@@ -599,6 +599,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 body=data.get("actor"),
                 user=request.user,
                 expected_revision=data.get("expected_revision"),
+                share_actions=data.get("share_actions"),
             )
         )
 

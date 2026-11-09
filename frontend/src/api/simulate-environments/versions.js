@@ -204,12 +204,18 @@ export const getActorView = async (envId, actorId) =>
  * @param {string} envId
  * @param {{ op: "create"|"replace"|"delete", actor?: Object, actorId?: string, revision: number }} change
  */
-export const editActor = async (envId, { op, actor, actorId, revision }) => {
+export const editActor = async (
+  envId,
+  { op, actor, actorId, revision, shareActions },
+) => {
+  // Actions only one other actor holds, confirmed in the form as shared by both.
+  const shared = shareActions?.length ? { share_actions: shareActions } : {};
   if (op === "create") {
     return (
       await axios.post(actorsPath(envId), {
         actor,
         expected_revision: revision,
+        ...shared,
       })
     ).data;
   }
@@ -218,6 +224,7 @@ export const editActor = async (envId, { op, actor, actorId, revision }) => {
       await axios.put(actorPath(envId, actorId), {
         actor,
         expected_revision: revision,
+        ...shared,
       })
     ).data;
   }
