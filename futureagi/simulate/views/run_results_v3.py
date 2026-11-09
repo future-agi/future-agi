@@ -28,6 +28,7 @@ from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import HarnessCapabilityReportSerializer
 from simulate.serializers.harness_job import HarnessRunReadinessSelectionSerializer
+from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
@@ -367,6 +368,10 @@ class RunCallSerializer(serializers.Serializer):
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
+    failure_domain = serializers.ChoiceField(
+        choices=HARNESS_FAILURE_DOMAINS, allow_null=True
+    )
+    failure_code = serializers.CharField(allow_null=True)
 
 
 class FacetValueSerializer(serializers.Serializer):
