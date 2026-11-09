@@ -471,10 +471,10 @@ def _ensure_workflows_registered() -> None:
     # (plan §9); it runs on `simulation_runner`, not the native call queues.
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
+        from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
         from simulate.temporal.workflows.certification_workflow import (
             ProductionCertificationWorkflow,
         )
-        from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
         from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
             HostedHarnessGatewayWorkflow,
         )
@@ -771,6 +771,12 @@ def _ensure_activities_registered() -> None:
     # runner spawns the released SDK as a child process; these do not run on the
     # native voice queues.
     try:
+        from simulate.temporal.activities.agent_fix import (
+            close_agent_fix_run,
+            launch_agent_fix_sandbox,
+            release_agent_fix_sandbox,
+            watch_agent_fix_engine,
+        )
         from simulate.temporal.activities.certification import (
             certification_cancel_case,
             certification_deliver_notifications,
@@ -780,12 +786,6 @@ def _ensure_activities_registered() -> None:
             certification_reconcile_case,
             certification_record_case_result,
             certification_submit_case,
-        )
-        from simulate.temporal.activities.agent_fix import (
-            close_agent_fix_run,
-            launch_agent_fix_sandbox,
-            release_agent_fix_sandbox,
-            watch_agent_fix_engine,
         )
         from simulate.temporal.activities.hosted_harness_gateway import (
             cancel_hosted_harness_attempt,

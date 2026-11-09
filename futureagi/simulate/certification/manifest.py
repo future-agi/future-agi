@@ -543,12 +543,8 @@ def _validate_interaction(
                 out[field] = raw[field]
         stable_assertions = raw.get("stable_assertions")
         if stable_assertions is not None:
-            if (
-                not isinstance(stable_assertions, list)
-                or not all(
-                    isinstance(name, str) and name.strip()
-                    for name in stable_assertions
-                )
+            if not isinstance(stable_assertions, list) or not all(
+                isinstance(name, str) and name.strip() for name in stable_assertions
             ):
                 _fail(
                     "invalid_schema",
