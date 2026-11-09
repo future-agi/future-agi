@@ -6,16 +6,17 @@ import asyncio
 import uuid
 
 import pytest
-from temporalio import activity
+from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 from simulate.temporal.constants import QUEUE_RUNNER
 from simulate.temporal.types.agent_fix import (
     AgentFixCloseInput,
     AgentFixInput,
     AgentFixLaunch,
+    AgentFixOutput,
     AgentFixVariations,
     AgentFixWatch,
     AgentFixWatchInput,
@@ -354,3 +355,61 @@ async def test_a_builder_past_its_cap_ends_the_fix_on_the_step_s_own_clock(
         ("failed", "fix_variations_timeout")
     ]
     assert 60 <= activities.variation_looks <= 62
+
+
+@workflow.defn(name="AgentFixWorkflow")
+class _BeforeVariations(AgentFixWorkflow):
+    """The workflow as fixes started before their first step existed ran it."""
+
+    @workflow.run
+    async def run(self, input: AgentFixInput) -> AgentFixOutput:
+        try:
+            observation = await self._drive(input)
+        finally:
+            await self._release(input)
+        return AgentFixOutput(fix_run_id=input.fix_run_id, observation=observation)
+
+
+@workflow.defn(name="AgentFixWorkflow")
+class _Unguarded(AgentFixWorkflow):
+    """The first step without its patch guard."""
+
+    @workflow.run
+    async def run(self, input: AgentFixInput) -> AgentFixOutput:
+        observation = await self._variations(input) or await self._drive(input)
+        await self._release(input)
+        return AgentFixOutput(fix_run_id=input.fix_run_id, observation=observation)
+
+
+@pytest.mark.asyncio
+async def test_a_fix_started_before_its_first_step_existed_replays_unchanged(
+    temporal_test_server_options,
+):
+    activities = FakeActivities(launches=[_started()], watches=[Observation.ENDED])
+    async with await WorkflowEnvironment.start_time_skipping(
+        **temporal_test_server_options
+    ) as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE_RUNNER,
+            workflows=[_BeforeVariations],
+            activities=activities.all(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                _BeforeVariations.run,
+                AgentFixInput(fix_run_id="fix-1"),
+                id=f"agent-fix-test-{uuid.uuid4()}",
+                task_queue=QUEUE_RUNNER,
+            )
+            await handle.result()
+        history = await handle.fetch_history()
+
+    def replay(workflow_class):
+        return Replayer(
+            workflows=[workflow_class], workflow_runner=UnsandboxedWorkflowRunner()
+        ).replay_workflow(history, raise_on_replay_failure=False)
+
+    assert (await replay(AgentFixWorkflow)).replay_failure is None
+    # Without the guard, the same history would not replay.
+    assert (await replay(_Unguarded)).replay_failure is not None
