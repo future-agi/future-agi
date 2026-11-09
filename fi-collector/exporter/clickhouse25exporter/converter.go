@@ -324,6 +324,9 @@ func collectTrace(ids *curatedwriter.Batch, row map[string]any, rawProjectID str
 	if sid, ok := row["trace_session_id"].(string); ok {
 		t.SessionID = sid // nil (no session) stays "" → NULL
 	}
+	if vid, ok := row["project_version_id"].(string); ok {
+		t.ProjectVersionID = vid
+	}
 	ids.AddTrace(t)
 }
 
@@ -528,6 +531,11 @@ func spanToRow(
 		"_version":          versionNanos,
 		"is_deleted":        uint8(0),
 	}
+	// Only auth's resolved stamp populates the column; the raw SDK version
+	// remains in resource_attrs and is never promoted without project scope.
+	projectVersionID, _ := resourceAttrs["fi.project_version_id"].(string)
+	projectVersionID, _ = canonicalUUID(projectVersionID)
+	row["project_version_id"] = nullableUUID(projectVersionID)
 	return row, identity, nil
 }
 
