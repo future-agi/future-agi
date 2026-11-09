@@ -1,0 +1,206 @@
+import PropTypes from "prop-types";
+import { useState } from "react";
+import ReactApexChart from "react-apexcharts";
+import {
+  Box,
+  Button,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+  useTheme,
+} from "@mui/material";
+import { formatMetricValue } from "./formatMetricValue";
+import { formatMetricTime, formatMetricWindow } from "./metricTime";
+import { pointValueState } from "./unitValueState";
+import MetricValueCell from "./MetricValueCell";
+
+import { metricTrendPoints } from "./metricPageValues";
+
+export default function MetricTrendChart({ data, name }) {
+  const theme = useTheme();
+  const [table, setTable] = useState(false);
+  const points = metricTrendPoints(data.results);
+  const hasValues = points.some((point) => point.y !== null);
+  const now = new Date();
+  const today = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  const showToday =
+    today >= Date.parse(data.effective_window.window_start) &&
+    today <= Date.parse(data.effective_window.window_end);
+  // Single-series emphasis, not categorical identity: foreground ink follows
+  // the host theme. Missing buckets stay null; no smoothing or zero filling.
+  const options = {
+    chart: {
+      type: "line",
+      fontFamily: theme.typography.fontFamily,
+      foreColor: theme.palette.text.secondary,
+      animations: { enabled: false },
+      toolbar: { show: false },
+      zoom: { enabled: false },
+      background: "transparent",
+    },
+    theme: { mode: theme.palette.mode },
+    colors: [theme.palette.text.primary],
+    stroke: { width: 2, curve: "straight" },
+    markers: {
+      size: 4,
+      strokeWidth: 2,
+      strokeColors: theme.palette.background.paper,
+      hover: { sizeOffset: 2 },
+      showNullDataPoints: false,
+    },
+    grid: { borderColor: theme.palette.divider, strokeDashArray: 0 },
+    dataLabels: { enabled: false },
+    legend: { show: false },
+    xaxis: {
+      type: "datetime",
+      min: Date.parse(data.effective_window.window_start),
+      max: Date.parse(data.effective_window.window_end),
+      labels: { datetimeUTC: true },
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+      crosshairs: {
+        show: true,
+        stroke: { width: 1, dashArray: 0, color: theme.palette.text.disabled },
+      },
+    },
+    yaxis: {
+      labels: {
+        formatter: (value) =>
+          formatMetricValue(value, {
+            ...data.results[0],
+            value_type: "number",
+          }) || "",
+      },
+    },
+    tooltip: {
+      shared: true,
+      intersect: false,
+      // Apex accepts a DOM node. textContent keeps metric names/units out of HTML.
+      custom: ({ dataPointIndex }) => {
+        const point = data.results[dataPointIndex];
+        const node = document.createElement("div");
+        node.style.padding = theme.spacing(3);
+        const value = document.createElement("strong");
+        value.textContent =
+          pointValueState(point).state === "value"
+            ? `${point.weighted ? "≈ " : ""}${formatMetricValue(point.value, { ...point, value_type: "number" })}`
+            : pointValueState(point).label;
+        const label = document.createElement("div");
+        label.textContent = `${name} · ${formatMetricTime(point?.window_start)}`;
+        node.append(value, label);
+        return node;
+      },
+    },
+    annotations: {
+      xaxis: showToday
+        ? [
+            {
+              x: today,
+              borderColor: theme.palette.text.disabled,
+              label: {
+                text: "Today (UTC)",
+                style: {
+                  color: theme.palette.text.secondary,
+                  background: theme.palette.background.paper,
+                },
+              },
+            },
+          ]
+        : [],
+    },
+    noData: { text: "No values in this window" },
+  };
+  return (
+    <Stack spacing={2}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between">
+        <Typography component="h2" variant="subtitle1" fontWeight={600}>
+          Trend
+        </Typography>
+        <Button
+          color="inherit"
+          size="small"
+          aria-pressed={table}
+          onClick={() => setTable(!table)}
+        >
+          {table ? "Show chart" : "View data table"}
+        </Button>
+      </Stack>
+      <Typography variant="caption" color="text.secondary">
+        {formatMetricWindow(data.effective_window)} ·{" "}
+        {data.effective_window.rounding}
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        {name} over time. Gaps mean no value, not zero. Times are UTC.
+      </Typography>
+      {!hasValues && (
+        <Typography role="status" color="text.secondary" sx={{ py: 4 }}>
+          No values in this window
+        </Typography>
+      )}
+      {hasValues && !table && (
+        <Box
+          role="img"
+          aria-label={`${name} trend. Use View data table for values and missing-data reasons.`}
+          sx={{
+            minWidth: 0,
+            // ApexCharts 3 hides marker groups until a line path completes. A
+            // series of isolated values has no connecting paths, so with our
+            // disabled animations those valid points otherwise stay invisible.
+            "& .apexcharts-series-markers-wrap.apexcharts-element-hidden": {
+              display: "initial",
+            },
+            "& .apexcharts-nullpoint": { display: "none" },
+            "@media print, (forced-colors: active)": { display: "none" },
+          }}
+        >
+          <ReactApexChart
+            type="line"
+            height={300}
+            options={options}
+            series={[{ name, data: points }]}
+          />
+        </Box>
+      )}
+      <TableContainer
+        sx={{
+          display: table ? "block" : "none",
+          "@media print, (forced-colors: active)": { display: "block" },
+        }}
+      >
+        <Table size="small" aria-label="Metric trend data">
+          <TableHead>
+            <TableRow>
+              <TableCell>Bucket start (UTC)</TableCell>
+              <TableCell>Bucket end (UTC)</TableCell>
+              <TableCell>Value and coverage</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {data.results.map((point, index) => (
+              <TableRow key={`${point.window_start}:${index}`}>
+                <TableCell>{formatMetricTime(point.window_start)}</TableCell>
+                <TableCell>{formatMetricTime(point.window_end)}</TableCell>
+                <TableCell>
+                  <MetricValueCell source="point" value={point} />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Stack>
+  );
+}
+MetricTrendChart.propTypes = {
+  data: PropTypes.object.isRequired,
+  name: PropTypes.string.isRequired,
+};
