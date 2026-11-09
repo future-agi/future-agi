@@ -4,14 +4,13 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("simulate", "0105_alter_certificationcampaign_max_active_cases"),
     ]
 
     operations = [
         migrations.AlterModelOptions(
-            name='certificationcase',
-            options={'ordering': ['sequence']},
+            name="certificationcase",
+            options={"ordering": ["sequence"]},
         ),
     ]

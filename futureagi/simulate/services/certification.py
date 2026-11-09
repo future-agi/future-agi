@@ -161,9 +161,7 @@ def create_campaign(
         **normalized,
         "defaults": {**normalized["defaults"], "certification_tier": tier},
         "cases": [
-            case
-            for case in normalized["cases"]
-            if tier in case.get("tiers", ["full"])
+            case for case in normalized["cases"] if tier in case.get("tiers", ["full"])
         ],
     }
     try:
