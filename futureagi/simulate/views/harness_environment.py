@@ -14,11 +14,13 @@ from simulate.serializers.harness_environment import (
     HarnessAgentVersionCreateSerializer,
     HarnessCapabilityCasePageSerializer,
     HarnessCapabilityCasesQuerySerializer,
+    HarnessCapabilityHistoryQuerySerializer,
     HarnessCapabilityRecheckResponseSerializer,
     HarnessCapabilityRecheckSerializer,
     HarnessCapabilitySelectionQuerySerializer,
     HarnessCapabilitySelectionReportSerializer,
     HarnessCapabilitySelectionSerializer,
+    HarnessCertifiedPairingPageSerializer,
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
     HarnessDefaultMoveSerializer,
@@ -543,6 +545,25 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         keys = body.pop("scenario_ids")
         trials = body.pop("trials")
         return Response(_selection_report(job, body, keys=keys, trials=trials))
+
+    @validated_request(
+        query_serializer=HarnessCapabilityHistoryQuerySerializer,
+        responses={200: HarnessCertifiedPairingPageSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_capability_history",
+    )
+    @action(detail=True, methods=["get"], url_path="capabilities/history")
+    def capability_history(self, request, pk=None):
+        """The pairings certified on this environment, newest first, with the exact
+        agent, environment and suite versions of each. No writes."""
+        from simulate.services.harness_readiness.release import certified_pairings
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        cursor = request.validated_query_data.get("cursor")
+        return Response(certified_pairings(job, cursor=cursor))
 
     @validated_request(
         query_serializer=HarnessCapabilityCasesQuerySerializer,

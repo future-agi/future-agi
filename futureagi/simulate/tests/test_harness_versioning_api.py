@@ -435,6 +435,15 @@ class TestVersionsList:
             or "simulate_harness_suite_version" in query["sql"]
         ]
         assert version_selects
+        # Only the two documents the release checks read, never the whole column.
+        version_selects = [
+            re.sub(
+                r"\"documents\" -> '(stage_outputs|release_checks)'",
+                "",
+                re.sub(r"\"simulate_harness_environment_version\"\.", "", sql),
+            )
+            for sql in version_selects
+        ]
         assert all('"documents"' not in sql for sql in version_selects)
         assert all(
             '"configuration_snapshot"' not in query["sql"]

@@ -1,5 +1,6 @@
 """Findings that hold whatever the certificate says: the environment version's
-contract, and the agent's preflight."""
+contract, the agent's preflight, and the agent version's own tools against the
+contract's."""
 
 from __future__ import annotations
 
@@ -110,3 +111,84 @@ def preflight_findings(
         + (f" (missing {', '.join(missing)})" if missing else ""),
         targets("check", [str(check.get("id")) for check in failed], "failed"),
     )
+
+
+def _arguments(tool: Mapping[str, Any], field: str) -> frozenset[str] | None:
+    """A tool's argument names: an agent document's ``parameters.properties``, a
+    contract's ``args``; ``None`` when the document does not say."""
+    value = tool.get(field)
+    if field == "parameters":
+        value = value.get("properties") if isinstance(value, Mapping) else None
+        return (
+            frozenset(str(name) for name in value)
+            if isinstance(value, Mapping)
+            else None
+        )
+    return frozenset(str(name) for name in value) if isinstance(value, list) else None
+
+
+def _changed(ours: Mapping[str, Any], theirs: Mapping[str, Any]) -> bool:
+    """Whether the agent calls a tool with other argument names than the world's;
+    a side that does not say is no change."""
+    agent, world = _arguments(ours, "parameters"), _arguments(theirs, "args")
+    return agent is not None and world is not None and agent != world
+
+
+def _named(tools: Any) -> dict[str, Mapping[str, Any]]:
+    return {
+        str(tool["name"]): tool
+        for tool in tools or []
+        if isinstance(tool, Mapping) and tool.get("name")
+    }
+
+
+def agent_findings(
+    agent_tools: list[Mapping[str, Any]] | None,
+    contract: Mapping[str, Any] | None,
+) -> dict[str, Reading]:
+    """The agent version's tools against the environment version's, by row.
+
+    ``agent_tools`` ``None`` means the version's tools were never read. A tool the
+    agent has and the world lacks blocks every case (targets of kind ``agent_tool``);
+    a world tool the agent lacks, or one it calls with other argument names, blocks
+    the cases that use it. An empty list was read and shows no gap.
+    """
+    if agent_tools is None:
+        return {
+            "tool_discovery": Reading(
+                "not_run",
+                "agent_tools_unread",
+                "This agent version's tools have not been read yet",
+            )
+        }
+    if not agent_tools:
+        return {}
+    agent = _named(agent_tools)
+    world = _named((contract or {}).get("tools"))
+    found: dict[str, Reading] = {}
+    outside = sorted(set(agent) - set(world))
+    missing = sorted(set(world) - set(agent))
+    if outside or missing:
+        parts = []
+        if outside:
+            parts.append("Not in this environment: " + ", ".join(outside))
+        if missing:
+            parts.append("Not in this agent version: " + ", ".join(missing))
+        found["tool_discovery"] = Reading(
+            "failed",
+            "tool_not_in_world" if outside else "tool_not_in_agent",
+            "; ".join(parts),
+            targets("agent_tool", outside, "failed")
+            + targets("tool", missing, "failed"),
+        )
+    changed = sorted(
+        name for name in set(agent) & set(world) if _changed(agent[name], world[name])
+    )
+    if changed:
+        found["tool_routing"] = Reading(
+            "failed",
+            "tool_signature_changed",
+            "Takes other arguments in this environment: " + ", ".join(changed),
+            targets("tool", changed, "failed"),
+        )
+    return found

@@ -3,9 +3,11 @@ the re-check that validates the pairing again."""
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, TypedDict
 
 import structlog
+from django.core.cache import cache
 from django.utils import timezone
 
 from simulate.models import (
@@ -17,6 +19,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models.harness_versioning import VersionStatus
+from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_readiness.catalogue import (
     AREAS,
     CATALOG_VERSION,
@@ -31,6 +34,7 @@ from simulate.services.harness_readiness.catalogue import (
     Status,
 )
 from simulate.services.harness_readiness.evidence import (
+    agent_tools,
     certified,
     pair_bundle,
     read_evidence,
@@ -57,6 +61,8 @@ from simulate.services.hosted_harness import (
 )
 
 logger = structlog.get_logger(__name__)
+# A report is read again at most this often while nothing it is read from changes.
+REPORT_TTL_SECONDS = 60
 
 
 class ReadinessReport(TypedDict):
@@ -186,6 +192,9 @@ def _validation(
     shown: dict[str, Any] | None = None
     if state == "failed":
         shown = {"code": error.get("code"), "reason": validation.failed_reason(error)}
+        if error.get("excerpt"):
+            # ALK's own redacted line for the failed check, never the agent's output.
+            shown["excerpt"] = error["excerpt"]
         if "failed_actions" in error:
             shown["failed_actions"] = error["failed_actions"]
     elif state == "check_unavailable":
@@ -217,12 +226,18 @@ def recheck(pairing: Pairing) -> validation.ValidationView:
 
     Raises:
         UsageLimitExceeded: the organization cannot spend on a build sandbox, which a
-            validation runs in; a pairing already certified starts none.
+            validation runs in; a pairing already certified starts none unless its
+            agent version's tools are still to be read.
     """
     from simulate.services.harness_usage import require_harness_authoring
 
     agent = pairing.agent_version
-    if not certified(pair_bundle(pairing)):
+    if not certified(pair_bundle(pairing)) or (
+        agent is not None
+        and validation.needs_reading(
+            pairing.environment, agent, pairing.environment_version, pairing.runtime
+        )
+    ):
         require_harness_authoring(str(pairing.environment.organization_id))
     started = (
         validation.start_validation(
@@ -255,8 +270,73 @@ def readiness_report(
     otherwise it is looked up as a run of the pairing would.
     """
     bundle = bundle or pair_bundle(pairing)
+    key = _report_key(pairing, bundle)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    report = _computed_report(pairing, bundle)
+    cache.set(key, report, timeout=REPORT_TTL_SECONDS)
+    return report
+
+
+def _report_key(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> str:
+    """What a report is read from: the versions and their side row, the bundle and
+    its latest check, the agent's stored document, and the agent's newest job of this
+    environment (its runs and Stops). Any change reads the report again."""
+    from simulate.models import AgentVersionSetup
+
+    agent_id = getattr(pairing.agent_version, "id", None)
+    check = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            assembled_bundle_id=bundle.id, payload__metadata__certify_only=True
+        )
+        .order_by("-created_at")
+        .values_list("id", "state", "updated_at")
+        .first()
+        if bundle is not None
+        else None
+    )
+    newest = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            environment_id=pairing.environment.id, agent_version_id=agent_id
+        )
+        .order_by("-updated_at")
+        .values_list("id", "updated_at")
+        .first()
+    )
+    setup = (
+        AgentVersionSetup.no_workspace_objects.filter(agent_version_id=agent_id)
+        .values_list("id", "setup_hash", "status")
+        .first()
+    )
+    parts = (
+        RULES_VERSION,
+        pairing.environment.id,
+        agent_id,
+        pairing.environment_version.id,
+        canonical_digest(pairing.environment_version.documents or {}),
+        pairing.suite_version.id,
+        pairing.suite_version.certify_hash,
+        (pairing.suite_version.documents or {}).get("authoring_revisions"),
+        getattr(pairing.runtime, "id", None),
+        getattr(pairing.runtime, "updated_at", None),
+        getattr(pairing.runtime, "preflight_status", None),
+        (bundle.id, bundle.state, bundle.updated_at) if bundle is not None else None,
+        check,
+        newest,
+        setup,
+    )
+    return (
+        "harness-readiness-report:" + hashlib.sha256(repr(parts).encode()).hexdigest()
+    )
+
+
+def _computed_report(
+    pairing: Pairing, bundle: HarnessAssembledBundle | None
+) -> ReadinessReport:
     evidence = read_evidence(pairing, bundle)
-    found = rows(pairing, evidence, bundle)
+    tools = agent_tools(pairing)
+    found = rows(pairing, evidence, bundle, agent_tools=tools)
     view = _validation(pairing, bundle)
     refs = version_refs(
         pairing.agent_version, pairing.environment_version, pairing.suite_version
@@ -280,6 +360,7 @@ def readiness_report(
             "environment_version": refs["environment"],
             "suite_version": refs["suite"],
             "evidence": evidence.source,
+            "agent_tools": {"read": tools is not None, "count": len(tools or [])},
         },
         "validation": view,
         "answer": answer(

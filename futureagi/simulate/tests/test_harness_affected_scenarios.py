@@ -16,21 +16,24 @@ from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_readiness import (
     PASSED,
     PRODUCTION_ONLY,
+    SAME_TOOLS,
+    WORLD,
     _built,
     _certify,
     _environment,
     _pairing,
     _rows,
+    _tool,
     _with_a2,
 )
-from simulate.tests.test_harness_readiness import (
-    readiness_on as readiness_on,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    readiness_on as readiness_on,
 )
-from simulate.tests.test_harness_readiness import (
-    scheduled as scheduled,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    scheduled as scheduled,
 )
-from simulate.tests.test_harness_readiness import (
-    storage as storage,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    storage as storage,
 )
 from simulate.tests.test_harness_versioning_assembly import _row
 from simulate.tests.test_harness_versioning_runs import _run
@@ -539,3 +542,301 @@ class TestListsAndCounts:
         assert start["status"] == "stale"
         assert start["affected"]["count"] == 10
         assert report["selection"]["stale"] == 10
+
+
+def _run_metadata(run):
+    run.refresh_from_db()
+    return run.payload["metadata"]
+
+
+class TestHoldBack:
+    def test_a_run_holds_back_the_blocked_cases_and_names_them(
+        self, user, workspace, storage
+    ):
+        environment = _ten_certified(user, workspace, storage, "hb-four")
+        _built(environment, contract=PRODUCTION_ONLY)
+
+        run = _run(environment, REFUND_KEYS + LOOKUP_KEYS, key="hold")
+
+        metadata = _run_metadata(run)
+        chosen = metadata["readiness_selection"]
+        assert (chosen["requested"], chosen["running"]) == (10, 6)
+        assert chosen["held_back"] == {
+            "count": 4,
+            "keys": REFUND_KEYS,
+            "truncated": False,
+            "by": {"tool_routing": 4},
+        }
+        assert "issue_refund reaches production" in chosen["reasons"]["tool_routing"]
+        sent = [entry["scenario_key"] for entry in metadata["execution_manifest"]]
+        assert sent == LOOKUP_KEYS
+        assert metadata["selected_scenario_keys"] == REFUND_KEYS + LOOKUP_KEYS
+        assert run.test_execution.total_scenarios == 6
+        assert run.test_execution.total_calls == 6
+
+    def test_every_case_blocked_is_refused_and_no_run_is_made(
+        self, user, workspace, storage
+    ):
+        from simulate.models import HostedHarnessJob
+
+        environment = _ten_certified(user, workspace, storage, "hb-all")
+        _built(environment, contract=PRODUCTION_ONLY)
+        before = HostedHarnessJob.no_workspace_objects.count()
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _run(environment, REFUND_KEYS, key="all")
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "all_cases_blocked",
+            409,
+        )
+        assert "No run was created" in refused.value.message
+        assert "issue_refund reaches production" in refused.value.message
+        assert refused.value.details["selection"]["held_back"]["count"] == 4
+        assert HostedHarnessJob.no_workspace_objects.count() == before
+
+    def test_nothing_blocked_sends_every_case(self, user, workspace, storage):
+        environment = _ten_certified(user, workspace, storage, "hb-none")
+
+        run = _run(environment, REFUND_KEYS + LOOKUP_KEYS, key="none")
+
+        metadata = _run_metadata(run)
+        assert metadata["readiness_selection"]["held_back"]["count"] == 0
+        assert len(metadata["execution_manifest"]) == 10
+
+    def test_pins_moved_after_readiness_was_read_is_refused(
+        self, user, workspace, storage, monkeypatch
+    ):
+        from simulate.services import hosted_harness
+
+        environment = _ten_certified(user, workspace, storage, "hb-moved")
+        real = hosted_harness._readiness_plan
+
+        def stale(*args, **kwargs):
+            planned = real(*args, **kwargs)
+            return hosted_harness._ReadinessPlan(
+                pins=(None, None, None), plan=planned.plan
+            )
+
+        monkeypatch.setattr(hosted_harness, "_readiness_plan", stale)
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _run(environment, LOOKUP_KEYS, key="moved")
+
+        assert refused.value.code == "environment_not_ready"
+        assert refused.value.retryable is True
+
+
+class TestAgentGapCases:
+    def _a2(self, user, workspace, storage, key, tools, documents=None):
+        environment, a2 = _with_a2(user, workspace, storage, key, tools=tools)
+        _suite(environment, documents or _ten())
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+        return environment, _pairing(environment, a2)
+
+    def test_a_tool_the_world_lacks_holds_back_every_case(
+        self, user, workspace, storage
+    ):
+        environment, pairing = self._a2(
+            user,
+            workspace,
+            storage,
+            "gap-cases-world",
+            (*SAME_TOOLS, _tool("send_email", "to")),
+            # A case calling no tool can still have the agent call send_email.
+            [*_ten(), _doc("chat-1", sub_goals=("polite",))],
+        )
+
+        report = _select(environment, pairing=pairing)
+
+        chosen = report["selection"]
+        assert (chosen["blocked"], chosen["eligible"]) == (11, 0)
+        discovery = _rows(report)["tool_discovery"]
+        assert discovery["affected"]["count"] == 11
+        assert discovery["needed_by"] == 11
+        plan = harness_readiness.select_for_run(
+            pairing, keys=[*REFUND_KEYS, *LOOKUP_KEYS, "chat-1"], trials=1
+        )
+        assert (plan.view["running"], plan.view["held_back"]["by"]) == (
+            0,
+            {"tool_discovery": 11},
+        )
+        assert plan.view["reasons"]["tool_discovery"] == (
+            "Not in this environment: send_email"
+        )
+
+    def test_a_world_tool_the_agent_lacks_holds_back_only_its_cases(
+        self, user, workspace, storage
+    ):
+        environment, pairing = self._a2(
+            user, workspace, storage, "gap-cases-agent", (SAME_TOOLS[0],)
+        )
+
+        report = _select(environment, pairing=pairing)
+
+        chosen = report["selection"]
+        # The rest still run: routing waits on discovery, as for any blocked tool.
+        assert (chosen["blocked"], chosen["untested"]) == (4, 6)
+        assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS
+        assert _rows(report)["tool_discovery"]["affected"]["count"] == 4
+
+    def test_a_changed_signature_holds_back_only_the_cases_using_it(
+        self, user, workspace, storage
+    ):
+        environment, pairing = self._a2(
+            user,
+            workspace,
+            storage,
+            "gap-cases-signature",
+            (SAME_TOOLS[0], _tool(REFUND, "order_id")),
+        )
+
+        report = _select(environment, pairing=pairing)
+
+        assert report["selection"]["lists"]["blocked"]["keys"] == REFUND_KEYS
+        assert _rows(report)["tool_routing"]["affected"]["count"] == 4
+
+    def test_an_unread_version_holds_back_no_case(self, user, workspace, storage):
+        environment, pairing = self._a2(
+            user, workspace, storage, "gap-cases-unread", None
+        )
+
+        report = _select(environment, pairing=pairing)
+
+        chosen = report["selection"]
+        assert (chosen["blocked"], chosen["untested"]) == (0, 10)
+        plan = harness_readiness.select_for_run(
+            pairing, keys=REFUND_KEYS + LOOKUP_KEYS, trials=1
+        )
+        assert plan.view["running"] == 10
+
+
+def _earlier_suite(environment, *, edited=(), missing=()):
+    """A discarded copy of the default suite version whose members differ: ``edited``
+    keys carry other contents and ``missing`` keys are absent."""
+    import uuid
+
+    suite = HarnessSuiteVersion.no_workspace_objects.get(
+        id=environment.suite_version_id
+    )
+    members = list(HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite))
+    suite.pk = uuid.uuid4()
+    suite.id = suite.pk
+    suite.status = "discarded"
+    suite.version_number = None
+    suite.save()
+    for member in members:
+        if member.scenario_key in missing:
+            continue
+        content = dict(member.content)
+        if member.scenario_key in edited:
+            content["name"] = "an earlier wording"
+        HarnessSuiteMember.no_workspace_objects.create(
+            suite_version=suite,
+            scenario=member.scenario,
+            scenario_key=member.scenario_key,
+            number=member.number,
+            content=content,
+        )
+    return suite
+
+
+class TestScope:
+    def test_cases_not_selected_are_excluded_and_counted(
+        self, user, workspace, storage
+    ):
+        environment = _ten_certified(user, workspace, storage, "sc-excluded")
+
+        chosen = _select(environment, [LOOKUP_KEYS[0], REFUND_KEYS[1]])["selection"]
+
+        assert chosen["suite_total"] == 10
+        assert chosen["requested"] == 2
+        assert chosen["excluded"] == {
+            "count": 8,
+            "keys": [
+                key
+                for key in REFUND_KEYS + LOOKUP_KEYS
+                if key not in (LOOKUP_KEYS[0], REFUND_KEYS[1])
+            ],
+            "truncated": False,
+            "reason": "not_selected",
+        }
+
+    def test_the_whole_suite_excludes_nothing(self, user, workspace, storage):
+        environment = _ten_certified(user, workspace, storage, "sc-whole")
+
+        chosen = _select(environment)["selection"]
+
+        assert (chosen["suite_total"], chosen["excluded"]["count"]) == (10, 0)
+
+    def test_nothing_changed_without_an_earlier_run(self, user, workspace, storage):
+        environment = _ten_certified(user, workspace, storage, "sc-first")
+
+        changed = _select(environment)["selection"]["changed"]
+
+        assert changed == {"count": 0, "keys": [], "truncated": False, "since": None}
+
+    def test_a_run_of_the_same_suite_version_changed_nothing(
+        self, user, workspace, storage
+    ):
+        environment = _ten_certified(user, workspace, storage, "sc-same")
+        run = _run(environment, LOOKUP_KEYS, key="same")
+
+        changed = _select(environment)["selection"]["changed"]
+
+        assert changed["count"] == 0
+        assert changed["since"]["run_id"] == str(run.id)
+
+    def test_cases_edited_or_added_since_the_last_run_are_changed(
+        self, user, workspace, storage
+    ):
+        from simulate.models import HostedHarnessJob
+
+        environment = _ten_certified(user, workspace, storage, "sc-changed")
+        run = _run(environment, LOOKUP_KEYS, key="earlier")
+        earlier = _earlier_suite(
+            environment, edited=(LOOKUP_KEYS[1],), missing=(REFUND_KEYS[0],)
+        )
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            suite_version=earlier
+        )
+
+        changed = _select(environment)["selection"]["changed"]
+
+        assert changed["keys"] == [REFUND_KEYS[0], LOOKUP_KEYS[1]]
+        assert changed["count"] == 2
+        assert changed["since"]["run_id"] == str(run.id)
+
+    def test_a_check_is_not_a_run_to_compare_with(self, user, workspace, storage):
+        from simulate.models import HostedHarnessJob
+
+        environment = _ten_certified(user, workspace, storage, "sc-check")
+        run = _run(environment, LOOKUP_KEYS, key="check")
+        payload = dict(run.payload)
+        payload["metadata"] = {**payload["metadata"], "certify_only": True}
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(payload=payload)
+
+        assert _select(environment)["selection"]["changed"]["since"] is None
+
+    def test_a_run_records_its_scope(self, user, workspace, storage):
+        environment = _ten_certified(user, workspace, storage, "sc-run")
+
+        run = _run(environment, LOOKUP_KEYS, key="scoped")
+
+        chosen = _run_metadata(run)["readiness_selection"]
+        assert chosen["suite_total"] == 10
+        assert chosen["excluded"]["keys"] == REFUND_KEYS
+        assert chosen["changed"]["since"] is None
+
+    def test_another_agent_versions_run_is_not_compared(self, user, workspace, storage):
+        environment, a2 = _with_a2(user, workspace, storage, "sc-other-agent")
+        _suite(environment, _ten())
+        _certify(environment, storage)
+        _run(environment, LOOKUP_KEYS, key="a1-run")
+
+        changed = _select(environment, pairing=_pairing(environment, a2))["selection"][
+            "changed"
+        ]
+
+        assert changed["since"] is None

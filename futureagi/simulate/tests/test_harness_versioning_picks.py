@@ -37,8 +37,8 @@ from simulate.tests.test_harness_versioning_backfill import (
     _definition,
     _legacy,
 )
-from simulate.tests.test_harness_versioning_backfill import (
-    storage as storage,  # noqa: F401 - fixture
+from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
+    storage as storage,
 )
 from simulate.tests.test_harness_versioning_record import _authoring
 
@@ -234,6 +234,7 @@ class TestNoPicks:
             "stage",
             "versions",
             "warnings",
+            "selection",
         }
         assert body["versions"] == {
             "agent": {"id": str(environment.agent_version_id), "label": "v1"},
