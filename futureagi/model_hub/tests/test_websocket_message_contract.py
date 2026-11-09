@@ -138,6 +138,9 @@ async def receive_message(socket):
     return json.loads(event["text"])
 
 
+# Channels closes old DB connections in a worker thread before dispatch, even
+# with mocked ORM lookups. Use transactional access for the real ASGI consumers.
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("message,targeted", MESSAGES)
 def test_helper_messages_reach_only_authenticated_organization(message, targeted):
     target = message.get("generation_id", TARGET)
@@ -336,6 +339,7 @@ def test_http_validation_log_contains_only_status_and_known_field_names():
     )
 
 
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize(
     "action,id_field,prefix,data",
     [
@@ -400,6 +404,7 @@ def test_prompt_endpoint_identifiers_reach_subscribed_consumer(
     assert_helper_delivery(message, True, target)
 
 
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize(
     "target",
     [
