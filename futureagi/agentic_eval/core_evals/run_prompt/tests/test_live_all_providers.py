@@ -14,7 +14,7 @@ This module tests ALL models from the following providers:
 - Together AI (3 models)
 - Cohere (2 models)
 - DeepSeek (2 models)
-- Fireworks AI (5 models)
+- Fireworks AI (1 model)
 - AI21 (3 models)
 - Cerebras (2 models)
 
@@ -1482,11 +1482,7 @@ DEEPSEEK_REASONING_MODELS = [
 
 # Fireworks AI Models
 FIREWORKS_AI_MODELS = [
-    "fireworks_ai/accounts/fireworks/models/llama-v3p2-1b-instruct",
-    "fireworks_ai/accounts/fireworks/models/llama-v3p2-3b-instruct",
-    "fireworks_ai/accounts/fireworks/models/firefunction-v2",
-    "fireworks_ai/accounts/fireworks/models/mixtral-8x22b-instruct-hf",
-    "fireworks_ai/accounts/fireworks/models/qwen2-72b-instruct",
+    "fireworks_ai/accounts/fireworks/models/gpt-oss-120b",
 ]
 
 # AI21 Models
@@ -2080,7 +2076,7 @@ class TestFireworksAILiveAllModels:
     ])
     def test_fireworks_ai_combined_parameters(self, temp, max_tok, top_p):
         """Test Fireworks AI with combined parameter variations."""
-        model = "fireworks_ai/accounts/fireworks/models/llama-v3p2-1b-instruct"
+        model = "fireworks_ai/accounts/fireworks/models/gpt-oss-120b"
         content, response = run_model_test(
             model_name=model,
             api_key=self.api_key,
