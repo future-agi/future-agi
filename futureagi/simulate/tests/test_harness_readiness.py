@@ -2404,6 +2404,27 @@ class TestObservedRouting:
             " leaves the test world, so it was not asked)"
         )
 
+    def test_a_tool_left_unasked_reads_partial_with_the_reason(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "tr-not-asked")
+        _certify(
+            environment,
+            storage,
+            checks={**PASSED, "action_behavior": "0/0"},
+            actions=NOT_PROBED,
+            routed=["lookup_order"],
+            unobserved=[{"tool": "issue_refund", "reason": "not_asked"}],
+        )
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["status"] == "partial"
+        assert routing["reason"] == (
+            "Not yet shown reaching the test world: issue_refund (not asked: the"
+            " check's time for tool requests ran out)"
+        )
+
 
 class TestReleaseChecks:
     """B8: a release is Ready only once all five release checks passed."""
