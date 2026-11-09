@@ -32,7 +32,7 @@ export const SERVER_BLOCK_COPY = Object.freeze({
   description: {
     step: S.CONFIGURATION,
     text: () =>
-      "Descriptions aren't saved yet. Clear the description to run the experiment.",
+      "Descriptions aren't saved here. Clear the description to run the experiment.",
   },
   name: {
     step: S.CONFIGURATION,
@@ -77,7 +77,7 @@ export const SERVER_BLOCK_COPY = Object.freeze({
   metadata: {
     step: S.REVIEW,
     text: () =>
-      "Experiment metadata isn't saved yet. Remove the metadata rows to run.",
+      "Experiment metadata isn't saved here. Remove the metadata rows to run.",
   },
   error_policy: {
     step: S.REVIEW,

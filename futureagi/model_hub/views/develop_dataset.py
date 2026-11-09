@@ -243,7 +243,12 @@ from model_hub.services.dataset_failed_filters import (
     failure_counts,
     validate_read_columns,
 )
-from model_hub.services.dataset_schema import added_rows_refusal, imported_rows_refusal
+from model_hub.services.dataset_schema import (
+    added_rows_refusal,
+    imported_rows_refusal,
+    is_empty_cell_value,
+    normalize_added_cell_value,
+)
 from model_hub.services.dataset_splits import project_split_membership
 from model_hub.services.dataset_table_snapshot import (
     DATASET_TABLE_EXACT_MAX_COLUMNS,
@@ -5683,6 +5688,27 @@ class AddDataRowsView(APIView):
             if dataset is None:
                 return self._gm.not_found("Dataset not found")
 
+            columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
+                source__in=[
+                    SourceChoices.EXPERIMENT.value,
+                    SourceChoices.EXPERIMENT_EVALUATION.value,
+                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                ]
+            )
+
+            # Normalize the complete batch before billing or creating any rows.
+            column_types = {column.name: column.data_type for column in columns}
+            try:
+                for row_data in rows:
+                    for cell_data in row_data.get("cells", []):
+                        name = cell_data["column_name"]
+                        if name in column_types:
+                            cell_data["value"] = normalize_added_cell_value(
+                                cell_data.get("value", ""), column_types[name]
+                            )
+            except serializers.ValidationError as error:
+                return self._gm.bad_request(error.detail)
+
             # Validate row limit
             organization = (
                 getattr(request, "organization", None) or request.user.organization
@@ -5715,14 +5741,6 @@ class AddDataRowsView(APIView):
                 max_order = last_row.order
             else:
                 max_order = -1
-            columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
-                source__in=[
-                    SourceChoices.EXPERIMENT.value,
-                    SourceChoices.EXPERIMENT_EVALUATION.value,
-                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                ]
-            )
-
             # Create rows and cells
             for index, row_data in enumerate(rows):
                 new_row = Row.objects.create(
@@ -6337,10 +6355,8 @@ class UpdateCellValueView(APIView):
                     f"Value exceeds maximum length of {MAX_CELL_VALUE_LENGTH} characters"
                 )
 
-            # Handle empty values for all data types
-            if not new_value or (
-                isinstance(new_value, str) and new_value.strip() == ""
-            ):
+            # Handle absence without discarding numeric zero or boolean false.
+            if is_empty_cell_value(new_value):
                 cell.value = None
                 cell.value_infos = json.dumps({})
                 cell.status = CellStatus.PASS.value
@@ -6349,11 +6365,11 @@ class UpdateCellValueView(APIView):
                 cell.value_infos = json.dumps({})
                 cell.status = CellStatus.PASS.value
             elif column_data_type == DataTypeChoices.BOOLEAN.value:
-                if new_value in BooleanChoices.TRUE_OPTIONS.value:
+                if new_value is True or new_value in BooleanChoices.TRUE_OPTIONS.value:
                     cell.value = "true"
                     cell.value_infos = json.dumps({})
                     cell.status = CellStatus.PASS.value
-                elif new_value in BooleanChoices.FALSE_OPTIONS.value:
+                elif new_value is False or new_value in BooleanChoices.FALSE_OPTIONS.value:
                     cell.value = "false"
                     cell.value_infos = json.dumps({})
                     cell.status = CellStatus.PASS.value

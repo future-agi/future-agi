@@ -110,6 +110,23 @@ def _reject_json_constant(value):
     raise ValueError("Non-finite JSON number.")
 
 
+def is_empty_cell_value(value):
+    """Only null and blank strings clear a cell; zero and false are values."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def normalize_added_cell_value(value, data_type):
+    """Encode native JSON containers for TextField storage, leaving strings intact."""
+    if data_type in ("json", "array") and isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, allow_nan=False)
+        except (TypeError, ValueError, RecursionError):
+            raise ValidationError(
+                "JSON and array cells must contain finite JSON values."
+            ) from None
+    return value
+
+
 def typed_value(value, data_type):
     """Interpret stored text using the column type, never the schema's desired type."""
     if value is None or value == "":
@@ -200,10 +217,14 @@ def added_rows_refusal(request, dataset_id, rows):
             values.update(
                 {cell["column_name"]: cell.get("value", "") for cell in cells}
             )
-            # TextField persistence stringifies JSON values on this writer.
+            # Validate the same normalized text the batch writer persists.
             proposed.append(
                 {
-                    key: None if value is None else str(value)
+                    key: (
+                        None
+                        if value is None
+                        else str(normalize_added_cell_value(value, types[key]))
+                    )
                     for key, value in values.items()
                 }
             )
@@ -287,8 +308,8 @@ def validate_cell_edit(attrs):
     for cell in cells:
         values[by_id[cell.column_id].name] = cell.value
     value = attrs.get("new_value", "")
-    # Match the pinned writer's empty handling and integer conversion exactly.
-    if not value or (isinstance(value, str) and not value.strip()):
+    # Match the writer's empty handling and integer conversion exactly.
+    if is_empty_cell_value(value):
         value = None
     elif column.data_type == "integer":
         try:

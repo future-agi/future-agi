@@ -7047,8 +7047,12 @@ class EvalPlayGroundAPIView(APIView):
                         # A trace's span count is bounded (FutureAGI caps
                         # writes via the OTLP ingest pipeline) so a single
                         # in-process pass is cheaper than two CH round-trips.
+                        # Scope the span read to the authorized project: ClickHouse
+                        # trace ids can collide across projects (J25.FA-001).
                         with get_reader() as reader:
-                            _ch_spans = reader.list_by_trace(str(_t.id))
+                            _ch_spans = reader.list_by_trace(
+                                str(_t.id), project_id=str(_t.project_id)
+                            )
                         _span_count = len(_ch_spans)
                         _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
                         _total_tokens = sum((s.total_tokens or 0) for s in _ch_spans)
