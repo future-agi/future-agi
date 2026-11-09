@@ -44,19 +44,21 @@ vi.mock("react-apexcharts", () => ({
   default: () => <div data-testid="trend-chart" />,
 }));
 vi.mock("src/sections/projects/TracesDrawer/TracesDrawer", () => ({
-  default: ({ rowData, navigationContext, onClose }) => (
-    <div role="dialog" aria-label="Conversation source">
-      {rowData.session_id} {JSON.stringify(navigationContext)}
-      <button onClick={onClose}>Close source</button>
-    </div>
-  ),
+  default: ({ open, rowData, navigationContext, onClose }) =>
+    open ? (
+      <div role="dialog" aria-label="Conversation source">
+        {rowData.session_id} {JSON.stringify(navigationContext)}
+        <button onClick={onClose}>Close source</button>
+      </div>
+    ) : null,
 }));
 vi.mock("src/sections/tasks/components/TaskRunTraceDrawer", () => ({
-  default: ({ traceId, projectId }) => (
-    <div role="dialog" aria-label="Trace source">
-      {traceId} {projectId}
-    </div>
-  ),
+  default: ({ open, traceId, projectId }) =>
+    open ? (
+      <div role="dialog" aria-label="Trace source">
+        {traceId} {projectId}
+      </div>
+    ) : null,
 }));
 
 let client;

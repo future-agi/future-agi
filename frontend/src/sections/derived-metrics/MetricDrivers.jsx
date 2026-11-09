@@ -64,7 +64,58 @@ export default function MetricDrivers({ metric, scope, window }) {
     params: { context: contextFor[definition?.level] || "sessions" },
   });
   const kpi = useMetricKpi({ ...args, params: window });
-  if (!metric) return null;
+  const candidateField = fields.data?.results[0];
+  const field = matchingMetricDriverField(candidateField, definition)
+    ? candidateField
+    : null;
+  const rows = query.data?.results || [];
+  // The server ranks failures. Defensively exclude open/missing/expired rows;
+  // missing values must never be presented as failing conversations.
+  const valid = field
+    ? rows.filter(
+        (row) =>
+          unitValueState(row, field).state === "value" &&
+          formatMetricValue(unitValueState(row, field).value, field) !== null,
+      )
+    : [];
+  const excluded = rows.length - valid.length;
+  const comparable = sameMetricRead(query.data, kpi.data);
+  // Retain only the selected source's identity, not masked metric data. Keep
+  // this keyed drawer mounted so refetches do not reset its session or tab.
+  const sourceOpen = Boolean(
+    metric && valid.some((row) => row.unit_id === selected?.unitId),
+  );
+  const sourceDrawer = selected && (
+    <Suspense
+      key="source"
+      fallback={
+        sourceOpen && <Typography role="status">Opening source…</Typography>
+      }
+    >
+      {selected.level === "conversation" ? (
+        <TracesDrawer
+          key={selected.unitId}
+          open={sourceOpen}
+          onClose={() => setSelected(null)}
+          rowData={{ session_id: selected.unitId }}
+          navigationContext={{
+            workspace_id: scope.workspaceId,
+            project_id: selected.projectId,
+            filters: [],
+            sort_params: [],
+          }}
+        />
+      ) : (
+        <TaskRunTraceDrawer
+          open={sourceOpen}
+          onClose={() => setSelected(null)}
+          projectId={selected.projectId}
+          traceId={selected.unitId}
+        />
+      )}
+    </Suspense>
+  );
+  if (!metric) return <Stack spacing={2}>{sourceDrawer}</Stack>;
   if (definition?.level === "user")
     return (
       <Alert severity="info">
@@ -84,22 +135,6 @@ export default function MetricDrivers({ metric, scope, window }) {
         Not calculated yet. Drivers need an active definition.
       </Typography>
     );
-  const candidateField = fields.data?.results[0];
-  const field = matchingMetricDriverField(candidateField, definition)
-    ? candidateField
-    : null;
-  const rows = query.data?.results || [];
-  // The server ranks failures. Defensively exclude open/missing/expired rows;
-  // missing values must never be presented as failing conversations.
-  const valid = field
-    ? rows.filter(
-        (row) =>
-          unitValueState(row, field).state === "value" &&
-          formatMetricValue(unitValueState(row, field).value, field) !== null,
-      )
-    : [];
-  const excluded = rows.length - valid.length;
-  const comparable = sameMetricRead(query.data, kpi.data);
   const canOpen = ["conversation", "trace"].includes(definition.level);
   return (
     <Stack spacing={2}>
@@ -152,7 +187,13 @@ export default function MetricDrivers({ metric, scope, window }) {
                             color="inherit"
                             size="small"
                             sx={{ textAlign: "left", overflowWrap: "anywhere" }}
-                            onClick={() => setSelected(row.unit_id)}
+                            onClick={() =>
+                              setSelected({
+                                unitId: row.unit_id,
+                                level: definition.level,
+                                projectId: metric.project_id,
+                              })
+                            }
                           >
                             {row.unit_id}
                           </Button>
@@ -240,33 +281,7 @@ export default function MetricDrivers({ metric, scope, window }) {
           Next drivers
         </Button>
       </Stack>
-      {selected && valid.some((row) => row.unit_id === selected) && (
-        <Suspense
-          fallback={<Typography role="status">Opening source…</Typography>}
-        >
-          {definition.level === "conversation" ? (
-            <TracesDrawer
-              key={selected}
-              open
-              onClose={() => setSelected(null)}
-              rowData={{ session_id: selected }}
-              navigationContext={{
-                workspace_id: scope.workspaceId,
-                project_id: metric.project_id,
-                filters: [],
-                sort_params: [],
-              }}
-            />
-          ) : (
-            <TaskRunTraceDrawer
-              open
-              onClose={() => setSelected(null)}
-              projectId={metric.project_id}
-              traceId={selected}
-            />
-          )}
-        </Suspense>
-      )}
+      {sourceDrawer}
     </Stack>
   );
 }
