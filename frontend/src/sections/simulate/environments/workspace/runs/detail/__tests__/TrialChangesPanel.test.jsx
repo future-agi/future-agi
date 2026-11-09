@@ -326,4 +326,30 @@ describe("TrialChangesPanel", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("says first when a scenario fault did not take effect, even when nothing else changed", () => {
+    const message =
+      "The timeout fault on call 1 of crm.apply_discount could not be applied: the agent made that call outside the world's door (in its own process), so nothing held it.";
+    render(
+      <TrialChangesPanel
+        trialState={{
+          notices: [{ code: "fault_not_applied", message }, { code: "blank" }],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("Worth knowing about this trial"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(message)).toBeInTheDocument();
+    expect(
+      screen.getByText("Nothing changed in the world in this trial."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no notices heading when the trial has none", () => {
+    render(<TrialChangesPanel trialState={{ state_changes: [] }} />);
+    expect(
+      screen.queryByText("Worth knowing about this trial"),
+    ).not.toBeInTheDocument();
+  });
 });

@@ -1,6 +1,7 @@
 export const TRIAL_CHANGES_COPY = {
   tab: "World changes",
   heading: "What changed in the world",
+  noticesHeading: "Worth knowing about this trial",
   about:
     "Each participant's attempts in this trial and what the world made of them. Refused and faulted attempts changed nothing.",
   counts: (one) =>

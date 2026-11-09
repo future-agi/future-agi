@@ -1494,6 +1494,37 @@ def test_a_call_keeps_its_trial_s_state_changes_and_actor_decisions_and_serves_t
     assert TRIAL_STATE_KEY not in cleared
 
 
+def test_a_fault_that_did_not_take_effect_is_kept_on_the_trial_for_the_person(
+    organization, workspace
+):
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+    from simulate.tests.test_harness_call_actors import _ingest
+    from simulate.views.run_results_v3 import TrialStateSerializer
+
+    notice = {
+        "code": "fault_not_applied",
+        "message": "The timeout fault on call 1 of crm.apply_discount could not be applied: the agent made that call "
+        "outside the world's door (in its own process), so nothing held it.",
+        "action": "crm.apply_discount",
+        "on_call": 1,
+        "mode": "timeout",
+        "internal": "dropped",
+    }
+    metadata: dict = {}
+    _ingest(
+        organization,
+        workspace,
+        "fault-notice",
+        CallExecution.SimulationCallType.TEXT,
+        {"messages": [], "notices": [notice, "x", {"code": "no_message"}]},
+        metadata,
+    )
+    expected = {key: value for key, value in notice.items() if key != "internal"}
+    assert metadata[TRIAL_STATE_KEY] == {"notices": [expected]}
+    assert TrialStateSerializer(data=metadata[TRIAL_STATE_KEY]).is_valid()
+
+
 def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_records(
     user, workspace, storage, auth_client
 ):
