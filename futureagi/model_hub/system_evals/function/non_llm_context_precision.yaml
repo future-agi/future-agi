@@ -19,10 +19,15 @@ config:
         import json
         def _p(v):
             if isinstance(v, str):
-                try: return json.loads(v)
-                except: return [x.strip() for x in v.split("\n") if x.strip()]
-            if isinstance(v, list): return v
-            return [str(v)]
+                try:
+                    v = json.loads(v)
+                    # Preserve key matching for JSON objects.
+                    if isinstance(v, dict): return list(v)
+                except (json.JSONDecodeError, ValueError):
+                    return [x.strip() for x in v.split("\n") if x.strip()]
+            if v is None: return []
+            if isinstance(v, (list, tuple, set)): return list(v)
+            return [v]
         ret = _p(kwargs.get("output", output))
         ref = _p(kwargs.get("expected", expected))
         if not ret: return {"score": 0.0, "reason": "No retrieved contexts"}
