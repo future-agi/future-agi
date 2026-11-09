@@ -7,7 +7,7 @@ alone. Temporary source rows are connection-owned and cannot survive a failed
 preparation. Only frozen publication batches are recoverable.
 """
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta
 from time import monotonic
 from uuid import uuid4
@@ -30,23 +30,46 @@ SPAN_CAPTURE_ROWS = 50_000
 SPAN_CAPTURE_BYTES = 64 * 1024 * 1024
 
 
-def require_retirement_evidence(writer, head, definitions):
-    """Do not erase legacy bucket-only history while converting it to retirement.
+def require_retirement_evidence(writer, head, definitions, *, draft=None, cutoff=None):
+    """Prove coverage of every bucket this publication can replace or expire.
 
-    Readers can honestly return unavailable until a backfill supplies fields;
-    privacy maintenance must also fail closed rather than silently dropping the
-    previously published totals. Retired anonymous counts are not live evidence.
+    A bounded backfill may use its generation-pinned frozen proposal to upgrade a
+    legacy bucket. Untouched retained buckets can wait for the next pass; missing
+    evidence in an expiring bucket cannot. Compare per bucket, so new arrivals in
+    another bucket cannot disguise a deficit in legacy history.
     """
     if head is None:
         return
+    from tracer.models.derived_metric import MetricStateConflict
     from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
+    from tracer.services.derived_metrics.retention import _proposal_rows
     from tracer.services.derived_metrics.storage import BUCKET_TOTALS, RETIRED_PARTS
 
+    dirty = ()
+    if draft is not None:
+        if draft.parent_manifest_id != head.id:
+            raise MetricStateConflict("span evidence proposal has a different parent")
+        dirty = tuple(
+            sorted(
+                {
+                    datetime.fromisoformat(str(entry["bucket_start"]))
+                    for chunk in draft.ledger_chunks.filter(
+                        part__in=["dirty_before", "dirty_after"]
+                    )
+                    for entry in chunk.payload
+                    if "bucket_start" in entry
+                }
+            )
+        )
     for definition in definitions:
         if definition.level != "span":
             continue
         counts, params = [], {}
-        for table in (FIELD_VALUES, BUCKET_TOTALS, RETIRED_PARTS):
+        for table, alias in (
+            (FIELD_VALUES, "live"),
+            (BUCKET_TOTALS, "total"),
+            (RETIRED_PARTS, "retired"),
+        ):
             prefix = "field" if table == FIELD_VALUES else "metric"
             sql, bound = committed_rows_select(
                 table,
@@ -60,18 +83,57 @@ def require_retirement_evidence(writer, head, definitions):
                 param_prefix="retirement_proof_" + table.name,
             )
             params = merge_bindings(params, bound)
-            counts.append(
-                f"(SELECT count() FROM ({sql}) WHERE is_deleted = 0 AND level = 'span' AND status != 'open')"
+            count = (
+                "countIf(level = 'span' AND status != 'open')"
                 if table == FIELD_VALUES
-                else f"(SELECT sum(unit_count) FROM ({sql}) WHERE is_deleted = 0)"
+                else "sum(unit_count)"
             )
-        live, total, retired = writer.store.execute(
-            "SELECT " + ", ".join(counts), params
-        )[0]
-        # Subject erasure deliberately drops aggregate history while keeping
-        # unrelated live fields. Only a deficit of evidence blocks retirement;
-        # surplus live evidence must remain refreshable after that erasure.
-        if total > live + retired:
+            counts.append(
+                f"SELECT bucket_start, {count} AS {alias} FROM ({sql}) "
+                "WHERE is_deleted = 0 GROUP BY bucket_start"
+            )
+        live, total, retired = counts
+        predicate = "1"
+        if cutoff is not None:
+            predicate = "t.bucket_start < %(proof_cutoff)s"
+            params["proof_cutoff"] = cutoff
+            if dirty:
+                predicate += " OR t.bucket_start IN %(proof_dirty)s"
+                params["proof_dirty"] = dirty
+        proposal_join, proposal_proof = "", ""
+        if draft is not None:
+            proposed, bound = _proposal_rows(
+                writer, draft, head, FIELD_VALUES, "retirement_proof_proposed"
+            )
+            params = merge_bindings(
+                params,
+                bound,
+                {
+                    "proof_field": str(definition.metric_id),
+                    "proof_version": definition.version,
+                },
+            )
+            proposal_join = (
+                " LEFT JOIN (SELECT bucket_start, count() AS proposed "
+                f"FROM ({proposed}) WHERE is_deleted = 0 AND level = 'span' "
+                "AND status != 'open' AND field_id = toUUID(%(proof_field)s) "
+                "AND field_version = %(proof_version)s GROUP BY bucket_start) p "
+                "ON t.bucket_start = p.bucket_start"
+            )
+            proposal_proof = (
+                " AND t.total > ifNull(p.proposed, 0) + ifNull(r.retired, 0)"
+            )
+        # Complete parents permit terminal corrections/retractions. Deficient
+        # parents instead need a complete proposed bucket before replacement.
+        if writer.store.execute(
+            f"SELECT count() FROM ({total}) t LEFT JOIN ({live}) l "
+            "ON t.bucket_start = l.bucket_start "
+            f"LEFT JOIN ({retired}) r ON t.bucket_start = r.bucket_start"
+            f"{proposal_join} WHERE ({predicate}) "
+            "AND t.total > ifNull(l.live, 0) + ifNull(r.retired, 0)"
+            f"{proposal_proof}",
+            params,
+        )[0][0]:
             raise MetricAdmissionUnproven(
                 "committed span evidence requires backfill before retirement"
             )
@@ -79,7 +141,16 @@ def require_retirement_evidence(writer, head, definitions):
 
 @contextmanager
 def captured_span_fields(
-    writer, attempt, definition, scope, *, head, as_of, cutoff, preserve_pruned=False
+    writer,
+    attempt,
+    definition,
+    scope,
+    *,
+    head,
+    as_of,
+    cutoff,
+    preserve_pruned=False,
+    previous_page=None,
 ):
     store = writer.store
     dirty = sorted(
@@ -107,6 +178,17 @@ def captured_span_fields(
         key_in=fixed,
         param_prefix="span_previous_fields",
     )
+    if previous_page is not None:
+        # Retirement pages are disjoint immutable identities, not bucket slices:
+        # a terminal correction can move into another page's original bucket.
+        previous, previous_params = previous_page
+        dirty = [
+            row[0]
+            for row in store.execute(
+                f"SELECT DISTINCT bucket_start FROM ({previous}) ORDER BY bucket_start",
+                previous_params,
+            )
+        ]
     source_scope = {
         "capture_project": str(scope.project),
         "capture_org": str(scope.organization),
@@ -223,10 +305,15 @@ def captured_span_fields(
                 ),
                 param_prefix="span_capture_dependencies",
             )
+            # A published field is also pinned identity evidence. Legacy
+            # backfills can supply it without a redundant dependency row. A
+            # retired/tombstoned identity is absent here and still needs proof;
+            # raw source presence alone never admits an unknown old span.
             if store.execute(
                 f"SELECT count() FROM {name} WHERE unit_id NOT IN "
-                f"(SELECT toJSONString(tuple(trace_id, span_id)) FROM ({deps}) WHERE is_deleted = 0)",
-                bound,
+                f"(SELECT toJSONString(tuple(trace_id, span_id)) FROM ({deps}) WHERE is_deleted = 0) "
+                f"AND unit_id NOT IN (SELECT unit_id FROM ({previous}) WHERE is_deleted = 0)",
+                merge_bindings(bound, previous_params),
             )[0][0]:
                 raise MetricAdmissionUnproven("metric_admission_unproven")
         check_session()
@@ -242,34 +329,123 @@ def captured_span_fields(
 
 
 @contextmanager
-def retiring_span_fields(
+def retiring_span_parts(
     writer, attempt, head, definition, expired, params, *, cutoff, as_of
 ):
-    """Terminal corrections are frozen before anonymous publication, not at read time.
+    """Stream disjoint pinned identities into anonymous PRE-FOLD statistics.
 
-    Only previously committed expiring identities may enter retirement. Preserve
-    their committed value if raw storage has already physically pruned the source;
-    a present authoritative deletion/filter change is not such an absence.
+    Each private capture keeps the normal row/byte bounds. Reduce it before the
+    next capture, retaining only a bounded anonymous accumulator, never all the
+    backlog's private rows or one registry entry per page. Terminal corrections
+    and physically pruned sources follow the same rules as ordinary capture.
+    Nothing is published until the complete iterator and final freeze succeed.
     """
-    from tracer.services.derived_metrics.queries import Scope
+    from clickhouse_driver.errors import ServerException
 
-    with (
-        writer.store.compaction_budget(monotonic() + 600),
-        captured_span_fields(
-            writer,
-            attempt,
-            definition,
-            Scope(writer.org_id, writer.workspace_id, writer.lease.project_id),
-            head=head,
-            as_of=as_of,
-            cutoff=None,
-            preserve_pruned=True,
-        ) as (fields, _previous, _params, _count, _size),
-    ):
+    from tracer.services.derived_metrics.buckets import (
+        live_parts_select,
+        merge_parts_select,
+    )
+    from tracer.services.derived_metrics.frozen_relations import FrozenRelations
+    from tracer.services.derived_metrics.queries import Scope
+    from tracer.services.derived_metrics.unit_reads import field_recipe
+
+    formula = field_recipe(definition).formula
+    params = merge_bindings(params, formula.parameters if formula is not None else {})
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    columns = ", ".join(c for c, _ in SOURCE_SCHEMA if c != "source_rows")
+    lower, parts = "", None
+    target_rows = SPAN_CAPTURE_ROWS
+    with writer.store.compaction_budget(monotonic() + 600), ExitStack() as current:
+        while True:
+            writer.lease.keepalive()
+            page_params = merge_bindings(params, {"retiring_after": lower})
+            candidates = (
+                f"SELECT * FROM ({expired}) WHERE is_deleted = 0 "
+                "AND unit_id > %(retiring_after)s ORDER BY unit_id "
+                f"LIMIT {target_rows}"
+            )
+            count, upper = writer.store.execute(
+                "SELECT count(), max(unit_id) FROM (SELECT unit_id, "
+                f"sum(length(formatRow('RowBinary', {columns}, toUInt64(1)))) "
+                "OVER (ORDER BY unit_id ROWS UNBOUNDED PRECEDING) AS capture_bytes "
+                f"FROM ({candidates})) WHERE capture_bytes <= {SPAN_CAPTURE_BYTES}",
+                page_params,
+            )[0]
+            if not count:
+                if writer.store.execute(
+                    f"SELECT count() FROM ({candidates})", page_params
+                )[0][0]:
+                    raise MetricVisibilityError(
+                        "span retirement row exceeds its capture budget"
+                    )
+                break
+            previous = (
+                f"SELECT * FROM ({candidates}) WHERE unit_id <= %(retiring_through)s",
+                merge_bindings(page_params, {"retiring_through": upper}),
+            )
+            # A correction can be wider than its committed preimage. Retry only
+            # the unconsumed capture, with fewer identities, never weaker limits.
+            replacement = ExitStack()
+            try:
+                with captured_span_fields(
+                    writer,
+                    attempt,
+                    definition,
+                    scope,
+                    head=head,
+                    as_of=as_of,
+                    cutoff=None,
+                    preserve_pruned=True,
+                    previous_page=previous,
+                ) as (fields, _previous, _params, _count, _size):
+                    live = live_parts_select(
+                        definition,
+                        f"SELECT * FROM ({fields}) WHERE unit_start < %(retiring_span_cutoff)s",
+                    )
+                    relations = replacement.enter_context(
+                        FrozenRelations(
+                            writer.store,
+                            org_id=writer.org_id,
+                            project_id=writer.lease.project_id,
+                            attempt_id=attempt.id,
+                            source=[
+                                attempt.parent_manifest_sha256,
+                                str(definition.metric_id),
+                                definition.version,
+                                lower,
+                                upper,
+                            ],
+                        )
+                    )
+                    union = live if parts is None else f"({live}) UNION ALL ({parts})"
+                    handle = relations.materialize(
+                        merge_parts_select(union),
+                        merge_bindings(params, {"retiring_span_cutoff": cutoff}),
+                        role="child",
+                    )
+                    next_parts = relations.select(handle, role="child")
+            except Exception as exc:
+                replacement.close()
+                if (
+                    isinstance(exc, ServerException)
+                    and "metric_span_capture_budget" in str(exc)
+                    and count > 1
+                ):
+                    target_rows = max(1, count // 2)
+                    continue
+                raise
+            # Both accumulators coexist only for this checked merge. Closing the
+            # prior registry cannot remove the newly materialized replacement.
+            current.close()
+            current.enter_context(replacement.pop_all())
+            parts, lower = next_parts, upper
+            target_rows = SPAN_CAPTURE_ROWS
         yield (
-            f"SELECT * FROM ({fields}) WHERE unit_id IN (SELECT unit_id FROM ({expired})) "
-            "AND unit_start < %(retiring_span_cutoff)s",
-            merge_bindings(params, {"retiring_span_cutoff": cutoff}),
+            parts
+            if parts is not None
+            else live_parts_select(definition, f"SELECT * FROM ({expired}) WHERE 0"),
+            params,
         )
 
 

@@ -390,7 +390,7 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
     )
     from tracer.services.derived_metrics.unit_reads import field_recipe
 
-    require_retirement_evidence(writer, head, definitions)
+    require_retirement_evidence(writer, head, definitions, draft=draft, cutoff=cutoff)
     fields, params = _proposal_rows(writer, draft, head, FIELD_VALUES, "retire_fields")
     params["retire_cutoff"] = cutoff
     expired = (
@@ -973,7 +973,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             require_retirement_evidence,
         )
 
-        require_retirement_evidence(writer, head, definitions)
+        require_retirement_evidence(writer, head, definitions, cutoff=cutoff)
         recovery = writer.abort_stale()
         for opened in MetricRefreshAttempt.objects.filter(
             project_id=project_id, state__in=MetricRefreshAttempt.OPEN_STATES
@@ -1125,11 +1125,11 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
                     ],
                 )
             from tracer.services.derived_metrics.span_evidence import (
-                retiring_span_fields,
+                retiring_span_parts,
             )
 
             capture = (
-                retiring_span_fields(
+                retiring_span_parts(
                     writer,
                     attempt,
                     head,
@@ -1140,17 +1140,16 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
                     as_of=as_of or now,
                 )
                 if definition.level == "span"
-                else nullcontext((expiring, p))
+                else nullcontext((live_parts_select(definition, expiring), p))
             )
-            with capture as (expiring, p):
+            with capture as (live, p):
                 if definition.level == "span":
                     span_dirty.update(
                         row[0]
                         for row in writer.store.execute(
-                            f"SELECT DISTINCT bucket_start FROM ({expiring})", p
+                            f"SELECT DISTINCT bucket_start FROM ({live})", p
                         )
                     )
-                live = live_parts_select(definition, expiring)
                 previous = f"SELECT {', '.join(KEYS + STATS)} FROM ({retired}) WHERE metric_id = toUUID(%(expiry_metric)s) AND metric_version = %(expiry_version)s AND is_deleted = 0"
                 merged = merge_parts_select(f"({live}) UNION ALL ({previous})")
                 writer.freeze(
