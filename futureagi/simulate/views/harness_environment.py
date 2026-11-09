@@ -132,6 +132,13 @@ def _bound_by_name(run_test, name):
     return None
 
 
+def _selection_report(job, picks, *, keys, trials):
+    from simulate.services.harness_readiness import resolve_pairing, selection_report
+
+    pairing = resolve_pairing(job, **picks)
+    return selection_report(pairing, keys=keys, trials=trials)
+
+
 def _held_back_from(request, job, suite_version_id=None) -> tuple[str, ...]:
     """The scenarios this caller may not read: the held-back cases for a coding agent,
     chosen on its first read; none for anyone else. A coding agent may read or pick
@@ -139,13 +146,6 @@ def _held_back_from(request, job, suite_version_id=None) -> tuple[str, ...]:
     if coding_agent_key(request) is None:
         return ()
     return require_default_suite(job, suite_version_id).scenario_keys
-
-
-def _selection_report(job, picks, *, keys, trials):
-    from simulate.services.harness_readiness import resolve_pairing, selection_report
-
-    pairing = resolve_pairing(job, **picks)
-    return selection_report(pairing, keys=keys, trials=trials)
 
 
 def _uuid_or_none(value):

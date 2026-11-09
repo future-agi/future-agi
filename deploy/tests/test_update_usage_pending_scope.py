@@ -39,7 +39,7 @@ LATEST = (
     ('simulate','0102_agent_fix_engine_notes'),
     ('simulate','0103_harness_job_verify_of'),
     ('simulate','0104_actors'),
-    ('simulate','0103_hosted_job_capability_snapshot'),
+    ('simulate','0104_hosted_job_capability_snapshot'),
     ('simulate','0105_harness_version_name'),
     ('simulate','0106_harness_version_candidate'),
 )

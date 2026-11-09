@@ -1674,7 +1674,11 @@ class HostedHarnessProvider:
                     retry_cfg["max_backoff_seconds"],
                 )
         except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
+            refused = exc.as_dict()
+            if coder is not None:
+                # A refusal's selection names the suite's cases, held-back ones included.
+                refused.pop("selection", None)
+            return Response(refused, status=exc.status_code)
         except Exception:
             logger.exception(
                 "selected harness Run dispatch failed environment=%s", environment.id
@@ -1741,8 +1745,13 @@ class HostedHarnessProvider:
                 "total_calls": len(manifest),
                 "state": child.state,
                 "stage": child.current_stage,
-                "selection": (child.payload.get("metadata") or {}).get(
-                    "readiness_selection"
+                # Readiness names the suite's cases, held-back ones included.
+                "selection": (
+                    None
+                    if coder is not None
+                    else (child.payload.get("metadata") or {}).get(
+                        "readiness_selection"
+                    )
                 ),
                 **created_run(environment, child),
             },

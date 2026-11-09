@@ -888,7 +888,7 @@ class HarnessRunCreateResponseSerializer(serializers.Serializer):
         allow_null=True,
         help_text=(
             "The cases readiness held back from this run and why; null when runs are"
-            " not pinned to versions."
+            " not pinned to versions, and for a coding agent's key."
         ),
     )
 
