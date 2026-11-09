@@ -18193,6 +18193,7 @@ export interface AgentFixLaunchLimitsApi {
   scenarios_min: number;
   cases_min: number;
   variations_per_case: number;
+  verified_cases_min: number;
   scenarios_max: number;
 }
 

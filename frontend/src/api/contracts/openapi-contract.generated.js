@@ -92905,6 +92905,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "scenarios_min",
         "cases_min",
         "variations_per_case",
+        "verified_cases_min",
         "scenarios_max",
       ],
       type: "object",
@@ -92927,6 +92928,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         variations_per_case: {
           title: "Variations per case",
+          type: "integer",
+        },
+        verified_cases_min: {
+          title: "Verified cases min",
           type: "integer",
         },
         scenarios_max: {

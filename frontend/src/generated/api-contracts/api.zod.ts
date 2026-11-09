@@ -36543,6 +36543,7 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     scenarios_min: zod.number(),
     cases_min: zod.number(),
     variations_per_case: zod.number(),
+    verified_cases_min: zod.number(),
     scenarios_max: zod.number(),
   }),
   blocked: zod.object({
