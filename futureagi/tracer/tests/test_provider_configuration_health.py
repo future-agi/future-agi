@@ -26,12 +26,12 @@ pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 
 @pytest.fixture
-def provider(observe_project, organization, workspace):
+def provider(observe_project, organization, workspace, request):
     return ObservabilityProvider.objects.create(
         project=observe_project,
         organization=organization,
         workspace=workspace,
-        provider=ProviderChoices.RETELL,
+        provider=getattr(request, "param", ProviderChoices.RETELL),
         enabled=True,
         last_fetched_at=timezone.now() - timedelta(days=1),
         poll_state={
@@ -63,6 +63,7 @@ def poll(provider, **kwargs):
     )
 
 
+@pytest.mark.parametrize("provider", ["retell", "vapi"], indirect=True)
 @pytest.mark.parametrize(
     "reason",
     [
@@ -87,7 +88,7 @@ def test_setup_backoff_survives_reload_and_logs_only_transition(
         )
         if reason == "credential_unreadable":
             ProviderCredentials.objects.create(
-                agent_definition=agent, provider_type="retell", api_key="enc::invalid"
+                agent_definition=agent, provider_type=provider.provider, api_key="enc::invalid"
             )
     now = timezone.now()
     monkeypatch.setattr(op.timezone, "now", lambda: now)
@@ -95,6 +96,7 @@ def test_setup_backoff_survives_reload_and_logs_only_transition(
         side_effect=AssertionError("incomplete setup must not call provider HTTP")
     )
     monkeypatch.setattr("tracer.services.observability_providers.requests.post", http)
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", http)
     before, watermark = provider.poll_state.copy(), provider.last_fetched_at
     with capture_logs() as logs:
         assert poll(provider) is None
@@ -114,7 +116,7 @@ def test_setup_backoff_survives_reload_and_logs_only_transition(
             provider.poll_state["configuration_health"]["next_retry_at"]
         ) == now + timedelta(minutes=20)
     transitions = [
-        entry for entry in logs if entry["event"] == "retell_configuration_changed"
+        entry for entry in logs if entry["event"] == f"{provider.provider}_configuration_changed"
     ]
     assert len(transitions) == 1
     assert transitions[0]["log_level"] == (
@@ -163,6 +165,7 @@ def test_repaired_credentials_resume_before_cooldown_without_resetting_window(
     )
 
 
+@pytest.mark.parametrize("provider", ["retell", "vapi"], indirect=True)
 def test_reason_change_and_backoff_cap(provider, monkeypatch):
     now = timezone.now()
     monkeypatch.setattr(op.timezone, "now", lambda: now)
@@ -184,7 +187,7 @@ def test_reason_change_and_backoff_cap(provider, monkeypatch):
             [
                 entry
                 for entry in logs
-                if entry["event"] == "retell_configuration_changed"
+                if entry["event"] == f"{provider.provider}_configuration_changed"
             ]
         )
         == 2
@@ -229,6 +232,7 @@ def test_real_provider_failures_still_log_errors(provider, monkeypatch, status):
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("provider", ["retell", "vapi"], indirect=True)
 def test_two_workers_record_only_one_transition(provider, monkeypatch):
     logger = Mock()
     monkeypatch.setattr(op, "logger", logger)
@@ -236,7 +240,7 @@ def test_two_workers_record_only_one_transition(provider, monkeypatch):
     def record():
         close_old_connections()
         try:
-            op._record_retell_configuration_failure(provider.id, "missing_agent")
+            op._record_configuration_failure(provider.id, "missing_agent")
         finally:
             close_old_connections()
 
@@ -352,6 +356,7 @@ def test_missing_vapi_key_does_not_fall_back_to_public_download(
     normalizer.assert_not_called()
 
 
+@pytest.mark.parametrize("provider", ["retell", "vapi"], indirect=True)
 def test_bad_provider_does_not_stop_healthy_provider(provider, monkeypatch):
     healthy = ObservabilityProvider.objects.create(
         project=provider.project,
@@ -419,3 +424,145 @@ def test_unreadable_vapi_credential_never_uses_plaintext(provider, monkeypatch):
     )
     with pytest.raises(ValueError):
         VapiRecordingService._api_key_from_agent_definition(agent)
+
+
+@pytest.mark.parametrize("provider", ["vapi"], indirect=True)
+def test_vapi_reactivation_uses_one_version_for_listing_and_recording(provider, monkeypatch):
+    agent = attach_agent(provider, assistant_id="older-assistant")
+    older = AgentVersion.objects.create(
+        agent_definition=agent, organization=provider.organization,
+        workspace=provider.workspace, version_number=1, status="archived",
+        commit_message="Synthetic older version",
+    )
+    agent.assistant_id = "newer-assistant"
+    agent.save(update_fields=["assistant_id"])
+    newer = AgentVersion.objects.create(
+        agent_definition=agent, organization=provider.organization,
+        workspace=provider.workspace, version_number=2, status="active",
+        commit_message="Synthetic newer version",
+    )
+    for version, key in [(older, "older-key"), (newer, "newer-key")]:
+        credentials = ProviderCredentials(
+            agent_version=version, provider_type="vapi",
+            assistant_id=version.configuration_snapshot["assistant_id"],
+        )
+        credentials.set_api_key(key)
+        credentials.save()
+    older.activate()
+    agent.refresh_from_db()
+    assert agent.assistant_id == "newer-assistant"  # activation does not restore this
+
+    def respond(*args, **kwargs):
+        assert kwargs["headers"]["Authorization"] == "Bearer older-key"
+        assert kwargs["params"]["assistantId"] == "older-assistant"
+        # A concurrent version change must not affect the in-flight rehost key.
+        newer.activate()
+        return Mock(json=lambda: [{"id": "synthetic-call"}])
+
+    listing = Mock(side_effect=respond)
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", listing)
+    normalizer = Mock(return_value={})
+    monkeypatch.setattr(op, "normalize_vapi_data", normalizer)
+    assert poll(provider) is not None
+    listing.assert_called_once()
+    assert normalizer.call_args.kwargs["api_key"] == "older-key"
+    assert ObservabilityService.resolve_vapi_configuration(provider).assistant_id == "newer-assistant"
+
+
+@pytest.mark.parametrize("provider", ["vapi"], indirect=True)
+@pytest.mark.parametrize("initial_reason", ["missing_agent", "missing_key"])
+def test_vapi_repair_resumes_before_cooldown(provider, monkeypatch, initial_reason):
+    agent = attach_agent(provider, api_key=None) if initial_reason == "missing_key" else None
+    listing = Mock(return_value=Mock(json=lambda: []))
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", listing)
+    watermark = provider.last_fetched_at
+    with capture_logs() as logs:
+        for _ in range(3):
+            op.fetch_observability_logs._original_func(provider_id=str(provider.id))
+        provider.refresh_from_db()
+        assert provider.poll_state["configuration_health"]["reason_code"] == initial_reason
+        assert provider.poll_state["configuration_health"]["failure_count"] == 1
+        assert provider.last_fetched_at == watermark
+        listing.assert_not_called()
+        if agent is None:
+            agent = attach_agent(provider, api_key=None)
+        version = AgentVersion.objects.create(
+            agent_definition=agent, organization=provider.organization,
+            workspace=provider.workspace, version_number=1, status="active",
+            commit_message="Synthetic repaired version",
+        )
+        credentials = ProviderCredentials(agent_version=version, provider_type="vapi")
+        credentials.set_api_key("repaired-key")
+        credentials.save()
+        op.fetch_observability_logs._original_func(provider_id=str(provider.id))
+    provider.refresh_from_db()
+    assert "configuration_health" not in provider.poll_state
+    assert provider.last_fetched_at > watermark
+    assert provider.poll_state["other"] == {"sentinel": "preserved"}
+    assert provider.enabled
+    assert ObservabilityProviderSerializer(provider).data["configuration_health"] is None
+    listing.assert_called_once()
+    assert listing.call_args.kwargs["headers"]["Authorization"] == "Bearer repaired-key"
+    transitions = [entry for entry in logs if entry["event"] == "vapi_configuration_changed"]
+    assert [entry["status"] for entry in transitions] == ["misconfigured", "configured"]
+    assert not [entry for entry in logs if entry["log_level"] == "error"]
+    assert "repaired-key" not in str(logs)
+
+
+@pytest.mark.parametrize("provider", ["vapi"], indirect=True)
+@pytest.mark.parametrize("status", [401, 403, 500, 503])
+def test_vapi_upstream_errors_remain_visible(provider, monkeypatch, status):
+    attach_agent(provider)
+    listing = Mock(side_effect=requests.HTTPError(response=Mock(status_code=status)))
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", listing)
+    watermark = provider.last_fetched_at
+    with capture_logs() as logs:
+        for _ in range(2):
+            assert poll(provider) is None
+    errors = [entry for entry in logs if entry["log_level"] == "error"]
+    assert [entry["status_code"] for entry in errors] == [status, status]
+    provider.refresh_from_db()
+    assert "configuration_health" not in provider.poll_state
+    assert provider.last_fetched_at == watermark
+
+
+@pytest.mark.parametrize("provider", ["vapi"], indirect=True)
+def test_vapi_disabled_and_manual_runs_do_not_quarantine(provider, monkeypatch):
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
+    before = provider.poll_state.copy()
+    http = Mock()
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", http)
+    with capture_logs() as logs:
+        assert poll(provider) == op.StoreOutcome(0, 0, 0)
+    assert not logs
+    with capture_logs() as logs:
+        assert op.fetch_logs_for_provider(
+            provider.id, scheduled=False,
+            start_time=timezone.now() - timedelta(hours=1), end_time=timezone.now(),
+        ) is None
+    provider.refresh_from_db()
+    assert provider.poll_state == before
+    assert logs[-1]["event"] == "vapi_configuration_error"
+    assert logs[-1]["reason_code"] == "missing_agent"
+    http.assert_not_called()
+
+
+@pytest.mark.parametrize("provider", ["vapi"], indirect=True)
+def test_vapi_version_without_assistant_never_uses_definition_assistant(provider, monkeypatch):
+    agent = attach_agent(provider)
+    version = AgentVersion.objects.create(
+        agent_definition=agent, organization=provider.organization,
+        workspace=provider.workspace, version_number=1,
+        configuration_snapshot={"assistant_id": ""},
+        commit_message="Synthetic incomplete version",
+    )
+    credentials = ProviderCredentials(agent_version=version, provider_type="vapi")
+    credentials.set_api_key("version-key")
+    credentials.save()
+    http = Mock()
+    monkeypatch.setattr("tracer.services.observability_providers.requests.get", http)
+    assert poll(provider) is None
+    provider.refresh_from_db()
+    assert provider.poll_state["configuration_health"]["reason_code"] == "missing_assistant_id"
+    http.assert_not_called()

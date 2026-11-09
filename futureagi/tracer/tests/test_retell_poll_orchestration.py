@@ -4125,7 +4125,8 @@ def test_other_provider_advances_after_store_unconditionally(fake_table, monkeyp
         op.ObservabilityService, "get_call_logs", lambda **k: [{"id": "c1"}]
     )
     monkeypatch.setattr(
-        op.ObservabilityService, "resolve_vapi_key", lambda provider: "synthetic-key"
+        op.ObservabilityService, "resolve_vapi_configuration",
+        lambda provider: SimpleNamespace(api_key="synthetic-key", assistant_id="synthetic-assistant"),
     )
     monkeypatch.setattr(
         op, "process_and_store_logs", lambda *a, **k: op.StoreOutcome(1, 0, 0)
@@ -4152,7 +4153,8 @@ def test_other_provider_store_exception_does_not_advance_and_propagates(
         op.ObservabilityService, "get_call_logs", lambda **k: [{"id": "c1"}]
     )
     monkeypatch.setattr(
-        op.ObservabilityService, "resolve_vapi_key", lambda provider: "synthetic-key"
+        op.ObservabilityService, "resolve_vapi_configuration",
+        lambda provider: SimpleNamespace(api_key="synthetic-key", assistant_id="synthetic-assistant"),
     )
 
     def boom(*a, **k):

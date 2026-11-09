@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from datetime import timezone as dt_timezone
 from typing import Any, Iterable, Optional
@@ -62,6 +63,14 @@ class VapiArtifactNotReadyError(Exception):
 
 class VapiRateLimitError(Exception):
     """429 from Vapi."""
+
+
+@dataclass(frozen=True)
+class VapiConfiguration:
+    """One selected agent version's listing and recording configuration."""
+
+    api_key: Optional[str] = field(repr=False)
+    assistant_id: Optional[str]
 
 
 class VapiRecordingService:
@@ -221,12 +230,25 @@ class VapiRecordingService:
 
     @classmethod
     def _api_key_from_agent_definition(cls, agent_def) -> Optional[str]:
-        """Resolve Vapi api_key through the canonical ProviderCredentials chain."""
+        return cls.configuration_from_agent_definition(agent_def).api_key
+
+    @classmethod
+    def configuration_from_agent_definition(cls, agent_def) -> VapiConfiguration:
+        """Select a version once so its key cannot be paired with another assistant.
+
+        Activating a historical version does not restore AgentDefinition's fields.
+        Versioned assistants therefore come from that version's snapshot, never
+        the mutable definition. Keep the canonical encrypted-credential fallback
+        for versions predating the credential migration.
+        """
         from simulate.services.agent_definition import resolve_api_key_for_version
 
         version = agent_def.active_version or agent_def.latest_version
         if version is not None:
-            return resolve_api_key_for_version(version)
+            return VapiConfiguration(
+                resolve_api_key_for_version(version),
+                (version.configuration_snapshot or {}).get("assistant_id"),
+            )
 
         # Only genuinely pre-versioned agents may use the old plaintext column.
         # A present encrypted row is authoritative, including an empty key.
@@ -235,10 +257,13 @@ class VapiRecordingService:
         try:
             credentials = agent_def.credentials_legacy
         except ProviderCredentials.DoesNotExist:
-            return agent_def.api_key or None
+            return VapiConfiguration(agent_def.api_key or None, agent_def.assistant_id)
         if credentials.provider_type != ProviderCredentials.ProviderType.VAPI:
-            return None
-        return credentials.get_api_key() or None
+            return VapiConfiguration(None, None)
+        return VapiConfiguration(
+            credentials.get_api_key() or None,
+            credentials.assistant_id or agent_def.assistant_id,
+        )
 
     @classmethod
     async def download_artifact_async(

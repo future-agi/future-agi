@@ -21,7 +21,7 @@ from tracer.serializers.observability_provider import ObservabilityProviderSeria
 from tracer.services.observability_providers import (
     RETELL_LIST_PAGE_LIMIT,
     ObservabilityService,
-    RetellConfigurationError,
+    ProviderConfigurationError,
     RetellCursorRejected,
 )
 from tracer.utils.bland import normalize_bland_data
@@ -201,6 +201,9 @@ def fetch_logs_for_provider(
                     provider, start_time=start_time, end_time=end_time
                 )
             )
+        if provider.provider == ProviderChoices.VAPI and scheduled:
+            if not provider.enabled or not _provider_configuration_ready(provider):
+                return StoreOutcome(0, 0, 0)
         # F1: the activity deadline only bounds Retell's own page loop; other
         # providers' single-request polls ignore it.
         return _poll_other_provider(provider, start_time=start_time, end_time=end_time)
@@ -225,12 +228,12 @@ def fetch_logs_for_provider(
                 error_type=type(exc).__name__,
             )
         return None
-    except RetellConfigurationError as exc:
+    except ProviderConfigurationError as exc:
         if scheduled and exc.is_setup_error:
-            _record_retell_configuration_failure(provider.id, exc.reason_code)
+            _record_configuration_failure(provider.id, exc.reason_code)
             return None
         logger.error(
-            "retell_configuration_error",
+            f"{provider.provider}_configuration_error",
             provider_id=str(provider_id),
             error_type=type(exc).__name__,
             reason_code=exc.reason_code,
@@ -266,7 +269,7 @@ def _write_retell_state(provider_id, retell_state: dict) -> bool:
     return False
 
 
-def _record_retell_configuration_failure(provider_id, reason_code: str) -> None:
+def _record_configuration_failure(provider_id, reason_code: str) -> None:
     """Persist one transition under a row lock; never disturb the import window."""
     now = timezone.now()
     with transaction.atomic():
@@ -295,7 +298,7 @@ def _record_retell_configuration_failure(provider_id, reason_code: str) -> None:
     if changed:
         log = logger.error if reason_code == "credential_unreadable" else logger.warning
         log(
-            "retell_configuration_changed",
+            f"{provider.provider}_configuration_changed",
             provider_id=str(provider_id),
             status="misconfigured",
             reason_code=reason_code,
@@ -303,7 +306,7 @@ def _record_retell_configuration_failure(provider_id, reason_code: str) -> None:
         )
 
 
-def _retell_configuration_ready(provider) -> bool:
+def _provider_configuration_ready(provider) -> bool:
     """A cheap local check detects repairs even during cooldown; no provider HTTP.
 
     This covers edits through agent versions/credentials as well as provider
@@ -314,8 +317,11 @@ def _retell_configuration_ready(provider) -> bool:
     if not health:
         return True
     try:
-        ObservabilityService._resolve_retell_key(provider)
-    except RetellConfigurationError as exc:
+        if provider.provider == ProviderChoices.VAPI:
+            ObservabilityService.resolve_vapi_configuration(provider)
+        else:
+            ObservabilityService._resolve_retell_key(provider)
+    except ProviderConfigurationError as exc:
         if (
             exc.reason_code == health["reason_code"]
             and _parse(health["next_retry_at"]) > timezone.now()
@@ -331,7 +337,7 @@ def _retell_configuration_ready(provider) -> bool:
     ):
         provider.poll_state = updated
         logger.info(
-            "retell_configuration_changed",
+            f"{provider.provider}_configuration_changed",
             provider_id=str(provider.id),
             status="configured",
         )
@@ -487,7 +493,7 @@ def _poll_retell_provider(
     # Every returned outcome is the CURRENT page's counts so far — one meaning
     # for the checkpoint and the completion paths, because the fan-out reads
     # only None (this run failed) versus not None.
-    if not provider.enabled or not _retell_configuration_ready(provider):
+    if not provider.enabled or not _provider_configuration_ready(provider):
         return StoreOutcome(0, 0, 0)
     provider_id = provider.id
     now = timezone.now()
@@ -1051,6 +1057,14 @@ def _manual_retell_run(
 def _poll_other_provider(
     provider, *, start_time: datetime | None, end_time: datetime | None
 ) -> StoreOutcome:
+    # Resolve before any watermark repair or HTTP. Pass this exact configuration
+    # through listing and its key through rehosting, even if activation races us.
+    listing_options = {}
+    credentials = {}
+    if provider.provider == ProviderChoices.VAPI:
+        configuration = ObservabilityService.resolve_vapi_configuration(provider)
+        listing_options["vapi_configuration"] = configuration
+        credentials["api_key"] = configuration.api_key
     provider_id = provider.id
     now = timezone.now()
     end = min(end_time or now, now)
@@ -1070,14 +1084,8 @@ def _poll_other_provider(
         start_time=str(start) if start else None,
         end_time=str(end),
     )
-    credentials = {}
-    if provider.provider == ProviderChoices.VAPI:
-        key = ObservabilityService.resolve_vapi_key(provider)
-        if not key:
-            raise ValueError("Vapi observability credentials are not configured")
-        credentials["api_key"] = key
     logs = ObservabilityService.get_call_logs(
-        provider=provider, start_time=start, end_time=end, **credentials
+        provider=provider, start_time=start, end_time=end, **listing_options
     )  # HTTPError propagates to fetch_logs_for_provider
     try:
         outcome = process_and_store_logs(logs, provider, **credentials)
