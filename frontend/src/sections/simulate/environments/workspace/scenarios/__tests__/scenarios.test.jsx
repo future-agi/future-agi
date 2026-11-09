@@ -98,12 +98,12 @@ describe("ScenariosStep", () => {
     expect(screen.queryByText(`(${SERVER_ROWS.length})`)).toBeNull();
   });
 
-  it("puts Add scenarios in the list toolbar", () => {
+  it("keeps unbuilt Add scenarios out of the list toolbar", () => {
     renderStep();
     const toolbar = screen.getByRole("toolbar", { name: "Scenarios" });
     expect(
-      within(toolbar).getByRole("button", { name: "Add scenarios" }),
-    ).toBeInTheDocument();
+      within(toolbar).queryByRole("button", { name: "Add scenarios" }),
+    ).toBeNull();
   });
 
   it("puts Coverage in the list toolbar instead of a card above it", async () => {
@@ -268,7 +268,7 @@ describe("ScenariosStep", () => {
     });
   });
 
-  it("shows the empty placeholder with a disabled (coming-soon) Add when there are no scenarios", async () => {
+  it("shows the empty placeholder without an unbuilt Add control", async () => {
     // The empty-state gate reads the server's unfiltered suite total now, so the
     // list source must report an empty suite (not just an empty envState).
     listScenarios.mockImplementation((jobId, params) =>
@@ -276,9 +276,7 @@ describe("ScenariosStep", () => {
     );
     renderStep([]);
     expect(await screen.findByText("No scenarios yet")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Add scenarios" }),
-    ).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Add scenarios" })).toBeNull();
   });
 
   it("enables the edit pencil", async () => {
@@ -353,12 +351,10 @@ describe("ScenariosStep — locked template", () => {
     return { patch };
   };
 
-  it("locks the Add scenarios CTA behind the fork tooltip", () => {
+  it("does not offer Add scenarios even on a locked environment", () => {
     renderLocked(true);
-    expect(
-      screen.getByRole("button", { name: "Add scenarios" }),
-    ).toBeDisabled();
-    expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Add scenarios" })).toBeNull();
+    expect(screen.queryByText("Coming soon")).toBeNull();
   });
 
   it("disables the per-row edit and delete with the fork tooltip", async () => {

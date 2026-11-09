@@ -36,7 +36,7 @@ export const OPTIONS = [
     icon: "solar:code-linear",
     blurb:
       "Read the code straight from a git host. Scenarios and tools stay in sync with the real code as it changes. No manual updates when your agent evolves.",
-    preview: ["GitHub", "GitLab", "Bitbucket"],
+    preview: ["GitHub"],
     setupSubtitle:
       "We read the code so scenarios stay in sync with your actual tools.",
     status: OPTION_STATUS.LIVE,
@@ -151,6 +151,6 @@ export const ENVIRONMENTS_HEADER = {
   title: "Environments",
   subtitle:
     "An environment is the world your agent runs in: seeded state, tools, and rules. Pick how you want to bring your agent in and we take care of the rest.",
-  connectHeading: "Or connect your own agent",
+  connectHeading: "Connect your own agent",
   connectSub: "We work with what you already have: no rewrite, no adapter.",
 };

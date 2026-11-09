@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button } from "@mui/material";
 
@@ -13,7 +13,6 @@ import {
   withCallContext,
 } from "src/api/simulate-environments/runDetail";
 import DiagnosisPane from "./DiagnosisPane";
-import ImaginePane from "./ImaginePane";
 import BetaChip from "./BetaChip";
 import {
   SELF_IMPROVEMENT_BETA_HINT,
@@ -25,8 +24,8 @@ import {
  *
  * Opened by the run header's "Debug failures" button. Opening it requests the
  * run's Omega diagnosis once (`debug-analysis`); the DiagnosisPane shows the
- * issues it found and hands their calls back to the table. A second "Imagine"
- * tab is present but gated (no backend).
+ * issues it found and hands their calls back to the table. Unimplemented
+ * exploratory panes are not offered.
  *
  * The drawer uses the shared `SideDrawer`, which already paints the single
  * close-X — so this content deliberately does NOT add its own, or the two would
@@ -78,7 +77,6 @@ export default function FixMyAgentDrawer({
   onLaunch,
   onViewCalls,
 }) {
-  const [tab, setTab] = useState("diagnosis");
   const { analysis, isLoading, request, isRequesting, requestError } =
     useDebugAnalysis(open ? executionId : null);
 
@@ -128,9 +126,7 @@ export default function FixMyAgentDrawer({
   // (the Trials tab, where past runs live, is hidden until one exists).
   const selfImprovementOpen = useSelfImprovementOpen();
   const canLaunch =
-    tab === "diagnosis" &&
-    view.status === "completed" &&
-    view.goals.length + view.oneOffs.length > 0;
+    view.status === "completed" && view.goals.length + view.oneOffs.length > 0;
 
   return (
     <SideDrawer open={open} onClose={onClose} width={{ xs: "100%", sm: 570 }}>
@@ -177,7 +173,7 @@ export default function FixMyAgentDrawer({
           </Box>
         </Stack>
 
-        {/* Tab bar — Diagnosis (real) and Imagine (gated). */}
+        {/* Only the implemented diagnosis is offered. */}
         <Stack
           direction="row"
           spacing={2}
@@ -188,33 +184,18 @@ export default function FixMyAgentDrawer({
             flexShrink: 0,
           }}
         >
-          <TabButton
-            active={tab === "diagnosis"}
-            onClick={() => setTab("diagnosis")}
-            icon="solar:document-medicine-linear"
-          >
+          <TabButton active icon="solar:document-medicine-linear">
             Diagnosis
-          </TabButton>
-          <TabButton
-            active={tab === "imagine"}
-            onClick={() => setTab("imagine")}
-            icon="solar:magic-stick-3-linear"
-          >
-            Imagine
           </TabButton>
         </Stack>
 
-        {tab === "diagnosis" ? (
-          <DiagnosisPane
-            analysis={view}
-            isLoading={isLoading}
-            isRequesting={isRequesting}
-            onRetry={() => request()}
-            onViewCalls={onViewCalls}
-          />
-        ) : (
-          <ImaginePane />
-        )}
+        <DiagnosisPane
+          analysis={view}
+          isLoading={isLoading}
+          isRequesting={isRequesting}
+          onRetry={() => request()}
+          onViewCalls={onViewCalls}
+        />
 
         {canLaunch && (
           <Box

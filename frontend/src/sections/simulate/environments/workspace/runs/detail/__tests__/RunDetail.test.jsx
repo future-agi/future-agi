@@ -1205,13 +1205,15 @@ describe("RunDetail", () => {
     expect(screen.getByText("optimizer-form")).toBeInTheDocument();
   });
 
-  it("shows the Imagine tab as coming soon (no backend)", async () => {
+  it("hides the unbuilt Imagine tab and its empty pane", async () => {
     const user = userEvent.setup();
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    await user.click(screen.getByText("Imagine"));
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
+    expect(screen.getByText("Diagnosis")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Imagine" })).toBeNull();
+    expect(screen.queryByText("Imagine")).toBeNull();
+    expect(screen.queryByLabelText("Coming soon")).toBeNull();
   });
 
   it("keeps self-improvement in beta: its launch is shown but disabled", async () => {

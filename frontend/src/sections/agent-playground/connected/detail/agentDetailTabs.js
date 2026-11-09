@@ -7,8 +7,6 @@ export const DETAIL_TABS = [
   { id: "environments", label: "Environments" },
 ];
 
-export const COMING_SOON_TABS = ["Constraints", "Improvements", "Connections"];
-
 export const agentDetailPath = (agentId, tab = "overview") =>
   `${CONNECTED_AGENTS_PATH}/${agentId}/${tab}`;
 

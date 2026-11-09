@@ -103,8 +103,7 @@ const WorkbenchLandingPage = () => {
             fontWeight={"fontWeightRegular"}
             sx={{ marginBottom: "24px", color: "text.disabled" }}
           >
-            Generate a new prompt or improve an existing one to get better, more
-            accurate results.
+            Write a prompt from scratch to get started.
           </Typography>
         </Box>
         <Box
@@ -113,22 +112,24 @@ const WorkbenchLandingPage = () => {
           gap={theme.spacing(2)}
           flexWrap={"wrap"}
         >
-          {prompts.map((item, index) => (
-            <Box
-              flex={1}
-              key={index}
-              onClick={item.onClick}
-              sx={{ cursor: item.availableFeature ? "pointer" : "default" }}
-            >
-              <LandingPageCard
-                title={item.title}
-                description={item.description}
-                image={item.image}
-                showAction={true}
-                {...item}
-              />
-            </Box>
-          ))}
+          {prompts
+            .filter((item) => item.availableFeature)
+            .map((item, index) => (
+              <Box
+                flex={1}
+                key={index}
+                onClick={item.onClick}
+                sx={{ cursor: item.availableFeature ? "pointer" : "default" }}
+              >
+                <LandingPageCard
+                  title={item.title}
+                  description={item.description}
+                  image={item.image}
+                  showAction={true}
+                  {...item}
+                />
+              </Box>
+            ))}
         </Box>
       </Box>
     </Box>

@@ -11,16 +11,15 @@ import Field from "../components/Field";
 import { REPO_PROVIDERS as PROVIDER_OPTIONS } from "../repoProviders";
 
 describe("ChipCard", () => {
-  it("coming soon: labelled and inert", () => {
+  it("hides unbuilt chips entirely, including their tooltip and keyboard target", () => {
     const onClick = vi.fn();
-    render(<ChipCard label="GitLab" comingSoon onClick={onClick} />);
-    // The coming-soon chip sits alongside the label (not a wrapping tooltip).
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
-    expect(screen.getByText("GitLab")).toBeInTheDocument();
-    const btn = screen.getByRole("button");
-    expect(btn).toHaveAttribute("tabindex", "-1");
-    fireEvent.click(screen.getByText("GitLab"));
-    fireEvent.keyDown(btn, { key: "Enter" });
+    const { container } = render(
+      <ChipCard label="GitLab" comingSoon onClick={onClick} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByLabelText("Coming soon")).toBeNull();
+    expect(screen.queryByText("GitLab")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
     expect(onClick).not.toHaveBeenCalled();
   });
 
@@ -54,8 +53,9 @@ describe("ProviderRow", () => {
       />,
     );
     expect(container.querySelector("[data-missing-icon]")).toBeNull();
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(2);
-    fireEvent.click(screen.getByText("GitLab"));
+    expect(screen.queryAllByLabelText("Coming soon")).toHaveLength(0);
+    expect(screen.queryByText("GitLab")).toBeNull();
+    expect(screen.queryByText("Bitbucket")).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("GitHub"));
     expect(onChange).toHaveBeenCalledWith("github");

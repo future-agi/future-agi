@@ -166,16 +166,6 @@ export const OTHER_AUTH_METHODS = [
     label: "NO AUTH",
     value: "noAuth",
   },
-  {
-    label: "OAUTH 2.0 (coming soon)",
-    value: "oauth2_0",
-    disabled: true,
-  },
-  {
-    label: "DIGEST AUTH (coming soon)",
-    value: "bigestAuth",
-    disabled: true,
-  },
 ];
 
 export const AUTH_METHODS_BY_PROVIDER = {

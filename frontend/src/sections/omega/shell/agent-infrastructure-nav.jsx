@@ -1,5 +1,6 @@
 import React from "react";
 import Label from "src/components/label";
+import { DEPLOYMENT_UNAVAILABLE } from "src/sections/omega/shell/switches";
 import { paths } from "src/routes/paths";
 import { omegaNavIcon } from "./icons";
 import { OMEGA_PRODUCT } from "./rollout";
@@ -62,7 +63,7 @@ export function agentInfrastructureGroup(
             inert: true,
             info: (
               <Label sx={{ textTransform: "none" }}>
-                Not available in this deployment
+                {DEPLOYMENT_UNAVAILABLE}
               </Label>
             ),
           },

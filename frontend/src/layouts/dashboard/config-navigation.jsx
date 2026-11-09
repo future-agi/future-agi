@@ -12,6 +12,7 @@ import { HELP_LINK } from "src/config-global";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import Label from "src/components/label";
+import { DEPLOYMENT_UNAVAILABLE } from "src/sections/omega/shell/switches";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
@@ -511,7 +512,7 @@ export function useNavSettingsData() {
           inert: true,
           info: (
             <Label sx={{ textTransform: "none" }}>
-              Not available in this deployment
+              {DEPLOYMENT_UNAVAILABLE}
             </Label>
           ),
         });

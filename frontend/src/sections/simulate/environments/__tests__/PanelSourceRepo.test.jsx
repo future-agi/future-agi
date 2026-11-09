@@ -26,7 +26,9 @@ vi.mock("src/api/harness/harness", () => ({
   listHarnessJobs: vi.fn(),
 }));
 
-const { preflightHarnessJob, createHarnessJob } = await import("src/api/harness/harness");
+const { preflightHarnessJob, createHarnessJob } = await import(
+  "src/api/harness/harness"
+);
 const { default: PanelSourceRepo } = await import("../panels/PanelSourceRepo");
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "../store/useEnvironmentsStore"
@@ -48,7 +50,14 @@ const FAIL = {
   credentials: {
     scanned_files: 12,
     detected_connectors: ["vapi"],
-    requirements: [{ environment_name: "VAPI_API_KEY", purpose: "target_provider", required: true, status: "missing" }],
+    requirements: [
+      {
+        environment_name: "VAPI_API_KEY",
+        purpose: "target_provider",
+        required: true,
+        status: "missing",
+      },
+    ],
     credential_choices: [],
     probe: [],
   },
@@ -66,12 +75,15 @@ const renderPanel = () => {
 };
 
 const typeRepo = (value) =>
-  fireEvent.change(screen.getByPlaceholderText("owner/repo"), { target: { value } });
+  fireEvent.change(screen.getByPlaceholderText("owner/repo"), {
+    target: { value },
+  });
 
 const runPreflight = () =>
   fireEvent.click(screen.getByRole("button", { name: "Run preflight" }));
 
-const buildBtn = () => screen.getByRole("button", { name: /Build environment/ });
+const buildBtn = () =>
+  screen.getByRole("button", { name: /Build environment/ });
 
 beforeEach(() => {
   resetEnvironmentsStore();
@@ -80,18 +92,18 @@ beforeEach(() => {
 });
 
 describe("PanelSourceRepo", () => {
-  it("renders three provider chips, two coming soon", () => {
+  it("renders only the implemented GitHub provider", () => {
     renderPanel();
     expect(screen.getByText("GitHub")).toBeInTheDocument();
-    expect(screen.getByText("GitLab")).toBeInTheDocument();
-    expect(screen.getByText("Bitbucket")).toBeInTheDocument();
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(2);
+    expect(screen.queryByText("GitLab")).toBeNull();
+    expect(screen.queryByText("Bitbucket")).toBeNull();
+    expect(screen.queryAllByLabelText("Coming soon")).toHaveLength(0);
   });
 
-  it("keeps GitHub selected when a coming-soon provider is clicked", async () => {
+  it("keeps GitHub selected with no unbuilt provider to pick", async () => {
     preflightHarnessJob.mockResolvedValue(PASS);
     renderPanel();
-    fireEvent.click(screen.getByText("GitLab"));
+    expect(screen.queryByText("GitLab")).toBeNull();
     typeRepo("owner/repo");
     runPreflight();
 
@@ -106,9 +118,13 @@ describe("PanelSourceRepo", () => {
   it("gates both actions until a valid repository is entered", () => {
     renderPanel();
     // Run preflight is disabled with nothing typed; Build is disabled with a hint.
-    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Run preflight" }),
+    ).toBeDisabled();
     expect(buildBtn()).toBeDisabled();
-    expect(screen.getByText("Run preflight to check your setup before building")).toBeInTheDocument();
+    expect(
+      screen.getByText("Run preflight to check your setup before building"),
+    ).toBeInTheDocument();
   });
 
   it("enables Run preflight on a valid repo but keeps Build disabled until it passes", () => {
@@ -124,7 +140,9 @@ describe("PanelSourceRepo", () => {
     expect(
       screen.getByText(/Enter a repository as owner\/repo or a GitHub URL/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Run preflight" }),
+    ).toBeDisabled();
   });
 
   it("renders hosted credential readiness and enables Build", async () => {
@@ -144,7 +162,9 @@ describe("PanelSourceRepo", () => {
     typeRepo("owner/repo");
     runPreflight();
 
-    expect(await screen.findByText("Credentials need attention")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Credentials need attention"),
+    ).toBeInTheDocument();
     expect(screen.getByText("VAPI_API_KEY")).toBeInTheDocument();
     expect(screen.getByText("missing")).toBeInTheDocument();
     expect(buildBtn()).toBeDisabled();
@@ -168,7 +188,10 @@ describe("PanelSourceRepo", () => {
     );
     expect(createHarnessJob).toHaveBeenCalledWith(
       expect.objectContaining({
-        source: expect.objectContaining({ kind: "github", repository: "owner/repo" }),
+        source: expect.objectContaining({
+          kind: "github",
+          repository: "owner/repo",
+        }),
       }),
       "idem-test",
     );
@@ -199,7 +222,9 @@ describe("PanelSourceRepo", () => {
     fireEvent.click(buildBtn());
 
     await waitFor(() =>
-      expect(enqueueSnackbar).toHaveBeenCalledWith(message, { variant: "error" }),
+      expect(enqueueSnackbar).toHaveBeenCalledWith(message, {
+        variant: "error",
+      }),
     );
     expect(navigate).not.toHaveBeenCalled();
     expect(buildBtn()).toBeEnabled();
@@ -216,7 +241,9 @@ describe("PanelSourceRepo", () => {
     // trigger returns.
     typeRepo("owner/other-repo");
     expect(buildBtn()).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Run preflight" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Run preflight" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Ready to build")).not.toBeInTheDocument();
   });
 
@@ -237,7 +264,9 @@ describe("PanelSourceRepo", () => {
     renderPanel();
     typeRepo("owner/repo");
     fireEvent.click(screen.getByText("Private"));
-    fireEvent.change(screen.getByPlaceholderText("12345678"), { target: { value: "42" } });
+    fireEvent.change(screen.getByPlaceholderText("12345678"), {
+      target: { value: "42" },
+    });
     runPreflight();
     await waitFor(() => expect(buildBtn()).toBeEnabled());
     fireEvent.click(buildBtn());

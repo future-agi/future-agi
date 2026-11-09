@@ -10,11 +10,11 @@ import R4RunCard, {
   r4CardSummary,
 } from "src/sections/develop-detail/Experiment/R4RunCard";
 
-// Copied programmatically from activation-005-rl1915-cs-at-go,
-// row SBXCS-FA-RUNSOURCES-01-RL1915; verified against the row before commit.
-const WITHHELD = "Future AGI sandbox: Coming soon";
+// W3 uses the exact hosted takeover wording from 7f132adf. Pin the revised
+// bytes while retaining the unchanged LIVE catalog and capability checks.
+const WITHHELD = "Future AGI sandbox: Not available in this deployment";
 const WITHHELD_SHA256 =
-  "aeb3bf326a660d9662cd2adf27a126395d1849ef3f3f52695a2cada064e81859";
+  "547e4c47dedd61da804da844060c1c77d8c0583a95077a1c2f9b98f661344ff7";
 const LIVE = "Runs in the Future AGI sandbox";
 const state = vi.hoisted(() => ({ capability: {}, r4: {} }));
 vi.mock("src/hooks/useCapabilities", () => ({

@@ -17,6 +17,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import { DEPLOYMENT_UNAVAILABLE } from "src/sections/omega/shell/switches";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import Term from "src/sections/common/ux/Term";
 import { VOCAB } from "src/sections/common/vocab";
@@ -25,7 +26,7 @@ import { EXECUTION_MODES, catalogEntry, modeLabel, modesFor } from "./catalog";
 
 const SHORT = Object.fromEntries(EXECUTION_MODES.map((m) => [m.id, m.short]));
 // SBXCS-FA-RUNSOURCES-01-RL1915: activated withheld copy.
-const SANDBOX_WITHHELD = "Future AGI sandbox: Coming soon";
+const SANDBOX_WITHHELD = `Future AGI sandbox: ${DEPLOYMENT_UNAVAILABLE}`;
 
 export const MODE_HINT = Object.freeze({
   local: "Your machine runs each row; model keys stay in its environment",

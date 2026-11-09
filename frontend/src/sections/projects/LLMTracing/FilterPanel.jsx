@@ -4,7 +4,6 @@ import { Box, Button, Chip, Popover, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import ComplexFilter from "src/components/ComplexFilter/ComplexFilter";
 import { getRandomId } from "src/utils/utils";
-import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 const FilterPanel = ({
   anchorEl,
@@ -70,22 +69,6 @@ const FilterPanel = ({
           onClick={() => setActiveTab("basic")}
           sx={{ fontWeight: 500, fontSize: 12 }}
         />
-        <CustomTooltip
-          show
-          title="Coming soon"
-          placement="top"
-          arrow
-          size="small"
-          type="black"
-        >
-          <Chip
-            label="SQL"
-            size="small"
-            variant="outlined"
-            disabled
-            sx={{ fontWeight: 500, fontSize: 12 }}
-          />
-        </CustomTooltip>
       </Stack>
 
       {/* Filter rows */}

@@ -1,7 +1,7 @@
 import { AGENT_TYPES } from "src/sections/agents/constants";
 
 // The agent-type picker on the Hosted-platform panel. Voice and Chat are live;
-// the remaining modalities are gated until their rosters ship.
+// unimplemented modalities are absent from this picker.
 export const ENTRY_AGENT_TYPES = [
   {
     id: AGENT_TYPES.VOICE,
@@ -9,24 +9,6 @@ export const ENTRY_AGENT_TYPES = [
     icon: "solar:phone-calling-rounded-linear",
   },
   { id: AGENT_TYPES.CHAT, label: "Chat", icon: "solar:chat-round-linear" },
-  {
-    id: "computer",
-    label: "Computer use",
-    icon: "solar:monitor-linear",
-    comingSoon: true,
-  },
-  {
-    id: "code",
-    label: "Code",
-    icon: "solar:code-square-linear",
-    comingSoon: true,
-  },
-  {
-    id: "robotics",
-    label: "Robotics",
-    icon: "solar:cpu-bolt-linear",
-    comingSoon: true,
-  },
 ];
 
 // Modality metadata for the My Environments agent-type cell. Keyed by the same

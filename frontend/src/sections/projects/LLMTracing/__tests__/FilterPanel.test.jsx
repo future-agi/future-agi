@@ -18,10 +18,12 @@ describe("FilterPanel", () => {
     defaultFilter: { id: "default" },
   };
 
-  it("renders Basic and SQL tabs when open", () => {
+  it("keeps Basic and hides the unbuilt SQL teaser when open", () => {
     render(<FilterPanel {...defaultProps} />);
     expect(screen.getByText("Basic")).toBeInTheDocument();
-    expect(screen.getByText("SQL")).toBeInTheDocument();
+    expect(screen.queryByText("SQL")).toBeNull();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+    expect(screen.queryByRole("tooltip")).toBeNull();
   });
 
   it("renders Add filter button", () => {

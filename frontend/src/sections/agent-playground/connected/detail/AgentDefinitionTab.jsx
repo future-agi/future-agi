@@ -7,7 +7,6 @@ import { sourceLabel } from "../connectedAgentLabels";
 import { Card, LineSkeleton } from "./bits";
 import { MONO } from "./format";
 import { hostedRows, storedAgentRows } from "./definitionRows";
-import ComingSoonCard from "./ComingSoonCard";
 import ObservabilityToggle, {
   ObservabilityToggleSkeleton,
 } from "./ObservabilityToggle";
@@ -251,10 +250,6 @@ export default function AgentDefinitionTab() {
       ) : (
         <ObservabilityToggleSkeleton />
       )}
-      <ComingSoonCard
-        title="File structure"
-        description="Browse the files we read from your agent, version by version."
-      />
     </Stack>
   );
 }

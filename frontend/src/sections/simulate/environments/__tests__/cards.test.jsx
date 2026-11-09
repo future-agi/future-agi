@@ -30,7 +30,9 @@ describe("OptionCard", () => {
 
   it("live option: keyboard-focusable and fires on Enter", () => {
     const onClick = vi.fn();
-    render(<OptionCard option={optionById(OPTION_ID.SOURCE)} onClick={onClick} />);
+    render(
+      <OptionCard option={optionById(OPTION_ID.SOURCE)} onClick={onClick} />,
+    );
 
     const btn = screen.getByRole("button");
     expect(btn).toHaveAttribute("tabindex", "0");
@@ -38,66 +40,72 @@ describe("OptionCard", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
-  it("coming-soon option: labelled and inert", () => {
-    const onClick = vi.fn();
-    render(<OptionCard option={optionById(OPTION_ID.MCP)} onClick={onClick} />);
-
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
-    const btn = screen.getByRole("button");
-    expect(btn).toHaveAttribute("tabindex", "-1");
-    fireEvent.click(btn);
-    fireEvent.keyDown(btn, { key: "Enter" });
-    expect(onClick).not.toHaveBeenCalled();
-  });
+  it.each([OPTION_ID.MCP, OPTION_ID.LOCAL])(
+    "hides unbuilt option %s with no keyboard target",
+    (id) => {
+      const onClick = vi.fn();
+      const { container } = render(
+        <OptionCard option={optionById(id)} onClick={onClick} />,
+      );
+      expect(container).toBeEmptyDOMElement();
+      expect(screen.queryByLabelText("Coming soon")).toBeNull();
+      expect(screen.queryByRole("button")).toBeNull();
+      expect(onClick).not.toHaveBeenCalled();
+    },
+  );
 
   it("selected option: exposes aria-pressed", () => {
-    render(<OptionCard option={optionById(OPTION_ID.SOURCE)} selected onClick={vi.fn()} />);
+    render(
+      <OptionCard
+        option={optionById(OPTION_ID.SOURCE)}
+        selected
+        onClick={vi.fn()}
+      />,
+    );
     expect(screen.getByRole("button")).toHaveAttribute("aria-pressed", "true");
   });
 });
 
 describe("TemplateHeroCard", () => {
-  it("renders the coming-soon prebuilt hero and is inert", () => {
+  it("hides the unbuilt prebuilt hero and all of its teaser copy", () => {
     const onClick = vi.fn();
     render(<TemplateHeroCard onClick={onClick} />);
 
-    expect(screen.getByText("Prebuilt Environments")).toBeInTheDocument();
-    expect(screen.getByText("· Fastest")).toBeInTheDocument();
-    expect(screen.getByText("Customer Support Line")).toBeInTheDocument();
-    expect(screen.getByText("Coding")).toBeInTheDocument();
-    expect(screen.getByText("Browser")).toBeInTheDocument();
-    expect(screen.getByText("Airline Rebooking")).toBeInTheDocument();
-    expect(screen.getByText("+ 10 more")).toBeInTheDocument();
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
+    expect(screen.queryByText("Prebuilt Environments")).toBeNull();
+    expect(screen.queryByText("· Fastest")).toBeNull();
+    expect(screen.queryByText("Customer Support Line")).toBeNull();
+    expect(screen.queryByText("Coding")).toBeNull();
+    expect(screen.queryByText("Browser")).toBeNull();
+    expect(screen.queryByText("Airline Rebooking")).toBeNull();
+    expect(screen.queryByText("+ 10 more")).toBeNull();
+    expect(screen.queryByLabelText("Coming soon")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button"));
+    expect(screen.queryByRole("button")).toBeNull();
     expect(onClick).not.toHaveBeenCalled();
   });
 
-  it("does not activate on Enter while coming soon", () => {
+  it("has no keyboard target for the unbuilt prebuilt hero", () => {
     const onClick = vi.fn();
     render(<TemplateHeroCard onClick={onClick} />);
 
-    const btn = screen.getByRole("button");
-    expect(btn).toHaveAttribute("tabindex", "-1");
-    fireEvent.keyDown(btn, { key: "Enter" });
+    expect(screen.queryByRole("button")).toBeNull();
     expect(onClick).not.toHaveBeenCalled();
   });
 });
 
 describe("WebEnvironmentsHeroCard", () => {
-  it("renders the coming-soon web hero and is inert", () => {
+  it("hides the unbuilt web hero and all of its teaser copy", () => {
     const onClick = vi.fn();
     render(<WebEnvironmentsHeroCard onClick={onClick} />);
 
-    expect(screen.getByText("Web Environments")).toBeInTheDocument();
+    expect(screen.queryByText("Web Environments")).toBeNull();
     ["Slack", "Notion", "Gmail", "Salesforce", "Linear"].forEach((chip) => {
-      expect(screen.getByText(chip)).toBeInTheDocument();
+      expect(screen.queryByText(chip)).toBeNull();
     });
-    expect(screen.getByText("+ 8 more")).toBeInTheDocument();
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
+    expect(screen.queryByText("+ 8 more")).toBeNull();
+    expect(screen.queryByLabelText("Coming soon")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button"));
+    expect(screen.queryByRole("button")).toBeNull();
     expect(onClick).not.toHaveBeenCalled();
   });
 });

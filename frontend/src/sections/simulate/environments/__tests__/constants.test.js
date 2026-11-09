@@ -60,17 +60,16 @@ describe("environmentOptions", () => {
 describe("agentTypes", () => {
   it("gates the agent-type roster", () => {
     expect(liveIds(ENTRY_AGENT_TYPES)).toEqual(["voice", "text"]);
-    expect(comingSoonIds(ENTRY_AGENT_TYPES)).toEqual([
-      "computer",
-      "code",
-      "robotics",
-    ]);
+    expect(ENTRY_AGENT_TYPES.map((o) => o.id)).toEqual(["voice", "text"]);
+    expect(comingSoonIds(ENTRY_AGENT_TYPES)).toEqual([]);
   });
 });
 
 describe("repoProviders", () => {
   it("only github is live", () => {
     expect(liveIds(REPO_PROVIDERS)).toEqual(["github"]);
+    expect(REPO_PROVIDERS.map((o) => o.id)).toEqual(["github"]);
+    expect(OPTIONS.find((o) => o.id === "source").preview).toEqual(["GitHub"]);
   });
 });
 
@@ -88,10 +87,6 @@ describe("hostedPlatforms", () => {
     expect(comingSoonIds(HOSTED_PLATFORMS_BY_TYPE.voice)).toEqual([]);
     expect(HOSTED_PLATFORMS_BY_TYPE.text.map((p) => p.id)).toEqual([
       "retell_chat",
-      "openai_assistants",
-      "langgraph",
-      "crewai",
-      "claude_agents",
     ]);
   });
 });

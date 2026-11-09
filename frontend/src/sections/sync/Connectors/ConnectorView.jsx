@@ -56,14 +56,6 @@ const ConnectorView = () => {
             icon: "/assets/icons/connectors/c_big_query.svg",
             onClick: () => navigate("/dashboard/sync/connectors/big-query"),
           },
-          {
-            title: "Databricks (Coming Soon)",
-            icon: "/assets/icons/connectors/c_data_bricks.svg",
-          },
-          {
-            title: "Snowflakes (Coming Soon)",
-            icon: "/assets/icons/connectors/c_snowflaks.svg",
-          },
         ]}
       />
       <ConnectorRow

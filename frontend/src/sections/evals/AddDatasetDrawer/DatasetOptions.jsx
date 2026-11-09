@@ -1,8 +1,9 @@
-import { Box, Chip, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 
 const DatasetOptions = ({ title, subTitle, onClick, disabled }) => {
+  if (disabled) return null;
   return (
     <Box
       sx={{
@@ -15,7 +16,6 @@ const DatasetOptions = ({ title, subTitle, onClick, disabled }) => {
         border: "1px solid",
         borderColor: "divider",
         cursor: "pointer",
-        opacity: disabled ? 0.5 : 1,
       }}
       onClick={onClick}
     >
@@ -23,9 +23,6 @@ const DatasetOptions = ({ title, subTitle, onClick, disabled }) => {
         <Typography variant="body2" fontWeight={500} color="text.primary">
           {title}
         </Typography>
-        {disabled && (
-          <Chip variant="outlined" label="Coming Soon" size="small" />
-        )}
       </Box>
       <Typography variant="caption" color="text.secondary">
         {subTitle}

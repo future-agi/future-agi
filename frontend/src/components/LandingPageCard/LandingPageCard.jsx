@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Button, Typography, useTheme } from "@mui/material";
+import { Box, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import Image from "../image";
 import { ShowComponent } from "../show";
@@ -15,6 +15,8 @@ const LandingPageCard = ({
   disabled = false,
 }) => {
   const theme = useTheme();
+
+  if (showAction && !availableFeature) return null;
 
   return (
     <Box
@@ -90,17 +92,6 @@ const LandingPageCard = ({
             >
               Get started
             </LoadingButton>
-          </ShowComponent>
-          <ShowComponent condition={!availableFeature}>
-            <Button
-              variant="contained"
-              color="primary"
-              disabled
-              sx={{ "&.Mui-disabled": { color: "text.primary" } }}
-              type="buttom"
-            >
-              Coming soon
-            </Button>
           </ShowComponent>
         </Box>
       </ShowComponent>

@@ -195,19 +195,18 @@ describe("AgentDefinitionTab", () => {
     ).toBe(true);
   });
 
-  it("shows File structure as a plain Coming soon card", async () => {
+  it("hides the unbuilt File structure area without sample files or teaser copy", async () => {
     serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
     renderAt(HOSTED_AGENT_DETAIL);
-    const region = await screen.findByRole("region", {
-      name: "File structure",
-    });
+    await screen.findByText("sk-a...9f2c");
+    expect(screen.queryByRole("region", { name: "File structure" })).toBeNull();
+    expect(screen.queryByText("File structure")).toBeNull();
     expect(
-      within(region).getByText(/Browse the files we read from your agent/),
-    ).toBeInTheDocument();
-    expect(within(region).getByLabelText("Coming soon")).toBeInTheDocument();
-    // No sample files dressed up with the real version.
-    expect(within(region).queryByText("agent.yaml")).toBeNull();
-    expect(within(region).queryByText(/files · v/)).toBeNull();
+      screen.queryByText(/Browse the files we read from your agent/),
+    ).toBeNull();
+    expect(screen.queryByLabelText("Coming soon")).toBeNull();
+    expect(screen.queryByText("agent.yaml")).toBeNull();
+    expect(screen.queryByText(/files · v/)).toBeNull();
   });
 
   it("shows label and value rows while the version loads", async () => {

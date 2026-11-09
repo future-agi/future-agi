@@ -107,23 +107,21 @@ beforeEach(() => {
 const createdBody = () => createHarnessJob.mock.calls[0][0];
 
 describe("PanelHostedPlatform", () => {
-  it("renders five agent-type chips, three coming soon, and no coming-soon voice platform", () => {
+  it("renders only implemented agent types and voice platforms", () => {
     render(<PanelHostedPlatform />);
     expect(screen.getByText("Voice")).toBeInTheDocument();
     expect(screen.getByText("Chat")).toBeInTheDocument();
-    expect(screen.getByText("Computer use")).toBeInTheDocument();
-    expect(screen.getByText("Robotics")).toBeInTheDocument();
-    // 3 coming-soon agent types (Code / Computer use / Robotics). Bland and
-    // ElevenLabs are not hosted connectors, so they are absent from the
-    // voice roster rather than shown as coming-soon chips.
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(3);
+    for (const name of ["Computer use", "Code", "Robotics"]) {
+      expect(screen.queryByText(name)).toBeNull();
+    }
+    expect(screen.queryAllByLabelText("Coming soon")).toHaveLength(0);
     expect(screen.queryByLabelText("Bland.ai")).toBeNull();
     expect(screen.queryByLabelText("ElevenLabs")).toBeNull();
   });
 
-  it("keeps Voice selected when a coming-soon type is clicked", () => {
+  it("keeps Voice selected without offering an unbuilt Code type", () => {
     render(<PanelHostedPlatform />);
-    fireEvent.click(screen.getByText("Code"));
+    expect(screen.queryByText("Code")).toBeNull();
     expect(screen.getByLabelText("Vapi")).toBeInTheDocument();
   });
 
@@ -153,9 +151,15 @@ describe("PanelHostedPlatform", () => {
     });
     fireEvent.click(screen.getByText("Chat"));
 
-    // Chat defaults to Retell (the only chat connector); OpenAI Assistants is a
-    // coming-soon chip. Switching agent type clears the id/key.
-    expect(screen.getByText("OpenAI Assistants")).toBeInTheDocument();
+    // Chat defaults to Retell, the only implemented chat connector.
+    for (const name of [
+      "OpenAI Assistants",
+      "LangGraph Cloud",
+      "CrewAI",
+      "Claude Agents",
+    ]) {
+      expect(screen.queryByText(name)).toBeNull();
+    }
     expect(screen.getByPlaceholderText("agent_9f2c…").value).toBe("");
     expect(screen.getByPlaceholderText("sk-…").value).toBe("");
   });
@@ -312,7 +316,9 @@ describe("PanelHostedPlatform", () => {
     });
     expect(staged.apiKey).toBeUndefined();
     expect(staged.apiSecret).toBeUndefined();
-    expect(JSON.stringify(useEnvironmentsStore.getState())).not.toContain("lk-secret");
+    expect(JSON.stringify(useEnvironmentsStore.getState())).not.toContain(
+      "lk-secret",
+    );
   });
 
   it("gates both actions until both credential fields are filled", () => {
@@ -365,7 +371,9 @@ describe("PanelHostedPlatform", () => {
     // The raw key is redacted out of the staged draft and the persisted store.
     expect(staged.apiKey).toBeUndefined();
     expect("secret_refs" in staged).toBe(false);
-    expect(JSON.stringify(useEnvironmentsStore.getState())).not.toContain("sk-x");
+    expect(JSON.stringify(useEnvironmentsStore.getState())).not.toContain(
+      "sk-x",
+    );
   });
 
   it("builds with the value checked by the latest preflight after an edit", async () => {
@@ -376,7 +384,9 @@ describe("PanelHostedPlatform", () => {
     runPreflight();
     await waitFor(() => expect(buildBtn()).toBeEnabled());
 
-    fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "sk-new" } });
+    fireEvent.change(screen.getByPlaceholderText("sk-…"), {
+      target: { value: "sk-new" },
+    });
     runPreflight();
     await waitFor(() => expect(buildBtn()).toBeEnabled());
     fireEvent.click(buildBtn());
@@ -417,7 +427,9 @@ describe("PanelHostedPlatform", () => {
     // A new preflight is a new build, so it gets a new key.
     createHarnessJob.mockResolvedValue({ job: { job_id: "job-plat" } });
     await waitFor(() => expect(buildBtn()).toBeEnabled());
-    fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "sk-y" } });
+    fireEvent.change(screen.getByPlaceholderText("sk-…"), {
+      target: { value: "sk-y" },
+    });
     runPreflight();
     await waitFor(() => expect(buildBtn()).toBeEnabled());
     fireEvent.click(buildBtn());

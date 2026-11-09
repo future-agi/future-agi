@@ -188,14 +188,13 @@ describe("AgentDetailLayout", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows Constraints, Improvements and Connections as disabled Coming soon tabs", async () => {
+  it("hides the unbuilt Constraints, Improvements and Connections tabs", async () => {
     serve(HOSTED);
     renderAt(`${base(HOSTED)}/overview`);
     await screen.findByRole("tab", { name: "Overview" });
     ["Constraints", "Improvements", "Connections"].forEach((name) => {
-      const tab = screen.getByRole("tab", { name: new RegExp(name) });
-      expect(tab).toBeDisabled();
-      expect(within(tab).getByLabelText("Coming soon")).toBeInTheDocument();
+      expect(screen.queryByRole("tab", { name: new RegExp(name) })).toBeNull();
+      expect(screen.queryByText(name)).toBeNull();
     });
   });
 

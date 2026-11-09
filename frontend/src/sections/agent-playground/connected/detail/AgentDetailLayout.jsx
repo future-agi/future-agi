@@ -12,18 +12,13 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
-import ComingSoonChip from "src/sections/simulate/environments/components/ComingSoonChip";
 import { ENV_TABS_SX } from "src/sections/simulate/environments/environmentOptions";
 import { CONNECTED_AGENTS_PATH } from "../../agentsTabs";
 import AgentDetailHeader, {
   AgentDetailHeaderSkeleton,
 } from "./AgentDetailHeader";
 import AgentVersionSelect from "./AgentVersionSelect";
-import {
-  COMING_SOON_TABS,
-  DETAIL_TABS,
-  agentDetailPath,
-} from "./agentDetailTabs";
+import { DETAIL_TABS, agentDetailPath } from "./agentDetailTabs";
 import useAgentRoute from "./useAgentRoute";
 
 const errorText = (error) =>
@@ -122,20 +117,6 @@ export default function AgentDetailLayout() {
           >
             {DETAIL_TABS.map((t) => (
               <Tab key={t.id} value={t.id} label={tabLabel(t)} disableRipple />
-            ))}
-            {COMING_SOON_TABS.map((label) => (
-              <Tab
-                key={label}
-                value={label}
-                disabled
-                disableRipple
-                label={
-                  <Stack direction="row" alignItems="center" spacing={0.75}>
-                    <span>{label}</span>
-                    <ComingSoonChip />
-                  </Stack>
-                }
-              />
             ))}
           </CustomTabs>
         </Box>

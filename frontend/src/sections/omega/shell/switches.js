@@ -4,7 +4,7 @@
 // that state until the lane that closes the gap is accepted and the release
 // turns the switch on. Off stays hidden or uses honest wording (2026-10-19),
 // except RL 1808's hosted Sandboxes/Deployments sidebar information below:
-// visible title + "Coming soon", entirely inert, never a page or preview.
+// visible title + deployment-unavailable label, entirely inert, never a page or preview.
 //
 // A switch is a part the server reports (OMEGA_PART in rollout.js, decided in
 // omega_rollout/readiness.py from the release's OMEGA_RELEASED_PARTS). Read it
@@ -18,7 +18,7 @@
 // - Sandboxes and Deployments on hosted Future AGI: the server withholds the
 //   products themselves (omega_rollout/service.py, parts hosted_sandboxes and
 //   hosted_deployments). RL 1808 keeps their sidebar titles with inert
-//   "Coming soon" labels once capabilities confirms hosted + withheld. Their
+//   deployment-unavailable labels once capabilities confirms hosted + withheld. Their
 //   route gates still render the standard not-found; API refusal is unchanged.
 //   The product switcher lists Future AGI, AI Gateway and Omega Console, not
 //   these two sidebar products. Self-hosted/preview and master OFF are unchanged.
@@ -34,6 +34,10 @@
 //   capability-statement modules).
 
 import { OMEGA_PART } from "./rollout";
+
+// Exact hosted takeover wording from 7f132adf; one label for built products
+// withheld by this deployment, never a promise about future availability.
+export const DEPLOYMENT_UNAVAILABLE = "Not available in this deployment";
 
 /** The switches this module words: who turns each on, and where it shows. */
 export const P22_SWITCHES = Object.freeze([

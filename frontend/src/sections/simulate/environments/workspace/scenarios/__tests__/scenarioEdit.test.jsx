@@ -20,17 +20,27 @@ import {
 
 // The list reads the server (fixtures) source.
 vi.mock("src/api/simulate-environments/scenarios", async () => {
-  const actual = await vi.importActual("src/api/simulate-environments/scenarios");
+  const actual = await vi.importActual(
+    "src/api/simulate-environments/scenarios",
+  );
   return {
     ...actual,
     listScenarios: vi.fn(),
     amendScenarios: vi.fn(),
     // Mock coverage too so CoverageMatrix does not fire a real (failing) request
     // that spams the axios auth-redirect interceptor on every render.
-    scenarioCoverage: vi.fn(async () => ({ axes: [], per_axis: [], rows: [], columns: [], cells: [] })),
+    scenarioCoverage: vi.fn(async () => ({
+      axes: [],
+      per_axis: [],
+      rows: [],
+      columns: [],
+      cells: [],
+    })),
   };
 });
-const { listScenarios, amendScenarios } = await import("src/api/simulate-environments/scenarios");
+const { listScenarios, amendScenarios } = await import(
+  "src/api/simulate-environments/scenarios"
+);
 const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
@@ -63,9 +73,9 @@ beforeEach(() => {
 });
 
 describe("ScenariosStep — add", () => {
-  it("disables the Add scenarios button (coming soon) — the drawer stays built", () => {
+  it("hides Add scenarios until a real create operation exists", () => {
     renderStep();
-    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Add scenarios" })).toBeNull();
   });
 
   // The drawer is kept fully wired even though the Add button is disabled for
@@ -73,13 +83,21 @@ describe("ScenariosStep — add", () => {
   it("the add drawer appends the chosen scenarios through onAdd", () => {
     const onAdd = vi.fn();
     render(
-      <AddScenariosDrawer open env={env} selected={pooled} onAdd={onAdd} onClose={() => {}} />,
+      <AddScenariosDrawer
+        open
+        env={env}
+        selected={pooled}
+        onAdd={onAdd}
+        onClose={() => {}}
+      />,
     );
 
     expect(screen.getByText(/could not know to write/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: /select all/i }));
-    fireEvent.click(screen.getByRole("button", { name: /^Add \d+ scenarios?$/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Add \d+ scenarios?$/ }),
+    );
 
     expect(onAdd).toHaveBeenCalledTimes(1);
     const added = onAdd.mock.calls[0][0];
@@ -99,11 +117,15 @@ describe("ScenariosStep — edit", () => {
     renderStep();
     await screen.findByRole("table");
     const row = firstRow();
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+    );
 
     // Name is proved, not described — it prefills but is read-only (not in the
     // server's editable_fields).
-    const nameField = screen.getAllByLabelText("Name", { selector: "input" })[0];
+    const nameField = screen.getAllByLabelText("Name", {
+      selector: "input",
+    })[0];
     expect(nameField).toHaveValue(row.name);
     expect(nameField).toBeDisabled();
 
@@ -115,7 +137,9 @@ describe("ScenariosStep — edit", () => {
     const saveBtn = screen.getByRole("button", { name: "Save scenario" });
     expect(saveBtn).toBeDisabled();
 
-    fireEvent.change(passesWhen, { target: { value: "Passes when it books the ride." } });
+    fireEvent.change(passesWhen, {
+      target: { value: "Passes when it books the ride." },
+    });
     expect(saveBtn).toBeEnabled();
     fireEvent.click(saveBtn);
 
@@ -124,7 +148,12 @@ describe("ScenariosStep — edit", () => {
     expect(amendScenarios).toHaveBeenCalledWith("job-test", {
       rework: false,
       changes: [
-        { op: "set_field", scenario: row.name, field: "tests", value: "Passes when it books the ride." },
+        {
+          op: "set_field",
+          scenario: row.name,
+          field: "tests",
+          value: "Passes when it books the ride.",
+        },
       ],
     });
   });
@@ -139,18 +168,29 @@ describe("ScenarioEditor persona choices", () => {
         open
         onClose={() => {}}
         onSave={onSave}
-        row={{ id: "r1", name: "s1", _raw: { persona: { accent: "Scottish", languages: ["English"] } } }}
+        row={{
+          id: "r1",
+          name: "s1",
+          _raw: { persona: { accent: "Scottish", languages: ["English"] } },
+        }}
         scenarioEditing={{
           editable_fields: ["tests"],
           persona_fields: ["accent", "languages"],
-          persona_choices: { accent: ["American", "Indian"], languages: ["English", "Hindi"] },
+          persona_choices: {
+            accent: ["American", "Indian"],
+            languages: ["English", "Hindi"],
+          },
           rework_fields: ["accent", "languages"],
         }}
       />,
     );
     fireEvent.mouseDown(screen.getByLabelText("Accent"));
-    expect(await screen.findByRole("option", { name: "Indian" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Scottish" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("option", { name: "Indian" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Scottish" }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "Indian" }));
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
     expect(onSave.mock.calls[0][0].changes).toEqual([

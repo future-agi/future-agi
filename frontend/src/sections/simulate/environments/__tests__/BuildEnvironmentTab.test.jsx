@@ -4,7 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { render } from "src/utils/test-utils";
-import { useEnvironmentsStore, resetEnvironmentsStore } from "../store/useEnvironmentsStore";
+import {
+  useEnvironmentsStore,
+  resetEnvironmentsStore,
+} from "../store/useEnvironmentsStore";
 
 const navigate = vi.fn();
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
@@ -36,22 +39,16 @@ describe("BuildEnvironmentTab", () => {
     navigate.mockReset();
   });
 
-  it("renders the two hero cards and five option cards in order", () => {
+  it("renders only the three implemented options in order", () => {
     renderTab();
     const cards = screen.getAllByRole("button");
-    expect(cards).toHaveLength(7);
+    expect(cards).toHaveLength(3);
 
-    [
-      "Prebuilt Environments",
-      "Web Environments",
-      "Source repository",
-      "Code upload",
-      "Hosted platform",
-      "MCP server",
-      "Build locally",
-    ].forEach((title, i) => {
-      expect(within(cards[i]).getByText(title)).toBeInTheDocument();
-    });
+    ["Source repository", "Code upload", "Hosted platform"].forEach(
+      (title, i) => {
+        expect(within(cards[i]).getByText(title)).toBeInTheDocument();
+      },
+    );
   });
 
   it("does not render the omitted options", () => {
@@ -60,12 +57,20 @@ describe("BuildEnvironmentTab", () => {
     expect(screen.queryByText("Start from scratch")).toBeNull();
   });
 
-  it("marks prebuilt, web, mcp, and local as coming soon", () => {
+  it("hides prebuilt, web, mcp, and local entirely", () => {
     renderTab();
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(4);
+    for (const title of [
+      "Prebuilt Environments",
+      "Web Environments",
+      "MCP server",
+      "Build locally",
+    ]) {
+      expect(screen.queryByText(title)).toBeNull();
+    }
+    expect(screen.queryAllByLabelText("Coming soon")).toHaveLength(0);
   });
 
-  it("opens the source panel and ignores coming-soon picks", async () => {
+  it("opens the source panel without offering unbuilt picks", async () => {
     const user = userEvent.setup();
     renderTab();
 
@@ -74,17 +79,13 @@ describe("BuildEnvironmentTab", () => {
     expect(screen.getAllByText("Source repository")).toHaveLength(2);
     expect(useEnvironmentsStore.getState().choice).toBe("source");
 
-    await user.click(screen.getByText("MCP server"));
+    expect(screen.queryByText("MCP server")).toBeNull();
     expect(useEnvironmentsStore.getState().choice).toBe("source");
-    // MCP has no panel, so its title stays only on the OptionCard.
-    expect(screen.getAllByText("MCP server")).toHaveLength(1);
   });
 
-  it("does not navigate from the Prebuilt hero while it is coming soon", async () => {
-    const user = userEvent.setup();
+  it("offers no navigation to the unbuilt Prebuilt hero", () => {
     renderTab();
-
-    await user.click(screen.getByText("Prebuilt Environments"));
+    expect(screen.queryByText("Prebuilt Environments")).toBeNull();
     expect(navigate).not.toHaveBeenCalled();
   });
 });

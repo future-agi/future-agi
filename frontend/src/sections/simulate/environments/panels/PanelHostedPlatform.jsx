@@ -9,7 +9,10 @@ import PlatformLogo from "../components/PlatformLogo";
 import { PLATFORM_LOGOS } from "../components/platformLogos";
 import { COUNTRY_BY_ISO } from "../components/countryCodes";
 import ContactInformation from "./ContactInformation";
-import { isValidPhoneNumber, phoneNumberError } from "../components/phoneNumber";
+import {
+  isValidPhoneNumber,
+  phoneNumberError,
+} from "../components/phoneNumber";
 import ScenarioCount from "./ScenarioCount";
 import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
@@ -17,7 +20,10 @@ import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import ParallelismField from "./ParallelismField";
 import usePanelBuild from "../hooks/usePanelBuild";
 import { ENTRY_AGENT_TYPES } from "../agentTypes";
-import { HOSTED_PLATFORMS_BY_TYPE, HOSTED_EMPTY_ROSTER_COPY } from "../hostedPlatforms";
+import {
+  HOSTED_PLATFORMS_BY_TYPE,
+  HOSTED_EMPTY_ROSTER_COPY,
+} from "../hostedPlatforms";
 
 /* Type gate first — the platform roster only makes sense once we know what kind
    of agent is being connected. Default to voice (what we integrate with today)
@@ -58,16 +64,22 @@ export default function PanelHostedPlatform() {
     build.resetPreflight();
   };
   const {
-    agentType, platform, id, key, apiSecret, livekitUrl, repoUrl,
-    simMode, countryIso, contactNumber, inboundCalls, agentSpeaksFirst, systemPrompt,
+    agentType,
+    platform,
+    id,
+    key,
+    apiSecret,
+    livekitUrl,
+    repoUrl,
+    simMode,
+    countryIso,
+    contactNumber,
+    inboundCalls,
+    agentSpeaksFirst,
+    systemPrompt,
     scenarioCount,
   } = form;
   const platforms = HOSTED_PLATFORMS_BY_TYPE[agentType] || [];
-  // Coming-soon (not-yet-a-connector) platforms sort to the end, so the
-  // selectable ones lead the row. Stable, so each group keeps its roster order.
-  const orderedPlatforms = [...platforms].sort(
-    (a, b) => Number(!!a.comingSoon) - Number(!!b.comingSoon),
-  );
 
   /* When agent type flips, snap to the first platform of the new type and clear
      the credentials so we do not carry a key into another provider's form. */
@@ -89,17 +101,22 @@ export default function PanelHostedPlatform() {
   // Others has no WebRTC path, so it requires a number regardless of simMode;
   // other voice envs only require it in Phone mode.
   const phoneRequired =
-    agentType === AGENT_TYPES.VOICE && (isOther || (!isLiveKit && simMode === "phone"));
+    agentType === AGENT_TYPES.VOICE &&
+    (isOther || (!isLiveKit && simMode === "phone"));
   const phoneOk =
-    !phoneRequired || isValidPhoneNumber(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber);
+    !phoneRequired ||
+    isValidPhoneNumber(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber);
   const phoneError = phoneRequired
     ? phoneNumberError(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber)
     : null;
-  const preflightBlockedReason = phoneError ? `Contact number: ${phoneError}` : null;
+  const preflightBlockedReason = phoneError
+    ? `Contact number: ${phoneError}`
+    : null;
   const hasPrompt = !!systemPrompt.trim();
   const credsOk = isOther
     ? hasPrompt
-    : !!id.trim() && !!key.trim() &&
+    : !!id.trim() &&
+      !!key.trim() &&
       (!isLiveKit || (!!apiSecret.trim() && !!livekitUrl.trim() && hasPrompt));
   const canGo = !!chosen && credsOk && phoneOk;
 
@@ -152,7 +169,6 @@ export default function PanelHostedPlatform() {
               key={t.id}
               icon={t.icon}
               label={t.label}
-              comingSoon={t.comingSoon}
               on={agentType === t.id}
               onClick={() => pickAgentType(t.id)}
             />
@@ -167,15 +183,20 @@ export default function PanelHostedPlatform() {
           </Typography>
         ) : (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
-            {orderedPlatforms.map((p) => (
+            {platforms.map((p) => (
               <ChipCard
                 key={p.id}
                 /* "Others" has no brand logo — render its Solar icon instead. */
                 icon={p.isOther ? p.icon : undefined}
-                logo={p.isOther ? undefined : <PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
+                logo={
+                  p.isOther ? undefined : (
+                    <PlatformLogo id={p.id} name={p.name} brand={p.brand} />
+                  )
+                }
                 /* Wordmark logos already spell the name — don't repeat it. */
-                label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
-                comingSoon={p.comingSoon}
+                label={
+                  PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name
+                }
                 on={platform === p.id}
                 onClick={() => set("platform")(p.id)}
               />
@@ -190,7 +211,8 @@ export default function PanelHostedPlatform() {
               label="System prompt"
               required
               placeholder="You are a friendly returns agent for Acme…"
-              value={systemPrompt} onChange={set("systemPrompt")}
+              value={systemPrompt}
+              onChange={set("systemPrompt")}
               multiline
               helper="The platform dials the number below with its own telephony. The prompt only seeds scenarios; it never changes the live agent."
             />
@@ -200,7 +222,8 @@ export default function PanelHostedPlatform() {
                 label={chosen.idLabel || "Agent ID"}
                 required
                 placeholder={chosen.idPlaceholder}
-                value={id} onChange={set("id")}
+                value={id}
+                onChange={set("id")}
                 autoComplete="new-password"
                 mono
               />
@@ -209,7 +232,8 @@ export default function PanelHostedPlatform() {
                   label="LiveKit URL"
                   required
                   placeholder="wss://your-project.livekit.cloud"
-                  value={livekitUrl} onChange={set("livekitUrl")}
+                  value={livekitUrl}
+                  onChange={set("livekitUrl")}
                   mono
                 />
               )}
@@ -217,7 +241,8 @@ export default function PanelHostedPlatform() {
                 label={chosen.keyLabel || "API key"}
                 required
                 placeholder="sk-…"
-                value={key} onChange={set("key")}
+                value={key}
+                onChange={set("key")}
                 type="password"
                 autoComplete="new-password"
                 mono
@@ -229,7 +254,8 @@ export default function PanelHostedPlatform() {
                     label="LiveKit API secret"
                     required
                     placeholder="secret…"
-                    value={apiSecret} onChange={set("apiSecret")}
+                    value={apiSecret}
+                    onChange={set("apiSecret")}
                     type="password"
                     autoComplete="new-password"
                     mono
@@ -238,7 +264,8 @@ export default function PanelHostedPlatform() {
                     label="System prompt"
                     required
                     placeholder="You are a friendly returns agent for Acme…"
-                    value={systemPrompt} onChange={set("systemPrompt")}
+                    value={systemPrompt}
+                    onChange={set("systemPrompt")}
                     multiline
                     helper="LiveKit doesn't expose your agent's prompt, so paste it here. It only seeds scenarios; it never changes the live agent."
                   />
@@ -248,11 +275,16 @@ export default function PanelHostedPlatform() {
           )}
           {agentType === AGENT_TYPES.VOICE && (
             <ContactInformation
-              mode={simMode} onMode={set("simMode")}
-              countryIso={countryIso} onCountryIso={set("countryIso")}
-              contactNumber={contactNumber} onContactNumber={set("contactNumber")}
-              inboundCalls={inboundCalls} onInboundCalls={set("inboundCalls")}
-              agentSpeaksFirst={agentSpeaksFirst} onAgentSpeaksFirst={set("agentSpeaksFirst")}
+              mode={simMode}
+              onMode={set("simMode")}
+              countryIso={countryIso}
+              onCountryIso={set("countryIso")}
+              contactNumber={contactNumber}
+              onContactNumber={set("contactNumber")}
+              inboundCalls={inboundCalls}
+              onInboundCalls={set("inboundCalls")}
+              agentSpeaksFirst={agentSpeaksFirst}
+              onAgentSpeaksFirst={set("agentSpeaksFirst")}
               phoneOnly={isOther}
               webOnly={isLiveKit}
             />
@@ -260,7 +292,8 @@ export default function PanelHostedPlatform() {
           <Field
             label="GitHub repo"
             placeholder="https://github.com/your-org/your-agent"
-            value={repoUrl} onChange={set("repoUrl")}
+            value={repoUrl}
+            onChange={set("repoUrl")}
             mono
             helper="Optional. Lets us read the agent's tools + prompts to seed matching scenarios."
           />
@@ -290,7 +323,11 @@ export default function PanelHostedPlatform() {
       <ContinueRow
         disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
-        hint={build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
+        hint={
+          build.status === "done"
+            ? "Resolve the failed preflight checks above to continue"
+            : "Run preflight to check your setup before building"
+        }
         onClick={build.commitBuild}
       />
     </Stack>

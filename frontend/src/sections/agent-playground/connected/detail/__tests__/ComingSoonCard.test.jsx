@@ -3,18 +3,19 @@ import { render, screen } from "@testing-library/react";
 import ComingSoonCard from "../ComingSoonCard";
 
 describe("ComingSoonCard", () => {
-  it("names the area, marks it Coming soon and says what it will do", () => {
+  it("renders no unbuilt area, description, chip or action", () => {
     render(
       <ComingSoonCard
         title="File structure"
         description="Browse the files we read from your agent."
       />,
     );
-    const region = screen.getByRole("region", { name: "File structure" });
-    expect(region).toHaveTextContent("File structure");
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "File structure" })).toBeNull();
+    expect(screen.queryByText("File structure")).toBeNull();
+    expect(screen.queryByLabelText("Coming soon")).toBeNull();
     expect(
-      screen.getByText("Browse the files we read from your agent."),
-    ).toBeInTheDocument();
+      screen.queryByText("Browse the files we read from your agent."),
+    ).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

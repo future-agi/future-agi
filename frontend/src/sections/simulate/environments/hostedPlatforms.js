@@ -2,8 +2,8 @@ import { AGENT_TYPES } from "src/sections/agents/constants";
 
 // Hosted-platform providers grouped by agent type — the roster only makes sense
 // once we know what kind of agent is being connected. Only the two live agent
-// types (voice, chat) keep rosters; coming-soon types cannot be selected, so
-// their rosters would be dead data. `brand` hexes are each vendor's own mark
+// types (voice, chat) keep rosters; unimplemented connectors are absent.
+// `brand` hexes are each vendor's own mark
 // colour, used to tint the platform chip. The voice logos live in
 // components/platformLogos.js — this module stays svg-free so it is runnable
 // on its own.
@@ -53,8 +53,7 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
   [AGENT_TYPES.CHAT]: [
     {
       // The only real chat connector today (maps to `retell_chat`); listed first
-      // so it's the default when Chat is selected. The rest are not connectors
-      // yet, so they're surfaced coming-soon (not selectable).
+      // so it's the default when Chat is selected.
       id: "retell_chat",
       name: "Retell AI",
       icon: "solar:chat-round-line-linear",
@@ -62,42 +61,6 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Chat agent ID",
       idPlaceholder: "agent_9f2c…",
       keyLabel: "Retell API key",
-    },
-    {
-      id: "openai_assistants",
-      name: "OpenAI Assistants",
-      icon: "solar:magic-stick-3-linear",
-      idLabel: "Assistant ID",
-      idPlaceholder: "asst_9f2c…",
-      keyLabel: "OpenAI API key",
-      comingSoon: true,
-    },
-    {
-      id: "langgraph",
-      name: "LangGraph Cloud",
-      icon: "solar:diagram-up-linear",
-      idLabel: "Deployment URL",
-      idPlaceholder: "https://…",
-      keyLabel: "LangSmith API key",
-      comingSoon: true,
-    },
-    {
-      id: "crewai",
-      name: "CrewAI",
-      icon: "solar:users-group-rounded-linear",
-      idLabel: "Crew ID",
-      idPlaceholder: "crew_9f2c…",
-      keyLabel: "CrewAI API key",
-      comingSoon: true,
-    },
-    {
-      id: "claude_agents",
-      name: "Claude Agents",
-      icon: "solar:atom-linear",
-      idLabel: "Agent name",
-      idPlaceholder: "support-agent",
-      keyLabel: "Anthropic API key",
-      comingSoon: true,
     },
   ],
 };

@@ -323,13 +323,12 @@ describe("AgentVersionsTab", () => {
     ).toBeNull();
   });
 
-  it("shows Compare as a plain Coming soon card", async () => {
+  it("hides the unbuilt Compare area and its sample-file teaser", async () => {
     renderTab();
-    const region = await screen.findByRole("region", { name: "Compare" });
-    expect(
-      within(region).getByText(/Compare any two versions/),
-    ).toBeInTheDocument();
-    expect(within(region).getByLabelText("Coming soon")).toBeInTheDocument();
-    expect(within(region).queryByText(/prompts\/system\.md/)).toBeNull();
+    await screen.findByText("2 versions");
+    expect(screen.queryByRole("region", { name: "Compare" })).toBeNull();
+    expect(screen.queryByText(/Compare any two versions/)).toBeNull();
+    expect(screen.queryByLabelText("Coming soon")).toBeNull();
+    expect(screen.queryByText(/prompts\/system\.md/)).toBeNull();
   });
 });
