@@ -273,6 +273,8 @@ function schemaToZod(schema, options = {}) {
     case "string":
       compiled = z.string();
       if (schema.format === "uuid") compiled = compiled.uuid();
+      if (typeof schema.pattern === "string")
+        compiled = compiled.regex(new RegExp(schema.pattern));
       if (Number.isInteger(schema.minLength))
         compiled = compiled.min(schema.minLength);
       if (Number.isInteger(schema.maxLength))

@@ -10,7 +10,7 @@ TARGET_PATTERN = (
 )
 
 
-def normalize_socket_target(value):
+def normalize_socket_target(value: str | UUID) -> str:
     value = str(value)
     prefix = ""
     for candidate in ("generate_", "improve_"):
