@@ -9,6 +9,7 @@ from django.db import close_old_connections
 from temporalio import activity
 
 from tfc.telemetry import otel_sync_to_async
+from tfc.utils.evaluation_denials import EvaluationDenied
 from tfc.temporal.evaluations.types import (
     RunSingleEvaluationInput,
     RunSingleEvaluationOutput,
@@ -86,6 +87,14 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
             "evaluation_id": str(evaluation.id),
             "status": evaluation.status,
         }
+
+    except EvaluationDenied as denial:
+        evaluation.status = StatusChoices.FAILED
+        evaluation.error_message = str(denial)
+        evaluation.value = None
+        evaluation.reason = str(denial)
+        evaluation.metadata = {"denial": denial.as_dict()}
+        return {"evaluation_id": evaluation_id, "status": "failed", "error": str(denial)}
 
     except Exception as e:
         from tfc.ee_gates import jev_error_message

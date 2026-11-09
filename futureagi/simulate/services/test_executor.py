@@ -158,6 +158,8 @@ from simulate.temporal.activities.xl import (
     stringify_leaf,
     walk_subject_path,
 )
+from simulate.services.evaluation_denials import record_evaluation_denial
+from tfc.utils.evaluation_denials import EvaluationDenied
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
@@ -4573,6 +4575,8 @@ class TestExecutor:
                             f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
                             f"on call execution {call_execution.id}"
                         )
+                except EvaluationDenied as denial:
+                    logger.warning("simulation_evaluation_denied", code=denial.code)
                 except Exception as e:
                     logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
                     traceback.print_exc()
@@ -5488,6 +5492,9 @@ class TestExecutor:
                     eval_config_id=str(eval_config.id),
                 )
 
+        except EvaluationDenied as denial:
+            record_evaluation_denial(call_execution, eval_config, denial)
+            raise
         except Exception as e:
             logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 

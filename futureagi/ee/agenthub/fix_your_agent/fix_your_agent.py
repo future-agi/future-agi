@@ -27,6 +27,8 @@ import time
 from model_hub.utils.evals import evals_template
 from simulate.utils.agent_prompt_optimiser import update_agent_optimiser_run_step
 
+from tfc.utils.evaluation_denials import EvaluationDenied
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -130,6 +132,8 @@ class SimulationEvaluator(Evaluator):
             resolved = EvalTemplate.objects.get(id=template_id_str)
             self._eval_template_cache[template_id_str] = resolved
             return resolved
+        except EvaluationDenied:
+            raise
         except Exception as e:
             logger.debug(
                 f"[RUN_EVAL] Could not resolve EvalTemplate id={template_id_str} from DB: {e}"
@@ -353,6 +357,8 @@ class SimulationEvaluator(Evaluator):
                     )
                 )
 
+            except EvaluationDenied:
+                raise
             except Exception as e:
                 logger.error(f"Evaluation failed for input {i + 1}: {e}", exc_info=True)
                 results.append(
@@ -459,6 +465,8 @@ class SimulationEvaluator(Evaluator):
                     f"[BATCH] Eval {idx + 1} ({eval_config.name}): {score:.4f} - {reason[:100]}"
                 )
                 return idx, score, reason
+            except EvaluationDenied:
+                raise
             except Exception as e:
                 logger.error(f"[BATCH] Eval {idx + 1} failed: {e}")
                 return idx, 0.5, f"Eval failed: {str(e)}"
@@ -655,6 +663,8 @@ class SimulationEvaluator(Evaluator):
                         return 0.0, eval_result
 
                     return 0.0, "Unknown eval result format"
+                except EvaluationDenied:
+                    raise
                 except Exception as e:
                     logger.warning(
                         f"[RUN_EVAL] EvalRunner path failed, falling back to direct eval: {e}"
@@ -717,6 +727,8 @@ class SimulationEvaluator(Evaluator):
 
             return score, reason
 
+        except EvaluationDenied:
+            raise
         except Exception as e:
             logger.error(f"Evaluation with config failed: {e}", exc_info=True)
             return 0.0, f"Evaluation error: {str(e)}"
@@ -796,6 +808,8 @@ Return ONLY a number between 0.0 and 1.0."""
                 )
                 score = float(score_str) if score_str else 0.5
                 return max(0.0, min(1.0, score))
+            except EvaluationDenied:
+                raise
             except Exception as e:
                 logger.warning(f"Issue evaluation failed: {e}")
                 return 0.5
@@ -819,6 +833,8 @@ Return ONLY a number between 0.0 and 1.0."""
                     weight = priority_weights.get(issue.get("priority", "medium"), 1.0)
                     scores.append(score)
                     weights.append(weight)
+                except EvaluationDenied:
+                    raise
                 except Exception as e:
                     logger.error(f"Issue eval failed: {e}")
                     scores.append(0.5)
@@ -1192,6 +1208,8 @@ class FixYourAgent:
                     agent_optimiser_run_steps, 2, status="completed"
                 )
 
+            except EvaluationDenied:
+                raise
             except Exception as e:
                 logger.error(f"Baseline evaluation failed: {e}", exc_info=True)
                 # Step 2: Failed
@@ -1280,6 +1298,8 @@ class FixYourAgent:
                 agent_optimiser_run_steps, 3, status="completed"
             )
 
+        except EvaluationDenied:
+            raise
         except Exception as exc:
             logger.error(
                 f"Optimization failed for {optimizer_type}: {exc}", exc_info=True
@@ -1459,6 +1479,8 @@ class FixYourAgent:
                         eval_template=eval_template,
                     )
                     eval_configs.append(config)
+                except EvaluationDenied:
+                    raise
                 except Exception as e:
                     logger.warning(f"Failed to reconstruct eval config: {e}")
 

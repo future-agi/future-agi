@@ -21,6 +21,19 @@ class SDKErrorResponseSerializer(serializers.Serializer):
     )
 
 
+class SDKEvaluationDenialResponseSerializer(SDKErrorResponseSerializer):
+    """Usage refusal; completed_results must not be rerun after a batch denial."""
+
+    code = serializers.CharField()
+    error_code = serializers.CharField(required=False)
+    dimension = serializers.CharField(required=False)
+    current_usage = serializers.FloatField(required=False)
+    limit = serializers.FloatField(required=False)
+    upgrade_cta = serializers.JSONField(required=False)
+    completed_results = serializers.ListField(child=serializers.DictField(), required=False)
+    failed_index = serializers.IntegerField(required=False, min_value=0)
+
+
 class ConfigureEvaluationsRequestSerializer(serializers.Serializer):
     eval_config = ConfigureEvaluationsSerializer()
     platform = serializers.CharField()

@@ -3,6 +3,7 @@ import uuid
 import structlog
 from django.core.exceptions import ValidationError
 from django.db.models import Q
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
@@ -25,6 +26,7 @@ from sdk.serializers.contracts import (
     ConfigureEvaluationsRequestSerializer,
     SDKConfigureEvaluationsResponseSerializer,
     SDKErrorResponseSerializer,
+    SDKEvaluationDenialResponseSerializer,
     SDKEvalTemplateResponseSerializer,
     SDKGetEvalsResponseSerializer,
     SDKStandaloneEvalRequestSerializer,
@@ -44,6 +46,7 @@ from sdk.utils.evaluations import (
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.external_eval_config import (
     ExternalEvalConfig,
@@ -157,6 +160,16 @@ class StandaloneEvalView(APIView):
         responses={
             200: SDKStandaloneEvalResponseSerializer,
             400: SDKErrorResponseSerializer,
+            402: openapi.Response(
+                "Billing or usage limit. For a partial batch, resume at failed_index; "
+                "completed_results have already executed and may be charged.",
+                SDKEvaluationDenialResponseSerializer,
+            ),
+            429: openapi.Response(
+                "Evaluation rate limit. No Retry-After is returned without a known "
+                "reset time. For partial batches, retry only from failed_index.",
+                SDKEvaluationDenialResponseSerializer,
+            ),
             500: SDKErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -222,6 +235,9 @@ class StandaloneEvalView(APIView):
             logger.info("Successfully completed all evaluations")
             return self._gm.success_response(output_entries)
 
+        except EvaluationDenied as denial:
+            logger.warning("sdk_evaluation_denied", code=denial.code)
+            return denial.response(self._gm)
         except Exception as e:
             logger.exception(f"Error in running standalone eval: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -296,6 +312,8 @@ class StandaloneEvalView_v2(APIView):
 
             if evaluation.status == StatusChoices.FAILED:
                 response_data["result"]["error_message"] = evaluation.error_message
+                if (evaluation.metadata or {}).get("denial"):
+                    response_data["result"]["denial"] = evaluation.metadata["denial"]
 
             return self._gm.success_response(response_data)
 
@@ -313,6 +331,16 @@ class StandaloneEvalView_v2(APIView):
         responses={
             200: SDKStandaloneEvalResponseSerializer,
             400: SDKErrorResponseSerializer,
+            402: openapi.Response(
+                "Billing or usage limit. For a partial batch, resume at failed_index; "
+                "completed_results have already executed and may be charged.",
+                SDKEvaluationDenialResponseSerializer,
+            ),
+            429: openapi.Response(
+                "Evaluation rate limit. No Retry-After is returned without a known "
+                "reset time. For partial batches, retry only from failed_index.",
+                SDKEvaluationDenialResponseSerializer,
+            ),
             500: SDKErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -445,6 +473,9 @@ class StandaloneEvalView_v2(APIView):
                 return jev_error
             return self._gm.bad_request(str(e))
 
+        except EvaluationDenied as denial:
+            logger.warning("sdk_evaluation_denied", code=denial.code)
+            return denial.response(self._gm)
         except Exception as e:
             logger.exception(f"Error in running standalone eval: {str(e)}")
             return self._gm.internal_server_error_response(

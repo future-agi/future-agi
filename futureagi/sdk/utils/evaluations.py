@@ -16,6 +16,7 @@ from sdk.utils.helpers import (
 )
 from tracer.utils.inline_evals import trigger_inline_eval
 from tfc.constants.api_calls import APICallStatusChoices
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_rate_limited
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -56,7 +57,9 @@ def _log_and_deduct_cost_for_standalone_eval(
     if check_usage is not None:
         usage_check = check_usage(str(user.organization.id), api_call_type)
         if not usage_check.allowed:
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+            from ee.usage.exceptions import UsageLimitExceeded
+
+            raise UsageLimitExceeded(usage_check)
 
     if model:
         log_config.update({"model": str(model)})
@@ -76,6 +79,8 @@ def _log_and_deduct_cost_for_standalone_eval(
 
         if not api_call_log_row:
             raise ValueError("API call not allowed : Error validating the api call.")
+
+        raise_if_rate_limited(api_call_log_row)
 
         if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
             raise ValueError(f"API call not allowed: {api_call_log_row.status}")
@@ -455,18 +460,23 @@ def _run_batched_standalone_eval(
 
     for i in range(num_items):
         input_item = {key: inputs[key][i] for key in keys}
-        result = _run_standalone_eval(
-            eval_template,
-            input_item,
-            model,
-            user,
-            workspace,
-            eval_config,
-            error_localizer_enabled,
-            trace_eval,
-            custom_eval_name,
-            span_id,
-        )
+        try:
+            result = _run_standalone_eval(
+                eval_template,
+                input_item,
+                model,
+                user,
+                workspace,
+                eval_config,
+                error_localizer_enabled,
+                trace_eval,
+                custom_eval_name,
+                span_id,
+            )
+        except EvaluationDenied as denial:
+            denial.completed_results = results
+            denial.failed_index = i
+            raise
         results.append(result)
 
     return results
@@ -615,6 +625,8 @@ def _run_protect(
 
         logger.info(f"Protect Eval | Completed: user: {user.id}")
         return formatted
+    except EvaluationDenied:
+        raise
     except Exception as e:
         logger.exception(f"Protect Eval | Failed: user: {user.id}, error: {e}")
         raise e

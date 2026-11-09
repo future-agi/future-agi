@@ -142,6 +142,7 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
+from tfc.utils.evaluation_denials import EvaluationDenied
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
@@ -6811,6 +6812,9 @@ class TraceEvalView(APIView):
                     status="completed",
                 )
 
+            except EvaluationDenied as denial:
+                logger.warning("trace_evaluation_denied", code=denial.code)
+                return denial.response(self._gm)
             except Exception as eval_error:
                 from tfc.ee_gates import jev_error_message
 
@@ -7427,14 +7431,12 @@ class EvalPlayGroundAPIView(APIView):
                 # template rather than the exception text.
                 return self._gm.bad_request(missing_provider_key_message(exc.provider))
             except Exception as exc:
-                if UsageLimitExceeded is not None and isinstance(
-                    exc, UsageLimitExceeded
-                ):
+                if isinstance(exc, EvaluationDenied):
                     logger.warning(
                         "eval_playground_usage_limit",
                         error_type=type(exc).__name__,
                     )
-                    return self._gm.usage_limit_response(exc.check_result)
+                    return exc.response(self._gm)
                 from model_hub.utils.jev_templates import jev_error_response
 
                 # A failed Jev run says what to fix: a rejected key will never
@@ -8142,6 +8144,9 @@ class TestEvaluationTemplateAPIView(APIView):
             if jev_error is not None:
                 return jev_error
             return self._gm.bad_request(missing_provider_key_message(exc.provider))
+        except EvaluationDenied as denial:
+            logger.warning("evaluation_template_test_denied", code=denial.code)
+            return denial.response(self._gm)
         except Exception as exc:
             from model_hub.utils.jev_templates import jev_error_response
 
