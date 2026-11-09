@@ -894,9 +894,12 @@ class TestUserApi:
             "budget_credits_max": 50000,
             "max_minutes_max": 1440,
             "scenarios_min": 1,
+            "cases_min": 1,
+            "variations_per_case": 3,
             "scenarios_max": 200,
         }
         assert options["blocked"] is None
+        assert options["variations_blocked"] is None
 
     @pytest.mark.parametrize(
         ("cases", "minutes"),
@@ -1296,11 +1299,19 @@ class TestUserApi:
         )
         return SimpleNamespace(bare=bare, commit=commit)
 
-    def _ship(self, auth_client, fix_run, candidate, replies, **body):
-        """POST pull-request with ``body`` and GitHub's API answering ``replies`` in turn."""
+    def _ship(self, auth_client, fix_run, candidate, replies, *, head=None, **body):
+        """POST pull-request with ``body`` and GitHub's API answering ``replies`` in turn.
+        The target branch's head is the fix's commit unless ``head`` says otherwise."""
         calls = []
+        source = HostedHarnessJob.no_workspace_objects.get(id=fix_run.source_run_id)
+        commit = (source.payload.get("source") or {}).get("commit_sha")
 
         def answer(method, url, **kwargs):
+            if method == "GET" and "/git/ref/heads/" in url:
+                sha = head or commit
+                return SimpleNamespace(
+                    status_code=200, json=lambda: {"object": {"sha": sha}}, text=""
+                )
             calls.append((method, url, kwargs))
             status, body = replies.pop(0)
             return SimpleNamespace(
@@ -1892,6 +1903,58 @@ class TestUserApi:
         assert environment.agent_version_id == candidate.agent_version_id
         override = self._override(auth_client, fix_run)
         assert (override["reason"], override["by"]["id"]) == (self.REASON, str(user.id))
+
+    def test_an_uploaded_fix_is_not_shipped_over_a_default_that_moved_even_on_a_reason(
+        self, auth_client, environment, source_run
+    ):
+        fix_run, candidate = self._vetoed(source_run, "archive")
+        # Another fix from the same run shipped first.
+        _, shipped = self._proven(source_run, "archive")
+        auth_client.post(
+            f"{BASE}/{shipped.fix_run_id}/candidates/{shipped.id}/make-default/",
+            {},
+            format="json",
+        )
+
+        response = auth_client.post(
+            f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/",
+            {"override_reason": self.REASON},
+            format="json",
+        )
+
+        assert (response.status_code, response.json()["error"]) == (
+            409,
+            "fix_base_moved",
+        )
+        environment.refresh_from_db()
+        assert environment.agent_version_id == shipped.agent_version_id
+        assert self._override(auth_client, fix_run)["reason"] == ""
+
+    @pytest.mark.parametrize("reason", ["", "the regression is a flaky check"])
+    def test_a_github_fix_is_not_shipped_when_its_branch_moved(
+        self, auth_client, source_run, github, reason
+    ):
+        fix_run, candidate = (
+            self._vetoed(source_run, "github")
+            if reason
+            else self._proven(source_run, "github")
+        )
+        body = {"override_reason": reason} if reason else {}
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], head="f" * 40, **body
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            409,
+            "fix_base_moved",
+            [],
+        )
+        assert f"main @ {github.commit[:7]}" in response.json()["message"]
+        assert "main @ fffffff" in response.json()["message"]
+        # Nothing was pushed, and no reason was recorded.
+        assert _git(github.bare, "for-each-ref", "refs/heads/futureagi") == ""
+        assert self._override(auth_client, fix_run)["reason"] == ""
 
 
 @pytest.mark.parametrize(

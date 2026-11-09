@@ -16,23 +16,35 @@ from simulate.temporal.types.agent_fix import (
     AgentFixCloseInput,
     AgentFixInput,
     AgentFixLaunch,
+    AgentFixVariations,
     AgentFixWatch,
     AgentFixWatchInput,
     Observation,
+    VariationsStep,
 )
 from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
 
 
 class FakeActivities:
-    """Each launch returns the next of ``launches``; each watch the next of ``watches``."""
+    """Each launch returns the next of ``launches``; each watch the next of ``watches``;
+    each look at the first step the next of ``variations``, then DONE."""
 
-    def __init__(self, launches, watches=()):
+    def __init__(self, launches, watches=(), variations=()):
         self.launches = list(launches)
         self.watches = list(watches)
+        self.variations = list(variations)
+        self.variation_looks = 0
         self.launch_calls = 0
         self.watched: list[str] = []
         self.released = 0
         self.closed: list[AgentFixCloseInput] = []
+
+    @activity.defn(name="advance_agent_fix_variations")
+    async def advance(self, _input: AgentFixInput) -> AgentFixVariations:
+        self.variation_looks += 1
+        step = self.variations.pop(0) if self.variations else VariationsStep.DONE
+        await asyncio.sleep(0.01)
+        return AgentFixVariations(step=step)
 
     @activity.defn(name="launch_agent_fix_sandbox")
     async def launch(self, _input: AgentFixInput) -> AgentFixLaunch:
@@ -61,7 +73,7 @@ class FakeActivities:
         self.closed.append(input)
 
     def all(self):
-        return [self.launch, self.watch, self.release, self.close]
+        return [self.advance, self.launch, self.watch, self.release, self.close]
 
 
 def _started(command_id="engine-1"):
@@ -288,3 +300,57 @@ async def test_a_run_stopped_before_its_first_sandbox_is_closed_as_stopped(
     assert activities.watched == []
     assert [close.state for close in activities.closed] == ["stopped"]
     assert activities.released == 1
+
+
+@pytest.mark.asyncio
+async def test_the_first_step_runs_before_the_engine_starts(
+    temporal_test_server_options,
+):
+    activities = FakeActivities(
+        launches=[_started()],
+        watches=[Observation.ENDED],
+        variations=[
+            VariationsStep.WAITING,
+            VariationsStep.WRITING,
+            VariationsStep.CHECKING,
+            VariationsStep.DONE,
+        ],
+    )
+
+    result = await _run(activities, temporal_test_server_options)
+
+    assert result.observation == Observation.ENDED
+    assert activities.variation_looks == 4
+    assert activities.launch_calls == 1
+    assert activities.closed == []
+
+
+@pytest.mark.asyncio
+async def test_a_first_step_that_ends_the_fix_starts_no_engine(
+    temporal_test_server_options,
+):
+    activities = FakeActivities(launches=[], variations=[VariationsStep.ENDED])
+
+    result = await _run(activities, temporal_test_server_options)
+
+    assert result.observation == Observation.ENDED
+    assert activities.launch_calls == 0
+    assert activities.released == 1
+    assert activities.closed == []
+
+
+@pytest.mark.asyncio
+async def test_a_builder_past_its_cap_ends_the_fix_on_the_step_s_own_clock(
+    temporal_test_server_options,
+):
+    # Each look waits a minute; the builder has 60 of them.
+    activities = FakeActivities(launches=[], variations=[VariationsStep.WRITING] * 70)
+
+    result = await _run(activities, temporal_test_server_options)
+
+    assert result.observation == Observation.ENDED
+    assert activities.launch_calls == 0
+    assert [(one.state, one.code) for one in activities.closed] == [
+        ("failed", "fix_variations_timeout")
+    ]
+    assert 60 <= activities.variation_looks <= 62
