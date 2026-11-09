@@ -44,7 +44,8 @@ def structural_findings(
 
     A tool the build recorded as unreachable, or a service-backed tool naming no
     service, cannot be routed to the test world. A tool using a dependency the
-    environment cannot stand up reaches the real one: production-only.
+    environment cannot stand up reaches the real one: production-only. The agent's
+    own tools service, which a tool entrypoint names, is stood up with the agent.
     """
     contract = contract or {}
     unroutable = sorted(
@@ -62,11 +63,21 @@ def structural_findings(
             "No reachable implementation for: " + ", ".join(unroutable),
             targets("tool", unroutable, "failed"),
         )
+    # The agent's own tools service: the build stands it up from the agent's source, so it is never production.
+    served = {
+        str(entry.get("service"))
+        for entry in contract.get("tool_entrypoints") or []
+        if isinstance(entry, Mapping)
+        and entry.get("mode") == "service"
+        and entry.get("service")
+    }
     live = sorted(
         {
             str(tool)
             for dependency in contract.get("dependencies") or []
-            if isinstance(dependency, Mapping) and not _provisionable(dependency)
+            if isinstance(dependency, Mapping)
+            and not _provisionable(dependency)
+            and str(dependency.get("name") or "") not in served
             for tool in dependency.get("used_by") or []
         }
     )
