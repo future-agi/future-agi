@@ -41,13 +41,13 @@ def submit_hosted_harness_job(
         require_harness_run_usage,
         require_harness_source_call_usage,
     )
+    from simulate.services.harness_versioning.versions import versioning_enabled
     from simulate.services.hosted_harness import (
         HostedHarnessError,
         create_hosted_job,
         find_replayed_job,
         idempotency_lock_name,
     )
-    from simulate.services.harness_versioning.versions import versioning_enabled
     from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
     # This uses only references/configuration and deployment env presence.
@@ -62,7 +62,9 @@ def submit_hosted_harness_job(
         workspace=workspace,
     )
     if replayed is None and versioning_enabled():
-        from simulate.services.harness_agent_changes import validate_public_github_source
+        from simulate.services.harness_agent_changes import (
+            validate_public_github_source,
+        )
 
         validate_public_github_source(payload, lookup=False)
 
