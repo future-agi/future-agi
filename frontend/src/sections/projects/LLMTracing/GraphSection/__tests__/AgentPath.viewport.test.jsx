@@ -2,9 +2,9 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
-  userEvent,
   within,
 } from "src/utils/test-utils";
 import AgentPath from "../AgentPath";
@@ -104,27 +104,29 @@ describe("AgentPath viewport unit regression", () => {
   it.each(cases)(
     "fits the whole $name after manual zoom",
     async ({ data, fullscreen, viewBox, fittedWidth, fittedHeight }) => {
-      const user = userEvent.setup();
       const { container } = render(<AgentPath data={data} />);
       const inlineChart = container
         .querySelector(".agent-path-node")
         .closest("svg");
-      await user.hover(inlineChart);
+      // The inline toolbar renders only while the graph is hovered. A pointer
+      // move in jsdom reads as leaving the graph and hides it before a click
+      // lands, so hover with mouseover and click without moving the pointer.
+      fireEvent.mouseOver(inlineChart);
 
       let graphRoot = container;
       if (fullscreen) {
-        await user.click(screen.getByTitle("Fullscreen"));
+        fireEvent.click(screen.getByTitle("Fullscreen"));
         graphRoot = await screen.findByRole("dialog");
       }
 
       const chart = graphRoot.querySelector(".agent-path-node").closest("svg");
       const controls = within(graphRoot);
-      await user.click(controls.getByTitle("Zoom in"));
+      fireEvent.click(controls.getByTitle("Zoom in"));
       expect(Number(chart.getAttribute("width"))).toBeGreaterThan(
         Number(fittedWidth),
       );
 
-      await user.click(controls.getByTitle("Fit to view"));
+      fireEvent.click(controls.getByTitle("Fit to view"));
 
       expect(chart).toHaveAttribute("viewBox", viewBox);
       expect(chart).toHaveAttribute("width", fittedWidth);
