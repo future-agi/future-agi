@@ -1,4 +1,6 @@
-import { test, expect } from '../../lib/fixtures';
+import { test, expect } from '../../lib/key-administrator';
+import { sendTrace } from '../../lib/otlp';
+import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 
@@ -40,16 +42,20 @@ test('SET-E2E-003: optional-expiry keys stop access and remain distinguishable f
       'authenticate non-expiring and future keys through headers and Basic auth',
       'after natural expiry, replay both auth paths and distinguish expired from disabled rejection',
       'reload Keys and read the exact Expired and Disabled rows',
+      'warm collector authentication with non-expiring and far-future keys',
+      'save past and near-future expiries in Django admin and refuse previously cached access at each boundary',
+      'keep the unrelated non-expiring key usable and show the admin-edited keys as Expired',
     ],
     backendChecks: [
       'UI-created no-expiry and future keys persist with their exact optional expiry and actor organization.',
       'Non-expiring and future keys authenticate using headers and Basic auth; expired keys consistently return api_key_expired, distinct from manually disabled keys.',
       'The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.',
+      'Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.',
     ],
   }),
 }, async ({ page, actor, probe, request }, testInfo) => {
-  test.setTimeout(480_000);
-  // Six UI_READY stages + natural expiry observation + API/storage headroom = 8 × 60s.
+  test.setTimeout(900_000);
+  // Existing 480s + six admin/UI 60s operations + 60s boundary headroom.
   const prefix = `e2e-key-expiry-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const names = Object.fromEntries(['never', 'future', 'expired', 'disabled']
     .map(kind => [kind, `${prefix}-${kind}`]));
@@ -182,4 +188,85 @@ test('SET-E2E-003: optional-expiry keys stop access and remain distinguishable f
     await expect(disabledRow.getByText('Disabled', { exact: true })).toBeVisible({ timeout: UI_READY });
     await expect(disabledRow.getByText('Expired', { exact: true })).toHaveCount(0, { timeout: UI_READY });
   }, { timeout: 2 * UI_READY });
+
+  const changedKeys: CreatedKey[] = [];
+  for (const kind of ['past', 'near']) {
+    const key = (await actor.api.post<Created>(CREATE, {
+      key_name: `${prefix}-admin-${kind}`,
+      expires_at: kind === 'past' ? null : futureExpiry,
+    })).result;
+    changedKeys.push(key);
+    const seeded = await sendTrace(request, { collectorUrl: E2E.collectorUrl,
+      apiKey: key.api_key, secretKey: key.secret_key, projectName: `${prefix}-${kind}` });
+    await testInfo.attach(`warmed-${kind}-identity`, {
+      body: JSON.stringify({ keyId: key.key_id, traceId: seeded.traceId }),
+      contentType: 'application/json',
+    });
+    await expect.poll(async () => {
+      const rows = await probe.ch<{ n: string }>(
+        'SELECT count() AS n FROM spans FINAL WHERE trace_id = {t:String}', { t: seeded.traceId });
+      return Number(rows[0].n);
+    }, POLL.SPAN_VISIBLE).toBe(2);
+  }
+
+  await test.step('admin: sign in with the limited key-administrator actor', async () => {
+    // Django admin's AuthenticationForm and accounts.admin.OrgApiKeyAdmin.
+    await page.goto(`${E2E.apiUrl}/admin/login/`);
+    await page.locator('#id_username').fill(actor.email);
+    await page.locator('#id_password').fill(actor.password);
+    await page.getByRole('button', { name: 'Log in', exact: true }).click();
+    await expect(page).toHaveURL(`${E2E.apiUrl}/admin/`, { timeout: UI_READY });
+  }, { timeout: UI_READY });
+
+  for (const [index, kind] of ['past', 'near'].entries()) {
+    const key = changedKeys[index];
+    const expires = new Date(Math.floor(Date.now() / 1000) * 1000
+      + (kind === 'past' ? -60_000 : 60_000));
+    const iso = expires.toISOString();
+    await test.step(`admin: save ${kind} expiry through the real change form`, async () => {
+      await page.goto(`${E2E.apiUrl}/admin/accounts/orgapikey/${key.key_id}/change/`);
+      // AdminSplitDateTime widget; admin displays UTC in this managed stack.
+      await page.locator('#id_expires_at_0').fill(iso.slice(0, 10));
+      await page.locator('#id_expires_at_1').fill(iso.slice(11, 19));
+      await page.locator('input[name="_continue"]').click();
+      await expect(page.locator('.messagelist .success')).toBeVisible({ timeout: UI_READY });
+    }, { timeout: UI_READY });
+    const rows = await probe.pg<{ expires_at: Date }>(
+      'SELECT expires_at FROM accounts_orgapikey WHERE id = $1 AND organization_id = $2',
+      [key.key_id, actor.organizationId]);
+    expect(rows.map(row => row.expires_at.toISOString())).toEqual([iso]);
+    const headers = { 'X-Api-Key': key.api_key, 'X-Secret-Key': key.secret_key };
+    // Empty OTLP export is a valid request, accepted before expiry. Authentication
+    // assertions are single calls, not polled or retried.
+    if (kind === 'near') {
+      const before = await request.post(`${E2E.collectorUrl}/v1/traces`, {
+        headers, data: { resourceSpans: [] },
+      });
+      expect(before.status()).toBe(200);
+      await expect.poll(() => Date.now() >= expires.getTime(), { timeout: UI_READY }).toBe(true);
+    }
+    const refused = await request.post(`${E2E.collectorUrl}/v1/traces`, {
+      headers, data: { resourceSpans: [] },
+    });
+    expect(refused.status()).toBe(401);
+    expect((await refused.json()).code).toBe('api_key_expired');
+    const apiRefused = await request.get(`${E2E.apiUrl}${HEALTH}`, { headers });
+    expect(apiRefused.status()).toBe(401);
+    expect((await apiRefused.json()).code).toBe('api_key_expired');
+    const control = keys.find(k => k.key_name === names.never)!;
+    const controlHeaders = { 'X-Api-Key': control.api_key, 'X-Secret-Key': control.secret_key };
+    const collectorControl = await request.post(`${E2E.collectorUrl}/v1/traces`, {
+      headers: controlHeaders, data: { resourceSpans: [] },
+    });
+    expect(collectorControl.status()).toBe(200);
+    expect((await request.get(`${E2E.apiUrl}${HEALTH}`, { headers: controlHeaders })).status()).toBe(200);
+  }
+  await test.step('UI: the admin-edited keys show Expired', async () => {
+    await page.goto(PAGE, { waitUntil: 'domcontentloaded' });
+    await page.getByPlaceholder('Search', { exact: true }).fill(`${prefix}-admin-`);
+    for (const key of changedKeys) {
+      await expect(page.locator(`[role="row"][data-id="${key.key_id}"]`)
+        .getByText('Expired', { exact: true })).toBeVisible({ timeout: UI_READY });
+    }
+  }, { timeout: UI_READY });
 });

@@ -2413,7 +2413,7 @@
 
 **Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
 
-**Spec:** `flows/settings/api-key-expiry.spec.ts:31`
+**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
 
 **Tags:** —
 
@@ -2425,12 +2425,16 @@
 4. authenticate non-expiring and future keys through headers and Basic auth
 5. after natural expiry, replay both auth paths and distinguish expired from disabled rejection
 6. reload Keys and read the exact Expired and Disabled rows
+7. warm collector authentication with non-expiring and far-future keys
+8. save past and near-future expiries in Django admin and refuse previously cached access at each boundary
+9. keep the unrelated non-expiring key usable and show the admin-edited keys as Expired
 
 **Backend state verified:**
 
 - UI-created no-expiry and future keys persist with their exact optional expiry and actor organization.
 - Non-expiring and future keys authenticate using headers and Basic auth; expired keys consistently return api_key_expired, distinct from manually disabled keys.
 - The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.
+- Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.
 
 ## simulate
 
