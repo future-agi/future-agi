@@ -28,12 +28,14 @@ import {
 import ScenarioPicker from "./ScenarioPicker";
 import { formatCredits, formatMinutes } from "./fixRunView";
 import {
+  NO_MODELS_NOTE,
   UNTRACED_NOTE,
   blockedReason as blockedReasonOf,
   budgetSteps,
   costLimitOf,
   countsLine,
   isTraced,
+  seesModels,
   launchError,
   marginSteps,
   minuteSteps,
@@ -212,14 +214,14 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
   }
 
   const { agent, environment, limits } = options;
-  const traced = isTraced(options);
+  const lockable = seesModels(options);
   const error = launchError({
     targets,
     protectedKeys,
     surfaces,
     limits,
     models,
-    traced,
+    needsModels: lockable,
     costLimit,
   });
   const blockedReason = blockedReasonOf(options, targets.length);
@@ -246,7 +248,8 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         locked_paths: locked,
         budget_credits: budget,
         max_minutes: minutes,
-        allowed_models: traced ? models : [],
+        // A form that saw no model leaves the default to the platform.
+        ...(lockable ? { allowed_models: models } : {}),
         reply_latency_margin_pct: latencyMargin,
         cost_margin_pct: costMargin,
         cost_limit_usd: costLimitOf(costLimit),
@@ -389,7 +392,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
             />
           </Row>
           <Row k="Models" center>
-            {traced ? (
+            {lockable ? (
               <ChipsInput
                 values={models}
                 onChange={setModels}
@@ -399,7 +402,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
               />
             ) : (
               <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-                {UNTRACED_NOTE}
+                {isTraced(options) ? NO_MODELS_NOTE : UNTRACED_NOTE}
               </Typography>
             )}
           </Row>

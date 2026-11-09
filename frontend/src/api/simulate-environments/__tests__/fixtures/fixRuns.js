@@ -537,6 +537,7 @@ export function fixtureLaunchOptions(sourceRunId) {
       budget_credits: 1500,
       max_minutes: 150,
       allowed_models: [],
+      agent_cost_metered: false,
       reply_latency_margin_pct: 25,
       cost_margin_pct: 25,
     },

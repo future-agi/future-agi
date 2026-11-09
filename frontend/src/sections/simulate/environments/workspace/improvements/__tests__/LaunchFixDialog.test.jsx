@@ -373,7 +373,6 @@ describe("LaunchFixDialog", () => {
     const [url, body] = axios.post.mock.calls.at(-1);
     expect(url).toBe("/simulate/api/agent-fix-runs/");
     expect(Object.keys(body).sort()).toEqual([
-      "allowed_models",
       "budget_credits",
       "cost_limit_usd",
       "cost_margin_pct",
@@ -386,13 +385,14 @@ describe("LaunchFixDialog", () => {
       "target_scenario_keys",
     ]);
     expect(body.source_run_id).toBe("te-run-6");
-    // An untraced agent: no model to lock, the default margins, no cost limit.
+    // An untraced agent: no model to lock, so the platform keeps its default;
+    // the default margins, and no cost limit.
+    expect("allowed_models" in body).toBe(false);
     expect([
-      body.allowed_models,
       body.reply_latency_margin_pct,
       body.cost_margin_pct,
       body.cost_limit_usd,
-    ]).toEqual([[], 25, 25, null]);
+    ]).toEqual([25, 25, null]);
     expect(navigate.mock.calls[0][0]).toMatch(
       /^\/dashboard\/simulate\/environments\/env-1\/improvements\/fix-new-\d+$/,
     );
@@ -406,6 +406,22 @@ describe("LaunchFixDialog", () => {
       await screen.findByText(/This agent is not traced/),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Add an allowed model")).toBeNull();
+  });
+
+  it("says when the traces name no model, and leaves the lock to the platform", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.defaults.agent_cost_metered = true;
+    pinOptions(options);
+    const user = userEvent.setup();
+    renderDialog();
+
+    expect(
+      await screen.findByText(/This agent's traces name no model/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/This agent is not traced/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Start improvement" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    expect("allowed_models" in axios.post.mock.calls.at(-1)[1]).toBe(false);
   });
 
   it("locks a traced agent to the models its run called, and sends the user's limits", async () => {

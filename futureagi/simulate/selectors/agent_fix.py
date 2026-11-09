@@ -435,17 +435,39 @@ def _record(
     )
 
 
+def _read_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
+    if run.test_execution_id is None:
+        return {}
+    return run_usage(run.test_execution) or {}
+
+
 def call_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
     """Each call's model calls in a run, from the spans its agent exported, by call id.
     Empty when the agent is not traced, and when the read fails: the calls then read as
     unmeasured, and what depends on them as not verified."""
-    if run.test_execution_id is None:
-        return {}
     try:
-        return run_usage(run.test_execution) or {}
+        return _read_usage(run)
     except CHError:
         logger.warning("agent_fix_span_read_failed", run=str(run.id), exc_info=True)
         return {}
+
+
+def source_run_usage(source_run: HostedHarnessJob) -> dict[str, CallUsage]:
+    """``call_usage`` for the run a fix starts from, whose spans set what the fix can
+    check for good. A read that fails refuses the launch, to be tried again: a fix
+    frozen as untraced would never check what it could have."""
+    try:
+        return _read_usage(source_run)
+    except CHError as exc:
+        logger.warning(
+            "agent_fix_source_span_read_failed", run=str(source_run.id), exc_info=True
+        )
+        raise HostedHarnessError(
+            "fix_traces_unreadable",
+            "could not read this run's traces; try again",
+            status_code=503,
+            retryable=True,
+        ) from exc
 
 
 def models_called(usage: Mapping[str, CallUsage]) -> list[str]:
@@ -1090,6 +1112,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
     )
     blocked = launch_blocker(source_run)
     variations_blocked = variations_blocker(source_run)
+    usage = call_usage(source_run)
     return LaunchOptions(
         source_run=LaunchSourceRun(
             id=str(source_run.test_execution_id),
@@ -1127,7 +1150,8 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,
             max_minutes=default_max_minutes(len(scenarios) + variations),
-            allowed_models=models_called(call_usage(source_run)),
+            allowed_models=models_called(usage),
+            agent_cost_metered=bool(usage),
             reply_latency_margin_pct=MARGIN_PCT_DEFAULT,
             cost_margin_pct=MARGIN_PCT_DEFAULT,
         ),

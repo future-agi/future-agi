@@ -92890,6 +92890,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "budget_credits",
         "max_minutes",
         "allowed_models",
+        "agent_cost_metered",
         "reply_latency_margin_pct",
         "cost_margin_pct",
       ],
@@ -92916,6 +92917,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        agent_cost_metered: {
+          title: "Agent cost metered",
+          type: "boolean",
         },
         reply_latency_margin_pct: {
           title: "Reply latency margin pct",

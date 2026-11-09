@@ -36569,6 +36569,7 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     budget_credits: zod.number(),
     max_minutes: zod.number(),
     allowed_models: zod.array(zod.string().min(1)),
+    agent_cost_metered: zod.boolean(),
     reply_latency_margin_pct: zod.number(),
     cost_margin_pct: zod.number(),
   }),

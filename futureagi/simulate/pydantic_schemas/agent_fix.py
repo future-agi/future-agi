@@ -341,8 +341,11 @@ class LaunchDefaults(BaseModel):
     surfaces: list[Surface]
     budget_credits: int
     max_minutes: int
-    # The models the run's spans show the agent called; empty when it exported none.
+    # The models the run's spans show the agent called; empty when they named none.
     allowed_models: list[str]
+    # Whether the run's spans exported the agent's model calls, so a fix can measure
+    # their cost even when they name no model.
+    agent_cost_metered: bool
     reply_latency_margin_pct: int
     cost_margin_pct: int
 

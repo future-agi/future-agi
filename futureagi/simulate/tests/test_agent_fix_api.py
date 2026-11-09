@@ -895,6 +895,7 @@ class TestUserApi:
             "budget_credits": 1500,
             "max_minutes": 180,
             "allowed_models": [],
+            "agent_cost_metered": False,
             "reply_latency_margin_pct": 25,
             "cost_margin_pct": 25,
         }

@@ -57,7 +57,7 @@ class CallUsage:
 
     models: list[str]
     llm_spans: int
-    # None when a span counted tokens but no cost: an unpriced model is not free.
+    # None when an LLM or embedding span carried no cost.
     cost_usd: float | None
 
 
@@ -168,27 +168,31 @@ def run_traces_params(
 
 
 def run_usage_sql() -> str:
-    """Each call's LLM spans: the models they named, how many there were, their cost, and
-    how many counted tokens but no cost. A trace counts for its call, as in the list."""
-    is_llm = "observation_type = 'llm'"
+    """Each call's model calls: the models its LLM spans named, how many there were,
+    what its LLM and embedding spans cost, and how many of those carried no cost. A span
+    counts for the call it names, else for the call its trace names, as in the list."""
+    call_mark = f"{cols.ATTRS_STRING}['{CALL_MARK_KEY}']"
+    has_call_mark = f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')"
     # The request model a span names, else the model column, for an instrumentor that
     # names its model in another convention.
     model = f"if({cols.LLM_REQUEST_MODEL} != '', {cols.LLM_REQUEST_MODEL}, model)"
     return (
         "SELECT call_execution_id, "
-        "groupUniqArrayArray(trace_models) AS models, "
-        "sum(trace_llm_spans) AS llm_spans, "
-        "sum(trace_cost) AS cost, "
-        "sum(trace_unpriced) AS unpriced "
+        "groupUniqArrayIf(span_model, is_llm AND span_model != '') AS models, "
+        "countIf(is_llm) AS llm_spans, "
+        "countIf(is_billed) AS billed_spans, "
+        "sumIf(span_cost, is_billed) AS cost, "
+        "countIf(is_billed AND NOT span_cost > 0) AS unpriced "
         "FROM ("
-        f"SELECT {_CALL_OF_TRACE}, "
-        f"groupUniqArrayIf({model}, {is_llm} AND {model} != '') AS trace_models, "
-        f"countIf({is_llm}) AS trace_llm_spans, "
-        f"sumIf(cost, {is_llm}) AS trace_cost, "
-        f"countIf({is_llm} AND total_tokens > 0 AND cost = 0) AS trace_unpriced "
+        f"SELECT if({has_call_mark}, {call_mark}, "
+        f"argMinIf({call_mark}, start_time, {has_call_mark}) "
+        "OVER (PARTITION BY trace_id)) AS call_execution_id, "
+        "observation_type = 'llm' AS is_llm, "
+        "observation_type IN ('llm', 'embedding') AS is_billed, "
+        f"{model} AS span_model, "
+        "cost AS span_cost "
         "FROM spans FINAL "
         f"{_job_scope_sql()}"
-        "GROUP BY trace_id"
         ") "
         "WHERE call_execution_id != '' "
         "GROUP BY call_execution_id"
@@ -196,8 +200,10 @@ def run_usage_sql() -> str:
 
 
 def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
-    """Each call's model calls in a run, by call id; a call that exported no LLM span is
-    missing. None when the run's agent is not traced, so none of its calls can be seen."""
+    """Each call's model calls in a run, by call id; a call that exported no LLM or
+    embedding span is missing. None when the run's agent is not traced, so none of its
+    calls can be seen. A span with no cost leaves its call's cost unknown: it may be an
+    unpriced model, and an unpriced model is not free."""
     source = run_traces_source(execution)
     if source is None:
         return None
@@ -210,8 +216,8 @@ def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
             llm_spans=int(llm_spans),
             cost_usd=None if unpriced else float(cost),
         )
-        for call_id, models, llm_spans, cost, unpriced in rows
-        if llm_spans
+        for call_id, models, llm_spans, billed_spans, cost, unpriced in rows
+        if billed_spans
     }
 
 

@@ -52,11 +52,10 @@ def spans(ch_database, monkeypatch):
             trace,
             *,
             call=None,
-            llm=False,
+            kind="chain",
             model="",
             model_column=None,
             cost=0.0,
-            tokens=0,
             project=PROJECT,
             job=JOB,
             at=START + timedelta(minutes=5),
@@ -69,12 +68,11 @@ def spans(ch_database, monkeypatch):
             pairs = ", ".join(f"'{key}', '{value}'" for key, value in attrs.items())
             client.execute(
                 "INSERT INTO spans (project_id, observation_type, start_time, trace_id,"
-                " id, model, cost, total_tokens, attrs_string, resource_attrs,"
+                " id, model, cost, attrs_string, resource_attrs,"
                 " created_at, updated_at, _version) VALUES"
-                f" ('{project}', '{'llm' if llm else 'chain'}',"
+                f" ('{project}', '{kind}',"
                 f" '{at:%Y-%m-%d %H:%M:%S}', '{trace}', '{uuid.uuid4()}',"
-                f" '{column}', {cost},"
-                f" {tokens}, map({pairs}),"
+                f" '{column}', {cost}, map({pairs}),"
                 f""" '{{"fi": {{"simulation": {{"job_id": "{job}"}}}}}}',"""
                 " now64(), now64(), 1)"
             )
@@ -103,25 +101,47 @@ def test_each_call_s_models_spans_and_cost_come_from_its_traces(spans, monkeypat
     one, two, three = (str(uuid.uuid4()) for _ in range(3))
     # The call is named on the trace's root only; its LLM spans count for it.
     spans(one, call=priced)
-    spans(one, llm=True, model="m1", cost=0.01, tokens=100)
-    spans(one, llm=True, model="m2", cost=0.02, tokens=50)
+    spans(one, kind="llm", model="m1", cost=0.01)
+    spans(one, kind="llm", model="m2", cost=0.02)
     spans(two, call=priced)
-    spans(two, llm=True, model="m1", cost=0.005, tokens=20)
+    spans(two, kind="llm", model="m1", cost=0.005)
     # A span that names its model only in the model column, not in
     # gen_ai.request.model.
-    spans(two, llm=True, model_column="m3", cost=0.001, tokens=5)
-    # An LLM span with tokens and no cost: an unpriced model, not a free one.
+    spans(two, kind="llm", model_column="m3", cost=0.001)
+    # An embedding's cost is the agent's too; it names no model the lock checks.
+    spans(two, kind="embedding", model_column="e1", cost=0.002)
+    # An LLM span with no cost, whatever its tokens say: an instrumentor that
+    # reports input and output tokens only leaves the total at 0 too.
     spans(three, call=unpriced)
-    spans(three, llm=True, model="m1", cost=0.0, tokens=70)
-    spans(three, llm=True, model="m1", cost=0.01, tokens=70)
+    spans(three, kind="llm", model="m1", cost=0.0)
+    spans(three, kind="llm", model="m1", cost=0.01)
 
     usage = run_traces_v3.run_usage(SimpleNamespace())
 
     assert usage.keys() == {priced, unpriced}
     assert usage[priced].models == ["m1", "m2", "m3"]
     assert usage[priced].llm_spans == 4
-    assert usage[priced].cost_usd == pytest.approx(0.036)
+    assert usage[priced].cost_usd == pytest.approx(0.038)
     assert usage[unpriced] == CallUsage(models=["m1"], llm_spans=2, cost_usd=None)
+
+
+@pytest.mark.integration
+def test_a_span_counts_for_the_call_it_names_before_its_trace_s(spans, monkeypatch):
+    _traced(monkeypatch)
+    first, second, trace = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    # The trace's root starts first, so the trace is its call's.
+    spans(trace, call=first, at=START + timedelta(minutes=1))
+    spans(trace, kind="llm", model="m1", cost=0.01)
+    # One trace, two calls: this span names its own.
+    spans(trace, call=second, kind="llm", model="m2", cost=0.02)
+
+    usage = run_traces_v3.run_usage(SimpleNamespace())
+
+    assert {call: (one.models, one.llm_spans) for call, one in usage.items()} == {
+        first: (["m1"], 1),
+        second: (["m2"], 1),
+    }
+    assert usage[second].cost_usd == pytest.approx(0.02)
 
 
 @pytest.mark.integration
@@ -138,9 +158,9 @@ def test_spans_outside_the_job_its_project_or_its_window_do_not_count(
     ):
         trace = str(uuid.uuid4())
         spans(trace, call=call, **where)
-        spans(trace, llm=True, model="m1", cost=0.01, tokens=10, **where)
+        spans(trace, kind="llm", model="m1", cost=0.01, **where)
     # A trace no call owns, and a call's trace with no LLM span.
-    spans(str(uuid.uuid4()), llm=True, model="m9", cost=1.0, tokens=10)
+    spans(str(uuid.uuid4()), kind="llm", model="m9", cost=1.0)
     spans(str(uuid.uuid4()), call=call)
 
     assert run_traces_v3.run_usage(SimpleNamespace()) == {}

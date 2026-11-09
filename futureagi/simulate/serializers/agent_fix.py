@@ -520,6 +520,8 @@ class AgentFixLaunchDefaultsSerializer(serializers.Serializer):
     # The models the run's spans show the agent called; empty when the agent is not
     # traced, so a fix cannot see its model calls or their cost.
     allowed_models = serializers.ListField(child=serializers.CharField())
+    # Whether the run's spans exported the agent's model calls at all.
+    agent_cost_metered = serializers.BooleanField()
     reply_latency_margin_pct = serializers.IntegerField()
     cost_margin_pct = serializers.IntegerField()
 

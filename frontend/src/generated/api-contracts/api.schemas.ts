@@ -18199,6 +18199,7 @@ export interface AgentFixLaunchDefaultsApi {
   budget_credits: number;
   max_minutes: number;
   allowed_models: string[];
+  agent_cost_metered: boolean;
   reply_latency_margin_pct: number;
   cost_margin_pct: number;
 }

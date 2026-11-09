@@ -91,12 +91,19 @@ const MARGIN_MAX = 1000;
 export const marginSteps = (value) =>
   stepsWithin(MARGIN_STEPS, value, MARGIN_MAX);
 
-// The run's spans show the models the agent called; with none, a fix cannot see
-// its model calls at all.
-export const isTraced = (options) => options.defaults.allowed_models.length > 0;
+// The models the run's spans show the agent called: the lock a fix starts from.
+export const seesModels = (options) =>
+  options.defaults.allowed_models.length > 0;
+
+// Whether the run exported the agent's model calls at all, named or not.
+export const isTraced = (options) =>
+  seesModels(options) || options.defaults.agent_cost_metered;
 
 export const UNTRACED_NOTE =
   "This agent is not traced, so a fix cannot see the models it calls or what they cost. The model lock and the cost limit will read as not verified.";
+
+export const NO_MODELS_NOTE =
+  "This agent's traces name no model, so the model lock will read as not verified. Its cost is still checked.";
 
 // The limit on the agent's spend per conversation, in US dollars: null when
 // left empty, NaN when it is not a number above 0.
@@ -113,7 +120,7 @@ export function launchError({
   surfaces,
   limits,
   models = [],
-  traced = false,
+  needsModels = false,
   costLimit = "",
 }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
@@ -127,7 +134,7 @@ export function launchError({
     return "A case can't be both fixed and protected.";
   }
   if (!surfaces.length) return "Pick at least one part it may change.";
-  if (traced && !models.length) return "Allow at least one model.";
+  if (needsModels && !models.length) return "Allow at least one model.";
   if (Number.isNaN(costLimitOf(costLimit))) {
     return "The cost limit must be a number of dollars above 0.";
   }

@@ -2424,13 +2424,41 @@ class TestLaunchConstraints:
 
         assert (
             defaults.allowed_models,
+            defaults.agent_cost_metered,
             defaults.reply_latency_margin_pct,
             defaults.cost_margin_pct,
-        ) == (["gpt-5-mini", "vertex_ai/gemini-3.8-flash"], 25, 25)
+        ) == (["gpt-5-mini", "vertex_ai/gemini-3.8-flash"], True, 25, 25)
 
     def test_an_untraced_agent_s_form_allows_no_model(self, source_run):
         with patch(TRACED, _usage(None)):
-            assert launch_options(source_run).defaults.allowed_models == []
+            defaults = launch_options(source_run).defaults
+
+        assert (defaults.allowed_models, defaults.agent_cost_metered) == ([], False)
+
+    def test_a_form_whose_spans_name_no_model_still_says_their_cost_is_measured(
+        self, source_run
+    ):
+        usage = self._source_usage(
+            source_run, [CallUsage(models=[], llm_spans=2, cost_usd=0.01)]
+        )
+        with patch(TRACED, _usage(usage)):
+            defaults = launch_options(source_run).defaults
+
+        assert (defaults.allowed_models, defaults.agent_cost_metered) == ([], True)
+
+    def test_a_launch_whose_traces_cannot_be_read_is_refused_to_be_tried_again(
+        self, source_run, user
+    ):
+        with patch(TRACED, side_effect=CHError("down")):
+            with pytest.raises(HostedHarnessError) as refused:
+                _launch(source_run, user)
+
+        assert (
+            refused.value.code,
+            refused.value.status_code,
+            refused.value.retryable,
+        ) == ("fix_traces_unreadable", 503, True)
+        assert not AgentFixRun.no_workspace_objects.exists()
 
     def test_a_traced_agent_s_fix_is_locked_to_its_models_and_measures_its_calls(
         self, source_run, user

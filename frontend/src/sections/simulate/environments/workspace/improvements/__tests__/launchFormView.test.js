@@ -11,6 +11,7 @@ import {
   blockedReason,
   costLimitOf,
   isTraced,
+  seesModels,
   marginSteps,
 } from "../launchFormView";
 
@@ -165,10 +166,10 @@ describe("launch checks", () => {
       "A case can't be both fixed and protected.",
     ],
     [{ ...ok, surfaces: [] }, "Pick at least one part it may change."],
-    [{ ...ok, traced: true, models: ["m1"] }, null],
-    [{ ...ok, traced: true, models: [] }, "Allow at least one model."],
-    // An untraced agent's fix sees no model, so it needs none allowed.
-    [{ ...ok, traced: false, models: [] }, null],
+    [{ ...ok, needsModels: true, models: ["m1"] }, null],
+    [{ ...ok, needsModels: true, models: [] }, "Allow at least one model."],
+    // A fix that sees no model needs none allowed.
+    [{ ...ok, needsModels: false, models: [] }, null],
     [{ ...ok, costLimit: "0.05" }, null],
     [
       { ...ok, costLimit: "0" },
@@ -196,8 +197,14 @@ describe("constraints", () => {
     expect(marginSteps(40)).toEqual([10, 25, 40, 50, 100]);
   });
 
-  it("calls an agent traced only when the run's spans named a model", () => {
-    expect(isTraced({ defaults: { allowed_models: [] } })).toBe(false);
-    expect(isTraced({ defaults: { allowed_models: ["m1"] } })).toBe(true);
+  it("calls an agent traced when its spans named a model or measured its cost", () => {
+    const options = (allowed_models, agent_cost_metered) => ({
+      defaults: { allowed_models, agent_cost_metered },
+    });
+    expect(isTraced(options([], false))).toBe(false);
+    expect(isTraced(options([], true))).toBe(true);
+    expect(isTraced(options(["m1"], false))).toBe(true);
+    expect(seesModels(options([], true))).toBe(false);
+    expect(seesModels(options(["m1"], false))).toBe(true);
   });
 });

@@ -29,7 +29,6 @@ from simulate.pydantic_schemas.agent_fix import (
 )
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
-    call_usage,
     default_max_minutes,
     fewest_failing_cases,
     is_retryable,
@@ -38,6 +37,7 @@ from simulate.selectors.agent_fix import (
     overridable_regressions,
     recent_lost_models,
     scenario_results,
+    source_run_usage,
     variations_blocker,
     written_variations,
 )
@@ -186,7 +186,7 @@ def launch_fix_run(
         max_minutes = default_max_minutes(
             len(ran) + (VARIATIONS_PER_CASE * failing_cases if variations else 0)
         )
-    usage = call_usage(source_run)
+    usage = source_run_usage(source_run)
     seen = models_called(usage)
     allowed = list(dict.fromkeys(seen if allowed_models is None else allowed_models))
     # A fix that sees the agent's models with none allowed would refuse every candidate.
