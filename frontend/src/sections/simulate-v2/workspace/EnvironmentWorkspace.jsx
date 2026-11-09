@@ -197,7 +197,8 @@ import AlsoRunIn from "../run/AlsoRunIn";
 import WorldPanel from "./WorldPanel";
 import SettingsPanel from "./SettingsPanel";
 import { clickable, focusRing } from "../components/clickable";
-import { compatibilityOf, pairingStampOf } from "../_mock/compatibility";
+import { compatibilityOf, pairingStampOf,
+  PAIR_CHECK_LIMIT_MIN } from "../_mock/compatibility";
 import { buildableAgentsOf } from "../environments/worldSource";
 
 /**
@@ -1229,18 +1230,28 @@ export default function EnvironmentWorkspace() {
     setCapsChecking(true);
     setTimeout(
       () => {
-        /* A check that fails on our side (?check=unavailable shows it):
-           nothing about the pairing is learned, so it counts against
-           nothing and runs aren't held. */
-        if (new URLSearchParams(window.location.search).get("check") === "unavailable") {
+        /* A check that fails on our side (?check=unavailable shows it) or
+           runs past its limit (?check=timeout): nothing about the pairing
+           is learned, so it counts against nothing and runs aren't held. */
+        const knob = new URLSearchParams(window.location.search).get("check");
+        if (knob === "unavailable" || knob === "timeout") {
+          const timedOut = knob === "timeout";
           setAgentValues(agentKey, {
             checkUnavailable: {
               at: new Date().toISOString(),
-              reason: "The test world couldn't be prepared on our side",
+              timedOut,
+              reason: timedOut
+                ? `It didn't finish within ${PAIR_CHECK_LIMIT_MIN} minutes`
+                : "The test world couldn't be prepared on our side",
             },
           });
           setCapsChecking(false);
-          enqueueSnackbar("The check couldn't run on our side — runs aren't held. Try again later.", { variant: "info" });
+          enqueueSnackbar(
+            timedOut
+              ? `The check didn't finish within ${PAIR_CHECK_LIMIT_MIN} minutes — runs aren't held. Re-check to try again.`
+              : "The check couldn't run on our side — runs aren't held. Try again later.",
+            { variant: "info" },
+          );
           return;
         }
         const out = runConnectionCheck(agentNow, spec, found.tools);

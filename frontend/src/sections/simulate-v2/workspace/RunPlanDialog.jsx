@@ -229,6 +229,8 @@ export default function RunPlanDialog({
   const [blockedChoice, setBlockedChoice] = useState(null);
   const subsetOk = blockedChoice === "eligible" || blockedChoice === "observe";
   const blockedN = compat?.scope?.blocked?.length || 0;
+  /* After a failed check the whole pairing is refused — no subset to pick. */
+  const pairFailed = compat?.validation?.state === "failed";
   const blockingRows = (compat?.rows || []).filter((r) => r.blocks);
   /* Observing a case changes nothing for a tool that would write to
      production, a tool the agent lacks, or answers it could read. */
@@ -381,9 +383,8 @@ export default function RunPlanDialog({
     ledger.project,
     { user: me, userUsed: ledger.user },
   );
-  /* Runs of a pairing wait while its check runs, and are held after it
-     failed when nothing can run; a check unavailable on our side holds
-     nothing. */
+  /* Runs of a pairing wait while its check runs and are refused after it
+     failed; a check unavailable on our side, or timed out, holds nothing. */
   const pairHold = !compat
     ? null
     : checkingCompat
@@ -391,9 +392,9 @@ export default function RunPlanDialog({
           title: "Waiting for this pairing's check",
           line: "Runs start once it finishes.",
         }
-      : compat.validation?.state === "failed" && !compat.scope.runnable
+      : pairFailed
         ? {
-            title: "Held — this pairing's last check failed",
+            title: "Refused — this pairing's last check failed",
             line: "Fix what it found and re-check.",
           }
         : null;
@@ -488,7 +489,7 @@ export default function RunPlanDialog({
               checking={checkingCompat}
               excluded={breakdown?.excluded || 0}
             >
-              {blockedN > 0 && (
+              {blockedN > 0 && !pairFailed && (
                 <Stack spacing={1}>
                   {blockedN > 0 && (
                     <>

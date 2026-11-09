@@ -28,7 +28,11 @@ import {
   scenariosCalling,
   toolFit,
 } from "./toolFit";
-import { currentAgentVersion, currentEnvVersion } from "./versions";
+import {
+  currentAgentVersion,
+  currentEnvVersion,
+  isCredentialsVersion,
+} from "./versions";
 import { hashSeed } from "./runStream";
 import { familyOf, transportQualified } from "./testedVersions";
 import { checksStateOf } from "./release";
@@ -300,8 +304,9 @@ export const compatibilityOf = ({
     )
     .map((s) => s.id);
 
-  /* Stale: evidence that no longer matches — a credential changed, or the
-     source moved on after the last test. */
+  /* Stale: evidence that no longer matches — the agent version, the
+     environment version or the scenarios moved on after the last check. A
+     credentials-only version keeps the check: it behaves as its base. */
   const testedAt = test?.at ? Date.parse(test.at) : null;
   /* Only a version that was actually saved — a stand-in "v1" is dated now. */
   const saved = (envState?.agentVersions || []).find(
@@ -312,9 +317,8 @@ export const compatibilityOf = ({
      environment version or edited scenarios make that check stale too. */
   const checkedHere = env?.id ? v.checkedOn?.[env.id] || null : null;
   const pairNow = checkedHere ? pairingStampOf(env, envState) : null;
-  const staleWhy = v.disconnected
-    ? "A credential it uses changed since the last test"
-    : testedAt && versionAt && versionAt > testedAt
+  const staleWhy =
+    testedAt && versionAt && versionAt > testedAt && !isCredentialsVersion(saved)
       ? `Agent ${version.label} arrived after the last test`
       : checkedHere && pairNow.envVersion !== checkedHere.envVersion
         ? `Environment ${pairNow.envVersion} was saved after the last check (it ran on ${checkedHere.envVersion})`
@@ -1018,17 +1022,26 @@ export const PAIR_CHECK_LIMIT_MIN = 45;
 
 /*
   The pairing's last check, as a run reads it: ready, stale, failed (runs
-  of the pairing are held), or unavailable — the check failed on our side
-  (the test world couldn't be prepared), so it counts against nothing and
-  runs aren't held. "validating" is the live state, passed in by the caller.
+  of the pairing are refused until a check passes), unavailable — the check
+  failed on our side (the test world couldn't be prepared) — or timed out
+  (it didn't finish within PAIR_CHECK_LIMIT_MIN). Neither of the last two
+  counts against the pairing or holds runs. "validating" is the live state,
+  passed in by the caller.
 */
 const validationOf = (v, test, testedAt, rows, staleWhy) => {
   const off = v.checkUnavailable;
   if (off && (!testedAt || Date.parse(off.at) > testedAt))
-    return { state: "unavailable", reason: off.reason, at: off.at };
+    return {
+      state: off.timedOut ? "timed_out" : "unavailable",
+      reason: off.reason,
+      at: off.at,
+    };
   if (!test) return null;
+  /* The agent's check fails only when it couldn't start or reply; any other
+     blocked row (a tool still reaching production, say) holds back just the
+     cases that need it. */
   const failed = rows.filter(
-    (r) => r.status === "blocked" && r.repair === "connection",
+    (r) => r.status === "blocked" && (r.id === "start" || r.id === "message"),
   );
   if (failed.length)
     return {

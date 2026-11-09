@@ -1710,6 +1710,8 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                           `Agent ${c.identity?.agentVersion || "v1"} on environment ${c.identity?.worldVersion || "v1"} · ${c.testedAt ? `checked ${ago(c.testedAt)}` : "never checked"}`,
                           v === "unavailable"
                             ? "Last check unavailable on our side — it held nothing."
+                            : v === "timed_out"
+                              ? "Last check didn't finish in time — it held nothing."
                             : v === "stale"
                               ? `Stale: ${c.staleWhy}.`
                               : null,

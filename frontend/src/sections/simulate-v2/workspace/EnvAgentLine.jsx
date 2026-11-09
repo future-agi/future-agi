@@ -30,6 +30,7 @@ import {
   currentAgentVersion,
   currentEnvVersion,
   isAgentPinned,
+  isCredentialsVersion,
   isPendingDraft,
   versionNumber,
 } from "../_mock/versions";
@@ -127,15 +128,30 @@ export default function EnvAgentLine({
   const [menu, setMenu] = useState(null);
   const [switching, setSwitching] = useState(false);
   /* A new default for a pairing no check has covered waits for its check;
-     the environment keeps testing the old version until it passes. */
+     the environment keeps testing the old version until it passes. A
+     credentials-only version behaves as its base, so it moves at once.
+     ?check=fail on the page makes the check fail. */
   const checkable = checksConnection(record || agent);
+  const needsCheck = (label) =>
+    checkable &&
+    !isCredentialsVersion(versions.find((x) => x.label === label));
   const [pendingDefault, setPendingDefault] = useState(null);
+  const [failedDefault, setFailedDefault] = useState(null);
   const makeDefault = (label) => {
-    if (!checkable) return testHere(label);
+    setFailedDefault(null);
+    if (!needsCheck(label)) return testHere(label);
     setPendingDefault(label);
     setTimeout(() => {
-      testHere(label);
       setPendingDefault(null);
+      if (new URLSearchParams(window.location.search).get("check") === "fail") {
+        setFailedDefault({
+          label,
+          reason: "it didn't reply to the test message",
+        });
+        enqueueSnackbar(`${nm(label)} didn't pass its check here — the default stays ${nm(active)}.`, { variant: "error" });
+        return;
+      }
+      testHere(label);
       enqueueSnackbar(`${nm(label)} passed its check here — it's now the default.`, { variant: "success" });
     }, 6000);
   };
@@ -395,7 +411,7 @@ export default function EnvAgentLine({
             </Typography>
           </Stack>
         )}
-        {switchTo && !locked && !pendingDefault && (
+        {switchTo && !locked && !pendingDefault && !failedDefault && (
           <Button
             size="small"
             variant="outlined"
@@ -424,6 +440,41 @@ export default function EnvAgentLine({
           </IconButton>
         )}
       </Stack>
+      {/* A default whose check failed stays where it was; said on its own row. */}
+      {failedDefault && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 2,
+            py: 0.75,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <StatusDot status="failed" size={6} live={false} />
+          <Typography
+            noWrap
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            {`${nm(failedDefault.label)} didn't pass its check here: ${failedDefault.reason}. The default stays ${nm(active)}.`}
+          </Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => makeDefault(failedDefault.label)}
+            sx={{ color: "text.primary", flexShrink: 0 }}
+          >
+            Check again
+          </Button>
+        </Stack>
+      )}
       {compat && (
         <Stack
           direction="row"
@@ -533,7 +584,7 @@ export default function EnvAgentLine({
         env={env}
         envState={envState}
         label={switchTo || active}
-        checks={checkable}
+        checks={needsCheck(switchTo || active)}
         onConfirm={() => {
           makeDefault(switchTo);
           setSwitching(false);
