@@ -35,7 +35,10 @@ from model_hub.services.skills_hub.limits import (
 from model_hub.services.skills_hub.packages import file_sha256, manifest_digest
 from model_hub.services.skills_hub.templates_registry import get_template_files
 from model_hub.services.skills_hub.types import MISSING, Actor, FileInput, PublishResult
-from model_hub.services.skills_hub.v11.evidence import attach_test_evidence_locked
+from model_hub.services.skills_hub.v11.evidence import (
+    attach_test_evidence_locked,
+    validate_test_evidence_locked,
+)
 from model_hub.services.skills_hub.v11.governance import (
     authorize_archive_locked,
     authorize_release_locked,
@@ -351,6 +354,14 @@ def _publish_checked(
             status=409,
             detail={"base_version": base_version, "latest_version": latest_number},
         )
+    evidence_currentness = None
+    if evidence_run_id is not None:
+        _, evidence_currentness = validate_test_evidence_locked(
+            principal=principal,
+            skill=skill,
+            candidate_digest=manifest_digest(files),
+            run_id=evidence_run_id,
+        )
     version, unchanged = persist_immutable_version_locked(
         skill=skill,
         actor=actor,
@@ -372,6 +383,7 @@ def _publish_checked(
             name=label,
             version_number=version.number,
             evidence_run_id=evidence_run_id,
+            evidence_currentness=evidence_currentness,
         )
     evidence = None
     if evidence_run_id is not None:
@@ -380,6 +392,7 @@ def _publish_checked(
             skill=skill,
             version=version,
             run_id=evidence_run_id,
+            currentness_at_action=evidence_currentness,
         )
         evidence = {
             "run_id": str(attached.run_id),

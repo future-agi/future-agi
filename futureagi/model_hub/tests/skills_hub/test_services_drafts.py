@@ -16,6 +16,47 @@ from model_hub.services.skills_hub.types import FileInput
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 
+@pytest.fixture
+def other_writer(hub_other_user, organization, workspace):
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    membership = OrganizationMembership.no_workspace_objects.create(
+        organization=organization,
+        user=hub_other_user,
+        role=OrganizationRoles.MEMBER,
+        level=Level.MEMBER,
+        is_active=True,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        workspace=workspace,
+        user=hub_other_user,
+        organization_membership=membership,
+        role=OrganizationRoles.WORKSPACE_MEMBER,
+        level=Level.WORKSPACE_MEMBER,
+        is_active=True,
+    )
+    return hub_other_user
+
+
+def test_save_denies_user_without_current_membership(hub_skill, hub_other_user):
+    with pytest.raises(SkillsHubError) as exc:
+        save_draft(
+            skill=hub_skill,
+            user=hub_other_user,
+            files=[],
+            note="",
+            base_version=None,
+            revision=0,
+        )
+    assert exc.value.code == "access_revoked"
+    assert not HubSkillDraft.all_objects.filter(
+        skill=hub_skill, user=hub_other_user
+    ).exists()
+
+
 def test_save_incomplete_content_and_revision_conflict(hub_skill, user):
     files: list[FileInput] = [
         {"path": "SKILL.md", "content": "An unfinished draft without frontmatter"}
@@ -43,7 +84,7 @@ def test_save_incomplete_content_and_revision_conflict(hub_skill, user):
 
 
 def test_get_is_read_only_and_drafts_are_per_user(
-    hub_skill, user, hub_other_user, make_skill_files
+    hub_skill, user, hub_other_user, make_skill_files, other_writer
 ):
     with pytest.raises(SkillsHubError) as exc:
         get_draft(skill=hub_skill, user=hub_other_user)
@@ -150,7 +191,7 @@ def test_draft_paths_are_relative(hub_skill, user, path):
 
 
 def test_publish_tombstones_only_its_author_draft(
-    hub_skill, user, hub_other_user, make_skill_files
+    hub_skill, user, hub_other_user, make_skill_files, other_writer
 ):
     save_draft(
         skill=hub_skill,

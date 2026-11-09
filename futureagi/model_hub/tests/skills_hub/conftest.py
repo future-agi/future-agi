@@ -146,3 +146,20 @@ def hub_other_org_workspace(hub_other_organization, user):
         is_default=False,
         is_active=True,
     )
+
+
+@pytest.fixture
+def workspace_spend_policy(organization, workspace, user):
+    """Explicit synthetic allowance; production has no default or test bypass."""
+    from model_hub.services.skills_hub.r3.spend_policy import update_spend_policy
+    from model_hub.services.skills_hub.v11.types import SkillPrincipal, SkillScope
+
+    return update_spend_policy(
+        principal=SkillPrincipal(
+            SkillScope(organization.pk, workspace.pk), user.pk, None, "human"
+        ),
+        revision=0,
+        enabled=True,
+        period_limit_usd="100",
+        idempotency_key=uuid4(),
+    )

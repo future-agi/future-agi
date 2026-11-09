@@ -593,6 +593,15 @@ class FileChunk(HubSerializer):
 
 
 class DraftOut(HubSerializer):
+    recovery_digest = s.SerializerMethodField()
+
+    def get_recovery_digest(self, obj) -> str:
+        from model_hub.services.skills_hub.r3.draft_recovery import (
+            draft_recovery_digest,
+        )
+
+        return draft_recovery_digest(obj)
+
     def get_fields(self):
         return {**super().get_fields(), "source": s.JSONField()}
 

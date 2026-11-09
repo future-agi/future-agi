@@ -169,14 +169,14 @@ def list_test_evidence(
     }
 
 
-def attach_test_evidence_locked(
+def validate_test_evidence_locked(
     *,
     principal: SkillPrincipal,
     skill: HubSkill,
-    version: HubSkillVersion,
+    candidate_digest: str,
     run_id: UUID,
-    label_event: HubSkillLabelEvent | None = None,
-) -> HubSkillTestEvidence:
+) -> tuple[HubSkillTestRun, dict]:
+    """Resolve supplied evidence before any release-pointer mutation."""
     require_private_principal(principal=principal)
     require_scope_access(principal=principal, write=True)
     if not transaction.get_connection().in_atomic_block:
@@ -187,16 +187,9 @@ def attach_test_evidence_locked(
         skill.organization_id != principal.scope.organization_id
         or skill.workspace_id != principal.scope.workspace_id
         or skill.deleted
-        or version.skill_id != skill.id
     ):
         raise SkillsHubError(
             "evidence_mismatch", "Evidence does not belong to this release.", status=409
-        )
-    if label_event is not None and (
-        label_event.skill_id != skill.id or label_event.to_version != version.number
-    ):
-        raise SkillsHubError(
-            "evidence_mismatch", "Evidence does not match the label event.", status=409
         )
     run = (
         HubSkillTestRun.objects.select_for_update()
@@ -222,7 +215,7 @@ def attach_test_evidence_locked(
             status=403,
         )
     if (
-        run.candidate_digest != version.digest
+        run.candidate_digest != candidate_digest
         or run.job.status not in TERMINAL_JOB_STATUSES
     ):
         raise SkillsHubError(
@@ -230,12 +223,37 @@ def attach_test_evidence_locked(
             "Attach terminal evidence for this exact content.",
             status=409,
         )
-    freshness = currentness(run=run, skill=skill, candidate_digest=version.digest)
+    freshness = currentness(run=run, skill=skill, candidate_digest=candidate_digest)
     if not freshness["payload_available"]:
         raise SkillsHubError(
             "evidence_expired",
             "Detailed evidence expired; it cannot be newly attached.",
             status=410,
+        )
+    return run, freshness
+
+
+def attach_test_evidence_locked(
+    *,
+    principal: SkillPrincipal,
+    skill: HubSkill,
+    version: HubSkillVersion,
+    run_id: UUID,
+    label_event: HubSkillLabelEvent | None = None,
+    currentness_at_action: dict | None = None,
+) -> HubSkillTestEvidence:
+    if version.skill_id != skill.pk:
+        raise SkillsHubError(
+            "evidence_mismatch", "Evidence does not belong to this release.", status=409
+        )
+    run, freshness = validate_test_evidence_locked(
+        principal=principal, skill=skill, candidate_digest=version.digest, run_id=run_id
+    )
+    if label_event is not None and (
+        label_event.skill_id != skill.id or label_event.to_version != version.number
+    ):
+        raise SkillsHubError(
+            "evidence_mismatch", "Evidence does not match the label event.", status=409
         )
     evidence, _ = HubSkillTestEvidence.objects.get_or_create(
         version=version,
@@ -249,7 +267,9 @@ def attach_test_evidence_locked(
             "execution_fingerprint": run.execution_fingerprint,
             "attached_by_id": principal.user_id,
             "attached_by_api_key_id": principal.api_key_id,
-            "currentness_at_action": freshness,
+            "currentness_at_action": (
+                freshness if currentness_at_action is None else currentness_at_action
+            ),
         },
     )
     return evidence

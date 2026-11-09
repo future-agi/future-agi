@@ -268,6 +268,11 @@ def context_release_state(*, principal: SkillPrincipal, context_id: UUID) -> dic
                 "version": row.version.number,
                 "version_id": str(row.version_id),
                 "updated_at": row.updated_at.isoformat(),
+                "updated_by": (
+                    {"id": str(row.updated_by_id), "name": row.updated_by.name}
+                    if row.updated_by is not None
+                    else None
+                ),
                 "is_protected": row.name in context.protected_label_names,
                 "can_move": (
                     admin if row.name in context.protected_label_names else writer
@@ -277,7 +282,9 @@ def context_release_state(*, principal: SkillPrincipal, context_id: UUID) -> dic
                 ),
                 "release_revision": context.release_revision,
             }
-            for row in context.labels.select_related("version").order_by("name")
+            for row in context.labels.select_related("version", "updated_by").order_by(
+                "name"
+            )
         ],
         "permissions": {
             "can_publish": writer,

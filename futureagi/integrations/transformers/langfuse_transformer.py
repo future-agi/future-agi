@@ -1,16 +1,15 @@
+import logging
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from integrations.transformers.base import BaseTraceTransformer, register_transformer
 from tracer.utils.adapters.base import (
     extract_query,
     flatten_input_messages,
     flatten_output_messages,
-)
-from tracer.utils.adapters.base import guess_provider as _guess_provider
-from tracer.utils.adapters.base import (
     set_io_value,
 )
+from tracer.utils.adapters.base import guess_provider as _guess_provider
 from tracer.utils.langfuse_upsert import parse_langfuse_timestamp
 from tracer.utils.otel import SpanAttributes
 
@@ -47,6 +46,7 @@ class LangfuseTransformer(BaseTraceTransformer):
         else:
             metadata = {"integration_source": "langfuse", "original_metadata": metadata}
 
+        metadata.pop("fi.external.langfuse", None)
         tags = list(raw_trace.get("tags") or [])
         if "langfuse" not in tags:
             tags.append("langfuse")
@@ -88,8 +88,11 @@ class LangfuseTransformer(BaseTraceTransformer):
         raw_trace: dict[str, Any],
         trace_id: str,
         project_id: str,
+        *,
+        source_origin: str | None = None,
+        source_project_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Transform Langfuse observations into FutureAGI ObservationSpan dicts."""
+        """Transform observations; only connector-owned inputs attest external lineage."""
         observations = raw_trace.get("observations") or []
         result = []
 
@@ -152,6 +155,37 @@ class LangfuseTransformer(BaseTraceTransformer):
                 trace_session_id=raw_trace.get("sessionId"),
             )
 
+            raw_metadata = obs.get("metadata") or {}
+            metadata = (
+                dict(raw_metadata)
+                if isinstance(raw_metadata, dict)
+                else {"original_metadata": raw_metadata}
+            )
+            # A posted metadata field is not a connector attestation. The real
+            # connector supplies its configured host and provider-returned project ID.
+            metadata.pop("fi.external.langfuse", None)
+            if source_origin is not None and source_project_id is not None:
+                from model_hub.services.skills_hub.r3.external_trace_capture import (
+                    retained_external_lineage,
+                )
+
+                try:
+                    metadata["fi.external.langfuse"] = retained_external_lineage(
+                        origin=source_origin,
+                        project_id=source_project_id,
+                        trace_id=raw_trace["id"],
+                        observation_id=obs["id"],
+                    )
+                except ValueError:
+                    # Fail closed on provenance, not on existing trace ingestion.
+                    logging.getLogger(__name__).warning(
+                        "Langfuse source identity cannot supply a navigation link",
+                        exc_info=True,
+                    )
+                    metadata["fi.external.langfuse.status"] = (
+                        "unsupported_source_identity"
+                    )
+
             span_dict = {
                 "id": obs["id"],
                 "trace_id": trace_id,
@@ -163,7 +197,7 @@ class LangfuseTransformer(BaseTraceTransformer):
                 "end_time": end_time,
                 "input": obs.get("input"),
                 "output": obs.get("output"),
-                "metadata": obs.get("metadata") or {},
+                "metadata": metadata,
                 "model": model_name,
                 "provider": provider,
                 "model_parameters": obs.get("modelParameters") or {},
@@ -288,7 +322,7 @@ class LangfuseTransformer(BaseTraceTransformer):
         return parse_langfuse_timestamp(ts)
 
     @staticmethod
-    def _map_level_to_status(level: Optional[str]) -> str:
+    def _map_level_to_status(level: str | None) -> str:
         """Map Langfuse observation level to FutureAGI status.
 
         Langfuse observations that complete without errors may omit the

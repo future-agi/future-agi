@@ -339,6 +339,13 @@ def save_suite(
                 for key, value in case.items()
                 if key != "reviewed"
             )
+            if old and "source" in old:
+                from model_hub.services.skills_hub.v11.inventory import fingerprint
+
+                case["source"] = {
+                    **old["source"],
+                    "sanitized_digest": fingerprint(case),
+                }
             case["origin"] = old["origin"] if old else "manual"
             case["exposed_to_assist"] = bool(
                 (old and old.get("exposed_to_assist"))

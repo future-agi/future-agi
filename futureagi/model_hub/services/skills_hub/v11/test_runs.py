@@ -36,7 +36,6 @@ from model_hub.services.skills_hub.v11.jobs import (
     create_job_locked,
     dispatch_job,
     existing_job,
-    lock_quota,
 )
 from model_hub.services.skills_hub.v11.limits import (
     HARNESS_VERSION,
@@ -597,7 +596,9 @@ def create_test_run(
     ):
         _invalid("Confirm provider processing and the exact reviewed plan.")
     with transaction.atomic():
-        lock_quota(principal.scope.organization_id)
+        from model_hub.services.skills_hub.r3.spend_policy import lock_spend_authority
+
+        lock_spend_authority(scope=principal.scope)
         existing = existing_job(
             principal=principal,
             kind="test",

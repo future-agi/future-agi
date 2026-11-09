@@ -424,10 +424,22 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
     case = next(
         case for case in snapshot["cases"] if case["id"] == str(attempt.case_id)
     )
-    messages, bundles = build_task_messages(
-        snapshot=snapshot, case=case, variant=attempt.variant
-    )
-    tools = tool_definitions() if bundles else []
+    from model_hub.services.skills_hub.v12 import testing as context_testing
+
+    is_context = snapshot.get("harness") == context_testing.HARNESS_VERSION
+    root_path = "AGENTS.md" if is_context else "SKILL.md"
+    if is_context:
+        messages, bundles = context_testing.build_context_task_messages(
+            snapshot=snapshot, case=case, variant=attempt.variant
+        )
+        tools = context_testing.context_tool_definitions(
+            with_context=attempt.variant != "without_target"
+        )
+    else:
+        messages, bundles = build_task_messages(
+            snapshot=snapshot, case=case, variant=attempt.variant
+        )
+        tools = tool_definitions() if bundles else []
     profile = snapshot["limits"]["profiles"][run.profile]
     target_id = snapshot["candidate"]["skill_id"]
     receipts: list[dict] = []
@@ -449,6 +461,23 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
             if remaining <= 0:
                 raise SkillsHubError(
                     "provider_timeout", "Task-phase deadline reached.", status=422
+                )
+            root_receipt = (
+                context_testing.root_delivery_receipt(
+                    snapshot=snapshot, variant=attempt.variant, call_id=""
+                )
+                if is_context
+                else None
+            )
+            if (
+                root_receipt
+                and delivered_bytes + root_receipt["delivered_bytes"]
+                > profile["max_delivered_bytes_per_attempt"]
+            ):
+                raise SkillsHubError(
+                    "budget_exhausted",
+                    "Standing instructions exceed the delivery allowance.",
+                    status=422,
                 )
             before = await sync_to_async(
                 lambda: HubSkillModelCall.objects.filter(attempt_id=attempt_id).count()
@@ -480,6 +509,9 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
                     ).count()
                 )()
                 if after > before and last_call and last_call.started_at is not None:
+                    if root_receipt is not None:
+                        receipts.append({**root_receipt, "call_id": str(last_call.id)})
+                        delivered_bytes += root_receipt["delivered_bytes"]
                     receipts.extend(pending_receipts)
                     pending_receipts = []
                     target_receipts = [
@@ -488,7 +520,7 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
                         if receipt["skill_id"] == target_id
                     ]
                     loaded = any(
-                        r["path"] == "SKILL.md"
+                        r["path"] == root_path
                         and r["outcome"] == "delivered"
                         and r["delivered_bytes"] > 0
                         for r in target_receipts
@@ -548,15 +580,23 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
                         status=422,
                     )
                 assert last_call is not None
-                output, receipt, target_requested = process_tool(
-                    call=tool,
-                    call_id=str(last_call.id),
-                    bundles=bundles,
-                    activated=activated,
-                    target_id=target_id,
-                    remaining_bytes=profile["max_delivered_bytes_per_attempt"]
+                tool_args = {
+                    "call": tool,
+                    "call_id": str(last_call.id),
+                    "activated": activated,
+                    "remaining_bytes": profile["max_delivered_bytes_per_attempt"]
                     - delivered_bytes,
-                )
+                }
+                if is_context:
+                    output, receipt, target_requested = (
+                        context_testing.process_context_tool(
+                            snapshot=snapshot, variant=attempt.variant, **tool_args
+                        )
+                    )
+                else:
+                    output, receipt, target_requested = process_tool(
+                        bundles=bundles, target_id=target_id, **tool_args
+                    )
                 requested |= target_requested
                 delivered_bytes += receipt["delivered_bytes"]
                 pending_receipts.append(receipt)
@@ -585,13 +625,13 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
         receipt for receipt in receipts if receipt["skill_id"] == target_id
     ]
     loaded = any(
-        r["path"] == "SKILL.md"
+        r["path"] == root_path
         and r["outcome"] == "delivered"
         and r["delivered_bytes"] > 0
         for r in target_receipts
     )
     target_loaded = True if loaded else None if failure else False
-    _, complete = file_coverage(target_receipts, "SKILL.md")
+    _, complete = file_coverage(target_receipts, root_path)
     routing = (
         "not_applicable"
         if attempt.variant == "without_target" or case["expected_trigger"] is None

@@ -124,8 +124,18 @@ def save_draft(
     note: str,
     base_version: int | None,
     revision: int,
+    actor: Actor | None = None,
 ) -> HubSkillDraft:
     """Save if the supplied revision still matches, including first-create races."""
+    principal = principal_for_actor(
+        skill=skill, actor=actor or Actor(user=user, api_key=None)
+    )
+    require_private_principal(principal=principal)
+    require_scope_access(principal=principal, write=True)
+    if principal.user_id != user.pk:
+        raise SkillsHubError(
+            "principal_not_supported", "Save only your own draft.", status=403
+        )
     skill = scoped_skill(skill, lock=True)
     draft = HubSkillDraft.all_objects.filter(skill=skill, user=user).first()
     _check_revision(draft, revision)
@@ -142,12 +152,20 @@ def save_draft(
         )
         source = (
             dict(basis.source)
-            if basis and basis.source.get("provider") == "github"
+            if basis and basis.source.get("provider") in {"github", "migration"}
             else {}
         )
         if draft is None:
             draft = HubSkillDraft(skill=skill, user=user)
         draft.source = source
+    elif {file["path"] for file in draft.files} - {file["path"] for file in files}:
+        from model_hub.services.skills_hub.r3.draft_recovery import (
+            checkpoint_draft_locked,
+        )
+
+        checkpoint_draft_locked(
+            principal=principal, skill=skill, draft=draft, reason="deletion"
+        )
     draft.files = files
     draft.note = note
     draft.base_version = base_version
@@ -262,5 +280,12 @@ def publish_draft(
         adopt_draft_source_locked(
             skill=result.version.skill, draft=draft, version=result.version
         )
+    from model_hub.services.skills_hub.r3.migration_receipts import (
+        bind_migration_publication_locked,
+    )
+
+    bind_migration_publication_locked(
+        skill=result.version.skill, draft=draft, version=result.version
+    )
     _tombstone(draft)
     return result

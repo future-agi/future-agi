@@ -30,4 +30,8 @@ def user_runs(path: str = "") -> Q:
     ``simulation_runs__`` from an environment). Anything else uses the selectors
     above.
     """
-    return Q(**{f"{path}fix_run__isnull": True})
+    from model_hub.services.skills_hub.r3.native_evidence import (
+        ordinary_simulation_jobs,
+    )
+
+    return Q(**{f"{path}fix_run__isnull": True}) & ordinary_simulation_jobs(path)

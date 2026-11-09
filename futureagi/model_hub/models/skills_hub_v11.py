@@ -227,6 +227,7 @@ class HubSkillTestRun(models.Model):
     candidate_digest = models.CharField(max_length=71)
     candidate = models.JSONField(default=dict)
     production = models.JSONField(null=True)
+    reference = models.JSONField(null=True)
     competitors = models.JSONField(default=list)
     baseline_version = models.ForeignKey(
         "model_hub.HubSkillVersion",
@@ -279,7 +280,9 @@ class HubSkillTestAttempt(models.Model):
     case_id = models.UUIDField()
     variant = models.CharField(
         max_length=16,
-        choices=[(v, v) for v in ("candidate", "production", "without_target")],
+        choices=[
+            (v, v) for v in ("candidate", "production", "reference", "without_target")
+        ],
     )
     repeat_index = models.PositiveSmallIntegerField()
     schedule_index = models.PositiveIntegerField()

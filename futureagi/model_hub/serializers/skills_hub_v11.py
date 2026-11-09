@@ -279,7 +279,26 @@ class CaseInput(HubV11Serializer):
         return validate_cases([attrs])[0]
 
 
+class DatasetCaseSource(HubV11Serializer):
+    provider = s.ChoiceField(choices=["dataset"])
+    dataset_id = s.UUIDField()
+    row_id = s.UUIDField()
+    revision = s.CharField()
+    prompt_column_id = s.UUIDField()
+    fixture_column_ids = s.ListField(child=s.UUIDField())
+    hashes = s.DictField(child=s.RegexField(r"^[a-f0-9]{64}$"))
+    source_fingerprint = Digest()
+    sanitized_digest = Digest()
+    replay_scope = s.ChoiceField(choices=["text_only"])
+
+
 class CaseOut(CaseInput):
+    def get_fields(self):
+        return {
+            **super().get_fields(),
+            "source": DatasetCaseSource(required=False, read_only=True),
+        }
+
     reviewed_by = Person(allow_null=True)
     reviewed_at = s.DateTimeField(allow_null=True)
     origin = s.ChoiceField(choices=["manual", "template", "assist"])

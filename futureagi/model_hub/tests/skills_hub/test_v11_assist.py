@@ -304,7 +304,9 @@ def assist_principal(organization, workspace, user):
 
 
 @pytest.fixture
-def assist_connection(monkeypatch, organization, workspace, user):
+def assist_connection(
+    monkeypatch, organization, workspace, user, workspace_spend_policy
+):
     from decimal import Decimal
 
     from model_hub.models.api_key import ApiKey

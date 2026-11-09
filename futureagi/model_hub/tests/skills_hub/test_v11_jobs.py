@@ -38,7 +38,15 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture
-def execution(settings, organization, workspace, user, hub_skill, monkeypatch):
+def execution(
+    settings,
+    organization,
+    workspace,
+    user,
+    hub_skill,
+    monkeypatch,
+    workspace_spend_policy,
+):
     settings.SKILLS_VERIFIED_MODELS = ["gpt-4o-mini"]
     ApiKey.no_workspace_objects.create(
         organization=organization,

@@ -28,6 +28,7 @@ from model_hub.models.skills_hub_v11 import (
     HubSkillTestAttempt,
 )
 from model_hub.services.skills_hub.errors import SkillsHubError
+from model_hub.services.skills_hub.r3 import spend_policy
 from model_hub.services.skills_hub.v11.inventory import canonical_json, fingerprint
 from model_hub.services.skills_hub.v11.limits import effective_limits, retention_days
 from model_hub.services.skills_hub.v11.principals import (
@@ -120,7 +121,9 @@ def create_job_locked(
     require_scope_access(principal=principal, write=True)
     if not transaction.get_connection().in_atomic_block:
         raise RuntimeError("create_job_locked requires the acceptance transaction")
-    # Caller must acquire this quota before skill/suite/draft locks.
+    # Callers acquire the shared authority before skill/suite/draft locks.
+    if kind in {"test", "assist"}:
+        spend_policy.lock_spend_authority(scope=principal.scope)
     quota = lock_quota(principal.scope.organization_id)
     existing = existing_job(
         principal=principal,
@@ -167,7 +170,7 @@ def create_job_locked(
             detail={"retry_at": None},
         )
     job_id = uuid4()
-    return HubSkillJob.objects.create(
+    job = HubSkillJob.objects.create(
         id=job_id,
         organization_id=principal.scope.organization_id,
         workspace_id=principal.scope.workspace_id,
@@ -183,6 +186,9 @@ def create_job_locked(
         max_total_tokens=limits.get("max_total_tokens"),
         max_estimated_cost_usd=limits.get("max_estimated_cost_usd"),
     )
+    if kind in {"test", "assist"}:
+        spend_policy.reserve_text_job(job=job)
+    return job
 
 
 def dispatch_job(*, job_id: UUID, scope: SkillScope) -> None:
@@ -267,10 +273,15 @@ def check_job_running(job: HubSkillJob) -> None:
             .first()
         )
         if snapshot is not None:
-            check_snapshot_distribution(
-                scope=SkillScope(job.organization_id, job.workspace_id),
-                snapshot=snapshot,
-            )
+            scope = SkillScope(job.organization_id, job.workspace_id)
+            if snapshot.get("harness") == "contexts-text-v1.2":
+                from model_hub.services.skills_hub.v12.testing import (
+                    recheck_context_snapshot_access,
+                )
+
+                recheck_context_snapshot_access(scope=scope, snapshot=snapshot)
+            else:
+                check_snapshot_distribution(scope=scope, snapshot=snapshot)
     if job.status not in {"queued", "running"} or job.cancel_requested_at:
         raise SkillsHubError(
             "execution_cancelled",
@@ -292,6 +303,9 @@ def reserve_call(
 ) -> HubSkillModelCall:
     parent = HubSkillJob.objects.get(id=job_id)
     with transaction.atomic():
+        spend_policy.lock_spend_authority(
+            scope=SkillScope(parent.organization_id, parent.workspace_id)
+        )
         quota = lock_quota(parent.organization_id)
         job = HubSkillJob.objects.select_for_update().get(id=job_id)
         check_job_running(job)
@@ -392,6 +406,7 @@ def reserve_call(
             reserved_tokens=token_allowance,
             reserved_estimate_usd=estimated_allowance,
         )
+        spend_policy.reserve_text_call(call=call)
         job.reserved_tokens += token_allowance
         job.reserved_estimate_usd += estimated_allowance
         job.save(update_fields=["reserved_tokens", "reserved_estimate_usd"])
@@ -401,6 +416,9 @@ def reserve_call(
 def mark_in_flight(*, call_id: UUID, generation: int, connection: dict) -> None:
     parent = HubSkillModelCall.objects.select_related("job").get(id=call_id)
     with transaction.atomic():
+        spend_policy.lock_spend_authority(
+            scope=SkillScope(parent.job.organization_id, parent.job.workspace_id)
+        )
         job = HubSkillJob.objects.select_for_update().get(id=parent.job_id)
         check_job_running(job)
         call = HubSkillModelCall.objects.select_for_update().get(id=call_id)
@@ -417,6 +435,11 @@ def mark_in_flight(*, call_id: UUID, generation: int, connection: dict) -> None:
             raise SkillsHubError(
                 "execution_unknown", "Attempt claim is stale.", status=409
             )
+        spend_policy.mark_paid_call_sent(
+            principal=principal_for_job(job),
+            reservation_id=spend_policy.text_call_reservation_id(call=call),
+            generation=generation,
+        )
         call.state, call.started_at = "in_flight", timezone.now()
         call.connection_reference, call.connection_revision = (
             connection["connection_id"],
@@ -447,7 +470,9 @@ def settle_call(
 ) -> None:
     parent = HubSkillModelCall.objects.select_related("job").get(id=call_id)
     with transaction.atomic():
-        lock_quota(parent.job.organization_id)
+        spend_policy.lock_spend_authority(
+            scope=SkillScope(parent.job.organization_id, parent.job.workspace_id)
+        )
         job = HubSkillJob.objects.select_for_update().get(id=parent.job_id)
         call = HubSkillModelCall.objects.select_for_update().get(id=call_id)
         if generation != call.claim_generation or call.finished_at is not None:
@@ -457,6 +482,24 @@ def settle_call(
             stale |= not HubSkillTestAttempt.objects.filter(
                 id=call.attempt_id, claim_generation=generation, status="running"
             ).exists()
+        scope = SkillScope(job.organization_id, job.workspace_id)
+        reservation_id = spend_policy.text_call_reservation_id(call=call)
+        if call.started_at is not None:
+            spend_policy.settle_paid_call(
+                scope=scope,
+                reservation_id=reservation_id,
+                generation=generation,
+                actual_usd=(
+                    result.estimated_cost_usd
+                    if result is not None and result.usage is not None
+                    else None
+                ),
+                sender_stopped=True,
+            )
+        else:
+            spend_policy.release_unsent_call(
+                scope=scope, reservation_id=reservation_id, generation=generation
+            )
         # Local transport has settled. Unknown usage still retains its entire spend reservation.
         call.finished_at = timezone.now()
         call.state = (
@@ -751,7 +794,7 @@ def finish_job(
 
         aggregate_test_run(scope=scope, run_id=job_id)
     with transaction.atomic():
-        lock_quota(parent.organization_id)
+        spend_policy.lock_spend_authority(scope=scope)
         job = HubSkillJob.objects.select_for_update().get(id=job_id)
         stopping = (
             failure_code
@@ -853,8 +896,22 @@ def finish_job(
                     HubSkillAssistProposal.objects.filter(
                         job=job, payload_expires_at__isnull=True
                     ).update(payload_expires_at=job.finished_at + timedelta(days=days))
-        if job.status in TERMINAL_JOB_STATUSES and not live:
-            job.reservation_released_at = job.reservation_released_at or timezone.now()
+        if job.status in TERMINAL_JOB_STATUSES:
+            from model_hub.models.skills_hub_r3 import HubSkillSpendReservation
+
+            admission = HubSkillSpendReservation.objects.filter(
+                organization_id=scope.organization_id,
+                workspace_id=scope.workspace_id,
+                operation_id=job.pk,
+                source_id=job.pk,
+                parent__isnull=True,
+            ).first()
+            if admission is not None:
+                spend_policy.close_admission(scope=scope, admission_id=admission.pk)
+            if not live:
+                job.reservation_released_at = (
+                    job.reservation_released_at or timezone.now()
+                )
         job.save(
             update_fields=[
                 "status",
@@ -1009,6 +1066,16 @@ def purge_expired_payloads(*, batch_size: int = 100) -> dict:
             HubSkillModelCall.objects.filter(job=job).update(
                 assistant_message=None, tool_receipts=[]
             )
+            from model_hub.services.skills_hub.r3.human_review import (
+                purge_annotation_payload,
+            )
+
+            purge_annotation_payload(
+                source="skills_text",
+                source_id=run.pk,
+                organization_id=job.organization_id,
+                workspace_id=job.workspace_id,
+            )
             result["runs"] += 1
     for proposal_id in list(
         HubSkillAssistProposal.objects.filter(
@@ -1038,4 +1105,13 @@ def purge_expired_payloads(*, batch_size: int = 100) -> dict:
     result["previews"] = HubSkillGitHubPreview.objects.filter(
         job_id__in=expired_previews
     ).update(bundle=None, diff=None, license={})
+    from model_hub.services.skills_hub.r3.case_import import purge_expired_case_previews
+    from model_hub.services.skills_hub.r3.draft_recovery import (
+        purge_expired_checkpoints,
+    )
+    from model_hub.services.skills_hub.r3.import_plans import purge_expired_intake
+
+    result["case_previews"] = purge_expired_case_previews(batch_size=limit)
+    result["intake"] = purge_expired_intake(batch_size=limit)
+    result["checkpoints"] = purge_expired_checkpoints(batch_size=limit)
     return result

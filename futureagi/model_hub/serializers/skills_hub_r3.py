@@ -192,6 +192,7 @@ class HumanAnnotation(EvidenceSource):
 
 
 class RetainedPlanAcceptance(ContextSerializer):
+    decision = s.ChoiceField(choices=["keep", "replace", "manual"], default="replace")
     plan_id = s.UUIDField()
     expected_fingerprint = Digest()
     item_key = s.CharField(max_length=255)

@@ -801,10 +801,7 @@ def create_assist_proposal(
     *, principal: SkillPrincipal, skill_id: UUID, idempotency_key: UUID, request: dict
 ) -> HubSkillAssistProposal:
     """Accept the reviewed immutable input with shared organization admission."""
-    from model_hub.models.skills_hub_v11 import (
-        HubSkillAssistProposal,
-        HubSkillExecutionQuota,
-    )
+    from model_hub.models.skills_hub_v11 import HubSkillAssistProposal
     from model_hub.services.skills_hub.v11.jobs import create_job_locked, dispatch_job
     from model_hub.services.skills_hub.v11.principals import (
         require_private_principal,
@@ -825,12 +822,9 @@ def create_assist_proposal(
         return existing
     configuration = _request_input(request, creation=True)
     with transaction.atomic():
-        HubSkillExecutionQuota.objects.get_or_create(
-            organization_id=principal.scope.organization_id
-        )
-        HubSkillExecutionQuota.objects.select_for_update().get(
-            organization_id=principal.scope.organization_id
-        )
+        from model_hub.services.skills_hub.r3.spend_policy import lock_spend_authority
+
+        lock_spend_authority(scope=principal.scope)
         existing = _existing_proposal(
             principal=principal,
             idempotency_key=idempotency_key,
@@ -992,8 +986,11 @@ def apply_assist_proposal(
         checks = run_checks(files, expected_name=skill.name)
         if checks["summary"]["errors"]:
             raise _output_error()
+        from model_hub.services.skills_hub.v12.authoring import actor_for_principal
+
         saved = save_draft(
             skill=skill,
+            actor=actor_for_principal(principal),
             user=draft.user,
             files=files,
             note=draft.note,

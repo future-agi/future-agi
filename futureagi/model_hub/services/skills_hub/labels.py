@@ -13,7 +13,10 @@ from model_hub.selectors.skills_hub import scoped_skill
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.limits import LABEL_RE, MAX_LABELS, RESERVED_LABELS
 from model_hub.services.skills_hub.types import MISSING, Actor
-from model_hub.services.skills_hub.v11.evidence import attach_test_evidence_locked
+from model_hub.services.skills_hub.v11.evidence import (
+    attach_test_evidence_locked,
+    validate_test_evidence_locked,
+)
 from model_hub.services.skills_hub.v11.governance import (
     advance_release_revision_locked,
     authorize_label_change_locked,
@@ -93,6 +96,7 @@ def _set_label_locked(
     note="",
     expected_digest=None,
     evidence_run_id=None,
+    evidence_currentness: dict | None = None,
 ) -> HubSkillLabel:
     """Private mutation seam: caller holds the skill lock and has authorized all moves."""
     _validate_name(name)
@@ -114,6 +118,16 @@ def _set_label_locked(
         raise SkillsHubError(
             "invalid_label", "A skill can have up to 20 labels.", status=400
         )
+    freshness = evidence_currentness
+    if evidence_run_id is not None:
+        _, observed = validate_test_evidence_locked(
+            principal=principal,
+            skill=skill,
+            candidate_digest=version.digest,
+            run_id=evidence_run_id,
+        )
+        if freshness is None:
+            freshness = observed
     previous = current.version.number if current else None
     if current is not None and previous == version_number:
         if evidence_run_id is not None:
@@ -122,6 +136,7 @@ def _set_label_locked(
                 skill=skill,
                 version=version,
                 run_id=evidence_run_id,
+                currentness_at_action=freshness,
             )
         current.skill = skill
         return current
@@ -148,6 +163,7 @@ def _set_label_locked(
             version=version,
             run_id=evidence_run_id,
             label_event=event,
+            currentness_at_action=freshness,
         )
     current.skill = skill
     skill.updated_by = actor.user

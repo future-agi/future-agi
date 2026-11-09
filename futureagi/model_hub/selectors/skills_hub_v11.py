@@ -251,6 +251,11 @@ def get_attempt_detail(
             calls=calls, started_at=attempt.started_at, finished_at=attempt.finished_at
         ),
         "error": attempt.error,
+        **(
+            {"reference": run.reference}
+            if run.harness_version == "contexts-text-v1.2"
+            else {}
+        ),
     }
     import json
 
@@ -801,6 +806,11 @@ def _run_summary(run: HubSkillTestRun, context: dict) -> dict:
         "execution_configuration": run.execution_configuration,
         "candidate": run.candidate,
         "production": run.production,
+        **(
+            {"reference": run.reference, "subject_kind": "agent_context"}
+            if run.harness_version == "contexts-text-v1.2"
+            else {}
+        ),
         "competitors": run.competitors,
         "suite_revision": run.suite_revision,
         "selected_case_ids": run.selected_case_ids,

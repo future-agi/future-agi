@@ -138,13 +138,22 @@ def save_owned_draft(
                 "Use a purpose of 1–1024 characters.",
                 status=400,
             )
-        draft.context_spec = {**draft.context_spec, "description": description}
     elif description is not None:
         raise SkillsHubError(
             "invalid_context_definition",
             "Edit skill descriptions in SKILL.md.",
             status=400,
         )
+    if {file["path"] for file in draft.files} - {file["path"] for file in files}:
+        from model_hub.services.skills_hub.r3.draft_recovery import (
+            checkpoint_draft_locked,
+        )
+
+        checkpoint_draft_locked(
+            principal=principal, skill=skill, draft=draft, reason="deletion"
+        )
+    if kind == "agent_context":
+        draft.context_spec = {**draft.context_spec, "description": description}
     draft.files, draft.note = files, note
     draft.head_review_fingerprint = ""
     draft.revision += 1

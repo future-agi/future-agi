@@ -1762,6 +1762,10 @@ SKILLS_GITHUB_ENABLED = os.getenv("SKILLS_GITHUB_ENABLED", "false").lower() in (
 SKILLS_CONTEXT_CONSUMPTION_ENABLED = os.getenv(
     "SKILLS_CONTEXT_CONSUMPTION_ENABLED", "false"
 ).lower() in ("true", "1", "yes")
+# Campaign persistence does not qualify the repository executor or enable rollouts.
+SKILLS_CONTEXT_CAMPAIGNS_ENABLED = os.getenv(
+    "SKILLS_CONTEXT_CAMPAIGNS_ENABLED", "false"
+).lower() in ("true", "1", "yes")
 # Approved standard catalog IDs only, after live credential/tool/usage/deadline
 # verification. Empty by default; no managed/global/environment-key fallback.
 SKILLS_VERIFIED_MODELS = _split_env("SKILLS_VERIFIED_MODELS")

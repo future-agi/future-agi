@@ -144,8 +144,27 @@ def set_quarantine(
                 "Choose another version of this resource.",
                 status=400,
             )
+    versions = [version.pk, *([replacement.pk] if replacement else [])]
+    resource_ids = {
+        version.skill_id,
+        *HubSkillContextDependency.objects.filter(
+            parent_version_id__in=versions,
+            organization_id=principal.scope.organization_id,
+            workspace_id=principal.scope.workspace_id,
+        ).values_list("child_skill_id", flat=True),
+    }
     with transaction.atomic():
-        HubSkill._base_manager.select_for_update().get(pk=version.skill_id)
+        # Publication/release take this same UUID-ordered graph lock. In particular,
+        # replacement eligibility cannot race a quarantine of one of its children.
+        list(
+            HubSkill._base_manager.filter(
+                pk__in=resource_ids,
+                organization_id=principal.scope.organization_id,
+                workspace_id=principal.scope.workspace_id,
+            )
+            .order_by("id")
+            .select_for_update(of=("self",))
+        )
         require_safety_admin(principal=principal)
         current = get_version_safety(principal=principal, version_id=version.pk)
         if current["revision"] != revision:

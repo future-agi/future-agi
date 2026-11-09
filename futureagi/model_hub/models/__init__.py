@@ -74,6 +74,8 @@ from .skills_hub_v11 import (
 )
 from .skills_hub_v12 import (
     HubSkillContextBinding,
+    HubSkillContextCampaign,
+    HubSkillContextCampaignTarget,
     HubSkillContextCapture,
     HubSkillContextCredential,
     HubSkillContextDependency,

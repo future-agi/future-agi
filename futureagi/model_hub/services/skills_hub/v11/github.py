@@ -856,8 +856,11 @@ def stage_github_preview(
             raise _error(
                 "skills_unavailable", "Source-aware drafts are not enabled.", 503
             )
+        from model_hub.services.skills_hub.v12.authoring import actor_for_principal
+
         draft = save_draft(
             skill=skill,
+            actor=actor_for_principal(principal),
             user=user,
             files=files,
             note="",

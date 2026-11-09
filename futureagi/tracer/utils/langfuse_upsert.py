@@ -6,6 +6,7 @@ traces into the FutureAGI database.
 """
 
 from datetime import datetime
+from functools import partial
 
 import structlog
 from django.db import transaction
@@ -49,6 +50,9 @@ def upsert_langfuse_trace(
     org,
     workspace,
     org_id,
+    *,
+    source_origin: str | None = None,
+    source_project_id: str | None = None,
 ):
     """Upsert a single assembled Langfuse trace with observations and scores.
 
@@ -136,8 +140,13 @@ def upsert_langfuse_trace(
             )
 
         # Transform observations
+        lineage = (
+            {"source_origin": source_origin, "source_project_id": source_project_id}
+            if source_origin is not None and source_project_id is not None
+            else {}
+        )
         obs_dicts = transformer.transform_observations(
-            assembled_trace, trace_id, project_id
+            assembled_trace, trace_id, project_id, **lineage
         )
 
         # Fix orphan parent_span_ids: Langfuse OTEL integration sometimes
@@ -266,6 +275,7 @@ def upsert_langfuse_trace(
             langfuse_score_id = score_data.pop("langfuse_score_id")
             observation_id = score_data.pop("observation_id", None)
 
+            score_span: ObservationSpan | None
             if observation_id:
                 # CH25-TODO(read-after-write-inside-atomic; revisit after OTel
                 # direct-to-CH cutover): same atomic block as the upserts at
@@ -275,7 +285,7 @@ def upsert_langfuse_trace(
                 # return a Django model instance — CHSpan cannot stand in here.
                 # CH-side lag mechanism: PeerDB CDC replication from PG.
                 try:
-                    obs_span = ObservationSpan.no_workspace_objects.get(
+                    score_span = ObservationSpan.no_workspace_objects.get(
                         id=observation_id
                     )
                 except ObservationSpan.DoesNotExist:
@@ -289,13 +299,13 @@ def upsert_langfuse_trace(
                 # direct-to-CH cutover): fallback pick of "earliest span on
                 # the trace" — same read-after-write hazard as the timing
                 # aggregate above, plus the EvalLogger FK requirement that
-                # keeps obs_span as a Django ObservationSpan instance.
-                obs_span = (
+                # keeps score_span as a Django ObservationSpan instance.
+                score_span = (
                     ObservationSpan.no_workspace_objects.filter(trace=trace)
                     .order_by("start_time")
                     .first()
                 )
-                if not obs_span:
+                if score_span is None:
                     logger.warning(
                         "langfuse_no_observations_for_score",
                         trace_id=trace_id,
@@ -307,7 +317,7 @@ def upsert_langfuse_trace(
                 eval_id=langfuse_score_id,
                 defaults={
                     "trace": trace,
-                    "observation_span": obs_span,
+                    "observation_span": score_span,
                     **score_data,
                 },
             )
@@ -321,7 +331,7 @@ def upsert_langfuse_trace(
         mirror_traces_to_clickhouse,
     )
 
-    transaction.on_commit(lambda tid=str(trace.id): mirror_traces_to_clickhouse([tid]))
+    transaction.on_commit(partial(mirror_traces_to_clickhouse, [str(trace.id)]))
 
     # CH25 (P3b flip): mirror the curated EndUser / TraceSession into CH
     # `end_users` / `trace_sessions`, keyed by the DETERMINISTIC ids stamped above.
@@ -334,11 +344,10 @@ def upsert_langfuse_trace(
         )
 
         transaction.on_commit(
-            lambda eu=ch_end_user, s=ch_session: (
-                mirror_curated_dimensions_to_clickhouse(
-                    [eu] if eu is not None else None,
-                    [s] if s is not None else None,
-                )
+            partial(
+                mirror_curated_dimensions_to_clickhouse,
+                [ch_end_user] if ch_end_user is not None else None,
+                [ch_session] if ch_session is not None else None,
             )
         )
 

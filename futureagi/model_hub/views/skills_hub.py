@@ -630,6 +630,7 @@ class SkillDraftView(SkillsView):
         result = drafts.save_draft(
             skill=self.skill(request, skill_id),
             user=request.user,
+            actor=self.actor(request),
             **request.validated_data,
         )
         return self.output(request, s.DraftOut, result)

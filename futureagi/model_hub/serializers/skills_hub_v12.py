@@ -7,7 +7,6 @@ from model_hub.serializers.skills_hub import (
     ChecksResult,
     FileChunk,
     FileInput,
-    LabelOut,
     Person,
 )
 from model_hub.serializers.skills_hub_v11 import HubV11Serializer, Integer
@@ -395,12 +394,21 @@ class ContextReleasePermissions(ContextSerializer):
     can_issue_credentials = s.BooleanField()
 
 
+class ContextReleaseLabel(ContextLabelSummary):
+    updated_at = s.DateTimeField()
+    updated_by = Person(allow_null=True)
+    is_protected = s.BooleanField()
+    can_move = s.BooleanField()
+    can_remove = s.BooleanField()
+    release_revision = Integer(min_value=0)
+
+
 class ContextReleaseState(ContextSerializer):
     latest_version = Integer(min_value=1, allow_null=True)
     release_revision = Integer(min_value=0)
     security_revision = Integer(min_value=0)
     protected_label_names = s.ListField(child=s.CharField())
-    labels = LabelOut(many=True)
+    labels = ContextReleaseLabel(many=True)
     permissions = ContextReleasePermissions()
 
 
@@ -565,6 +573,7 @@ class ContextCaseOut(v11.CaseOut):
 
 
 class ContextDeliveryReceipt(v11.Receipt):
+    tool_call_id = s.CharField(allow_blank=True)
     source_version_id = s.UUIDField(allow_null=True)
 
     class Meta:

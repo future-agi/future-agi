@@ -17,5 +17,13 @@ def reconcile_skills_jobs() -> dict:
 )
 def purge_skills_payloads() -> dict:
     from model_hub.services.skills_hub.v11.jobs import purge_expired_payloads
+    from model_hub.services.skills_hub.v12.capture import purge_expired_captures
+    from model_hub.services.skills_hub.v12.consumers import (
+        purge_expired_consumer_metadata,
+    )
 
-    return purge_expired_payloads(batch_size=100)
+    return {
+        **purge_expired_payloads(batch_size=100),
+        "context_capture_payloads": purge_expired_captures(batch_size=100),
+        "context_consumer_metadata": purge_expired_consumer_metadata(batch_size=100),
+    }
