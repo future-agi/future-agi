@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
-from typing import Any
 
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -12,7 +11,7 @@ from django.utils.dateparse import parse_datetime
 from simulate.services.hosted_harness import HostedHarnessError
 
 
-def validate_jsonb_strings(value: Any, *, field: str) -> None:
+def validate_jsonb_strings(value: object, *, field: str) -> None:
     """Reject text JSONB cannot store, including keys, without exposing content.
 
     Check before hashing or encoding: lone surrogates also fail UTF-8 encoding.
@@ -48,7 +47,7 @@ def validate_jsonb_strings(value: Any, *, field: str) -> None:
             )
 
 
-def receipt_timestamp(value: Any, *, field: str) -> datetime:
+def receipt_timestamp(value: object, *, field: str) -> datetime:
     """Accept aware datetimes or timezone-bearing ISO timestamps, without coercing JSON."""
     parsed = value
     if isinstance(value, str):
@@ -63,3 +62,17 @@ def receipt_timestamp(value: Any, *, field: str) -> datetime:
             status_code=400,
         )
     return parsed
+
+
+def receipt_call_times(call_data: object) -> tuple[datetime, datetime]:
+    """Validate the offline receipt's call before any of its fields are persisted."""
+    if not isinstance(call_data, dict):
+        raise HostedHarnessError(
+            "invalid_receipt_timestamp",
+            "call must contain started_at and ended_at timestamps with timezones",
+            status_code=400,
+        )
+    return (
+        receipt_timestamp(call_data.get("started_at"), field="call.started_at"),
+        receipt_timestamp(call_data.get("ended_at"), field="call.ended_at"),
+    )
