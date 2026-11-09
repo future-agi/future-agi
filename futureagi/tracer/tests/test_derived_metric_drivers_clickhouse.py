@@ -48,9 +48,7 @@ def published_fixture(writer, workspace, project, *, kind, formula, values):
             }
             for name in ("y", "x")
         ],
-        field_spec={
-            "conditions": [{"alias": "y", "operator": "gt", "value": 0}]
-        }
+        field_spec={"conditions": [{"alias": "y", "operator": "gt", "value": 0}]}
         if kind in {"share", "count"}
         else {},
         selection_unit="session",
@@ -74,9 +72,7 @@ def published_fixture(writer, workspace, project, *, kind, formula, values):
                 "trace": trace,
                 "unit": unit_id,
                 "at": AT + timedelta(minutes=5),
-                "inputs": {
-                    k: v for k, v in {"y": y, "x": x}.items() if v is not None
-                },
+                "inputs": {k: v for k, v in {"y": y, "x": x}.items() if v is not None},
             },
         )
     head = writer.refresh(
@@ -185,7 +181,7 @@ def test_boolean_successes_and_missing_units_never_enter_any_drivers_page(
     assert set(seen) == set(ids[1:3]) and after is None
 
 
-def test_complete_zero_denominator_ratio_still_contributes_to_drivers(
+def test_complete_zero_denominator_contributes_but_is_not_a_failing_driver(
     live_writer, workspace, observe_project
 ):
     metric, definition, head, ids = published_fixture(
@@ -196,17 +192,43 @@ def test_complete_zero_denominator_ratio_still_contributes_to_drivers(
         formula="ratio(y, x)",
         values=[(-2, 0), (6, 2), (0, 2)],
     )
-    fields, params, total, _ = effect_rows(live_writer, metric, definition, head)
-    result = reads.read_units(
-        metric, WINDOW, drivers=True, store=live_writer.store, retention_days=lambda: 0
+    fields, params, total, contributions = effect_rows(
+        live_writer, metric, definition, head
     )
-    assert {r["unit_id"] for r in result["results"]} == {ids[0], ids[2]}
-    for row in result["results"]:
-        without = recompute_without(
-            live_writer, definition, fields, params, row["unit_id"]
-        )
-        assert row["influence"] == pytest.approx(total["value"] - without)
-    zero_denominator = next(r for r in result["results"] if r["unit_id"] == ids[0])
+    assert total["numerator"] == 4.0 and total["denominator"] == 4.0
+    assert total["value"] == 1.0 and total["valid_count"] == 3
+    zero_denominator = next(r for r in contributions if r["unit_id"] == ids[0])
     assert zero_denominator["no_value_reason"] == "zero_denominator"
     assert zero_denominator["value_number"] is None
     assert zero_denominator["influence"] == -0.5
+    without = recompute_without(live_writer, definition, fields, params, ids[0])
+    assert without == 1.5
+    assert zero_denominator["influence"] == total["value"] - without
+    kpi = reads.read_kpi(metric, WINDOW, store=live_writer.store)
+    assert kpi["current"]["value"] == total["value"]
+    assert kpi["current"]["evaluated_count"] == 3
+
+    result = reads.read_units(
+        metric,
+        {**WINDOW, "limit": 1},
+        drivers=True,
+        store=live_writer.store,
+        retention_days=lambda: 0,
+    )
+    assert [r["unit_id"] for r in result["results"]] == [ids[2]]
+    assert result["next_cursor"] is None  # No-value rows cannot occupy later pages.
+    row = result["results"][0]
+    assert row["status"] == "value" and row["value_number"] == 0.0
+    without = recompute_without(live_writer, definition, fields, params, ids[2])
+    assert row["influence"] == pytest.approx(total["value"] - without)
+    assert row["influence"] == -1.0
+
+    values = reads.read_units(
+        metric,
+        {**WINDOW, "context": "sessions", "unit_ids": [ids[0]]},
+        store=live_writer.store,
+        retention_days=lambda: 0,
+    )
+    assert values["results"][0]["status"] == "no_value"
+    assert values["results"][0]["no_value_reason"] == "zero_denominator"
+    assert values["results"][0]["value_number"] is None

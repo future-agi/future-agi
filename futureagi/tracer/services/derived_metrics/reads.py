@@ -628,9 +628,11 @@ def _failing_unit_predicate(definition):
     # zero effect, so filtering only by negative influence would lose them all.
     if definition.kind in {"share", "count"}:
         return "status = 'ok' AND value_bool = 0"
-    # Numeric drivers are the units pulling the value down, not the largest
-    # absolute contributors (which can instead be pulling it up).
-    return "influence < 0"
+    # Complete zero-denominator rows still contribute to pooled estimates and
+    # effects, but have no per-unit value and must not consume failing-row slots.
+    # Among valued units, select those pulling the value down, not merely the
+    # largest absolute contributors (which can instead be pulling it up).
+    return "status = 'ok' AND influence < 0"
 
 
 def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
