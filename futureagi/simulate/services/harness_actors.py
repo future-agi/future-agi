@@ -709,10 +709,28 @@ def _scenarios_using(documents: list[dict[str, Any]], actor_id: str) -> list[str
     return sorted(
         str(scenario.get("scenario_key") or scenario.get("name") or "")
         for scenario in documents
-        if any(
-            isinstance(one, dict) and one.get("id") == actor_id
-            for one in scenario.get("actors") or []
-        )
+        if _takes_part(scenario, actor_id)
+    )
+
+
+def _takes_part(scenario: dict[str, Any], actor_id: str) -> bool:
+    """Whether an actor is in a scenario: listed, sending its start, or writing a pre-run session.
+
+    The caller is the person in every scenario a person starts, so only one started by a task or an event has none.
+    """
+    start = scenario.get("starts_with")
+    if actor_id == CALLER:
+        return not start
+    if isinstance(start, dict) and start.get("actor") == actor_id:
+        return True
+    if any(
+        isinstance(one, dict) and one.get("id") == actor_id
+        for one in scenario.get("actors") or []
+    ):
+        return True
+    return any(
+        isinstance(session, dict) and actor_id in (session.get("actors") or [])
+        for session in scenario.get("pre_run") or []
     )
 
 

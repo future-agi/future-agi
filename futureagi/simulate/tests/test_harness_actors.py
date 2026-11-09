@@ -349,6 +349,26 @@ def test_an_actor_a_scenario_includes_is_not_removed(
     ]
 
 
+def test_an_actor_counts_every_scenario_it_takes_part_in_however_it_comes_in():
+    from simulate.services.harness_actors import _scenarios_using
+
+    documents = [
+        {"scenario_key": "asks", "actors": [{"id": "manager"}]},
+        {
+            "scenario_key": "meeting-ended",
+            "starts_with": {"actor": "calendar", "text": "The call ended"},
+        },
+        {"scenario_key": "thread", "pre_run": [{"actors": ["coworker", "manager"]}]},
+        {"scenario_key": "summarize", "starts_with": {"text": "Summarize this thread"}},
+    ]
+
+    # The caller is the person in every scenario that a person starts, and in none started by a task or event.
+    assert _scenarios_using(documents, "caller") == ["asks", "thread"]
+    assert _scenarios_using(documents, "manager") == ["asks", "thread"]
+    assert _scenarios_using(documents, "calendar") == ["meeting-ended"]
+    assert _scenarios_using(documents, "coworker") == ["thread"]
+
+
 def test_in_a_scenario_others_see_the_caller_s_situation_and_the_caller_does_not_get_it_twice(
     user, workspace, storage, auth_client
 ):
