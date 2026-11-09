@@ -5,7 +5,6 @@ import hashlib
 import io
 import json
 import logging
-import re
 import secrets
 import tarfile
 import uuid
@@ -59,6 +58,9 @@ _HEARTBEAT_WRITE_SECONDS = 5
 # Restarts that keep failing back off, then give up so the user is not left waiting forever.
 RUNTIME_RETRY_BACKOFF_SECONDS = 60
 RUNTIME_GIVE_UP_SECONDS = 15 * 60
+# A poll restarts that wait, but no command waits longer than this in all: a runtime that
+# keeps coming back and stopping is still given up.
+RUNTIME_GIVE_UP_CAP_SECONDS = 60 * 60
 # Only a runtime start writes a starting lease, so one this fresh is a start still in progress.
 RUNTIME_START_SECONDS = 10 * 60
 # The most scenarios one chat save may hold; Extend's added total counts against it too.
@@ -170,14 +172,35 @@ def settle_interrupted_turn(conversation: HostedHarnessConversation) -> None:
         conversation.active_invocation_id = None
 
 
+def _past_give_up(
+    conversation: HostedHarnessConversation,
+    oldest: HostedHarnessConversationMessage,
+    lease: HostedHarnessConversationLease | None,
+    now,
+) -> bool:
+    """Whether the oldest command has waited too long. A chat process that polled after
+    it was queued was still working on it, so the wait counts from its last poll."""
+    from simulate.services.harness_versioning.rebuild import waiting_since
+
+    since = waiting_since(conversation, oldest)
+    # Only the process's own polls make a lease active; a start sets it to starting.
+    last_poll = (
+        lease.heartbeat_at
+        if lease is not None
+        and lease.state == HostedHarnessConversationLease.State.ACTIVE
+        and lease.heartbeat_at is not None
+        else since
+    )
+    return now - since > timedelta(seconds=RUNTIME_GIVE_UP_CAP_SECONDS) or (
+        now - max(since, last_poll) > timedelta(seconds=RUNTIME_GIVE_UP_SECONDS)
+    )
+
+
 def recover_stalled_conversations(
     schedule: Callable[[str], Any], *, limit: int = 100
 ) -> dict[str, int]:
     """Restart chat runtimes that died with messages outstanding; settle ones that died idle."""
-    from simulate.services.harness_versioning.rebuild import (
-        holds_conversation,
-        waiting_since,
-    )
+    from simulate.services.harness_versioning.rebuild import holds_conversation
 
     now = timezone.now()
     unacked = HostedHarnessConversationMessage.no_workspace_objects.filter(
@@ -204,7 +227,8 @@ def recover_stalled_conversations(
     )
     session_builds = getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
     candidates = list(
-        HostedHarnessConversation.no_workspace_objects.select_related("job").annotate(
+        HostedHarnessConversation.no_workspace_objects.select_related("job")
+        .annotate(
             outstanding=Exists(unacked),
             healthy=Exists(healthy),
             overdue=Exists(
@@ -217,7 +241,8 @@ def recover_stalled_conversations(
             Q(outstanding=True)
             | Q(state__in=_ACTIVE_CONVERSATION_STATES)
             | (
-                Q(job__environment__isnull=True) & ~Q(job__state__in=_TERMINAL_JOB_STATES)
+                Q(job__environment__isnull=True)
+                & ~Q(job__state__in=_TERMINAL_JOB_STATES)
                 if session_builds
                 else Q(pk__in=[])
             )
@@ -259,8 +284,7 @@ def recover_stalled_conversations(
         oldest = _unacked_commands(candidate).order_by("sequence").first()
         if (
             oldest is not None
-            and now - waiting_since(candidate, oldest)
-            > timedelta(seconds=RUNTIME_GIVE_UP_SECONDS)
+            and _past_give_up(candidate, oldest, lease, now)
             # A rebuild's own checks end it; its chat restarts meanwhile.
             and not holds_conversation(candidate)
         ):
@@ -324,8 +348,6 @@ def retire_without_saved_workspace(conversation_id) -> int:
 
 
 def _abandon_outstanding(conversation_id) -> int:
-    from simulate.services.harness_versioning.rebuild import waiting_since
-
     with transaction.atomic():
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update().get(
@@ -340,15 +362,29 @@ def _abandon_outstanding(conversation_id) -> int:
             runtime_is_live(lease)
             or runtime_start_pending(lease)
             or oldest is None
-            or timezone.now() - waiting_since(conversation, oldest)
-            <= timedelta(seconds=RUNTIME_GIVE_UP_SECONDS)
+            or not _past_give_up(conversation, oldest, lease, timezone.now())
         ):
             return 0
+        # A turn_started event marks its command delivered; a poll after the command
+        # arrived means a process was running to take it.
+        started = (
+            oldest.state == HostedHarnessConversationMessage.State.DELIVERED
+            or bool(
+                lease is not None
+                and lease.state == HostedHarnessConversationLease.State.ACTIVE
+                and lease.heartbeat_at is not None
+                and lease.heartbeat_at > oldest.created_at
+            )
+        )
         return _fail_outstanding(
             conversation,
             state=HostedHarnessConversation.State.DEGRADED,
             reply=(
-                "The environment chat could not start, so your message was not "
+                "The environment chat stopped responding before it finished your "
+                "message. Changes it had not saved yet are lost. Send it again to "
+                "retry."
+                if started
+                else "The environment chat could not start, so your message was not "
                 "delivered. Send it again to retry."
             ),
         )
@@ -736,7 +772,9 @@ def build_turn_context(conversation: HostedHarnessConversation) -> dict[str, Any
         "capabilities": {
             "policy_hash": conversation.policy_hash,
             "control_only": bool(lease and lease.control_only),
-            "builder_session": bool(getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)),
+            "builder_session": bool(
+                getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
+            ),
         },
         "event_watermark": conversation.event_acked_through,
         "command_watermark": conversation.command_acked_through,
@@ -858,7 +896,9 @@ def _keep_working_sandbox_alive(conversation, lease, now) -> None:
     try:
         HostedHarnessGateway()._renew_chat_idle_window(lease)
     except Exception:  # noqa: BLE001 - the poll must answer even when renewal cannot
-        logger.exception("working conversation renewal failed conversation=%s", conversation.id)
+        logger.exception(
+            "working conversation renewal failed conversation=%s", conversation.id
+        )
 
 
 def pending_commands(
@@ -1220,9 +1260,16 @@ def conversation_run_status(
         "adjustments": [
             {
                 key: item.get(key)
-                for key in ("adjustment_id", "instruction", "target_stage", "status", "applied_stage")
+                for key in (
+                    "adjustment_id",
+                    "instruction",
+                    "target_stage",
+                    "status",
+                    "applied_stage",
+                )
             }
-            for item in ((job.payload or {}).get("metadata") or {}).get("adjustments") or []
+            for item in ((job.payload or {}).get("metadata") or {}).get("adjustments")
+            or []
         ],
     }
 
@@ -1326,7 +1373,8 @@ def conversation_scenarios(
     filters = QueryDict(mutable=True)
     for field, values in (params.get("filters") or {}).items():
         filters.setlist(
-            str(field), [str(one) for one in (values if isinstance(values, list) else [values])]
+            str(field),
+            [str(one) for one in (values if isinstance(values, list) else [values])],
         )
     queryset = apply_filters(queryset, filters)
     queryset = (
@@ -1348,9 +1396,7 @@ def conversation_scenarios(
         "numbers_not_found": [number for number in numbers if number not in found]
         if numbers and matching <= page_size
         else [],
-        "rows": [
-            _scenario_summary(row, full=bool(params.get("full"))) for row in rows
-        ],
+        "rows": [_scenario_summary(row, full=bool(params.get("full"))) for row in rows],
     }
 
 
@@ -1393,30 +1439,41 @@ def conversation_overview(conversation: HostedHarnessConversation) -> dict[str, 
     for row in rows:
         by_use_case.setdefault(row["use_case"] or "(no use case)", []).append(row)
     overlays = {
-        str((row["coverage"] or {}).get("overlay") or "") for row in rows if row["coverage"]
+        str((row["coverage"] or {}).get("overlay") or "")
+        for row in rows
+        if row["coverage"]
     }
     grid = coverage_grid(scenarios, "task", "overlay")
     agent = (environment.payload or {}).get("agent") or {}
     overview = {
         "environment": {
             "id": str(environment.id),
-            "name": str(((environment.payload or {}).get("metadata") or {}).get("name") or ""),
+            "name": str(
+                ((environment.payload or {}).get("metadata") or {}).get("name") or ""
+            ),
             "state": environment.state,
             "connector": agent.get("connector"),
             "mode": agent.get("mode") or "",
-            "source_kind": ((environment.payload or {}).get("source") or {}).get("kind"),
+            "source_kind": ((environment.payload or {}).get("source") or {}).get(
+                "kind"
+            ),
         },
         "scenario_count": len(rows),
         "use_cases": [
             {
                 "use_case": name,
                 "count": len(held),
-                "numbers": _number_ranges([one["number"] for one in held if one["number"]]),
+                "numbers": _number_ranges(
+                    [one["number"] for one in held if one["number"]]
+                ),
                 ("names" if small else "examples"): [
-                    f"#{one['number']} {one['name']}" for one in (held if small else held[:3])
+                    f"#{one['number']} {one['name']}"
+                    for one in (held if small else held[:3])
                 ],
             }
-            for name, held in sorted(by_use_case.items(), key=lambda pair: -len(pair[1]))
+            for name, held in sorted(
+                by_use_case.items(), key=lambda pair: -len(pair[1])
+            )
         ],
         "coverage": {
             "axes": [
@@ -1425,12 +1482,15 @@ def conversation_overview(conversation: HostedHarnessConversation) -> dict[str, 
             ],
             "axes_varied": sum(1 for one in grid["per_axis"] if one["levels"] > 1),
             "forced_present": [name for name in _FORCED_OVERLAYS if name in overlays],
-            "forced_missing": [name for name in _FORCED_OVERLAYS if name not in overlays],
+            "forced_missing": [
+                name for name in _FORCED_OVERLAYS if name not in overlays
+            ],
         },
         "recent_runs": conversation_runs(conversation, limit=5)["runs"],
         "build_changes": [
             {key: item.get(key) for key in ("instruction", "target_stage", "status")}
-            for item in ((job.payload or {}).get("metadata") or {}).get("adjustments") or []
+            for item in ((job.payload or {}).get("metadata") or {}).get("adjustments")
+            or []
         ],
         "earlier_messages": [
             {"role": message.role, "text": (message.content or "")[:800]}
@@ -1468,8 +1528,17 @@ def _suite_snapshot(job: HostedHarnessJob) -> dict[str, tuple[int | None, str, s
             row.number,
             row.name or row.scenario_key,
             canonical_digest(
-                [row.instruction, row.tests, row.branch, row.use_case, row.persona, row.sub_goals,
-                 row.coverage, row.keywords, row.background_noise]
+                [
+                    row.instruction,
+                    row.tests,
+                    row.branch,
+                    row.use_case,
+                    row.persona,
+                    row.sub_goals,
+                    row.coverage,
+                    row.keywords,
+                    row.background_noise,
+                ]
             ),
         )
         for row in HostedHarnessScenario.no_workspace_objects.filter(job=job)
@@ -1480,7 +1549,9 @@ def publish_conversation_workspace(
     conversation: HostedHarnessConversation, *, digest: str
 ) -> dict[str, Any]:
     """Publish the chat's latest checkpoint now and say exactly what changed, or why it did not."""
-    conversation = HostedHarnessConversation.no_workspace_objects.get(id=conversation.id)
+    conversation = HostedHarnessConversation.no_workspace_objects.get(
+        id=conversation.id
+    )
     if not digest or conversation.latest_workspace_digest != digest:
         return {
             "applied": False,
@@ -1518,7 +1589,9 @@ def publish_conversation_workspace(
     after = _suite_snapshot(environment)
     added = sorted(key for key in after if key not in before)
     removed = sorted(key for key in before if key not in after)
-    changed = sorted(key for key in after if key in before and after[key][2] != before[key][2])
+    changed = sorted(
+        key for key in after if key in before and after[key][2] != before[key][2]
+    )
 
     def described(keys: list[str], held: dict) -> list[dict[str, Any]]:
         return sorted(
@@ -1528,7 +1601,10 @@ def publish_conversation_workspace(
 
     return {
         "applied": True,
-        "revision": str(((published.payload or {}).get("metadata") or {}).get("authoring_revision") or ""),
+        "revision": str(
+            ((published.payload or {}).get("metadata") or {}).get("authoring_revision")
+            or ""
+        ),
         "scenario_count": len(after),
         "added": described(added, after),
         "removed": described(removed, before),
