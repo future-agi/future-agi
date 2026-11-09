@@ -50764,7 +50764,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "target_scenario_keys",
         "surfaces",
         "budget_credits",
-        "max_minutes",
       ],
       type: "object",
       properties: {

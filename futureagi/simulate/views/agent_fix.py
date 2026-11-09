@@ -193,7 +193,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             surfaces=data["surfaces"],
             locked_paths=data["locked_paths"],
             budget_usd=data["budget_credits"] / 100,
-            max_minutes=data["max_minutes"],
+            max_minutes=data.get("max_minutes"),
             user=request.user,
         )
         return Response(

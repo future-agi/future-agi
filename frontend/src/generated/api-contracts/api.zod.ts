@@ -36497,7 +36497,8 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
   max_minutes: zod
     .number()
     .min(1)
-    .max(simulateApiAgentFixRunsCreateBodyMaxMinutesMax),
+    .max(simulateApiAgentFixRunsCreateBodyMaxMinutesMax)
+    .optional(),
 });
 
 /**
