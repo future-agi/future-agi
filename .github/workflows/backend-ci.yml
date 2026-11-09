@@ -32,6 +32,9 @@ jobs:
       backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
       update_safety: ${{ steps.filter.outputs.update_safety || 'false' }}
       executor_base: ${{ steps.filter.outputs.executor_base || 'false' }}
+      coverage: ${{ steps.filter.outputs.coverage_tracer == 'true' || steps.filter.outputs.coverage_model_hub == 'true' || steps.filter.outputs.coverage_agentic_eval == 'true' }}
+      coverage_filters: ${{ steps.filter.outputs.changes || '[]' }}
+      coverage_tooling: ${{ steps.filter.outputs.coverage_tooling || 'false' }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -70,6 +73,16 @@ jobs:
             executor_base:
               - 'futureagi/code-executor/Dockerfile.base'
               - 'futureagi/code-executor/requirements.sandbox.txt'
+            coverage_tracer:
+              - 'futureagi/tracer/**/*.py'
+            coverage_model_hub:
+              - 'futureagi/model_hub/**/*.py'
+            coverage_agentic_eval:
+              - 'futureagi/agentic_eval/**/*.py'
+            coverage_tooling:
+              - 'futureagi/.ci/changed_line_coverage.py'
+              - 'futureagi/.ci/coverage_tests/**'
+              - '.github/workflows/backend-ci.yml'
       - id: always
         if: github.event_name != 'pull_request'
         run: echo "backend=true" >> "$GITHUB_OUTPUT"
@@ -318,14 +331,32 @@ jobs:
           name: test-durations-plan
           path: futureagi
 
+      - name: Configure scoped coverage (advisory)
+        id: coverage
+        if: github.event_name == 'pull_request' && needs.changes.outputs.coverage == 'true'
+        continue-on-error: true
+        env:
+          COVERAGE_FILTERS: ${{ needs.changes.outputs.coverage_filters }}
+        run: |
+          python3 -I .ci/changed_line_coverage.py configure \
+            --filters "$COVERAGE_FILTERS" --config "$RUNNER_TEMP/changed-line-coverage.ini"
+
       - name: Run shard
         id: run-shard
+        env:
+          COLLECT_COVERAGE: ${{ steps.coverage.outcome == 'success' }}
+          COVERAGE_FILE: .coverage.${{ matrix.group }}
         run: |
+          coverage_args=()
+          if [[ "$COLLECT_COVERAGE" == 'true' ]]; then
+            coverage_args=(--cov "--cov-config=$RUNNER_TEMP/changed-line-coverage.ini" --cov-report= "--cov-fail-under=0")
+          fi
           set +e
           # pytest.ini adds -v; -q restores compact module progress. Verbose
           # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
           # processing after the tests have passed. Keep full JUnit results.
           uv run pytest -q -ra --ignore=tests/stress \
+            "${coverage_args[@]}" \
             --splits "$SPLITS" --group "${{ matrix.group }}" \
             --splitting-algorithm least_duration \
             --durations-path .test_durations \
@@ -351,6 +382,18 @@ jobs:
           overwrite: true
           if-no-files-found: error
 
+      - name: Upload scoped coverage data (advisory)
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' && steps.run-shard.conclusion != 'skipped' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage-${{ matrix.group }}
+          path: futureagi/.coverage.${{ matrix.group }}
+          include-hidden-files: true
+          overwrite: true
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Upload timing data (dev pushes only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
         uses: actions/upload-artifact@v4
@@ -368,6 +411,76 @@ jobs:
           cat /tmp/compose-up.log || true
           docker compose -f docker-compose.test.yml -p futureagi-test ps
           docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 200
+
+  coverage-tooling:
+    name: Coverage tooling checks (not required)
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.coverage_tooling == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+      - name: Exercise real coverage collection, combination and changed-line reports
+        run: |
+          uv run --no-project --with coverage==7.13.1 --with diff-cover==9.7.1 \
+            --with pytest==8.4.1 --with pytest-cov==7.0.0 \
+            python -I -m unittest discover -s futureagi/.ci/coverage_tests -p 'check_*.py' -v
+
+  changed-line-coverage:
+    name: Changed-line Python coverage (advisory)
+    needs: [changes, test]
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.coverage == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: futureagi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+      - name: Download shard coverage
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-coverage-*
+          path: ${{ runner.temp }}/python-coverage
+          merge-multiple: true
+      - name: Report coverage against the PR merge base
+        id: report
+        env:
+          COVERAGE_FILTERS: ${{ needs.changes.outputs.coverage_filters }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          uv run --no-project --with coverage==7.13.1 --with diff-cover==9.7.1 \
+            python -I .ci/changed_line_coverage.py report \
+            --filters "$COVERAGE_FILTERS" --config "$RUNNER_TEMP/changed-line-coverage.ini" \
+            --artifacts "$RUNNER_TEMP/python-coverage" --output "$RUNNER_TEMP/coverage-report" \
+            --summary "$GITHUB_STEP_SUMMARY" --base "$PR_BASE" \
+            --shards "$SPLITS" --test-result "$TEST_RESULT"
+      - name: Explain unavailable report
+        if: ${{ !cancelled() && steps.report.outcome != 'success' }}
+        run: |
+          echo '## Changed-line Python coverage (advisory)' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Coverage report unavailable. Check this job for a collection or reporting failure. No threshold is enforced.' >> "$GITHUB_STEP_SUMMARY"
+          echo '::warning::Advisory coverage report unavailable; Backend Tests Pass is unaffected.'
+      - name: Upload combined coverage reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-line-coverage
+          path: ${{ runner.temp }}/coverage-report
+          retention-days: 7
+          if-no-files-found: ignore
 
   saml-multiworker:
     # The SAML race guarantees (one token per duplicated ACS post, no usable
