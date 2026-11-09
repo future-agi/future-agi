@@ -105,7 +105,9 @@ class TestDeleteCompareFolderActivity:
     """Tests for delete_compare_folder_activity."""
 
     @patch("tfc.utils.storage.delete_compare_folder")
-    def test_deletes_local_folder_if_exists(self, mock_s3_delete, monkeypatch, tmp_path):
+    def test_deletes_local_folder_if_exists(
+        self, mock_s3_delete, monkeypatch, tmp_path
+    ):
         """The writer's directory is removed after remote deletion."""
         from tfc.temporal.background_tasks.activities import (
             delete_compare_folder_activity,
@@ -124,7 +126,9 @@ class TestDeleteCompareFolderActivity:
         mock_s3_delete.assert_called_once_with(test_compare_id)
 
     @patch("tfc.utils.storage.delete_compare_folder")
-    def test_skips_local_deletion_if_folder_not_exists(self, mock_s3_delete, monkeypatch, tmp_path):
+    def test_skips_local_deletion_if_folder_not_exists(
+        self, mock_s3_delete, monkeypatch, tmp_path
+    ):
         """A missing local root still allows remote cleanup."""
         from tfc.temporal.background_tasks.activities import (
             delete_compare_folder_activity,

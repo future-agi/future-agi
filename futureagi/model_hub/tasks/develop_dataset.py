@@ -888,8 +888,12 @@ def delete_unused_compare_folder():
         folders = os.listdir(compare_folder_path)
     except FileNotFoundError:
         return
-    except OSError as e:
-        logger.error(f"Error deleting unused compare folder: {str(e)}")
+    except OSError:
+        logger.error(
+            "Error deleting unused compare folder",
+            compare_root=compare_folder_path,
+            exc_info=True,
+        )
         return
 
     for folder in folders:
@@ -903,6 +907,7 @@ def delete_unused_compare_folder():
                 continue
             if (time.time() - folder_stat.st_ctime) > 7200:
                 cleanup_compare_folder(folder)
-                logger.info(f"Deleted folder: {folder_path}")
-        except Exception as e:
-            logger.error(f"Error deleting compare folder {folder}: {str(e)}")
+                logger.info("Deleted compare folder", folder_path=folder_path)
+        except Exception:
+            # Keep failed markers for the next schedule; continue other folders.
+            logger.error("Error deleting compare folder", folder=folder, exc_info=True)

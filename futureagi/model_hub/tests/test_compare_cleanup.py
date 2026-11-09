@@ -21,7 +21,9 @@ def isolated_storage(monkeypatch, tmp_path, settings):
     monkeypatch.delenv("COMPARE_DATASET_LOCAL_ROOT", raising=False)
     settings.BASE_DIR = tmp_path
     client = Mock()
-    client.list_objects.return_value = [SimpleNamespace(object_name="compare/test/page.json")]
+    client.list_objects.return_value = [
+        SimpleNamespace(object_name="compare/test/page.json")
+    ]
     monkeypatch.setattr(storage, "get_storage_client", lambda: client)
     monkeypatch.setattr(tasks, "logger", Mock())
     return client
@@ -40,8 +42,12 @@ def expire_folders(monkeypatch, *folders):
     monkeypatch.setattr(tasks, "time", SimpleNamespace(time=lambda: now))
 
 
-@pytest.mark.parametrize("configured", [False, True], ids=["default-root", "configured-root"])
-def test_scheduled_cleanup_uses_writer_root(monkeypatch, tmp_path, isolated_storage, configured):
+@pytest.mark.parametrize(
+    "configured", [False, True], ids=["default-root", "configured-root"]
+)
+def test_scheduled_cleanup_uses_writer_root(
+    monkeypatch, tmp_path, isolated_storage, configured
+):
     if configured:
         monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "scratch"))
     expired = make_compare("expired")
@@ -87,10 +93,12 @@ def test_missing_root_is_quiet(monkeypatch, tmp_path, isolated_storage, configur
 
 
 def test_root_permission_error_is_logged(monkeypatch):
-    monkeypatch.setattr(tasks.os, "listdir", Mock(side_effect=PermissionError("denied")))
+    monkeypatch.setattr(
+        tasks.os, "listdir", Mock(side_effect=PermissionError("denied"))
+    )
     tasks.delete_unused_compare_folder()
     tasks.logger.error.assert_called_once()
-    assert "denied" in tasks.logger.error.call_args.args[0]
+    assert tasks.logger.error.call_args.kwargs["exc_info"] is True
 
 
 def test_child_disappears_after_listing(monkeypatch, tmp_path, isolated_storage):
@@ -112,7 +120,9 @@ def test_child_disappears_after_listing(monkeypatch, tmp_path, isolated_storage)
     tasks.logger.error.assert_not_called()
 
 
-def test_scheduled_remote_failure_keeps_marker_and_continues(monkeypatch, tmp_path, isolated_storage):
+def test_scheduled_remote_failure_keeps_marker_and_continues(
+    monkeypatch, tmp_path, isolated_storage
+):
     monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
     failed = make_compare("failed")
     expired = make_compare("expired")
@@ -183,7 +193,9 @@ def test_local_permission_error_is_not_suppressed(explicit_cleanup, monkeypatch)
     assert folder.exists()
 
 
-def test_concurrently_removed_child_does_not_leave_other_files(explicit_cleanup, monkeypatch):
+def test_concurrently_removed_child_does_not_leave_other_files(
+    explicit_cleanup, monkeypatch
+):
     folder = make_compare("child-race")
     (folder / "page.json").write_text("{}", encoding="utf-8")
     original_unlink = os.unlink
