@@ -51551,7 +51551,7 @@
             "get": {
                 "operationId": "simulate_api_harness-environments_read",
                 "summary": "One environment: overview, contract, world, scenarios, evaluations, settings.",
-                "description": "Same shape whichever door built it. A section the pipeline has not reached\nyet is null, so the client renders \"building\" rather than an empty pane.",
+                "description": "Same shape whichever door built it. A section the pipeline has not reached\nyet is null, so the client renders \"building\" rather than an empty pane. A\ncoding agent's read leaves out the held-back cases.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -52325,6 +52325,88 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/verify/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_verify",
+                "description": "Verify an agent version on the held-back cases, in a run no user read shows.\nIts live or completed verify is final: asking again returns it. After one that\nfailed or was canceled, asking again starts a new one.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVerifyCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVerifyCreateResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/verify/{verify_id}/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_verify_detail",
+                "description": "How the verified version did on the held-back cases, as counts only.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVerifyResult"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "verify_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/versions/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_versions",
@@ -52361,7 +52443,7 @@
         "/simulate/api/harness-environments/{id}/versions/agent/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_versions_create_agent_version",
-                "description": "A new agent version from an upload, a prompt edit or a settings edit; it is\nchecked next, then made this environment's default.",
+                "description": "A new agent version from an upload, a prompt edit or a settings edit; it is\nchecked next, then made this environment's default unless make_default is\nfalse. A coding agent key pushes only an upload, never made the default.",
                 "parameters": [
                     {
                         "name": "data",
@@ -52502,7 +52584,7 @@
         "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_versions_suite_suite_members",
-                "description": "The scenarios in one suite version, by number.",
+                "description": "The scenarios in one suite version, by number; a coding agent's read leaves\nout the held-back cases.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -52907,8 +52989,7 @@
         "/simulate/api/harness-jobs/{id}/": {
             "get": {
                 "operationId": "simulate_api_harness-jobs_read",
-                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "description": "One harness job. A coding agent key reads its own run narrowly, outside\nthis schema: only `status` (its failure as domain, stage, code and a fixed\nmessage), `receipts`, `consumption`, `platform`, and `job` with its ids and\nfive metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or\n`job.source`, which name every case of the suite.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -85926,6 +86007,20 @@
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "coding_agent"
+                    ],
+                    "default": "user"
+                },
+                "simulation_environment_id": {
+                    "title": "Simulation environment id",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },
@@ -136742,8 +136837,7 @@
                 "source_run_id",
                 "target_scenario_keys",
                 "surfaces",
-                "budget_credits",
-                "max_minutes"
+                "budget_credits"
             ],
             "type": "object",
             "properties": {
@@ -142088,6 +142182,127 @@
                 }
             }
         },
+        "HarnessVerifyCreate": {
+            "required": [
+                "agent_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "description": "The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "default": 3,
+                    "maximum": 20,
+                    "minimum": 1
+                }
+            }
+        },
+        "HarnessVerifyCreateResponse": {
+            "required": [
+                "verify_id",
+                "state"
+            ],
+            "type": "object",
+            "properties": {
+                "verify_id": {
+                    "title": "Verify id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "received",
+                        "queued",
+                        "admitted",
+                        "provisioning",
+                        "running",
+                        "finalizing",
+                        "cleaning_up",
+                        "retry_wait",
+                        "completed",
+                        "failed",
+                        "canceled"
+                    ]
+                }
+            }
+        },
+        "HarnessVerifyResult": {
+            "required": [
+                "state",
+                "passed",
+                "failed",
+                "total",
+                "trials",
+                "held_back_pass_rate",
+                "limited_validation"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "received",
+                        "queued",
+                        "admitted",
+                        "provisioning",
+                        "running",
+                        "finalizing",
+                        "cleaning_up",
+                        "retry_wait",
+                        "completed",
+                        "failed",
+                        "canceled"
+                    ]
+                },
+                "passed": {
+                    "title": "Passed",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "failed": {
+                    "title": "Failed",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "total": {
+                    "title": "Total",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "held_back_pass_rate": {
+                    "description": "95% range of the trial pass rate, [low, high]; null until it ends.",
+                    "type": "array",
+                    "items": {
+                        "type": "number",
+                        "maximum": 1,
+                        "minimum": 0
+                    },
+                    "maxItems": 2,
+                    "minItems": 2,
+                    "x-nullable": true
+                },
+                "limited_validation": {
+                    "title": "Limited validation",
+                    "description": "Too few cases were held back to call a version verified.",
+                    "type": "boolean"
+                }
+            }
+        },
         "HarnessAgentConfigChange": {
             "type": "object",
             "properties": {
@@ -142137,6 +142352,11 @@
                 },
                 "agent_payload": {
                     "$ref": "#/definitions/HarnessAgentPayloadChange"
+                },
+                "make_default": {
+                    "title": "Make default",
+                    "description": "False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default.",
+                    "type": "boolean"
                 }
             }
         },
@@ -155864,7 +156084,9 @@
                 "evaluations",
                 "scoring_status",
                 "csat_status",
-                "csat_reason"
+                "csat_reason",
+                "failure_domain",
+                "failure_code"
             ],
             "type": "object",
             "properties": {
@@ -156065,6 +156287,26 @@
                 },
                 "csat_reason": {
                     "title": "Csat reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "failure_domain": {
+                    "title": "Failure domain",
+                    "type": "string",
+                    "enum": [
+                        "agent",
+                        "simulator",
+                        "environment",
+                        "connectivity",
+                        "infrastructure",
+                        "grading",
+                        "platform_sync"
+                    ],
+                    "x-nullable": true
+                },
+                "failure_code": {
+                    "title": "Failure code",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true

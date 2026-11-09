@@ -1,11 +1,20 @@
-"""Authentication identities used by internal simulation services."""
+"""Authentication identities used by internal simulation services, and the calls a
+coding agent's API key may make."""
 
 from __future__ import annotations
 
 import secrets
+from typing import TYPE_CHECKING, NamedTuple
+from uuid import UUID
 
 from django.conf import settings
+from rest_framework import status
 from rest_framework.authentication import BaseAuthentication, get_authorization_header
+from rest_framework.exceptions import APIException, NotFound, PermissionDenied
+
+if TYPE_CHECKING:
+    from accounts.models import OrgApiKey
+    from simulate.models import HostedHarnessJob
 
 
 class InternalServiceUser:
@@ -257,3 +266,136 @@ class HarnessConversationAuthentication(BaseAuthentication):
             )
         conversation = lease.conversation
         return HarnessConversationUser(conversation), conversation
+
+
+class _Target(NamedTuple):
+    # The path kwarg holding the id the call acts on.
+    kwarg: str
+    # The HostedHarnessJob lookup from that id to a run; None when the id is the
+    # environment itself.
+    run_lookup: str | None
+
+
+_ENVIRONMENT = _Target("pk", None)
+_JOB = _Target("pk", "id")
+_EXECUTION = _Target("test_execution_id", "test_execution_id")
+_CALL = _Target("call_execution_id", "test_execution__calls__id")
+
+# Every call a coding agent's key may make, by resolved view name and method, and
+# what in its path ties it to an environment. Anything not listed is refused, so a
+# new route stays closed to the key until it is added here. A ``None`` target
+# names no environment: the source upload only stores an archive, and the agent
+# version made from it names the environment.
+CODING_AGENT_ROUTES: dict[tuple[str, str], _Target | None] = {
+    ("simulate:harness-job-source-upload", "POST"): None,
+    ("simulate:harness-environment-detail", "GET"): _ENVIRONMENT,
+    ("simulate:harness-environment-versions", "GET"): _ENVIRONMENT,
+    ("simulate:harness-environment-create-agent-version", "POST"): _ENVIRONMENT,
+    ("simulate:harness-environment-suite-members", "GET"): _ENVIRONMENT,
+    ("simulate:harness-environment-run-plan", "GET"): _ENVIRONMENT,
+    ("simulate:harness-environment-run", "POST"): _ENVIRONMENT,
+    ("simulate:harness-environment-verify", "POST"): _ENVIRONMENT,
+    ("simulate:harness-environment-verify-detail", "GET"): _ENVIRONMENT,
+    ("simulate:harness-job-detail", "GET"): _JOB,
+    ("simulate:test-execution-detail", "GET"): _EXECUTION,
+    ("simulate:v3-test-execution-calls", "GET"): _EXECUTION,
+    ("simulate:v3-call-execution-detail", "GET"): _CALL,
+}
+
+
+class CodingAgentNeedsSuiteVersion(APIException):
+    """No case can be held back from a coding agent whose environment has no suite
+    version, or on an install with versioning off; its key is refused, so it is never
+    served every case."""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "coding_agent_needs_suite_version"
+    default_detail = (
+        "A coding agent key needs an environment with a scenario version and"
+        " versioning on, to hold cases back from it"
+    )
+
+
+def _can_hold_back(environment_id: UUID) -> bool:
+    """Whether the environment has a suite version to hold cases back from."""
+    from simulate.models import HostedHarnessJob
+    from simulate.services.harness_versioning.versions import versioning_enabled
+
+    return (
+        versioning_enabled()
+        and HostedHarnessJob.no_workspace_objects.filter(
+            id=environment_id, suite_version__isnull=False
+        ).exists()
+    )
+
+
+def refuse_coding_agent_request(request, org_api_key: OrgApiKey) -> None:
+    """Raise unless ``request`` is a call in ``CODING_AGENT_ROUTES`` that this coding
+    agent key may make.
+
+    Fails closed: a request with no resolved route is refused, and so is every call
+    while the key's environment has nothing to hold back (409). Another environment
+    is a 403. A run, execution or call id is a 404 unless it belongs to a user run
+    of the key's environment that this key started, as ``coding_agent_key_id`` in
+    the run's metadata records. A person's runs of the same environment can
+    include cases the coding agent must not read, and a hidden run reads as one
+    that does not exist.
+    """
+    environment_id = org_api_key.simulation_environment_id
+    match = getattr(request, "resolver_match", None)
+    route = (getattr(match, "view_name", None), getattr(request, "method", None))
+    if route not in CODING_AGENT_ROUTES or environment_id is None:
+        raise PermissionDenied(
+            "A coding agent key cannot make this call",
+            code="coding_agent_route_refused",
+        )
+    if not _can_hold_back(environment_id):
+        raise CodingAgentNeedsSuiteVersion()
+    target = CODING_AGENT_ROUTES[route]
+    if target is None:
+        return
+    try:
+        target_id = UUID(str(match.kwargs[target.kwarg]))
+    except (KeyError, ValueError):
+        target_id = None
+    if target.run_lookup is None:
+        if target_id != environment_id:
+            raise PermissionDenied(
+                "A coding agent key acts on its own environment only",
+                code="coding_agent_environment_refused",
+            )
+        return
+
+    from simulate.models import HostedHarnessJob
+    from simulate.selectors.runs import user_runs
+
+    if (
+        target_id is None
+        or not HostedHarnessJob.no_workspace_objects.filter(
+            user_runs(),
+            environment_id=environment_id,
+            payload__metadata__coding_agent_key_id=str(org_api_key.id),
+            **{target.run_lookup: target_id},
+        ).exists()
+    ):
+        raise NotFound()
+
+
+def bindable_environment(request, environment_id: UUID) -> HostedHarnessJob | None:
+    """The environment, if the caller of ``request`` can see it, that a coding agent
+    key they mint may be bound to; same tenancy as the environment routes. One it
+    could hold nothing back on is refused (409), as every call of the key would be."""
+    from simulate.models import HostedHarnessJob
+    from simulate.services.harness_provider import request_organization, scope_jobs
+
+    environment = scope_jobs(
+        HostedHarnessJob.no_workspace_objects.filter(
+            id=environment_id,
+            organization=request_organization(request),
+            environment__isnull=True,
+        ),
+        request,
+    ).first()
+    if environment is not None and not _can_hold_back(environment.id):
+        raise CodingAgentNeedsSuiteVersion()
+    return environment

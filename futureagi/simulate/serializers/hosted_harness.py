@@ -18,6 +18,7 @@ class HarnessIngressResponseSerializer(serializers.Serializer):
     url = serializers.URLField()
     expires_in_seconds = serializers.IntegerField(min_value=60, max_value=86400)
 
+
 class HarnessIngressProxyRequestSerializer(serializers.Serializer):
     """Accept arbitrary callback payloads while keeping the relay in the API contract."""
 
@@ -146,18 +147,19 @@ class HarnessCallSerializer(serializers.Serializer):
     target_metrics = HarnessTargetMetricsSerializer(required=False, allow_null=True)
 
 
+HARNESS_FAILURE_DOMAINS = (
+    "agent",
+    "simulator",
+    "environment",
+    "connectivity",
+    "infrastructure",
+    "grading",
+    "platform_sync",
+)
+
+
 class HarnessFailureSerializer(serializers.Serializer):
-    domain = serializers.ChoiceField(
-        choices=(
-            "agent",
-            "simulator",
-            "environment",
-            "connectivity",
-            "infrastructure",
-            "grading",
-            "platform_sync",
-        )
-    )
+    domain = serializers.ChoiceField(choices=HARNESS_FAILURE_DOMAINS)
     stage = serializers.CharField(max_length=64)
     code = serializers.CharField(max_length=128)
     message = serializers.CharField(max_length=2000)
