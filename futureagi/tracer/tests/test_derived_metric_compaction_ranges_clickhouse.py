@@ -17,6 +17,7 @@ from tracer.models.derived_metric import (
 )
 from tracer.services.derived_metrics.compaction_ranges import (
     ALGORITHM,
+    BUCKETS,
     RANGE_ROWS,
     destination_select,
     digest_select,
@@ -136,7 +137,8 @@ def test_all_seven_stores_exact_payloads_and_no_pg_rowbinary(live_writer):
     attempt = manifest.published_by
     assert not attempt.batches.exists()
     assert not list(writer.plans(attempt))
-    assert attempt.compaction_ranges.count() > 56
+    # One empty range per hash bucket per table kind is the floor.
+    assert attempt.compaction_ranges.count() >= BUCKETS * len(TABLE_KINDS)
     assert set(attempt.compaction_ranges.values_list("state", flat=True)) == {
         "verified"
     }
@@ -159,7 +161,7 @@ def test_empty_ranges_have_complete_sealed_registry(live_writer):
     writer = live_writer
     seed_all(writer, count=0)
     attempt = prepare(writer)
-    assert attempt.compaction_ranges.count() == 56
+    assert attempt.compaction_ranges.count() == BUCKETS * len(TABLE_KINDS)
     assert set(attempt.compaction_ranges.values_list("row_count", flat=True)) == {0}
     manifest = writer.stage_and_publish(attempt)
     assert manifest.checkpoint_attempt_id == attempt.id

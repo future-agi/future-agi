@@ -349,26 +349,22 @@ def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
     assert grouped["results"][0]["group_key"] == '["value","west"]'
     assert grouped["results"][0]["value"] == 6.0
     if level == "span":
-        from tracer.services.derived_metrics.service import MetricUnavailableError
-
-        with pytest.raises(MetricUnavailableError, match="Committed span evidence"):
-            reads.read_units(
-                metric,
-                WINDOW,
-                drivers=True,
-                store=writer.store,
-                retention_days=lambda: 0,
-            )
-        with pytest.raises(MetricUnavailableError, match="Committed span evidence"):
-            reads.read_units(
-                metric,
-                {**WINDOW, "context": "spans", "unit_ids": ["absent"]},
-                store=writer.store,
-                retention_days=lambda: 0,
-            )
-        assert not MetricGenerationPin.objects.filter(
-            project_id=observe_project.id
-        ).exists()
+        # Span drivers and unit values now read the writer's committed span
+        # evidence (see test_derived_metric_span_evidence_clickhouse.py for the
+        # value-level coverage); here they must be readable, not unavailable.
+        drivers = reads.read_units(
+            metric, WINDOW, drivers=True, store=writer.store, retention_days=lambda: 0
+        )
+        assert isinstance(drivers["results"], list)
+        values = reads.read_units(
+            metric,
+            {**WINDOW, "context": "spans", "unit_ids": ["absent"]},
+            store=writer.store,
+            retention_days=lambda: 0,
+        )
+        assert [(r["unit_id"], r["status"]) for r in values["results"]] == [
+            ("absent", "no_value")
+        ]
         return
     first = reads.read_units(
         metric,
