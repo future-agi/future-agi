@@ -149,6 +149,7 @@ except ImportError:
     ConversationMetricsCalculator = None
     PhoneNumberService = None
     decide_processing_skip = None
+from simulate.services.evaluation_denials import record_evaluation_denial
 from simulate.temporal.activities.xl import (
     PATH_MISSING,
     TRANSCRIPT_DOT_ALIASES,
@@ -158,8 +159,6 @@ from simulate.temporal.activities.xl import (
     stringify_leaf,
     walk_subject_path,
 )
-from simulate.services.evaluation_denials import record_evaluation_denial
-from tfc.utils.evaluation_denials import EvaluationDenied
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
@@ -176,6 +175,7 @@ from tfc.temporal.drop_in import temporal_activity
 
 # Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied
 
 try:
     from ee.usage.models.usage import APICallType

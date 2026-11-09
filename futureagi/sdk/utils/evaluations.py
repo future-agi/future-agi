@@ -3,6 +3,8 @@ import uuid
 
 import structlog
 
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_rate_limited
+
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 
@@ -16,7 +18,6 @@ from sdk.utils.helpers import (
 )
 from tracer.utils.inline_evals import trigger_inline_eval
 from tfc.constants.api_calls import APICallStatusChoices
-from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_rate_limited
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:

@@ -328,8 +328,6 @@ class DirectEvaluator:
                 output_len=len(output) if output else 0,
             )
             return output
-        except EvaluationDenied:
-            raise
         except Exception as e:
             logger.error(f"LLM call failed: {e}", exc_info=True)
             return f"Error: {e}"
@@ -411,8 +409,6 @@ class DirectEvaluator:
                         updated_mapping[key] = json.dumps(
                             input_data, indent=2, default=str
                         )
-                    except EvaluationDenied:
-                        raise
                     except Exception:
                         updated_mapping[key] = str(input_data)
             elif value in ("prompt", "agent_prompt"):
@@ -427,8 +423,6 @@ class DirectEvaluator:
         try:
             db_template = EvalTemplate.objects.get(id=eval_template.id)
             eval_template_for_runner = db_template
-        except EvaluationDenied:
-            raise
         except Exception:
             eval_template_for_runner = eval_template
 
@@ -525,8 +519,6 @@ class DirectEvaluator:
                 )
                 return score, reason
             return 0.0, "No eval results"
-        except EvaluationDenied:
-            raise
         except Exception as e:
             logger.error(f"Direct eval failed: {e}", exc_info=True)
             return 0.0, str(e)

@@ -33,6 +33,7 @@ from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.evaluation_denials import record_evaluation_denial
 from simulate.services.harness_evals import effective_simulation_mapping
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
@@ -40,13 +41,12 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationInput,
     RunToolCallEvaluationOutput,
 )
-from simulate.services.evaluation_denials import record_evaluation_denial
-from tfc.utils.evaluation_denials import EvaluationDenied
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
 from simulate.utils.test_execution_utils import eval_source
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
+from tfc.utils.evaluation_denials import EvaluationDenied
 from tfc.utils.storage_client import server_reachable_url
 
 logger = structlog.get_logger(__name__)

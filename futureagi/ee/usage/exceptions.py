@@ -29,9 +29,11 @@ class UsageLimitExceeded(EvaluationDenied):
         self.code = check_result.error_code
         super().__init__(check_result.reason or "Usage limit exceeded")
 
-
     def as_dict(self):
-        return {**super().as_dict(), **self.check_result.model_dump(exclude={"allowed"})}
+        return {
+            **super().as_dict(),
+            **self.check_result.model_dump(exclude={"allowed"}),
+        }
 
     def _response(self, general_methods):
         if self.code == "RATE_LIMITED":

@@ -142,14 +142,15 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
-from tfc.utils.evaluation_denials import EvaluationDenied
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
+from sdk.serializers.contracts import SDKEvaluationDenialResponseSerializer
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.settings.settings import BASE_URL
 from tfc.telemetry import wrap_for_thread
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied
 from tfc.utils.functions import calculate_eval_average
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig, InlineEval, ModelChoices
@@ -168,11 +169,6 @@ from tracer.services.exact_aggregation_cache import (
     read_exact_snapshot,
     read_or_schedule_exact_snapshot,
 )
-
-try:
-    from ee.usage.exceptions import UsageLimitExceeded
-except ImportError:
-    UsageLimitExceeded = None
 
 logger = structlog.get_logger(__name__)
 
@@ -6974,7 +6970,12 @@ class EvalPlayGroundAPIView(APIView):
 
     @validated_request(
         request_serializer=EvalPlayGroundSerializer,
-        responses={200: EvalExecutionResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: EvalExecutionResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            402: SDKEvaluationDenialResponseSerializer,
+            429: SDKEvaluationDenialResponseSerializer,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
@@ -7973,7 +7974,12 @@ class TestEvaluationTemplateAPIView(APIView):
 
     @validated_request(
         request_serializer=TestEvalTemplateSerializer,
-        responses={200: EvalExecutionResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: EvalExecutionResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            402: SDKEvaluationDenialResponseSerializer,
+            429: SDKEvaluationDenialResponseSerializer,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):

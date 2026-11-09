@@ -17644,6 +17644,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           403: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
@@ -17652,6 +17655,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           409: {
             $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -25847,6 +25853,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           403: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
@@ -25855,6 +25864,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           409: {
             $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -26684,6 +26696,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/SDKErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
           500: {
             $ref: "#/definitions/SDKErrorResponse",
           },
@@ -26841,6 +26859,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           400: {
             $ref: "#/definitions/SDKErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
+          },
+          429: {
+            $ref: "#/definitions/SDKEvaluationDenialResponse",
           },
           500: {
             $ref: "#/definitions/SDKErrorResponse",
@@ -82328,6 +82352,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/SDKEvalTemplate",
+        },
+      },
+    },
+    SDKEvaluationDenialResponse: {
+      required: ["status", "code"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        errors: {
+          title: "Errors",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+        },
+        dimension: {
+          title: "Dimension",
+          type: "string",
+        },
+        current_usage: {
+          title: "Current usage",
+          type: "number",
+        },
+        limit: {
+          title: "Limit",
+          type: "number",
+        },
+        upgrade_cta: {
+          title: "Upgrade cta",
+          type: "object",
+        },
+        completed_results: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        failed_index: {
+          title: "Failed index",
+          type: "integer",
+          minimum: 0,
         },
       },
     },

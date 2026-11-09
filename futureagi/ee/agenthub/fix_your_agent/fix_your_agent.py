@@ -2,6 +2,8 @@ import random
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from tfc.utils.evaluation_denials import EvaluationDenied
+
 # Type for the per-trial callback: (trial_data, trial_number, stepper_state, is_baseline) -> None
 OnTrialCallback = Callable[[dict, int, Dict[str, Any], bool], None]
 
@@ -26,8 +28,6 @@ from .transcript_simulator import TranscriptSimulator
 import time
 from model_hub.utils.evals import evals_template
 from simulate.utils.agent_prompt_optimiser import update_agent_optimiser_run_step
-
-from tfc.utils.evaluation_denials import EvaluationDenied
 
 import structlog
 
@@ -132,8 +132,6 @@ class SimulationEvaluator(Evaluator):
             resolved = EvalTemplate.objects.get(id=template_id_str)
             self._eval_template_cache[template_id_str] = resolved
             return resolved
-        except EvaluationDenied:
-            raise
         except Exception as e:
             logger.debug(
                 f"[RUN_EVAL] Could not resolve EvalTemplate id={template_id_str} from DB: {e}"
@@ -808,8 +806,6 @@ Return ONLY a number between 0.0 and 1.0."""
                 )
                 score = float(score_str) if score_str else 0.5
                 return max(0.0, min(1.0, score))
-            except EvaluationDenied:
-                raise
             except Exception as e:
                 logger.warning(f"Issue evaluation failed: {e}")
                 return 0.5
@@ -833,8 +829,6 @@ Return ONLY a number between 0.0 and 1.0."""
                     weight = priority_weights.get(issue.get("priority", "medium"), 1.0)
                     scores.append(score)
                     weights.append(weight)
-                except EvaluationDenied:
-                    raise
                 except Exception as e:
                     logger.error(f"Issue eval failed: {e}")
                     scores.append(0.5)
@@ -1208,7 +1202,11 @@ class FixYourAgent:
                     agent_optimiser_run_steps, 2, status="completed"
                 )
 
-            except EvaluationDenied:
+            except EvaluationDenied as denial:
+                update_agent_optimiser_run_step(
+                    agent_optimiser_run_steps, 2, status="failed", error=str(denial)
+                )
+                logger.warning("baseline_evaluation_denied", code=denial.code)
                 raise
             except Exception as e:
                 logger.error(f"Baseline evaluation failed: {e}", exc_info=True)
@@ -1298,7 +1296,11 @@ class FixYourAgent:
                 agent_optimiser_run_steps, 3, status="completed"
             )
 
-        except EvaluationDenied:
+        except EvaluationDenied as denial:
+            update_agent_optimiser_run_step(
+                agent_optimiser_run_steps, 3, status="failed", error=str(denial)
+            )
+            logger.warning("optimization_evaluation_denied", code=denial.code)
             raise
         except Exception as exc:
             logger.error(
@@ -1479,8 +1481,6 @@ class FixYourAgent:
                         eval_template=eval_template,
                     )
                     eval_configs.append(config)
-                except EvaluationDenied:
-                    raise
                 except Exception as e:
                     logger.warning(f"Failed to reconstruct eval config: {e}")
 
