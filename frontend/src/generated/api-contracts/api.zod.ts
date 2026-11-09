@@ -55169,7 +55169,9 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         computed_at: zod.string().min(1),
       })
       .optional()
-      .describe("The run readiness of the run's versions when it was created."),
+      .describe(
+        "The run readiness of the run's versions when it was created; null for a coding agent's key.",
+      ),
     readiness_selection: zod
       .object({
         suite_total: zod
@@ -55245,7 +55247,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       })
       .optional()
       .describe(
-        "The cases readiness held back from this run and why; null when runs are not pinned to versions.",
+        "The cases readiness held back from this run and why; null when runs are not pinned to versions, and for a coding agent's key.",
       ),
     selected_scenario_keys: zod
       .array(zod.string().min(1))

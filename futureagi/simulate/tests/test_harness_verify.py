@@ -1047,3 +1047,24 @@ class TestWhatACodingAgentReads:
 
         environment.refresh_from_db()
         assert held_back(environment) is None
+
+
+def test_a_coding_agent_starting_a_run_reads_no_readiness_selection(
+    api_client, environment, keys
+):
+    chosen = ensure_held_back(environment)
+    hidden = chosen.scenario_keys[0]
+    shown = [key for key in _suite_keys(environment) if key not in chosen.scenario_keys]
+
+    created = _as(
+        api_client,
+        keys.coder,
+        "post",
+        f"{BASE}/{environment.id}/run/",
+        {"scenario_ids": shown, "trials": 1},
+        HTTP_IDEMPOTENCY_KEY="coder-selection",
+    )
+
+    assert created.status_code == 202, created.content
+    assert created.json()["selection"] is None
+    assert hidden not in created.content.decode()
