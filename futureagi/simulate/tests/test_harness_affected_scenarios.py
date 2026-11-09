@@ -14,6 +14,7 @@ from simulate.services import harness_readiness
 from simulate.services.harness_readiness import selection
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_readiness import (
+    NOT_PROBED,
     PASSED,
     PRODUCTION_ONLY,
     SAME_TOOLS,
@@ -595,6 +596,33 @@ class TestHoldBack:
         assert refused.value.details["selection"]["held_back"]["count"] == 4
         assert HostedHarnessJob.no_workspace_objects.count() == before
 
+    def test_tools_the_provider_runs_hold_back_no_case(self, user, workspace, storage):
+        """Unavailable means the connection kind does not have it: no case is held."""
+        environment = _ten_certified(
+            user,
+            workspace,
+            storage,
+            "hb-provider",
+            tools=[
+                {"tool": tool, "availability": "runtime_only", "entrypoint_mode": "provider"}
+                for tool in (LOOKUP, REFUND)
+            ],
+            actions=NOT_PROBED,
+        )
+
+        report = _select(environment)
+        run = _run(environment, REFUND_KEYS + LOOKUP_KEYS, key="provider")
+
+        routing = _rows(report)["tool_routing"]
+        assert (routing["status"], routing["reason_code"]) == (
+            "unavailable",
+            "tools_in_provider",
+        )
+        assert report["selection"]["blocked"] == 0
+        metadata = _run_metadata(run)
+        assert metadata["readiness_selection"]["held_back"]["count"] == 0
+        assert len(metadata["execution_manifest"]) == 10
+
     def test_nothing_blocked_sends_every_case(self, user, workspace, storage):
         environment = _ten_certified(user, workspace, storage, "hb-none")
 
@@ -680,6 +708,21 @@ class TestAgentGapCases:
         assert (chosen["blocked"], chosen["untested"]) == (4, 6)
         assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS
         assert _rows(report)["tool_discovery"]["affected"]["count"] == 4
+
+    def test_a_world_tool_no_selected_case_uses_does_not_block_the_answer(
+        self, user, workspace, storage
+    ):
+        environment, pairing = self._a2(
+            user, workspace, storage, "gap-cases-unused", (SAME_TOOLS[0],)
+        )
+
+        whole = _select(environment, pairing=pairing)
+        lookups = _select(environment, LOOKUP_KEYS, pairing=pairing)
+
+        assert whole["answer"]["kind"] == "blocked"
+        assert _rows(lookups)["tool_discovery"]["affected"]["count"] == 0
+        assert lookups["selection"]["blocked"] == 0
+        assert lookups["answer"]["kind"] != "blocked"
 
     def test_a_changed_signature_holds_back_only_the_cases_using_it(
         self, user, workspace, storage

@@ -127,11 +127,22 @@ def _arguments(tool: Mapping[str, Any], field: str) -> frozenset[str] | None:
     return frozenset(str(name) for name in value) if isinstance(value, list) else None
 
 
+def _required(tool: Mapping[str, Any]) -> frozenset[str]:
+    """The argument names an agent document's ``parameters`` marks required."""
+    parameters = tool.get("parameters")
+    value = parameters.get("required") if isinstance(parameters, Mapping) else None
+    return frozenset(str(name) for name in value) if isinstance(value, list) else frozenset()
+
+
 def _changed(ours: Mapping[str, Any], theirs: Mapping[str, Any]) -> bool:
-    """Whether the agent calls a tool with other argument names than the world's;
-    a side that does not say is no change."""
+    """Whether the agent calls a tool in a way the world's tool does not take: an
+    argument the world takes is gone from the agent (removed or renamed), or the agent
+    requires one the world does not take. An extra optional argument is no change; a
+    side that does not say is no change."""
     agent, world = _arguments(ours, "parameters"), _arguments(theirs, "args")
-    return agent is not None and world is not None and agent != world
+    if agent is None or world is None:
+        return False
+    return bool(world - agent) or bool(_required(ours) - world)
 
 
 def _named(tools: Any) -> dict[str, Mapping[str, Any]]:
