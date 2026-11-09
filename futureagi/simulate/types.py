@@ -133,3 +133,5 @@ class WorkerTimeline(TypedDict):
     # How many of the call's messages were left out past the first ones kept.
     messages_omitted: NotRequired[int]
     collected_at: NotRequired[str]
+    # False when the read lacked a trace's top-level span or stopped at the span bound; that read is read again.
+    tree_complete: NotRequired[bool]

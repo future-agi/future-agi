@@ -2577,3 +2577,203 @@ def test_the_coordinator_s_own_calls_in_the_rows_do_not_make_it_a_worker():
     )
     assert timeline["coordinator"] == {"name": "root"}
     assert "root" not in {one["id"] for one in timeline["workers"]}
+
+
+# An early read can lack the top-level agent span (it ends last); the sealed rows the harness wrote while the call ran
+# still say who did what.
+_EARLY_T0 = "2026-11-09T10:00:"
+
+
+def _early_spans(with_root):
+    def at(second):
+        return f"{_EARLY_T0}{second:02d}"
+
+    spans = [
+        _span(
+            "t1",
+            "root",
+            "tool",
+            "ask_researcher",
+            at(1),
+            at(20),
+            input='{"input":"find x"}',
+            output='"x found"',
+        ),
+        _span(
+            "a1",
+            "t1",
+            "agent",
+            "researcher",
+            at(2),
+            at(19),
+            input="find x",
+            output="x found",
+        ),
+        _span(
+            "s1", "a1", "tool", "search", at(3), at(4), input='{"q":"a"}', output='"r"'
+        ),
+    ]
+    if with_root:
+        spans.insert(0, _span("root", None, "agent", "root", at(0), at(30)))
+    return spans
+
+
+def _early_rows(search_ok=True):
+    from datetime import UTC, datetime
+
+    def ep(second):
+        return datetime(2026, 11, 9, 10, 0, second, tzinfo=UTC).timestamp()
+
+    return [
+        {
+            "name": "ask_researcher",
+            "arguments": {"input": "find x"},
+            "ok": True,
+            "result": "x found",
+            "at": ep(1),
+            "ended_at": ep(20),
+            "worker_id": "root",
+            "delegated_to": "researcher",
+            "span_id": "t1",
+            "runtime_ids": {"event_id": "t1"},
+            "kind": "delegated",
+            "relationship": "observed",
+        },
+        {
+            "name": "search",
+            "arguments": {"q": "a"},
+            "ok": search_ok,
+            "refused": not search_ok,
+            "result": "r" if search_ok else "refused",
+            "at": ep(3),
+            "ended_at": ep(4),
+            "worker_id": "researcher",
+            "span_id": "s1",
+            "runtime_ids": {"event_id": "s1"},
+            "kind": "tool_call",
+            "relationship": "observed",
+            "parent_span_id": "t1",
+        },
+    ]
+
+
+_RESEARCHER = [{"id": "researcher", "name": "researcher"}]
+
+
+def test_a_read_missing_the_top_level_span_keeps_each_call_with_the_worker_the_harness_recorded():
+    timeline = worker_timeline(
+        _early_spans(False), _RESEARCHER, run_key=RUN, traced_calls=_early_rows()
+    )
+    shape = [
+        (e["type"], e.get("worker_id"), e.get("delegation_id"))
+        for e in timeline["events"]
+    ]
+    assert shape == [
+        ("delegated", f"{RUN}/researcher", "t1"),
+        ("tool_call", f"{RUN}/researcher", "t1"),
+        ("returned", f"{RUN}/researcher", "t1"),
+    ]
+    assert timeline["coordinator"] == {"name": "root"}
+
+
+def test_a_call_the_harness_graded_as_refused_stays_refused_when_its_span_says_ok():
+    timeline = worker_timeline(
+        _early_spans(True),
+        _RESEARCHER,
+        run_key=RUN,
+        traced_calls=_early_rows(search_ok=False),
+    )
+    (search,) = [e for e in timeline["events"] if e["type"] == "tool_call"]
+    assert (search["status"], search["output"]) == ("error", "refused")
+
+
+def test_merging_an_early_read_and_a_whole_one_shows_one_hand_off_and_keeps_the_whole_read():
+    early = {
+        **worker_timeline(_early_spans(False), _RESEARCHER, run_key=RUN),
+        "collection": "complete",
+        "spans_received": True,
+        "tree_complete": False,
+    }
+    whole = {
+        **worker_timeline(_early_spans(True), _RESEARCHER, run_key=RUN),
+        "collection": "complete",
+        "spans_received": True,
+        "tree_complete": True,
+    }
+    for first, second in ((early, whole), (whole, early)):
+        merged = harness_workers.kept_record(first, second)
+        kinds = [
+            (e["type"], e.get("tool") or e.get("worker_id")) for e in merged["events"]
+        ]
+        assert kinds == [
+            ("delegated", f"{RUN}/researcher"),
+            ("tool_call", "search"),
+            ("returned", f"{RUN}/researcher"),
+        ]
+        assert merged["coordinator"] == {"name": "root"}
+
+
+def test_two_reads_that_got_as_far_keep_the_later_one():
+    one = {
+        "events": [
+            {"type": "tool_call", "span_id": "x", "tool": "a"},
+            {"type": "tool_call", "span_id": "y", "tool": "b"},
+        ],
+        "workers": [],
+        "spans_received": True,
+        "collection": "complete",
+        "tree_complete": True,
+        "coordinator": {"name": "old"},
+    }
+    two = {
+        "events": [{"type": "tool_call", "span_id": "x", "tool": "a"}],
+        "workers": [],
+        "spans_received": True,
+        "collection": "complete",
+        "tree_complete": True,
+        "coordinator": {"name": "new"},
+    }
+    assert harness_workers.kept_record(one, two)["coordinator"] == {"name": "new"}
+
+
+@pytest.mark.django_db
+def test_a_read_that_was_not_whole_gets_one_more_read_later():
+    from unittest.mock import patch
+
+    from simulate.tasks import alk_sim
+
+    seen = {"workers": [{"observed": True}]}
+    for read in (
+        {**seen, "tree_complete": False},
+        {**seen, "collection": "partial"},
+        {**seen, "collection": "unavailable"},
+    ):
+        with (
+            patch(
+                "simulate.services.harness_workers.record_call_workers",
+                return_value=read,
+            ),
+            patch.object(alk_sim.record_call_workers, "apply_async") as again,
+        ):
+            alk_sim.record_call_workers("c1")
+            assert again.call_args.kwargs["kwargs"] == {"second_read": True}
+    with (
+        patch(
+            "simulate.services.harness_workers.record_call_workers",
+            return_value={**seen, "tree_complete": True},
+        ),
+        patch.object(alk_sim.record_call_workers, "apply_async") as again,
+    ):
+        alk_sim.record_call_workers("c1")
+        assert not again.called
+
+
+def test_a_trace_without_its_top_level_span_is_not_whole():
+    from types import SimpleNamespace as S
+
+    assert harness_workers._has_roots(
+        [S(trace_id="t", parent_span_id=None), S(trace_id="t", parent_span_id="a")]
+    )
+    assert not harness_workers._has_roots(
+        [S(trace_id="t", parent_span_id="root"), S(trace_id="u", parent_span_id=None)]
+    )
