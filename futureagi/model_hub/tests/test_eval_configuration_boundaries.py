@@ -226,6 +226,54 @@ def test_trace_keeps_failed_result_contract(
     assert_one_warning(logs)
 
 
+@pytest.mark.parametrize("kind", ["rate", "budget"])
+def test_trace_preserves_policy_denial_after_configuration_handler_merge(
+    organization, workspace, monkeypatch, kind
+):
+    import uuid
+
+    from ee.usage.exceptions import UsageLimitExceeded
+    from ee.usage.schemas.events import CheckResult
+    from model_hub.views import separate_evals
+    from tfc.utils.evaluation_denials import EvaluationRateLimited
+    from tracer.models.trace import Trace
+
+    template = template_for(organization, workspace, "Grade {{input}}")
+    trace_id = uuid.uuid4()
+    monkeypatch.setattr(
+        Trace.objects,
+        "get",
+        lambda **kw: SimpleNamespace(
+            id=trace_id, input={"input": "Synthetic content"}, output={}
+        ),
+    )
+    denial = (
+        EvaluationRateLimited()
+        if kind == "rate"
+        else UsageLimitExceeded(
+            CheckResult(
+                allowed=False, error_code="BUDGET_PAUSED", reason="Budget paused"
+            )
+        )
+    )
+    runner_mock = MagicMock(side_effect=denial)
+    monkeypatch.setattr(runner, "run_eval_func", runner_mock)
+    request = SimpleNamespace(
+        data={"trace_id": str(trace_id), "model": "turing_large"},
+        organization=organization,
+    )
+    with capture_logs() as logs:
+        response = separate_evals.TraceEvalView().post(request, template.id)
+    runner_mock.assert_called_once()
+    assert response.status_code == (429 if kind == "rate" else 402)
+    assert response.data["code"] == (
+        "rate_limited" if kind == "rate" else "BUDGET_PAUSED"
+    )
+    assert not [
+        e for e in logs if e.get("log_level") in {"error", "exception", "critical"}
+    ]
+
+
 def test_missing_provider_preview_logs_once(
     auth_client, organization, workspace, configured_runner
 ):
