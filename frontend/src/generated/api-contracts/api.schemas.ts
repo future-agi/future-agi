@@ -471,12 +471,22 @@ export interface AccountsStringResultResponseApi {
   result: string;
 }
 
+export type CreateSecretKeyApiType =
+  (typeof CreateSecretKeyApiType)[keyof typeof CreateSecretKeyApiType];
+
+export const CreateSecretKeyApiType = {
+  user: "user",
+  coding_agent: "coding_agent",
+} as const;
+
 export interface CreateSecretKeyApi {
   /**
    * @minLength 1
    * @maxLength 100
    */
   key_name: string;
+  type?: CreateSecretKeyApiType;
+  simulation_environment_id?: string;
 }
 
 export interface SecretKeyCreateResultApi {
@@ -18102,7 +18112,7 @@ export interface AgentFixLaunchApi {
    * @minimum 1
    * @maximum 1440
    */
-  max_minutes: number;
+  max_minutes?: number;
 }
 
 export interface AgentFixLaunchSourceRunApi {
@@ -20518,6 +20528,78 @@ export interface HarnessEnvironmentRunEvaluationsQueuedApi {
   call_execution_count: number;
 }
 
+export interface HarnessVerifyCreateApi {
+  /** The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts. */
+  agent_version_id: string;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+}
+
+export type HarnessVerifyCreateResponseApiState =
+  (typeof HarnessVerifyCreateResponseApiState)[keyof typeof HarnessVerifyCreateResponseApiState];
+
+export const HarnessVerifyCreateResponseApiState = {
+  received: "received",
+  queued: "queued",
+  admitted: "admitted",
+  provisioning: "provisioning",
+  running: "running",
+  finalizing: "finalizing",
+  cleaning_up: "cleaning_up",
+  retry_wait: "retry_wait",
+  completed: "completed",
+  failed: "failed",
+  canceled: "canceled",
+} as const;
+
+export interface HarnessVerifyCreateResponseApi {
+  verify_id: string;
+  state: HarnessVerifyCreateResponseApiState;
+}
+
+export type HarnessVerifyResultApiState =
+  (typeof HarnessVerifyResultApiState)[keyof typeof HarnessVerifyResultApiState];
+
+export const HarnessVerifyResultApiState = {
+  received: "received",
+  queued: "queued",
+  admitted: "admitted",
+  provisioning: "provisioning",
+  running: "running",
+  finalizing: "finalizing",
+  cleaning_up: "cleaning_up",
+  retry_wait: "retry_wait",
+  completed: "completed",
+  failed: "failed",
+  canceled: "canceled",
+} as const;
+
+export interface HarnessVerifyResultApi {
+  state: HarnessVerifyResultApiState;
+  /** @minimum 0 */
+  passed: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  total: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+  /**
+   * 95% range of the trial pass rate, [low, high]; null until it ends.
+   * @minItems 2
+   * @maxItems 2
+   */
+  held_back_pass_rate: number[];
+  /** Too few cases were held back to call a version verified. */
+  limited_validation: boolean;
+}
+
 export interface HarnessAgentConfigChangeApi {
   /**
    * @minLength 1
@@ -20545,6 +20627,8 @@ export interface HarnessAgentVersionCreateApi {
    */
   prompt?: string;
   agent_payload?: HarnessAgentPayloadChangeApi;
+  /** False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default. */
+  make_default?: boolean;
 }
 
 export interface HarnessAgentCredentialsResponseApi {
@@ -26268,6 +26352,19 @@ export const RunCallApiCsatStatus = {
   skipped: "skipped",
 } as const;
 
+export type RunCallApiFailureDomain =
+  (typeof RunCallApiFailureDomain)[keyof typeof RunCallApiFailureDomain];
+
+export const RunCallApiFailureDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  platform_sync: "platform_sync",
+} as const;
+
 export interface RunCallApi {
   id: string;
   /** @minLength 1 */
@@ -26316,6 +26413,9 @@ export interface RunCallApi {
   csat_status: RunCallApiCsatStatus;
   /** @minLength 1 */
   csat_reason: string;
+  failure_domain: RunCallApiFailureDomain;
+  /** @minLength 1 */
+  failure_code: string;
 }
 
 export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
