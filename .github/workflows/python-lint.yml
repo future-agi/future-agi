@@ -3,7 +3,8 @@ name: Python lint
 # Fails on Python lint violations that a PR adds; old ones are left for cleanup
 # PRs. Rules: the repo's ruff config plus the banned patterns from the coding
 # standards that the config does not select yet. See
-# scripts/check_python_lint_delta.py. Advisory until it is made a required check.
+# scripts/check_python_lint_delta.py. S608 (SQL built from strings) only warns.
+# Advisory until it is made a required check.
 #
 # No branches filter: stacked PRs into feature branches get the check too.
 

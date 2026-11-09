@@ -111,10 +111,14 @@ class PureFunctionTests(unittest.TestCase):
         self.assertEqual(gate.dedupe([a, b]), [a, b])
 
     def test_annotation_escapes_and_carries_the_replacement(self):
-        line = gate.annotation(v("futureagi/a,b.py", "S608", 3, "x"))
-        self.assertTrue(line.startswith("::error file=futureagi/a%2Cb.py,line=3,col=1,title=ruff S608 (new in this change)::"))
-        self.assertIn("bound parameter", line)
+        line = gate.annotation(v("futureagi/a,b.py", "BLE001", 3, "x"))
+        self.assertTrue(line.startswith("::error file=futureagi/a%2Cb.py,line=3,col=1,title=ruff BLE001 (new in this change)::"))
+        self.assertIn("logger.exception", line)
         self.assertNotIn("\n", line)
+
+    def test_a_warning_only_rule_is_annotated_as_a_warning(self):
+        self.assertTrue(gate.annotation(v("futureagi/a.py", "S608", 3, "x")).startswith("::warning "))
+        self.assertTrue(gate.annotation(v("futureagi/a.py", "BLE001", 3, "x")).startswith("::error "))
 
     def test_every_banned_rule_has_a_replacement_hint(self):
         for code in gate.BANNED_RULES:
@@ -207,8 +211,9 @@ class EndToEndTests(unittest.TestCase):
             text=True,
             env={**os.environ, "GITHUB_STEP_SUMMARY": ""},
         )
-        found = re.findall(r"^::error file=([^,]+),line=(\d+),col=\d+,title=ruff ([A-Za-z0-9-]+)", proc.stdout, re.MULTILINE)
-        return proc.returncode, [(f, int(n), c) for f, n, c in found], proc
+        found = re.findall(r"^::(error|warning) file=([^,]+),line=(\d+),col=\d+,title=ruff ([A-Za-z0-9-]+)", proc.stdout, re.MULTILINE)
+        self.warnings = [(f, int(n), c) for level, f, n, c in found if level == "warning"]
+        return proc.returncode, [(f, int(n), c) for level, f, n, c in found if level == "error"], proc
 
     def test_fails_on_new_violations_only(self):
         self.write("futureagi/pyproject.toml", CONFIG)
@@ -231,7 +236,6 @@ class EndToEndTests(unittest.TestCase):
             sorted(found),
             sorted(
                 [
-                    ("futureagi/app/mod.py", 10, "S608"),
                     ("futureagi/app/mod.py", 11, "BLE001"),
                     ("futureagi/app/mod.py", 13, "T201"),
                     ("futureagi/app/new_ugly.py", 1, "FORMAT"),
@@ -239,6 +243,18 @@ class EndToEndTests(unittest.TestCase):
             ),
             proc.stdout,
         )
+        self.assertEqual(self.warnings, [("futureagi/app/mod.py", 10, "S608")], proc.stdout)
+
+    def test_a_warning_only_finding_does_not_fail_the_check(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/q.py", "def q(table):\n    return 1\n")
+        base = self.commit()
+        self.write("futureagi/app/q.py", 'def q(table):\n    return f"SELECT count() FROM {table}"\n')
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+        self.assertEqual(self.warnings, [("futureagi/app/q.py", 2, "S608")], proc.stdout)
 
     def test_passes_when_only_old_violations_remain(self):
         self.write("futureagi/pyproject.toml", CONFIG)

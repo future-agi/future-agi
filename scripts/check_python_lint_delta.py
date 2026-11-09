@@ -55,6 +55,12 @@ BANNED_RULES = (
     "PGH004",
 )
 
+# Reported as warnings, never failures. S608 also fires when only a table or column
+# name from code is interpolated: over 2026-08-08..2026-11-07 most of its 248 new
+# hits were ClickHouse query builders joining SQL fragments, not values. Failing on
+# it would teach people to add a noqa without reading, so a reviewer checks each one.
+WARN_ONLY = frozenset({"S608"})
+
 # What to write instead, from the "Write this instead" column of standard 12.
 HINTS = {
     "BLE001": "Catch the narrow exception. Catch Exception only at a boundary (the top of a request, "
@@ -67,9 +73,10 @@ HINTS = {
     "E722": "Do not use a bare except. Catch the narrow exception, or Exception at a boundary with "
     "logger.exception.",
     "B904": "Use raise NewError(...) from exc. Use from None only when hiding the cause is deliberate.",
-    "S608": "Pass every value as a bound parameter: %(name)s with a params dict through the ClickHouse "
-    "client, cursor.execute(sql, params), or the ORM. If only a table or column name from a constant "
-    "or an allowlist is interpolated, keep it and add '# noqa: S608 - <reason>'.",
+    "S608": "Check that every interpolated part is a table or column name, or a fragment, built from "
+    "constants or an allowlist in code. Pass every value as a bound parameter: %(name)s with a params "
+    "dict through the ClickHouse client, cursor.execute(sql, params), or the ORM. This is a warning; "
+    "a reviewer checks it.",
     "S113": "Give the call a finite timeout, on the call or on the client it uses.",
     "T201": "Log with structlog.get_logger(__name__). Management commands use self.stdout.write.",
     "G004": "Use a stable event name and keyword fields on a structlog logger: "
@@ -329,11 +336,12 @@ def escape_property(s: str) -> str:
 
 
 def annotation(v: Violation) -> str:
-    """A GitHub Actions error annotation that says what to write instead."""
+    """A GitHub Actions annotation that says what to write instead: a warning for WARN_ONLY rules."""
     hint = HINTS.get(v.code, "")
     text = f"{v.code}: {v.message}" + (f" {hint}" if hint else "")
+    level = "warning" if v.code in WARN_ONLY else "error"
     title = escape_property(f"ruff {v.code} (new in this change)")
-    return f"::error file={escape_property(v.path)},line={v.line},col={v.column},title={title}::{escape_data(text)}"
+    return f"::{level} file={escape_property(v.path)},line={v.line},col={v.column},title={title}::{escape_data(text)}"
 
 
 def check(repo: Path, base: str, ruff: str) -> list[Violation]:
@@ -388,19 +396,24 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    errors = [v for v in found if v.code not in WARN_ONLY]
+    warnings = [v for v in found if v.code in WARN_ONLY]
     lines = [f"Compared with {args.base[:12]} using {version}."]
-    if found:
-        lines.append(f"**{len(found)} new violation(s).** Each annotation says what to write instead.")
-        lines += [f"- `{v.path}:{v.line}` {v.code} {v.message}" for v in found]
+    if errors:
+        lines.append(f"**{len(errors)} new violation(s).** Each annotation says what to write instead.")
+        lines += [f"- `{v.path}:{v.line}` {v.code} {v.message}" for v in errors]
     else:
         lines.append("No new violations.")
+    if warnings:
+        lines.append(f"{len(warnings)} warning(s) for a reviewer to check (these do not fail the check):")
+        lines += [f"- `{v.path}:{v.line}` {v.code} {v.message}" for v in warnings]
     for v in found:
         print(annotation(v))
     print("\n".join(lines))
     if summary:
         with open(summary, "a", encoding="utf-8") as fh:
             fh.write("## Python lint (new violations only)\n\n" + "\n".join(lines) + "\n")
-    return 1 if found else 0
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
