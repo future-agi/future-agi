@@ -70,6 +70,7 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
         if event["type"] in _HAND_OFF_TYPES and event.get("delegation_id")
     }
     waiting: dict[str, list[WorkerEvent]] = {}
+    waiting_blocks: dict[str, list[_Block]] = {}
 
     def open_for(event: WorkerEvent) -> _Block | None:
         """The open hand-off an event's recorded id names. Without one the record does not say, so the event stays
@@ -95,18 +96,31 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
         at = _seconds(event.get("at"))
         worker = event.get("worker_id")
         if event["type"] in _HAND_OFF_TYPES:
-            parent = holder(event)
-            if parent is None:
+            recorded_parent = str(event.get("parent_delegation_id") or "")
+            # A hand-off recorded inside one that has not opened yet (no start, or another clock) waits for it.
+            later = bool(
+                recorded_parent
+                and recorded_parent in named
+                and recorded_parent not in by_id
+            )
+            parent = None if later else holder(event)
+            if parent is None and not later:
                 parent = root
                 unknown.add(event.get("seq", len(blocks)))
-            block = _Block(event.get("seq", len(blocks)), worker, parent.depth + 1, at)
+            block = _Block(
+                event.get("seq", len(blocks)), worker, (parent or root).depth + 1, at
+            )
             block.handoff = event
-            parent.items.append(block)
+            if later:
+                waiting_blocks.setdefault(recorded_parent, []).append(block)
+            else:
+                (parent or root).items.append(block)
             blocks.append(block)
             open_.setdefault(worker, []).append(block)
             if event.get("delegation_id"):
                 by_id[str(event["delegation_id"])] = block
                 block.items.extend(waiting.pop(str(event["delegation_id"]), []))
+                block.items.extend(waiting_blocks.pop(str(event["delegation_id"]), []))
         elif event["type"] == "returned":
             block = open_for(event)
             if block is not None:
@@ -143,7 +157,16 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
             (block or root).items.append(event)
             if block is not None:
                 block.reach(at)
+    _set_depths(root)
     return root, blocks, unknown
+
+
+def _set_depths(node: _Block) -> None:
+    """Each hand-off one deeper than the one it sits in, once every late-placed hand-off has joined its parent."""
+    for item in node.items:
+        if isinstance(item, _Block):
+            item.depth = node.depth + 1
+            _set_depths(item)
 
 
 def _close(node: _Block) -> None:
