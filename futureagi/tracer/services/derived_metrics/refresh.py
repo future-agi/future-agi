@@ -13,7 +13,7 @@ M2/T16 still require representative scale measurements before deployment.
 import json
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from time import monotonic
 from uuid import UUID
 
@@ -35,7 +35,6 @@ from tracer.services.derived_metrics.bounded_reads import (
     BUCKET_INPUT_ROWS,
     BucketFieldPlan,
     BucketRangeOverflow,
-    KeyRelation,
     capture_source_output,
     committed_key_pages,
     committed_key_ranges,
@@ -468,7 +467,10 @@ class RefreshWriter:
                 source_cut_ceilings,
             )
 
-            if attempt.source_ceilings.get("a01_source_cut") != source_cut_ceilings(source_cut)["a01_source_cut"]:
+            if (
+                attempt.source_ceilings.get("a01_source_cut")
+                != source_cut_ceilings(source_cut)["a01_source_cut"]
+            ):
                 raise MetricLedgerConflict("frozen source cut changed on replay")
         if attempt.state == "committed":
             return MetricReadManifest.objects.get(published_by=attempt)
@@ -761,8 +763,8 @@ class RefreshWriter:
                     "policy_dependencies",
                 )
             private_relations.append((dependencies, bound))
-            # Spans intentionally have no stored fields. Their old memberships
-            # in the private recovery ledger must obey the same current horizon
+            # Span fields and their old memberships in the private recovery
+            # ledger must obey the same current horizon
             # as the proposed dependency relation, even after a start correction.
             if any(
                 entry.get("unit_start")
@@ -1342,6 +1344,19 @@ class RefreshWriter:
                 self._span_dirty_keys(attempt, change, head, source_ids)
             for definition in definitions:
                 if definition.level == "span":
+                    from tracer.services.derived_metrics.span_evidence import (
+                        freeze_span_fields,
+                    )
+
+                    freeze_span_fields(
+                        self,
+                        attempt,
+                        head,
+                        definition,
+                        scope,
+                        as_of=as_of,
+                        cutoff=cutoff,
+                    )
                     continue
                 for offset in range(0, len(ids), MAX_BATCH_ROWS):
                     candidates = tuple(sorted(ids))[offset : offset + MAX_BATCH_ROWS]
@@ -1601,7 +1616,7 @@ class RefreshWriter:
                 # both open predicates. R01 changes only the prior lookup domain;
                 # a separate all-proposal scratch stream is deferred to R03.
                 lifecycle_keys = self.store.execute(
-                    f"SELECT DISTINCT level, unit_id FROM ({overlay}) ORDER BY level, unit_id",
+                    f"SELECT DISTINCT level, unit_id FROM ({overlay}) WHERE level != 'span' ORDER BY level, unit_id",
                     overlay_params,
                 )
                 for membership in iter_key_membership_batches(
@@ -1639,11 +1654,7 @@ class RefreshWriter:
                         },
                     )
             for definition in definitions:
-                if definition.level == "span" and cutoff is None:
-                    self._freeze_span_buckets(
-                        attempt, head, definition, scope, as_of=as_of, cutoff=cutoff
-                    )
-                elif definition.level not in {"user", "span"} and cutoff is None:
+                if definition.level != "user" and cutoff is None:
                     self._freeze_buckets(
                         attempt, head, definition, overlay, overlay_params
                     )
@@ -1823,6 +1834,27 @@ class RefreshWriter:
         for offset in range(0, len(source_ids), MAX_BATCH_ROWS):
             page = tuple(source_ids[offset : offset + MAX_BATCH_ROWS])
             for membership in iter_key_membership_batches(
+                FIELD_VALUES,
+                fixed={"level": ("span",)},
+                columns="unit_id",
+                values=[json.dumps(key, separators=(",", ":")) for key in page],
+                max_items=MAX_BATCH_ROWS,
+            ):
+                fields, fp = committed_rows_select(
+                    FIELD_VALUES,
+                    head,
+                    org_id=self.org_id,
+                    project_id=self.lease.project_id,
+                    key_in=membership,
+                    param_prefix="span_dirty_fields",
+                )
+                starts.update(
+                    row[0]
+                    for row in self.store.execute(
+                        f"SELECT DISTINCT unit_start FROM ({fields})", fp
+                    )
+                )
+            for membership in iter_key_membership_batches(
                 SOURCE_DEPENDENCIES,
                 fixed={},
                 columns=("trace_id", "span_id"),
@@ -1870,103 +1902,6 @@ class RefreshWriter:
             ],
         )
 
-    def _freeze_span_buckets(
-        self, attempt, head, definition, scope, *, as_of, cutoff, retired_override=None
-    ):
-        """Direct deduped source totals. No span field or lifecycle rows are stored."""
-        from tracer.services.derived_metrics.unit_reads import span_values_select
-
-        dirty = {
-            entry["bucket_start"]
-            for chunk in attempt.ledger_chunks.filter(
-                part__in=["dirty_before", "dirty_after"]
-            )
-            for entry in chunk.payload
-            if "bucket_start" in entry
-        }
-        for value in sorted(dirty):
-            at = datetime.fromisoformat(str(value))
-            membership = {
-                "metric_id": (definition.metric_id,),
-                "metric_version": (definition.version,),
-                "bucket_start": (at.replace(tzinfo=UTC) if at.tzinfo is None else at,),
-            }
-            old, op = committed_rows_select(
-                BUCKET_TOTALS,
-                head,
-                org_id=self.org_id,
-                project_id=self.lease.project_id,
-                key_in=membership,
-                param_prefix="span_bucket_previous",
-            )
-            retired, rp = (
-                retired_override
-                if retired_override is not None
-                else committed_rows_select(
-                    RETIRED_PARTS,
-                    head,
-                    org_id=self.org_id,
-                    project_id=self.lease.project_id,
-                    key_in=membership,
-                    param_prefix="span_bucket_retired",
-                )
-            )
-            until = at + timedelta(minutes=15)
-            # A wholly expired bucket still needs a replacement when this
-            # publication freezes its final anonymous parts. Its live interval
-            # is empty; source deltas cannot alter already-retired observations.
-            fields, params = span_values_select(
-                definition,
-                scope,
-                start=min(max(at, cutoff), until) if cutoff is not None else at,
-                end=until,
-                as_of=as_of,
-            )
-            params = merge_bindings(params, op, rp)
-            if head and head.published_by.source_ceilings.get("retention_floor"):
-                dependencies, dp = committed_rows_select(
-                    SOURCE_DEPENDENCIES,
-                    head,
-                    org_id=self.org_id,
-                    project_id=self.lease.project_id,
-                    key_relation=KeyRelation(
-                        ("trace_id", "span_id"),
-                        "SELECT JSONExtractString(unit_id, 1), JSONExtractString(unit_id, 2) "
-                        f"FROM ({fields})",
-                        params,
-                    ),
-                    param_prefix="span_bucket_dependencies",
-                )
-                params = merge_bindings(params, dp)
-                if self.store.execute(
-                    f"SELECT count() FROM ({fields}) WHERE unit_id NOT IN "
-                    f"(SELECT toJSONString(tuple(trace_id, span_id)) FROM ({dependencies}) WHERE is_deleted = 0)",
-                    params,
-                )[0][0]:
-                    raise MetricAdmissionUnproven("metric_admission_unproven")
-            params.update(
-                span_metric=str(definition.metric_id),
-                span_version=definition.version,
-                span_bucket=at,
-            )
-            predicate = "metric_id = toUUID(%(span_metric)s) AND metric_version = %(span_version)s AND bucket_start = toDateTime(%(span_bucket)s, 'UTC')"
-            previous = f"SELECT * FROM ({old}) WHERE {predicate}"
-            anonymous = f"SELECT * FROM ({retired}) WHERE {predicate}"
-            with self._anonymous_bucket_parts(
-                attempt, definition, fields, anonymous, params
-            ) as parts:
-                self.freeze(
-                    attempt,
-                    BUCKET_TOTALS,
-                    replacement_select(parts, previous),
-                    params,
-                    collect_payloads=False,
-                    extra={
-                        "metric_id": "toUUID(%(span_metric)s)",
-                        "metric_version": "toUInt32(%(span_version)s)",
-                    },
-                )
-
     @contextmanager
     def _anonymous_bucket_parts(self, attempt, definition, fields, retired, params):
         """Capture anonymous children and the final global fold exactly once.
@@ -1980,7 +1915,10 @@ class RefreshWriter:
 
         from tracer.services.derived_metrics.buckets import live_parts_select
         from tracer.services.derived_metrics.frozen_relations import FrozenRelations
+        from tracer.services.derived_metrics.unit_reads import field_recipe
 
+        formula = field_recipe(definition).formula
+        formula_params = formula.parameters if formula is not None else {}
         target_rows = BUCKET_INPUT_ROWS
         deadline = getattr(self, "_compaction_deadline", None) or monotonic() + 600
         with self.store.compaction_budget(deadline):
@@ -2022,7 +1960,7 @@ class RefreshWriter:
                             )
                             relations.materialize(
                                 live_parts_select(definition, sql),
-                                bound,
+                                merge_bindings(bound, formula_params),
                                 role="child",
                             )
                             children += 1

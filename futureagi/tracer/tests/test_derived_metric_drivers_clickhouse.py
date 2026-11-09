@@ -1,6 +1,7 @@
 # ruff: noqa: F811 -- shared isolated ClickHouse and PG fixtures
 """Drivers are failing units, with effects from the estimator's complete cases."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -25,7 +26,9 @@ pytestmark = [
 ]
 
 
-def published_fixture(writer, workspace, project, *, kind, formula, values):
+def published_fixture(
+    writer, workspace, project, *, kind, formula, values, level="conversation"
+):
     metric = DerivedMetric.objects.create(
         organization=workspace.organization,
         workspace=workspace,
@@ -36,7 +39,7 @@ def published_fixture(writer, workspace, project, *, kind, formula, values):
         metric=metric,
         version=1,
         kind=kind,
-        level="conversation",
+        level=level,
         formula=formula,
         inputs=[
             {
@@ -51,7 +54,7 @@ def published_fixture(writer, workspace, project, *, kind, formula, values):
         field_spec={"conditions": [{"alias": "y", "operator": "gt", "value": 0}]}
         if kind in {"share", "count"}
         else {},
-        selection_unit="session",
+        selection_unit="span" if level == "span" else "session",
         weighting="none",
         backfill_status="complete",
     )
@@ -59,7 +62,11 @@ def published_fixture(writer, workspace, project, *, kind, formula, values):
     scope = Scope(workspace.organization_id, workspace.id, project.id)
     for index, (y, x) in enumerate(values):
         unit_id, trace = str(uuid4()), str(uuid4())
-        ids.append(unit_id)
+        ids.append(
+            json.dumps([trace, str(index)], separators=(",", ":"))
+            if level == "span"
+            else unit_id
+        )
         sources.append(SourceKey(trace, str(index)))
         writer.store.execute(
             "INSERT INTO spans (id, trace_id, project_id, org_id, trace_session_id, "
@@ -78,7 +85,7 @@ def published_fixture(writer, workspace, project, *, kind, formula, values):
     head = writer.refresh(
         ChangeBatch(
             tuple(sources),
-            tuple(UnitKey("conversation", i) for i in ids),
+            tuple(UnitKey(level, i) for i in ids),
             (),
             (),
             (),
@@ -115,8 +122,9 @@ def recompute_without(writer, definition, fields, params, unit_id):
     return reads._rows(writer.store, sql, params)[0]["value"]
 
 
+@pytest.mark.parametrize("level", ["conversation", "span"])
 def test_incomplete_boolean_or_has_no_influence_and_removal_does_not_change_kpi(
-    live_writer, workspace, observe_project
+    live_writer, workspace, observe_project, level
 ):
     metric, definition, head, ids = published_fixture(
         live_writer,
@@ -125,6 +133,7 @@ def test_incomplete_boolean_or_has_no_influence_and_removal_does_not_change_kpi(
         kind="custom",
         formula="sum((y > 0) or (x > 0))",
         values=[(1, None), (0, 0), (1, 1)],
+        level=level,
     )
     fields, params, total, rows = effect_rows(live_writer, metric, definition, head)
     incomplete = next(r for r in rows if r["unit_id"] == ids[0])
@@ -144,8 +153,9 @@ def test_incomplete_boolean_or_has_no_influence_and_removal_does_not_change_kpi(
 
 
 @pytest.mark.parametrize("kind", ["share", "count"])
+@pytest.mark.parametrize("level", ["conversation", "span"])
 def test_boolean_successes_and_missing_units_never_enter_any_drivers_page(
-    live_writer, workspace, observe_project, kind
+    live_writer, workspace, observe_project, kind, level
 ):
     metric, definition, head, ids = published_fixture(
         live_writer,
@@ -154,6 +164,7 @@ def test_boolean_successes_and_missing_units_never_enter_any_drivers_page(
         kind=kind,
         formula="mean(y)",
         values=[(1, 1), (0, 1), (0, 1), (None, 1)],
+        level=level,
     )
     fields, params, total, _ = effect_rows(live_writer, metric, definition, head)
     assert total["value"] == pytest.approx(1 / 3 if kind == "share" else 1)
@@ -181,8 +192,9 @@ def test_boolean_successes_and_missing_units_never_enter_any_drivers_page(
     assert set(seen) == set(ids[1:3]) and after is None
 
 
+@pytest.mark.parametrize("level", ["conversation", "span"])
 def test_complete_zero_denominator_contributes_but_is_not_a_failing_driver(
-    live_writer, workspace, observe_project
+    live_writer, workspace, observe_project, level
 ):
     metric, definition, head, ids = published_fixture(
         live_writer,
@@ -191,6 +203,7 @@ def test_complete_zero_denominator_contributes_but_is_not_a_failing_driver(
         kind="custom",
         formula="ratio(y, x)",
         values=[(-2, 0), (6, 2), (0, 2)],
+        level=level,
     )
     fields, params, total, contributions = effect_rows(
         live_writer, metric, definition, head
@@ -225,7 +238,11 @@ def test_complete_zero_denominator_contributes_but_is_not_a_failing_driver(
 
     values = reads.read_units(
         metric,
-        {**WINDOW, "context": "sessions", "unit_ids": [ids[0]]},
+        {
+            **WINDOW,
+            "context": "spans" if level == "span" else "sessions",
+            "unit_ids": [ids[0]],
+        },
         store=live_writer.store,
         retention_days=lambda: 0,
     )

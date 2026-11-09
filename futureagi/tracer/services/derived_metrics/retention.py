@@ -11,6 +11,7 @@ The original manifest is revoked before any physical deletion. Audit hashes are
 never rewritten; terminal private replay/preimage chunks can be deleted whole.
 """
 
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -312,6 +313,21 @@ def _current_retained(fields, cutoff_parameter):
     )
 
 
+def _retained_fields(fields, predicate, cutoff_parameter):
+    """A retained span may not keep an expired/unproven owner's private IDs."""
+    owner_retained = (
+        f"session_id IN (SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
+        "GROUP BY unit_id HAVING min(unit_start) >= "
+        f"toDateTime64(%({cutoff_parameter})s, 6, 'UTC'))"
+    )
+    return (
+        "SELECT * REPLACE("
+        f"if(level = 'span' AND NOT ({owner_retained}), '', session_id) AS session_id, "
+        f"if(level = 'span' AND NOT ({owner_retained}), '', user_id) AS user_id) "
+        f"FROM ({fields}) WHERE {predicate}"
+    )
+
+
 def _current_tables(writer, head, draft=None):
     """Skip absent indices, not coverage checks, using verified batch metadata.
 
@@ -368,9 +384,13 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
     and its private bytes are purged with the predecessor revisions after publish.
     """
     from tracer.services.derived_metrics.publication import FrozenRows
-    from tracer.services.derived_metrics.queries import Scope
     from tracer.services.derived_metrics.refresh import payload_select
+    from tracer.services.derived_metrics.span_evidence import (
+        require_retirement_evidence,
+    )
+    from tracer.services.derived_metrics.unit_reads import field_recipe
 
+    require_retirement_evidence(writer, head, definitions)
     fields, params = _proposal_rows(writer, draft, head, FIELD_VALUES, "retire_fields")
     params["retire_cutoff"] = cutoff
     expired = (
@@ -381,8 +401,6 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
     span_dirty = (
         _expired_span_buckets(writer, head, cutoff) if span_definitions else set()
     )
-    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
-    as_of = datetime.fromisoformat(str(draft.source_ceilings["as_of"]))
     current_cleanup = _current_expiry_required(
         writer, head, fields, params, draft=draft, cutoff_parameter="retire_cutoff"
     )
@@ -408,27 +426,21 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
     # Span checkpoints also scrub unproven conversation/user owner links from
     # retained span dependencies and PG preimages. Without an actual privacy
     # transition this is an ordinary checkpoint: prior safe pins stay usable.
-    span_proposals = {}
-    for definition in span_definitions:
-        if span_dirty:
-            sql, bound = _expiring_span_fields(writer, head, definition, cutoff, as_of)
-            span_proposals[(str(definition.metric_id), definition.version)] = (
-                sql,
-                bound,
-            )
-            span_dirty.update(
-                row[0]
-                for row in writer.store.execute(
-                    f"SELECT DISTINCT bucket_start FROM ({sql})", bound
-                )
-            )
+    # Span retirement uses the same frozen proposal as evidence and totals.
+    # Re-reading raw spans here could retire a newer value than the pinned KPI.
     if span_dirty:
         writer.append(
             draft,
             "dirty_before",
             [{"level": "span", "bucket_start": value} for value in sorted(span_dirty)],
         )
-    retained = f"SELECT * FROM ({fields}) WHERE (level, unit_id) NOT IN ({expired})"
+    retained = (
+        _retained_fields(
+            fields, f"(level, unit_id) NOT IN ({expired})", "retire_cutoff"
+        )
+        if span_definitions
+        else f"SELECT * FROM ({fields}) WHERE (level, unit_id) NOT IN ({expired})"
+    )
     ledger = {}
     for chunk in draft.ledger_chunks.exclude(part="cleanup_intent"):
         ledger.setdefault(chunk.part, []).extend(chunk.payload)
@@ -486,12 +498,9 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
             f"SELECT * FROM ({fields}) WHERE field_id = toUUID(%(retire_metric)s) "
             f"AND field_version = %(retire_version)s AND (level, unit_id) IN ({expired})"
         )
-        if definition.level == "span":
-            expiring, bound = span_proposals.get(
-                (str(definition.metric_id), definition.version),
-                (f"SELECT * FROM {FIELD_VALUES.name} WHERE 0", {}),
-            )
-            p.update(bound)
+        formula = field_recipe(definition).formula
+        if formula is not None:
+            p.update(formula.parameters)
         previous = (
             f"SELECT {', '.join(KEYS + STATS)} FROM ({retired}) "
             "WHERE metric_id = toUUID(%(retire_metric)s) AND metric_version = %(retire_version)s AND is_deleted = 0"
@@ -569,17 +578,7 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
         RETIRED_PARTS, retired_payloads, prefix="retire_anonymous"
     )
     for definition in definitions:
-        if definition.level == "span":
-            writer._freeze_span_buckets(
-                attempt,
-                head,
-                definition,
-                scope,
-                as_of=as_of,
-                cutoff=cutoff,
-                retired_override=(new_retired, nrp),
-            )
-        elif definition.level != "user":
+        if definition.level != "user":
             writer._freeze_buckets(
                 attempt,
                 head,
@@ -868,6 +867,13 @@ def _span_owner_cleanup_required(writer, head, fields, field_params, cutoff):
             "WHERE level = 'conversation' AND unit_start >= toDateTime64(%(span_owner_cutoff)s, 6, 'UTC'))",
             {**field_params, **params, "span_owner_cutoff": cutoff},
         )[0][0]
+        or writer.store.execute(
+            f"SELECT count() FROM ({fields}) WHERE level = 'span' "
+            "AND (notEmpty(session_id) OR notEmpty(user_id)) "
+            f"AND session_id NOT IN (SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
+            "GROUP BY unit_id HAVING min(unit_start) >= %(span_owner_cutoff)s)",
+            {**field_params, "span_owner_cutoff": cutoff},
+        )[0][0]
     )
 
 
@@ -892,73 +898,6 @@ def _expired_span_buckets(writer, head, cutoff):
             {**params, "span_expiry_cutoff": cutoff},
         )
     }
-
-
-def _expiring_span_fields(writer, head, definition, cutoff, now):
-    """Freeze only the newly retired source interval, never count it twice."""
-    from tracer.services.derived_metrics.queries import Scope
-    from tracer.services.derived_metrics.unit_reads import span_values_select
-
-    floor = head.published_by.source_ceilings.get("retention_floor")
-    if floor:
-        lower = datetime.fromisoformat(floor)
-    else:
-        buckets, params = committed_rows_select(
-            BUCKET_TOTALS,
-            head,
-            org_id=writer.org_id,
-            project_id=writer.lease.project_id,
-            key_in={
-                "metric_id": (definition.metric_id,),
-                "metric_version": (definition.version,),
-            },
-            param_prefix="retiring_buckets",
-        )
-        rows = writer.store.execute(
-            f"SELECT minOrNull(bucket_start) FROM ({buckets}) WHERE metric_id = toUUID(%(retiring_metric)s) "
-            "AND metric_version = %(retiring_version)s AND is_deleted = 0",
-            {
-                **params,
-                "retiring_metric": str(definition.metric_id),
-                "retiring_version": definition.version,
-            },
-        )
-        lower = rows[0][0] or cutoff
-    fields, params = span_values_select(
-        definition,
-        Scope(writer.org_id, writer.workspace_id, writer.lease.project_id),
-        start=lower,
-        end=max(lower, cutoff),
-        as_of=now,
-    )
-    from tracer.services.derived_metrics.bounded_reads import (
-        KeyRelation,
-        merge_bindings,
-    )
-
-    dependencies, dp = committed_rows_select(
-        SOURCE_DEPENDENCIES,
-        head,
-        org_id=writer.org_id,
-        project_id=writer.lease.project_id,
-        key_relation=KeyRelation(
-            ("trace_id", "span_id"),
-            "SELECT JSONExtractString(unit_id, 1), JSONExtractString(unit_id, 2) "
-            f"FROM ({fields})",
-            params,
-        ),
-        param_prefix="retiring_span_dependencies",
-    )
-    params = merge_bindings(params, dp)
-    if writer.store.execute(
-        f"SELECT count() FROM ({fields}) WHERE unit_id NOT IN "
-        f"(SELECT toJSONString(tuple(trace_id, span_id)) FROM ({dependencies}) WHERE is_deleted = 0)",
-        params,
-    )[0][0]:
-        from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
-
-        raise MetricAdmissionUnproven("metric_admission_unproven")
-    return fields, params
 
 
 def _expired_physical_payload(writer, head, cutoff):
@@ -1030,6 +969,11 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         writer.store.assert_visible(head)
         if head.revoked_at:
             raise MetricStateConflict("expired base requires source rebuild")
+        from tracer.services.derived_metrics.span_evidence import (
+            require_retirement_evidence,
+        )
+
+        require_retirement_evidence(writer, head, definitions)
         recovery = writer.abort_stale()
         for opened in MetricRefreshAttempt.objects.filter(
             project_id=project_id, state__in=MetricRefreshAttempt.OPEN_STATES
@@ -1130,13 +1074,26 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             ],
             ledger=recovery,
         )
-        writer.freeze_current(
-            attempt,
-            FIELD_VALUES,
-            head,
-            where=f"(level, unit_id) NOT IN ({expired_units})",
-            params=params,
-        )
+        if span_definitions:
+            writer.freeze(
+                attempt,
+                FIELD_VALUES,
+                _retained_fields(
+                    fields,
+                    f"(level, unit_id) NOT IN ({expired_units})",
+                    "expiry_cutoff",
+                ),
+                params,
+                collect_payloads=False,
+            )
+        else:
+            writer.freeze_current(
+                attempt,
+                FIELD_VALUES,
+                head,
+                where=f"(level, unit_id) NOT IN ({expired_units})",
+                params=params,
+            )
         for definition in definitions:
             if definition.level == "user":
                 continue
@@ -1147,30 +1104,65 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             }
             predicate = "field_id = toUUID(%(expiry_metric)s) AND field_version = %(expiry_version)s"
             expiring = f"SELECT * FROM ({fields}) WHERE {predicate} AND (level, unit_id) IN ({expired_units})"
+            from tracer.services.derived_metrics.unit_reads import field_recipe
+
+            formula = field_recipe(definition).formula
+            if formula is not None:
+                p.update(formula.parameters)
             if definition.level == "span":
-                expiring, sp = _expiring_span_fields(
-                    writer, head, definition, cutoff, as_of or now
-                )
-                p.update(sp)
                 span_dirty.update(
                     row[0]
                     for row in writer.store.execute(
                         f"SELECT DISTINCT bucket_start FROM ({expiring})", p
                     )
                 )
-            live = live_parts_select(definition, expiring)
-            previous = f"SELECT {', '.join(KEYS + STATS)} FROM ({retired}) WHERE metric_id = toUUID(%(expiry_metric)s) AND metric_version = %(expiry_version)s AND is_deleted = 0"
-            merged = merge_parts_select(f"({live}) UNION ALL ({previous})")
-            writer.freeze(
-                attempt,
-                RETIRED_PARTS,
-                f"SELECT *, toUInt8(0) AS is_deleted FROM ({merged})",
-                p,
-                extra={
-                    "metric_id": "toUUID(%(expiry_metric)s)",
-                    "metric_version": "toUInt32(%(expiry_version)s)",
-                },
+                writer.append(
+                    attempt,
+                    "dirty_before",
+                    [
+                        {"level": "span", "bucket_start": value}
+                        for value in sorted(span_dirty)
+                    ],
+                )
+            from tracer.services.derived_metrics.span_evidence import (
+                retiring_span_fields,
             )
+
+            capture = (
+                retiring_span_fields(
+                    writer,
+                    attempt,
+                    head,
+                    definition,
+                    expiring,
+                    p,
+                    cutoff=cutoff,
+                    as_of=as_of or now,
+                )
+                if definition.level == "span"
+                else nullcontext((expiring, p))
+            )
+            with capture as (expiring, p):
+                if definition.level == "span":
+                    span_dirty.update(
+                        row[0]
+                        for row in writer.store.execute(
+                            f"SELECT DISTINCT bucket_start FROM ({expiring})", p
+                        )
+                    )
+                live = live_parts_select(definition, expiring)
+                previous = f"SELECT {', '.join(KEYS + STATS)} FROM ({retired}) WHERE metric_id = toUUID(%(expiry_metric)s) AND metric_version = %(expiry_version)s AND is_deleted = 0"
+                merged = merge_parts_select(f"({live}) UNION ALL ({previous})")
+                writer.freeze(
+                    attempt,
+                    RETIRED_PARTS,
+                    f"SELECT *, toUInt8(0) AS is_deleted FROM ({merged})",
+                    p,
+                    extra={
+                        "metric_id": "toUUID(%(expiry_metric)s)",
+                        "metric_version": "toUInt32(%(expiry_version)s)",
+                    },
+                )
         # Versions outside the supplied backfill/active set keep already anonymous
         # history; no fresh stats may be manufactured without their definition.
         missing = writer.store.execute(
@@ -1239,9 +1231,11 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             )
         if span_definitions:
             from tracer.services.derived_metrics.publication import FrozenRows
-            from tracer.services.derived_metrics.queries import Scope
             from tracer.services.derived_metrics.refresh import payload_select
 
+            new_live, nlp = _proposal_overlay(
+                writer, attempt, FIELD_VALUES, "expiry_live"
+            )
             new_retired, nrp = payload_select(
                 RETIRED_PARTS,
                 [
@@ -1251,13 +1245,13 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
                 prefix="expiry_anonymous",
             )
             for definition in span_definitions:
-                writer._freeze_span_buckets(
+                writer._freeze_buckets(
                     attempt,
                     head,
                     definition,
-                    Scope(writer.org_id, writer.workspace_id, project_id),
-                    as_of=as_of or now,
-                    cutoff=cutoff,
+                    new_live,
+                    nlp,
+                    complete_fields=True,
                     retired_override=(new_retired, nrp),
                 )
         writer.seal(attempt, cursors={"pending_expiry": False})
@@ -1330,6 +1324,13 @@ def purge_by_scope(store, request, *, writer=None):
                 if kind == "users"
                 else "(session_id IN %(erase_subjects)s OR unit_id IN %(erase_subjects)s)"
             )
+            # Retention can scrub an unproven span-owner link while retaining
+            # the younger span. Without that lineage, subject erasure must drop
+            # unknown-owner span evidence conservatively, never guess it is safe.
+            owner = "user_id" if kind == "users" else "session_id"
+            field_predicate = (
+                f"({field_predicate} OR (level = 'span' AND {owner} = ''))"
+            )
             dep_predicate = (
                 "(raw_user_id IN %(erase_subjects)s OR canonical_user_id IN %(erase_subjects)s)"
                 if kind == "users"
@@ -1352,7 +1353,9 @@ def purge_by_scope(store, request, *, writer=None):
             # Unassignable multi-user conversations still carry the erased user's
             # evidence: remove that conversation, rather than leaking its maps.
             victims = store.execute(
-                f"SELECT DISTINCT unit_id FROM ({fields}) WHERE {field_predicate} UNION DISTINCT SELECT canonical_session_id FROM ({deps}) WHERE {dep_predicate}",
+                f"SELECT DISTINCT unit_id FROM ({fields}) WHERE {field_predicate} "
+                f"UNION DISTINCT SELECT canonical_session_id FROM ({deps}) WHERE {dep_predicate} "
+                f"UNION DISTINCT SELECT toJSONString(tuple(trace_id, span_id)) FROM ({deps}) WHERE {dep_predicate}",
                 params,
             )
             for table in LIST_CURRENT_TABLES:
