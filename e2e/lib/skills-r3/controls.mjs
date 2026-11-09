@@ -9,12 +9,13 @@ export class Barriers {
     token(name, 'barrier');
     requireValue(!this.#closed, 'Barriers closed');
     if (!this.#entries.has(name)) {
-      let release; let reject; let reached;
+      let release; let reject; let reached; let rejectArrival;
       const waiting = new Promise((resolve, fail) => { release = resolve; reject = fail; });
-      // Register rejection handling even before a request reaches the barrier.
+      const arrival = new Promise((resolve, fail) => { reached = resolve; rejectArrival = fail; });
+      // Either side may be created before its observer attaches.
       waiting.catch(() => {});
-      const arrival = new Promise((resolve) => { reached = resolve; });
-      this.#entries.set(name, { waiting, arrival, release, reject, reached, arrivals: 0, released: false });
+      arrival.catch(() => {});
+      this.#entries.set(name, { waiting, arrival, release, reject, reached, rejectArrival, arrivals: 0, released: false });
     }
     return this.#entries.get(name);
   }
@@ -35,8 +36,12 @@ export class Barriers {
     return { arrivals: entry.arrivals, released: entry.released };
   }
   close() {
-    for (const entry of this.#entries.values()) entry.reject(new Error('Fixture teardown'));
     this.#closed = true;
+    for (const entry of this.#entries.values()) {
+      const error = new Error('Fixture teardown');
+      entry.reject(error);
+      entry.rejectArrival(error);
+    }
   }
 }
 
@@ -60,7 +65,23 @@ export class ScopedClock {
 export class OwnedResources {
   #resources = new Map();
   #closed = false;
-  constructor(runId) { this.runId = token(runId, 'run'); this.ownerCapability = randomUUID(); }
+  #probeTimeoutMs;
+  constructor(runId, { probeTimeoutMs = 5_000 } = {}) {
+    this.runId = token(runId, 'run');
+    this.ownerCapability = randomUUID();
+    // Four sequential probes per resource must fit the runner's 30-second teardown.
+    requireValue(Number.isSafeInteger(probeTimeoutMs) && probeTimeoutMs > 0 && probeTimeoutMs <= 5_000, 'Probe timeout must be between 1 and 5000 ms');
+    this.#probeTimeoutMs = probeTimeoutMs;
+  }
+  async #probe(callback) {
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(callback),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Teardown probe deadline')), this.#probeTimeoutMs); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  }
   register({ id, ownerCapability, cancel, settle, terminate, destroyed }) {
     requireValue(!this.#closed && ownerCapability === this.ownerCapability, 'Resource ownership mismatch');
     token(id, 'resource');
@@ -71,15 +92,17 @@ export class OwnedResources {
   async teardown() {
     requireValue(!this.#closed, 'Teardown already performed');
     this.#closed = true;
-    const receipts = [];
-    for (const [id, resource] of [...this.#resources].reverse()) {
+    // Start every owned resource independently. One outage must not consume the
+    // outer deadline before another resource even receives its termination call.
+    // Promise.all retains reverse-registration receipt order, not completion order.
+    const receipts = await Promise.all([...this.#resources].reverse().map(async ([id, resource]) => {
       const receipt = { id, cancellation: 'unknown', settlement: 'unknown', destruction: 'unknown' };
-      try { await resource.cancel(); receipt.cancellation = 'requested'; } catch { /* retain uncertainty */ }
-      try { receipt.settlement = await resource.settle() === true ? 'settled' : 'unknown'; } catch { /* retain uncertainty */ }
-      try { await resource.terminate(); } catch { /* destruction probe is authoritative */ }
-      try { receipt.destruction = await resource.destroyed() === true ? 'confirmed' : 'unknown'; } catch { /* retain uncertainty */ }
-      receipts.push(receipt);
-    }
+      try { await this.#probe(() => resource.cancel()); receipt.cancellation = 'requested'; } catch { /* retain uncertainty */ }
+      try { receipt.settlement = await this.#probe(() => resource.settle()) === true ? 'settled' : 'unknown'; } catch { /* retain uncertainty */ }
+      try { await this.#probe(() => resource.terminate()); } catch { /* destruction probe is authoritative */ }
+      try { receipt.destruction = await this.#probe(() => resource.destroyed()) === true ? 'confirmed' : 'unknown'; } catch { /* retain uncertainty */ }
+      return receipt;
+    }));
     return { receipts, qualified: receipts.every((r) => r.settlement === 'settled' && r.destruction === 'confirmed') };
   }
 }

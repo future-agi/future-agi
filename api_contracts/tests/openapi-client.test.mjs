@@ -95,10 +95,14 @@ test("generated draft accepts a null base and rejects non-number bases", () => {
       note: "",
       revision: 1,
       updated_at: "2026-11-06T00:00:00Z",
+      source: {},
     },
   };
   const schema = validator("DraftListResponse");
   assert.equal(schema.safeParse(payload).success, true);
+  const { source, ...withoutSource } = payload.result;
+  assert.equal(schema.safeParse({ ...payload, result: withoutSource }).success, false);
+  assert.deepEqual(source, {});
   assert.equal(
     schema.safeParse({
       ...payload,
@@ -129,6 +133,7 @@ test("generated compare accepts exact integer-or-draft refs and nullable hashes"
   };
   const schema = validator("CompareListResponse");
   assert.equal(schema.safeParse(payload).success, true);
+  assert.equal(schema.safeParse({ status: false, result: null }).success, true);
   for (const value of [null, {}, [], "1", "latest", 0, -1]) {
     assert.equal(
       schema.safeParse({

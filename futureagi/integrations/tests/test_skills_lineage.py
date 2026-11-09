@@ -54,6 +54,7 @@ def test_connector_retains_only_provider_project_identity(
     )
     assert rows.count() == len(trace["observations"])
     for row in rows:
+        assert isinstance(row.metadata, dict)
         assert row.metadata["available_skills"] == ["refund"]
         if external_project is None:
             assert "fi.external.langfuse" not in row.metadata

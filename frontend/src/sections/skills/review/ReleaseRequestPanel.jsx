@@ -11,6 +11,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { isDefiniteRejection } from "src/api/skills/operation-errors";
 import Section from "src/components/section";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import ReleaseReviewBody, {
@@ -69,9 +70,7 @@ export function useReviewedOperation() {
       return response;
     } catch (err) {
       if (!active.current) return null;
-      const status = err?.response?.status ?? err?.status;
-      const knownRejected =
-        status >= 400 && status < 500 && ![408, 425, 429].includes(status);
+      const knownRejected = isDefiniteRejection(err);
       // A denial on a recovery attempt cannot prove that the original send
       // failed: current authorization is checked before receipt lookup.
       const confirmedRejected = knownRejected && !operation.uncertain;

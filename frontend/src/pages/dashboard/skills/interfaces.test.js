@@ -84,8 +84,10 @@ describe('Skills integration boundaries', () => {
     const routePaths = children.elements.flatMap((node) => node.properties.filter((property) => property.name?.getText() === 'path').map((property) => property.initializer.text));
     expect(routePaths.indexOf('contexts/rollouts')).toBeLessThan(routePaths.indexOf('contexts/:contextId'));
     expect(routePaths.indexOf('reviews')).toBeLessThan(routePaths.indexOf(':skillId'));
+    const allowance = children.elements.find((node) => node.properties.some((property) => property.name?.getText() === 'path' && property.initializer?.text === 'allowance'));
+    expect(allowance?.properties.find((property) => property.name?.getText() === 'element')?.initializer.getText()).toBe('<SkillsSpendPolicyPage />');
     const routes = [{ path: '/dashboard/skills', children: routePaths.map((routePath) => ({ path: routePath })) }];
-    for (const [url, expected] of [[paths.dashboard.skills.contexts, 'contexts'], [paths.dashboard.skills.contextReview('context-id'), 'contexts/:contextId/review'], [paths.dashboard.skills.contextRollout('campaign-id'), 'contexts/rollouts/:campaignId'], [paths.dashboard.skills.reviews, 'reviews'], [paths.dashboard.skills.archived, 'archived'], [paths.dashboard.skills.edit('skill-id'), ':skillId/edit']]) {
+    for (const [url, expected] of [[paths.dashboard.skills.contexts, 'contexts'], [paths.dashboard.skills.contextReview('context-id'), 'contexts/:contextId/review'], [paths.dashboard.skills.contextRollout('campaign-id'), 'contexts/rollouts/:campaignId'], [paths.dashboard.skills.reviews, 'reviews'], [paths.dashboard.skills.archived, 'archived'], [paths.dashboard.skills.allowance, 'allowance'], [paths.dashboard.skills.edit('skill-id'), ':skillId/edit']]) {
       expect(matchRoutes(routes, url).at(-1).route.path).toBe(expected);
     }
   });

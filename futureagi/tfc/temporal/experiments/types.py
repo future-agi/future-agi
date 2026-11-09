@@ -54,7 +54,7 @@ class SetupExperimentOutput:
     prompt_configs: list  # List of prompt configurations (V1: from JSON, V2: from EPC)
     eval_template_ids: list  # List of evaluation template IDs
     status: str
-    agent_configs: list = None  # V2 only: list of agent config dicts
+    agent_configs: list | None = None  # V2 only; historical V1 payloads use null
     experiment_type: str = "llm"  # V2: experiment type (llm, tts, stt, image)
     has_base_column: bool = True  # Whether experiment has a base column
 

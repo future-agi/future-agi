@@ -75,6 +75,7 @@ export const paths = {
       contextReview: (id) => `${ROOTS.DASHBOARD}/skills/contexts/${id}/review`,
       reviews: `${ROOTS.DASHBOARD}/skills/reviews`,
       archived: `${ROOTS.DASHBOARD}/skills/archived`,
+      allowance: `${ROOTS.DASHBOARD}/skills/allowance`,
       contextRollouts: `${ROOTS.DASHBOARD}/skills/contexts/rollouts`,
       contextRollout: (id) => `${ROOTS.DASHBOARD}/skills/contexts/rollouts/${id}`,
     },

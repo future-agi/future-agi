@@ -11,9 +11,10 @@
     "report": "playwright show-report",
     "typecheck": "tsc --noEmit",
     "catalog": "node scripts/flow-catalog.mjs",
-    "catalog:check": "node scripts/flow-catalog.mjs --check",
+    "catalog:check": "node scripts/flow-catalog.mjs --check && yarn selftest",
     "coverage": "node scripts/e2e-coverage.mjs",
-    "selftest": "node --test 'scripts/**/*.test.mjs'"
+    "selftest": "node scripts/selftest.mjs",
+    "selftest:docs": "node --test harness/skills-r3/docs.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",

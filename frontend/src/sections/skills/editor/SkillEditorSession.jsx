@@ -134,7 +134,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
           deletionCheckpoint.current = null;
           if (draft.revision !== retained.input.revision || draft.recoveryDigest !== retained.input.expectedDigest) throw new Error('Checkpoint recovered, but the draft changed. Review deletion again.');
           return draft;
-        });
+        }, { operationKey: `checkpoint-delete:${path}` });
         if (!saved || latestSession.current.editSequence !== sequence) { setOperationError('Deletion was not applied. Preserve the latest edits and retry the recovery checkpoint.'); return; }
       }
       session.edit(latestSession.current.files.filter((item) => item.path !== path));
@@ -165,7 +165,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
       back={<IconButton aria-label={isContext ? 'Back to context' : 'Back to skill'} onClick={() => navigate(detailPath)}><Iconify icon="solar:arrow-left-linear" /></IconButton>}
       actions={<Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
         <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography>
-        {session.status === 'error' && <Button size="small" onClick={() => session.save()}>Retry</Button>}
+        {session.status === 'error' && <Button size="small" disabled={Boolean(session.mutationError)} onClick={() => session.save()}>Retry</Button>}
         {session.status === 'conflict' && <Button size="small" onClick={() => setConflictOpen(true)}>Resolve conflict</Button>}
         {!isContext && <Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => openAssist('draft')}>Draft with AI</Button>}
         <Button variant="outlined" disabled={locked || saving} onClick={() => setDiscardOpen(true)}>Discard draft</Button>

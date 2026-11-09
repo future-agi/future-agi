@@ -32650,8 +32650,148 @@ export const ModelHubSkillsConsumptionVersionsManifestListResponse = zod.object(
   },
 );
 
+export const modelHubSkillsContextsListQueryPageDefault = 1;
+
+export const modelHubSkillsContextsListQueryPageSizeDefault = 25;
+export const modelHubSkillsContextsListQueryPageSizeMax = 100;
+
+export const modelHubSkillsContextsListQuerySortDefault = `updated`;
+export const modelHubSkillsContextsListQueryOrderDefault = `desc`;
+
+export const ModelHubSkillsContextsListQueryParams = zod.object({
+  page: zod.number().min(1).default(modelHubSkillsContextsListQueryPageDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(modelHubSkillsContextsListQueryPageSizeMax)
+    .default(modelHubSkillsContextsListQueryPageSizeDefault),
+  search: zod.string().optional(),
+  tag: zod.string().optional(),
+  label: zod.string().optional(),
+  sort: zod
+    .enum(["updated", "name", "created"])
+    .default(modelHubSkillsContextsListQuerySortDefault),
+  order: zod
+    .enum(["asc", "desc"])
+    .default(modelHubSkillsContextsListQueryOrderDefault),
+});
+
+export const modelHubSkillsContextsListResponseResultCountMin = 0;
+
+export const modelHubSkillsContextsListResponseResultTotalPagesMin = 0;
+
+export const modelHubSkillsContextsListResponseResultResultsItemMetadataRevisionMin = 0;
+
+export const modelHubSkillsContextsListResponseResultResultsItemReleaseRevisionMin = 0;
+
+export const modelHubSkillsContextsListResponseResultResultsItemSecurityRevisionMin = 0;
+
+export const ModelHubSkillsContextsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    count: zod.number().min(modelHubSkillsContextsListResponseResultCountMin),
+    page: zod.number().min(1),
+    page_size: zod.number().min(1),
+    total_pages: zod
+      .number()
+      .min(modelHubSkillsContextsListResponseResultTotalPagesMin),
+    results: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        kind: zod.enum(["agent_context"]),
+        name: zod.string().min(1),
+        description: zod.string().min(1),
+        tags: zod.array(zod.string().min(1)),
+        metadata_revision: zod
+          .number()
+          .min(
+            modelHubSkillsContextsListResponseResultResultsItemMetadataRevisionMin,
+          ),
+        latest_version: zod.number().min(1).nullable(),
+        labels: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            version: zod.number().min(1),
+            version_id: zod.string().uuid(),
+          }),
+        ),
+        release_revision: zod
+          .number()
+          .min(
+            modelHubSkillsContextsListResponseResultResultsItemReleaseRevisionMin,
+          ),
+        security_revision: zod
+          .number()
+          .min(
+            modelHubSkillsContextsListResponseResultResultsItemSecurityRevisionMin,
+          ),
+        protected_label_names: zod.array(zod.string().min(1)),
+        has_draft: zod.boolean(),
+        updated_at: zod.string().datetime({ offset: true }),
+        updated_by: zod.union([
+          zod.object({
+            id: zod.string().uuid(),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
+      }),
+    ),
+  }),
+});
+
+export const modelHubSkillsContextsCreateBodyNameRegExp = new RegExp(
+  "^[a-z0-9][a-z0-9-]{0,63}$",
+);
+export const modelHubSkillsContextsCreateBodyDescriptionMax = 1024;
+
+export const modelHubSkillsContextsCreateBodyTagsItemMax = 50;
+
+export const modelHubSkillsContextsCreateBodyTagsMax = 20;
+
+export const modelHubSkillsContextsCreateBodyFilesMax = 200;
+
+export const ModelHubSkillsContextsCreateBody = zod.object({
+  name: zod.string().min(1).regex(modelHubSkillsContextsCreateBodyNameRegExp),
+  description: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsContextsCreateBodyDescriptionMax),
+  tags: zod
+    .array(zod.string().min(1).max(modelHubSkillsContextsCreateBodyTagsItemMax))
+    .max(modelHubSkillsContextsCreateBodyTagsMax),
+  files: zod
+    .array(
+      zod.object({
+        path: zod.string(),
+        content: zod.string(),
+      }),
+    )
+    .min(1)
+    .max(modelHubSkillsContextsCreateBodyFilesMax)
+    .nullable(),
+});
+
+export const modelHubSkillsContextsCreateResponseResultDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    revision: zod.number().min(1),
+    context_id: zod.string().uuid(),
+    draft_id: zod.string().uuid(),
+    digest: zod
+      .string()
+      .min(1)
+      .regex(modelHubSkillsContextsCreateResponseResultDigestRegExp)
+      .optional(),
+    published: zod.boolean().optional(),
+  }),
+});
+
 export const ModelHubSkillsContextsBindingsPartialUpdateParams = zod.object({
-  binding_id: zod.string(),
+  binding_id: zod.string().uuid(),
 });
 
 export const modelHubSkillsContextsBindingsPartialUpdateBodyRevisionMin = 0;
@@ -32817,7 +32957,7 @@ export const ModelHubSkillsContextsBindingsPartialUpdateResponse = zod.object({
 });
 
 export const ModelHubSkillsContextsBindingsDeleteParams = zod.object({
-  binding_id: zod.string(),
+  binding_id: zod.string().uuid(),
 });
 
 export const modelHubSkillsContextsBindingsDeleteBodyRevisionMin = 0;
@@ -32829,7 +32969,7 @@ export const ModelHubSkillsContextsBindingsDeleteBody = zod.object({
 });
 
 export const ModelHubSkillsContextsBindingsReceiptsCreateParams = zod.object({
-  binding_id: zod.string(),
+  binding_id: zod.string().uuid(),
 });
 
 export const modelHubSkillsContextsBindingsReceiptsCreateBodySequenceMin = 0;
@@ -32978,7 +33118,7 @@ export const ModelHubSkillsContextsBindingsReceiptsCreateResponse = zod.object({
 });
 
 export const ModelHubSkillsContextsBindingsSessionsCreateParams = zod.object({
-  binding_id: zod.string(),
+  binding_id: zod.string().uuid(),
 });
 
 export const modelHubSkillsContextsBindingsSessionsCreateBodyClientSessionKeyMax = 200;
@@ -33053,7 +33193,7 @@ export const ModelHubSkillsContextsBindingsSessionsCreateResponse = zod.object({
 
 export const ModelHubSkillsContextsBindingsSessionsAccessCheckCreateParams =
   zod.object({
-    binding_id: zod.string(),
+    binding_id: zod.string().uuid(),
     session_id: zod.string(),
   });
 
@@ -33079,6 +33219,982 @@ export const ModelHubSkillsContextsBindingsSessionsAccessCheckCreateResponse =
       checked_at: zod.string().datetime({ offset: true }),
     }),
   });
+
+export const modelHubSkillsContextsCampaignsListQueryPageDefault = 1;
+
+export const modelHubSkillsContextsCampaignsListQueryPageSizeDefault = 25;
+export const modelHubSkillsContextsCampaignsListQueryPageSizeMax = 100;
+
+export const ModelHubSkillsContextsCampaignsListQueryParams = zod.object({
+  page: zod
+    .number()
+    .min(1)
+    .default(modelHubSkillsContextsCampaignsListQueryPageDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(modelHubSkillsContextsCampaignsListQueryPageSizeMax)
+    .default(modelHubSkillsContextsCampaignsListQueryPageSizeDefault),
+});
+
+export const modelHubSkillsContextsCampaignsListResponseResultCountMin = 0;
+
+export const modelHubSkillsContextsCampaignsListResponseResultTotalPagesMin = 0;
+
+export const modelHubSkillsContextsCampaignsListResponseResultResultsItemTargetCountMin = 0;
+
+export const modelHubSkillsContextsCampaignsListResponseResultResultsItemManifestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    count: zod
+      .number()
+      .min(modelHubSkillsContextsCampaignsListResponseResultCountMin),
+    page: zod.number().min(1),
+    page_size: zod.number().min(1),
+    total_pages: zod
+      .number()
+      .min(modelHubSkillsContextsCampaignsListResponseResultTotalPagesMin),
+    results: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string().min(1),
+        revision: zod.number().min(1),
+        status: zod.string().min(1),
+        target_count: zod
+          .number()
+          .min(
+            modelHubSkillsContextsCampaignsListResponseResultResultsItemTargetCountMin,
+          ),
+        manifest_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsCampaignsListResponseResultResultsItemManifestDigestRegExp,
+          )
+          .nullable(),
+        parent_campaign_id: zod.string().uuid().nullable(),
+        authorized_at: zod.string().datetime({ offset: true }).nullable(),
+        reason: zod.string(),
+        created_at: zod.string().datetime({ offset: true }),
+        provenance: zod.enum(["client_reported"]),
+      }),
+    ),
+  }),
+});
+
+export const modelHubSkillsContextsCampaignsCreateBodyNameMax = 120;
+
+export const ModelHubSkillsContextsCampaignsCreateBody = zod.object({
+  name: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsContextsCampaignsCreateBodyNameMax),
+  targets: zod.array(
+    zod.object({
+      binding_id: zod.string().uuid(),
+      version: zod.number().min(1),
+    }),
+  ),
+  parent_campaign_id: zod.string().uuid().nullable(),
+});
+
+export const modelHubSkillsContextsCampaignsCreateResponseResultTargetCountMin = 0;
+
+export const modelHubSkillsContextsCampaignsCreateResponseResultManifestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    revision: zod.number().min(1),
+    status: zod.string().min(1),
+    target_count: zod
+      .number()
+      .min(modelHubSkillsContextsCampaignsCreateResponseResultTargetCountMin),
+    manifest_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsCampaignsCreateResponseResultManifestDigestRegExp,
+      )
+      .nullable(),
+    parent_campaign_id: zod.string().uuid().nullable(),
+    authorized_at: zod.string().datetime({ offset: true }).nullable(),
+    reason: zod.string(),
+    created_at: zod.string().datetime({ offset: true }),
+    provenance: zod.enum(["client_reported"]),
+  }),
+});
+
+export const ModelHubSkillsContextsCampaignsReadParams = zod.object({
+  campaign_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsCampaignsReadResponseResultTargetCountMin = 0;
+
+export const modelHubSkillsContextsCampaignsReadResponseResultManifestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsReadResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    revision: zod.number().min(1),
+    status: zod.string().min(1),
+    target_count: zod
+      .number()
+      .min(modelHubSkillsContextsCampaignsReadResponseResultTargetCountMin),
+    manifest_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsCampaignsReadResponseResultManifestDigestRegExp,
+      )
+      .nullable(),
+    parent_campaign_id: zod.string().uuid().nullable(),
+    authorized_at: zod.string().datetime({ offset: true }).nullable(),
+    reason: zod.string(),
+    created_at: zod.string().datetime({ offset: true }),
+    provenance: zod.enum(["client_reported"]),
+    enabled: zod.boolean(),
+    can_authorize: zod.boolean(),
+  }),
+});
+
+export const ModelHubSkillsContextsCampaignsAuthorizeCreateParams = zod.object({
+  campaign_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsCampaignsAuthorizeCreateBodyExpectedManifestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsAuthorizeCreateBodyDecisionsItemPlanDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsCampaignsAuthorizeCreateBodyDecisionsItemReasonMax = 500;
+
+export const ModelHubSkillsContextsCampaignsAuthorizeCreateBody = zod.object({
+  revision: zod.number().min(1),
+  expected_manifest_digest: zod
+    .string()
+    .min(1)
+    .regex(
+      modelHubSkillsContextsCampaignsAuthorizeCreateBodyExpectedManifestDigestRegExp,
+    ),
+  decisions: zod.array(
+    zod.object({
+      binding_id: zod.string().uuid(),
+      plan_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsCampaignsAuthorizeCreateBodyDecisionsItemPlanDigestRegExp,
+        )
+        .nullable(),
+      decision: zod.enum(["include", "exclude"]),
+      reason: zod
+        .string()
+        .max(
+          modelHubSkillsContextsCampaignsAuthorizeCreateBodyDecisionsItemReasonMax,
+        ),
+    }),
+  ),
+  acknowledge_repository_writes: zod.boolean(),
+});
+
+export const modelHubSkillsContextsCampaignsAuthorizeCreateResponseResultTargetCountMin = 0;
+
+export const modelHubSkillsContextsCampaignsAuthorizeCreateResponseResultManifestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsAuthorizeCreateResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+      revision: zod.number().min(1),
+      status: zod.string().min(1),
+      target_count: zod
+        .number()
+        .min(
+          modelHubSkillsContextsCampaignsAuthorizeCreateResponseResultTargetCountMin,
+        ),
+      manifest_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsCampaignsAuthorizeCreateResponseResultManifestDigestRegExp,
+        )
+        .nullable(),
+      parent_campaign_id: zod.string().uuid().nullable(),
+      authorized_at: zod.string().datetime({ offset: true }).nullable(),
+      reason: zod.string(),
+      created_at: zod.string().datetime({ offset: true }),
+      provenance: zod.enum(["client_reported"]),
+    }),
+  });
+
+export const ModelHubSkillsContextsCampaignsCancelCreateParams = zod.object({
+  campaign_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsCampaignsCancelCreateBodyReasonMax = 500;
+
+export const ModelHubSkillsContextsCampaignsCancelCreateBody = zod.object({
+  revision: zod.number().min(1),
+  reason: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsContextsCampaignsCancelCreateBodyReasonMax),
+});
+
+export const modelHubSkillsContextsCampaignsCancelCreateResponseResultTargetCountMin = 0;
+
+export const modelHubSkillsContextsCampaignsCancelCreateResponseResultManifestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsCancelCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    revision: zod.number().min(1),
+    status: zod.string().min(1),
+    target_count: zod
+      .number()
+      .min(
+        modelHubSkillsContextsCampaignsCancelCreateResponseResultTargetCountMin,
+      ),
+    manifest_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsCampaignsCancelCreateResponseResultManifestDigestRegExp,
+      )
+      .nullable(),
+    parent_campaign_id: zod.string().uuid().nullable(),
+    authorized_at: zod.string().datetime({ offset: true }).nullable(),
+    reason: zod.string(),
+    created_at: zod.string().datetime({ offset: true }),
+    provenance: zod.enum(["client_reported"]),
+  }),
+});
+
+export const ModelHubSkillsContextsCampaignsPauseCreateParams = zod.object({
+  campaign_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsCampaignsPauseCreateBodyReasonMax = 500;
+
+export const ModelHubSkillsContextsCampaignsPauseCreateBody = zod.object({
+  revision: zod.number().min(1),
+  reason: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsContextsCampaignsPauseCreateBodyReasonMax),
+});
+
+export const modelHubSkillsContextsCampaignsPauseCreateResponseResultTargetCountMin = 0;
+
+export const modelHubSkillsContextsCampaignsPauseCreateResponseResultManifestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsPauseCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    revision: zod.number().min(1),
+    status: zod.string().min(1),
+    target_count: zod
+      .number()
+      .min(
+        modelHubSkillsContextsCampaignsPauseCreateResponseResultTargetCountMin,
+      ),
+    manifest_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsCampaignsPauseCreateResponseResultManifestDigestRegExp,
+      )
+      .nullable(),
+    parent_campaign_id: zod.string().uuid().nullable(),
+    authorized_at: zod.string().datetime({ offset: true }).nullable(),
+    reason: zod.string(),
+    created_at: zod.string().datetime({ offset: true }),
+    provenance: zod.enum(["client_reported"]),
+  }),
+});
+
+export const ModelHubSkillsContextsCampaignsResumeCreateParams = zod.object({
+  campaign_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsCampaignsResumeCreateBodyReasonMax = 500;
+
+export const ModelHubSkillsContextsCampaignsResumeCreateBody = zod.object({
+  revision: zod.number().min(1),
+  reason: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsContextsCampaignsResumeCreateBodyReasonMax),
+});
+
+export const modelHubSkillsContextsCampaignsResumeCreateResponseResultTargetCountMin = 0;
+
+export const modelHubSkillsContextsCampaignsResumeCreateResponseResultManifestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsResumeCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    revision: zod.number().min(1),
+    status: zod.string().min(1),
+    target_count: zod
+      .number()
+      .min(
+        modelHubSkillsContextsCampaignsResumeCreateResponseResultTargetCountMin,
+      ),
+    manifest_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsCampaignsResumeCreateResponseResultManifestDigestRegExp,
+      )
+      .nullable(),
+    parent_campaign_id: zod.string().uuid().nullable(),
+    authorized_at: zod.string().datetime({ offset: true }).nullable(),
+    reason: zod.string(),
+    created_at: zod.string().datetime({ offset: true }),
+    provenance: zod.enum(["client_reported"]),
+  }),
+});
+
+export const ModelHubSkillsContextsCampaignsRollbackPreviewCreateParams =
+  zod.object({
+    campaign_id: zod.string().uuid(),
+  });
+
+export const ModelHubSkillsContextsCampaignsRollbackPreviewCreateBody =
+  zod.object({
+    revision: zod.number().min(1),
+  });
+
+export const modelHubSkillsContextsCampaignsRollbackPreviewCreateResponseResultTargetsItemPreviousLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsRollbackPreviewCreateResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      revision: zod.number().min(1),
+      parent_campaign_id: zod.string().uuid(),
+      executable: zod.boolean(),
+      targets: zod.array(
+        zod.object({
+          binding_id: zod.string().uuid(),
+          previous_lock_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsCampaignsRollbackPreviewCreateResponseResultTargetsItemPreviousLockDigestRegExp,
+            )
+            .nullable(),
+          base_commit: zod.string().min(1).nullable(),
+          state: zod.string().min(1),
+          blockers: zod.array(zod.string().min(1)),
+          reverse_changes: zod.array(
+            zod.object({
+              path: zod.string().min(1),
+              action: zod.enum(["add", "remove", "replace"]),
+              before_sha256: zod.string().min(1).nullable(),
+              after_sha256: zod.string().min(1).nullable(),
+              ownership: zod.string().min(1),
+              diff_preview: zod.string(),
+            }),
+          ),
+        }),
+      ),
+    }),
+  });
+
+export const ModelHubSkillsContextsCampaignsTargetsListParams = zod.object({
+  campaign_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsCampaignsTargetsListQueryPageDefault = 1;
+
+export const modelHubSkillsContextsCampaignsTargetsListQueryPageSizeDefault = 25;
+export const modelHubSkillsContextsCampaignsTargetsListQueryPageSizeMax = 100;
+
+export const ModelHubSkillsContextsCampaignsTargetsListQueryParams = zod.object(
+  {
+    page: zod
+      .number()
+      .min(1)
+      .default(modelHubSkillsContextsCampaignsTargetsListQueryPageDefault),
+    page_size: zod
+      .number()
+      .min(1)
+      .max(modelHubSkillsContextsCampaignsTargetsListQueryPageSizeMax)
+      .default(modelHubSkillsContextsCampaignsTargetsListQueryPageSizeDefault),
+  },
+);
+
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultCountMin = 0;
+
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultTotalPagesMin = 0;
+
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemSelectorLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemDesiredDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemRepositoryOneRepositoryIdMax = 200;
+
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemRepositoryOneDefaultBranchMax = 255;
+
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemRepositoryOneProjectScopeMax = 255;
+
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemPlanOnePreviousLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemPlanOneMaterializationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemPlanOnePlanDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemPlanDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsTargetsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    count: zod
+      .number()
+      .min(modelHubSkillsContextsCampaignsTargetsListResponseResultCountMin),
+    page: zod.number().min(1),
+    page_size: zod.number().min(1),
+    total_pages: zod
+      .number()
+      .min(
+        modelHubSkillsContextsCampaignsTargetsListResponseResultTotalPagesMin,
+      ),
+    results: zod.array(
+      zod.object({
+        binding_id: zod.string().uuid(),
+        name: zod.string().min(1),
+        binding_revision: zod.number().min(1),
+        selector: zod.object({
+          version: zod.number().min(1).optional(),
+          label: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemSelectorLabelRegExp,
+            )
+            .optional(),
+        }),
+        desired_version: zod.number().min(1),
+        desired_version_id: zod.string().uuid(),
+        desired_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemDesiredDigestRegExp,
+          ),
+        repository: zod.union([
+          zod.object({
+            provider: zod.enum(["github"]),
+            repository_id: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemRepositoryOneRepositoryIdMax,
+              ),
+            default_branch: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemRepositoryOneDefaultBranchMax,
+              ),
+            project_scope: zod
+              .string()
+              .max(
+                modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemRepositoryOneProjectScopeMax,
+              ),
+          }),
+          zod.null(),
+        ]),
+        plan: zod.union([
+          zod.object({
+            campaign_revision: zod.number().min(1),
+            binding_revision: zod.number().min(1),
+            repository_id: zod.string().min(1),
+            base_commit: zod.string().min(1),
+            previous_lock_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemPlanOnePreviousLockDigestRegExp,
+              )
+              .nullable(),
+            desired_version_id: zod.string().uuid(),
+            materialization_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemPlanOneMaterializationDigestRegExp,
+              ),
+            plan_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemPlanOnePlanDigestRegExp,
+              ),
+            local_review_required: zod.boolean(),
+            blockers: zod.array(zod.string().min(1)),
+            changes: zod.array(
+              zod.object({
+                path: zod.string().min(1),
+                action: zod.enum(["add", "remove", "replace"]),
+                before_sha256: zod.string().min(1).nullable(),
+                after_sha256: zod.string().min(1).nullable(),
+                ownership: zod.string().min(1),
+                diff_preview: zod.string(),
+              }),
+            ),
+          }),
+          zod.null(),
+        ]),
+        plan_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsCampaignsTargetsListResponseResultResultsItemPlanDigestRegExp,
+          )
+          .nullable(),
+        decision: zod.string().min(1),
+        reason: zod.string(),
+        attempt: zod.union([
+          zod.object({
+            attempt_id: zod.string().uuid(),
+            claim_generation: zod.number().min(1),
+            expires_at: zod.string().datetime({ offset: true }),
+            mode: zod.string().min(1),
+            state: zod.string().min(1),
+            branch: zod.string().min(1),
+            marker: zod.string().min(1),
+            receipt: zod.union([
+              zod.object({
+                state: zod.string().min(1),
+                repository_commit: zod.string().min(1).nullable(),
+                pull_request_number: zod.number().min(1).nullable(),
+                reason: zod.string(),
+              }),
+              zod.null(),
+            ]),
+          }),
+          zod.null(),
+        ]),
+        pr_state: zod.string().min(1),
+        merge_state: zod.string().min(1),
+        provenance: zod.enum(["client_reported"]),
+      }),
+    ),
+  }),
+});
+
+export const ModelHubSkillsContextsCampaignsTargetsAttemptsCreateParams =
+  zod.object({
+    campaign_id: zod.string().uuid(),
+    binding_id: zod.string().uuid(),
+  });
+
+export const ModelHubSkillsContextsCampaignsTargetsAttemptsCreateBody =
+  zod.object({
+    state: zod.string().min(1),
+    repository_commit: zod.string().min(1).nullable(),
+    pull_request_number: zod.number().min(1).nullable(),
+    reason: zod.string(),
+    attempt_id: zod.string().uuid(),
+    claim_generation: zod.number().min(1),
+  });
+
+export const ModelHubSkillsContextsCampaignsTargetsAttemptsCreateResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.union([
+      zod.object({
+        attempt_id: zod.string().uuid(),
+        claim_generation: zod.number().min(1),
+        expires_at: zod.string().datetime({ offset: true }),
+        mode: zod.string().min(1),
+        state: zod.string().min(1),
+        branch: zod.string().min(1),
+        marker: zod.string().min(1),
+        receipt: zod.union([
+          zod.object({
+            state: zod.string().min(1),
+            repository_commit: zod.string().min(1).nullable(),
+            pull_request_number: zod.number().min(1).nullable(),
+            reason: zod.string(),
+          }),
+          zod.null(),
+        ]),
+      }),
+      zod.null(),
+    ]),
+  });
+
+export const ModelHubSkillsContextsCampaignsTargetsClaimCreateParams =
+  zod.object({
+    campaign_id: zod.string().uuid(),
+    binding_id: zod.string().uuid(),
+  });
+
+export const modelHubSkillsContextsCampaignsTargetsClaimCreateBodyPlanDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsTargetsClaimCreateBody = zod.object(
+  {
+    plan_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsCampaignsTargetsClaimCreateBodyPlanDigestRegExp,
+      ),
+  },
+);
+
+export const modelHubSkillsContextsCampaignsTargetsClaimCreateResponseResultApprovedPlanDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsTargetsClaimCreateResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      attempt_id: zod.string().uuid(),
+      claim_generation: zod.number().min(1),
+      expires_at: zod.string().datetime({ offset: true }),
+      approved_plan_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsCampaignsTargetsClaimCreateResponseResultApprovedPlanDigestRegExp,
+        ),
+      mode: zod.string().min(1),
+      branch: zod.string().min(1),
+      marker: zod.string().min(1),
+      replay: zod.boolean(),
+      campaign_status: zod.string().min(1),
+    }),
+  });
+
+export const ModelHubSkillsContextsCampaignsTargetsObservationsListParams =
+  zod.object({
+    campaign_id: zod.string().uuid(),
+    binding_id: zod.string().uuid(),
+  });
+
+export const modelHubSkillsContextsCampaignsTargetsObservationsListResponseResultInstalledOneDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsObservationsListResponseResultDiscoveredOneDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsObservationsListResponseResultInstructionsDeliveredOneDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsTargetsObservationsListResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      binding_id: zod.string().uuid(),
+      coverage: zod.enum(["declared_binding"]),
+      installed: zod.union([
+        zod.object({
+          id: zod.string().uuid(),
+          version_id: zod.string().uuid(),
+          digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsCampaignsTargetsObservationsListResponseResultInstalledOneDigestRegExp,
+            ),
+          observed_at: zod.string().datetime({ offset: true }),
+          origin: zod.string().min(1),
+          stale: zod.boolean(),
+        }),
+        zod.null(),
+      ]),
+      discovered: zod.union([
+        zod.object({
+          id: zod.string().uuid(),
+          version_id: zod.string().uuid(),
+          digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsCampaignsTargetsObservationsListResponseResultDiscoveredOneDigestRegExp,
+            ),
+          observed_at: zod.string().datetime({ offset: true }),
+          origin: zod.string().min(1),
+          stale: zod.boolean(),
+        }),
+        zod.null(),
+      ]),
+      instructions_delivered: zod.union([
+        zod.object({
+          id: zod.string().uuid(),
+          version_id: zod.string().uuid(),
+          digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsCampaignsTargetsObservationsListResponseResultInstructionsDeliveredOneDigestRegExp,
+            ),
+          observed_at: zod.string().datetime({ offset: true }),
+          origin: zod.string().min(1),
+          stale: zod.boolean(),
+        }),
+        zod.null(),
+      ]),
+    }),
+  });
+
+export const ModelHubSkillsContextsCampaignsTargetsPlanUpdateParams =
+  zod.object({
+    campaign_id: zod.string().uuid(),
+    binding_id: zod.string().uuid(),
+  });
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateBodyOnePreviousLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateBodyOneMaterializationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateBodyOnePlanDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsTargetsPlanUpdateBody = zod.union([
+  zod.object({
+    campaign_revision: zod.number().min(1),
+    binding_revision: zod.number().min(1),
+    repository_id: zod.string().min(1),
+    base_commit: zod.string().min(1),
+    previous_lock_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsCampaignsTargetsPlanUpdateBodyOnePreviousLockDigestRegExp,
+      )
+      .nullable(),
+    desired_version_id: zod.string().uuid(),
+    materialization_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsCampaignsTargetsPlanUpdateBodyOneMaterializationDigestRegExp,
+      ),
+    plan_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsCampaignsTargetsPlanUpdateBodyOnePlanDigestRegExp,
+      ),
+    local_review_required: zod.boolean(),
+    blockers: zod.array(zod.string().min(1)),
+    changes: zod.array(
+      zod.object({
+        path: zod.string().min(1),
+        action: zod.enum(["add", "remove", "replace"]),
+        before_sha256: zod.string().min(1).nullable(),
+        after_sha256: zod.string().min(1).nullable(),
+        ownership: zod.string().min(1),
+        diff_preview: zod.string(),
+      }),
+    ),
+  }),
+  zod.null(),
+]);
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetSelectorLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetDesiredDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetRepositoryOneRepositoryIdMax = 200;
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetRepositoryOneDefaultBranchMax = 255;
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetRepositoryOneProjectScopeMax = 255;
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetPlanOnePreviousLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetPlanOneMaterializationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetPlanOnePlanDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetPlanDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultPlanDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsCampaignsTargetsPlanUpdateResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      revision: zod.number().min(1),
+      target: zod.object({
+        binding_id: zod.string().uuid(),
+        name: zod.string().min(1),
+        binding_revision: zod.number().min(1),
+        selector: zod.object({
+          version: zod.number().min(1).optional(),
+          label: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetSelectorLabelRegExp,
+            )
+            .optional(),
+        }),
+        desired_version: zod.number().min(1),
+        desired_version_id: zod.string().uuid(),
+        desired_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetDesiredDigestRegExp,
+          ),
+        repository: zod.union([
+          zod.object({
+            provider: zod.enum(["github"]),
+            repository_id: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetRepositoryOneRepositoryIdMax,
+              ),
+            default_branch: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetRepositoryOneDefaultBranchMax,
+              ),
+            project_scope: zod
+              .string()
+              .max(
+                modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetRepositoryOneProjectScopeMax,
+              ),
+          }),
+          zod.null(),
+        ]),
+        plan: zod.union([
+          zod.object({
+            campaign_revision: zod.number().min(1),
+            binding_revision: zod.number().min(1),
+            repository_id: zod.string().min(1),
+            base_commit: zod.string().min(1),
+            previous_lock_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetPlanOnePreviousLockDigestRegExp,
+              )
+              .nullable(),
+            desired_version_id: zod.string().uuid(),
+            materialization_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetPlanOneMaterializationDigestRegExp,
+              ),
+            plan_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetPlanOnePlanDigestRegExp,
+              ),
+            local_review_required: zod.boolean(),
+            blockers: zod.array(zod.string().min(1)),
+            changes: zod.array(
+              zod.object({
+                path: zod.string().min(1),
+                action: zod.enum(["add", "remove", "replace"]),
+                before_sha256: zod.string().min(1).nullable(),
+                after_sha256: zod.string().min(1).nullable(),
+                ownership: zod.string().min(1),
+                diff_preview: zod.string(),
+              }),
+            ),
+          }),
+          zod.null(),
+        ]),
+        plan_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultTargetPlanDigestRegExp,
+          )
+          .nullable(),
+        decision: zod.string().min(1),
+        reason: zod.string(),
+        attempt: zod.union([
+          zod.object({
+            attempt_id: zod.string().uuid(),
+            claim_generation: zod.number().min(1),
+            expires_at: zod.string().datetime({ offset: true }),
+            mode: zod.string().min(1),
+            state: zod.string().min(1),
+            branch: zod.string().min(1),
+            marker: zod.string().min(1),
+            receipt: zod.union([
+              zod.object({
+                state: zod.string().min(1),
+                repository_commit: zod.string().min(1).nullable(),
+                pull_request_number: zod.number().min(1).nullable(),
+                reason: zod.string(),
+              }),
+              zod.null(),
+            ]),
+          }),
+          zod.null(),
+        ]),
+        pr_state: zod.string().min(1),
+        merge_state: zod.string().min(1),
+        provenance: zod.enum(["client_reported"]),
+      }),
+      plan_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsCampaignsTargetsPlanUpdateResponseResultPlanDigestRegExp,
+        ),
+    }),
+  });
+
+export const ModelHubSkillsContextsCapabilitiesListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    campaigns_enabled: zod.boolean(),
+  }),
+});
 
 export const modelHubSkillsContextsCredentialsListQueryPageDefault = 1;
 
@@ -33345,8 +34461,140 @@ export const ModelHubSkillsContextsResolveListResponse = zod.object({
   }),
 });
 
+export const ModelHubSkillsContextsReadParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsReadResponseResultReleaseStateReleaseRevisionMin = 0;
+
+export const modelHubSkillsContextsReadResponseResultReleaseStateSecurityRevisionMin = 0;
+
+export const modelHubSkillsContextsReadResponseResultReleaseStateLabelsItemReleaseRevisionMin = 0;
+
+export const modelHubSkillsContextsReadResponseResultContextMetadataRevisionMin = 0;
+
+export const modelHubSkillsContextsReadResponseResultContextReleaseRevisionMin = 0;
+
+export const modelHubSkillsContextsReadResponseResultContextSecurityRevisionMin = 0;
+
+export const ModelHubSkillsContextsReadResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    release_state: zod.object({
+      latest_version: zod.number().min(1).nullable(),
+      release_revision: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReadResponseResultReleaseStateReleaseRevisionMin,
+        ),
+      security_revision: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReadResponseResultReleaseStateSecurityRevisionMin,
+        ),
+      protected_label_names: zod.array(zod.string().min(1)),
+      labels: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          version: zod.number().min(1),
+          version_id: zod.string().uuid(),
+          updated_at: zod.string().datetime({ offset: true }),
+          updated_by: zod.union([
+            zod.object({
+              id: zod.string().uuid(),
+              name: zod.string(),
+            }),
+            zod.null(),
+          ]),
+          is_protected: zod.boolean(),
+          can_move: zod.boolean(),
+          can_remove: zod.boolean(),
+          release_revision: zod
+            .number()
+            .min(
+              modelHubSkillsContextsReadResponseResultReleaseStateLabelsItemReleaseRevisionMin,
+            ),
+        }),
+      ),
+      permissions: zod.object({
+        can_publish: zod.boolean(),
+        can_promote: zod.boolean(),
+        can_manage_protection: zod.boolean(),
+        can_quarantine: zod.boolean(),
+        can_issue_credentials: zod.boolean(),
+      }),
+    }),
+    latest: zod.union([
+      zod.object({
+        id: zod.string().uuid(),
+        number: zod.number(),
+        digest: zod.string().min(1),
+        note: zod.string(),
+        created_at: zod.string().datetime({ offset: true }),
+        created_by: zod.union([
+          zod.object({
+            id: zod.string().uuid(),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
+        file_count: zod.number(),
+        total_bytes: zod.number(),
+        labels: zod.array(zod.string().min(1)).optional(),
+        source: zod.object({}).passthrough(),
+      }),
+      zod.null(),
+    ]),
+    own_draft: zod.union([
+      zod.object({
+        revision: zod.number().min(1),
+        base_version: zod.number().min(1).nullable(),
+      }),
+      zod.null(),
+    ]),
+    context: zod.object({
+      id: zod.string().uuid(),
+      kind: zod.enum(["agent_context"]),
+      name: zod.string().min(1),
+      description: zod.string().min(1),
+      tags: zod.array(zod.string().min(1)),
+      metadata_revision: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReadResponseResultContextMetadataRevisionMin,
+        ),
+      latest_version: zod.number().min(1).nullable(),
+      labels: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          version: zod.number().min(1),
+          version_id: zod.string().uuid(),
+        }),
+      ),
+      release_revision: zod
+        .number()
+        .min(modelHubSkillsContextsReadResponseResultContextReleaseRevisionMin),
+      security_revision: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReadResponseResultContextSecurityRevisionMin,
+        ),
+      protected_label_names: zod.array(zod.string().min(1)),
+      has_draft: zod.boolean(),
+      updated_at: zod.string().datetime({ offset: true }),
+      updated_by: zod.union([
+        zod.object({
+          id: zod.string().uuid(),
+          name: zod.string(),
+        }),
+        zod.null(),
+      ]),
+    }),
+  }),
+});
+
 export const ModelHubSkillsContextsBindingsListParams = zod.object({
-  context_id: zod.string(),
+  context_id: zod.string().uuid(),
 });
 
 export const modelHubSkillsContextsBindingsListQueryPageDefault = 1;
@@ -33468,7 +34716,7 @@ export const ModelHubSkillsContextsBindingsListResponse = zod.object({
 });
 
 export const ModelHubSkillsContextsBindingsCreateParams = zod.object({
-  context_id: zod.string(),
+  context_id: zod.string().uuid(),
 });
 
 export const modelHubSkillsContextsBindingsCreateBodyNameMax = 120;
@@ -33621,7 +34869,7 @@ export const ModelHubSkillsContextsBindingsCreateResponse = zod.object({
 });
 
 export const ModelHubSkillsContextsConsumersListParams = zod.object({
-  context_id: zod.string(),
+  context_id: zod.string().uuid(),
 });
 
 export const modelHubSkillsContextsConsumersListQueryPageDefault = 1;
@@ -33874,8 +35122,1115 @@ export const ModelHubSkillsContextsConsumersListResponse = zod.object({
   }),
 });
 
+export const ModelHubSkillsContextsDependenciesApplyCreateParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsDependenciesApplyCreateBodyLinksItemSelectorLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+export const modelHubSkillsContextsDependenciesApplyCreateBodyRefreshSkillIdsMax = 20;
+
+export const modelHubSkillsContextsDependenciesApplyCreateBodyExpectedFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsDependenciesApplyCreateBody = zod.object({
+  revision: zod.number().min(1),
+  links: zod.array(
+    zod.object({
+      skill_id: zod.string().uuid(),
+      selector: zod.object({
+        version: zod.number().min(1).optional(),
+        label: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsDependenciesApplyCreateBodyLinksItemSelectorLabelRegExp,
+          )
+          .optional(),
+      }),
+    }),
+  ),
+  refresh_skill_ids: zod
+    .array(zod.string().uuid())
+    .max(modelHubSkillsContextsDependenciesApplyCreateBodyRefreshSkillIdsMax),
+  expected_fingerprint: zod
+    .string()
+    .min(1)
+    .regex(
+      modelHubSkillsContextsDependenciesApplyCreateBodyExpectedFingerprintRegExp,
+    ),
+});
+
+export const modelHubSkillsContextsDependenciesApplyCreateResponseResultDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsDependenciesApplyCreateResponse = zod.object(
+  {
+    status: zod.boolean(),
+    result: zod.object({
+      revision: zod.number().min(1),
+      context_id: zod.string().uuid(),
+      draft_id: zod.string().uuid(),
+      digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsDependenciesApplyCreateResponseResultDigestRegExp,
+        )
+        .optional(),
+      published: zod.boolean().optional(),
+    }),
+  },
+);
+
+export const ModelHubSkillsContextsDependenciesPreviewCreateParams = zod.object(
+  {
+    context_id: zod.string().uuid(),
+  },
+);
+
+export const modelHubSkillsContextsDependenciesPreviewCreateBodyLinksItemSelectorLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+export const modelHubSkillsContextsDependenciesPreviewCreateBodyRefreshSkillIdsMax = 20;
+
+export const ModelHubSkillsContextsDependenciesPreviewCreateBody = zod.object({
+  revision: zod.number().min(1),
+  links: zod.array(
+    zod.object({
+      skill_id: zod.string().uuid(),
+      selector: zod.object({
+        version: zod.number().min(1).optional(),
+        label: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsDependenciesPreviewCreateBodyLinksItemSelectorLabelRegExp,
+          )
+          .optional(),
+      }),
+    }),
+  ),
+  refresh_skill_ids: zod
+    .array(zod.string().uuid())
+    .max(modelHubSkillsContextsDependenciesPreviewCreateBodyRefreshSkillIdsMax),
+});
+
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultResolvedLockSchemaMax = 1;
+
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultResolvedLockLinksItemMountMax = 255;
+
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultResolvedLockLinksItemRequestedLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultResolvedLockLinksItemDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemBeforeMountMax = 255;
+
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemBeforeRequestedLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemBeforeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemAfterMountMax = 255;
+
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemAfterRequestedLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemAfterDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsDependenciesPreviewCreateResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      revision: zod.number().min(1),
+      fingerprint: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsDependenciesPreviewCreateResponseResultFingerprintRegExp,
+        ),
+      candidate_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsDependenciesPreviewCreateResponseResultCandidateDigestRegExp,
+        ),
+      resolved_lock: zod.object({
+        schema: zod
+          .number()
+          .min(1)
+          .max(
+            modelHubSkillsContextsDependenciesPreviewCreateResponseResultResolvedLockSchemaMax,
+          ),
+        links: zod.array(
+          zod.object({
+            mount: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsDependenciesPreviewCreateResponseResultResolvedLockLinksItemMountMax,
+              ),
+            skill_id: zod.string().uuid(),
+            requested: zod.object({
+              version: zod.number().min(1).optional(),
+              label: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsDependenciesPreviewCreateResponseResultResolvedLockLinksItemRequestedLabelRegExp,
+                )
+                .optional(),
+            }),
+            version: zod.number().min(1),
+            version_id: zod.string().uuid(),
+            digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsDependenciesPreviewCreateResponseResultResolvedLockLinksItemDigestRegExp,
+              ),
+          }),
+        ),
+      }),
+      checks: zod.object({
+        items: zod.array(
+          zod.object({
+            code: zod.string().min(1),
+            severity: zod.enum(["error", "warning", "info"]),
+            message: zod.string().min(1),
+            path: zod.string().min(1).optional(),
+            line: zod.number().optional(),
+            detail: zod.object({}).passthrough().optional(),
+          }),
+        ),
+        summary: zod.object({
+          errors: zod.number(),
+          warnings: zod.number(),
+          infos: zod.number(),
+        }),
+        tokens: zod.object({
+          metadata: zod.number(),
+          skill_md: zod.number(),
+          total: zod.number(),
+        }),
+        frontmatter: zod.object({}).passthrough().nullable(),
+      }),
+      changes: zod.array(
+        zod.object({
+          skill_id: zod.string().uuid(),
+          mount: zod.string().min(1),
+          change: zod.string().min(1),
+          before: zod.object({
+            mount: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemBeforeMountMax,
+              ),
+            skill_id: zod.string().uuid(),
+            requested: zod.object({
+              version: zod.number().min(1).optional(),
+              label: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemBeforeRequestedLabelRegExp,
+                )
+                .optional(),
+            }),
+            version: zod.number().min(1),
+            version_id: zod.string().uuid(),
+            digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemBeforeDigestRegExp,
+              ),
+          }),
+          after: zod.object({
+            mount: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemAfterMountMax,
+              ),
+            skill_id: zod.string().uuid(),
+            requested: zod.object({
+              version: zod.number().min(1).optional(),
+              label: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemAfterRequestedLabelRegExp,
+                )
+                .optional(),
+            }),
+            version: zod.number().min(1),
+            version_id: zod.string().uuid(),
+            digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsDependenciesPreviewCreateResponseResultChangesItemAfterDigestRegExp,
+              ),
+          }),
+          upstream_version: zod.number().min(1).nullable(),
+        }),
+      ),
+    }),
+  });
+
+export const ModelHubSkillsContextsDraftListParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsDraftListResponseResultContextSpecSchemaMax = 1;
+
+export const modelHubSkillsContextsDraftListResponseResultContextSpecDescriptionMax = 1024;
+
+export const modelHubSkillsContextsDraftListResponseResultContextSpecLinksItemSelectorLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+export const modelHubSkillsContextsDraftListResponseResultResolvedLockSchemaMax = 1;
+
+export const modelHubSkillsContextsDraftListResponseResultResolvedLockLinksItemMountMax = 255;
+
+export const modelHubSkillsContextsDraftListResponseResultResolvedLockLinksItemRequestedLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsDraftListResponseResultResolvedLockLinksItemDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftListResponseResultDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftListResponseResultRecoveryDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsDraftListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    base_version: zod.number().min(1).nullable(),
+    expected_head_version: zod.number().min(1).nullable(),
+    revision: zod.number().min(1),
+    files: zod.array(
+      zod.object({
+        path: zod.string(),
+        content: zod.string(),
+      }),
+    ),
+    note: zod.string(),
+    context_spec: zod.object({
+      schema: zod
+        .number()
+        .min(1)
+        .max(modelHubSkillsContextsDraftListResponseResultContextSpecSchemaMax),
+      description: zod
+        .string()
+        .min(1)
+        .max(
+          modelHubSkillsContextsDraftListResponseResultContextSpecDescriptionMax,
+        ),
+      links: zod.array(
+        zod.object({
+          skill_id: zod.string().uuid(),
+          selector: zod.object({
+            version: zod.number().min(1).optional(),
+            label: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsDraftListResponseResultContextSpecLinksItemSelectorLabelRegExp,
+              )
+              .optional(),
+          }),
+        }),
+      ),
+    }),
+    resolved_lock: zod.object({
+      schema: zod
+        .number()
+        .min(1)
+        .max(
+          modelHubSkillsContextsDraftListResponseResultResolvedLockSchemaMax,
+        ),
+      links: zod.array(
+        zod.object({
+          mount: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsDraftListResponseResultResolvedLockLinksItemMountMax,
+            ),
+          skill_id: zod.string().uuid(),
+          requested: zod.object({
+            version: zod.number().min(1).optional(),
+            label: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsDraftListResponseResultResolvedLockLinksItemRequestedLabelRegExp,
+              )
+              .optional(),
+          }),
+          version: zod.number().min(1),
+          version_id: zod.string().uuid(),
+          digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsDraftListResponseResultResolvedLockLinksItemDigestRegExp,
+            ),
+        }),
+      ),
+    }),
+    digest: zod
+      .string()
+      .min(1)
+      .regex(modelHubSkillsContextsDraftListResponseResultDigestRegExp)
+      .nullable(),
+    checks: zod.object({
+      items: zod.array(
+        zod.object({
+          code: zod.string().min(1),
+          severity: zod.enum(["error", "warning", "info"]),
+          message: zod.string().min(1),
+          path: zod.string().min(1).optional(),
+          line: zod.number().optional(),
+          detail: zod.object({}).passthrough().optional(),
+        }),
+      ),
+      summary: zod.object({
+        errors: zod.number(),
+        warnings: zod.number(),
+        infos: zod.number(),
+      }),
+      tokens: zod.object({
+        metadata: zod.number(),
+        skill_md: zod.number(),
+        total: zod.number(),
+      }),
+      frontmatter: zod.object({}).passthrough().nullable(),
+    }),
+    updated_at: zod.string().datetime({ offset: true }),
+    id: zod.string().uuid(),
+    recovery_digest: zod
+      .string()
+      .min(1)
+      .regex(modelHubSkillsContextsDraftListResponseResultRecoveryDigestRegExp),
+    head_acknowledged: zod.boolean(),
+    review_fingerprint: zod.string(),
+  }),
+});
+
+export const ModelHubSkillsContextsDraftUpdateParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsDraftUpdateBodyFilesMax = 200;
+
+export const modelHubSkillsContextsDraftUpdateBodyDescriptionMax = 1024;
+
+export const modelHubSkillsContextsDraftUpdateBodyNoteMax = 2000;
+
+export const ModelHubSkillsContextsDraftUpdateBody = zod.object({
+  revision: zod.number().min(1),
+  base_version: zod.number().min(1).nullable(),
+  files: zod
+    .array(
+      zod.object({
+        path: zod.string(),
+        content: zod.string(),
+      }),
+    )
+    .min(1)
+    .max(modelHubSkillsContextsDraftUpdateBodyFilesMax),
+  description: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsContextsDraftUpdateBodyDescriptionMax),
+  note: zod.string().max(modelHubSkillsContextsDraftUpdateBodyNoteMax),
+});
+
+export const modelHubSkillsContextsDraftUpdateResponseResultContextSpecSchemaMax = 1;
+
+export const modelHubSkillsContextsDraftUpdateResponseResultContextSpecDescriptionMax = 1024;
+
+export const modelHubSkillsContextsDraftUpdateResponseResultContextSpecLinksItemSelectorLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+export const modelHubSkillsContextsDraftUpdateResponseResultResolvedLockSchemaMax = 1;
+
+export const modelHubSkillsContextsDraftUpdateResponseResultResolvedLockLinksItemMountMax = 255;
+
+export const modelHubSkillsContextsDraftUpdateResponseResultResolvedLockLinksItemRequestedLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsDraftUpdateResponseResultResolvedLockLinksItemDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftUpdateResponseResultDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftUpdateResponseResultRecoveryDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsDraftUpdateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    base_version: zod.number().min(1).nullable(),
+    expected_head_version: zod.number().min(1).nullable(),
+    revision: zod.number().min(1),
+    files: zod.array(
+      zod.object({
+        path: zod.string(),
+        content: zod.string(),
+      }),
+    ),
+    note: zod.string(),
+    context_spec: zod.object({
+      schema: zod
+        .number()
+        .min(1)
+        .max(
+          modelHubSkillsContextsDraftUpdateResponseResultContextSpecSchemaMax,
+        ),
+      description: zod
+        .string()
+        .min(1)
+        .max(
+          modelHubSkillsContextsDraftUpdateResponseResultContextSpecDescriptionMax,
+        ),
+      links: zod.array(
+        zod.object({
+          skill_id: zod.string().uuid(),
+          selector: zod.object({
+            version: zod.number().min(1).optional(),
+            label: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsDraftUpdateResponseResultContextSpecLinksItemSelectorLabelRegExp,
+              )
+              .optional(),
+          }),
+        }),
+      ),
+    }),
+    resolved_lock: zod.object({
+      schema: zod
+        .number()
+        .min(1)
+        .max(
+          modelHubSkillsContextsDraftUpdateResponseResultResolvedLockSchemaMax,
+        ),
+      links: zod.array(
+        zod.object({
+          mount: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsDraftUpdateResponseResultResolvedLockLinksItemMountMax,
+            ),
+          skill_id: zod.string().uuid(),
+          requested: zod.object({
+            version: zod.number().min(1).optional(),
+            label: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsDraftUpdateResponseResultResolvedLockLinksItemRequestedLabelRegExp,
+              )
+              .optional(),
+          }),
+          version: zod.number().min(1),
+          version_id: zod.string().uuid(),
+          digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsDraftUpdateResponseResultResolvedLockLinksItemDigestRegExp,
+            ),
+        }),
+      ),
+    }),
+    digest: zod
+      .string()
+      .min(1)
+      .regex(modelHubSkillsContextsDraftUpdateResponseResultDigestRegExp)
+      .nullable(),
+    checks: zod.object({
+      items: zod.array(
+        zod.object({
+          code: zod.string().min(1),
+          severity: zod.enum(["error", "warning", "info"]),
+          message: zod.string().min(1),
+          path: zod.string().min(1).optional(),
+          line: zod.number().optional(),
+          detail: zod.object({}).passthrough().optional(),
+        }),
+      ),
+      summary: zod.object({
+        errors: zod.number(),
+        warnings: zod.number(),
+        infos: zod.number(),
+      }),
+      tokens: zod.object({
+        metadata: zod.number(),
+        skill_md: zod.number(),
+        total: zod.number(),
+      }),
+      frontmatter: zod.object({}).passthrough().nullable(),
+    }),
+    updated_at: zod.string().datetime({ offset: true }),
+    id: zod.string().uuid(),
+    recovery_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsDraftUpdateResponseResultRecoveryDigestRegExp,
+      ),
+    head_acknowledged: zod.boolean(),
+    review_fingerprint: zod.string(),
+  }),
+});
+
+export const ModelHubSkillsContextsDraftDeleteParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const ModelHubSkillsContextsDraftDeleteBody = zod.object({
+  revision: zod.number().min(1),
+});
+
+export const ModelHubSkillsContextsDraftAcknowledgeHeadCreateParams =
+  zod.object({
+    context_id: zod.string().uuid(),
+  });
+
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateBodyExpectedDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateBodyReviewFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsDraftAcknowledgeHeadCreateBody = zod.object({
+  revision: zod.number().min(1),
+  expected_digest: zod
+    .string()
+    .min(1)
+    .regex(
+      modelHubSkillsContextsDraftAcknowledgeHeadCreateBodyExpectedDigestRegExp,
+    ),
+  expected_head_version: zod.number().min(1).nullable(),
+  review_fingerprint: zod
+    .string()
+    .min(1)
+    .regex(
+      modelHubSkillsContextsDraftAcknowledgeHeadCreateBodyReviewFingerprintRegExp,
+    ),
+});
+
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultContextSpecSchemaMax = 1;
+
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultContextSpecDescriptionMax = 1024;
+
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultContextSpecLinksItemSelectorLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultResolvedLockSchemaMax = 1;
+
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultResolvedLockLinksItemMountMax = 255;
+
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultResolvedLockLinksItemRequestedLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultResolvedLockLinksItemDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultRecoveryDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsDraftAcknowledgeHeadCreateResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      base_version: zod.number().min(1).nullable(),
+      expected_head_version: zod.number().min(1).nullable(),
+      revision: zod.number().min(1),
+      files: zod.array(
+        zod.object({
+          path: zod.string(),
+          content: zod.string(),
+        }),
+      ),
+      note: zod.string(),
+      context_spec: zod.object({
+        schema: zod
+          .number()
+          .min(1)
+          .max(
+            modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultContextSpecSchemaMax,
+          ),
+        description: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultContextSpecDescriptionMax,
+          ),
+        links: zod.array(
+          zod.object({
+            skill_id: zod.string().uuid(),
+            selector: zod.object({
+              version: zod.number().min(1).optional(),
+              label: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultContextSpecLinksItemSelectorLabelRegExp,
+                )
+                .optional(),
+            }),
+          }),
+        ),
+      }),
+      resolved_lock: zod.object({
+        schema: zod
+          .number()
+          .min(1)
+          .max(
+            modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultResolvedLockSchemaMax,
+          ),
+        links: zod.array(
+          zod.object({
+            mount: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultResolvedLockLinksItemMountMax,
+              ),
+            skill_id: zod.string().uuid(),
+            requested: zod.object({
+              version: zod.number().min(1).optional(),
+              label: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultResolvedLockLinksItemRequestedLabelRegExp,
+                )
+                .optional(),
+            }),
+            version: zod.number().min(1),
+            version_id: zod.string().uuid(),
+            digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultResolvedLockLinksItemDigestRegExp,
+              ),
+          }),
+        ),
+      }),
+      digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultDigestRegExp,
+        )
+        .nullable(),
+      checks: zod.object({
+        items: zod.array(
+          zod.object({
+            code: zod.string().min(1),
+            severity: zod.enum(["error", "warning", "info"]),
+            message: zod.string().min(1),
+            path: zod.string().min(1).optional(),
+            line: zod.number().optional(),
+            detail: zod.object({}).passthrough().optional(),
+          }),
+        ),
+        summary: zod.object({
+          errors: zod.number(),
+          warnings: zod.number(),
+          infos: zod.number(),
+        }),
+        tokens: zod.object({
+          metadata: zod.number(),
+          skill_md: zod.number(),
+          total: zod.number(),
+        }),
+        frontmatter: zod.object({}).passthrough().nullable(),
+      }),
+      updated_at: zod.string().datetime({ offset: true }),
+      id: zod.string().uuid(),
+      recovery_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsDraftAcknowledgeHeadCreateResponseResultRecoveryDigestRegExp,
+        ),
+      head_acknowledged: zod.boolean(),
+      review_fingerprint: zod.string(),
+    }),
+  });
+
+export const ModelHubSkillsContextsDraftFilesListParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsDraftFilesListQueryPathMax = 255;
+
+export const modelHubSkillsContextsDraftFilesListQueryOffsetDefault = 0;
+export const modelHubSkillsContextsDraftFilesListQueryOffsetMin = 0;
+
+export const modelHubSkillsContextsDraftFilesListQueryMaxBytesDefault = 32768;
+export const modelHubSkillsContextsDraftFilesListQueryMaxBytesMin = 4;
+export const modelHubSkillsContextsDraftFilesListQueryMaxBytesMax = 49152;
+
+export const ModelHubSkillsContextsDraftFilesListQueryParams = zod.object({
+  path: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsContextsDraftFilesListQueryPathMax),
+  offset: zod
+    .number()
+    .min(modelHubSkillsContextsDraftFilesListQueryOffsetMin)
+    .default(modelHubSkillsContextsDraftFilesListQueryOffsetDefault),
+  max_bytes: zod
+    .number()
+    .min(modelHubSkillsContextsDraftFilesListQueryMaxBytesMin)
+    .max(modelHubSkillsContextsDraftFilesListQueryMaxBytesMax)
+    .default(modelHubSkillsContextsDraftFilesListQueryMaxBytesDefault),
+  revision: zod.number().min(1),
+});
+
+export const modelHubSkillsContextsDraftFilesListResponseResultDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsDraftFilesListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    path: zod.string().min(1),
+    sha256: zod.string().min(1),
+    size_bytes: zod.number(),
+    total_chars: zod.number(),
+    offset: zod.number(),
+    next_offset: zod.number().nullable(),
+    eof: zod.boolean(),
+    text: zod.string(),
+    context_id: zod.string().uuid(),
+    revision: zod.number().min(1),
+    digest: zod
+      .string()
+      .min(1)
+      .regex(modelHubSkillsContextsDraftFilesListResponseResultDigestRegExp),
+  }),
+});
+
+export const ModelHubSkillsContextsDraftHeadReviewCreateParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const ModelHubSkillsContextsDraftHeadReviewCreateBody = zod.object({
+  revision: zod.number().min(1),
+});
+
+export const modelHubSkillsContextsDraftHeadReviewCreateResponseResultCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftHeadReviewCreateResponseResultHeadDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftHeadReviewCreateResponseResultReviewFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsDraftHeadReviewCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    subject_id: zod.string().uuid(),
+    kind: zod.enum(["skill", "agent_context"]),
+    draft_revision: zod.number().min(1),
+    candidate_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsDraftHeadReviewCreateResponseResultCandidateDigestRegExp,
+      ),
+    base_version: zod.number().min(1).nullable(),
+    expected_head_version: zod.number().min(1).nullable(),
+    head_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsDraftHeadReviewCreateResponseResultHeadDigestRegExp,
+      )
+      .nullable(),
+    review_fingerprint: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsDraftHeadReviewCreateResponseResultReviewFingerprintRegExp,
+      ),
+  }),
+});
+
+export const ModelHubSkillsContextsDraftPublishCreateParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsDraftPublishCreateBodyExpectedDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftPublishCreateBodyReviewFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftPublishCreateBodyNoteMax = 2000;
+
+export const ModelHubSkillsContextsDraftPublishCreateBody = zod.object({
+  revision: zod.number().min(1),
+  expected_digest: zod
+    .string()
+    .min(1)
+    .regex(modelHubSkillsContextsDraftPublishCreateBodyExpectedDigestRegExp),
+  expected_head_version: zod.number().min(1).nullable(),
+  review_fingerprint: zod
+    .string()
+    .min(1)
+    .regex(modelHubSkillsContextsDraftPublishCreateBodyReviewFingerprintRegExp),
+  base_version: zod.number().min(1).nullable(),
+  note: zod.string().max(modelHubSkillsContextsDraftPublishCreateBodyNoteMax),
+  acknowledge_warnings: zod.boolean(),
+});
+
+export const ModelHubSkillsContextsDraftPublishCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    release_revision: zod.number(),
+    evidence: zod.union([
+      zod.object({
+        run_id: zod.string().uuid(),
+        currentness: zod.object({
+          content: zod.boolean(),
+          baseline: zod.boolean().nullable(),
+          suite: zod.boolean().nullable(),
+          competitors: zod.boolean().nullable(),
+          payload_available: zod.boolean(),
+        }),
+        validity: zod.enum(["reviewed", "diagnostic"]),
+      }),
+      zod.null(),
+    ]),
+    version: zod.object({
+      id: zod.string().uuid(),
+      number: zod.number(),
+      digest: zod.string().min(1),
+      note: zod.string(),
+      created_at: zod.string().datetime({ offset: true }),
+      created_by: zod.union([
+        zod.object({
+          id: zod.string().uuid(),
+          name: zod.string(),
+        }),
+        zod.null(),
+      ]),
+      file_count: zod.number(),
+      total_bytes: zod.number(),
+      labels: zod.array(zod.string().min(1)).optional(),
+      source: zod.object({}).passthrough(),
+    }),
+    unchanged: zod.boolean(),
+    checks: zod.object({
+      items: zod.array(
+        zod.object({
+          code: zod.string().min(1),
+          severity: zod.enum(["error", "warning", "info"]),
+          message: zod.string().min(1),
+          path: zod.string().min(1).optional(),
+          line: zod.number().optional(),
+          detail: zod.object({}).passthrough().optional(),
+        }),
+      ),
+      summary: zod.object({
+        errors: zod.number(),
+        warnings: zod.number(),
+        infos: zod.number(),
+      }),
+      tokens: zod.object({
+        metadata: zod.number(),
+        skill_md: zod.number(),
+        total: zod.number(),
+      }),
+      frontmatter: zod.object({}).passthrough().nullable(),
+    }),
+  }),
+});
+
+export const ModelHubSkillsContextsDraftStartCreateParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsDraftStartCreateBodyRevisionMin = 0;
+export const modelHubSkillsContextsDraftStartCreateBodyRevisionMax = 0;
+
+export const ModelHubSkillsContextsDraftStartCreateBody = zod.object({
+  revision: zod
+    .number()
+    .min(modelHubSkillsContextsDraftStartCreateBodyRevisionMin)
+    .max(modelHubSkillsContextsDraftStartCreateBodyRevisionMax),
+  from_version: zod.number().min(1).nullable(),
+});
+
+export const modelHubSkillsContextsDraftStartCreateResponseResultContextSpecSchemaMax = 1;
+
+export const modelHubSkillsContextsDraftStartCreateResponseResultContextSpecDescriptionMax = 1024;
+
+export const modelHubSkillsContextsDraftStartCreateResponseResultContextSpecLinksItemSelectorLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+export const modelHubSkillsContextsDraftStartCreateResponseResultResolvedLockSchemaMax = 1;
+
+export const modelHubSkillsContextsDraftStartCreateResponseResultResolvedLockLinksItemMountMax = 255;
+
+export const modelHubSkillsContextsDraftStartCreateResponseResultResolvedLockLinksItemRequestedLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsDraftStartCreateResponseResultResolvedLockLinksItemDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftStartCreateResponseResultDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsDraftStartCreateResponseResultRecoveryDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsDraftStartCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    base_version: zod.number().min(1).nullable(),
+    expected_head_version: zod.number().min(1).nullable(),
+    revision: zod.number().min(1),
+    files: zod.array(
+      zod.object({
+        path: zod.string(),
+        content: zod.string(),
+      }),
+    ),
+    note: zod.string(),
+    context_spec: zod.object({
+      schema: zod
+        .number()
+        .min(1)
+        .max(
+          modelHubSkillsContextsDraftStartCreateResponseResultContextSpecSchemaMax,
+        ),
+      description: zod
+        .string()
+        .min(1)
+        .max(
+          modelHubSkillsContextsDraftStartCreateResponseResultContextSpecDescriptionMax,
+        ),
+      links: zod.array(
+        zod.object({
+          skill_id: zod.string().uuid(),
+          selector: zod.object({
+            version: zod.number().min(1).optional(),
+            label: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsDraftStartCreateResponseResultContextSpecLinksItemSelectorLabelRegExp,
+              )
+              .optional(),
+          }),
+        }),
+      ),
+    }),
+    resolved_lock: zod.object({
+      schema: zod
+        .number()
+        .min(1)
+        .max(
+          modelHubSkillsContextsDraftStartCreateResponseResultResolvedLockSchemaMax,
+        ),
+      links: zod.array(
+        zod.object({
+          mount: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsDraftStartCreateResponseResultResolvedLockLinksItemMountMax,
+            ),
+          skill_id: zod.string().uuid(),
+          requested: zod.object({
+            version: zod.number().min(1).optional(),
+            label: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsDraftStartCreateResponseResultResolvedLockLinksItemRequestedLabelRegExp,
+              )
+              .optional(),
+          }),
+          version: zod.number().min(1),
+          version_id: zod.string().uuid(),
+          digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsDraftStartCreateResponseResultResolvedLockLinksItemDigestRegExp,
+            ),
+        }),
+      ),
+    }),
+    digest: zod
+      .string()
+      .min(1)
+      .regex(modelHubSkillsContextsDraftStartCreateResponseResultDigestRegExp)
+      .nullable(),
+    checks: zod.object({
+      items: zod.array(
+        zod.object({
+          code: zod.string().min(1),
+          severity: zod.enum(["error", "warning", "info"]),
+          message: zod.string().min(1),
+          path: zod.string().min(1).optional(),
+          line: zod.number().optional(),
+          detail: zod.object({}).passthrough().optional(),
+        }),
+      ),
+      summary: zod.object({
+        errors: zod.number(),
+        warnings: zod.number(),
+        infos: zod.number(),
+      }),
+      tokens: zod.object({
+        metadata: zod.number(),
+        skill_md: zod.number(),
+        total: zod.number(),
+      }),
+      frontmatter: zod.object({}).passthrough().nullable(),
+    }),
+    updated_at: zod.string().datetime({ offset: true }),
+    id: zod.string().uuid(),
+    recovery_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsDraftStartCreateResponseResultRecoveryDigestRegExp,
+      ),
+    head_acknowledged: zod.boolean(),
+    review_fingerprint: zod.string(),
+  }),
+});
+
 export const ModelHubSkillsContextsReleaseStateListParams = zod.object({
-  context_id: zod.string(),
+  context_id: zod.string().uuid(),
 });
 
 export const modelHubSkillsContextsReleaseStateListResponseResultReleaseRevisionMin = 0;
@@ -33932,8 +36287,536 @@ export const ModelHubSkillsContextsReleaseStateListResponse = zod.object({
   }),
 });
 
+export const ModelHubSkillsContextsReleaseReviewCreateParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsReleaseReviewCreateBodyPageDefault = 1;
+
+export const modelHubSkillsContextsReleaseReviewCreateBodyLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const ModelHubSkillsContextsReleaseReviewCreateBody = zod.object({
+  operation: zod.enum(["publish", "move", "restore", "remove", "archive"]),
+  target_version: zod.number().min(1).nullish(),
+  evidence_run_id: zod.string().uuid().nullish(),
+  revision: zod.number().min(1).nullish(),
+  page: zod
+    .number()
+    .min(1)
+    .default(modelHubSkillsContextsReleaseReviewCreateBodyPageDefault),
+  label: zod
+    .string()
+    .min(1)
+    .regex(modelHubSkillsContextsReleaseReviewCreateBodyLabelRegExp)
+    .nullish(),
+});
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultReleaseStateReleaseRevisionMin = 0;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultReleaseStateSecurityRevisionMin = 0;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultReleaseStateLabelsItemReleaseRevisionMin = 0;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultChangesCountMin = 0;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultChangesTotalPagesMin = 0;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultChangesToDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultHeadChangesCountMin = 0;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultHeadChangesTotalPagesMin = 0;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultHeadChangesToDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemBeforeMountMax = 255;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemBeforeRequestedLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemBeforeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemAfterMountMax = 255;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemAfterRequestedLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemAfterDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultImpactBindingsItemSelectorLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultImpactBindingsItemConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultImpactFollowingMin = 0;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultImpactPinnedMin = 0;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultImpactUnobservedMin = 0;
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultImpactFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultHeadReviewCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultHeadReviewHeadDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultHeadReviewReviewFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsReleaseReviewCreateResponseResultReviewFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsReleaseReviewCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    candidate: zod.object({
+      kind: zod.enum(["draft", "version"]),
+      digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultCandidateDigestRegExp,
+        ),
+      revision: zod.number().min(1).optional(),
+      version: zod.number().min(1).optional(),
+    }),
+    base_version: zod.number().min(1).nullable(),
+    latest_version: zod.number().min(1).nullable(),
+    release_state: zod.object({
+      latest_version: zod.number().min(1).nullable(),
+      release_revision: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultReleaseStateReleaseRevisionMin,
+        ),
+      security_revision: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultReleaseStateSecurityRevisionMin,
+        ),
+      protected_label_names: zod.array(zod.string().min(1)),
+      labels: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          version: zod.number().min(1),
+          version_id: zod.string().uuid(),
+          updated_at: zod.string().datetime({ offset: true }),
+          updated_by: zod.union([
+            zod.object({
+              id: zod.string().uuid(),
+              name: zod.string(),
+            }),
+            zod.null(),
+          ]),
+          is_protected: zod.boolean(),
+          can_move: zod.boolean(),
+          can_remove: zod.boolean(),
+          release_revision: zod
+            .number()
+            .min(
+              modelHubSkillsContextsReleaseReviewCreateResponseResultReleaseStateLabelsItemReleaseRevisionMin,
+            ),
+        }),
+      ),
+      permissions: zod.object({
+        can_publish: zod.boolean(),
+        can_promote: zod.boolean(),
+        can_manage_protection: zod.boolean(),
+        can_quarantine: zod.boolean(),
+        can_issue_credentials: zod.boolean(),
+      }),
+    }),
+    changes: zod.object({
+      count: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultChangesCountMin,
+        ),
+      page: zod.number().min(1),
+      page_size: zod.number().min(1),
+      total_pages: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultChangesTotalPagesMin,
+        ),
+      to: zod.object({
+        kind: zod.enum(["draft", "version"]),
+        digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsReleaseReviewCreateResponseResultChangesToDigestRegExp,
+          ),
+        revision: zod.number().min(1).optional(),
+        version: zod.number().min(1).optional(),
+      }),
+      context_id: zod.string().uuid(),
+      files: zod.array(
+        zod.object({
+          path: zod.string().min(1),
+          status: zod.enum(["added", "removed", "modified", "unchanged"]),
+          from_sha256: zod.string().min(1).nullable(),
+          to_sha256: zod.string().min(1).nullable(),
+          from_text_url: zod.string().min(1).nullable(),
+          to_text_url: zod.string().min(1).nullable(),
+        }),
+      ),
+      summary: zod.object({
+        added: zod.number(),
+        removed: zod.number(),
+        modified: zod.number(),
+        unchanged: zod.number(),
+      }),
+      from: zod.number().min(1).nullable(),
+    }),
+    head_changes: zod.object({
+      count: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultHeadChangesCountMin,
+        ),
+      page: zod.number().min(1),
+      page_size: zod.number().min(1),
+      total_pages: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultHeadChangesTotalPagesMin,
+        ),
+      to: zod.object({
+        kind: zod.enum(["draft", "version"]),
+        digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsReleaseReviewCreateResponseResultHeadChangesToDigestRegExp,
+          ),
+        revision: zod.number().min(1).optional(),
+        version: zod.number().min(1).optional(),
+      }),
+      context_id: zod.string().uuid(),
+      files: zod.array(
+        zod.object({
+          path: zod.string().min(1),
+          status: zod.enum(["added", "removed", "modified", "unchanged"]),
+          from_sha256: zod.string().min(1).nullable(),
+          to_sha256: zod.string().min(1).nullable(),
+          from_text_url: zod.string().min(1).nullable(),
+          to_text_url: zod.string().min(1).nullable(),
+        }),
+      ),
+      summary: zod.object({
+        added: zod.number(),
+        removed: zod.number(),
+        modified: zod.number(),
+        unchanged: zod.number(),
+      }),
+      from: zod.number().min(1).nullable(),
+    }),
+    dependency_changes: zod.array(
+      zod.object({
+        skill_id: zod.string().uuid(),
+        mount: zod.string().min(1),
+        change: zod.string().min(1),
+        before: zod.object({
+          mount: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemBeforeMountMax,
+            ),
+          skill_id: zod.string().uuid(),
+          requested: zod.object({
+            version: zod.number().min(1).optional(),
+            label: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemBeforeRequestedLabelRegExp,
+              )
+              .optional(),
+          }),
+          version: zod.number().min(1),
+          version_id: zod.string().uuid(),
+          digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemBeforeDigestRegExp,
+            ),
+        }),
+        after: zod.object({
+          mount: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemAfterMountMax,
+            ),
+          skill_id: zod.string().uuid(),
+          requested: zod.object({
+            version: zod.number().min(1).optional(),
+            label: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemAfterRequestedLabelRegExp,
+              )
+              .optional(),
+          }),
+          version: zod.number().min(1),
+          version_id: zod.string().uuid(),
+          digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsReleaseReviewCreateResponseResultDependencyChangesItemAfterDigestRegExp,
+            ),
+        }),
+        upstream_version: zod.number().min(1).nullable(),
+      }),
+    ),
+    checks: zod.object({
+      items: zod.array(
+        zod.object({
+          code: zod.string().min(1),
+          severity: zod.enum(["error", "warning", "info"]),
+          message: zod.string().min(1),
+          path: zod.string().min(1).optional(),
+          line: zod.number().optional(),
+          detail: zod.object({}).passthrough().optional(),
+        }),
+      ),
+      summary: zod.object({
+        errors: zod.number(),
+        warnings: zod.number(),
+        infos: zod.number(),
+      }),
+      tokens: zod.object({
+        metadata: zod.number(),
+        skill_md: zod.number(),
+        total: zod.number(),
+      }),
+      frontmatter: zod.object({}).passthrough().nullable(),
+    }),
+    evidence: zod.union([
+      zod.object({
+        run_id: zod.string().uuid(),
+        currentness: zod.object({
+          content: zod.boolean(),
+          baseline: zod.boolean().nullable(),
+          suite: zod.boolean().nullable(),
+          competitors: zod.boolean().nullable(),
+          payload_available: zod.boolean(),
+        }),
+        validity: zod.enum(["reviewed", "diagnostic"]),
+      }),
+      zod.null(),
+    ]),
+    impact: zod.object({
+      as_of: zod.string().datetime({ offset: true }),
+      scope: zod.enum(["known_references"]),
+      bindings: zod.array(
+        zod.object({
+          id: zod.string().uuid(),
+          revision: zod.number().min(1),
+          mode: zod.string().min(1),
+          selector: zod.object({
+            version: zod.number().min(1).optional(),
+            label: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsReleaseReviewCreateResponseResultImpactBindingsItemSelectorLabelRegExp,
+              )
+              .optional(),
+          }),
+          configuration_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsReleaseReviewCreateResponseResultImpactBindingsItemConfigurationDigestRegExp,
+            ),
+        }),
+      ),
+      following: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultImpactFollowingMin,
+        ),
+      pinned: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultImpactPinnedMin,
+        ),
+      unobserved: zod
+        .number()
+        .min(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultImpactUnobservedMin,
+        ),
+      more_available: zod.boolean(),
+      fingerprint: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultImpactFingerprintRegExp,
+        ),
+    }),
+    head_review: zod.object({
+      subject_id: zod.string().uuid(),
+      kind: zod.enum(["skill", "agent_context"]),
+      draft_revision: zod.number().min(1),
+      candidate_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultHeadReviewCandidateDigestRegExp,
+        ),
+      base_version: zod.number().min(1).nullable(),
+      expected_head_version: zod.number().min(1).nullable(),
+      head_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultHeadReviewHeadDigestRegExp,
+        )
+        .nullable(),
+      review_fingerprint: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsReleaseReviewCreateResponseResultHeadReviewReviewFingerprintRegExp,
+        ),
+    }),
+    review_fingerprint: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsReleaseReviewCreateResponseResultReviewFingerprintRegExp,
+      ),
+  }),
+});
+
+export const ModelHubSkillsContextsVersionsListParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsVersionsListQueryPageDefault = 1;
+
+export const modelHubSkillsContextsVersionsListQueryPageSizeDefault = 25;
+export const modelHubSkillsContextsVersionsListQueryPageSizeMax = 100;
+
+export const ModelHubSkillsContextsVersionsListQueryParams = zod.object({
+  page: zod
+    .number()
+    .min(1)
+    .default(modelHubSkillsContextsVersionsListQueryPageDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(modelHubSkillsContextsVersionsListQueryPageSizeMax)
+    .default(modelHubSkillsContextsVersionsListQueryPageSizeDefault),
+});
+
+export const ModelHubSkillsContextsVersionsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    count: zod.number(),
+    page: zod.number(),
+    page_size: zod.number(),
+    total_pages: zod.number(),
+    results: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        number: zod.number(),
+        digest: zod.string().min(1),
+        note: zod.string(),
+        created_at: zod.string().datetime({ offset: true }),
+        created_by: zod.union([
+          zod.object({
+            id: zod.string().uuid(),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
+        file_count: zod.number(),
+        total_bytes: zod.number(),
+        labels: zod.array(zod.string().min(1)).optional(),
+        source: zod.object({}).passthrough(),
+      }),
+    ),
+  }),
+});
+
+export const ModelHubSkillsContextsVersionsReadParams = zod.object({
+  context_id: zod.string().uuid(),
+  number: zod.number().min(1),
+});
+
+export const ModelHubSkillsContextsVersionsReadResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    number: zod.number(),
+    digest: zod.string().min(1),
+    note: zod.string(),
+    created_at: zod.string().datetime({ offset: true }),
+    created_by: zod.union([
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string(),
+      }),
+      zod.null(),
+    ]),
+    file_count: zod.number(),
+    total_bytes: zod.number(),
+    labels: zod.array(zod.string().min(1)).optional(),
+    source: zod.object({}).passthrough(),
+    frontmatter: zod.object({}).passthrough(),
+    checks: zod.object({
+      items: zod.array(
+        zod.object({
+          code: zod.string().min(1),
+          severity: zod.enum(["error", "warning", "info"]),
+          message: zod.string().min(1),
+          path: zod.string().min(1).optional(),
+          line: zod.number().optional(),
+          detail: zod.object({}).passthrough().optional(),
+        }),
+      ),
+      summary: zod.object({
+        errors: zod.number(),
+        warnings: zod.number(),
+        infos: zod.number(),
+      }),
+      tokens: zod.object({
+        metadata: zod.number(),
+        skill_md: zod.number(),
+        total: zod.number(),
+      }),
+      frontmatter: zod.object({}).passthrough().nullable(),
+    }),
+    files: zod.array(
+      zod.object({
+        path: zod.string().min(1),
+        size_bytes: zod.number(),
+        sha256: zod.string().min(1),
+        token_estimate: zod.number(),
+      }),
+    ),
+  }),
+});
+
 export const ModelHubSkillsContextsVersionsInspectionListParams = zod.object({
-  context_id: zod.string(),
+  context_id: zod.string().uuid(),
   number: zod.number().min(1),
 });
 
@@ -34086,7 +36969,7 @@ export const ModelHubSkillsContextsVersionsInspectionListResponse = zod.object({
 
 export const ModelHubSkillsContextsVersionsInspectionFilesListParams =
   zod.object({
-    context_id: zod.string(),
+    context_id: zod.string().uuid(),
     number: zod.number().min(1),
   });
 
@@ -34789,6 +37672,12 @@ export const ModelHubSkillsImportCreateBody = zod.object({
     .describe(
       "JSON object mapping preview bundle keys to reviewed release revisions.",
     ),
+  acknowledged_omissions: zod
+    .string()
+    .optional()
+    .describe(
+      "JSON object mapping bundle keys to the exact reviewed omitted path/reason pairs. Required to import a supported subset.",
+    ),
 });
 
 export const ModelHubSkillsImportCreateResponse = zod.object({
@@ -34850,6 +37739,12 @@ export const ModelHubSkillsImportPreviewCreateResponse = zod.object({
         file_count: zod.number(),
         total_bytes: zod.number(),
         status: zod.enum(["new", "changed", "unchanged", "invalid"]),
+        omissions: zod.array(
+          zod.object({
+            path: zod.string().min(1),
+            reason: zod.string().min(1),
+          }),
+        ),
         skill_id: zod.string().uuid().optional(),
         latest_version: zod.number().nullish(),
         checks: zod.object({
@@ -35017,6 +37912,1686 @@ export const ModelHubSkillsPublishCreateResponse = zod.object({
   }),
 });
 
+export const modelHubSkillsReleaseRequestsCreateBodyPacketSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketTransitionExpectedReleaseRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketTransitionExpectedSecurityRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketTransitionExpectedImpactFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketTransitionLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+export const modelHubSkillsReleaseRequestsCreateBodyPacketTargetOneEnvironmentIdMax = 200;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketTargetOneRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketTargetOneConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeRuntimeVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemNameMax = 200;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeConnectionRevisionMax = 100;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeStateSchemaMax = 100;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeResetEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeObservableBoundariesMax = 7;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextJudgeModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextJudgeMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextHarnessVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextAdapterVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextEvaluatorVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemAnnotationRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketExternalPipelineOneUrlMax = 2000;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketExternalPipelineOneConfigurationIdentityMax = 255;
+
+export const modelHubSkillsReleaseRequestsCreateBodyPacketExternalPipelineOneDecisionMax = 2000;
+
+export const modelHubSkillsReleaseRequestsCreateBodyExpectedFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsCreateBodyRecipientIdsMax = 20;
+
+export const modelHubSkillsReleaseRequestsCreateBodyRevisionDefault = 0;
+export const modelHubSkillsReleaseRequestsCreateBodyRevisionMin = 0;
+
+export const ModelHubSkillsReleaseRequestsCreateBody = zod.object({
+  packet: zod.object({
+    schema: zod
+      .number()
+      .min(1)
+      .max(modelHubSkillsReleaseRequestsCreateBodyPacketSchemaMax),
+    subject_kind: zod.enum(["skill", "agent_context"]),
+    subject_id: zod.string().uuid(),
+    candidate_version_id: zod.string().uuid(),
+    candidate_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsReleaseRequestsCreateBodyPacketCandidateDigestRegExp,
+      ),
+    transition: zod.object({
+      expected_version: zod.number().min(1).nullable(),
+      version: zod.number().min(1),
+      expected_release_revision: zod
+        .number()
+        .min(
+          modelHubSkillsReleaseRequestsCreateBodyPacketTransitionExpectedReleaseRevisionMin,
+        ),
+      expected_security_revision: zod
+        .number()
+        .min(
+          modelHubSkillsReleaseRequestsCreateBodyPacketTransitionExpectedSecurityRevisionMin,
+        ),
+      expected_impact_fingerprint: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsReleaseRequestsCreateBodyPacketTransitionExpectedImpactFingerprintRegExp,
+        ),
+      label: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsReleaseRequestsCreateBodyPacketTransitionLabelRegExp,
+        ),
+    }),
+    target: zod.union([
+      zod.object({
+        binding_id: zod.string().uuid().nullable(),
+        environment_id: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsCreateBodyPacketTargetOneEnvironmentIdMax,
+          )
+          .nullable(),
+        revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsCreateBodyPacketTargetOneRevisionMin,
+          ),
+        configuration_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsCreateBodyPacketTargetOneConfigurationDigestRegExp,
+          ),
+      }),
+      zod.null(),
+    ]),
+    evidence: zod.array(
+      zod.object({
+        schema: zod
+          .number()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemSchemaMax,
+          ),
+        source_id: zod.string().uuid(),
+        subject_kind: zod.enum(["skill", "agent_context"]),
+        subject_id: zod.string().uuid(),
+        candidate_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemCandidateDigestRegExp,
+          ),
+        execution_fingerprint: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemExecutionFingerprintRegExp,
+          ),
+        status: zod.enum([
+          "completed",
+          "failed",
+          "cancelled",
+          "timed_out",
+          "interrupted",
+        ]),
+        visibility: zod.enum(["private", "workspace"]),
+        payload_expires_at: zod.string().datetime({ offset: true }),
+        configuration: zod.object({
+          schema: zod
+            .number()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationSchemaMax,
+            ),
+          digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationDigestRegExp,
+            ),
+          native: zod
+            .object({
+              code_commit: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCodeCommitRegExp,
+                ),
+              code_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCodeDigestRegExp,
+                ),
+              entrypoint: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeEntrypointMax,
+                ),
+              image_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeImageDigestRegExp,
+                ),
+              runtime_version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeRuntimeVersionMax,
+                ),
+              packages: zod.array(
+                zod.object({
+                  name: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemNameMax,
+                    ),
+                  version: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemVersionMax,
+                    ),
+                  sha256: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp,
+                    ),
+                }),
+              ),
+              package_lock_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackageLockDigestRegExp,
+                ),
+              model: zod.object({
+                model_id: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeModelModelIdMax,
+                  ),
+                temperature: zod.number(),
+                max_output_tokens: zod
+                  .number()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax,
+                  ),
+              }),
+              connection_id: zod.string().uuid(),
+              connection_revision: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeConnectionRevisionMax,
+                ),
+              tools_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeToolsDigestRegExp,
+                ),
+              retrieval_fixture_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp,
+                ),
+              state_schema: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeStateSchemaMax,
+                ),
+              checkpoint_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp,
+                ),
+              side_effect_policy: zod.enum([
+                "read_only",
+                "fixture_only",
+                "idempotent_approved",
+              ]),
+              reset_entrypoint: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeResetEntrypointMax,
+                ),
+              context_mount: zod.enum(["/fi_context/"]),
+              observable_boundaries: zod
+                .array(
+                  zod.enum([
+                    "catalog",
+                    "child_selection",
+                    "root_delivery",
+                    "file_delivery",
+                    "model_request",
+                    "tool_result",
+                    "checkpoint",
+                  ]),
+                )
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeObservableBoundariesMax,
+                ),
+            })
+            .optional(),
+          text: zod
+            .object({
+              model: zod.object({
+                model_id: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextModelModelIdMax,
+                  ),
+                temperature: zod.number(),
+                max_output_tokens: zod
+                  .number()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextModelMaxOutputTokensMax,
+                  ),
+              }),
+              judge: zod.object({
+                model_id: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextJudgeModelIdMax,
+                  ),
+                temperature: zod.number(),
+                max_output_tokens: zod
+                  .number()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextJudgeMaxOutputTokensMax,
+                  ),
+              }),
+              harness_version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextHarnessVersionMax,
+                ),
+              adapter_version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextAdapterVersionMax,
+                ),
+              evaluator_version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextEvaluatorVersionMax,
+                ),
+            })
+            .optional(),
+        }),
+        annotation_revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemAnnotationRevisionMin,
+          ),
+        source: zod.enum(["skills_text", "simulation_native"]),
+      }),
+    ),
+    external_pipeline: zod.union([
+      zod.object({
+        url: zod
+          .string()
+          .url()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsCreateBodyPacketExternalPipelineOneUrlMax,
+          ),
+        configuration_identity: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsCreateBodyPacketExternalPipelineOneConfigurationIdentityMax,
+          ),
+        decision: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsCreateBodyPacketExternalPipelineOneDecisionMax,
+          ),
+        trust: zod.enum(["operator_recorded_unimported"]),
+        recorded_by: zod.string().uuid(),
+      }),
+      zod.null(),
+    ]),
+  }),
+  expected_fingerprint: zod
+    .string()
+    .min(1)
+    .regex(modelHubSkillsReleaseRequestsCreateBodyExpectedFingerprintRegExp),
+  recipient_ids: zod
+    .array(zod.string().uuid())
+    .min(1)
+    .max(modelHubSkillsReleaseRequestsCreateBodyRecipientIdsMax),
+  request_id: zod.string().uuid().nullish(),
+  revision: zod
+    .number()
+    .min(modelHubSkillsReleaseRequestsCreateBodyRevisionMin)
+    .default(modelHubSkillsReleaseRequestsCreateBodyRevisionDefault),
+});
+
+export const ModelHubSkillsReleaseRequestsCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    revision: zod.number().min(1),
+    id: zod.string().uuid(),
+    status: zod.string().min(1),
+  }),
+});
+
+export const modelHubSkillsReleaseRequestsPreviewCreateBodyTargetOneEnvironmentIdMax = 200;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateBodyTargetOneRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateBodyTargetOneConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsPreviewCreateBodyEvidenceItemAnnotationRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateBodyEvidenceDefault = [];
+export const modelHubSkillsReleaseRequestsPreviewCreateBodyExternalPipelineOneUrlMax = 2000;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateBodyExternalPipelineOneConfigurationIdentityMax = 255;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateBodyExternalPipelineOneDecisionMax = 2000;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateBodyLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const ModelHubSkillsReleaseRequestsPreviewCreateBody = zod.object({
+  resource_id: zod.string().uuid(),
+  kind: zod.enum(["skill", "agent_context"]),
+  candidate_version_id: zod.string().uuid(),
+  target: zod
+    .union([
+      zod.object({
+        binding_id: zod.string().uuid().nullable(),
+        environment_id: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsPreviewCreateBodyTargetOneEnvironmentIdMax,
+          )
+          .nullable(),
+        revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsPreviewCreateBodyTargetOneRevisionMin,
+          ),
+        configuration_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsPreviewCreateBodyTargetOneConfigurationDigestRegExp,
+          ),
+      }),
+      zod.null(),
+    ])
+    .optional(),
+  evidence: zod
+    .array(
+      zod.object({
+        source_id: zod.string().uuid(),
+        annotation_revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsPreviewCreateBodyEvidenceItemAnnotationRevisionMin,
+          ),
+        source: zod.enum(["skills_text", "simulation_native"]),
+      }),
+    )
+    .default(modelHubSkillsReleaseRequestsPreviewCreateBodyEvidenceDefault),
+  external_pipeline: zod
+    .union([
+      zod.object({
+        url: zod
+          .string()
+          .url()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsPreviewCreateBodyExternalPipelineOneUrlMax,
+          ),
+        configuration_identity: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsPreviewCreateBodyExternalPipelineOneConfigurationIdentityMax,
+          ),
+        decision: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsPreviewCreateBodyExternalPipelineOneDecisionMax,
+          ),
+        trust: zod.enum(["operator_recorded_unimported"]),
+        recorded_by: zod.string().uuid(),
+      }),
+      zod.null(),
+    ])
+    .optional(),
+  label: zod
+    .string()
+    .min(1)
+    .regex(modelHubSkillsReleaseRequestsPreviewCreateBodyLabelRegExp),
+});
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTransitionExpectedReleaseRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTransitionExpectedSecurityRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTransitionExpectedImpactFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTransitionLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTargetOneEnvironmentIdMax = 200;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTargetOneRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTargetOneConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeRuntimeVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemNameMax = 200;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeConnectionRevisionMax = 100;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeStateSchemaMax = 100;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeResetEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeObservableBoundariesMax = 7;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextJudgeModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextJudgeMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextHarnessVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextAdapterVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextEvaluatorVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemAnnotationRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketExternalPipelineOneUrlMax = 2000;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketExternalPipelineOneConfigurationIdentityMax = 255;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketExternalPipelineOneDecisionMax = 2000;
+
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsReleaseRequestsPreviewCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    packet: zod.object({
+      schema: zod
+        .number()
+        .min(1)
+        .max(
+          modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketSchemaMax,
+        ),
+      subject_kind: zod.enum(["skill", "agent_context"]),
+      subject_id: zod.string().uuid(),
+      candidate_version_id: zod.string().uuid(),
+      candidate_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketCandidateDigestRegExp,
+        ),
+      transition: zod.object({
+        expected_version: zod.number().min(1).nullable(),
+        version: zod.number().min(1),
+        expected_release_revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTransitionExpectedReleaseRevisionMin,
+          ),
+        expected_security_revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTransitionExpectedSecurityRevisionMin,
+          ),
+        expected_impact_fingerprint: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTransitionExpectedImpactFingerprintRegExp,
+          ),
+        label: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTransitionLabelRegExp,
+          ),
+      }),
+      target: zod.union([
+        zod.object({
+          binding_id: zod.string().uuid().nullable(),
+          environment_id: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTargetOneEnvironmentIdMax,
+            )
+            .nullable(),
+          revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTargetOneRevisionMin,
+            ),
+          configuration_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketTargetOneConfigurationDigestRegExp,
+            ),
+        }),
+        zod.null(),
+      ]),
+      evidence: zod.array(
+        zod.object({
+          schema: zod
+            .number()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemSchemaMax,
+            ),
+          source_id: zod.string().uuid(),
+          subject_kind: zod.enum(["skill", "agent_context"]),
+          subject_id: zod.string().uuid(),
+          candidate_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemCandidateDigestRegExp,
+            ),
+          execution_fingerprint: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemExecutionFingerprintRegExp,
+            ),
+          status: zod.enum([
+            "completed",
+            "failed",
+            "cancelled",
+            "timed_out",
+            "interrupted",
+          ]),
+          visibility: zod.enum(["private", "workspace"]),
+          payload_expires_at: zod.string().datetime({ offset: true }),
+          configuration: zod.object({
+            schema: zod
+              .number()
+              .min(1)
+              .max(
+                modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationSchemaMax,
+              ),
+            digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationDigestRegExp,
+              ),
+            native: zod
+              .object({
+                code_commit: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCodeCommitRegExp,
+                  ),
+                code_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCodeDigestRegExp,
+                  ),
+                entrypoint: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeEntrypointMax,
+                  ),
+                image_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeImageDigestRegExp,
+                  ),
+                runtime_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeRuntimeVersionMax,
+                  ),
+                packages: zod.array(
+                  zod.object({
+                    name: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemNameMax,
+                      ),
+                    version: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemVersionMax,
+                      ),
+                    sha256: zod
+                      .string()
+                      .min(1)
+                      .regex(
+                        modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp,
+                      ),
+                  }),
+                ),
+                package_lock_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackageLockDigestRegExp,
+                  ),
+                model: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeModelModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax,
+                    ),
+                }),
+                connection_id: zod.string().uuid(),
+                connection_revision: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeConnectionRevisionMax,
+                  ),
+                tools_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeToolsDigestRegExp,
+                  ),
+                retrieval_fixture_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp,
+                  ),
+                state_schema: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeStateSchemaMax,
+                  ),
+                checkpoint_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp,
+                  ),
+                side_effect_policy: zod.enum([
+                  "read_only",
+                  "fixture_only",
+                  "idempotent_approved",
+                ]),
+                reset_entrypoint: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeResetEntrypointMax,
+                  ),
+                context_mount: zod.enum(["/fi_context/"]),
+                observable_boundaries: zod
+                  .array(
+                    zod.enum([
+                      "catalog",
+                      "child_selection",
+                      "root_delivery",
+                      "file_delivery",
+                      "model_request",
+                      "tool_result",
+                      "checkpoint",
+                    ]),
+                  )
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeObservableBoundariesMax,
+                  ),
+              })
+              .optional(),
+            text: zod
+              .object({
+                model: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextModelModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextModelMaxOutputTokensMax,
+                    ),
+                }),
+                judge: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextJudgeModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextJudgeMaxOutputTokensMax,
+                    ),
+                }),
+                harness_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextHarnessVersionMax,
+                  ),
+                adapter_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextAdapterVersionMax,
+                  ),
+                evaluator_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextEvaluatorVersionMax,
+                  ),
+              })
+              .optional(),
+          }),
+          annotation_revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemAnnotationRevisionMin,
+            ),
+          source: zod.enum(["skills_text", "simulation_native"]),
+        }),
+      ),
+      external_pipeline: zod.union([
+        zod.object({
+          url: zod
+            .string()
+            .url()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketExternalPipelineOneUrlMax,
+            ),
+          configuration_identity: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketExternalPipelineOneConfigurationIdentityMax,
+            ),
+          decision: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketExternalPipelineOneDecisionMax,
+            ),
+          trust: zod.enum(["operator_recorded_unimported"]),
+          recorded_by: zod.string().uuid(),
+        }),
+        zod.null(),
+      ]),
+    }),
+    fingerprint: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsReleaseRequestsPreviewCreateResponseResultFingerprintRegExp,
+      ),
+  }),
+});
+
+export const ModelHubSkillsReleaseRequestsReadParams = zod.object({
+  request_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketTransitionExpectedReleaseRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketTransitionExpectedSecurityRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketTransitionExpectedImpactFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketTransitionLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketTargetOneEnvironmentIdMax = 200;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketTargetOneRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketTargetOneConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeRuntimeVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemNameMax = 200;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeConnectionRevisionMax = 100;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeStateSchemaMax = 100;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeResetEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeObservableBoundariesMax = 7;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextJudgeModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextJudgeMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextHarnessVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextAdapterVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextEvaluatorVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemAnnotationRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketExternalPipelineOneUrlMax = 2000;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketExternalPipelineOneConfigurationIdentityMax = 255;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketExternalPipelineOneDecisionMax = 2000;
+
+export const modelHubSkillsReleaseRequestsReadResponseResultFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsReleaseRequestsReadResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    revision: zod.number().min(1),
+    id: zod.string().uuid(),
+    status: zod.string().min(1),
+    packet: zod.object({
+      schema: zod
+        .number()
+        .min(1)
+        .max(modelHubSkillsReleaseRequestsReadResponseResultPacketSchemaMax),
+      subject_kind: zod.enum(["skill", "agent_context"]),
+      subject_id: zod.string().uuid(),
+      candidate_version_id: zod.string().uuid(),
+      candidate_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsReleaseRequestsReadResponseResultPacketCandidateDigestRegExp,
+        ),
+      transition: zod.object({
+        expected_version: zod.number().min(1).nullable(),
+        version: zod.number().min(1),
+        expected_release_revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsReadResponseResultPacketTransitionExpectedReleaseRevisionMin,
+          ),
+        expected_security_revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsReadResponseResultPacketTransitionExpectedSecurityRevisionMin,
+          ),
+        expected_impact_fingerprint: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsReadResponseResultPacketTransitionExpectedImpactFingerprintRegExp,
+          ),
+        label: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsReadResponseResultPacketTransitionLabelRegExp,
+          ),
+      }),
+      target: zod.union([
+        zod.object({
+          binding_id: zod.string().uuid().nullable(),
+          environment_id: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsReadResponseResultPacketTargetOneEnvironmentIdMax,
+            )
+            .nullable(),
+          revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsReadResponseResultPacketTargetOneRevisionMin,
+            ),
+          configuration_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsReadResponseResultPacketTargetOneConfigurationDigestRegExp,
+            ),
+        }),
+        zod.null(),
+      ]),
+      evidence: zod.array(
+        zod.object({
+          schema: zod
+            .number()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemSchemaMax,
+            ),
+          source_id: zod.string().uuid(),
+          subject_kind: zod.enum(["skill", "agent_context"]),
+          subject_id: zod.string().uuid(),
+          candidate_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemCandidateDigestRegExp,
+            ),
+          execution_fingerprint: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemExecutionFingerprintRegExp,
+            ),
+          status: zod.enum([
+            "completed",
+            "failed",
+            "cancelled",
+            "timed_out",
+            "interrupted",
+          ]),
+          visibility: zod.enum(["private", "workspace"]),
+          payload_expires_at: zod.string().datetime({ offset: true }),
+          configuration: zod.object({
+            schema: zod
+              .number()
+              .min(1)
+              .max(
+                modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationSchemaMax,
+              ),
+            digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationDigestRegExp,
+              ),
+            native: zod
+              .object({
+                code_commit: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCodeCommitRegExp,
+                  ),
+                code_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCodeDigestRegExp,
+                  ),
+                entrypoint: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeEntrypointMax,
+                  ),
+                image_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeImageDigestRegExp,
+                  ),
+                runtime_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeRuntimeVersionMax,
+                  ),
+                packages: zod.array(
+                  zod.object({
+                    name: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemNameMax,
+                      ),
+                    version: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemVersionMax,
+                      ),
+                    sha256: zod
+                      .string()
+                      .min(1)
+                      .regex(
+                        modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp,
+                      ),
+                  }),
+                ),
+                package_lock_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackageLockDigestRegExp,
+                  ),
+                model: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeModelModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax,
+                    ),
+                }),
+                connection_id: zod.string().uuid(),
+                connection_revision: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeConnectionRevisionMax,
+                  ),
+                tools_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeToolsDigestRegExp,
+                  ),
+                retrieval_fixture_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp,
+                  ),
+                state_schema: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeStateSchemaMax,
+                  ),
+                checkpoint_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp,
+                  ),
+                side_effect_policy: zod.enum([
+                  "read_only",
+                  "fixture_only",
+                  "idempotent_approved",
+                ]),
+                reset_entrypoint: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeResetEntrypointMax,
+                  ),
+                context_mount: zod.enum(["/fi_context/"]),
+                observable_boundaries: zod
+                  .array(
+                    zod.enum([
+                      "catalog",
+                      "child_selection",
+                      "root_delivery",
+                      "file_delivery",
+                      "model_request",
+                      "tool_result",
+                      "checkpoint",
+                    ]),
+                  )
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeObservableBoundariesMax,
+                  ),
+              })
+              .optional(),
+            text: zod
+              .object({
+                model: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextModelModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextModelMaxOutputTokensMax,
+                    ),
+                }),
+                judge: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextJudgeModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextJudgeMaxOutputTokensMax,
+                    ),
+                }),
+                harness_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextHarnessVersionMax,
+                  ),
+                adapter_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextAdapterVersionMax,
+                  ),
+                evaluator_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextEvaluatorVersionMax,
+                  ),
+              })
+              .optional(),
+          }),
+          annotation_revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemAnnotationRevisionMin,
+            ),
+          source: zod.enum(["skills_text", "simulation_native"]),
+        }),
+      ),
+      external_pipeline: zod.union([
+        zod.object({
+          url: zod
+            .string()
+            .url()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsReadResponseResultPacketExternalPipelineOneUrlMax,
+            ),
+          configuration_identity: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsReadResponseResultPacketExternalPipelineOneConfigurationIdentityMax,
+            ),
+          decision: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsReadResponseResultPacketExternalPipelineOneDecisionMax,
+            ),
+          trust: zod.enum(["operator_recorded_unimported"]),
+          recorded_by: zod.string().uuid(),
+        }),
+        zod.null(),
+      ]),
+    }),
+    fingerprint: zod
+      .string()
+      .min(1)
+      .regex(modelHubSkillsReleaseRequestsReadResponseResultFingerprintRegExp),
+    author_id: zod.string().uuid(),
+    subject_id: zod.string().uuid(),
+  }),
+});
+
+export const ModelHubSkillsReleaseRequestsDecisionsCreateParams = zod.object({
+  request_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsReleaseRequestsDecisionsCreateBodyExpectedFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsDecisionsCreateBodyCommentMax = 2000;
+
+export const ModelHubSkillsReleaseRequestsDecisionsCreateBody = zod.object({
+  revision: zod.number().min(1),
+  expected_fingerprint: zod
+    .string()
+    .min(1)
+    .regex(
+      modelHubSkillsReleaseRequestsDecisionsCreateBodyExpectedFingerprintRegExp,
+    ),
+  decision: zod.enum(["approve", "request_changes"]),
+  comment: zod
+    .string()
+    .max(modelHubSkillsReleaseRequestsDecisionsCreateBodyCommentMax),
+});
+
+export const ModelHubSkillsReleaseRequestsDecisionsCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    revision: zod.number().min(1),
+    id: zod.string().uuid(),
+    status: zod.string().min(1),
+    request_id: zod.string().uuid(),
+    decision: zod.enum(["approve", "request_changes"]),
+  }),
+});
+
+export const ModelHubSkillsReleaseRequestsExecuteCreateParams = zod.object({
+  request_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsReleaseRequestsExecuteCreateBodyExpectedFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsReleaseRequestsExecuteCreateBody = zod.object({
+  revision: zod.number().min(1),
+  expected_fingerprint: zod
+    .string()
+    .min(1)
+    .regex(
+      modelHubSkillsReleaseRequestsExecuteCreateBodyExpectedFingerprintRegExp,
+    ),
+});
+
+export const modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionPacketFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionReleaseRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionSecurityRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionTargetOneEnvironmentIdMax = 200;
+
+export const modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionTargetOneRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionTargetOneConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionEvidenceItemAnnotationRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsExecuteCreateResponseResultPostMoveStateReleaseRevisionMin = 0;
+
+export const ModelHubSkillsReleaseRequestsExecuteCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    revision: zod.number().min(1),
+    request_id: zod.string().uuid(),
+    decision_id: zod.string().uuid(),
+    executed_by: zod.string().uuid(),
+    actor_api_key_id: zod.string().uuid().nullable(),
+    currentness_at_action: zod.object({
+      packet_fingerprint: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionPacketFingerprintRegExp,
+        ),
+      release_revision: zod
+        .number()
+        .min(
+          modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionReleaseRevisionMin,
+        ),
+      security_revision: zod
+        .number()
+        .min(
+          modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionSecurityRevisionMin,
+        ),
+      target: zod.union([
+        zod.object({
+          binding_id: zod.string().uuid().nullable(),
+          environment_id: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionTargetOneEnvironmentIdMax,
+            )
+            .nullable(),
+          revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionTargetOneRevisionMin,
+            ),
+          configuration_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionTargetOneConfigurationDigestRegExp,
+            ),
+        }),
+        zod.null(),
+      ]),
+      evidence: zod.array(
+        zod.object({
+          source_id: zod.string().uuid(),
+          annotation_revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsExecuteCreateResponseResultCurrentnessAtActionEvidenceItemAnnotationRevisionMin,
+            ),
+          currentness: zod.record(zod.string(), zod.boolean().nullable()),
+          source: zod.string().min(1),
+        }),
+      ),
+    }),
+    post_move_state: zod.object({
+      version: zod.number().min(1),
+      release_revision: zod
+        .number()
+        .min(
+          modelHubSkillsReleaseRequestsExecuteCreateResponseResultPostMoveStateReleaseRevisionMin,
+        ),
+      event_id: zod.string().uuid().nullable(),
+      label: zod.string().min(1),
+    }),
+  }),
+});
+
+export const ModelHubSkillsReleaseRequestsReceiptListParams = zod.object({
+  request_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionPacketFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionReleaseRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionSecurityRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionTargetOneEnvironmentIdMax = 200;
+
+export const modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionTargetOneRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionTargetOneConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionEvidenceItemAnnotationRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsReceiptListResponseResultPostMoveStateReleaseRevisionMin = 0;
+
+export const ModelHubSkillsReleaseRequestsReceiptListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    revision: zod.number().min(1),
+    request_id: zod.string().uuid(),
+    decision_id: zod.string().uuid(),
+    executed_by: zod.string().uuid(),
+    actor_api_key_id: zod.string().uuid().nullable(),
+    currentness_at_action: zod.object({
+      packet_fingerprint: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionPacketFingerprintRegExp,
+        ),
+      release_revision: zod
+        .number()
+        .min(
+          modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionReleaseRevisionMin,
+        ),
+      security_revision: zod
+        .number()
+        .min(
+          modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionSecurityRevisionMin,
+        ),
+      target: zod.union([
+        zod.object({
+          binding_id: zod.string().uuid().nullable(),
+          environment_id: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionTargetOneEnvironmentIdMax,
+            )
+            .nullable(),
+          revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionTargetOneRevisionMin,
+            ),
+          configuration_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionTargetOneConfigurationDigestRegExp,
+            ),
+        }),
+        zod.null(),
+      ]),
+      evidence: zod.array(
+        zod.object({
+          source_id: zod.string().uuid(),
+          annotation_revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsReceiptListResponseResultCurrentnessAtActionEvidenceItemAnnotationRevisionMin,
+            ),
+          currentness: zod.record(zod.string(), zod.boolean().nullable()),
+          source: zod.string().min(1),
+        }),
+      ),
+    }),
+    post_move_state: zod.object({
+      version: zod.number().min(1),
+      release_revision: zod
+        .number()
+        .min(
+          modelHubSkillsReleaseRequestsReceiptListResponseResultPostMoveStateReleaseRevisionMin,
+        ),
+      event_id: zod.string().uuid().nullable(),
+      label: zod.string().min(1),
+    }),
+  }),
+});
+
 /**
  * Resolve an immutable skill manifest. Returns ETag: "<digest>". Send If-None-Match with that value for HTTP 304; a missing label never falls back. Optional file_offset/file_limit page the file inventory; follow next_file_offset with the returned version pinned. MCP defaults to 25 files per page and omits frontmatter and file contents; read SKILL.md in chunks for the original metadata.
  */
@@ -35086,6 +39661,79 @@ export const ModelHubSkillsResolveListResponse = zod.object({
     next_file_offset: zod.number().nullable(),
     created_at: zod.string().datetime({ offset: true }),
   }),
+});
+
+export const modelHubSkillsReviewInboxListQueryPageDefault = 1;
+
+export const modelHubSkillsReviewInboxListQueryPageSizeDefault = 25;
+export const modelHubSkillsReviewInboxListQueryPageSizeMax = 100;
+
+export const ModelHubSkillsReviewInboxListQueryParams = zod.object({
+  page: zod
+    .number()
+    .min(1)
+    .default(modelHubSkillsReviewInboxListQueryPageDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(modelHubSkillsReviewInboxListQueryPageSizeMax)
+    .default(modelHubSkillsReviewInboxListQueryPageSizeDefault),
+  status: zod
+    .enum(["pending", "approved", "changes_requested", "released"])
+    .optional(),
+});
+
+export const modelHubSkillsReviewInboxListResponseResultCountMin = 0;
+
+export const modelHubSkillsReviewInboxListResponseResultTotalPagesMin = 0;
+
+export const modelHubSkillsReviewInboxListResponseResultResultsItemFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReviewInboxListResponseResultUnreadCountMin = 0;
+
+export const ModelHubSkillsReviewInboxListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    count: zod
+      .number()
+      .min(modelHubSkillsReviewInboxListResponseResultCountMin),
+    page: zod.number().min(1),
+    page_size: zod.number().min(1),
+    total_pages: zod
+      .number()
+      .min(modelHubSkillsReviewInboxListResponseResultTotalPagesMin),
+    results: zod.array(
+      zod.object({
+        revision: zod.number().min(1),
+        id: zod.string().uuid(),
+        status: zod.string().min(1),
+        subject_id: zod.string().uuid(),
+        subject_kind: zod.enum(["skill", "agent_context"]),
+        name: zod.string().min(1),
+        author_id: zod.string().uuid(),
+        unread: zod.boolean(),
+        fingerprint: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReviewInboxListResponseResultResultsItemFingerprintRegExp,
+          ),
+        candidate_version_id: zod.string().uuid(),
+        updated_at: zod.string().datetime({ offset: true }),
+      }),
+    ),
+    unread_count: zod
+      .number()
+      .min(modelHubSkillsReviewInboxListResponseResultUnreadCountMin),
+  }),
+});
+
+export const ModelHubSkillsReviewInboxSeenCreateParams = zod.object({
+  request_id: zod.string().uuid(),
+});
+
+export const ModelHubSkillsReviewInboxSeenCreateBody = zod.object({
+  revision: zod.number().min(1),
 });
 
 export const modelHubSkillsSpendPolicyListResponseResultRevisionMin = 0;
@@ -35309,7 +39957,7 @@ export const ModelHubSkillsVersionSafetyUpdateResponse = zod.object({
 });
 
 export const ModelHubSkillsVersionsInspectionListParams = zod.object({
-  context_id: zod.string(),
+  context_id: zod.string().uuid(),
   number: zod.number().min(1),
 });
 
@@ -35456,7 +40104,7 @@ export const ModelHubSkillsVersionsInspectionListResponse = zod.object({
 });
 
 export const ModelHubSkillsVersionsInspectionFilesListParams = zod.object({
-  context_id: zod.string(),
+  context_id: zod.string().uuid(),
   number: zod.number().min(1),
 });
 

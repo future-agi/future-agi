@@ -1196,3 +1196,31 @@ describe("editor integration seam", () => {
     ).toBeInTheDocument();
   });
 });
+
+
+it.each([400, 403])("unlocks normalized first-attempt admission rejection %s and rotates the operation", async (statusCode) => {
+  api.create.mockRejectedValueOnce({ statusCode, code: "spend_policy_required" });
+  mount(setup());
+  await configure();
+  await reviewPlan();
+  fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+  await screen.findByText(/An administrator must enable the workspace spending allowance/);
+  expect(screen.queryByText(/request may already have been accepted/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Preview work and spend" })).toBeEnabled();
+  const first = api.create.mock.calls[0][0];
+  fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+  await waitFor(() => expect(api.create).toHaveBeenCalledTimes(2));
+  expect(api.create.mock.calls[1][0].idempotencyKey).not.toBe(first.idempotencyKey);
+});
+
+it("does not discard an uncertain paid request after a normalized recovery denial", async () => {
+  api.create.mockRejectedValueOnce(new Error("Lost response")).mockRejectedValueOnce({ statusCode: 403, code: "spend_policy_required" });
+  mount(setup());
+  await configure();
+  await reviewPlan();
+  fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Retry same submission" }));
+  await screen.findByText(/An administrator must enable the workspace spending allowance/);
+  expect(screen.getByRole("button", { name: "Retry same submission" })).toBeEnabled();
+  expect(api.create.mock.calls[1][0]).toBe(api.create.mock.calls[0][0]);
+});

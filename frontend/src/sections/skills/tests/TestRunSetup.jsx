@@ -13,6 +13,8 @@ import {
   Typography,
 } from "@mui/material";
 
+import { paths } from "src/routes/paths";
+import { isDefiniteRejection, operationStatus } from "src/api/skills/operation-errors";
 import { skillFilesDigest } from 'src/api/skills/digest';
 import { getSkillErrorCode, useSkillsList } from "src/api/skills";
 import {
@@ -172,6 +174,8 @@ const errorCopy = (error) => {
       return "Outbound secret findings remain unresolved. Remove real secrets or review genuine false positives.";
     case "evaluation_material_present":
       return "Edit the real draft to remove evaluation material, or explicitly choose a diagnostic check and preview again.";
+    case "spend_policy_required":
+      return "An administrator must enable the workspace spending allowance before tests can run. Open Workspace allowance in Skills.";
     case "skills_capacity_exceeded":
       return "Workspace model capacity is busy. Your setup is preserved; retry after capacity becomes available.";
     case "model_not_configured":
@@ -401,11 +405,15 @@ export default function TestRunSetup({
     } catch (failure) {
       setError(errorCopy(failure));
       // A validation rejection did not admit work. Unknown/network outcomes keep the exact submission for replay.
-      const status = failure?.response?.status;
-      if (status >= 400 && status < 500 && ![408, 409].includes(status))
+      const capacityRejected = !submitted && operationStatus(failure) === 429 && getSkillErrorCode(failure) === "skills_capacity_exceeded";
+      if (capacityRejected) setSubmitted(false);
+      const confirmedRejected = !submitted && isDefiniteRejection(failure);
+      if (confirmedRejected) {
         setSubmitted(false);
+        submission.current = null;
+      }
       if (
-        ["test_plan_changed", "candidate_changed", "draft_conflict"].includes(
+        confirmedRejected && ["test_plan_changed", "candidate_changed", "draft_conflict"].includes(
           getSkillErrorCode(failure),
         )
       ) {
@@ -453,7 +461,7 @@ export default function TestRunSetup({
           Workspace write access is required to run tests.
         </Alert>
       )}
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <Alert severity="error">{error}{error.includes("administrator must enable") && <Button component="a" href={paths.dashboard.skills.allowance}>Open workspace allowance</Button>}</Alert>}
       {!options.data.models.some((item) => item.canRun) && (
         <Alert severity="info">
           Connect a supported workspace model to run tests.{" "}

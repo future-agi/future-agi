@@ -296,3 +296,50 @@ describe("retained source intake", () => {
     expect(screen.getByText(/existing draft blocks replacement/)).toBeVisible();
   });
 });
+
+
+it("unlocks a normalized name_taken rejection without losing the context input", async () => {
+  const create = vi.fn().mockRejectedValueOnce({ statusCode: 409, code: "name_taken" }).mockResolvedValueOnce({ contextId: "new" });
+  render(<ContextImportDialog scopeKey={scopeKey} open onClose={vi.fn()} onCreate={create} />);
+  fireEvent.change(screen.getByLabelText("AGENTS.md"), { target: { value: "Standing instructions" } });
+  fireEvent.change(screen.getByLabelText("Immutable name"), { target: { value: "taken" } });
+  fireEvent.change(screen.getByLabelText("Purpose"), { target: { value: "Preserved purpose" } });
+  click("Create draft");
+  await screen.findByText(/This name is already in use/);
+  expect(screen.getByLabelText("Immutable name")).toBeEnabled();
+  expect(screen.getByLabelText("AGENTS.md")).toHaveValue("Standing instructions");
+  expect(screen.getByLabelText("Purpose")).toHaveValue("Preserved purpose");
+  fireEvent.change(screen.getByLabelText("Immutable name"), { target: { value: "available" } });
+  click("Create draft");
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+  expect(create.mock.calls[1][0]).toMatchObject({ name: "available", description: "Preserved purpose", files: [{ path: "AGENTS.md", content: "Standing instructions" }] });
+  expect(create.mock.calls[1][1].idempotencyKey).not.toBe(create.mock.calls[0][1].idempotencyKey);
+});
+
+it("keeps the exact creation locked when a recovery attempt is denied", async () => {
+  const create = vi.fn().mockRejectedValueOnce(new Error("Lost response")).mockRejectedValueOnce({ statusCode: 403, code: "forbidden" });
+  render(<ContextImportDialog scopeKey={scopeKey} open onClose={vi.fn()} onCreate={create} />);
+  fireEvent.change(screen.getByLabelText("AGENTS.md"), { target: { value: "Standing instructions" } });
+  fireEvent.change(screen.getByLabelText("Immutable name"), { target: { value: "new-context" } });
+  fireEvent.change(screen.getByLabelText("Purpose"), { target: { value: "Purpose" } });
+  click("Create draft");
+  await screen.findByRole("button", { name: "Retry same operation" });
+  expect(screen.getByLabelText("Immutable name")).toBeDisabled();
+  click("Retry same operation");
+  await screen.findByText(/current access does not allow/);
+  expect(screen.getByLabelText("Immutable name")).toBeDisabled();
+  expect(create.mock.calls[1]).toEqual(create.mock.calls[0]);
+});
+
+
+it("allows a new upload selection after an uncertain read-only preview", async () => {
+  const preview = vi.fn().mockRejectedValueOnce(new Error("Network unavailable")).mockResolvedValueOnce({ previewId: "next", expiresAt: future, roots: [], rejected: [], skipped: [] });
+  const view = render(<ContextImportDialog scopeKey={scopeKey} open onClose={vi.fn()} onPreview={preview} onImport={vi.fn()} />);
+  const upload = view.container.ownerDocument.querySelector('input[type="file"]');
+  fireEvent.change(upload, { target: { files: [new File(["first"], "first.zip")] } });
+  await screen.findByText(/could not be confirmed/);
+  fireEvent.change(upload, { target: { files: [new File(["second"], "second.zip")] } });
+  await screen.findByText(/Retained preview next/);
+  expect(preview).toHaveBeenCalledTimes(2);
+  expect(preview.mock.calls[1][0].get('files').name).toBe('second.zip');
+});

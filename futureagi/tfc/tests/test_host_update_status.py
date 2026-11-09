@@ -5,6 +5,8 @@ EndpointTests require the project Django runner and an isolated test database;
 missing backend prerequisites are failures, never skip-to-green permission tests.
 """
 
+from __future__ import annotations
+
 import copy
 import importlib.util
 import json
@@ -13,6 +15,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from tfc.host_updates import status
@@ -240,6 +243,7 @@ class ReaderTests(unittest.TestCase):
                 with self.assertRaises(status.StatusUnavailable) as caught:
                     decode(self.snapshot, {**expected, key: value})
                 self.assertEqual(caught.exception.reason, "installation_mismatch")
+        identity: object
         for identity in (
             None,
             [],
@@ -410,6 +414,10 @@ class FileTests(unittest.TestCase):
     def test_atomic_replacement_returns_opened_complete_inode(self):
         replacement = self.directory / "replacement"
         replacement.write_bytes(b"new complete inode")
+        # Qualify both inodes explicitly, as setUp does for the original. A
+        # group-writable process umask must not turn this atomicity test into
+        # the separate untrusted-file permission test above.
+        replacement.chmod(0o644)
         original_read = os.read
         replaced = False
 
@@ -443,8 +451,8 @@ class FileTests(unittest.TestCase):
             status._read_file(str(self.file))
 
     def test_read_is_bounded_even_if_file_grows(self):
-        calls = []
-        bytes_read = []
+        calls: list[int] = []
+        bytes_read: list[int] = []
         original_read = os.read
 
         def grow_after_size_check(fd, count):
@@ -598,8 +606,8 @@ class SerializerTests(unittest.TestCase):
                 ],
                 production,
             )
-        for production in (None, 0, "false"):
-            installation["production"] = production
+        for invalid_production in (None, 0, "false"):
+            installation["production"] = invalid_production
             self.assertFalse(HostUpdateStatusResponseSerializer(data=value).is_valid())
         del installation["production"]
         self.assertFalse(HostUpdateStatusResponseSerializer(data=value).is_valid())
@@ -683,7 +691,7 @@ class ErrorContractTests(unittest.TestCase):
         from tfc.views.host_update_status import HostUpdateStatusView
 
         canary = "CANARY credential=secret /private/host postgres://user:password@db"
-        cases = []
+        cases: list[tuple[Exception, int, str]] = []
         for http_status, code, _, _ in ERROR_CASES:
             exc = APIException(canary, code=code)
             exc.status_code = http_status
@@ -696,13 +704,13 @@ class ErrorContractTests(unittest.TestCase):
             )
             cases.append((exc, expected[0], expected[1]))
         cases.append((RuntimeError(canary), 503, "service_unavailable"))
-        for exc, http_status, code in cases:
+        for error, http_status, code in cases:
             view = HostUpdateStatusView()
             view.request = view.initialize_request(
                 APIRequestFactory().get("/api/host-update-status/")
             )
             with (
-                self.subTest(status=http_status, code=code, exc=type(exc).__name__),
+                self.subTest(status=http_status, code=code, exc=type(error).__name__),
                 patch(
                     "tfc.views.host_update_status.build_error_envelope",
                     wraps=build_error_envelope,
@@ -712,7 +720,7 @@ class ErrorContractTests(unittest.TestCase):
                     "tfc.views.host_update_status.set_rollback", wraps=set_rollback
                 ) as rollback,
             ):
-                response = view.handle_exception(exc)
+                response = view.handle_exception(error)
                 expected = error_body(code)
                 self.assertEqual(response.status_code, http_status)
                 self.assertEqual(response.data, expected)
@@ -767,6 +775,7 @@ class ErrorContractTests(unittest.TestCase):
             {**body, "details": {"private": ["CANARY"]}},
             {**body, "status": True},
         ]
+        value: object
         for key in body:
             invalid.append({k: v for k, v in body.items() if k != key})
             for value in (None, [], {"secret": "CANARY"}, 0):
@@ -785,15 +794,21 @@ class ErrorContractTests(unittest.TestCase):
 
 # Do not require Django merely to run the stdlib reader suite. Selecting the
 # endpoint suite without Django still fails at setUp; it is not silently skipped.
-try:
+if TYPE_CHECKING:
     from django.test import TestCase as DatabaseTestCase
-except ModuleNotFoundError as exc:
-    if exc.name != "django":
-        raise
-    DatabaseTestCase = unittest.TestCase
+    from rest_framework.test import APIClient
+else:
+    try:
+        from django.test import TestCase as DatabaseTestCase
+    except ModuleNotFoundError as exc:
+        if exc.name != "django":
+            raise
+        DatabaseTestCase = unittest.TestCase
 
 
 class EndpointTests(DatabaseTestCase):
+    client: APIClient
+
     def setUp(self):
         from django.core.cache import cache
         from django.test import override_settings
@@ -896,7 +911,7 @@ class EndpointTests(DatabaseTestCase):
                         self.client.generic(
                             method.upper(),
                             self.url,
-                            b'{"credential":"CANARY"}',
+                            '{"credential":"CANARY"}',
                             content_type="application/json",
                         ),
                         400,
@@ -1094,7 +1109,12 @@ class EndpointTests(DatabaseTestCase):
         ):
             self.client.credentials(**credentials)
             for header in ("HTTP_X_API_KEY", "HTTP_X_SECRET_KEY"):
-                response = self.client.get(self.url, **{header: "CANARY_SECRET"})
+                response = self.client.get(
+                    self.url,
+                    headers={
+                        header.removeprefix("HTTP_").replace("_", "-"): "CANARY_SECRET"
+                    },
+                )
                 self.assertEqual(response.status_code, 403)
                 self.assertNotIn("CANARY", response.content.decode())
 
@@ -1132,7 +1152,7 @@ class EndpointTests(DatabaseTestCase):
                 self.assertNotIn("CANARY", response.content.decode())
             self.assertEqual(
                 self.client.generic(
-                    "GET", self.url, b"{}", content_type="application/json"
+                    "GET", self.url, "{}", content_type="application/json"
                 ).status_code,
                 400,
             )

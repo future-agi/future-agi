@@ -16245,6 +16245,104 @@ export interface SkillsConsumptionChunkResponseApi {
   result: SkillsContextConsumptionChunkApi;
 }
 
+export type SkillsContextContextSummaryApiKind =
+  (typeof SkillsContextContextSummaryApiKind)[keyof typeof SkillsContextContextSummaryApiKind];
+
+export const SkillsContextContextSummaryApiKind = {
+  agent_context: "agent_context",
+} as const;
+
+export interface SkillsContextContextLabelSummaryApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minimum 1 */
+  version: number;
+  version_id: string;
+}
+
+export type SkillsContextContextSummaryApiUpdatedBy = {
+  id: string;
+  name: string;
+} | null;
+
+export interface SkillsContextContextSummaryApi {
+  id: string;
+  kind: SkillsContextContextSummaryApiKind;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  tags: string[];
+  /** @minimum 0 */
+  metadata_revision: number;
+  /** @minimum 1 */
+  latest_version: number | null;
+  labels: SkillsContextContextLabelSummaryApi[];
+  /** @minimum 0 */
+  release_revision: number;
+  /** @minimum 0 */
+  security_revision: number;
+  protected_label_names: string[];
+  has_draft: boolean;
+  updated_at: string;
+  updated_by: SkillsContextContextSummaryApiUpdatedBy;
+}
+
+export interface SkillsContextContextPageApi {
+  /** @minimum 0 */
+  count: number;
+  /** @minimum 1 */
+  page: number;
+  /** @minimum 1 */
+  page_size: number;
+  /** @minimum 0 */
+  total_pages: number;
+  results: SkillsContextContextSummaryApi[];
+}
+
+export interface SkillsContextPageResponseApi {
+  status: boolean;
+  result: SkillsContextContextPageApi;
+}
+
+export interface SkillsContextCreateApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-z0-9][a-z0-9-]{0,63}$
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 1024
+   */
+  description: string;
+  /** @maxItems 20 */
+  tags: string[];
+  /**
+   * @minItems 1
+   * @maxItems 200
+   */
+  files: SkillsHubFileInputApi[] | null;
+}
+
+export interface SkillsContextReceiptApi {
+  /** @minimum 1 */
+  revision: number;
+  context_id: string;
+  draft_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest?: string;
+  published?: boolean;
+}
+
+export interface SkillsReceiptResponseApi {
+  status: boolean;
+  result: SkillsContextReceiptApi;
+}
+
 export type SkillsContextBindingInputApiKind =
   (typeof SkillsContextBindingInputApiKind)[keyof typeof SkillsContextBindingInputApiKind];
 
@@ -16519,6 +16617,430 @@ export interface SkillsSessionOutResponseApi {
   result: SkillsContextSessionOutApi;
 }
 
+export type SkillsContextCampaignApiProvenance =
+  (typeof SkillsContextCampaignApiProvenance)[keyof typeof SkillsContextCampaignApiProvenance];
+
+export const SkillsContextCampaignApiProvenance = {
+  client_reported: "client_reported",
+} as const;
+
+export interface SkillsContextCampaignApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minimum 1 */
+  revision: number;
+  /** @minLength 1 */
+  status: string;
+  /** @minimum 0 */
+  target_count: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  manifest_digest: string | null;
+  parent_campaign_id: string | null;
+  authorized_at: string | null;
+  reason: string;
+  created_at: string;
+  provenance: SkillsContextCampaignApiProvenance;
+}
+
+export interface SkillsContextCampaignPageApi {
+  /** @minimum 0 */
+  count: number;
+  /** @minimum 1 */
+  page: number;
+  /** @minimum 1 */
+  page_size: number;
+  /** @minimum 0 */
+  total_pages: number;
+  results: SkillsContextCampaignApi[];
+}
+
+export interface SkillsCampaignPageResponseApi {
+  status: boolean;
+  result: SkillsContextCampaignPageApi;
+}
+
+export interface SkillsContextCampaignTargetInputApi {
+  binding_id: string;
+  /** @minimum 1 */
+  version: number;
+}
+
+export interface SkillsContextCampaignCreateApi {
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  name: string;
+  targets: SkillsContextCampaignTargetInputApi[];
+  parent_campaign_id: string | null;
+}
+
+export interface SkillsCampaignResponseApi {
+  status: boolean;
+  result: SkillsContextCampaignApi;
+}
+
+export type SkillsContextCampaignDetailApiProvenance =
+  (typeof SkillsContextCampaignDetailApiProvenance)[keyof typeof SkillsContextCampaignDetailApiProvenance];
+
+export const SkillsContextCampaignDetailApiProvenance = {
+  client_reported: "client_reported",
+} as const;
+
+export interface SkillsContextCampaignDetailApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minimum 1 */
+  revision: number;
+  /** @minLength 1 */
+  status: string;
+  /** @minimum 0 */
+  target_count: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  manifest_digest: string | null;
+  parent_campaign_id: string | null;
+  authorized_at: string | null;
+  reason: string;
+  created_at: string;
+  provenance: SkillsContextCampaignDetailApiProvenance;
+  enabled: boolean;
+  can_authorize: boolean;
+}
+
+export interface SkillsCampaignDetailResponseApi {
+  status: boolean;
+  result: SkillsContextCampaignDetailApi;
+}
+
+export type SkillsContextCampaignDecisionApiDecision =
+  (typeof SkillsContextCampaignDecisionApiDecision)[keyof typeof SkillsContextCampaignDecisionApiDecision];
+
+export const SkillsContextCampaignDecisionApiDecision = {
+  include: "include",
+  exclude: "exclude",
+} as const;
+
+export interface SkillsContextCampaignDecisionApi {
+  binding_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  plan_digest: string | null;
+  decision: SkillsContextCampaignDecisionApiDecision;
+  /** @maxLength 500 */
+  reason: string;
+}
+
+export interface SkillsContextCampaignAuthorizationApi {
+  /** @minimum 1 */
+  revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_manifest_digest: string;
+  decisions: SkillsContextCampaignDecisionApi[];
+  acknowledge_repository_writes: boolean;
+}
+
+export interface SkillsContextCampaignStatusApi {
+  /** @minimum 1 */
+  revision: number;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  reason: string;
+}
+
+export interface SkillsContextRevisionApi {
+  /** @minimum 1 */
+  revision: number;
+}
+
+export type SkillsContextCampaignChangeApiAction =
+  (typeof SkillsContextCampaignChangeApiAction)[keyof typeof SkillsContextCampaignChangeApiAction];
+
+export const SkillsContextCampaignChangeApiAction = {
+  add: "add",
+  remove: "remove",
+  replace: "replace",
+} as const;
+
+export interface SkillsContextCampaignChangeApi {
+  /** @minLength 1 */
+  path: string;
+  action: SkillsContextCampaignChangeApiAction;
+  /** @minLength 1 */
+  before_sha256: string | null;
+  /** @minLength 1 */
+  after_sha256: string | null;
+  /** @minLength 1 */
+  ownership: string;
+  diff_preview: string;
+}
+
+export interface SkillsContextRollbackTargetApi {
+  binding_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  previous_lock_digest: string | null;
+  /** @minLength 1 */
+  base_commit: string | null;
+  /** @minLength 1 */
+  state: string;
+  blockers: string[];
+  reverse_changes: SkillsContextCampaignChangeApi[];
+}
+
+export interface SkillsContextRollbackApi {
+  /** @minimum 1 */
+  revision: number;
+  parent_campaign_id: string;
+  executable: boolean;
+  targets: SkillsContextRollbackTargetApi[];
+}
+
+export interface SkillsRollbackResponseApi {
+  status: boolean;
+  result: SkillsContextRollbackApi;
+}
+
+export type SkillsContextCampaignPlanApi = {
+  /** @minimum 1 */
+  campaign_revision: number;
+  /** @minimum 1 */
+  binding_revision: number;
+  /** @minLength 1 */
+  repository_id: string;
+  /** @minLength 1 */
+  base_commit: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  previous_lock_digest: string | null;
+  desired_version_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  materialization_digest: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  plan_digest: string;
+  local_review_required: boolean;
+  blockers: string[];
+  changes: SkillsContextCampaignChangeApi[];
+} | null;
+
+export type SkillsContextAttemptReceiptApi = {
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  repository_commit: string | null;
+  /** @minimum 1 */
+  pull_request_number: number | null;
+  reason: string;
+} | null;
+
+export type SkillsContextAttemptApi = {
+  attempt_id: string;
+  /** @minimum 1 */
+  claim_generation: number;
+  expires_at: string;
+  /** @minLength 1 */
+  mode: string;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  branch: string;
+  /** @minLength 1 */
+  marker: string;
+  receipt: SkillsContextAttemptReceiptApi | null;
+} | null;
+
+export type SkillsContextCampaignTargetApiProvenance =
+  (typeof SkillsContextCampaignTargetApiProvenance)[keyof typeof SkillsContextCampaignTargetApiProvenance];
+
+export const SkillsContextCampaignTargetApiProvenance = {
+  client_reported: "client_reported",
+} as const;
+
+export interface SkillsContextCampaignTargetApi {
+  binding_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minimum 1 */
+  binding_revision: number;
+  selector: SkillsContextSelectorApi;
+  /** @minimum 1 */
+  desired_version: number;
+  desired_version_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  desired_digest: string;
+  repository: SkillsContextRepositoryIdentityApi | null;
+  plan: SkillsContextCampaignPlanApi | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  plan_digest: string | null;
+  /** @minLength 1 */
+  decision: string;
+  reason: string;
+  attempt: SkillsContextAttemptApi | null;
+  /** @minLength 1 */
+  pr_state: string;
+  /** @minLength 1 */
+  merge_state: string;
+  provenance: SkillsContextCampaignTargetApiProvenance;
+}
+
+export interface SkillsContextCampaignTargetsApi {
+  /** @minimum 0 */
+  count: number;
+  /** @minimum 1 */
+  page: number;
+  /** @minimum 1 */
+  page_size: number;
+  /** @minimum 0 */
+  total_pages: number;
+  results: SkillsContextCampaignTargetApi[];
+}
+
+export interface SkillsCampaignTargetsResponseApi {
+  status: boolean;
+  result: SkillsContextCampaignTargetsApi;
+}
+
+export interface SkillsContextAttemptInputApi {
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  repository_commit: string | null;
+  /** @minimum 1 */
+  pull_request_number: number | null;
+  reason: string;
+  attempt_id: string;
+  /** @minimum 1 */
+  claim_generation: number;
+}
+
+export interface SkillsAttemptResponseApi {
+  status: boolean;
+  result: SkillsContextAttemptApi | null;
+}
+
+export interface SkillsContextClaimInputApi {
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  plan_digest: string;
+}
+
+export interface SkillsContextClaimApi {
+  attempt_id: string;
+  /** @minimum 1 */
+  claim_generation: number;
+  expires_at: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  approved_plan_digest: string;
+  /** @minLength 1 */
+  mode: string;
+  /** @minLength 1 */
+  branch: string;
+  /** @minLength 1 */
+  marker: string;
+  replay: boolean;
+  /** @minLength 1 */
+  campaign_status: string;
+}
+
+export interface SkillsClaimResponseApi {
+  status: boolean;
+  result: SkillsContextClaimApi;
+}
+
+export type SkillsContextObservationsApiCoverage =
+  (typeof SkillsContextObservationsApiCoverage)[keyof typeof SkillsContextObservationsApiCoverage];
+
+export const SkillsContextObservationsApiCoverage = {
+  declared_binding: "declared_binding",
+} as const;
+
+export type SkillsContextObservationApi = {
+  id: string;
+  version_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+  observed_at: string;
+  /** @minLength 1 */
+  origin: string;
+  stale: boolean;
+} | null;
+
+export interface SkillsContextObservationsApi {
+  binding_id: string;
+  coverage: SkillsContextObservationsApiCoverage;
+  installed: SkillsContextObservationApi | null;
+  discovered: SkillsContextObservationApi | null;
+  instructions_delivered: SkillsContextObservationApi | null;
+}
+
+export interface SkillsObservationsResponseApi {
+  status: boolean;
+  result: SkillsContextObservationsApi;
+}
+
+export interface SkillsContextPlanRecordedApi {
+  /** @minimum 1 */
+  revision: number;
+  target: SkillsContextCampaignTargetApi;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  plan_digest: string;
+}
+
+export interface SkillsPlanRecordedResponseApi {
+  status: boolean;
+  result: SkillsContextPlanRecordedApi;
+}
+
+export interface SkillsContextCapabilitiesApi {
+  campaigns_enabled: boolean;
+}
+
+export interface SkillsCapabilitiesResponseApi {
+  status: boolean;
+  result: SkillsContextCapabilitiesApi;
+}
+
 export type SkillsContextCredentialMetadataApiPurpose =
   (typeof SkillsContextCredentialMetadataApiPurpose)[keyof typeof SkillsContextCredentialMetadataApiPurpose];
 
@@ -16599,6 +17121,82 @@ export interface SkillsContextCredentialIssuedApi {
 export interface SkillsCredentialIssuedResponseApi {
   status: boolean;
   result: SkillsContextCredentialIssuedApi;
+}
+
+export type SkillsContextContextReleaseLabelApiUpdatedBy = {
+  id: string;
+  name: string;
+} | null;
+
+export interface SkillsContextContextReleaseLabelApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minimum 1 */
+  version: number;
+  version_id: string;
+  updated_at: string;
+  updated_by: SkillsContextContextReleaseLabelApiUpdatedBy;
+  is_protected: boolean;
+  can_move: boolean;
+  can_remove: boolean;
+  /** @minimum 0 */
+  release_revision: number;
+}
+
+export interface SkillsContextContextReleasePermissionsApi {
+  can_publish: boolean;
+  can_promote: boolean;
+  can_manage_protection: boolean;
+  can_quarantine: boolean;
+  can_issue_credentials: boolean;
+}
+
+export interface SkillsContextContextReleaseStateApi {
+  /** @minimum 1 */
+  latest_version: number | null;
+  /** @minimum 0 */
+  release_revision: number;
+  /** @minimum 0 */
+  security_revision: number;
+  protected_label_names: string[];
+  labels: SkillsContextContextReleaseLabelApi[];
+  permissions: SkillsContextContextReleasePermissionsApi;
+}
+
+export type SkillsContextOwnDraftApi = {
+  /** @minimum 1 */
+  revision: number;
+  /** @minimum 1 */
+  base_version: number | null;
+} | null;
+
+export type SkillsContextDetailApiLatest = {
+  id: string;
+  number: number;
+  /** @minLength 1 */
+  digest: string;
+  note: string;
+  created_at: string;
+  created_by: {
+    id: string;
+    name: string;
+  } | null;
+  file_count: number;
+  total_bytes: number;
+  readonly labels?: readonly string[];
+  source: { [key: string]: unknown };
+} | null;
+
+export interface SkillsContextDetailApi {
+  release_state: SkillsContextContextReleaseStateApi;
+  latest: SkillsContextDetailApiLatest;
+  own_draft: SkillsContextOwnDraftApi | null;
+  context: SkillsContextContextSummaryApi;
+}
+
+export interface SkillsDetailResponseApi {
+  status: boolean;
+  result: SkillsContextDetailApi;
 }
 
 export interface SkillsContextBindingPageApi {
@@ -16683,58 +17281,31 @@ export interface SkillsConsumerPageResponseApi {
   result: SkillsContextConsumerPageApi;
 }
 
-export type SkillsContextContextReleaseLabelApiUpdatedBy = {
-  id: string;
-  name: string;
-} | null;
+export interface SkillsContextLinkInputApi {
+  skill_id: string;
+  selector: SkillsContextSelectorApi;
+}
 
-export interface SkillsContextContextReleaseLabelApi {
-  /** @minLength 1 */
-  name: string;
+export interface SkillsContextDependencyApplyApi {
   /** @minimum 1 */
-  version: number;
-  version_id: string;
-  updated_at: string;
-  updated_by: SkillsContextContextReleaseLabelApiUpdatedBy;
-  is_protected: boolean;
-  can_move: boolean;
-  can_remove: boolean;
-  /** @minimum 0 */
-  release_revision: number;
+  revision: number;
+  links: SkillsContextLinkInputApi[];
+  /** @maxItems 20 */
+  refresh_skill_ids: string[];
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_fingerprint: string;
 }
 
-export interface SkillsContextContextReleasePermissionsApi {
-  can_publish: boolean;
-  can_promote: boolean;
-  can_manage_protection: boolean;
-  can_quarantine: boolean;
-  can_issue_credentials: boolean;
-}
-
-export interface SkillsContextContextReleaseStateApi {
+export interface SkillsContextDependencyPreviewApi {
   /** @minimum 1 */
-  latest_version: number | null;
-  /** @minimum 0 */
-  release_revision: number;
-  /** @minimum 0 */
-  security_revision: number;
-  protected_label_names: string[];
-  labels: SkillsContextContextReleaseLabelApi[];
-  permissions: SkillsContextContextReleasePermissionsApi;
+  revision: number;
+  links: SkillsContextLinkInputApi[];
+  /** @maxItems 20 */
+  refresh_skill_ids: string[];
 }
-
-export interface SkillsContextReleaseStateResponseApi {
-  status: boolean;
-  result: SkillsContextContextReleaseStateApi;
-}
-
-export type SkillsContextSnapshotDescriptorApiKind =
-  (typeof SkillsContextSnapshotDescriptorApiKind)[keyof typeof SkillsContextSnapshotDescriptorApiKind];
-
-export const SkillsContextSnapshotDescriptorApiKind = {
-  skill: "skill",
-  agent_context: "agent_context",
-} as const;
 
 export interface SkillsContextLockedLinkApi {
   /**
@@ -16753,6 +17324,534 @@ export interface SkillsContextLockedLinkApi {
    */
   digest: string;
 }
+
+export interface SkillsContextResolvedLockApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  schema: number;
+  links: SkillsContextLockedLinkApi[];
+}
+
+export interface SkillsContextDependencyChangeApi {
+  skill_id: string;
+  /** @minLength 1 */
+  mount: string;
+  /** @minLength 1 */
+  change: string;
+  before: SkillsContextLockedLinkApi;
+  after: SkillsContextLockedLinkApi;
+  /** @minimum 1 */
+  upstream_version: number | null;
+}
+
+export interface SkillsContextDependencyPlanApi {
+  /** @minimum 1 */
+  revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  fingerprint: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  candidate_digest: string;
+  resolved_lock: SkillsContextResolvedLockApi;
+  checks: SkillsHubChecksResultApi;
+  changes: SkillsContextDependencyChangeApi[];
+}
+
+export interface SkillsDependencyPlanResponseApi {
+  status: boolean;
+  result: SkillsContextDependencyPlanApi;
+}
+
+export interface SkillsContextContextSpecApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  schema: number;
+  /**
+   * @minLength 1
+   * @maxLength 1024
+   */
+  description: string;
+  links: SkillsContextLinkInputApi[];
+}
+
+export interface SkillsContextDraftApi {
+  /** @minimum 1 */
+  base_version: number | null;
+  /** @minimum 1 */
+  expected_head_version: number | null;
+  /** @minimum 1 */
+  revision: number;
+  files: SkillsHubFileInputApi[];
+  note: string;
+  context_spec: SkillsContextContextSpecApi;
+  resolved_lock: SkillsContextResolvedLockApi;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string | null;
+  checks: SkillsHubChecksResultApi;
+  updated_at: string;
+  id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  recovery_digest: string;
+  head_acknowledged: boolean;
+  review_fingerprint: string;
+}
+
+export interface SkillsDraftResponseApi {
+  status: boolean;
+  result: SkillsContextDraftApi;
+}
+
+export interface SkillsContextDraftSaveApi {
+  /** @minimum 1 */
+  revision: number;
+  /** @minimum 1 */
+  base_version: number | null;
+  /**
+   * @minItems 1
+   * @maxItems 200
+   */
+  files: SkillsHubFileInputApi[];
+  /**
+   * @minLength 1
+   * @maxLength 1024
+   */
+  description: string;
+  /** @maxLength 2000 */
+  note: string;
+}
+
+export interface SkillsContextHeadAcknowledgmentApi {
+  /** @minimum 1 */
+  revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_digest: string;
+  /** @minimum 1 */
+  expected_head_version: number | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  review_fingerprint: string;
+}
+
+export interface SkillsHubDraftChunkApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minLength 1 */
+  sha256: string;
+  size_bytes: number;
+  total_chars: number;
+  offset: number;
+  next_offset: number | null;
+  eof: boolean;
+  text: string;
+  context_id: string;
+  /** @minimum 1 */
+  revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+}
+
+export interface SkillsDraftChunkResponseApi {
+  status: boolean;
+  result: SkillsHubDraftChunkApi;
+}
+
+export type SkillsContextHeadReviewApiKind =
+  (typeof SkillsContextHeadReviewApiKind)[keyof typeof SkillsContextHeadReviewApiKind];
+
+export const SkillsContextHeadReviewApiKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export interface SkillsContextHeadReviewApi {
+  subject_id: string;
+  kind: SkillsContextHeadReviewApiKind;
+  /** @minimum 1 */
+  draft_revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  candidate_digest: string;
+  /** @minimum 1 */
+  base_version: number | null;
+  /** @minimum 1 */
+  expected_head_version: number | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  head_digest: string | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  review_fingerprint: string;
+}
+
+export interface SkillsHeadReviewResponseApi {
+  status: boolean;
+  result: SkillsContextHeadReviewApi;
+}
+
+export interface SkillsContextContextPublishApi {
+  /** @minimum 1 */
+  revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_digest: string;
+  /** @minimum 1 */
+  expected_head_version: number | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  review_fingerprint: string;
+  /** @minimum 1 */
+  base_version: number | null;
+  /** @maxLength 2000 */
+  note: string;
+  acknowledge_warnings: boolean;
+}
+
+export interface SkillsHubEvidenceCurrentnessApi {
+  content: boolean;
+  baseline: boolean | null;
+  suite: boolean | null;
+  competitors: boolean | null;
+  payload_available: boolean;
+}
+
+export type SkillsHubPublishResultApiEvidence = {
+  run_id: string;
+  currentness: SkillsHubEvidenceCurrentnessApi;
+  validity: "reviewed" | "diagnostic";
+} | null;
+
+export type SkillsHubPublishResultApiVersionCreatedBy = {
+  id: string;
+  name: string;
+} | null;
+
+export type SkillsHubPublishResultApiVersionSource = { [key: string]: unknown };
+
+export type SkillsHubPublishResultApiVersion = {
+  id: string;
+  number: number;
+  /** @minLength 1 */
+  digest: string;
+  note: string;
+  created_at: string;
+  created_by: SkillsHubPublishResultApiVersionCreatedBy;
+  file_count: number;
+  total_bytes: number;
+  readonly labels?: readonly string[];
+  source: SkillsHubPublishResultApiVersionSource;
+};
+
+export interface SkillsHubPublishResultApi {
+  release_revision: number;
+  evidence: SkillsHubPublishResultApiEvidence;
+  version: SkillsHubPublishResultApiVersion;
+  unchanged: boolean;
+  checks: SkillsHubChecksResultApi;
+}
+
+export interface SkillsPublishResultResponseApi {
+  status: boolean;
+  result: SkillsHubPublishResultApi;
+}
+
+export interface SkillsContextDraftStartApi {
+  /**
+   * @minimum 0
+   * @maximum 0
+   */
+  revision: number;
+  /** @minimum 1 */
+  from_version: number | null;
+}
+
+export interface SkillsContextReleaseStateResponseApi {
+  status: boolean;
+  result: SkillsContextContextReleaseStateApi;
+}
+
+export type SkillsContextReleaseReviewInputApiOperation =
+  (typeof SkillsContextReleaseReviewInputApiOperation)[keyof typeof SkillsContextReleaseReviewInputApiOperation];
+
+export const SkillsContextReleaseReviewInputApiOperation = {
+  publish: "publish",
+  move: "move",
+  restore: "restore",
+  remove: "remove",
+  archive: "archive",
+} as const;
+
+export interface SkillsContextReleaseReviewInputApi {
+  operation: SkillsContextReleaseReviewInputApiOperation;
+  /** @minimum 1 */
+  target_version?: number | null;
+  evidence_run_id?: string | null;
+  /** @minimum 1 */
+  revision?: number | null;
+  /** @minimum 1 */
+  page?: number;
+  /**
+   * @minLength 1
+   * @pattern ^[a-z0-9][a-z0-9-]{0,39}$
+   */
+  label?: string | null;
+}
+
+export type SkillsContextReviewCandidateApiKind =
+  (typeof SkillsContextReviewCandidateApiKind)[keyof typeof SkillsContextReviewCandidateApiKind];
+
+export const SkillsContextReviewCandidateApiKind = {
+  draft: "draft",
+  version: "version",
+} as const;
+
+export interface SkillsContextReviewCandidateApi {
+  kind: SkillsContextReviewCandidateApiKind;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+  /** @minimum 1 */
+  revision?: number;
+  /** @minimum 1 */
+  version?: number;
+}
+
+export type SkillsContextReviewFileApiStatus =
+  (typeof SkillsContextReviewFileApiStatus)[keyof typeof SkillsContextReviewFileApiStatus];
+
+export const SkillsContextReviewFileApiStatus = {
+  added: "added",
+  removed: "removed",
+  modified: "modified",
+  unchanged: "unchanged",
+} as const;
+
+export interface SkillsContextReviewFileApi {
+  /** @minLength 1 */
+  path: string;
+  status: SkillsContextReviewFileApiStatus;
+  /** @minLength 1 */
+  from_sha256: string | null;
+  /** @minLength 1 */
+  to_sha256: string | null;
+  /** @minLength 1 */
+  from_text_url: string | null;
+  /** @minLength 1 */
+  to_text_url: string | null;
+}
+
+export interface SkillsHubCompareSummaryApi {
+  added: number;
+  removed: number;
+  modified: number;
+  unchanged: number;
+}
+
+export interface SkillsContextReviewDiffApi {
+  /** @minimum 0 */
+  count: number;
+  /** @minimum 1 */
+  page: number;
+  /** @minimum 1 */
+  page_size: number;
+  /** @minimum 0 */
+  total_pages: number;
+  to: SkillsContextReviewCandidateApi;
+  context_id: string;
+  files: SkillsContextReviewFileApi[];
+  summary: SkillsHubCompareSummaryApi;
+  /** @minimum 1 */
+  from: number | null;
+}
+
+export type SkillsContextReleaseImpactApiScope =
+  (typeof SkillsContextReleaseImpactApiScope)[keyof typeof SkillsContextReleaseImpactApiScope];
+
+export const SkillsContextReleaseImpactApiScope = {
+  known_references: "known_references",
+} as const;
+
+export interface SkillsContextImpactBindingApi {
+  id: string;
+  /** @minimum 1 */
+  revision: number;
+  /** @minLength 1 */
+  mode: string;
+  selector: SkillsContextSelectorApi;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  configuration_digest: string;
+}
+
+export interface SkillsContextReleaseImpactApi {
+  as_of: string;
+  scope: SkillsContextReleaseImpactApiScope;
+  bindings: SkillsContextImpactBindingApi[];
+  /** @minimum 0 */
+  following: number;
+  /** @minimum 0 */
+  pinned: number;
+  /** @minimum 0 */
+  unobserved: number;
+  more_available: boolean;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  fingerprint: string;
+}
+
+export type SkillsContextReleaseReviewApiEvidence = {
+  run_id: string;
+  currentness: SkillsHubEvidenceCurrentnessApi;
+  validity: "reviewed" | "diagnostic";
+} | null;
+
+export interface SkillsContextReleaseReviewApi {
+  candidate: SkillsContextReviewCandidateApi;
+  /** @minimum 1 */
+  base_version: number | null;
+  /** @minimum 1 */
+  latest_version: number | null;
+  release_state: SkillsContextContextReleaseStateApi;
+  changes: SkillsContextReviewDiffApi;
+  head_changes: SkillsContextReviewDiffApi;
+  dependency_changes: SkillsContextDependencyChangeApi[];
+  checks: SkillsHubChecksResultApi;
+  evidence: SkillsContextReleaseReviewApiEvidence;
+  impact: SkillsContextReleaseImpactApi;
+  head_review: SkillsContextHeadReviewApi;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  review_fingerprint: string;
+}
+
+export interface SkillsReleaseReviewResponseApi {
+  status: boolean;
+  result: SkillsContextReleaseReviewApi;
+}
+
+export type SkillsHubVersionPageApiResultsItemCreatedBy = {
+  id: string;
+  name: string;
+} | null;
+
+export type SkillsHubVersionPageApiResultsItemSource = {
+  [key: string]: unknown;
+};
+
+export type SkillsHubVersionPageApiResultsItem = {
+  id: string;
+  number: number;
+  /** @minLength 1 */
+  digest: string;
+  note: string;
+  created_at: string;
+  created_by: SkillsHubVersionPageApiResultsItemCreatedBy;
+  file_count: number;
+  total_bytes: number;
+  readonly labels?: readonly string[];
+  source: SkillsHubVersionPageApiResultsItemSource;
+};
+
+export interface SkillsHubVersionPageApi {
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  results: SkillsHubVersionPageApiResultsItem[];
+}
+
+export interface SkillsVersionPageResponseApi {
+  status: boolean;
+  result: SkillsHubVersionPageApi;
+}
+
+export interface SkillsHubVersionFileApi {
+  /** @minLength 1 */
+  path: string;
+  size_bytes: number;
+  /** @minLength 1 */
+  sha256: string;
+  token_estimate: number;
+}
+
+export type SkillsHubVersionDetailApiCreatedBy = {
+  id: string;
+  name: string;
+} | null;
+
+export type SkillsHubVersionDetailApiSource = { [key: string]: unknown };
+
+export type SkillsHubVersionDetailApiFrontmatter = { [key: string]: unknown };
+
+export interface SkillsHubVersionDetailApi {
+  id: string;
+  number: number;
+  /** @minLength 1 */
+  digest: string;
+  note: string;
+  created_at: string;
+  created_by: SkillsHubVersionDetailApiCreatedBy;
+  file_count: number;
+  total_bytes: number;
+  readonly labels?: readonly string[];
+  source: SkillsHubVersionDetailApiSource;
+  frontmatter: SkillsHubVersionDetailApiFrontmatter;
+  checks: SkillsHubChecksResultApi;
+  files: SkillsHubVersionFileApi[];
+}
+
+export interface SkillsVersionDetailResponseApi {
+  status: boolean;
+  result: SkillsHubVersionDetailApi;
+}
+
+export type SkillsContextSnapshotDescriptorApiKind =
+  (typeof SkillsContextSnapshotDescriptorApiKind)[keyof typeof SkillsContextSnapshotDescriptorApiKind];
+
+export const SkillsContextSnapshotDescriptorApiKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
 
 export interface SkillsContextSnapshotDescriptorApi {
   schema?: number;
@@ -17163,13 +18262,6 @@ export interface SkillsHubCompareFileApi {
   to_text?: string | null;
 }
 
-export interface SkillsHubCompareSummaryApi {
-  added: number;
-  removed: number;
-  modified: number;
-  unchanged: number;
-}
-
 export type SkillsHubCompareResultApi = {
   /** Positive version number or the literal draft. */
   from: number | "draft";
@@ -17287,6 +18379,13 @@ export const SkillsHubImportBundleApiStatus = {
   invalid: "invalid",
 } as const;
 
+export interface SkillsHubImportOmissionApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minLength 1 */
+  reason: string;
+}
+
 export interface SkillsHubImportBundleApi {
   /** @minLength 1 */
   key: string;
@@ -17296,6 +18395,7 @@ export interface SkillsHubImportBundleApi {
   file_count: number;
   total_bytes: number;
   status: SkillsHubImportBundleApiStatus;
+  omissions: SkillsHubImportOmissionApi[];
   skill_id?: string;
   latest_version?: number | null;
   checks: SkillsHubChecksResultApi;
@@ -17338,14 +18438,6 @@ export interface SkillsHubPushRequestApi {
   acknowledge_warnings?: boolean;
 }
 
-export interface SkillsHubEvidenceCurrentnessApi {
-  content: boolean;
-  baseline: boolean | null;
-  suite: boolean | null;
-  competitors: boolean | null;
-  payload_available: boolean;
-}
-
 export type SkillsHubPushResultApiEvidence = {
   run_id: string;
   currentness: SkillsHubEvidenceCurrentnessApi;
@@ -17384,6 +18476,532 @@ export interface SkillsHubPushResultApi {
 export interface SkillsPushResultResponseApi {
   status: boolean;
   result: SkillsHubPushResultApi;
+}
+
+export type SkillsContextReleasePacketApiSubjectKind =
+  (typeof SkillsContextReleasePacketApiSubjectKind)[keyof typeof SkillsContextReleasePacketApiSubjectKind];
+
+export const SkillsContextReleasePacketApiSubjectKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export interface SkillsContextPointerTransitionApi {
+  /** @minimum 1 */
+  expected_version: number | null;
+  /** @minimum 1 */
+  version: number;
+  /** @minimum 0 */
+  expected_release_revision: number;
+  /** @minimum 0 */
+  expected_security_revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_impact_fingerprint: string;
+  /**
+   * @minLength 1
+   * @pattern ^[a-z0-9][a-z0-9-]{0,39}$
+   */
+  label: string;
+}
+
+export type SkillsContextTargetConfigurationApi = {
+  binding_id: string | null;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  environment_id: string | null;
+  /** @minimum 0 */
+  revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  configuration_digest: string;
+} | null;
+
+export type SkillsContextEvidenceRefApiSubjectKind =
+  (typeof SkillsContextEvidenceRefApiSubjectKind)[keyof typeof SkillsContextEvidenceRefApiSubjectKind];
+
+export const SkillsContextEvidenceRefApiSubjectKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export type SkillsContextEvidenceRefApiStatus =
+  (typeof SkillsContextEvidenceRefApiStatus)[keyof typeof SkillsContextEvidenceRefApiStatus];
+
+export const SkillsContextEvidenceRefApiStatus = {
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+  timed_out: "timed_out",
+  interrupted: "interrupted",
+} as const;
+
+export type SkillsContextEvidenceRefApiVisibility =
+  (typeof SkillsContextEvidenceRefApiVisibility)[keyof typeof SkillsContextEvidenceRefApiVisibility];
+
+export const SkillsContextEvidenceRefApiVisibility = {
+  private: "private",
+  workspace: "workspace",
+} as const;
+
+export interface SkillsContextPackagePinApi {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  version: string;
+  /**
+   * @minLength 1
+   * @pattern ^[a-f0-9]{64}$
+   */
+  sha256: string;
+}
+
+export interface SkillsHubV11ModelConfigApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model_id: string;
+  temperature: number;
+  /**
+   * @minimum 1
+   * @maximum 8192
+   */
+  max_output_tokens: number;
+}
+
+export type SkillsContextNativeConfigurationApiSideEffectPolicy =
+  (typeof SkillsContextNativeConfigurationApiSideEffectPolicy)[keyof typeof SkillsContextNativeConfigurationApiSideEffectPolicy];
+
+export const SkillsContextNativeConfigurationApiSideEffectPolicy = {
+  read_only: "read_only",
+  fixture_only: "fixture_only",
+  idempotent_approved: "idempotent_approved",
+} as const;
+
+export type SkillsContextNativeConfigurationApiContextMount =
+  (typeof SkillsContextNativeConfigurationApiContextMount)[keyof typeof SkillsContextNativeConfigurationApiContextMount];
+
+export const SkillsContextNativeConfigurationApiContextMount = {
+  "/fi_context/": "/fi_context/",
+} as const;
+
+export type SkillsContextNativeConfigurationApiObservableBoundariesItem =
+  (typeof SkillsContextNativeConfigurationApiObservableBoundariesItem)[keyof typeof SkillsContextNativeConfigurationApiObservableBoundariesItem];
+
+export const SkillsContextNativeConfigurationApiObservableBoundariesItem = {
+  catalog: "catalog",
+  child_selection: "child_selection",
+  root_delivery: "root_delivery",
+  file_delivery: "file_delivery",
+  model_request: "model_request",
+  tool_result: "tool_result",
+  checkpoint: "checkpoint",
+} as const;
+
+export interface SkillsContextNativeConfigurationApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-f0-9]{40,64}$
+   */
+  code_commit: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  code_digest: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  entrypoint: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  image_digest: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  runtime_version: string;
+  packages: SkillsContextPackagePinApi[];
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  package_lock_digest: string;
+  model: SkillsHubV11ModelConfigApi;
+  connection_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  connection_revision: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  tools_digest: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  retrieval_fixture_digest: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  state_schema: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  checkpoint_digest: string;
+  side_effect_policy: SkillsContextNativeConfigurationApiSideEffectPolicy;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  reset_entrypoint: string;
+  context_mount: SkillsContextNativeConfigurationApiContextMount;
+  /**
+   * @minItems 1
+   * @maxItems 7
+   */
+  observable_boundaries: SkillsContextNativeConfigurationApiObservableBoundariesItem[];
+}
+
+export interface SkillsContextTextConfigurationApi {
+  model: SkillsHubV11ModelConfigApi;
+  judge: SkillsHubV11ModelConfigApi;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  harness_version: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  adapter_version: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  evaluator_version: string;
+}
+
+export interface SkillsContextEvidenceConfigurationApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  schema: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+  native?: SkillsContextNativeConfigurationApi;
+  text?: SkillsContextTextConfigurationApi;
+}
+
+export type SkillsContextEvidenceRefApiSource =
+  (typeof SkillsContextEvidenceRefApiSource)[keyof typeof SkillsContextEvidenceRefApiSource];
+
+export const SkillsContextEvidenceRefApiSource = {
+  skills_text: "skills_text",
+  simulation_native: "simulation_native",
+} as const;
+
+export interface SkillsContextEvidenceRefApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  schema: number;
+  source_id: string;
+  subject_kind: SkillsContextEvidenceRefApiSubjectKind;
+  subject_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  candidate_digest: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  execution_fingerprint: string;
+  status: SkillsContextEvidenceRefApiStatus;
+  visibility: SkillsContextEvidenceRefApiVisibility;
+  payload_expires_at: string;
+  configuration: SkillsContextEvidenceConfigurationApi;
+  /** @minimum 0 */
+  annotation_revision: number;
+  source: SkillsContextEvidenceRefApiSource;
+}
+
+export type SkillsContextExternalPipelineReferenceApi = {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  url: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  configuration_identity: string;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  decision: string;
+  trust: "operator_recorded_unimported";
+  recorded_by: string;
+} | null;
+
+export interface SkillsContextReleasePacketApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  schema: number;
+  subject_kind: SkillsContextReleasePacketApiSubjectKind;
+  subject_id: string;
+  candidate_version_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  candidate_digest: string;
+  transition: SkillsContextPointerTransitionApi;
+  target: SkillsContextTargetConfigurationApi | null;
+  evidence: SkillsContextEvidenceRefApi[];
+  external_pipeline: SkillsContextExternalPipelineReferenceApi | null;
+}
+
+export interface SkillsContextSubmitApi {
+  packet: SkillsContextReleasePacketApi;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_fingerprint: string;
+  /**
+   * @minItems 1
+   * @maxItems 20
+   */
+  recipient_ids: string[];
+  request_id?: string | null;
+  /** @minimum 0 */
+  revision?: number;
+}
+
+export interface SkillsContextRequestReceiptApi {
+  /** @minimum 1 */
+  revision: number;
+  id: string;
+  /** @minLength 1 */
+  status: string;
+}
+
+export interface SkillsRequestReceiptResponseApi {
+  status: boolean;
+  result: SkillsContextRequestReceiptApi;
+}
+
+export type SkillsContextPreviewApiKind =
+  (typeof SkillsContextPreviewApiKind)[keyof typeof SkillsContextPreviewApiKind];
+
+export const SkillsContextPreviewApiKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export type SkillsContextEvidenceSelectionApiSource =
+  (typeof SkillsContextEvidenceSelectionApiSource)[keyof typeof SkillsContextEvidenceSelectionApiSource];
+
+export const SkillsContextEvidenceSelectionApiSource = {
+  skills_text: "skills_text",
+  simulation_native: "simulation_native",
+} as const;
+
+export interface SkillsContextEvidenceSelectionApi {
+  source_id: string;
+  /** @minimum 0 */
+  annotation_revision: number;
+  source: SkillsContextEvidenceSelectionApiSource;
+}
+
+export interface SkillsContextPreviewApi {
+  resource_id: string;
+  kind: SkillsContextPreviewApiKind;
+  candidate_version_id: string;
+  target?: SkillsContextTargetConfigurationApi | null;
+  evidence?: SkillsContextEvidenceSelectionApi[];
+  external_pipeline?: SkillsContextExternalPipelineReferenceApi | null;
+  /**
+   * @minLength 1
+   * @pattern ^[a-z0-9][a-z0-9-]{0,39}$
+   */
+  label: string;
+}
+
+export interface SkillsContextPacketApi {
+  packet: SkillsContextReleasePacketApi;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  fingerprint: string;
+}
+
+export interface SkillsPacketResponseApi {
+  status: boolean;
+  result: SkillsContextPacketApi;
+}
+
+export interface SkillsContextRequestDetailApi {
+  /** @minimum 1 */
+  revision: number;
+  id: string;
+  /** @minLength 1 */
+  status: string;
+  packet: SkillsContextReleasePacketApi;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  fingerprint: string;
+  author_id: string;
+  subject_id: string;
+}
+
+export interface SkillsRequestDetailResponseApi {
+  status: boolean;
+  result: SkillsContextRequestDetailApi;
+}
+
+export type SkillsContextDecisionApiDecision =
+  (typeof SkillsContextDecisionApiDecision)[keyof typeof SkillsContextDecisionApiDecision];
+
+export const SkillsContextDecisionApiDecision = {
+  approve: "approve",
+  request_changes: "request_changes",
+} as const;
+
+export interface SkillsContextDecisionApi {
+  /** @minimum 1 */
+  revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_fingerprint: string;
+  decision: SkillsContextDecisionApiDecision;
+  /** @maxLength 2000 */
+  comment: string;
+}
+
+export type SkillsContextDecisionReceiptApiDecision =
+  (typeof SkillsContextDecisionReceiptApiDecision)[keyof typeof SkillsContextDecisionReceiptApiDecision];
+
+export const SkillsContextDecisionReceiptApiDecision = {
+  approve: "approve",
+  request_changes: "request_changes",
+} as const;
+
+export interface SkillsContextDecisionReceiptApi {
+  /** @minimum 1 */
+  revision: number;
+  id: string;
+  /** @minLength 1 */
+  status: string;
+  request_id: string;
+  decision: SkillsContextDecisionReceiptApiDecision;
+}
+
+export interface SkillsDecisionReceiptResponseApi {
+  status: boolean;
+  result: SkillsContextDecisionReceiptApi;
+}
+
+export interface SkillsContextExecuteApi {
+  /** @minimum 1 */
+  revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_fingerprint: string;
+}
+
+export type SkillsContextCurrentEvidenceApiCurrentness = {
+  [key: string]: boolean | null;
+};
+
+export interface SkillsContextCurrentEvidenceApi {
+  source_id: string;
+  /** @minimum 0 */
+  annotation_revision: number;
+  currentness: SkillsContextCurrentEvidenceApiCurrentness;
+  /** @minLength 1 */
+  source: string;
+}
+
+export interface SkillsContextCurrentnessApi {
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  packet_fingerprint: string;
+  /** @minimum 0 */
+  release_revision: number;
+  /** @minimum 0 */
+  security_revision: number;
+  target: SkillsContextTargetConfigurationApi | null;
+  evidence: SkillsContextCurrentEvidenceApi[];
+}
+
+export interface SkillsContextPostMoveApi {
+  /** @minimum 1 */
+  version: number;
+  /** @minimum 0 */
+  release_revision: number;
+  event_id: string | null;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface SkillsContextExecutionReceiptApi {
+  /** @minimum 1 */
+  revision: number;
+  request_id: string;
+  decision_id: string;
+  executed_by: string;
+  actor_api_key_id: string | null;
+  currentness_at_action: SkillsContextCurrentnessApi;
+  post_move_state: SkillsContextPostMoveApi;
+}
+
+export interface SkillsExecutionReceiptResponseApi {
+  status: boolean;
+  result: SkillsContextExecutionReceiptApi;
 }
 
 export interface SkillsHubRequestedApi {
@@ -17429,6 +19047,54 @@ export interface SkillsHubManifestApi {
 export interface SkillsManifestResponseApi {
   status: boolean;
   result: SkillsHubManifestApi;
+}
+
+export type SkillsContextInboxItemApiSubjectKind =
+  (typeof SkillsContextInboxItemApiSubjectKind)[keyof typeof SkillsContextInboxItemApiSubjectKind];
+
+export const SkillsContextInboxItemApiSubjectKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export interface SkillsContextInboxItemApi {
+  /** @minimum 1 */
+  revision: number;
+  id: string;
+  /** @minLength 1 */
+  status: string;
+  subject_id: string;
+  subject_kind: SkillsContextInboxItemApiSubjectKind;
+  /** @minLength 1 */
+  name: string;
+  author_id: string;
+  unread: boolean;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  fingerprint: string;
+  candidate_version_id: string;
+  updated_at: string;
+}
+
+export interface SkillsContextInboxApi {
+  /** @minimum 0 */
+  count: number;
+  /** @minimum 1 */
+  page: number;
+  /** @minimum 1 */
+  page_size: number;
+  /** @minimum 0 */
+  total_pages: number;
+  results: SkillsContextInboxItemApi[];
+  /** @minimum 0 */
+  unread_count: number;
+}
+
+export interface SkillsInboxResponseApi {
+  status: boolean;
+  result: SkillsContextInboxApi;
 }
 
 export type SkillsContextSpendSummaryApiCommercialBasis =
@@ -17739,20 +19405,6 @@ export interface SkillsHubV11CandidateRefApi {
    * @pattern ^sha256:[a-f0-9]{64}$
    */
   digest: string;
-}
-
-export interface SkillsHubV11ModelConfigApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  model_id: string;
-  temperature: number;
-  /**
-   * @minimum 1
-   * @maximum 8192
-   */
-  max_output_tokens: number;
 }
 
 export interface SkillsHubV11SecretFindingReviewApi {
@@ -18171,46 +19823,6 @@ export interface SkillsHubPublishOptionsApi {
   acknowledge_warnings?: boolean;
   force?: boolean;
   revision?: number;
-}
-
-export type SkillsHubPublishResultApiEvidence = {
-  run_id: string;
-  currentness: SkillsHubEvidenceCurrentnessApi;
-  validity: "reviewed" | "diagnostic";
-} | null;
-
-export type SkillsHubPublishResultApiVersionCreatedBy = {
-  id: string;
-  name: string;
-} | null;
-
-export type SkillsHubPublishResultApiVersionSource = { [key: string]: unknown };
-
-export type SkillsHubPublishResultApiVersion = {
-  id: string;
-  number: number;
-  /** @minLength 1 */
-  digest: string;
-  note: string;
-  created_at: string;
-  created_by: SkillsHubPublishResultApiVersionCreatedBy;
-  file_count: number;
-  total_bytes: number;
-  readonly labels?: readonly string[];
-  source: SkillsHubPublishResultApiVersionSource;
-};
-
-export interface SkillsHubPublishResultApi {
-  release_revision: number;
-  evidence: SkillsHubPublishResultApiEvidence;
-  version: SkillsHubPublishResultApiVersion;
-  unchanged: boolean;
-  checks: SkillsHubChecksResultApi;
-}
-
-export interface SkillsPublishResultResponseApi {
-  status: boolean;
-  result: SkillsHubPublishResultApi;
 }
 
 export interface SkillsHubV11ProtectionOutApi {
@@ -19493,42 +21105,6 @@ export interface SkillsUsageResponseApi {
   result: SkillsHubUsageApi;
 }
 
-export type SkillsHubVersionPageApiResultsItemCreatedBy = {
-  id: string;
-  name: string;
-} | null;
-
-export type SkillsHubVersionPageApiResultsItemSource = {
-  [key: string]: unknown;
-};
-
-export type SkillsHubVersionPageApiResultsItem = {
-  id: string;
-  number: number;
-  /** @minLength 1 */
-  digest: string;
-  note: string;
-  created_at: string;
-  created_by: SkillsHubVersionPageApiResultsItemCreatedBy;
-  file_count: number;
-  total_bytes: number;
-  readonly labels?: readonly string[];
-  source: SkillsHubVersionPageApiResultsItemSource;
-};
-
-export interface SkillsHubVersionPageApi {
-  count: number;
-  page: number;
-  page_size: number;
-  total_pages: number;
-  results: SkillsHubVersionPageApiResultsItem[];
-}
-
-export interface SkillsVersionPageResponseApi {
-  status: boolean;
-  result: SkillsHubVersionPageApi;
-}
-
 export interface SkillsHubPublishVersionRequestApi {
   /**
    * @minLength 1
@@ -19547,46 +21123,6 @@ export interface SkillsHubPublishVersionRequestApi {
   files: SkillsHubFileInputApi[];
   /** @minimum 1 */
   base_version?: number | null;
-}
-
-export interface SkillsHubVersionFileApi {
-  /** @minLength 1 */
-  path: string;
-  size_bytes: number;
-  /** @minLength 1 */
-  sha256: string;
-  token_estimate: number;
-}
-
-export type SkillsHubVersionDetailApiCreatedBy = {
-  id: string;
-  name: string;
-} | null;
-
-export type SkillsHubVersionDetailApiSource = { [key: string]: unknown };
-
-export type SkillsHubVersionDetailApiFrontmatter = { [key: string]: unknown };
-
-export interface SkillsHubVersionDetailApi {
-  id: string;
-  number: number;
-  /** @minLength 1 */
-  digest: string;
-  note: string;
-  created_at: string;
-  created_by: SkillsHubVersionDetailApiCreatedBy;
-  file_count: number;
-  total_bytes: number;
-  readonly labels?: readonly string[];
-  source: SkillsHubVersionDetailApiSource;
-  frontmatter: SkillsHubVersionDetailApiFrontmatter;
-  checks: SkillsHubChecksResultApi;
-  files: SkillsHubVersionFileApi[];
-}
-
-export interface SkillsVersionDetailResponseApi {
-  status: boolean;
-  result: SkillsHubVersionDetailApi;
 }
 
 export interface SkillsHubFileChunkApi {
@@ -42818,6 +44354,64 @@ export type ModelHubSkillsConsumptionVersionsManifestListParams = {
   file_limit?: number;
 };
 
+export type ModelHubSkillsContextsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+  search?: string;
+  tag?: string;
+  label?: string;
+  sort?: ModelHubSkillsContextsListSort;
+  order?: ModelHubSkillsContextsListOrder;
+};
+
+export type ModelHubSkillsContextsListSort =
+  (typeof ModelHubSkillsContextsListSort)[keyof typeof ModelHubSkillsContextsListSort];
+
+export const ModelHubSkillsContextsListSort = {
+  updated: "updated",
+  name: "name",
+  created: "created",
+} as const;
+
+export type ModelHubSkillsContextsListOrder =
+  (typeof ModelHubSkillsContextsListOrder)[keyof typeof ModelHubSkillsContextsListOrder];
+
+export const ModelHubSkillsContextsListOrder = {
+  asc: "asc",
+  desc: "desc",
+} as const;
+
+export type ModelHubSkillsContextsCampaignsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+};
+
+export type ModelHubSkillsContextsCampaignsTargetsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+};
+
 export type ModelHubSkillsContextsCredentialsListParams = {
   /**
    * @minimum 1
@@ -42881,6 +44475,39 @@ export const ModelHubSkillsContextsConsumersListWindowDays = {
   NUMBER_30: 30,
   NUMBER_90: 90,
 } as const;
+
+export type ModelHubSkillsContextsDraftFilesListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  path: string;
+  /**
+   * @minimum 0
+   */
+  offset?: number;
+  /**
+   * @minimum 4
+   * @maximum 49152
+   */
+  max_bytes?: number;
+  /**
+   * @minimum 1
+   */
+  revision: number;
+};
+
+export type ModelHubSkillsContextsVersionsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+};
 
 export type ModelHubSkillsContextsVersionsInspectionListParams = {
   /**
@@ -42981,6 +44608,8 @@ export type ModelHubSkillsImportCreateBody = {
   acknowledge_warnings?: boolean;
   /** JSON object mapping preview bundle keys to reviewed release revisions. */
   expected_release_revisions?: string;
+  /** JSON object mapping bundle keys to the exact reviewed omitted path/reason pairs. Required to import a supported subset. */
+  acknowledged_omissions?: string;
 };
 
 export type ModelHubSkillsImportPreviewCreateBody = {
@@ -43015,6 +44644,29 @@ export type ModelHubSkillsResolveListParams = {
    */
   file_limit?: number;
 };
+
+export type ModelHubSkillsReviewInboxListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+  status?: ModelHubSkillsReviewInboxListStatus;
+};
+
+export type ModelHubSkillsReviewInboxListStatus =
+  (typeof ModelHubSkillsReviewInboxListStatus)[keyof typeof ModelHubSkillsReviewInboxListStatus];
+
+export const ModelHubSkillsReviewInboxListStatus = {
+  pending: "pending",
+  approved: "approved",
+  changes_requested: "changes_requested",
+  released: "released",
+} as const;
 
 export type ModelHubSkillsVersionsInspectionListParams = {
   /**

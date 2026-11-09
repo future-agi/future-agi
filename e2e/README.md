@@ -528,7 +528,20 @@ bin/e2e test harness/
 
 Local runs use 3 workers (4 or more concurrent browsers overwhelm the stack's single-Granian-worker
 backend and the SPA never finishes booting); CI uses 2. Also available from `e2e/`: `yarn typecheck`
-and `yarn selftest` (unit tests for the catalog generator).
+and `yarn selftest` (unit tests for the catalog, harness scripts, and round-3 Skills primitives).
+The required CI `yarn catalog:check` step also runs `selftest`, discovering every
+`scripts/**/*.test.mjs` and `harness/skills-r3/**/*.test.mjs` suite except the separate docs gate.
+These are harness regressions, not complete product-journey or native qualification evidence.
+
+Run tests on the assigned temporary cloud VM, not on a shared local host. The documentation suite
+has a separate explicit gate because it requires the independently pinned docs repository:
+
+```bash
+CTXHUB_DOCS_ROOT=/absolute/pinned/docs-checkout yarn selftest:docs
+```
+
+Retain that checkout's commit/tree with the result. Missing docs fail this command; a passing
+`selftest` alone does not establish documentation qualification.
 
 ---
 

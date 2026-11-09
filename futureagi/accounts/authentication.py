@@ -896,6 +896,13 @@ class AuthMonitoringMiddleware:
         return self.get_response(request)
 
 
+def _token_cipher(secret_key: str | bytes) -> Fernet:
+    secret_key_bytes = (
+        secret_key if isinstance(secret_key, bytes) else secret_key.encode()
+    )
+    return Fernet(base64.b64encode(hashlib.sha256(secret_key_bytes).digest()))
+
+
 def generate_encrypted_message(key_value_pairs: dict) -> str:
     """
     Generate a deterministic encrypted message from key-value pairs.
@@ -922,13 +929,7 @@ def generate_encrypted_message(key_value_pairs: dict) -> str:
     message = json.dumps(sorted_pairs, sort_keys=True)
 
     # Generate key from settings secret key
-    secret_key = settings.SECRET_KEY
-    if isinstance(secret_key, bytes):
-        secret_key_bytes = secret_key
-    else:
-        secret_key_bytes = secret_key.encode()
-    key = base64.b64encode(hashlib.sha256(secret_key_bytes).digest())
-    f = Fernet(key)
+    f = _token_cipher(settings.SECRET_KEY)
 
     # Encrypt the message
     encrypted = f.encrypt(message.encode())
@@ -948,13 +949,7 @@ def decrypt_message(encrypted_message: str) -> dict[str, Any]:
     """
     try:
         # Generate key from settings secret key
-        secret_key = settings.SECRET_KEY
-        if isinstance(secret_key, bytes):
-            secret_key_bytes = secret_key
-        else:
-            secret_key_bytes = secret_key.encode()
-        key = base64.b64encode(hashlib.sha256(secret_key_bytes).digest())
-        f = Fernet(key)
+        f = _token_cipher(settings.SECRET_KEY)
 
         # Decrypt the message
         try:
@@ -1015,6 +1010,8 @@ def decode_token(token: str, *, transport: str = "http"):
         token_id = decrypted_token_obj.get("id")
         if not user_id:
             raise AuthenticationFailed("Invalid user id")
+        if not token_id:
+            raise AuthenticationFailed("Invalid auth token")
 
         now = timezone.now()
         cache_key = f"access_token_{token_id}"
@@ -1062,7 +1059,7 @@ def decode_token(token: str, *, transport: str = "http"):
             raise AuthenticationFailed("Invalid auth token")
         if token_row["auth_origin"] == AuthTokenOrigin.SAML:
             credential = validate_saml_credential(
-                token_row, user_id, now=now, transport=transport
+                dict(token_row), user_id, now=now, transport=transport
             )
             user = User.objects.select_related("organization").get(id=user_id)
             if (
@@ -1118,7 +1115,7 @@ def decode_token(token: str, *, transport: str = "http"):
 
 def _pydantic_error_response(exc):
     errors = exc.errors()
-    details = {}
+    details: dict[str, list[str]] = {}
     for err in errors[:10]:
         attr = ".".join(str(loc) for loc in err.get("loc", []))
         key = attr or "non_field_errors"
@@ -1220,7 +1217,7 @@ def custom_exception_handler(exc, context):
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 error_type="entitlement_error",
                 code=code,
-                details={"feature": [exc.feature], **error_details(detail)},
+                details={"feature": [exc.feature], **(error_details(detail) or {})},
             ),
             "error": {
                 "code": code,

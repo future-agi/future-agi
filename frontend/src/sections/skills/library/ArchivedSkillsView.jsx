@@ -19,7 +19,7 @@ function Archived({ scopeKey, query, onPageChange, onInspect, onReview, onUnarch
   const scoped = query.scopeKey === scopeKey;
   const rows = scoped ? query.data?.results || [] : [];
   const review = async (resource) => {
-    const result = await operation.run(onReview, { resourceId: resource.id });
+    const result = await operation.run(onReview, { resourceId: resource.id }, { retainUnknown: false });
     if (result) setSelection({ resource, review: result });
   };
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>

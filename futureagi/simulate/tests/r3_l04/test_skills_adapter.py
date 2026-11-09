@@ -1,6 +1,7 @@
 """The real control-plane adapter pins code/state without importing customer code."""
 
 from copy import deepcopy
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -55,7 +56,7 @@ def configuration():
 
 @pytest.fixture
 def spec(configuration):
-    case = {
+    case: dict[str, Any] = {
         "id": str(uuid4()),
         "prompt": "Review this synthetic refund",
         "fixtures": [{"name": "policy", "text": "Synthetic fixture"}],
@@ -65,7 +66,7 @@ def spec(configuration):
     }
     files = [{"path": "AGENTS.md", "content": "Use only supplied policy."}]
     subject_id = str(uuid4())
-    snapshots = {
+    snapshots: dict[str, dict[str, Any] | None] = {
         variant: {
             "skill_id": subject_id,
             "digest": manifest_digest(files),

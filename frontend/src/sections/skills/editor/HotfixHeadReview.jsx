@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Alert, Box, Button, Checkbox, FormControlLabel, Stack, Typography } from "@mui/material";
+import { isDefiniteRejection, operationStatus } from "src/api/skills/operation-errors";
 import TextDiff from "../components/TextDiff";
 
 // Intent: a release author acknowledges the current head, not a silent rebase.
@@ -13,7 +14,7 @@ import TextDiff from "../components/TextDiff";
  * scopeKey must include organization, workspace, principal and resource identity.
  */
 export function useAuthoringOperation(scopeKey) {
-  const [state, setState] = useState({ pending: false, error: null, result: null });
+  const [state, setState] = useState({ pending: false, error: null, result: null, uncertain: false });
   const current = useRef(scopeKey);
   const mounted = useRef(true);
   const request = useRef(null);
@@ -27,40 +28,48 @@ export function useAuthoringOperation(scopeKey) {
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
-  const run = async (operation, input) => {
+  const run = async (operation, input, { retainUnknown = true } = {}) => {
     if (running.current || !operation) return null;
     const scope = scopeKey;
     const body = JSON.stringify(input);
+    if (request.current?.uncertain && request.current.body !== body) return null;
     if (!request.current || request.current.body !== body) {
-      request.current = { body, key: crypto.randomUUID() };
+      request.current = { body, key: crypto.randomUUID(), operation, retainUnknown };
     }
     const ticket = request.current;
     running.current = true;
     setState({ pending: true, error: null, result: null });
     try {
-      const result = await operation(JSON.parse(ticket.body), { idempotencyKey: ticket.key });
+      const result = await ticket.operation(JSON.parse(ticket.body), { idempotencyKey: ticket.key });
       if (!mounted.current || current.current !== scope || request.current !== ticket) return null;
       const acknowledged = result === undefined ? { acknowledged: true } : result;
-      setState({ pending: false, error: null, result: acknowledged });
+      setState({ pending: false, error: null, result: acknowledged, uncertain: false });
       return acknowledged;
     } catch (error) {
       if (mounted.current && current.current === scope && request.current === ticket) {
-        setState({ pending: false, error, result: null });
+        const uncertain = ticket.retainUnknown && (ticket.uncertain || !isDefiniteRejection(error));
+        ticket.uncertain = uncertain;
+        if (!uncertain) request.current = null;
+        setState({ pending: false, error, result: null, uncertain });
       }
       return null;
     } finally {
-      if (current.current === scope && request.current === ticket) running.current = false;
+      if (current.current === scope) running.current = false;
     }
   };
-  return { ...state, run, canRetry: (input) => Boolean(state.error && request.current?.body === JSON.stringify(input)) };
+  return { ...state, run, retry: () => request.current ? run(request.current.operation, JSON.parse(request.current.body), { retainUnknown: request.current.retainUnknown }) : null, canRetry: (input) => Boolean(state.error && request.current?.body === JSON.stringify(input)) };
 }
 
 export function AuthoringError({ error }) {
   if (!error) return null;
   const code = error.code || error.response?.data?.code;
-  const status = error.status || error.response?.status;
+  const status = operationStatus(error);
   let message = "The operation could not be confirmed. Your input is retained. Retry uses the same operation key.";
-  if (status === 409 || ["draft_conflict", "stale_base", "dependency_plan_changed", "candidate_changed", "release_conflict"].includes(code)) {
+  if (code === "name_taken") {
+    message = "This name is already in use. Choose a different immutable name; your instructions and purpose are preserved.";
+  } else if (status === 400 || status === 422) {
+    message = (typeof error.message === "string" && error.message) || (typeof error.detail === "string" && error.detail) || "The request was rejected. Correct the input and submit again; your input is preserved.";
+  } else if (status === 409 || ["draft_conflict", "stale_base", "dependency_plan_changed", "candidate_changed", "release_conflict"].includes(code)) {
     message = "The reviewed state changed. Your input is retained. Reload and review the current state before trying again.";
   } else if (status === 410 || code?.endsWith("_expired")) {
     message = "This retained preview or checkpoint expired. Your input is retained; create a new preview before continuing.";
@@ -110,7 +119,7 @@ function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledge
       const saved = await session.flush();
       if (!saved) throw new Error("Save blocked");
       return onPreview(saved);
-    }, { action: "preview-head", editSequence: session.editSequence });
+    }, { action: "preview-head", editSequence: session.editSequence }, { retainUnknown: false });
     if (result) setPreview(result);
   };
   const acknowledge = async () => {
@@ -119,7 +128,7 @@ function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledge
       const saved = await session.mutateDraft((draft) => {
         if (draft.revision !== review.draftRevision) throw Object.assign(new Error("Changed draft"), { code: "draft_conflict" });
         return onAcknowledge(input, options);
-      });
+      }, { operationKey: options.idempotencyKey });
       if (!saved) throw new Error("Acknowledgment blocked");
       return saved;
     }, { revision: review.draftRevision, expectedDigest: review.candidateDigest, expectedHeadVersion: review.expectedHeadVersion, reviewFingerprint: review.reviewFingerprint });
@@ -129,13 +138,14 @@ function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledge
     <Typography variant="m3" component="h2">Review publication head</Typography>
     <Typography variant="s1">Content origin {session.baseVersion == null ? "is unpublished" : `is v${session.baseVersion}`}. Reviewing a newer head never copies its files into this draft.</Typography>
     <AuthoringError error={operation.error} />
-    <Button variant="outlined" onClick={prepare} disabled={!onPreview || operation.pending}>Review against current latest</Button>
+    {session.mutationError && operation.error && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const result = await operation.retry(); if (result) { setPreview(null); setConfirmed(false); onAcknowledged?.(result); } }}>Retry head acknowledgment</Button>}
+    <Button variant="outlined" onClick={prepare} disabled={!onPreview || operation.pending || Boolean(session.mutationError)}>Review against current latest</Button>
     {review && <>
       <Alert severity="warning">Publishing this {review.baseVersion == null ? "new" : `v${review.baseVersion}-derived`} candidate will make a new latest version after {review.expectedHeadVersion == null ? "the unpublished head" : `v${review.expectedHeadVersion}`}. Production does not move.</Alert>
       <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>Candidate {review.candidateDigest} · draft r{review.draftRevision}</Typography>
       <FileChanges files={preview.originChanges} beforeTitle={`Origin v${review.baseVersion}`} afterTitle="Candidate" />
       <FileChanges files={preview.headChanges} beforeTitle={`Latest v${review.expectedHeadVersion}`} afterTitle="Candidate" />
-      {!current && <Alert severity="info">The draft changed. Review the head again before acknowledging it.</Alert>}
+      {!current && <Alert severity="info">{session.mutationError ? "Recover the original acknowledgment with Retry head acknowledgment before reviewing or publishing." : "The draft changed. Review the head again before acknowledging it."}</Alert>}
       <FormControlLabel control={<Checkbox checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={!current || operation.pending} />} label="I reviewed both comparisons and the new-latest consequence." />
       <Button variant="contained" disabled={!current || !confirmed || !onAcknowledge || operation.pending} onClick={acknowledge}>Acknowledge reviewed head</Button>
     </>}

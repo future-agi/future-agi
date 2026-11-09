@@ -17,6 +17,7 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
   const inFlight = useRef(null);
   const flushing = useRef(null);
   const mutations = useRef(Promise.resolve());
+  const retainedMutation = useRef(null);
   const generation = useRef(0);
   const mounted = useRef(true);
   const { mutateAsync } = useSaveSkillDraft(skillId);
@@ -33,7 +34,7 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
   }, []);
 
   const save = useCallback(async (revision) => {
-    if (!mounted.current) return null;
+    if (!mounted.current || (latest.current.mutationError && retainedMutation.current?.acknowledged)) return null;
     if (inFlight.current) return inFlight.current;
     const snapshot = latest.current;
     if (snapshot.status === "conflict" && revision === undefined) return null;
@@ -94,29 +95,40 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
     return request;
   }, [flushLocal]);
 
-  const mutateDraft = useCallback((operation) => {
+  const mutateDraft = useCallback((operation, { operationKey } = {}) => {
+    const retained = retainedMutation.current;
+    const recovering = Boolean(retained && latest.current.mutationError);
+    // Once dispatched, only the original operation may recover. Never save
+    // local edits against a revision that the unknown write may have advanced.
+    if (retained && latest.current.mutationError && (operationKey ? retained.key !== operationKey : retained.operation !== operation)) return Promise.resolve(null);
     const epoch = generation.current;
     update({ ...latest.current, pendingMutations: latest.current.pendingMutations + 1, mutationError: null });
     const request = mutations.current.then(async () => {
       if (!mounted.current || epoch !== generation.current) return null;
-      const acknowledged = await flushLocal();
+      if (latest.current.mutationError && !recovering) return null;
+      const recovery = recovering ? retained : null;
+      const acknowledged = recovery?.acknowledged || await flushLocal();
       if (!mounted.current || epoch !== generation.current) return null;
       if (!acknowledged) {
         // A failed prerequisite save means the requested server mutation never
         // ran. A later ordinary save must not acknowledge that omitted intent.
         const error = latest.current.error ?? new Error("Save failed before the draft operation. Retry the operation or reload the draft.");
+        retainedMutation.current = { operation, key: operationKey };
         update({ ...latest.current, mutationError: error });
         return null;
       }
-      const snapshot = latest.current;
-      update({ ...snapshot, status: "saving" });
-      const mutation = Promise.resolve().then(() => operation(acknowledged)).then((draft) => {
+      const snapshot = recovery?.snapshot || latest.current;
+      const ticket = recovery?.acknowledged ? recovery : { operation, key: operationKey, acknowledged, snapshot };
+      retainedMutation.current = ticket;
+      update({ ...latest.current, status: "saving" });
+      const mutation = Promise.resolve().then(() => ticket.operation(acknowledged)).then((draft) => {
         if (!mounted.current || epoch !== generation.current) return null;
         if (!Array.isArray(draft?.files) || !Number.isSafeInteger(draft.revision)) throw new Error("This operation returned a receipt, not the acknowledged draft. Recover that exact revision before editing.");
         // Files/purpose typed during dependency Apply remain local and are saved
         // against its new revision; only the server can replace the accepted lock.
         const local = latest.current;
         const authored = local.editSequence === snapshot.editSequence ? {} : { files: local.files, note: local.note, description: local.description };
+        retainedMutation.current = null;
         update({ ...local, ...draft, ...authored, editSequence: local.editSequence, pendingMutations: local.pendingMutations, mutationError: null, savedFiles: draft.files, savedSequence: snapshot.editSequence, status: "saved", error: null });
         return draft;
       }).catch((error) => {
@@ -149,6 +161,7 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
     edit: (files) => editFields({ files }),
     reload: (draft) => {
       generation.current += 1;
+      retainedMutation.current = null;
       update(sessionState(draft));
     },
   };

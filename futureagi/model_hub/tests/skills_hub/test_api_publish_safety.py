@@ -110,7 +110,13 @@ def test_import_records_each_zip_origin_and_root(client, make_skill_files):
         ("research-skill", "second.zip", "research"),
     ]:
         skill = HubSkill.no_workspace_objects.get(name=skill_name)
-        source = {"type": "import", "filename": filename, "root": root}
+        source = {
+            "type": "import",
+            "filename": filename,
+            "root": root,
+            "omissions": [],
+            "supported_subset": False,
+        }
         assert skill.source == skill.versions.get().source == source
         assert result(client.get(BASE + str(skill.pk) + "/"))["source"] == source
 
@@ -144,6 +150,8 @@ def test_loose_import_provenance_uses_root_instruction_filename(
             "type": "import",
             "filename": "SKILL.md",
             "root": "",
+            "omissions": [],
+            "supported_subset": False,
         }
     )
 

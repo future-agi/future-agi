@@ -32,7 +32,7 @@ function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate,
     if (list.length > 200 || list.some((file) => file.size > 10 * 1024 * 1024)) { setUploadError("Upload at most 200 files; each ZIP must be at most 10 MiB. The server checks complete archive and compiled limits."); return; }
     const form = new FormData();
     list.forEach((file) => form.append("files", file, file.webkitRelativePath || file.name));
-    const result = await operation.run(() => onPreview(form), { action: "preview", selection: crypto.randomUUID() });
+    const result = await operation.run(() => onPreview(form), { action: "preview", selection: crypto.randomUUID() }, { retainUnknown: false });
     if (result) setPreview(result);
   };
   const input = mode === "upload" ? { previewId: preview?.previewId, expectedFingerprint: preview?.fingerprint, rootKey, name, description, tags: [], rightsConfirmed: true } : { name, description, tags: [], files: [{ path: "AGENTS.md", content: body }] };
@@ -43,7 +43,7 @@ function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate,
     const result = await operation.run(mode === "upload" ? onImport : onCreate, input);
     if (result) onCreated?.(result);
   };
-  const locked = operation.pending || submitted;
+  const locked = operation.pending || (submitted && (operation.uncertain || Boolean(operation.result)));
   return <ClosableDialog open={open} onClose={(...args) => { if (!operation.pending) onClose(...args); }} fullWidth maxWidth="md" aria-labelledby="context-import-title">
     <DialogTitle id="context-import-title">Create agent context</DialogTitle>
     <DialogContent><Stack spacing={1.5} sx={{ pt: 1, minWidth: 0 }}>
@@ -65,9 +65,9 @@ function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate,
       </> : <TextField label="AGENTS.md" size="small" fullWidth multiline minRows={10} value={body} disabled={locked} onChange={(event) => setBody(event.target.value)} helperText="One root instruction file; no YAML skill frontmatter is required." />}
       <TextField label="Immutable name" size="small" value={name} disabled={locked} onChange={(event) => setName(event.target.value)} inputProps={{ maxLength: 64 }} error={Boolean(name) && !nameValid} helperText="Lowercase letters, digits and single hyphens. Names are shared with Skills in this workspace." />
       <TextField label="Purpose" size="small" fullWidth multiline minRows={2} value={description} disabled={locked} onChange={(event) => setDescription(event.target.value)} inputProps={{ maxLength: 1024 }} helperText="Versioned with the context; not a tool authorization policy." />
-      {submitted && operation.error && <Alert severity="info">The submitted identity and bytes are locked for a same-operation retry. Do not create another draft to work around an unknown response.</Alert>}
+      {submitted && operation.uncertain && <Alert severity="info">The submitted identity and bytes are locked for a same-operation retry. Do not create another draft to work around an unknown response.</Alert>}
     </Stack></DialogContent>
-    <DialogActions><Button disabled={operation.pending} onClick={onClose}>Cancel</Button><Button variant="contained" onClick={submit} disabled={!canSubmit || operation.pending || Boolean(operation.result)}>{submitted && operation.error ? "Retry same operation" : mode === "upload" ? "Import as draft" : "Create draft"}</Button></DialogActions>
+    <DialogActions><Button disabled={operation.pending} onClick={onClose}>Cancel</Button><Button variant="contained" onClick={submit} disabled={!canSubmit || operation.pending || Boolean(operation.result)}>{submitted && operation.uncertain ? "Retry same operation" : mode === "upload" ? "Import as draft" : "Create draft"}</Button></DialogActions>
   </ClosableDialog>;
 }
 ImportContext.propTypes = { scopeKey: PropTypes.string.isRequired, open: PropTypes.bool.isRequired, onClose: PropTypes.func.isRequired, onPreview: PropTypes.func, onImport: PropTypes.func, onCreate: PropTypes.func, onCreated: PropTypes.func };

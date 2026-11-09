@@ -60,6 +60,7 @@ it('retains the original operation key after an unknown checkpoint and never del
   mount({ checkpointDraft });
   fireEvent.click(screen.getByRole('button', { name: 'Confirm supporting-file deletion' }));
   await screen.findByText(/Deletion was not applied/);
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'references/policy.md' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Confirm supporting-file deletion' }));
   await waitFor(() => expect(checkpointDraft).toHaveBeenCalledTimes(2));

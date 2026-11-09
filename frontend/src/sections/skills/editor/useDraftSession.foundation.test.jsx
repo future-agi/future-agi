@@ -100,3 +100,36 @@ it('refuses local edits to server-owned accepted locks', () => {
   expect(() => result.current.editFields({ resolvedLock: { links: [] } })).toThrow('mutateDraft');
   expect(result.current.resolvedLock).toEqual(initial.resolvedLock);
 });
+
+
+it('does not replace an uncertain mutation with a different operation', async () => {
+  const apply = vi.fn().mockRejectedValueOnce(new Error('Lost receipt')).mockResolvedValueOnce({ ...initial, revision: 5 });
+  const other = vi.fn();
+  const { result } = renderHook(() => useDraftSession('context', initial, true, resourceApi));
+  await act(async () => { await result.current.mutateDraft(apply, { operationKey: 'original' }); });
+  await act(async () => { expect(await result.current.mutateDraft(other, { operationKey: 'different' })).toBeNull(); });
+  expect(other).not.toHaveBeenCalled();
+  expect(result.current.mutationError).toBeTruthy();
+  await act(async () => { await result.current.mutateDraft(other, { operationKey: 'original' }); });
+  expect(other).not.toHaveBeenCalled();
+  expect(apply).toHaveBeenCalledTimes(2);
+  expect(apply.mock.calls[1]).toEqual(apply.mock.calls[0]);
+});
+
+it('serializes different queued mutations without replaying the first callback', async () => {
+  let finish;
+  const first = vi.fn((draft) => new Promise((resolve) => { finish = () => resolve({ ...draft, revision: 5 }); }));
+  const second = vi.fn(async (draft) => ({ ...draft, revision: 6 }));
+  const { result } = renderHook(() => useDraftSession('context', initial, true, resourceApi));
+  let pending;
+  await act(async () => { pending = result.current.mutateDraft(first, { operationKey: 'one' }); });
+  await act(async () => {
+    const queued = result.current.mutateDraft(second, { operationKey: 'two' });
+    finish();
+    await pending;
+    await queued;
+  });
+  expect(first).toHaveBeenCalledOnce();
+  expect(second).toHaveBeenCalledWith(expect.objectContaining({ revision: 5 }));
+  expect(result.current.revision).toBe(6);
+});

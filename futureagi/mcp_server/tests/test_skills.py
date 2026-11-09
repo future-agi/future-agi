@@ -100,17 +100,82 @@ def test_skills_openapi_has_all_routes_and_errors():
                 base + "{context_id}/versions/{number}/inspection/files/",
             }
         )
+    # Human authoring, release review and guarded campaigns are independent
+    # additions, not extra legacy leaf routes. Pin every new route and method
+    # rather than weakening the retained legacy inventory or error contracts.
+    authoring_operations = {}
+    for base, operations in (
+        (
+            "/model-hub/skills/contexts/",
+            {
+                "": {"get", "post"},
+                "capabilities/": {"get"},
+                "{context_id}/": {"get"},
+                "{context_id}/dependencies/apply/": {"post"},
+                "{context_id}/dependencies/preview/": {"post"},
+                "{context_id}/draft/": {"delete", "get", "put"},
+                "{context_id}/draft/acknowledge-head/": {"post"},
+                "{context_id}/draft/files/": {"get"},
+                "{context_id}/draft/head-review/": {"post"},
+                "{context_id}/draft/publish/": {"post"},
+                "{context_id}/draft/start/": {"post"},
+                "{context_id}/release/review/": {"post"},
+                "{context_id}/versions/": {"get"},
+                "{context_id}/versions/{number}/": {"get"},
+            },
+        ),
+        (
+            "/model-hub/skills/contexts/campaigns/",
+            {
+                "": {"get", "post"},
+                "{campaign_id}/": {"get"},
+                "{campaign_id}/authorize/": {"post"},
+                "{campaign_id}/cancel/": {"post"},
+                "{campaign_id}/pause/": {"post"},
+                "{campaign_id}/resume/": {"post"},
+                "{campaign_id}/rollback/preview/": {"post"},
+                "{campaign_id}/targets/": {"get"},
+                "{campaign_id}/targets/{binding_id}/attempts/": {"post"},
+                "{campaign_id}/targets/{binding_id}/claim/": {"post"},
+                "{campaign_id}/targets/{binding_id}/observations/": {"get"},
+                "{campaign_id}/targets/{binding_id}/plan/": {"put"},
+            },
+        ),
+        (
+            "/model-hub/skills/",
+            {
+                "release-requests/": {"post"},
+                "release-requests/preview/": {"post"},
+                "release-requests/{request_id}/": {"get"},
+                "release-requests/{request_id}/decisions/": {"post"},
+                "release-requests/{request_id}/execute/": {"post"},
+                "release-requests/{request_id}/receipt/": {"get"},
+                "review-inbox/": {"get"},
+                "review-inbox/{request_id}/seen/": {"post"},
+            },
+        ),
+    ):
+        authoring_operations.update(
+            {base + suffix: allowed for suffix, allowed in operations.items()}
+        )
+    authoring_paths = set(authoring_operations)
+    assert len(authoring_paths) == 34
     assert foundation_paths <= paths.keys()
     assert integration_paths <= paths.keys()
+    assert authoring_paths <= paths.keys()
     assert foundation_paths.isdisjoint(integration_paths)
+    assert authoring_paths.isdisjoint(foundation_paths | integration_paths)
     legacy_paths = {
         path: item
         for path, item in paths.items()
-        if path not in foundation_paths | integration_paths
+        if path not in foundation_paths | integration_paths | authoring_paths
     }
     assert len(legacy_paths) == 46
-    assert len(paths) == 73
+    assert len(paths) == 107
     methods = {"get", "post", "put", "patch", "delete"}
+    for path, allowed in authoring_operations.items():
+        assert methods.intersection(paths[path]) == allowed, path
+    assert sum(map(len, authoring_operations.values())) == 38
     assert sum(len(methods.intersection(item)) for item in legacy_paths.values()) == 58
     assert (
         sum(len(methods.intersection(paths[path])) for path in foundation_paths) == 11

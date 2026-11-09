@@ -68,7 +68,7 @@ def test_lost_initial_dispatch_is_recovered_without_duplicate_traces(signup):
     assert len(first_ids) == 2
     assert identities(user) == first_ids
     assert ObservationSpan.objects.filter(trace_id__in=first_ids).count() == 70
-    intent.refresh_from_db()
+    intent = DemoSeedRequest.objects.get(pk=intent.pk)
     assert intent.completed_at is not None
     # Both lost publication starts survive even though the seed stage completed.
     assert (

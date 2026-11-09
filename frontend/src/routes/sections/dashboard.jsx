@@ -109,6 +109,7 @@ const ProfileSettings = lazyWithRetry(
 const OrgSettings = lazyWithRetry(
   () => import("src/pages/dashboard/settings/OrgSettings"),
 );
+const SkillsSpendPolicyPage = lazyWithRetry(() => import('src/pages/dashboard/skills/SkillsSpendPolicyPage'));
 const SkillsWorkspaceLayout = lazyWithRetry(() => import('src/sections/skills/components/SkillsWorkspaceLayout'));
 const ContextLibraryPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextLibraryPage'));
 const ContextDetailPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextDetailPage'));
@@ -1345,6 +1346,7 @@ export const dashboardRoutes = (
         { path: 'contexts/:contextId', element: <ContextDetailPage /> },
         { path: 'reviews', element: <SkillsReviewsPage /> },
         { path: 'archived', element: <ArchivedSkillsPage /> },
+        { path: 'allowance', element: <SkillsSpendPolicyPage /> },
         { path: ":skillId", element: <SkillDetailPage /> },
         { path: ":skillId/edit", element: <SkillEditorPage /> },
         { path: ":skillId/compare", element: <SkillComparePage /> },

@@ -6,6 +6,7 @@ import json
 import logging
 import uuid
 from types import CodeType
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -933,6 +934,7 @@ class TestPreflight:
             409,
         )
         assert f"v{a3.version_number}" in refused.value.message
+        assert refused.value.details is not None
         assert refused.value.details["agent_version_id"] == str(a3.id)
         assert _side(a2).preflight_status == "failed"
         response = auth_client.post(
@@ -1182,6 +1184,7 @@ class TestPreflight:
             result = preflight_agent_version(a2, activate=False)
 
         assert result.status == "passed"
+        assert result.report is not None
         checks = {c["id"]: c["status"] for c in result.report["checks"]}
         assert (checks["source"], checks["credentials_present"]) == (
             "skipped",
@@ -1567,7 +1570,12 @@ class TestActivation:
         environment = _environment(user, workspace, "av-lost-race", storage)
         a1 = _a1(environment)
         a2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v2"})
-        report = {"checks": [], "missing": [], "invalid": [], "error": None}
+        report: dict[str, Any] = {
+            "checks": [],
+            "missing": [],
+            "invalid": [],
+            "error": None,
+        }
 
         def raced(*_args):
             # Another run of the check passes the version first.
@@ -1628,6 +1636,7 @@ class TestActivation:
         self, user, workspace, storage, scheduled, settings
     ):
         from minio.error import S3Error
+        from urllib3.response import HTTPResponse
 
         from simulate.services.harness_versioning import versions
 
@@ -1639,7 +1648,9 @@ class TestActivation:
 
         def flaky(locked, version, **kwargs):
             if locked.id == first.id:
-                raise S3Error(None, "InternalError", "down", "k", "r", "h")
+                raise S3Error(
+                    HTTPResponse(status=503), "InternalError", "down", "k", "r", "h"
+                )
             return real(locked, version, **kwargs)
 
         with patch.object(versions, "move_agent", side_effect=flaky):
@@ -2557,8 +2568,9 @@ class TestAgentPin:
 
         record_authoring(environment, _authoring(names=NAMES[:1]), origin="authoring")
 
-        environment.refresh_from_db()
+        environment = HostedHarnessJob.no_workspace_objects.get(pk=environment.pk)
         assert environment.agent_version_id is not None
+        assert environment.environment_version is not None
         assert environment.environment_version.agent_version_id == (
             environment.agent_version_id
         )

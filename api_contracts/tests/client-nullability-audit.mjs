@@ -11,7 +11,11 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const require = createRequire(path.join(root, "frontend/package.json"));
 const ts = require("typescript");
 const relative = "frontend/src/generated/api-contracts/api.zod.ts";
-const baseline = process.argv[2] || "origin/dev";
+// The target branch may contain newer, unrelated schema changes. Audit only
+// this PR's delta; an explicit revision/file still pins a reviewed baseline.
+const baseline = process.argv[2] || execFileSync(
+  "git", ["merge-base", "origin/dev", "HEAD"], { cwd: root, encoding: "utf8" },
+).trim();
 const before = fs.existsSync(baseline)
   ? fs.readFileSync(baseline, "utf8")
   : execFileSync("git", ["show", `${baseline}:${relative}`], {
