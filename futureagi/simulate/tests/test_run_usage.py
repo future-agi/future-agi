@@ -54,6 +54,7 @@ def spans(ch_database, monkeypatch):
             call=None,
             llm=False,
             model="",
+            model_column=None,
             cost=0.0,
             tokens=0,
             project=PROJECT,
@@ -64,13 +65,15 @@ def spans(ch_database, monkeypatch):
                 **({"fi.simulator.call_execution_id": call} if call else {}),
                 **({"gen_ai.request.model": model} if model else {}),
             }
+            column = model_column or ""
             pairs = ", ".join(f"'{key}', '{value}'" for key, value in attrs.items())
             client.execute(
                 "INSERT INTO spans (project_id, observation_type, start_time, trace_id,"
-                " id, cost, total_tokens, attrs_string, resource_attrs, created_at,"
-                " updated_at, _version) VALUES"
+                " id, model, cost, total_tokens, attrs_string, resource_attrs,"
+                " created_at, updated_at, _version) VALUES"
                 f" ('{project}', '{'llm' if llm else 'chain'}',"
-                f" '{at:%Y-%m-%d %H:%M:%S}', '{trace}', '{uuid.uuid4()}', {cost},"
+                f" '{at:%Y-%m-%d %H:%M:%S}', '{trace}', '{uuid.uuid4()}',"
+                f" '{column}', {cost},"
                 f" {tokens}, map({pairs}),"
                 f""" '{{"fi": {{"simulation": {{"job_id": "{job}"}}}}}}',"""
                 " now64(), now64(), 1)"
@@ -104,6 +107,9 @@ def test_each_call_s_models_spans_and_cost_come_from_its_traces(spans, monkeypat
     spans(one, llm=True, model="m2", cost=0.02, tokens=50)
     spans(two, call=priced)
     spans(two, llm=True, model="m1", cost=0.005, tokens=20)
+    # A span that names its model only in the model column, not in
+    # gen_ai.request.model.
+    spans(two, llm=True, model_column="m3", cost=0.001, tokens=5)
     # An LLM span with tokens and no cost: an unpriced model, not a free one.
     spans(three, call=unpriced)
     spans(three, llm=True, model="m1", cost=0.0, tokens=70)
@@ -112,9 +118,9 @@ def test_each_call_s_models_spans_and_cost_come_from_its_traces(spans, monkeypat
     usage = run_traces_v3.run_usage(SimpleNamespace())
 
     assert usage.keys() == {priced, unpriced}
-    assert usage[priced].models == ["m1", "m2"]
-    assert usage[priced].llm_spans == 3
-    assert usage[priced].cost_usd == pytest.approx(0.035)
+    assert usage[priced].models == ["m1", "m2", "m3"]
+    assert usage[priced].llm_spans == 4
+    assert usage[priced].cost_usd == pytest.approx(0.036)
     assert usage[unpriced] == CallUsage(models=["m1"], llm_spans=2, cost_usd=None)
 
 

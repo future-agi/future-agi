@@ -171,7 +171,9 @@ def run_usage_sql() -> str:
     """Each call's LLM spans: the models they named, how many there were, their cost, and
     how many counted tokens but no cost. A trace counts for its call, as in the list."""
     is_llm = "observation_type = 'llm'"
-    model = cols.LLM_REQUEST_MODEL
+    # The request model a span names, else the model column, for an instrumentor that
+    # names its model in another convention.
+    model = f"if({cols.LLM_REQUEST_MODEL} != '', {cols.LLM_REQUEST_MODEL}, model)"
     return (
         "SELECT call_execution_id, "
         "groupUniqArrayArray(trace_models) AS models, "
