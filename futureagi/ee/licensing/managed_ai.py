@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from typing import Any
 
 from ee.licensing.activation_client import (
@@ -119,8 +120,9 @@ async def stream_chat_completion(
     from ee.usage.deployment import DeploymentMode
 
     if not DeploymentMode.is_cloud():
-        async for chunk in stream_managed_service(json_body=payload):
-            yield chunk
+        async with aclosing(stream_managed_service(json_body=payload)) as stream:
+            async for chunk in stream:
+                yield chunk
         return
 
     base_url, api_key = _cloud_gateway_credentials()
@@ -131,14 +133,17 @@ async def stream_chat_completion(
             "Managed AI gateway rejected the internal API key",
         )
 
-    async for chunk in dispatch_managed_stream(
-        url=base_url.rstrip("/") + "/v1/chat/completions",
-        api_key=api_key,
-        json_body=payload,
-        timeout=300.0,
-        on_unauthorized=_on_unauthorized,
-    ):
-        yield chunk
+    async with aclosing(
+        dispatch_managed_stream(
+            url=base_url.rstrip("/") + "/v1/chat/completions",
+            api_key=api_key,
+            json_body=payload,
+            timeout=300.0,
+            on_unauthorized=_on_unauthorized,
+        )
+    ) as stream:
+        async for chunk in stream:
+            yield chunk
 
 
 def response_content(response: dict[str, Any]) -> str:

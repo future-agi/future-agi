@@ -244,8 +244,19 @@ class TestMessageFeedbackView:
 class TestFileUploadView:
     URL = "/falcon-ai/files/upload/"
 
+    @pytest.mark.parametrize("endpoint_env", ["MINIO_ENDPOINT", "S3_ENDPOINT_URL"])
+    @pytest.mark.parametrize(
+        ("endpoint", "host", "secure"),
+        [
+            ("minio:9000", "minio:9000", False),
+            ("localhost:9000", "localhost:9000", False),
+            ("http://minio:9000", "minio:9000", False),
+            ("https://storage.example.test:9443", "storage.example.test:9443", True),
+            (None, "minio:9000", False),
+        ],
+    )
     def test_upload_text_file_uses_s3_env_and_extracts_text(
-        self, auth_client, monkeypatch
+        self, auth_client, monkeypatch, endpoint_env, endpoint, host, secure
     ):
         class FakeMinio:
             instances = []
@@ -276,7 +287,9 @@ class TestFileUploadView:
         monkeypatch.delenv("MINIO_ENDPOINT", raising=False)
         monkeypatch.delenv("MINIO_ROOT_USER", raising=False)
         monkeypatch.delenv("MINIO_ROOT_PASSWORD", raising=False)
-        monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+        monkeypatch.delenv("S3_ENDPOINT_URL", raising=False)
+        if endpoint is not None:
+            monkeypatch.setenv(endpoint_env, endpoint)
         monkeypatch.setenv("S3_ACCESS_KEY", "futureagi")
         monkeypatch.setenv("S3_SECRET_KEY", "futureagi")
         monkeypatch.setattr("minio.Minio", FakeMinio)
@@ -294,10 +307,10 @@ class TestFileUploadView:
         falcon_file = FalconFile.objects.get(id=resp.data["result"]["id"])
         assert falcon_file.text_content == "Falcon file upload text"
         assert falcon_file.storage_key.endswith("/falcon notes.txt")
-        assert FakeMinio.instances[0].endpoint == "minio:9000"
+        assert FakeMinio.instances[0].endpoint == host
         assert FakeMinio.instances[0].access_key == "futureagi"
         assert FakeMinio.instances[0].secret_key == "futureagi"
-        assert FakeMinio.instances[0].secure is False
+        assert FakeMinio.instances[0].secure is secure
         assert FakeMinio.instances[0].put_calls[0]["content_type"] == "text/plain"
         # The proxy-aware transport the app's own storage client uses.
         assert type(FakeMinio.instances[0].http_client) is type(storage_http_client())

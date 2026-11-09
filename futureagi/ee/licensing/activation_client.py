@@ -18,6 +18,7 @@ import os
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
 
 import structlog
@@ -289,14 +290,17 @@ async def stream_managed_service(
             "TOKEN_EXPIRED", "Service token rejected — will refresh on next call"
         )
 
-    async for chunk in dispatch_managed_stream(
-        url=token.gateway_url.rstrip("/") + path,
-        api_key=token.access_token,
-        json_body=json_body,
-        timeout=timeout,
-        on_unauthorized=_on_unauthorized,
-    ):
-        yield chunk
+    async with aclosing(
+        dispatch_managed_stream(
+            url=token.gateway_url.rstrip("/") + path,
+            api_key=token.access_token,
+            json_body=json_body,
+            timeout=timeout,
+            on_unauthorized=_on_unauthorized,
+        )
+    ) as stream:
+        async for chunk in stream:
+            yield chunk
 
 
 class ManagedServiceError(Exception):

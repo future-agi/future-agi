@@ -34,10 +34,41 @@ _client = None
 
 
 def _parse_endpoint(raw_endpoint: str) -> tuple[str, bool | None]:
-    if "://" in raw_endpoint:
-        parsed = urlparse(raw_endpoint)
-        return parsed.netloc or parsed.path, parsed.scheme == "https"
-    return raw_endpoint, None
+    """Parse a storage authority, optionally prefixed by HTTP(S).
+
+    A bare host:port is not a URL scheme. Reject URL components that Minio
+    cannot use rather than silently dropping them (or deferring an empty host
+    to the first network request). Never include configuration in the error.
+    """
+    error = "Storage endpoint must be a host[:port] or an HTTP(S) URL"
+    if not raw_endpoint or any(c.isspace() for c in raw_endpoint):
+        raise ValueError(error)
+    has_scheme = "://" in raw_endpoint
+    try:
+        parsed = urlparse(raw_endpoint if has_scheme else "//" + raw_endpoint)
+        if (
+            (has_scheme and parsed.scheme not in ("http", "https"))
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in ("", "/")
+            or parsed.params
+            or "?" in raw_endpoint
+            or "#" in raw_endpoint
+            or parsed.netloc.endswith(":")
+            or parsed.port == 0
+        ):
+            raise ValueError(error)
+        host = parsed.hostname
+        if ":" in host:
+            ipaddress.IPv6Address(host)
+        elif any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-._" for c in host):
+            raise ValueError(error)
+        elif not host.strip("."):
+            raise ValueError(error)
+    except ValueError:
+        raise ValueError(error) from None
+    return parsed.netloc, parsed.scheme == "https" if has_scheme else None
 
 
 def _is_loopback(host: str | None) -> bool:

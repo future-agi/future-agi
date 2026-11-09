@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import random
+from contextlib import aclosing
 
 import httpx
 import structlog
@@ -127,16 +128,15 @@ class FalconLLMClient:
     async def stream_completion(self, messages, tools=None):
         """Yield streaming chunks in OpenAI format (normalized from any provider)."""
         if self.use_managed_gateway:
-            async for chunk in self._stream_managed(messages, tools):
-                yield chunk
+            stream = self._stream_managed(messages, tools)
         elif self.provider == "bedrock":
-            async for chunk in self._stream_bedrock(messages, tools):
-                yield chunk
+            stream = self._stream_bedrock(messages, tools)
         elif self.provider == "anthropic":
-            async for chunk in self._stream_anthropic(messages, tools):
-                yield chunk
+            stream = self._stream_anthropic(messages, tools)
         else:
-            async for chunk in self._stream_openai(messages, tools):
+            stream = self._stream_openai(messages, tools)
+        async with aclosing(stream):
+            async for chunk in stream:
                 yield chunk
 
     async def _stream_managed(self, messages, tools=None):
@@ -172,15 +172,16 @@ class FalconLLMClient:
                 )
                 payload["response_format"] = self.response_format
 
-        async for chunk in stream_chat_completion(payload):
-            metadata = chunk.get("agentcc_metadata")
-            if metadata:
-                self._gateway_cost += metadata.get("cost", 0)
+        async with aclosing(stream_chat_completion(payload)) as stream:
+            async for chunk in stream:
+                metadata = chunk.get("agentcc_metadata")
+                if metadata:
+                    self._gateway_cost += metadata.get("cost", 0)
 
-            for choice in chunk.get("choices") or []:
-                if choice.get("finish_reason") == "length":
-                    choice["finish_reason"] = "max_tokens"
-            yield chunk
+                for choice in chunk.get("choices") or []:
+                    if choice.get("finish_reason") == "length":
+                        choice["finish_reason"] = "max_tokens"
+                yield chunk
 
     async def _stream_bedrock(self, messages, tools=None):
         """Stream from AWS Bedrock using boto3, yielding OpenAI-compatible chunks."""
@@ -717,9 +718,10 @@ class FalconLLMClient:
         for attempt in range(max_retries):
             try:
                 yielded_any_chunk = False
-                async for chunk in self.stream_completion(messages, tools):
-                    yielded_any_chunk = True
-                    yield chunk
+                async with aclosing(self.stream_completion(messages, tools)) as stream:
+                    async for chunk in stream:
+                        yielded_any_chunk = True
+                        yield chunk
                 if not yielded_any_chunk:
                     raise EmptyStreamError(
                         "LLM upstream returned an empty stream with no chunks"

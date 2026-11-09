@@ -369,7 +369,6 @@ class FileUploadView(APIView):
 
         import os
         import re
-        from urllib.parse import urlparse
 
         from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME
 
@@ -431,17 +430,15 @@ class FileUploadView(APIView):
 
         from minio import Minio
 
-        from tfc.utils.storage_client import storage_http_client
+        from tfc.utils.storage_client import _parse_endpoint, storage_http_client
 
-        minio_endpoint = os.getenv("MINIO_ENDPOINT") or os.getenv(
-            "S3_ENDPOINT_URL", "minio:9000"
+        # Keep Falcon's legacy endpoint/credential overrides, but share the
+        # storage client's parser so bare host:port is not mistaken for a scheme.
+        minio_endpoint, scheme_hint = _parse_endpoint(
+            os.getenv("MINIO_ENDPOINT")
+            or os.getenv("S3_ENDPOINT_URL", "minio:9000")
         )
-        parsed_endpoint = urlparse(minio_endpoint)
-        if parsed_endpoint.scheme:
-            minio_endpoint = parsed_endpoint.netloc
-            secure = parsed_endpoint.scheme == "https"
-        else:
-            secure = "amazonaws" in minio_endpoint
+        secure = scheme_hint if scheme_hint is not None else "amazonaws" in minio_endpoint
 
         access_key = (
             os.getenv("MINIO_ROOT_USER")
