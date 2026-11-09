@@ -159,7 +159,7 @@ const COLUMNS = [
 */
 function StatusCell({ state }) {
   if (!state || state.id === "valid") return null;
-  return <StateChip state={state} />;
+  return <StateChip state={state} iconOnly />;
 }
 StatusCell.propTypes = { state: PropTypes.object };
 

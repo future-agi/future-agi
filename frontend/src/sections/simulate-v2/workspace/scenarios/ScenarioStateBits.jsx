@@ -40,8 +40,19 @@ const ICON = {
   stale: "solar:clock-circle-linear",
 };
 const MUTED = new Set(["archived", "later"]);
+/* In the table a state is one icon; the label and why stay on hover. */
+const ROW_ICON = {
+  draft: "solar:pen-2-linear",
+  recheck: "solar:refresh-linear",
+  outdated: "solar:danger-triangle-linear",
+  blocked: "solar:forbidden-circle-linear",
+  stale: "solar:clock-circle-linear",
+  archived: "solar:archive-linear",
+  later: "solar:history-linear",
+  active: "solar:check-circle-linear",
+};
 
-export function StateChip({ state }) {
+export function StateChip({ state, iconOnly = false }) {
   const tone = STATE_TONE[state.id] || null;
   const checking = state.proof?.id === "checking";
   /* The proof's own words, when they add something to the state's. */
@@ -71,6 +82,34 @@ export function StateChip({ state }) {
       )}
     </Stack>
   );
+  if (iconOnly)
+    return (
+      <Tooltip arrow title={title}>
+        <Box
+          role="img"
+          aria-label={checking ? "Checking" : state.label}
+          sx={{ display: "inline-flex", flexShrink: 0 }}
+        >
+          {checking ? (
+            <CircularProgress
+              size={12}
+              thickness={6}
+              sx={{ color: "text.disabled" }}
+            />
+          ) : (
+            <Iconify
+              icon={ROW_ICON[state.id] || "solar:info-circle-linear"}
+              width={16}
+              sx={{
+                color:
+                  tone ||
+                  (MUTED.has(state.id) ? "text.disabled" : "text.secondary"),
+              }}
+            />
+          )}
+        </Box>
+      </Tooltip>
+    );
   return (
     <Tooltip arrow title={title}>
       <Box
@@ -117,7 +156,10 @@ export function StateChip({ state }) {
     </Tooltip>
   );
 }
-StateChip.propTypes = { state: PropTypes.object.isRequired };
+StateChip.propTypes = {
+  state: PropTypes.object.isRequired,
+  iconOnly: PropTypes.bool,
+};
 
 /*
   Archive — a hand edit, reversible with Restore. No reason to pick; a note
