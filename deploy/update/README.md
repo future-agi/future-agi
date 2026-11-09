@@ -103,6 +103,11 @@ again) before re-running `./bin/install`.
 
 ## Update a Standalone or Distributed install
 
+If this installation is enrolled in automatic updates, first complete the
+[safe handoff to manual operations](#safe-handoff-to-manual-operations), before
+changing checkout files or running the installer. Manual changes invalidate the
+enrolled baseline; `enable` does not adopt them.
+
 ```bash
 cd /path/to/your/checkout
 
@@ -434,18 +439,17 @@ not qualify is reported and left for you to apply by hand. The application
 never starts, approves or retries an update: everything runs on the host, as
 the user who opted in.
 
-### Phase 1 status
+### Release eligibility
 
-**No published release qualifies for automatic apply yet.** A release applies
-automatically only when its signed manifest carries a compatibility proof with a
-row for your exact installed version, topology, profiles, platform and
+**Automatic apply requires published, signed exact-transition proof.** A release
+applies automatically only when its signed manifest carries a compatibility proof
+with a row for your exact installed version, topology, profiles, platform and
 deployment files, produced by a real upgrade-and-restore rehearsal. The exact-pair
-executor must complete all six suites, retain genuine measurements and verify
-cleanup before producing that proof. Its complete native acceptance is still
-under validation; the passing bounded milestones are not release proofs.
-Releases published before this feature carry no proof. Until a qualified release
-is published, an opted-in installation checks, verifies and reports new releases,
-and every release stays notify-only with a reason such as `uncertified_release`.
+executor must complete all six suites on real product images, retain genuine
+measurements and verify cleanup before producing that proof. Merging code or
+passing bounded milestones does not establish release eligibility. Without usable
+proof, an opted-in installation checks, verifies and reports releases but leaves
+them notify-only with a reason such as `uncertified_release`.
 
 ### Supported installations
 
@@ -469,12 +473,22 @@ Setup runs the same read-only state probes in every mode, so these apply to
 - **Host tools for the original host user:** Python 3.9 or newer, Docker Compose
   v2, host `cosign` v3 or newer on `PATH`, and a running cron daemon or a usable
   systemd manager. Setup never installs any of them.
+- **The `.env` target's filesystem:** local ext4 on Linux or APFS on macOS,
+  with native atomic exchange, hard links and durable file/directory sync.
+  Preserving-commit storage lives beside the canonical target, separately from
+  cold backups. Setup uses it when normalizing empty/`latest` pins; already
+  pinned installs still need it when an update changes versions. See
+  [Env commit and private retention](#env-commit-and-private-retention) for file
+  ownership and metadata restrictions. An ext4 backup destination does not make
+  a checkout's `.env` on XFS or Btrfs a supported commit target.
 
 `download` and `apply` also need **measurable Docker storage**: a local Linux
 dockerd on its Unix socket using the overlay2 driver, or Docker's containerd
 image store at its default paths. Docker Desktop, other VM-backed contexts and
 remote contexts report unknown capacity and are refused. Only `apply` needs a
-backup directory.
+backup directory, on private local ext4 or APFS storage. These are separate
+requirements: APFS support for env commits or backups does **not** make Docker
+Desktop eligible for automatic apply.
 
 ### One-time automatic-update setup
 
@@ -723,7 +737,8 @@ To try the same release again, clear its quarantine:
 
 Use the failed attempt's retained identity for `retry`: its private attempt
 record holds the exact target version and manifest hash. Cross-check the attempt
-with `./bin/update status --format json` and the matching backup evidence.
+with [host JSON status in the enrolled context](#status-on-the-host-and-in-the-app)
+and the matching backup evidence.
 `./bin/update check --format json` fetches the
 currently configured manifest and may show a newer release, not the target that
 failed. `retry` only clears the exact quarantine: that release is attempted
@@ -752,7 +767,7 @@ verified but not qualified for this particular installation.
 | `release_incomplete`, `discovery_incomplete` | The release is missing its signed manifest or bundle, or the updater could not complete discovery; it will not silently treat an incomplete check as current. |
 | `signature_rejected`, `host_verifier_required`, `unsupported_contract`, `immutable_release_changed` | The signature, required host verifier, manifest contract or immutable release bytes could not be trusted. Do not bypass verification. |
 | `channel_mismatch`, `version_policy_blocked` | The release is on another channel, or its version jump exceeds the configured policy. |
-| `uncertified_release`, `restore_not_certified`, `restore_procedure_unsupported`, `backup_inventory_mismatch` | No usable signed proof certifies the exact restore procedure and complete persistent-data coverage, or the setup predates restore-backed authorization. This includes every release today; see [Phase 1 status](#phase-1-status). |
+| `uncertified_release`, `restore_not_certified`, `restore_procedure_unsupported`, `backup_inventory_mismatch` | No usable signed proof certifies the exact restore procedure and complete persistent-data coverage, or the setup predates restore-backed authorization. See [Release eligibility](#release-eligibility). |
 | `transition_not_rehearsed` | The proof has no row for the exact installed version, topology and profiles. |
 | `platform_not_rehearsed` | The exact transition was not rehearsed on this host's platform (for example arm64). |
 | `deployment_files_mismatch` | The checkout's Compose or bootstrap files differ from the authenticated retained deployment or the enrolled baseline. |
@@ -851,6 +866,63 @@ and 2 when the private state is invalid. A manual `bin/update apply`, `stage`,
 or `rollback` started during an automatic attempt is refused with
 `automatic_recovery_pending`.
 
+### Safe handoff to manual operations
+
+For an enrolled installation, use this procedure **before** editing configuration,
+changing checkout files, manually upgrading, stopping or uninstalling. Run from
+its original checkout as the original host user. Coordinate with other operators:
+no one should enable automation or start another manual updater during the
+handoff or subsequent maintenance. Keep the enrollment and recovery evidence intact.
+
+1. **Record disable, not just a pause:**
+
+   ```bash
+   ./bin/update disable
+   printf 'exit=%s\n' "$?"
+   ```
+
+   Require exit `0` and `disable: recorded; no update or scheduler started.`
+   `busy; nothing recorded; retry the command` means no control was saved. If
+   exit `3` instead explicitly says `control recorded; public report busy`, the
+   disable was saved but its public report was not. After contention clears,
+   repeat `disable` to obtain the clean confirmation; do not infer success from
+   silence or from the app's status.
+2. **Let retained work finish through the normal runner:**
+
+   ```bash
+   ./bin/update run
+   printf 'exit=%s\n' "$?"
+   ```
+
+   This performs one tick and prints JSON without a `--format` flag. It uses the
+   enrolled Docker context and handles retained recovery before honoring disable;
+   it can still stop/start containers or restore data for an existing attempt.
+3. **Require the disabled no-op before manual mutation.** That invocation must
+   exit `0` and its JSON must contain all three fields: `"code": 0`,
+   `"disposition": "skipped"`, `"skip_reason": "disabled"`.
+   - `busy` also exits `0`, but proves nothing about completion. Wait for the
+     active invocation to finish, then run one fresh tick; do not kill it or
+     remove locks to proceed.
+   - If the tick finishes retained work (`applied`, `restored` or
+     `failed_available`), run one subsequent tick and require the disabled
+     result above. Recovery can return exit `5` for `restored` or
+     `failed_available` to retain the original forward failure.
+   - Any other result, missing JSON, `recovery_required`, or ambiguous evidence
+     means **stop** and follow [recovery guidance](#when-status-says-recovery_required).
+     A state needing manual recovery requires an evidence-based operator plan,
+     not a retry loop. Retry retained recovery only after a confirmed transient
+     host problem has been resolved.
+
+`status --format json` is diagnostic, not this completion check:
+`pending_transaction: false` only means no engine journal was observed. It does
+not rule out a reserved automatic attempt or pending success/restore finalization.
+The runner checks those under the runner and engine locks before returning the
+disabled skip. This hands off automatic work, not application health or any
+separate manual staged update. Keep automation disabled during manual work, use
+the [enrolled context](#status-on-the-host-and-in-the-app), and retain backups and
+ledgers. Manual configuration changes or upgrades invalidate the baseline; do not
+rerun setup, delete state or bypass a guard to make the changed install eligible.
+
 ### When status says recovery_required
 
 `recovery_required` (guidance `review_recovery`) means the updater could not
@@ -883,13 +955,23 @@ What to do:
    remove or recreate containers; and do not delete or replace volumes, the
    `.futureagi-updates/` directory, attempt evidence or anything in the backup
    directory.
-2. **Inspect without changing state:** run `./bin/update status` and
-   `./bin/update status --format json`, then `docker compose ps -a` and
-   `docker compose logs app`. Preserve the attempt's directory in the backup
-   destination (named after its attempt ID), including the recovery ledger,
+2. **Inspect without changing state:** set `ENROLLED_CONTEXT` to the exact context
+   name printed by setup's `Verified Docker target` line, then run from the
+   original checkout:
+
+   ```bash
+   : "${ENROLLED_CONTEXT:?Set this to the verified context name printed by setup}"
+   DOCKER_CONTEXT="$ENROLLED_CONTEXT" ./bin/update status
+   DOCKER_CONTEXT="$ENROLLED_CONTEXT" ./bin/update status --format json
+   docker --context "$ENROLLED_CONTEXT" compose ps -a
+   docker --context "$ENROLLED_CONTEXT" compose logs app
+   ```
+
+   Do not switch the global context. Preserve the attempt's directory in the
+   backup destination (named after its attempt ID), including the recovery ledger,
    proof, hash inventory and bounded logs. The private attempt record and ledger
-   identify the target and the durable recovery direction; public status alone
-   may not expose every detail.
+   identify the target and the durable recovery direction; status alone cannot
+   establish that all automatic work is finished.
 3. **Fix only an independently confirmed transient host problem, then let
    retained recovery retry.** For example, a host check may confirm that Docker
    is stopped or that its filesystem has exhausted free bytes or inodes. Recovery
@@ -913,12 +995,34 @@ What to do:
 
 ### Status on the host and in the app
 
-- `./bin/update status` prints the installed versions, an unfinished run and the
-  last receipt. It works while Docker is down (running versions then show as
-  unknown and it exits 2).
-- `./bin/update status --format json` prints a host-only document
-  (`host_schema_version` 1) with versions, the pending transaction, the last run
-  and reason codes. It contains host paths: never serve it to the app.
+For an enrolled installation, set `ENROLLED_CONTEXT` to the exact context name
+in setup's `Verified Docker target` line. Ordinary `status` (text, JSON and
+`--export-public`) and hand-run Compose commands use your shell's Docker
+selection, not automatically the enrollment's. Select it per command, without
+changing the global context:
+
+```bash
+: "${ENROLLED_CONTEXT:?Set this to the verified context name printed by setup}"
+DOCKER_CONTEXT="$ENROLLED_CONTEXT" ./bin/update status
+DOCKER_CONTEXT="$ENROLLED_CONTEXT" ./bin/update status --format json
+docker --context "$ENROLLED_CONTEXT" compose ps -a
+docker --context "$ENROLLED_CONTEXT" compose logs app
+```
+
+Use the original host user's Docker configuration, without an alternate
+`DOCKER_CONFIG`. `run` and `download` already pin the registered Docker context;
+controls such as `disable` change private host state without probing Docker.
+They do not need a context flag, and `--docker-context` is only an enrollment
+option for `setup`/`schedule init`, not `run` or `status`.
+
+- Text status prints the installed versions, an unfinished run and the last
+  receipt. It works while Docker is down (running versions then show as unknown
+  and it exits 2).
+- JSON status prints a host-only document (`host_schema_version` 1) with versions,
+  `pending_transaction`, the last run and reason codes. That pending flag only
+  observes the engine journal, not all retained automatic work; use the
+  [safe handoff](#safe-handoff-to-manual-operations) before manual changes.
+  It contains host paths: never serve it to the app.
 - `./bin/update reporting init --directory /absolute/dedicated/public-parent`
   binds a dedicated host directory once. From then on every tick and control
   writes a sanitized status report into its slot: versions, discovery, the
@@ -1077,15 +1181,15 @@ git, merge env settings, install dependencies or restore databases.
 
 ### Restore qualification and daemon image capacity
 
-**Complete qualification is still under native validation in this development
-tree.** The release producer issues automatic eligibility only after the exact
-source/target executor runs all six suites on real product images, validates the
-raw measurements and confirms cleanup. Bounded M1–M5 milestones have passed on
-native amd64 GitHub runners, but their outputs remain explicitly nonqualifying.
-Component tests, fake-Docker results and stage-status JSON are not release
-proofs; a missing measurement or failed assertion must never be waived to make
-acceptance green. An unavailable executor reports `shipping_executor_unavailable`;
-missing or failed suites and measurements remain explicit refusals.
+**Qualification is specific to the exact source/target transition and platform.**
+The release producer issues automatic eligibility only after the exact-pair
+executor runs all six suites on real product images, validates the raw
+measurements and confirms cleanup. Automatic apply additionally requires that
+proof in the published, signed release. Bounded M1–M5 milestones, component
+tests, fake-Docker results and stage-status JSON are not release proofs; a
+missing measurement or failed assertion must never be waived to make acceptance
+green. An unavailable executor reports `shipping_executor_unavailable`; missing
+or failed suites and measurements remain explicit refusals.
 
 Generated-baseline automatic apply uses authenticated contract-v2 transition evidence, the fixed
 `standalone-runtime-v2` observer, `automatic-layout.json`, and per-installation A6 estimates. It does not require

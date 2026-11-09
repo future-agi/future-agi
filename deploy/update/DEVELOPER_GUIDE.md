@@ -2,7 +2,7 @@
 
 Audience: engineers and reviewers changing the self-hosted product. Start with the checklist and change table; use [UPDATE_SAFETY.md](UPDATE_SAFETY.md) for the full checker specification.
 
-**Scope and status:** this guide describes Phase 1 in [PR #3623](https://github.com/future-agi/future-agi/pull/3623), verified against `7ab9a7313` on 2026-11-03. The PR is still under validation; this is not an announcement that automatic updates have shipped. These checks apply where this implementation is installed. Unattended apply supports the qualified base OSS Standalone Docker Compose layout, not every deployment topology. Later phases cover binary/systemd, Kubernetes/Helm/GitOps and distributor/air-gapped installs.
+**Scope and release eligibility:** this guide describes the Phase 1 implementation merged into `dev` in [PR #3623](https://github.com/future-agi/future-agi/pull/3623). These checks apply where this implementation is installed; merging it does not establish release eligibility. Unattended apply supports only the qualified base OSS Standalone Docker Compose layout and requires [published, signed proof for the exact transition](README.md#release-eligibility). The dated migration examples below are not live qualification results. Binary/systemd, Kubernetes/Helm/GitOps and distributor/air-gapped installs are outside this scope.
 
 ## 1. The rule for every developer
 

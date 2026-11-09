@@ -1,4 +1,4 @@
-"""Complete 24/29-pending-migration A9 intersection regression, without Django.
+"""Complete 27/32-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -26,6 +26,7 @@ SQL_ADDITIONS = (
     ('tracer','0121_merge_sql_execution_and_alert_high_water'),
     ('tracer','0122_sql_payload_expiry_index'),
     ('tracer','0130_merge_20261104_0940'),
+    ('tracer','0131_merge_sql_workbench_and_observationspan_internal_type'),
 )
 LATEST = (
     ('accounts','0029_demotracepublication_demoseedrequest'),
@@ -45,6 +46,8 @@ LATEST = (
     ('tracer','0127_project_analysis_source_generation'),
     ('tracer','0128_instantevalrow_source_session_ids'),
     ('tracer','0129_project_analysis_source_generation_db_default'),
+    ('tracer','0130_observationspan_internal_type'),
+    ('simulate','0102_agent_fix_engine_notes'),
 ) + SQL_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
@@ -54,7 +57,7 @@ FLOOR_ONLY = (
 )
 
 
-BASELINES = ((REVISIONS[1], LATEST, 24), (REVISIONS[0], LATEST + FLOOR_ONLY, 29))
+BASELINES = ((REVISIONS[1], LATEST, 27), (REVISIONS[0], LATEST + FLOOR_ONLY, 32))
 
 
 def added_migration_identities(revision):
@@ -295,6 +298,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                     if row['name']=='0030_queue_existing_demo_trace_publications': expected_row={'tracer_trace','tracer_observation_span'}
                     elif row['app_label']=='usage': expected_row={'usage_apicalllog'}
                     elif row['name']=='0118_instant_eval_answers': expected_row={'tracer_eval_task'}
+                    elif row['name']=='0130_observationspan_internal_type': expected_row={'tracer_observation_span'}
                     elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                     else: expected_row=set()
                     self.assertEqual(names,expected_row,(row['app_label'],row['name']))
