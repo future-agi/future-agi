@@ -79,16 +79,44 @@ def test_skills_openapi_has_all_routes_and_errors():
             foundation_paths.add(
                 f"/model-hub/skills/{prefix}/{{resource_id}}/versions/{{number}}/{suffix}/"
             )
+    integration_paths = {
+        "/model-hub/skills/spend-policy/",
+        "/model-hub/skills/version-safety/{version_id}/",
+        "/model-hub/skills/contexts/{context_id}/bindings/",
+        "/model-hub/skills/contexts/{context_id}/consumers/",
+        "/model-hub/skills/contexts/{context_id}/release-state/",
+        "/model-hub/skills/contexts/bindings/{binding_id}/",
+        "/model-hub/skills/contexts/bindings/{binding_id}/sessions/",
+        "/model-hub/skills/contexts/bindings/{binding_id}/sessions/{session_id}/access-check/",
+        "/model-hub/skills/contexts/bindings/{binding_id}/receipts/",
+    }
+    for prefix in ("", "contexts/"):
+        base = f"/model-hub/skills/{prefix}"
+        integration_paths.update(
+            {
+                base + "{resource_id}/draft/checkpoints/",
+                base + "{resource_id}/draft/checkpoints/{checkpoint_id}/restore/",
+                base + "{context_id}/versions/{number}/inspection/",
+                base + "{context_id}/versions/{number}/inspection/files/",
+            }
+        )
     assert foundation_paths <= paths.keys()
+    assert integration_paths <= paths.keys()
+    assert foundation_paths.isdisjoint(integration_paths)
     legacy_paths = {
-        path: item for path, item in paths.items() if path not in foundation_paths
+        path: item
+        for path, item in paths.items()
+        if path not in foundation_paths | integration_paths
     }
     assert len(legacy_paths) == 46
-    assert len(paths) == 56
+    assert len(paths) == 73
     methods = {"get", "post", "put", "patch", "delete"}
     assert sum(len(methods.intersection(item)) for item in legacy_paths.values()) == 58
     assert (
         sum(len(methods.intersection(paths[path])) for path in foundation_paths) == 11
+    )
+    assert (
+        sum(len(methods.intersection(paths[path])) for path in integration_paths) == 23
     )
     for item in paths.values():
         for method in methods.intersection(item):
