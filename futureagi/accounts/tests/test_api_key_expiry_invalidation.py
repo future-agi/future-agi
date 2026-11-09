@@ -91,6 +91,24 @@ def test_deferred_expiry_is_not_written(key, django_capture_on_commit_callbacks)
         factory.assert_not_called()
 
 
+@pytest.mark.parametrize("positional", [False, True])
+def test_iterable_update_fields_preserves_the_expiry_write(
+    key, positional, django_capture_on_commit_callbacks,
+):
+    expiry = timezone.now() + timedelta(seconds=10)
+    key.expires_at = expiry
+    fields = iter(["name", "expires_at"])
+    with patch("redis.Redis.from_url") as factory:
+        with django_capture_on_commit_callbacks(execute=True):
+            if positional:
+                key.save(False, False, None, fields)
+            else:
+                key.save(update_fields=fields)
+        factory.return_value.__enter__.return_value.publish.assert_called_once()
+    key.refresh_from_db()
+    assert key.expires_at == expiry
+
+
 def test_callback_captures_credentials_at_save(key, django_capture_on_commit_callbacks):
     digest = hashlib.sha256(f"{key.api_key}:{key.secret_key}".encode()).hexdigest()
     with patch("redis.Redis.from_url") as factory:

@@ -408,7 +408,14 @@ class OrgApiKey(BaseModel):
         # Do not compare with a previous timestamp: concurrent full saves can
         # restore an old value, and every persisted expiry must evict snapshots.
         # Respect partial/deferred saves that do not write expires_at at all.
-        update_fields = kwargs.get("update_fields")
+        update_fields = kwargs.get("update_fields", args[3] if len(args) > 3 else None)
+        if update_fields is not None:
+            # Django accepts any iterable, including a single-use generator.
+            update_fields = frozenset(update_fields)
+            if "update_fields" in kwargs:
+                kwargs["update_fields"] = update_fields
+            elif len(args) > 3:
+                args = (*args[:3], update_fields, *args[4:])
         writes_expiry = (
             "expires_at" not in self.get_deferred_fields()
             if update_fields is None
