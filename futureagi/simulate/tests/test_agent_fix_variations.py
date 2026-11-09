@@ -3,9 +3,11 @@ write variations of each into a suite version private to the fix, keeps those th
 version fails, and leaves the environment's suite, drafts and dataset as they were."""
 
 import json
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.db import OperationalError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -284,6 +286,23 @@ class TestTheBuilderMessage:
         assert not HostedHarnessConversationMessage.no_workspace_objects.filter(
             client_request_id=f"fix-{fix_run.id}-variations"
         ).exists()
+
+    def test_a_builder_turn_that_saved_nothing_ends_the_fix_soon_after(self, fix_run):
+        command = _command(fix_run)
+        _turn_ended(command, 1)
+
+        # Its save may still be on its way.
+        assert variations.advance(str(fix_run.id)) == VariationsStep.WRITING
+        HostedHarnessConversationEvent.no_workspace_objects.filter(
+            event_id=f"turn-{command.id}"
+        ).update(emitted_at=timezone.now() - timedelta(minutes=5))
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.ENDED
+        fix_run.refresh_from_db()
+        assert (fix_run.state, fix_run.failure["code"]) == (
+            AgentFixRun.State.FAILED,
+            "fix_variations_failed",
+        )
 
 
 class TestThePrivateSuite:
@@ -591,15 +610,66 @@ class TestSettle:
         shared.refresh_from_db()
         assert shared.deleted is False
 
-    def test_a_retry_keeps_the_variations_and_writes_none(
+    def test_too_few_is_decided_and_closed_together_through_an_outage(
+        self, environment, fix_run, storage
+    ):
+        _land(fix_run, storage, _builder_save(environment))
+        _finish(_base_run(fix_run), failed=[_named(fix_run, 2)])
+
+        with (
+            patch.object(
+                variations, "close_fix_run", side_effect=OperationalError("gone")
+            ),
+            pytest.raises(OperationalError),
+        ):
+            variations.advance(str(fix_run.id))
+
+        # The next look decides again: the engine never starts below the floor.
+        assert variations.advance(str(fix_run.id)) == VariationsStep.ENDED
+        fix_run.refresh_from_db()
+        assert fix_run.state == AgentFixRun.State.TOO_FEW_CASES
+
+    def test_a_legacy_environment_s_scenarios_for_the_variations_are_removed(
+        self, environment, fix_run, storage
+    ):
+        from simulate.services.alk_simulate_ingestion import (
+            _create_persona_scenarios_legacy,
+        )
+
+        _land(fix_run, storage, _builder_save(environment))
+        _base_run(fix_run)
+        run_test = environment.run_test
+        shared = run_test.scenarios.get()
+        # Built before grouped datasets: each persona got a scenario of its own.
+        [legacy] = _create_persona_scenarios_legacy(
+            environment.organization,
+            environment.workspace,
+            run_test.agent_definition,
+            [{"name": "caller", "situation": "a variation"}],
+        )
+        run_test.scenarios.add(legacy)
+        HostedHarnessScenario._base_manager.filter(
+            job=environment, scenario_key=_named(fix_run, 1)
+        ).update(scenario=legacy, dataset_row=None)
+
+        close_fix_run(fix_run.id, AgentFixRun.State.STOPPED)
+
+        legacy.refresh_from_db()
+        shared.refresh_from_db()
+        assert (legacy.deleted, shared.deleted) == (True, False)
+        assert not run_test.scenarios.filter(id=legacy.id).exists()
+
+    def test_a_retry_of_a_fix_that_failed_in_its_first_step_reuses_what_it_finished(
         self, environment, fix_run, storage, user, builder
     ):
         _land(fix_run, storage, _builder_save(environment))
-        _finish(_base_run(fix_run), failed=[_named(fix_run, n) for n in (1, 2, 3)])
+        variations_run = _base_run(fix_run)
+        _finish(variations_run, failed=[_named(fix_run, n) for n in (1, 2, 3)])
+        # The step ends before it settles: its cap, say.
         close_fix_run(
             fix_run.id,
             AgentFixRun.State.FAILED,
-            failure={"code": "fix_engine_died", "message": "m"},
+            failure={"code": "fix_variations_timeout", "message": "m"},
         )
         builder.reset_mock()
 
@@ -607,13 +677,34 @@ class TestSettle:
             AgentFixRun.no_workspace_objects.get(id=fix_run.id), user=user
         )
 
+        assert FixRequest.model_validate(retried.request).variations_pending is True
         assert retried.suite_version_id == _private(fix_run).id
-        # The failed fix's run of the base version is read again, not paid for twice.
         assert variations.advance(str(retried.id)) == VariationsStep.DONE
+        retried.refresh_from_db()
+        # No builder message and no second run of the base version: both are reused.
+        builder.assert_not_called()
         assert not HostedHarnessJob.no_workspace_objects.filter(
             fix_run=retried
         ).exists()
-        builder.assert_not_called()
+        assert retried.request["variation_parents"] == {
+            _named(fix_run, n): PARENT for n in (1, 2, 3)
+        }
+
+    def test_a_retry_of_a_fix_that_failed_while_the_builder_wrote_asks_again(
+        self, fix_run, user
+    ):
+        close_fix_run(
+            fix_run.id,
+            AgentFixRun.State.FAILED,
+            failure={"code": "fix_variations_timeout", "message": "m"},
+        )
+
+        retried = retry_fix_run(
+            AgentFixRun.no_workspace_objects.get(id=fix_run.id), user=user
+        )
+
+        assert variations.advance(str(retried.id)) == VariationsStep.WRITING
+        assert _command(retried).payload["_fix_run_id"] == str(retried.id)
 
 
 class TestACaseWithoutVariations:

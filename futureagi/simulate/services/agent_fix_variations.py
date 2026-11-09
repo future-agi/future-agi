@@ -11,6 +11,7 @@ import json
 import re
 import uuid
 from collections.abc import Mapping
+from datetime import timedelta
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -71,6 +72,8 @@ _CLAIMED = {
     Observation.ENDED: VariationsStep.ENDED,
     Observation.STOPPING: VariationsStep.STOPPING,
 }
+# How long after the builder's turn ends its save may take to land.
+_LANDING_GRACE = timedelta(minutes=3)
 # What a later look can outlive: the database or object storage briefly unavailable.
 _TRANSIENT = (OperationalError, InterfaceError, S3Error, HTTPError)
 
@@ -188,22 +191,27 @@ def _write(fix_run: AgentFixRun) -> VariationsStep:
     if command is None:
         _ask_builder(fix_run)
         return VariationsStep.WRITING
-    failed = (
-        command.state == HostedHarnessConversationMessage.State.FAILED
-        or HostedHarnessConversationEvent.no_workspace_objects.filter(
-            conversation_id=command.conversation_id,
-            kind="turn_completed",
-            payload__command_message_id=str(command.id),
-        )
-        .exclude(payload__outcome="success")
-        .exists()
-    )
-    if failed:
+    turn = HostedHarnessConversationEvent.no_workspace_objects.filter(
+        conversation_id=command.conversation_id,
+        kind="turn_completed",
+        payload__command_message_id=str(command.id),
+    ).first()
+    if command.state == HostedHarnessConversationMessage.State.FAILED or (
+        turn is not None and (turn.payload or {}).get("outcome") != "success"
+    ):
         return _end(
             fix_run,
             AgentFixRun.State.FAILED,
             "fix_variations_failed",
             "the environment's builder could not write the variations",
+        )
+    # The turn's save lands just after it ends; a turn that saved nothing never lands.
+    if turn is not None and timezone.now() - turn.emitted_at > _LANDING_GRACE:
+        return _end(
+            fix_run,
+            AgentFixRun.State.FAILED,
+            "fix_variations_failed",
+            "the environment's builder finished without saving the variations",
         )
     return VariationsStep.WRITING
 
@@ -551,6 +559,10 @@ def _settle(
             "variations_pending": False,
         }
     )
+    without = _without_variations(parents, variations)
+    too_few = len(failing) < floor
+    # One transaction: a fix whose request says the step is over is never left running
+    # below the floor, where its next look would start the engine.
     with transaction.atomic():
         locked = AgentFixRun.no_workspace_objects.select_for_update().get(id=fix_run.id)
         if locked.state != AgentFixRun.State.RUNNING:
@@ -563,7 +575,19 @@ def _settle(
         # The fix's minutes start now: the step's time is its own.
         locked.started_at = timezone.now()
         locked.save(update_fields=["request", "started_at", "updated_at"])
-    without = _without_variations(parents, variations)
+        if too_few:
+            unvaried = (
+                f" ({len(without)} of them got no usable variation)" if without else ""
+            )
+            _end(
+                fix_run,
+                AgentFixRun.State.TOO_FEW_CASES,
+                "fix_targets_too_few",
+                f"The run had {_count(len(parents), 'failing case')}{unvaried}. The"
+                f" builder wrote {_count(len(variations), 'variation')} of them, and"
+                f" {len(kept)} failed on the current version:"
+                f" {_count(len(failing), 'failing case')}, and a fix needs {floor}.",
+            )
     logger.info(
         "agent_fix_variations_settled",
         fix_run=str(fix_run.id),
@@ -573,20 +597,7 @@ def _settle(
         kept=len(kept),
         failing=len(failing),
     )
-    if len(failing) < floor:
-        unvaried = (
-            f" ({len(without)} of them got no usable variation)" if without else ""
-        )
-        return _end(
-            fix_run,
-            AgentFixRun.State.TOO_FEW_CASES,
-            "fix_targets_too_few",
-            f"The run had {_count(len(parents), 'failing case')}{unvaried}. The builder"
-            f" wrote {_count(len(variations), 'variation')} of them, and {len(kept)}"
-            f" failed on the current version: {_count(len(failing), 'failing case')},"
-            f" and a fix needs {floor}.",
-        )
-    return VariationsStep.DONE
+    return VariationsStep.ENDED if too_few else VariationsStep.DONE
 
 
 def _count(number: int, noun: str) -> str:

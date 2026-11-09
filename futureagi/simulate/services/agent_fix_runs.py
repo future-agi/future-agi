@@ -38,6 +38,7 @@ from simulate.selectors.agent_fix import (
     written_variations,
 )
 from simulate.services.agent_fix_agents import agent_kind
+from simulate.services.alk_simulate_ingestion import GROUPED_SCENARIOS_ORIGIN
 from simulate.services.harness_agent_versions import discard_agent_version
 from simulate.services.harness_usage import (
     require_agent_fix_usage,
@@ -434,12 +435,18 @@ def _drop_variation_rows(fix_run: AgentFixRun) -> None:
             now = timezone.now()
             rows = [one.dataset_row_id for one in bound if one.dataset_row_id]
             Row.all_objects.filter(id__in=rows).update(deleted=True, deleted_at=now)
-            # A legacy environment gave each persona a scenario of its own; a grouped
-            # one's shared scenario stays.
-            Scenarios.all_objects.filter(
-                id__in=[one.scenario_id for one in bound if not one.dataset_row_id],
-                dataset__isnull=True,
-            ).update(deleted=True, deleted_at=now)
+            # A legacy environment gave each persona a scenario of its own, linked to
+            # the run test; a grouped one's shared scenario stays.
+            legacy = list(
+                Scenarios.all_objects.filter(
+                    id__in=[one.scenario_id for one in bound if not one.dataset_row_id]
+                ).exclude(metadata__origin=GROUPED_SCENARIOS_ORIGIN)
+            )
+            Scenarios.all_objects.filter(id__in=[one.id for one in legacy]).update(
+                deleted=True, deleted_at=now
+            )
+            if legacy and fix_run.environment.run_test_id:
+                fix_run.environment.run_test.scenarios.remove(*legacy)
             for scenario in Scenarios.all_objects.filter(
                 id__in={one.scenario_id for one in bound if one.dataset_row_id}
             ).select_related("dataset"):
