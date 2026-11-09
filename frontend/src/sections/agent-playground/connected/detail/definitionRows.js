@@ -1,3 +1,4 @@
+import { frameworkLabel } from "../../connect/frameworkLabels";
 import { humanize, sourceLabel } from "../connectedAgentLabels";
 
 // Rows for the Definition cards. Each row is { label, value } or
@@ -176,6 +177,12 @@ export const storedAgentRows = ({ agent }) => {
   const rows = [
     { label: "Kind", value: humanize(agent.kind) },
     { label: "Type", value: humanize(agent.type) },
+    {
+      label: "Framework",
+      value: agent.extension?.framework
+        ? frameworkLabel(agent.extension.framework)
+        : null,
+    },
   ];
   if (ref) {
     rows.push({

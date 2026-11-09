@@ -25,6 +25,7 @@ from simulate.services.agent_setup import (
     store_agent,
     store_setup_failure,
     stored_agent,
+    stored_agent_answer,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.middleware.workspace_context import set_workspace_context
@@ -238,6 +239,39 @@ def test_source_agent_round_trips(version):
 
     assert stored_agent(version.id, with_raw_setup=True) == agent
     assert stored_agent(version.id) == _without_extension(agent)
+
+
+@pytest.mark.django_db
+def test_the_page_sees_the_framework_and_folder_but_not_the_contract(version):
+    from simulate.serializers.response.agent_setup import StoredAgentResponseSerializer
+
+    agent = source_agent(
+        extension={
+            "contract": {"agent": "harbor_hotels", "api_key": "[redacted]"},
+            "framework": {"name": "other", "version": None, "label": "Haystack"},
+            "source": {"subfolder": "agents/harbor"},
+        }
+    )
+    store_agent(agent_version_id=version.id, agent=agent, sdk_version="0.3.0")
+
+    shown = StoredAgentResponseSerializer(stored_agent_answer(version)).data
+
+    assert shown["agent"]["extension"] == {
+        "framework": {"name": "other", "version": None, "label": "Haystack"},
+        "source": {"subfolder": "agents/harbor"},
+    }
+    assert "harbor_hotels" not in str(shown)
+
+
+@pytest.mark.django_db
+def test_a_document_read_before_frameworks_shows_neither(version):
+    from simulate.serializers.response.agent_setup import StoredAgentResponseSerializer
+
+    store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+
+    shown = StoredAgentResponseSerializer(stored_agent_answer(version)).data
+
+    assert shown["agent"]["extension"] == {"framework": None, "source": None}
 
 
 @pytest.mark.django_db

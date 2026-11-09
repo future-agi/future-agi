@@ -235,12 +235,23 @@ def stored_agent_answer(agent_version: AgentVersion) -> StoredAgentAnswer | None
     if setup is None:
         return None
     return StoredAgentAnswer(
-        agent=_rebuilt_agent(setup, with_raw_setup=False),
+        agent={
+            **_rebuilt_agent(setup, with_raw_setup=False),
+            "extension": _shown_extension(setup.raw_setup),
+        },
         sdk_version=setup.sdk_version,
         stored_at=setup.created_at,
         setup_stale=_setup_is_stale(setup, agent_version.agent_definition),
         origin=setup.origin,
     )
+
+
+def _shown_extension(raw_setup: Any) -> dict[str, Any]:
+    raw = raw_setup if isinstance(raw_setup, dict) else {}
+    return {
+        name: raw[name] if isinstance(raw.get(name), dict) else None
+        for name in ("framework", "source")
+    }
 
 
 def _rebuilt_agent(setup: AgentVersionSetup, *, with_raw_setup: bool) -> dict[str, Any]:

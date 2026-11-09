@@ -32941,6 +32941,16 @@ export const SimulateAgentDefinitionsVersionsAgentListResponse = zod.object({
     gaps: zod.array(zod.string().min(1)),
     instrumentation: zod.string().min(1),
     setup_hash: zod.string().min(1),
+    extension: zod.object({
+      framework: zod.object({
+        name: zod.string().min(1),
+        version: zod.string().min(1),
+        label: zod.string().min(1).optional(),
+      }),
+      source: zod.object({
+        subfolder: zod.string().min(1),
+      }),
+    }),
   }),
   sdk_version: zod.string().min(1),
   stored_at: zod.string().datetime({ offset: true }),

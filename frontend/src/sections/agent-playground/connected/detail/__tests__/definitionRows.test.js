@@ -385,4 +385,38 @@ describe("storedAgentRows", () => {
     expect(rows.Gaps.value).toBe("None");
     expect(rows["Tracing library"].value).toBe("traceAI");
   });
+
+  const withFramework = (framework) =>
+    byLabel(
+      storedAgentRows({
+        ...details,
+        agent: { ...details.agent, extension: { framework } },
+      }),
+    ).Framework;
+
+  it("shows the framework the reading found, with its version", () => {
+    expect(withFramework({ name: "langchain", version: "0.3.1" }).value).toBe(
+      "LangChain 0.3.1",
+    );
+  });
+
+  it("names an unlisted framework by its label", () => {
+    expect(
+      withFramework({ name: "other", version: null, label: "Haystack" }).value,
+    ).toBe("Haystack");
+  });
+
+  it("says when no framework is used or none was detected", () => {
+    expect(withFramework({ name: "none", version: null }).value).toBe(
+      "No framework",
+    );
+    expect(withFramework({ name: "unknown", version: null }).value).toBe(
+      "Framework not detected",
+    );
+  });
+
+  it("has no framework row on a document stored before frameworks were read", () => {
+    expect(byLabel(storedAgentRows(details)).Framework).toBeUndefined();
+    expect(withFramework(undefined)).toBeUndefined();
+  });
 });

@@ -16589,6 +16589,25 @@ export interface StoredTelephonyApi {
   direction_supported: string[];
 }
 
+export interface StoredFrameworkApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  version: string;
+  /** @minLength 1 */
+  label?: string;
+}
+
+export interface StoredSourceEchoApi {
+  /** @minLength 1 */
+  subfolder: string;
+}
+
+export interface StoredExtensionApi {
+  framework: StoredFrameworkApi;
+  source: StoredSourceEchoApi;
+}
+
 export interface StoredAgentApi {
   /** @minLength 1 */
   schema_version: string;
@@ -16612,6 +16631,7 @@ export interface StoredAgentApi {
   instrumentation: string;
   /** @minLength 1 */
   setup_hash: string;
+  extension: StoredExtensionApi;
 }
 
 export interface StoredAgentResponseApi {
