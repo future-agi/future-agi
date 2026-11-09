@@ -10,7 +10,6 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   IconButton,
   InputBase,
   ListItemIcon,
@@ -66,35 +65,6 @@ import { ReportProvider, useReportModel } from "./reportContext";
 import { ErrorState } from "./parts";
 
 const CONTENT_WIDTH = 1180;
-
-function HeaderChip({ label, icon, title }) {
-  const chip = (
-    <Chip
-      size="small"
-      variant="outlined"
-      icon={icon ? <Iconify icon={icon} width={13} /> : undefined}
-      label={label}
-      sx={{
-        maxWidth: 320,
-        color: "text.secondary",
-        "& .MuiChip-icon": { color: "text.secondary", ml: 0.75 },
-      }}
-    />
-  );
-  return title ? (
-    <Tooltip describeChild arrow title={title}>
-      {chip}
-    </Tooltip>
-  ) : (
-    chip
-  );
-}
-
-HeaderChip.propTypes = {
-  label: PropTypes.node.isRequired,
-  icon: PropTypes.string,
-  title: PropTypes.node,
-};
 
 // The report's name, renamed in place: click it (or the pencil), Enter saves,
 // Escape cancels.
@@ -233,34 +203,37 @@ function ReportHeader({
         <InlineName key={config.name} config={config} />
         <Stack
           direction="row"
-          spacing={0.75}
           alignItems="center"
           useFlexGap
           flexWrap="wrap"
-          sx={{ mt: 0.75 }}
+          sx={{ mt: 0.5 }}
         >
-          <HeaderChip
-            label={unitTitle(config.unit)}
-            icon="mdi:layers-outline"
-          />
-          <HeaderChip
-            label={lens.key === "custom" ? "Custom question" : lens.title}
-            icon={lens.icon}
-          />
-          {scope && (
-            <HeaderChip
-              label={scope}
-              icon="mdi:calendar-range"
-              title="What this run read"
-            />
-          )}
+          {/* What the report reads, as one meta line. */}
+          <Typography
+            variant="body2"
+            color="text.subtitle"
+            component="span"
+            data-testid="report-meta"
+            sx={{ fontVariantNumeric: "tabular-nums" }}
+          >
+            {unitTitle(config.unit)} ·{" "}
+            {lens.key === "custom" ? "Custom question" : lens.title}
+            {scope && (
+              <>
+                {" · "}
+                <Tooltip describeChild arrow title="What this run read">
+                  <span>{scope}</span>
+                </Tooltip>
+              </>
+            )}
+          </Typography>
           {run && (
             <Box
               component="button"
               type="button"
               onClick={onDetails}
               sx={{
-                ml: 0.5,
+                ml: 1,
                 p: 0,
                 border: 0,
                 bgcolor: "transparent",
@@ -303,8 +276,8 @@ function ReportHeader({
       >
         <Button
           size="small"
-          variant="outlined"
-          color="inherit"
+          variant="contained"
+          color="primary"
           startIcon={<Iconify icon="mdi:play-outline" width={16} />}
           onClick={onRunNow}
           disabled={busy || !canRun}

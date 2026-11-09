@@ -358,6 +358,7 @@ export default function EditDrawer({
           </Button>
           <Button
             variant="contained"
+            color="primary"
             onClick={save}
             disabled={busy || Boolean(problem)}
           >

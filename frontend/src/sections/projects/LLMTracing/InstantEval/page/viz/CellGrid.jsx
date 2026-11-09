@@ -402,9 +402,7 @@ export default function CellGrid({
               boxShadow: (t) => t.customShadows?.dropdown,
             }}
           >
-            <Typography variant="body2" sx={{ fontSize: 12.5 }}>
-              {words(shown)}
-            </Typography>
+            <Typography variant="body2">{words(shown)}</Typography>
           </Section>
         )}
       </Popper>

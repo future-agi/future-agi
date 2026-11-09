@@ -1,18 +1,10 @@
 import Section from "src/components/section";
 import React from "react";
 import PropTypes from "prop-types";
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  Link,
-  Stack,
-  Tooltip,
-  Typography,
-} from "@mui/material";
+import { Box, Chip, Link, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import { Link as RouterLink } from "react-router-dom";
+import SharedErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { formatCount, formatPercent } from "./insightsFormat";
@@ -230,22 +222,16 @@ CategoryLink.propTypes = {
   maxWidth: PropTypes.number,
 };
 
-// The theme's warning yellow is unreadable as text on a light surface, so the
-// borderline tone uses its darker icon step there.
-export const cautionColor = (theme) =>
-  theme.palette.mode === "dark"
-    ? theme.palette.warning.light
-    : theme.palette.warning.icon ||
-      theme.palette.warning.darker ||
-      theme.palette.warning.dark;
+// The borderline tone: the warning role's text colour, readable in both modes.
+export const cautionColor = (theme) => theme.palette.status.warning.fg;
 
 export const toneColor = (theme, tone) =>
   ({
-    worse: theme.palette.error.main,
+    worse: theme.palette.status.danger.fg,
     borderline: cautionColor(theme),
-    better: theme.palette.success.dark,
-    bad: theme.palette.error.main,
-    good: theme.palette.success.dark,
+    better: theme.palette.status.success.fg,
+    bad: theme.palette.status.danger.fg,
+    good: theme.palette.status.success.fg,
   })[tone] || theme.palette.text.secondary;
 
 export function ToneChip({ label, tone = "neutral", icon, title, sx }) {
@@ -347,18 +333,22 @@ export function NotableLine({ note }) {
 
 NotableLine.propTypes = { note: PropTypes.object.isRequired };
 
+// An item's facets as a line of text, each in its tone's colour.
 export function FacetChips({ facets, dense }) {
+  const theme = useTheme();
   const chips = facetChips(facets);
   if (!chips.length) return null;
   return (
-    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+    <Stack direction="row" columnGap={1.5} rowGap={0.25} flexWrap="wrap">
       {chips.map((chip) => (
-        <ToneChip
+        <Typography
           key={chip.key}
-          label={chip.label}
-          tone={chip.tone}
-          sx={dense ? { height: 20, fontSize: 11 } : undefined}
-        />
+          variant={dense ? "caption" : "body2"}
+          component="span"
+          sx={{ color: toneColor(theme, chip.tone) }}
+        >
+          {chip.label}
+        </Typography>
       ))}
     </Stack>
   );
@@ -379,7 +369,7 @@ export function AttributePills({ attributes }) {
             alignItems: "center",
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 10,
+            borderRadius: "4px",
             fontSize: 11,
             lineHeight: "18px",
             overflow: "hidden",
@@ -536,20 +526,15 @@ Legend.propTypes = {
   dense: PropTypes.bool,
 };
 
+// The shared error state, sized for a panel and announced as an alert.
 export function ErrorState({ message, onRetry }) {
   return (
-    <Alert
-      severity="error"
-      action={
-        onRetry && (
-          <Button color="inherit" size="small" onClick={onRetry}>
-            Retry
-          </Button>
-        )
-      }
-    >
-      {message}
-    </Alert>
+    <SharedErrorState
+      role="alert"
+      title={message}
+      onRetry={onRetry}
+      sx={{ py: 4 }}
+    />
   );
 }
 

@@ -190,3 +190,19 @@ describe("History", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("the rows table with no rows", () => {
+  it("says answers are coming while the run reads, not that none match", () => {
+    renderTable({ records: [], total: 0, unit: "sessions", waiting: true });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Answers will appear here as Jev reads each session.",
+    );
+    expect(screen.queryByText("No sessions match.")).toBeNull();
+  });
+
+  it("says none match once the run is over", () => {
+    renderTable({ records: [], total: 0, unit: "sessions" });
+    expect(screen.getByText("No sessions match.")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});

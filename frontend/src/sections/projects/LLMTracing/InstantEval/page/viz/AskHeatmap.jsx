@@ -455,7 +455,6 @@ function Panel({
           variant="caption"
           color="text.secondary"
           sx={{
-            fontSize: 11.5,
             flexShrink: 0,
             fontVariantNumeric: "tabular-nums",
           }}
@@ -522,11 +521,7 @@ function Panel({
             sx={{ width: 10, height: 6, borderRadius: "1px", bgcolor: step }}
           />
         ))}
-        <Typography
-          variant="caption"
-          color="text.disabled"
-          sx={{ fontSize: 10.5 }}
-        >
+        <Typography variant="caption" color="text.disabled">
           {flat
             ? `near usual (${pct(overallShare)}) · no cell clearly more`
             : `near usual (${pct(overallShare)}) → clearly more`}
@@ -768,11 +763,7 @@ export default function AskHeatmap({
   if (kind === "time") {
     if (!grid?.rows.length)
       body = (
-        <Typography
-          variant="body2"
-          color="text.secondary"
-          sx={{ fontSize: 13 }}
-        >
+        <Typography variant="body1" color="text.secondary">
           No {plural} to place yet.
         </Typography>
       );
@@ -801,7 +792,7 @@ export default function AskHeatmap({
       );
   } else if (!matrix?.rows.length || !matrix.rows.some((r) => r.answered))
     body = (
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
+      <Typography variant="body1" color="text.secondary">
         No {plural} answered yet.
       </Typography>
     );

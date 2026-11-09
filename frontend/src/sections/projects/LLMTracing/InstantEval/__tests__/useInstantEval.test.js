@@ -376,7 +376,9 @@ describe("startAskRun", () => {
     const refused = await ask({ unit: "traces" }).catch((error) => error);
     expect(refused).toBeInstanceOf(AskKeyMissing);
     expect(refused.message).toBe(KEY_MISSING.message);
-    expect(refused.settingsPath).toBe("/dashboard/settings/ai-providers");
+    expect(refused.settingsPath).toBe(
+      "/dashboard/settings/ai-providers?provider=typesafe",
+    );
     // The questions were saved, so asking again reuses them.
     expect(refused.questions).toEqual([
       expect.objectContaining({ configId: "c1" }),
@@ -998,7 +1000,9 @@ describe("refusals the page explains", () => {
     const control = askError(envelope(400, "JEV_KEY_MISSING", KEY_MISSING));
     expect(control).toBeInstanceOf(AskKeyMissing);
     expect(control.message).toBe(KEY_MISSING.message);
-    expect(control.settingsPath).toBe("/dashboard/settings/ai-providers");
+    expect(control.settingsPath).toBe(
+      "/dashboard/settings/ai-providers?provider=typesafe",
+    );
     // As a raw Axios error, and without words of its own.
     const raw = askError({
       response: {

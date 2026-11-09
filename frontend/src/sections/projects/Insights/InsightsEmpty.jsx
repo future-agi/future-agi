@@ -21,7 +21,7 @@ const STEPS = [
 export default function InsightsEmpty({ onNew }) {
   return (
     <Box sx={{ px: 4, py: 5, maxWidth: 920 }}>
-      <Typography variant="l3" component="h2" fontWeight={600}>
+      <Typography variant="m1" component="h2" fontWeight={600}>
         What do you want to learn about your traffic?
       </Typography>
       <Typography
@@ -79,7 +79,7 @@ export default function InsightsEmpty({ onNew }) {
               minHeight: 132,
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 1,
+              borderRadius: "8px",
               bgcolor: "background.paper",
               textAlign: "left",
               font: "inherit",
@@ -89,7 +89,7 @@ export default function InsightsEmpty({ onNew }) {
               flexDirection: "column",
               gap: 1,
               "&:hover": { borderColor: "text.disabled" },
-              "&:hover .go": { color: "primary.main" },
+              "&:hover .go": { color: "text.primary" },
               "&:focus-visible": {
                 outline: "2px solid",
                 outlineColor: "primary.main",
@@ -109,7 +109,7 @@ export default function InsightsEmpty({ onNew }) {
             >
               <Iconify icon={template.icon} width={18} />
             </Box>
-            <Typography variant="subtitle2" sx={{ fontSize: 15 }}>
+            <Typography variant="m3" fontWeight={500}>
               {template.title}
             </Typography>
             <Typography variant="caption" color="text.secondary">

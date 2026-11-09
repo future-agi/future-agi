@@ -94,6 +94,7 @@ export default function KeepAnswering({
             <Button
               size="small"
               variant="contained"
+              color="primary"
               disabled={state.step === "working"}
               onClick={start}
             >

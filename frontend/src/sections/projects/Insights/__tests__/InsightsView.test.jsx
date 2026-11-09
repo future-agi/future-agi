@@ -1258,7 +1258,9 @@ describe("InsightsView", () => {
     );
     renderAt(`?report=${CONFIG_ID}&run=${RUN_ID}`);
     const shown = await screen.findAllByText("Oct 22–23 · 1 filter");
-    expect(shown.some((label) => label.closest(".MuiChip-root"))).toBe(true);
+    expect(
+      shown.some((label) => label.closest('[data-testid="report-meta"]')),
+    ).toBe(true);
     expect(screen.queryByText(/Custom range/)).toBeNull();
   });
 

@@ -217,7 +217,7 @@ export default function Findings({ summary }) {
         alignItems="center"
         sx={{
           mt: 0.5,
-          color: note.checked ? "text.secondary" : "warning.dark",
+          color: note.checked ? "text.secondary" : "status.warning.fg",
         }}
       >
         <Iconify

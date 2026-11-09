@@ -40,9 +40,7 @@ function HoverTip({ hover }) {
             boxShadow: (t) => t.customShadows?.dropdown,
           }}
         >
-          <Typography variant="body2" sx={{ fontSize: 12.5 }}>
-            {hover.text}
-          </Typography>
+          <Typography variant="body2">{hover.text}</Typography>
         </Section>
       )}
     </Popper>
@@ -197,7 +195,6 @@ export default function AnswerMatrix({
               variant="caption"
               color="text.secondary"
               sx={{
-                fontSize: 11,
                 lineHeight: "14px",
                 minWidth: 0,
                 overflowWrap: "anywhere",
@@ -230,12 +227,7 @@ export default function AnswerMatrix({
               {!matrix.group && (
                 <Swatch color={colorOf(question, row.key)} size={8} />
               )}
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                noWrap
-                sx={{ fontSize: 11.5 }}
-              >
+              <Typography variant="caption" color="text.secondary" noWrap>
                 {row.label}
               </Typography>
             </Stack>
@@ -300,7 +292,7 @@ export default function AnswerMatrix({
                     </span>
                     <span
                       style={{
-                        fontSize: 10.5,
+                        fontSize: theme.typography.s3.fontSize,
                         color: theme.palette.text.secondary,
                       }}
                     >
@@ -319,7 +311,6 @@ export default function AnswerMatrix({
               variant="caption"
               color="text.secondary"
               sx={{
-                fontSize: 11,
                 textAlign: "right",
                 alignSelf: "center",
                 fontVariantNumeric: "tabular-nums",
@@ -375,7 +366,6 @@ export default function AnswerMatrix({
                 sx={{
                   m: 0,
                   minWidth: 0,
-                  fontSize: 12.5,
                   fontVariantNumeric: "tabular-nums",
                 }}
               >

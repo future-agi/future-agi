@@ -246,7 +246,7 @@ function cellValue(column, category, ctx) {
               <Iconify
                 icon="mdi:account-alert-outline"
                 width={15}
-                sx={{ color: "warning.dark" }}
+                sx={{ color: "status.warning.fg" }}
                 aria-label="Mostly one user"
               />
             </Tooltip>
@@ -608,7 +608,7 @@ export default function CategoryTable({ reportId, run, attributes }) {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 1,
+          borderRadius: "8px",
           overflowX: "auto",
         }}
       >

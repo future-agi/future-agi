@@ -740,7 +740,7 @@ function SquaresPlot({
                   textAnchor="middle"
                   fill={theme.palette.common.white}
                   fontSize={9.5}
-                  fontWeight={700}
+                  fontWeight={theme.typography.fontWeightSemiBold}
                   fontFamily={theme.typography.fontFamily}
                 >
                   {text}
@@ -811,7 +811,7 @@ function SquaresPlot({
             <Typography variant="caption" color="text.secondary">
               {rangeText(hoverColumn.start, hoverColumn.end)}
             </Typography>
-            <Typography variant="body2" sx={{ fontSize: 13, mt: 0.25 }}>
+            <Typography variant="body1" sx={{ mt: 0.25 }}>
               {columnSummary(hoverColumn, unit)}
             </Typography>
             <Typography
@@ -1328,9 +1328,8 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
         sx={{ width: 10, height: 2, borderRadius: 1, bgcolor: color }}
       />
       <Typography
-        variant="body2"
+        variant="body1"
         sx={{
-          fontSize: 13,
           fontWeight: 600,
           minWidth: 40,
           fontVariantNumeric: "tabular-nums",
@@ -1338,7 +1337,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
       >
         {formatCount(value)}
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
+      <Typography variant="body1" color="text.secondary">
         {text}
       </Typography>
     </Stack>
@@ -1348,7 +1347,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
       <Typography variant="caption" color="text.secondary">
         {rangeText(column.start, column.end)}
       </Typography>
-      <Typography variant="body2" sx={{ fontSize: 13, mb: 0.75 }}>
+      <Typography variant="body1" sx={{ mb: 0.75 }}>
         {formatCount(column.n)} {rowsNoun(unit, sample, column.n)}
       </Typography>
       <Stack spacing={0.25}>
@@ -1442,7 +1441,7 @@ function LegendItem({ item, active, faded, onClick, quiet }) {
         variant="caption"
         sx={{
           color: quiet ? "text.secondary" : "text.primary",
-          fontSize: quiet ? 11.5 : 12,
+          typography: "s1",
         }}
       >
         {item.label}
@@ -1450,7 +1449,7 @@ function LegendItem({ item, active, faded, onClick, quiet }) {
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ fontVariantNumeric: "tabular-nums", fontSize: quiet ? 11.5 : 12 }}
+        sx={{ fontVariantNumeric: "tabular-nums", typography: "s1" }}
       >
         {item.share !== null && item.share !== undefined
           ? `${formatShare(item.share)} · ${formatCount(item.count)}`
@@ -1806,10 +1805,9 @@ function SquareCard({ item, question, colorOf }) {
       </Typography>
       {(record.label || record.excerpt) && (
         <Typography
-          variant="body2"
+          variant="body1"
           sx={{
             mt: 0.5,
-            fontSize: 13,
             display: "-webkit-box",
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",

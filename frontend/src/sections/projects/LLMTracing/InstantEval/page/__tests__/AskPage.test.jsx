@@ -356,7 +356,7 @@ const KEY_MISSING = {
   error_code: "JEV_KEY_MISSING",
   settings_path: "/dashboard/settings/ai-providers",
 };
-const AI_PROVIDERS = "/dashboard/settings/ai-providers";
+const AI_PROVIDERS = "/dashboard/settings/ai-providers?provider=typesafe";
 
 const ESTIMATE = {
   population: 104233,
@@ -2623,6 +2623,39 @@ describe("a sample size typed in", () => {
   });
 
   describe("on a view too small for the fixed sizes", () => {
+    it("holds the size choices' place while the view is counted", async () => {
+      fakes.estimate.mockImplementation(() => new Promise(() => {}));
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      expect(
+        await screen.findByTestId("scope-choices-loading"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("radiogroup", { name: "How many to read" }),
+      ).toBeNull();
+    });
+
+    it("offers a sample from inside the every-row card, adding no row", async () => {
+      fakes.estimate.mockImplementation(costed(smallEstimate(42)));
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      const all = await screen.findByRole("radio", {
+        name: /Every one of the 42/,
+      });
+      expect(screen.queryByTestId("scope-choices-loading")).toBeNull();
+      // In the card, but outside the radio: its own control, never dimmed
+      // with a choice that can't run.
+      const link = within(all.parentElement).getByRole("button", {
+        name: "Read a sample instead",
+      });
+      expect(all).not.toContainElement(link);
+      fireEvent.click(link);
+      expect(
+        screen.getByRole("spinbutton", { name: "Custom sample size" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Read a sample instead" }),
+      ).toBeNull();
+    });
+
     it("reads every row by default, or a sample typed in", async () => {
       fakes.estimate.mockImplementation(costed(smallEstimate(108)));
       fakes.startAskRun.mockResolvedValue({

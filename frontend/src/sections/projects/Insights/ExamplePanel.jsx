@@ -63,9 +63,10 @@ function metricParts(metrics = {}, unit) {
 function Label({ children }) {
   return (
     <Typography
-      variant="overline"
+      variant="s3"
       color="text.secondary"
       component="h3"
+      fontWeight="fontWeightMedium"
       sx={{ display: "block", mb: 0.5, lineHeight: "18px" }}
     >
       {children}
@@ -386,8 +387,9 @@ export default function ExamplePanel({ open, unitId, onClose }) {
           }}
         >
           <Typography
-            variant="overline"
+            variant="s3"
             color="text.secondary"
+            fontWeight="fontWeightMedium"
             sx={{ flex: 1 }}
           >
             Example {noun}
@@ -417,13 +419,10 @@ export default function ExamplePanel({ open, unitId, onClose }) {
             <Stack spacing={2.25}>
               <Box>
                 <Typography
-                  variant="subtitle1"
+                  variant="m1"
                   component="h2"
-                  sx={{
-                    fontSize: 16,
-                    lineHeight: 1.4,
-                    wordBreak: "break-word",
-                  }}
+                  fontWeight={600}
+                  sx={{ wordBreak: "break-word" }}
                 >
                   {title}
                 </Typography>
@@ -634,6 +633,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
             )}
             <Button
               variant="contained"
+              color="primary"
               endIcon={<Iconify icon="mdi:arrow-top-right" width={16} />}
               onClick={() => navigate(link.href)}
             >

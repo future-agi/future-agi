@@ -189,8 +189,9 @@ function CategoryTree({ categoryId }) {
   return (
     <Box component="nav" aria-label="Categories">
       <Typography
-        variant="overline"
+        variant="s3"
         color="text.secondary"
+        fontWeight="fontWeightMedium"
         sx={{ display: "block", px: 0.5, mb: 0.5 }}
       >
         Categories

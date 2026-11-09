@@ -1,3 +1,4 @@
+import PageHeader from "src/components/page-header";
 import Section from "src/components/section";
 import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
@@ -243,15 +244,15 @@ function LensPicker({ value, onChange, disabled }) {
               color: "text.primary",
               bgcolor: active ? "action.selected" : "background.paper",
               border: "1px solid",
-              borderColor: active ? "primary.main" : "divider",
-              borderRadius: 1.5,
+              borderColor: active ? "text.primary" : "divider",
+              borderRadius: "8px",
               cursor: disabled ? "default" : "pointer",
               display: "flex",
               flexDirection: "column",
               gap: 0.5,
               "&:hover": disabled
                 ? undefined
-                : { borderColor: active ? "primary.main" : "text.disabled" },
+                : { borderColor: active ? "text.primary" : "text.disabled" },
               "&:focus-visible": {
                 outline: "2px solid",
                 outlineColor: "primary.main",
@@ -315,6 +316,15 @@ export default function NewReport({
     !touched.unit && !lensFor(draft.lens).unit,
   );
   const defaultUnit = hasSessions.data === false ? "traces" : "sessions";
+  // Until then, and until the effect above has moved the unit, the unit may
+  // still change: counting sessions first would cost an estimate that is
+  // thrown away.
+  const unitSettling =
+    !fixed &&
+    (hasSessions.isLoading ||
+      (!touched.unit &&
+        hasSessions.data === false &&
+        draft.unit === "sessions"));
   useEffect(() => {
     if (touched.unit || fixed || hasSessions.data !== false) return;
     setDraft((current) =>
@@ -362,7 +372,7 @@ export default function NewReport({
     projectId,
     scope: settledScope,
     sampleSize: draft.sampleSize,
-    enabled: !fixed,
+    enabled: !fixed && !unitSettling,
   });
   // Rows handed over have nothing to count: the server only prices them.
   const handedCost = usePopulationCount({
@@ -384,7 +394,10 @@ export default function NewReport({
   // read again on its own and needn't hold anything up.
   const counting =
     !fixed &&
-    (count.isLoading || count.isPlaceholderData || settledScope !== countScope);
+    (unitSettling ||
+      count.isLoading ||
+      count.isPlaceholderData ||
+      settledScope !== countScope);
   // A handed-over population's cost for a new sample size, likewise.
   const costing =
     fixed && (handedCost.isLoading || handedCost.isPlaceholderData);
@@ -573,28 +586,20 @@ export default function NewReport({
 
   return (
     <Stack spacing={2} sx={{ maxWidth: 880, mx: "auto" }}>
-      <Stack direction="row" alignItems="flex-start" spacing={2}>
-        <Box sx={{ flex: 1 }}>
-          <Typography variant="m2" component="h1" fontWeight={600}>
-            New report
-          </Typography>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ fontSize: 13 }}
+      <PageHeader
+        title="New report"
+        description="Pick what to learn and which traffic to read. A report samples it, summarises every item, groups them and measures each group."
+        actions={
+          <IconButton
+            aria-label="Close new report"
+            onClick={onCancel}
+            size="small"
           >
-            Pick what to learn and which traffic to read. A report samples it,
-            summarises every item, groups them and measures each group.
-          </Typography>
-        </Box>
-        <IconButton
-          aria-label="Close new report"
-          onClick={onCancel}
-          size="small"
-        >
-          <Iconify icon="mdi:close" width={18} />
-        </IconButton>
-      </Stack>
+            <Iconify icon="mdi:close" width={18} />
+          </IconButton>
+        }
+        sx={{ mb: 0 }}
+      />
 
       {seed?.source && (
         <Alert
@@ -1030,7 +1035,9 @@ export default function NewReport({
                     message={blocker}
                     billing={blocker === creditBlocker && !credits.unavailable}
                   />
-                ) : (
+                ) : sentence ? (
+                  // The whole sentence once the scope is counted; while it is,
+                  // a sentence of its own rather than its tail.
                   [
                     sentence,
                     estimate,
@@ -1039,15 +1046,24 @@ export default function NewReport({
                   ]
                     .filter(Boolean)
                     .join(" · ")
-                )}
+                ) : counting || costing ? (
+                  `Counting the ${UNITS[draft.unit].plural}…`
+                ) : null}
               </Typography>
             )}
           </Box>
-          <Button color="inherit" onClick={onCancel}>
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            onClick={onCancel}
+          >
             Cancel
           </Button>
           <Button
+            size="small"
             variant="contained"
+            color="primary"
             onClick={runReport}
             // While a new scope or sample size is costed, the shown cost is
             // the previous one: Run waits for the server's figure.

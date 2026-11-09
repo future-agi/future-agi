@@ -245,8 +245,8 @@ function ConsistencyRow({ line, color, showSwatch, onSelect }) {
           title={`More users than chance alone would give (${qText(line.q)}). Users with at least ${MIN_CONSISTENT_SESSIONS} sessions answered count; a tier counts when its share is surely above the run's.`}
         >
           <Typography
-            variant="body2"
-            sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+            variant="body1"
+            sx={{ fontVariantNumeric: "tabular-nums" }}
           >
             {showSwatch && (
               <Swatch
@@ -426,7 +426,7 @@ export default function AskPatterns({
   let body;
   if (tooFew)
     body = (
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
+      <Typography variant="body1" color="text.secondary">
         {running
           ? `Patterns appear once ${MIN_ANSWERED} rows are answered (${formatCount(result.answered)} so far).`
           : `Too few answers to compare groups (${formatCount(result.answered)}).`}
@@ -434,7 +434,7 @@ export default function AskPatterns({
     );
   else if (!patterns.length)
     body = (
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
+      <Typography variant="body1" color="text.secondary">
         {consistency.length ? "Nothing else stands out" : "Nothing stands out"}
         {running ? " yet" : ""}: no day, time, user, model, turn count, error or
         other answer has a clearly different share of{" "}

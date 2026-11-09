@@ -566,7 +566,7 @@ export default function AskPanel({ run, lens }) {
             multiline
             maxRows={4}
             inputProps={{ "aria-label": "Ask about this report" }}
-            sx={{ flex: 1, fontSize: 14, py: 0.5 }}
+            sx={{ flex: 1, typography: "body1", py: 0.5 }}
           />
           {thread.length > 0 && !open && (
             <Button

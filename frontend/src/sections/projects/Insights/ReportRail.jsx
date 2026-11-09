@@ -20,6 +20,7 @@ import { useTheme } from "@mui/material/styles";
 import { useQueryClient } from "@tanstack/react-query";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge";
 import { unitWord } from "src/sections/projects/observePopulation";
 import { useCanStartRuns } from "src/sections/projects/runPermission";
 import {
@@ -230,7 +231,7 @@ function RenameField({ config, onDone }) {
       error={saving.state.status === "error"}
       helperText={saving.state.status === "error" ? saving.state.error : ""}
       sx={{
-        "& .MuiInputBase-input": { py: 0.5, fontSize: 14, fontWeight: 600 },
+        "& .MuiInputBase-input": { py: 0.5, typography: "subtitle2" },
       }}
     />
   );
@@ -278,18 +279,15 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
         position: "relative",
         p: 1.75,
         pr: 1.25,
-        borderRadius: 1,
+        borderRadius: "8px",
         border: "1px solid",
-        borderColor: selected ? "primary.main" : "divider",
-        boxShadow: selected
-          ? `0 0 0 1px ${theme.palette.primary.main}`
-          : "none",
-        bgcolor: "background.paper",
+        borderColor: selected ? "text.primary" : "divider",
+        bgcolor: selected ? "action.selected" : "background.paper",
         cursor: "pointer",
         display: "flex",
         flexDirection: "column",
         gap: 1,
-        transition: "border-color 120ms",
+        transition: "border-color 120ms, background-color 120ms",
         "&:hover": selected ? undefined : { borderColor: "text.disabled" },
         "&:focus-visible": {
           outline: "2px solid",
@@ -337,12 +335,26 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
 
       {active ? (
         <Stack spacing={0.75}>
-          <Typography variant="caption" color="text.secondary">
-            {run.status === "pending"
-              ? "Queued"
-              : `${stage?.label || "Working"}…`}{" "}
-            {stage?.detail ? `· ${stage.detail}` : ""}
-          </Typography>
+          <Stack direction="row" spacing={0.75} alignItems="center">
+            <StatusBadge
+              status={run.status === "pending" ? "queued" : "running"}
+              label={
+                run.status === "pending"
+                  ? "Queued"
+                  : `${stage?.label || "Working"}…`
+              }
+            />
+            {stage?.detail && (
+              <Typography
+                variant="caption"
+                color="text.subtitle"
+                noWrap
+                sx={{ minWidth: 0 }}
+              >
+                {stage.detail}
+              </Typography>
+            )}
+          </Stack>
           <LinearProgress
             variant="determinate"
             value={Math.max(
@@ -355,16 +367,17 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
         </Stack>
       ) : run?.status === "failed" ? (
         <Stack spacing={0.5}>
-          <Typography
-            variant="caption"
-            color={failed.stopped ? "text.secondary" : "error.main"}
-          >
-            {failed.stopped
-              ? "Last run stopped"
-              : runReadAny(run)
-                ? "Last run failed"
-                : "Failed before analysing"}
-          </Typography>
+          <StatusBadge
+            status={failed.stopped ? "stopped" : "failed"}
+            label={
+              failed.stopped
+                ? "Last run stopped"
+                : runReadAny(run)
+                  ? "Last run failed"
+                  : "Failed before analysing"
+            }
+            sx={{ alignSelf: "flex-start" }}
+          />
           <Typography variant="caption">
             {runOutcome(run, config.lens)}
           </Typography>
@@ -374,6 +387,7 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
           {failed.rerun && (
             <Button
               size="small"
+              variant="outlined"
               color="inherit"
               sx={{ alignSelf: "flex-start" }}
               disabled={!canRun}
@@ -451,9 +465,7 @@ function RailTemplates({ onNew }) {
             width={16}
             sx={{ color: "text.secondary", flexShrink: 0 }}
           />
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
-            {template.title}
-          </Typography>
+          <Typography variant="body2">{template.title}</Typography>
         </Stack>
       ))}
     </Stack>
@@ -554,7 +566,8 @@ export default function ReportRail({
           </Typography>
           <Button
             size="small"
-            variant="contained"
+            variant="outlined"
+            color="inherit"
             startIcon={<Iconify icon="mdi:plus" width={16} />}
             onClick={() => onNew()}
           >
@@ -611,10 +624,14 @@ export default function ReportRail({
             ))}
             <Box sx={{ pt: configs.length ? 1.5 : 0 }}>
               <Typography
-                variant="overline"
-                color="text.secondary"
+                variant="caption"
                 component="h2"
-                sx={{ display: "block", mb: 0.5 }}
+                sx={{
+                  display: "block",
+                  mb: 0.5,
+                  fontWeight: "fontWeightMedium",
+                  color: "text.secondary",
+                }}
               >
                 Start from a template
               </Typography>

@@ -184,7 +184,7 @@ export function VizCard({ title, caption, action, children, label }) {
         sx={{ mb: 1.5 }}
       >
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle2" component="h2" sx={{ fontSize: 15 }}>
+          <Typography variant="m3" component="h2" fontWeight={500}>
             {title}
           </Typography>
           {caption && (

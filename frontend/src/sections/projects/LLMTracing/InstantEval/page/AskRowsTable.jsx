@@ -141,7 +141,7 @@ function AnswerCell({ record, question, isUser }) {
             <Iconify
               icon="mdi:help-circle-outline"
               width={14}
-              sx={{ color: "warning.main" }}
+              sx={{ color: "status.warning.solid" }}
               aria-label="Jev was unsure"
             />
           </Box>
@@ -175,6 +175,7 @@ export default function AskRowsTable({
   total,
   runTotal,
   loading,
+  waiting = false,
   error,
   onRetry,
   hasMore,
@@ -209,7 +210,7 @@ export default function AskRowsTable({
         spacing={1}
         sx={{ px: 2, pt: 1.75, pb: 1.25 }}
       >
-        <Typography variant="subtitle2" component="h2" sx={{ fontSize: 15 }}>
+        <Typography variant="m3" component="h2" fontWeight={500}>
           {meta.title}
         </Typography>
         <Typography
@@ -375,9 +376,12 @@ export default function AskRowsTable({
         <Typography
           variant="body2"
           color="text.secondary"
+          role={waiting ? "status" : undefined}
           sx={{ px: 2, py: 2.5 }}
         >
-          No {meta.plural} match.
+          {waiting
+            ? `Answers will appear here as Jev reads each ${meta.noun}.`
+            : `No ${meta.plural} match.`}
         </Typography>
       )}
       {hasMore && !full && (
@@ -423,6 +427,8 @@ AskRowsTable.propTypes = {
   total: PropTypes.number,
   runTotal: PropTypes.number,
   loading: PropTypes.bool,
+  // The run hasn't finished: no rows yet means none read so far.
+  waiting: PropTypes.bool,
   error: PropTypes.bool,
   onRetry: PropTypes.func,
   hasMore: PropTypes.bool,

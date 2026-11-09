@@ -238,8 +238,9 @@ export default function RunProgress({ run }) {
         {recent.length > 0 && (
           <Box>
             <Typography
-              variant="overline"
+              variant="s3"
               color="text.secondary"
+              fontWeight="fontWeightMedium"
               sx={{ display: "block", mb: 1 }}
             >
               Just read
@@ -270,7 +271,7 @@ export default function RunProgress({ run }) {
         )}
         <Typography
           variant="caption"
-          color={note.stalled ? "warning.dark" : "text.secondary"}
+          color={note.stalled ? "status.warning.fg" : "text.secondary"}
         >
           {note.text}
         </Typography>

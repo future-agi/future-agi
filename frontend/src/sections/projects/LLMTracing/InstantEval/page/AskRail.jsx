@@ -12,9 +12,11 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha, keyframes, useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import { Link as RouterLink } from "react-router-dom";
+import EmptyState from "src/components/empty-state";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge";
 import { unitWord } from "src/sections/projects/observePopulation";
 import { isLiveRun, useInstantEvalHistory } from "../useInstantEval";
 import { answerText } from "../instantEvalAnswers";
@@ -27,11 +29,6 @@ import { answeredSplit, savedAnswerCount } from "./askFilter";
 
 const ASK_RAIL_WIDTH = 320;
 const SEARCH_DEBOUNCE_MS = 250;
-
-const pulse = keyframes`
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
-`;
 
 // The first question's answers as a thin bar, with the rows Jev couldn't
 // answer hatched in red at its end.
@@ -118,10 +115,22 @@ function cardState(listed, progress, now) {
     : "live";
 }
 
+// Each card state through the one status map: a live run pulses, a stopped
+// one is a warning, a quiet one is neutral.
 const STATE_MARKS = {
-  live: { title: "Still being answered", color: "info.main", pulse: true },
-  stalled: { title: "Stopped before finishing", color: "warning.main" },
-  quiet: { title: "No progress lately", color: "text.disabled" },
+  live: { status: "running", label: "Running", title: "Still being answered" },
+  stalled: {
+    status: "stalled",
+    role: "warning",
+    label: "Stopped",
+    title: "Stopped before finishing",
+  },
+  quiet: {
+    status: "idle",
+    role: "neutral",
+    label: "No progress lately",
+    title: "No progress lately",
+  },
 };
 
 // Now, moved on while a run is live: a run that stops moving turns quiet on
@@ -188,21 +197,15 @@ function RunCard({
               ? "done with both"
               : "answered"
         }`;
+  // The state itself is the badge in front; the line says how far it got.
   const size =
     rows == null
       ? ""
-      : state === "live"
+      : state
         ? progressWords
-        : state === "stalled"
-          ? `Stopped · ${progressWords}`
-          : state === "quiet"
-            ? `No progress lately · ${progressWords}`
-            : [
-                `${rows.toLocaleString()} ${unitWord(runItem.unit, rows)}`,
-                sessions,
-              ]
-                .filter(Boolean)
-                .join(" · ");
+        : [`${rows.toLocaleString()} ${unitWord(runItem.unit, rows)}`, sessions]
+            .filter(Boolean)
+            .join(" · ");
   const meta = [
     sourceViewTitle(runItem.unit),
     size,
@@ -224,12 +227,10 @@ function RunCard({
       }}
       sx={{
         p: 1.5,
-        borderRadius: 1,
+        borderRadius: "8px",
         border: "1px solid",
-        borderColor: selected ? "primary.main" : "divider",
-        boxShadow: (theme) =>
-          selected ? `0 0 0 1px ${theme.palette.primary.main}` : "none",
-        bgcolor: "background.paper",
+        borderColor: selected ? "text.primary" : "divider",
+        bgcolor: selected ? "action.selected" : "background.paper",
         cursor: "pointer",
         transition: "border-color 120ms",
         "&:hover": selected ? undefined : { borderColor: "text.disabled" },
@@ -240,66 +241,64 @@ function RunCard({
         },
       }}
     >
-      <Stack direction="row" spacing={0.75} alignItems="flex-start">
-        {mark && (
-          <Box
-            title={mark.title}
-            aria-label={mark.title}
-            role="img"
-            sx={{
-              width: 7,
-              height: 7,
-              mt: 0.75,
-              borderRadius: "50%",
-              flexShrink: 0,
-              bgcolor: mark.color,
-              ...(mark.pulse && {
-                animation: `${pulse} 1.6s ease-in-out infinite`,
-                "@media (prefers-reduced-motion: reduce)": {
-                  animation: "none",
-                },
-              }),
-            }}
-          />
-        )}
-        <Typography
-          variant="subtitle2"
-          title={runItem.items.map((entry) => entry.question).join("\n")}
-          sx={{
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            lineHeight: 1.4,
-            minWidth: 0,
-          }}
-        >
-          {question}
-        </Typography>
-      </Stack>
+      <Typography
+        variant="subtitle2"
+        title={runItem.items.map((entry) => entry.question).join("\n")}
+        sx={{
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          minWidth: 0,
+        }}
+      >
+        {question}
+      </Typography>
       {runItem.items.length > 1 && (
         <Typography variant="caption" color="text.secondary" component="p">
           +{runItem.items.length - 1} more question
           {runItem.items.length > 2 ? "s" : ""}
         </Typography>
       )}
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        noWrap
-        component="p"
-        title={meta}
-        sx={{ mt: 0.25, fontVariantNumeric: "tabular-nums" }}
+      <Stack
+        direction="row"
+        spacing={0.75}
+        alignItems="center"
+        sx={{ mt: 0.25, minWidth: 0 }}
       >
-        {meta}
-      </Typography>
+        {mark && (
+          <StatusBadge
+            status={mark.status}
+            role={mark.role}
+            label={mark.label}
+            variant="dot"
+            title={mark.title}
+            sx={{ flexShrink: 0 }}
+          />
+        )}
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          noWrap
+          component="p"
+          title={meta}
+          sx={{ minWidth: 0, fontVariantNumeric: "tabular-nums" }}
+        >
+          {meta}
+        </Typography>
+      </Stack>
       {failed && (
         <Stack spacing={0.5} sx={{ mt: 1 }}>
-          <Typography variant="caption" color="error.main" fontWeight={600}>
-            {failedBeforeAnswering
-              ? "Failed before answering"
-              : `Failed · ${answersSaved.toLocaleString()} ${answersSaved === 1 ? "answer" : "answers"} saved`}
-          </Typography>
+          <StatusBadge
+            status="failed"
+            label={
+              failedBeforeAnswering
+                ? "Failed before answering"
+                : `Failed · ${answersSaved.toLocaleString()} ${answersSaved === 1 ? "answer" : "answers"} saved`
+            }
+            size="sm"
+            sx={{ alignSelf: "flex-start" }}
+          />
           <Typography variant="caption" color="text.secondary">
             {failedBeforeAnswering
               ? "No answers were saved. Check the evaluator or recreate the question."
@@ -309,6 +308,7 @@ function RunCard({
             <Button
               key={entry.configId}
               size="small"
+              variant="outlined"
               component={RouterLink}
               to={`/dashboard/evaluations/${entry.templateId}`}
               onClick={(event) => event.stopPropagation()}
@@ -320,6 +320,7 @@ function RunCard({
           {editable.length < runItem.items.length && onRecreate && (
             <Button
               size="small"
+              variant="outlined"
               onClick={(event) => {
                 event.stopPropagation();
                 onRecreate(runItem);
@@ -454,9 +455,11 @@ export default function AskRail({
           >
             Instant eval
           </Typography>
+          {/* Secondary: each view beside the rail has its own primary
+              action (the composer's Ask, the run's way forward). */}
           <Button
             size="small"
-            variant="contained"
+            variant="outlined"
             startIcon={<Iconify icon="mdi:plus" width={16} />}
             onClick={onNew}
           >
@@ -523,9 +526,10 @@ export default function AskRail({
             {groups.map((group) => (
               <Box key={group.name}>
                 <Typography
-                  variant="overline"
+                  variant="s3"
                   color="text.secondary"
                   component="h2"
+                  fontWeight="fontWeightMedium"
                   sx={{ display: "block", mb: 0.75 }}
                 >
                   {group.name}
@@ -553,6 +557,7 @@ export default function AskRail({
             {history.hasMore && (
               <Button
                 size="small"
+                variant="outlined"
                 onClick={() => history.loadMore()}
                 disabled={history.isFetchingMore}
                 sx={{ alignSelf: "flex-start" }}
@@ -562,11 +567,20 @@ export default function AskRail({
             )}
           </Stack>
         ) : (
-          <Typography variant="body2" color="text.secondary">
-            {query
-              ? `No past question matches “${query}”.`
-              : "Questions you ask are kept here with their answers."}
-          </Typography>
+          <EmptyState
+            variant="no-results"
+            icon={query ? "solar:magnifer-linear" : "solar:history-linear"}
+            title={
+              query ? `No past question matches “${query}”` : "No questions yet"
+            }
+            description={
+              query
+                ? undefined
+                : "Questions you ask are kept here with their answers."
+            }
+            onClearFilters={query ? () => setSearch("") : undefined}
+            sx={{ px: 0 }}
+          />
         )}
       </Box>
     </Box>

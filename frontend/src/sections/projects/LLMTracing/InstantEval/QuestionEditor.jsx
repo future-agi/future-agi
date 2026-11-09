@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
-  Chip,
   IconButton,
   Stack,
   TextField,
@@ -50,12 +49,14 @@ function CategoryEditor({ categories, definitions, onChange }) {
           alignItems="center"
           spacing={1}
         >
-          <Chip
-            label={category}
-            size="small"
+          <Typography
+            variant="body2"
+            noWrap
             title={category}
-            sx={{ maxWidth: 160, flexShrink: 0 }}
-          />
+            sx={{ width: 120, flexShrink: 0 }}
+          >
+            {category}
+          </Typography>
           <TextField
             size="small"
             fullWidth
@@ -71,7 +72,7 @@ function CategoryEditor({ categories, definitions, onChange }) {
               maxLength: MAX_DEFINITION_LENGTH,
               "aria-label": `Definition of ${category}`,
             }}
-            sx={{ "& .MuiInputBase-input": { py: 0.5, fontSize: 13 } }}
+            sx={{ "& .MuiInputBase-input": { py: 0.5 } }}
           />
           <Tooltip title={`Remove ${category}`}>
             <IconButton
@@ -140,7 +141,7 @@ export default function QuestionEditor({
       sx={{
         border: "1px solid",
         borderColor: error ? "error.main" : "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         p: 1.5,
       }}
     >

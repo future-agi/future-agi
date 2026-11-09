@@ -5,7 +5,6 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   IconButton,
   LinearProgress,
   Link,
@@ -15,12 +14,14 @@ import {
   MenuItem,
   Skeleton,
   Stack,
+  Tab,
   Typography,
 } from "@mui/material";
-import { keyframes } from "@mui/material/styles";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
 import EnterpriseMark from "src/components/capability-gate/EnterpriseMark";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge";
+import { CustomTabs } from "src/components/tabs/tabs";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import { CAPABILITY, useFeatureDenied } from "src/hooks/useCapabilities";
 import { paths } from "src/routes/paths";
@@ -73,11 +74,6 @@ import {
 } from "./askLinks";
 
 const TracesDrawer = lazy(() => import("../../../TracesDrawer/TracesDrawer"));
-
-const pulse = keyframes`
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
-`;
 
 const CONTENT_WIDTH = 1180;
 
@@ -191,51 +187,48 @@ function StatusLine({ run, unit, creating }) {
         : null;
   return (
     <Stack spacing={0.75} sx={{ width: "100%" }}>
-      <Stack direction="row" spacing={1} alignItems="center">
-        <Box
-          aria-hidden
-          sx={{
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            flexShrink: 0,
-            bgcolor:
-              run.status === "failed" || nothing
-                ? "error.main"
-                : run.status === "stalled"
-                  ? "warning.main"
-                  : live || creating
-                    ? "info.main"
-                    : run.status === "done"
-                      ? "success.main"
-                      : "text.disabled",
-            ...((live || creating) && {
-              animation: `${pulse} 1.6s ease-in-out infinite`,
-              "@media (prefers-reduced-motion: reduce)": { animation: "none" },
-            }),
-          }}
-        />
-        <Typography
-          variant="body2"
-          aria-live="polite"
-          noWrap
-          title={[text, failedRows].filter(Boolean).join(" · ")}
-          sx={{
-            fontVariantNumeric: "tabular-nums",
-            minWidth: 0,
-            ...((run.status === "failed" || nothing) && {
-              color: "error.main",
-            }),
-          }}
-        >
-          {text}
-          {failedRows && run.status !== "loading" && (
-            <Box component="span" sx={{ color: "error.main" }}>
-              {` · ${failedRows}`}
+      {/* The run's state through the one status map; the line beside it
+          says where it stands. */}
+      <StatusBadge
+        variant="dot"
+        status={
+          run.status === "failed" || nothing
+            ? "failed"
+            : run.status === "stalled"
+              ? "stalled"
+              : live || creating
+                ? "running"
+                : run.status === "done"
+                  ? "success"
+                  : run.status
+        }
+        role={run.status === "stalled" ? "warning" : undefined}
+        aria-live="polite"
+        title={[text, failedRows].filter(Boolean).join(" · ")}
+        sx={{ fontVariantNumeric: "tabular-nums" }}
+        label={
+          <>
+            {/* The line reads as before: primary text, red when the run
+                answered nothing. */}
+            <Box
+              component="span"
+              sx={{
+                color:
+                  run.status === "failed" || nothing
+                    ? "status.danger.fg"
+                    : "text.primary",
+              }}
+            >
+              {text}
             </Box>
-          )}
-        </Typography>
-      </Stack>
+            {failedRows && run.status !== "loading" && (
+              <Box component="span" sx={{ color: "status.danger.fg" }}>
+                {` · ${failedRows}`}
+              </Box>
+            )}
+          </>
+        }
+      />
       {(live || creating || PAUSED_STATES.has(run.status)) && (
         <LinearProgress
           variant={
@@ -265,6 +258,22 @@ StatusLine.propTypes = {
   unit: PropTypes.string.isRequired,
   creating: PropTypes.bool,
 };
+
+// A question's tab: its number and words on one line, like the workspace
+// tabs (the theme styles the tab and its selected state).
+function QuestionTabLabel({ label }) {
+  return (
+    <Typography
+      component="span"
+      noWrap
+      sx={{ typography: "s1", color: "inherit", maxWidth: 360 }}
+    >
+      {label}
+    </Typography>
+  );
+}
+
+QuestionTabLabel.propTypes = { label: PropTypes.string.isRequired };
 
 // Pause, resume, cancel and retry the failed rows of a run. A cancelled run
 // is over: it is asked again (Run again), not resumed or retried, so Cancel
@@ -612,6 +621,7 @@ function SelectionBar({
         <Button
           size="small"
           variant="contained"
+          color="primary"
           startIcon={<Iconify icon="mdi:chart-box-outline" width={16} />}
           endIcon={
             patternsLocked ? (
@@ -774,6 +784,10 @@ export default function AskRunView({
         } answered${live || PAUSED_STATES.has(run.status) ? " so far" : ""}.`
       : null;
   const metaLine = [
+    question &&
+      (question.answerType === ANSWER_TYPES.CATEGORY
+        ? `${question.labels.length} categories`
+        : "Yes / No"),
     sourceViewTitle(unit),
     runScopeWords(scope?.label || summary?.scope?.label, run.window),
     run.total
@@ -1111,18 +1125,6 @@ export default function AskRunView({
                     <Skeleton variant="text" width={420} />
                   ))}
               </Typography>
-              {question && (
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  label={
-                    question.answerType === ANSWER_TYPES.CATEGORY
-                      ? `${question.labels.length} categories`
-                      : "Yes / No"
-                  }
-                  sx={{ mt: 0.5, flexShrink: 0 }}
-                />
-              )}
             </Box>
             <Stack
               direction="row"
@@ -1153,8 +1155,16 @@ export default function AskRunView({
               {onRunAgain && RERUNNABLE_STATES.has(run.status) && (
                 <Button
                   size="small"
-                  // The way forward from a cancelled or failed run.
-                  variant={run.status === "done" ? "outlined" : "contained"}
+                  // The way forward from a cancelled or failed run; a
+                  // selection's Find patterns takes the primary while it's on.
+                  variant={
+                    run.status === "done" || filterLabel
+                      ? "outlined"
+                      : "contained"
+                  }
+                  color={
+                    run.status === "done" || filterLabel ? "inherit" : "primary"
+                  }
                   disabled={!canRun || rerunning || Boolean(runAgainConfirm)}
                   startIcon={<Iconify icon="mdi:refresh" width={16} />}
                   onClick={() => onRunAgain()}
@@ -1193,45 +1203,44 @@ export default function AskRunView({
               {VIEWER_CANT_RUN}
             </Typography>
           )}
-          {questions.length > 1 && (
-            <Stack
-              direction="row"
-              gap={0.75}
-              flexWrap="wrap"
-              sx={{ mt: 1 }}
-              role="tablist"
-              aria-label="Questions"
-            >
-              {questions.map((item, index) => (
-                <Chip
-                  key={item.configId || index}
-                  role="tab"
-                  aria-selected={item.configId === question?.configId}
-                  size="small"
-                  label={`${index + 1} · ${item.question}`}
-                  title={item.fullQuestion || item.question}
-                  color={
-                    item.configId === question?.configId ? "primary" : "default"
-                  }
-                  variant={
-                    item.configId === question?.configId ? "filled" : "outlined"
-                  }
-                  onClick={() => {
-                    setFocus({ configId: item.configId, answer: null });
-                    setSelection(null);
-                  }}
-                  sx={{ maxWidth: 420 }}
-                />
-              ))}
-            </Stack>
-          )}
           <Typography
             variant="body2"
-            color="text.secondary"
-            sx={{ mt: 0.5, fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+            color="text.subtitle"
+            sx={{ mt: 0.5, fontVariantNumeric: "tabular-nums" }}
           >
             {metaLine.join(" · ")}
           </Typography>
+          {questions.length > 1 && (
+            <Box sx={{ mt: 1, borderBottom: 1, borderColor: "divider" }}>
+              <CustomTabs
+                value={
+                  questions.some((item) => item.configId === question?.configId)
+                    ? question.configId
+                    : false
+                }
+                onChange={(_, configId) => {
+                  setFocus({ configId, answer: null });
+                  setSelection(null);
+                }}
+                variant="scrollable"
+                scrollButtons={false}
+                aria-label="Questions"
+              >
+                {questions.map((item, index) => (
+                  <Tab
+                    key={item.configId || index}
+                    value={item.configId}
+                    title={item.fullQuestion || item.question}
+                    label={
+                      <QuestionTabLabel
+                        label={`${index + 1} · ${item.question}`}
+                      />
+                    }
+                  />
+                ))}
+              </CustomTabs>
+            </Box>
+          )}
         </Box>
 
         {answerHeadline.length > 0 && !failedBeforeAnswering && (
@@ -1353,7 +1362,7 @@ export default function AskRunView({
                 <Button
                   size="small"
                   variant="contained"
-                  color="warning"
+                  color="error"
                   disabled={acting}
                   onClick={async () => {
                     setConfirmCancel(false);
@@ -1379,7 +1388,7 @@ export default function AskRunView({
                 <Button
                   size="small"
                   variant="contained"
-                  color="warning"
+                  color="primary"
                   disabled={acting}
                   onClick={() =>
                     control("read_more", {
@@ -1410,7 +1419,7 @@ export default function AskRunView({
                 <Button
                   size="small"
                   variant="contained"
-                  color="warning"
+                  color="primary"
                   disabled={rerunning}
                   onClick={() => onRunAgain({ confirm: true })}
                 >
@@ -1506,6 +1515,15 @@ export default function AskRunView({
               total={tableTotal}
               runTotal={run.total}
               loading={!selectedRecords && rows.isLoading}
+              // Rows land while Jev reads: until the run ends, no rows means
+              // none read yet, not none matching.
+              waiting={
+                !filterLabel &&
+                (Boolean(creating) ||
+                  LIVE_STATES.has(run.status) ||
+                  PAUSED_STATES.has(run.status) ||
+                  run.status === "stalled")
+              }
               error={!selectedRecords && rows.isError}
               onRetry={rows.refetch}
               hasMore={!selectedRecords && rows.hasMore}

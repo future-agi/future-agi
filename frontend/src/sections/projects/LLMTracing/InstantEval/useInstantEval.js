@@ -269,8 +269,9 @@ export class AskRefused extends Error {
 }
 
 // Jev runs on the organization's own TypeSafe key; key problems point to the
-// AI Providers settings where it is added or replaced.
-export const AI_PROVIDERS_SETTINGS_PATH = "/dashboard/settings/ai-providers";
+// AI Providers settings where it is added or replaced, filtered to TypeSafe.
+export const AI_PROVIDERS_SETTINGS_PATH =
+  "/dashboard/settings/ai-providers?provider=typesafe";
 export const JEV_KEY_NEEDED =
   "Jev runs on your own TypeSafe key. Add it in Settings → AI Providers to start.";
 const JEV_KEY_MISSING = "JEV_KEY_MISSING";
