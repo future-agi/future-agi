@@ -137,6 +137,7 @@ _HISTORICAL_FINALIZE_WAIT_PATCH = "historical-eval-finalize-wait-v1"
 # now reaps again before its next claim.
 _CONTINUOUS_IDLE_REAP_PATCH = "continuous-eval-idle-reap-v1"
 _CONTINUOUS_DATABASE_BACKOFF_PATCH = "continuous-eval-database-backoff-v1"
+_CONTINUOUS_DATABASE_ADOPTION_PATCH = "continuous-eval-live-database-backoff-v1"
 # Explicit bound even when no batch can finish and the server has not suggested
 # CAN yet. All deferred paths, including pause cleanup, pass this checkpoint.
 _MAX_CONTINUOUS_POLLS = 100
@@ -626,7 +627,20 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 await self._run_with_database_backoff(state)
             else:
                 # Keep the original command order for pre-patch histories.
-                await self._run(state)
+                try:
+                    await self._run(state)
+                except ActivityError as exc:
+                    # A patch checked at run start is memoized False during
+                    # replay. Existing executions must still adopt backoff at
+                    # their first *new* outage, rather than wait for CAN (or
+                    # fail before it). Recorded terminal failures keep failing.
+                    if not _is_database_deferred_error(exc) or not workflow.patched(
+                        _CONTINUOUS_DATABASE_ADOPTION_PATCH
+                    ):
+                        raise
+                    self._phase = "waiting_for_database"
+                    await self._sleep_or_recheck(max(1, state.poll_interval_seconds))
+                    await self._run_with_database_backoff(state)
         except Exception:
             # Same fail-then-reraise as HistoricalEvalTaskWorkflow.run.
             await _fail_task(state.task_id)
@@ -641,7 +655,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
         roll history over without dropping work or forgetting the pause.
         """
         self._lost.update(state.lost_entry_ids or ())
-        self._paused = state.pause_requested
+        self._paused = self._paused or state.pause_requested
         labelled = marked_running = reconciled = reaped = False
         polls = 0
         while True:
@@ -785,10 +799,15 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                     lambda: self._paused,
                     lost=self._lost,
                 )
-                if skipped:
-                    await _requeue(state.task_id, skipped)
                 state.processed += len(entry_ids) - len(skipped)
                 state.batches += 1
+                if skipped:
+                    # In-memory bookkeeping only: preserve the exact legacy
+                    # commands, but retain cleanup if a new outage adopts the
+                    # patched loop after this activity fails.
+                    state.pending_requeue_ids = skipped
+                    await _requeue(state.task_id, skipped)
+                    state.pending_requeue_ids = []
             else:
                 self._phase = PHASE_SLEEPING
                 await self._sleep_or_recheck(state.poll_interval_seconds)

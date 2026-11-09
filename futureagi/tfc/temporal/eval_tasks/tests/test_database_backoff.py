@@ -10,6 +10,7 @@ import psycopg
 import pytest
 from asgiref.sync import sync_to_async
 from django.db import InternalError, OperationalError
+from temporalio import workflow
 from temporalio.client import WorkflowHistory
 from temporalio.common import RetryPolicy
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
@@ -660,3 +661,98 @@ def test_claim_transaction_distinguishes_confirmed_rollback_from_unknown_commit(
         if non_retryable
         else "EvalTaskDatabaseUnavailable"
     )
+
+
+@workflow.defn(name="ContinuousEvalTaskWorkflow")
+class LegacyContinuous(wf.ContinuousEvalTaskWorkflow):
+    @workflow.run
+    async def run(self, state: ContinuousDrainState) -> None:
+        try:
+            await self._run(state)
+        except Exception:
+            await wf._fail_task(state.task_id)
+            raise
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db(transaction=True)
+async def test_open_legacy_execution_adopts_backoff_on_first_new_outage(
+    workflow_environment,
+    eval_task,
+    make_pending_entries,
+    monkeypatch,
+):
+    _fast_control_retries(monkeypatch)
+    _patch_noop_reconcile(monkeypatch)
+    _patch_completing_run_entry(monkeypatch)
+    task_id = str(eval_task.id)
+    queue = f"db-live-upgrade-{uuid.uuid4().hex}"
+    client = workflow_environment.client
+    async with Worker(
+        client,
+        task_queue=queue,
+        workflows=[LegacyContinuous],
+        activities=get_activities(),
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            LegacyContinuous.run,
+            ContinuousDrainState(task_id=task_id, poll_interval_seconds=1),
+            id=f"eval-task-{task_id}",
+            task_queue=queue,
+        )
+
+        async def sleeping():
+            return await handle.query("phase") == "sleeping"
+
+        await _until(sleeping)
+    # Replace the worker, not the execution. Its recorded start has no new
+    # patch marker and must replay the legacy command sequence on this worker.
+    restored = threading.Event()
+    original = activities._reconcile_sync
+
+    def unavailable(*args):
+        if not restored.is_set():
+            raise _db_error("refused")
+        return original(*args)
+
+    monkeypatch.setattr(activities, "_reconcile_sync", unavailable)
+    async with Worker(
+        client,
+        task_queue=queue,
+        workflows=get_workflows(),
+        activities=get_activities(),
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        try:
+            await handle.signal("request_recheck")
+
+            async def deferred():
+                assert await _task_status(task_id) == EvalTaskStatus.RUNNING
+                return await handle.query("phase") == "waiting_for_database"
+
+            await _until(deferred)
+            await sync_to_async(make_pending_entries)(eval_task, 1)
+            restored.set()
+
+            async def completed():
+                return (await _status_counts(task_id))["completed"] == 1
+
+            await _until(completed)
+            assert (await handle.describe()).run_id == handle.first_execution_run_id
+            await _set_status(task_id, EvalTaskStatus.PAUSED)
+            await handle.signal("pause")
+            await asyncio.wait_for(handle.result(), 10)
+            history = await handle.fetch_history()
+            assert any(
+                wf._CONTINUOUS_DATABASE_ADOPTION_PATCH.encode() in payload.data
+                for event in history.events
+                for detail in event.marker_recorded_event_attributes.details.values()
+                for payload in detail.payloads
+            )
+            await Replayer(
+                workflows=[wf.ContinuousEvalTaskWorkflow],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ).replay_workflow(history)
+        finally:
+            await handle.cancel()
