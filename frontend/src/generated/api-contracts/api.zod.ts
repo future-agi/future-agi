@@ -39036,12 +39036,28 @@ export const SimulateApiHarnessEnvironmentsCreateActorParams = zod.object({
 
 export const simulateApiHarnessEnvironmentsCreateActorBodyExpectedRevisionMin = 0;
 
+export const simulateApiHarnessEnvironmentsCreateActorBodyShareActionsItemMax = 200;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyShareActionsMax = 100;
+
 export const SimulateApiHarnessEnvironmentsCreateActorBody = zod.object({
   actor: zod.record(zod.string(), zod.unknown()),
   expected_revision: zod
     .number()
     .min(simulateApiHarnessEnvironmentsCreateActorBodyExpectedRevisionMin)
     .optional(),
+  share_actions: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsCreateActorBodyShareActionsItemMax),
+    )
+    .max(simulateApiHarnessEnvironmentsCreateActorBodyShareActionsMax)
+    .optional()
+    .describe(
+      "Actions the edit gives that only one other actor holds today, confirmed as shared; without it such an edit is refused with permission_conflict (409) and each conflict.",
+    ),
 });
 
 export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
@@ -39119,12 +39135,28 @@ export const SimulateApiHarnessEnvironmentsReplaceActorParams = zod.object({
 
 export const simulateApiHarnessEnvironmentsReplaceActorBodyExpectedRevisionMin = 0;
 
+export const simulateApiHarnessEnvironmentsReplaceActorBodyShareActionsItemMax = 200;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyShareActionsMax = 100;
+
 export const SimulateApiHarnessEnvironmentsReplaceActorBody = zod.object({
   actor: zod.record(zod.string(), zod.unknown()),
   expected_revision: zod
     .number()
     .min(simulateApiHarnessEnvironmentsReplaceActorBodyExpectedRevisionMin)
     .optional(),
+  share_actions: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsReplaceActorBodyShareActionsItemMax),
+    )
+    .max(simulateApiHarnessEnvironmentsReplaceActorBodyShareActionsMax)
+    .optional()
+    .describe(
+      "Actions the edit gives that only one other actor holds today, confirmed as shared; without it such an edit is refused with permission_conflict (409) and each conflict.",
+    ),
 });
 
 export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
