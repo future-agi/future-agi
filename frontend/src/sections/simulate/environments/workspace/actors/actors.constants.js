@@ -145,6 +145,8 @@ export const ACTORS_COPY = {
       idHelp: (rule) =>
         `Made from the name; change it now if you like. ${rule ? `${rule.charAt(0).toUpperCase()}${rule.slice(1)}. ` : ""}It never changes once saved.`,
       idTaken: (name) => `Already used by ${name}; choose another id`,
+      // Ids the environment keeps for itself read as taken by it.
+      idReservedBy: "the environment itself (the agent or the caller)",
       idInvalid: (rule) =>
         rule ? `Use ${rule}` : "This id isn't allowed; choose another",
       permittedUnknown: (ids) =>

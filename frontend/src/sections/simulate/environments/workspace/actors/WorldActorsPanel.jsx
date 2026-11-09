@@ -87,6 +87,8 @@ export default function WorldActorsPanel({ envId, locked = false }) {
     loudness: data?.loudness || {},
     knowledgeSources: data?.knowledge_sources || { files: [], records: [] },
     others: cast,
+    // Ids the environment keeps for itself (the agent, the caller): never an actor's.
+    reservedIds: data?.reserved_ids || [],
     actorModels: data?.actor_models || [],
     // Uploads a document into the draft and answers with its path, so the form can pick it for this actor.
     upload: locked

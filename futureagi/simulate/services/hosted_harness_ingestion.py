@@ -1237,9 +1237,9 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(goal, dict) or not goal.get("name"):
             continue
         result = sub_goal_result(goal)
-        # Nothing decided this sub-goal, which is not the same as deciding against it.
-        # Coercing it would publish a failed, reasonless eval. Coverage carries the count.
-        if result is None:
+        # Nothing decided this sub-goal (or nothing could measure it), which is not the same as deciding against it.
+        # Publishing it would read as a failed, reasonless eval. Coverage carries the count.
+        if result in (None, "unmeasured"):
             continue
         results.append(
             {

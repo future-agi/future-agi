@@ -698,7 +698,15 @@ class ActorDecisionSerializer(serializers.Serializer):
 
     actor = serializers.CharField()
     play = serializers.ChoiceField(
-        choices=("mocked", "live", "history", "waiting", "timeout", "problem")
+        choices=(
+            "mocked",
+            "live",
+            "history",
+            "waiting",
+            "timeout",
+            "problem",
+            "not_triggered",
+        )
     )
     action = serializers.CharField(required=False, allow_null=True)
     arguments = serializers.DictField(
@@ -711,7 +719,7 @@ class ActorDecisionSerializer(serializers.Serializer):
     )
     problem = serializers.CharField(
         required=False,
-        help_text="For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.",
+        help_text="For `problem`: no_world_door or not_listed: the scenario's problem, never the agent's.",
     )
     why = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     status = serializers.IntegerField(required=False, allow_null=True)
