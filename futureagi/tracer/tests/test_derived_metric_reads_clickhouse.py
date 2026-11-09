@@ -363,7 +363,7 @@ def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
             retention_days=lambda: 0,
         )
         assert [(r["unit_id"], r["status"]) for r in values["results"]] == [
-            ("absent", "no_value")
+            ("absent", "not_calculated")
         ]
         return
     first = reads.read_units(
