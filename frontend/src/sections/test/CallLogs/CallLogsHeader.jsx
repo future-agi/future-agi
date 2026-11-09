@@ -67,7 +67,7 @@ const CallLogsHeader = ({ searchText, setSearchText }) => {
           endAdornment: searchText && (
             <InputAdornment position="end">
               <Iconify
-                icon="mingcute:close-line"
+                icon="solar:close-linear"
                 onClick={() => setSearchText("")}
                 sx={{ color: "text.disabled", cursor: "pointer" }}
               />
@@ -87,10 +87,9 @@ const CallLogsHeader = ({ searchText, setSearchText }) => {
           onClick={() => exportLogs()}
           startIcon={
             <SvgColor
+              width={16}
               src="/assets/icons/action_buttons/ic_download.svg"
               sx={{
-                width: 16,
-                height: 16,
                 color: "text.primary",
               }}
             />

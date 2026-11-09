@@ -343,21 +343,21 @@ const TestAnalyticsEvalsCard = (props) => {
                           >
                             <Box
                               sx={{
-                                backgroundColor: "green.o10",
+                                backgroundColor: "status.success.bg",
                                 padding: 1,
-                                color: "green.500",
+                                color: "status.success.fg",
                                 display: "flex",
                                 justifyContent: "center",
                                 alignItems: "center",
                                 width: "32px",
                                 height: "32px",
-                                borderRadius: "2px",
+                                borderRadius: "4px",
                               }}
                             >
                               <Iconify
                                 // @ts-ignore
                                 icon="qlementine-icons:success-16"
-                                color="green.500"
+                                color="status.success.fg"
                               />
                             </Box>
                             <Box>
@@ -373,8 +373,8 @@ const TestAnalyticsEvalsCard = (props) => {
                                 fontWeight={"fontWeightSemiBold"}
                                 sx={{
                                   color: "text.primary",
-                                  fontWeight: 700,
-                                  fontSize: "1.125rem",
+                                  fontWeight: 600,
+                                  fontSize: "1rem",
                                 }}
                               >
                                 {temp?.value?.[index] || 0} %
@@ -459,9 +459,9 @@ const TestAnalyticsEvalsCard = (props) => {
               sx={{
                 marginTop: "16px",
                 borderRadius: "4px",
-                backgroundColor: "blue.o5",
+                backgroundColor: "status.info.bg",
                 border: "1px solid",
-                borderColor: "blue.200",
+                borderColor: "status.info.border",
                 padding: "12px",
                 display: "flex",
                 flexDirection: "column",
@@ -471,14 +471,14 @@ const TestAnalyticsEvalsCard = (props) => {
               <Typography
                 typography={"s1"}
                 fontWeight={"fontWeightSemiBold"}
-                color="blue.500"
+                color="status.info.fg"
               >
                 There are no common columns to compare
               </Typography>
               <Typography
                 typography={"s3"}
                 fontWeight={"fontWeightRegular"}
-                color="blue.500"
+                color="status.info.fg"
               >
                 {"We've"} summarized each dataset. Please select one to view and
                 compare individually.

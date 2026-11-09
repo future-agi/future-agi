@@ -53,10 +53,10 @@ const Pill = ({ label, value }) => (
       bgcolor: "background.neutral",
       border: "1px solid",
       borderColor: "divider",
-      borderRadius: "2px",
+      borderRadius: "4px",
       minWidth: 0,
       maxWidth: 280,
-      fontSize: 11,
+      fontSize: 12,
       color: "text.primary",
       lineHeight: "16px",
     }}
@@ -68,9 +68,9 @@ const Pill = ({ label, value }) => (
         whiteSpace: "nowrap",
         color: "text.secondary",
         fontWeight: 600,
-        textTransform: "uppercase",
-        letterSpacing: "0.04em",
-        fontSize: 10,
+        textTransform: "none",
+        letterSpacing: 0,
+        fontSize: 12,
       }}
     >
       {label}
@@ -113,11 +113,11 @@ const DetailRow = ({ label, value, isPersona, raw }) => (
   >
     <Typography
       sx={{
-        fontSize: 10,
+        fontSize: 12,
         fontWeight: 600,
         color: "text.secondary",
-        textTransform: "uppercase",
-        letterSpacing: "0.04em",
+        textTransform: "none",
+        letterSpacing: 0,
         pt: 0.25,
       }}
     >
@@ -203,11 +203,11 @@ const CompareScenarioSummary = ({ data }) => {
       >
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.secondary",
-            textTransform: "uppercase",
-            letterSpacing: "0.06em",
+            textTransform: "none",
+            letterSpacing: 0,
             flexShrink: 0,
           }}
         >
@@ -241,9 +241,9 @@ const CompareScenarioSummary = ({ data }) => {
               py: 0.25,
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "2px",
+              borderRadius: "4px",
               bgcolor: "background.paper",
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 500,
               color: "text.primary",
               lineHeight: "16px",
@@ -256,7 +256,11 @@ const CompareScenarioSummary = ({ data }) => {
           >
             <span>{expanded ? "Hide full details" : "Show full details"}</span>
             <Iconify
-              icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
+              icon={
+                expanded
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
               width={12}
             />
           </ButtonBase>

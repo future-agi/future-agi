@@ -340,6 +340,35 @@ def test_stored_code_agent_without_an_instrumenter_is_refused(
     assert _created() == before
 
 
+def test_code_agent_with_nothing_stored_is_refused_not_a_project_error(
+    organization, workspace, user, auth_client
+):
+    agent = _agent(
+        organization,
+        workspace,
+        provider=None,
+        assistant_id=None,
+        api_key=None,
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+    )
+    agent.create_version(description="", commit_message="first", status="active")
+    before = _created()
+    with pytest.raises(switch.ObservabilityRefused) as raised:
+        _turn(agent, True, user, organization, workspace)
+    assert raised.value.missing == (switch.PROVIDER_MISSING,)
+    assert _created() == before
+
+    response = auth_client.put(
+        f"/simulate/agent-definitions/{agent.id}/edit/",
+        {"observability_enabled": True},
+        format="json",
+    )
+    assert response.status_code == 400
+    assert response.json()["code"] == "observability_prerequisite_missing"
+    assert _created() == before
+    assert _stored_agent(agent).observability_provider_id is None
+
+
 def test_agent_is_source_asks_the_summary(organization, workspace):
     agent = _agent(organization, workspace)
     with seams(make_summary(kind="source")):

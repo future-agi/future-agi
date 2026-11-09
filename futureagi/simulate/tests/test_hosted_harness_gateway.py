@@ -22,15 +22,27 @@ import pytest
 from django.test import override_settings
 from django.utils import timezone
 
-from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.models import (
+    HostedHarnessAttempt,
+    HostedHarnessExecution,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+)
+from simulate.models.test_execution import CallExecution
+from simulate.selectors.agent_fix import ran_at
 from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    begin_scenarios,
     create_hosted_job,
+    provision_scenarios,
     record_cleanup,
     register_attempt,
     request_cancellation,
+    scope_dispatch_to_rerun,
+    update_execution_counts,
 )
 from simulate.services.hosted_harness_diagnostics import cached_attempt_redaction_values
 from simulate.services.hosted_harness_gateway import (
@@ -38,12 +50,12 @@ from simulate.services.hosted_harness_gateway import (
     _SIMULATOR_SECRETS_PATH,
     HostedHarnessGateway,
     HostedSourceAcquirer,
+    _add_scoped_guest_pin_policy,
     _authoring_archive_for,
     _authoring_ttl_seconds,
     _connector_egress_domains,
     _execution_ttl_seconds,
     _known_simulator_egress_inputs,
-    _add_scoped_guest_pin_policy,
     _normalize_egress_domains,
     _platform_simulator_material,
     _provider_egress_domains,
@@ -56,6 +68,7 @@ from simulate.services.hosted_harness_gateway import (
     detect_source_connectors,
     detect_source_credentials,
     guest_failure_cause,
+    guest_job_document,
     pack_authoring_archive,
     prepare_dispatch_payload,
     resolve_authored_connector,
@@ -274,6 +287,13 @@ def test_caller_barge_in_rate_comes_from_platform_configuration(monkeypatch):
     monkeypatch.setenv("HARNESS_CALLER_BARGE_IN_RATE", "0.2")
     values = _platform_simulator_material()
     assert values["HARNESS_CALLER_BARGE_IN_RATE"] == "0.2"
+
+
+def test_authoring_duration_cap_reaches_the_sandbox(monkeypatch):
+    monkeypatch.setenv("ALK_HARNESS", "gemini")
+    monkeypatch.setenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "5400")
+    values = _platform_simulator_material()
+    assert values["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] == "5400"
 
 
 def test_a_deployment_catalogue_overrides_the_platform_clips(monkeypatch, tmp_path):
@@ -1102,6 +1122,72 @@ def test_dispatch_payload_uses_platform_livekit_url_for_provider_voice(connector
     assert "must-not-be-copied" not in json.dumps(dispatched)
 
 
+# ALK's HarnessJob refuses any non-empty value under a secret-looking key.
+_ALK_SECRET_NAMES = {
+    "api_key",
+    "api_secret",
+    "authorization",
+    "credential",
+    "credentials",
+    "password",
+    "private_key",
+    "secret",
+    "token",
+}
+
+
+def _alk_secret_paths(value, path=()):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            current = (*path, str(key))
+            normalized = str(key).lower().replace("-", "_")
+            if normalized in _ALK_SECRET_NAMES and item not in (None, "", {}, []):
+                yield ".".join(current)
+            yield from _alk_secret_paths(item, current)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _alk_secret_paths(item, (*path, str(index)))
+
+
+def _chat_state_payload():
+    return {
+        "agent": {"connector": "auto", "config": {}},
+        "metadata": {
+            "authoring_revision": "rev-1",
+            "conversation_checkpoints": {
+                "conv-1": {"digest": "d", "draft_basis": {"token": "abc123"}}
+            },
+            "draft_saves": {"key-1": {"pieces": {}, "at": "2026-10-18"}},
+        },
+    }
+
+
+def test_guest_job_document_drops_server_only_chat_state():
+    payload = _chat_state_payload()
+
+    document = guest_job_document(payload)
+
+    assert document["metadata"] == {"authoring_revision": "rev-1"}
+    assert list(_alk_secret_paths(document)) == []
+    assert "conversation_checkpoints" in payload["metadata"]
+    assert "draft_saves" in payload["metadata"]
+
+
+def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
+    from simulate.services.harness_versioning.assembly import certify_job_payload
+
+    payload = _chat_state_payload()
+
+    dispatched = prepare_dispatch_payload(payload, {})
+    certify = certify_job_payload(dispatched, 3)
+
+    for document in (dispatched, certify):
+        assert "conversation_checkpoints" not in document["metadata"]
+        assert "draft_saves" not in document["metadata"]
+        assert list(_alk_secret_paths(document)) == []
+    assert payload == _chat_state_payload()
+
+
 @pytest.mark.django_db
 def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     organization, monkeypatch
@@ -1142,7 +1228,14 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     assert all(
         "installation-secret-token" not in " ".join(cmd) for cmd in observed_commands
     )
-    assert observed_token == ["Authorization: Bearer installation-secret-token"] * 4
+    # GitHub takes an installation token as Basic x-access-token, not Bearer.
+    assert (
+        observed_token
+        == [
+            "Authorization: Basic eC1hY2Nlc3MtdG9rZW46aW5zdGFsbGF0aW9uLXNlY3JldC10b2tlbg=="
+        ]
+        * 4
+    )
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
         names = set(tar.getnames())
     assert "source/agent.py" in names
@@ -1761,6 +1854,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "AGENTCC_BASE_URL": "https://gateway.example.test",
         "AGENTCC_API_KEY": "harness-virtual-key",
         "SIMULATOR_STT_PROVIDER": "deepgram",
+        "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS": "3600",
     }
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
@@ -1776,6 +1870,8 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
 
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     assert attempt.provider_ref == "sandbox-1"
+    exports = client.sandbox.process.session_request.env
+    assert exports["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] == "3600"
     assert (
         client.params.cpu_units,
         client.params.memory_mb,
@@ -1806,7 +1902,9 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
-    assert job.conversation.messages.get().content.startswith("Build the test environment")
+    assert job.conversation.messages.get().content.startswith(
+        "Build the test environment"
+    )
     assert "; fi &&" in client.sandbox.process.session_request.command
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
     # former rather than using only the 10-minute call-runtime budget plus two minutes.
@@ -1837,7 +1935,9 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
         "endpoint": "https://agent.example.com",
         "visibility": "public",
     }
-    job, _ = create_hosted_job(organization, payload, idempotency_key="launch-gateway-staged")
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="launch-gateway-staged"
+    )
     client = _Daytona()
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
@@ -1869,8 +1969,9 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     command = client.sandbox.process.session_request.command
     assert "--await-harness" not in command and "--adjustments" in command
-    assert not job.conversation.messages.filter(content__startswith="Build the test environment").exists()
-
+    assert not job.conversation.messages.filter(
+        content__startswith="Build the test environment"
+    ).exists()
 
 
 def _launch_and_read_job_json(
@@ -2096,7 +2197,9 @@ def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp
         "endpoint": "https://agent.example.com",
         "visibility": "public",
     }
-    job, _ = create_hosted_job(organization, payload, idempotency_key="adjust-named-stage")
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="adjust-named-stage"
+    )
     client = _Daytona()
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
@@ -2122,7 +2225,9 @@ def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp
         },
     )
 
-    assert adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
+    assert (
+        adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
+    )
 
 
 @pytest.mark.django_db
@@ -2666,7 +2771,7 @@ def test_reconcile_waits_when_daytona_deletion_is_already_in_progress(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("exit_code", [0, 3, 78])
+@pytest.mark.parametrize("exit_code", [3, 78])
 def test_reconcile_terminal_and_authoring_exits_never_retry(
     organization, monkeypatch, exit_code
 ):
@@ -2829,6 +2934,317 @@ def test_reconcile_exit0_refreshes_terminal_delivery_flags(organization, monkeyp
     assert refreshed.terminal_failure is None
 
 
+def _delivered_run(
+    organization, key: str, *, receipts: int, parallelism: int = 1
+) -> HostedHarnessAttempt:
+    """A two-call Run of a saved environment holding its first ``receipts`` results and no
+    acknowledged manifest."""
+    environment, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"{key}-environment"
+    )
+    payload = _payload()
+    payload["scenario_count"] = 2
+    # Enough CPU for that many worlds side by side.
+    payload["runtime"].update(parallelism=parallelism, cpu_units=2 * parallelism)
+    job, _ = create_hosted_job(organization, payload, idempotency_key=key)
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example", provider_ref="sandbox-1"
+    ).attempt
+    keys = ["scenario-1", "scenario-2"]
+    provisioned = provision_scenarios(
+        attempt,
+        {
+            "operation": "provision",
+            "name": "Delivered run",
+            "personas": [
+                {"scenario_key": name, "name": name, "description": name}
+                for name in keys
+            ],
+        },
+    )
+    attempt.job.refresh_from_db()
+    begin_scenarios(
+        attempt,
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["result"]["run_test_id"],
+            "scenario_keys": keys,
+        },
+    )
+    registrations = HostedHarnessScenario.no_workspace_objects.filter(job=job).order_by(
+        "scenario_key"
+    )
+    for number, registration in enumerate(registrations):
+        # A Run's call hangs off its execution, not off the scenario it was built from.
+        call = registration.call_execution
+        HostedHarnessScenario.no_workspace_objects.filter(id=registration.id).update(
+            call_execution=None
+        )
+        execution = HostedHarnessExecution.no_workspace_objects.create(
+            job=job,
+            source_scenario=registration,
+            execution_key=f"{registration.scenario_key}:0",
+            trial_index=0,
+            call_execution=call,
+        )
+        if number < receipts:
+            _receive(attempt, execution)
+    job.refresh_from_db()
+    # The executions a Run sends its guest, which a relaunch can narrow.
+    metadata = {
+        **(job.payload.get("metadata") or {}),
+        "execution_manifest": [
+            {"execution_key": f"{name}:0", "scenario_key": name, "trial_index": 0}
+            for name in keys
+        ],
+    }
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        environment=environment, payload={**job.payload, "metadata": metadata}
+    )
+    return attempt
+
+
+def _receive(attempt: HostedHarnessAttempt, execution: HostedHarnessExecution) -> None:
+    HostedHarnessReceipt.no_workspace_objects.create(
+        job_id=attempt.job_id,
+        attempt=attempt,
+        scenario=execution.source_scenario,
+        execution=execution,
+        attempt_number=attempt.attempt_number,
+        digest=f"sha256:{uuid.uuid4().hex * 2}",
+        status="passed",
+        body={},
+    )
+    CallExecution.objects.filter(id=execution.call_execution_id).update(
+        status=CallExecution.CallStatus.COMPLETED
+    )
+
+
+def _deliver_terminal(attempt: HostedHarnessAttempt, stage: str) -> None:
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_event_received=True,
+        terminal_stage=stage,
+        state=HostedHarnessAttempt.State.FINALIZING,
+    )
+
+
+def _exited_cleanly(monkeypatch) -> tuple[HostedHarnessGateway, dict]:
+    """A gateway whose guest exited 0 and whose offline spool holds nothing more."""
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    captured = {}
+
+    def fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", fake_delete)
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 0, "logs": "", "process_logs": ""},
+    )
+    monkeypatch.setattr(gateway, "_recover_offline_delivery", lambda _: False)
+    return gateway, captured
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_keeps_a_scored_run_whose_manifest_was_lost(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "scored-run-lost-manifest", receipts=2)
+    _deliver_terminal(attempt, "completed")
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert captured["retry_pending"] is False
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    # Nothing stands in for the manifest: the attempt still records that it never came.
+    assert attempt.manifest_acked is False
+    assert not attempt.manifests.exists()
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_completes_a_scored_run_whose_terminal_event_was_lost(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "scored-run-lost-terminal", receipts=2)
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # Kept as a Run whose manifest was lost is kept. No relaunch, so no call runs or
+    # is charged a second time.
+    assert captured["retry_pending"] is False
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert job.attempts.count() == 1
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    # The ending is the platform's conclusion and says so; no guest sent it.
+    assert attempt.terminal_event_received is False
+    assert (attempt.terminal_stage, attempt.terminal_reason) == (
+        "completed",
+        "terminal_event_lost",
+    )
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("terminal_stage", "receipts", "retried"),
+    [
+        ("completed", 1, True),  # a result never arrived
+        (None, 1, True),  # neither a result nor the terminal event arrived
+        ("canceled", 2, False),  # the guest's own ending is not retried
+    ],
+)
+def test_reconcile_exit0_retries_a_run_only_when_its_results_are_missing(
+    organization, monkeypatch, terminal_stage, receipts, retried
+):
+    attempt = _delivered_run(
+        organization, f"run-missing-{terminal_stage}", receipts=receipts
+    )
+    if terminal_stage:
+        _deliver_terminal(attempt, terminal_stage)
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "terminal_delivery_incomplete"
+    assert captured["retry_pending"] is retried
+    assert job.state == (
+        HostedHarnessJob.State.RETRY_WAIT if retried else HostedHarnessJob.State.FAILED
+    )
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_relaunches_only_the_calls_without_a_result(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-missing-relaunch", receipts=1)
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    # Launch sends the guest what scope_dispatch_to_rerun leaves of the job's document:
+    # the call whose result was lost, not the call that already has its result.
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    dispatched = scope_dispatch_to_rerun(job.payload)
+    assert [
+        entry["execution_key"] for entry in dispatched["metadata"]["execution_manifest"]
+    ] == ["scenario-2:0"]
+    assert dispatched["scenario_count"] == 1
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    _receive(
+        second,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=first.job_id, execution_key="scenario-2:0"
+        ),
+    )
+    _deliver_terminal(second, "completed")
+
+    job = gateway.reconcile_completed(second)
+
+    # The first attempt's result and the relaunch's together finish the Run.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    update_execution_counts(job)
+    job.refresh_from_db()
+    assert (job.completed_count, job.failed_count) == (2, 0)
+
+
+@override_settings(
+    HARNESS_PARALLELISM_ENABLED=True, ALK_DAYTONA_DOCKERFILE="/hosted/Dockerfile"
+)
+@pytest.mark.django_db
+def test_relaunch_of_one_lost_call_keeps_the_runs_parallelism(
+    organization, monkeypatch
+):
+    first = _delivered_run(
+        organization, "run-missing-relaunch-w2", receipts=1, parallelism=2
+    )
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    gateway.reconcile_completed(first)
+
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    )
+    _receive(
+        second.attempt,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=first.job_id, execution_key="scenario-2:0"
+        ),
+    )
+    _deliver_terminal(second.attempt, "completed")
+    job = gateway.reconcile_completed(second.attempt)
+
+    # The relaunch runs its one call alone, but the Run's calls ran two at a time:
+    # running fewer calls is no clamp.
+    assert second.admitted_parallelism == 1
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert ran_at(job) == 2
+    assert "parallelism_clamped" not in job.payload["metadata"]
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_scores_the_run_from_its_calls_when_the_relaunch_runs_out(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-missing-relaunch-spent", receipts=1)
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    gateway.reconcile_completed(first)
+    # The relaunch, the last the budget allows, loses the one call it was sent.
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    _deliver_terminal(second, "completed")
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == "terminal_delivery_incomplete"
+    calls = {
+        execution.execution_key: execution.call_execution
+        for execution in HostedHarnessExecution.no_workspace_objects.filter(
+            job=job
+        ).select_related("call_execution")
+    }
+    assert calls["scenario-1:0"].status == CallExecution.CallStatus.COMPLETED
+    assert calls["scenario-2:0"].status == CallExecution.CallStatus.FAILED
+    assert calls["scenario-2:0"].ended_reason == job.failure["message"]
+    # The Run is not failed: it is scored from the call that has its result, as after
+    # an in-run re-run.
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
 @pytest.mark.django_db(transaction=True)
 def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     organization, monkeypatch
@@ -2880,6 +3296,50 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert client.sandbox.process.sessions == [_CHAT_SESSION]
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
     assert client.deleted is False
+
+
+@pytest.mark.django_db
+def test_chat_sandbox_job_document_omits_server_only_chat_state(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness_conversation import ensure_conversation
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key="chat-doc")
+    job.payload = {
+        **job.payload,
+        "metadata": {
+            **(job.payload.get("metadata") or {}),
+            **_chat_state_payload()["metadata"],
+        },
+    }
+    # A finished job's chat gets a sandbox of its own, sent the job document.
+    job.state = HostedHarnessJob.State.FAILED
+    job.current_stage = "failed"
+    job.save(update_fields=["payload", "state", "current_stage", "updated_at"])
+    conversation = ensure_conversation(job)
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    for name, value in (
+        ("load_workspace_archive", lambda _conversation: None),
+        ("_authoring_archive_for", lambda _job: None),
+        ("_platform_simulator_material", lambda: {}),
+        ("_resolved_egress_domains", lambda *_args: {"platform.example"}),
+    ):
+        monkeypatch.setattr(f"simulate.services.hosted_harness_gateway.{name}", value)
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        lambda *_: (b"source", None),
+    )
+
+    gateway.ensure_conversation_runtime(
+        job, conversation=conversation, endpoint_base_url="https://platform.example"
+    )
+
+    document = json.loads(client.sandbox.fs.uploads["/work/job.json"])
+    assert "conversation_checkpoints" not in document["metadata"]
+    assert "draft_saves" not in document["metadata"]
+    assert list(_alk_secret_paths(document)) == []
 
 
 @pytest.mark.django_db

@@ -1797,6 +1797,8 @@ class EvalTemplateBulkDeleteResponseSerializer(serializers.Serializer):
 
 
 class EvalTemplateListItemSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
+    model = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     id = serializers.UUIDField()
     name = serializers.CharField()
     template_type = serializers.CharField()
@@ -1837,6 +1839,7 @@ class EvalTemplateCreateResponseSerializer(serializers.Serializer):
 
 
 class EvalTemplateDetailResponseResultSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
     id = serializers.UUIDField()
     name = serializers.CharField()
     description = serializers.CharField(
@@ -2392,6 +2395,9 @@ class SingleRowEvaluationResponseSerializer(serializers.Serializer):
 
 
 class EvalTemplateCreateV2RequestSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
+    multi_choice = serializers.BooleanField(required=False, default=False)
+    input_data_types = serializers.JSONField(required=False, allow_null=True)
     name = serializers.CharField(required=False, allow_blank=True, max_length=255)
     is_draft = serializers.BooleanField(required=False, default=False)
     eval_type = serializers.ChoiceField(
@@ -2466,6 +2472,8 @@ class EvalTemplateCreateV2RequestSerializer(serializers.Serializer):
 
 
 class EvalTemplateUpdateV2RequestSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
+    input_data_types = serializers.JSONField(required=False, allow_null=True)
     name = serializers.CharField(required=False, allow_null=True, max_length=255)
     eval_type = serializers.ChoiceField(
         choices=["llm", "code", "agent"],
@@ -2547,6 +2555,7 @@ class EvalTemplateUpdateV2RequestSerializer(serializers.Serializer):
 
 
 class EvalTemplateVersionCreateRequestSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
     criteria = serializers.CharField(
         required=False,
         allow_null=True,
@@ -2558,6 +2567,7 @@ class EvalTemplateVersionCreateRequestSerializer(serializers.Serializer):
 
 
 class EvalTemplateVersionItemSerializer(serializers.Serializer):
+    jev_mapping = serializers.JSONField(required=False, allow_null=True)
     id = serializers.UUIDField()
     version_number = serializers.IntegerField()
     is_default = serializers.BooleanField()
@@ -3251,20 +3261,41 @@ class DatasetSdkRowsRequestSerializer(serializers.Serializer):
     dataset_id = serializers.UUIDField(required=False, allow_null=True)
 
 
-class DatasetRowCellRequestSerializer(serializers.Serializer):
+class DatasetRowCellRequestSerializer(StrictInputSerializer):
     column_name = serializers.CharField()
     value = JsonValueField(required=False, allow_null=True)
 
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
-class DatasetRowRequestSerializer(serializers.Serializer):
+
+class DatasetRowRequestSerializer(StrictInputSerializer):
     id = serializers.UUIDField(required=False)
+    order = serializers.IntegerField(
+        required=False,
+        help_text="Legacy input accepted for compatibility; rows are appended in request order.",
+    )
     # A row without cells is valid and creates an empty row; the endpoint has
     # always accepted ``{"rows": [{}]}`` so the contract must keep it optional.
     cells = DatasetRowCellRequestSerializer(many=True, required=False, default=list)
 
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
-class DatasetAddRowsRequestSerializer(serializers.Serializer):
+    def validate_cells(self, cells):
+        names = [cell["column_name"] for cell in cells]
+        if len(names) != len(set(names)):
+            raise serializers.ValidationError(
+                "Each column may appear only once per row."
+            )
+        return cells
+
+
+class DatasetAddRowsRequestSerializer(StrictInputSerializer):
     rows = DatasetRowRequestSerializer(many=True, allow_empty=False)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
 
 class DatasetAddRowsFromExistingRequestSerializer(serializers.Serializer):

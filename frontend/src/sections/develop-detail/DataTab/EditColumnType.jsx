@@ -154,7 +154,8 @@ const EditColumnType = () => {
         <Dialog
           open={Boolean(editColumnType)}
           onClose={onCloseCallback}
-          maxWidth="sm"
+          maxWidth={false}
+          PaperProps={{ sx: { maxWidth: 720 } }}
           fullWidth
         >
           <DialogTitle
@@ -172,11 +173,11 @@ const EditColumnType = () => {
                 justifyContent: "space-between",
               }}
             >
-              <Typography fontWeight={700} fontSize="18px">
+              <Typography fontWeight={600} fontSize="16px">
                 Update Column Type
               </Typography>
               <IconButton onClick={onCloseCallback}>
-                <Iconify icon="mdi:close" />
+                <Iconify icon="solar:close-linear" />
               </IconButton>
             </Box>
           </DialogTitle>
@@ -204,7 +205,7 @@ const EditColumnType = () => {
                 }}
               />
               {isError && (
-                <Alert severity="error" sx={{ py: 0.5 }}>
+                <Alert severity="error">
                   {error?.result?.message}{" "}
                   <b>You can also force update at your own risk</b>
                 </Alert>
@@ -249,7 +250,6 @@ const EditColumnType = () => {
               variant="contained"
               color="error"
               size="small"
-              sx={{ px: 2.5 }}
               onClick={handleSubmit(forceUpdate)} // Ensure this triggers submission
             >
               Confirm

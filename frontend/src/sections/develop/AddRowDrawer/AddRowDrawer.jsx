@@ -11,6 +11,7 @@ import { useParams } from "react-router";
 import ExistingDatasetModal from "./ExistingDatasetModal";
 import SyntheticDataDrawer from "./CreateSyntheticData";
 import { useDevelopDetailContext } from "src/sections/develop-detail/Context/DevelopDetailContext";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const options = [
   {
@@ -72,6 +73,7 @@ const AddRowDrawer = ({ open, onClose }) => {
     setExistingDataset(false);
   };
 
+  const covered = useDrawerCovered(open);
   return (
     <>
       <UploadFileModal
@@ -108,14 +110,15 @@ const AddRowDrawer = ({ open, onClose }) => {
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         onClose={handleClose}
         PaperProps={{
           sx: {
             height: "100vh",
-            // width: "550px",
+            // width: "480px",
             position: "fixed",
             zIndex: 9999,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}
@@ -131,7 +134,7 @@ const AddRowDrawer = ({ open, onClose }) => {
               onClick={handleClose}
               sx={{ position: "absolute", top: "10px", right: "12px" }}
             >
-              <Iconify icon="mingcute:close-line" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
             <Box
               sx={{

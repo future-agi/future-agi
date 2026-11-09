@@ -65,6 +65,9 @@ def run_traces_source(execution: TestExecution) -> RunTracesSource | None:
         summary = agent_summary(
             agent.id, agent_version_id=version.id if version else None
         )
+        if version is not None and not summary.agent_stored and not summary.setup_stale:
+            # A version made by a push stores no setup; the agent's own decides the kind.
+            summary = agent_summary(agent.id)
     except AgentNotFound:
         return None
     if summary.kind != TRACED_AGENT_KIND:
