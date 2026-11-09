@@ -438,7 +438,9 @@ class FileUploadView(APIView):
             os.getenv("MINIO_ENDPOINT")
             or os.getenv("S3_ENDPOINT_URL", "minio:9000")
         )
-        secure = scheme_hint if scheme_hint is not None else "amazonaws" in minio_endpoint
+        secure = (
+            scheme_hint if scheme_hint is not None else "amazonaws" in minio_endpoint
+        )
 
         access_key = (
             os.getenv("MINIO_ROOT_USER")
