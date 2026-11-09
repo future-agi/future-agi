@@ -5,6 +5,7 @@ import {
   Autocomplete,
   Box,
   Button,
+  Checkbox,
   Collapse,
   FormControlLabel,
   MenuItem,
@@ -201,6 +202,19 @@ export default function ActorForm({
   );
   const permitted = value("permitted");
   const unknownActions = permitted.filter((one) => !actionIds.includes(one));
+  // An action only one other actor holds is theirs alone: giving it to a second is shown, and confirmed, before saving.
+  const hadActions = new Set(actor?.permitted_actions || []);
+  const reserved = permitted
+    .filter((one) => !hadActions.has(one))
+    .map((one) => ({
+      action: one,
+      holders: others.filter((other) =>
+        (other.permitted_actions || []).includes(one),
+      ),
+    }))
+    .filter((one) => one.holders.length === 1);
+  const [shareConfirmed, setShareConfirmed] = useState(false);
+  const shareUnconfirmed = reserved.length > 0 && !shareConfirmed;
   const describe = (id) =>
     actions.find((one) => one.action === id)?.description || "";
   const channel = value("channel");
@@ -468,6 +482,30 @@ export default function ActorForm({
                   />
                 )}
               />
+              {reserved.length > 0 && (
+                <Alert severity="warning" data-testid="actor-permission-conflict">
+                  {reserved.map((one) => (
+                    <Typography key={one.action} sx={{ typography: "s2" }}>
+                      {F.permittedConflict(
+                        one.action,
+                        one.holders[0].name || one.holders[0].id,
+                      )}
+                    </Typography>
+                  ))}
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={shareConfirmed}
+                        onChange={(event) =>
+                          setShareConfirmed(event.target.checked)
+                        }
+                      />
+                    }
+                    label={F.permittedShare}
+                  />
+                </Alert>
+              )}
               {choice("play", F.play, Object.entries(F.plays), {
                 helperText: F.playHelp,
               })}
@@ -640,9 +678,15 @@ export default function ActorForm({
                 roleMissing ||
                 comesInIncomplete ||
                 Boolean(capWrong) ||
-                Boolean(argumentsWrong)
+                Boolean(argumentsWrong) ||
+                shareUnconfirmed
               }
-              onClick={() => onSave(toRecord(actor, fields, context))}
+              onClick={() =>
+                onSave(
+                  toRecord(actor, fields, context),
+                  reserved.map((one) => one.action),
+                )
+              }
             >
               {F.save}
             </Button>

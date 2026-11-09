@@ -647,6 +647,52 @@ def _record_problems(
     return problems
 
 
+def permission_conflicts(
+    before: list[ActorRecord], edited: ActorRecord
+) -> list[dict[str, str]]:
+    """Each action this edit gives the actor that exactly one other actor holds today: that one's alone, so giving it
+    to a second is a conflict to show before saving. An action two or more already hold is shared, not reserved.
+    """
+    actor_id = str(edited.get("id") or "")
+    own = next((one for one in before if one.get("id") == actor_id), None) or {}
+    had = set(own.get("permitted_actions") or [])
+    conflicts = []
+    for action in edited.get("permitted_actions") or []:
+        if action in had:
+            continue
+        holders = [
+            one
+            for one in before
+            if one.get("id") != actor_id
+            and action in (one.get("permitted_actions") or [])
+        ]
+        if len(holders) == 1:
+            holder = holders[0]
+            conflicts.append(
+                {
+                    "actor": actor_id,
+                    "action": action,
+                    "holder": str(holder.get("id") or ""),
+                    "holder_name": str(holder.get("name") or holder.get("id") or ""),
+                }
+            )
+    return conflicts
+
+
+def _conflict_error(conflicts: list[dict[str, str]]) -> HostedHarnessError:
+    sentences = [
+        f"{one['action']} is held only by {one['holder_name']} today; giving it to {one['actor']} lets both take it."
+        for one in conflicts
+    ]
+    return HostedHarnessError(
+        "permission_conflict",
+        " ".join(sentences)
+        + " Remove it, or confirm both should have it by listing it in share_actions.",
+        status_code=409,
+        details={"conflicts": conflicts},
+    )
+
+
 def _broken_references(
     actor: ActorRecord, known: set[str], rules: ActorRules
 ) -> list[tuple[str, Any]]:
@@ -716,10 +762,28 @@ def _scenarios_using(documents: list[dict[str, Any]], actor_id: str) -> list[str
     return sorted(
         str(scenario.get("scenario_key") or scenario.get("name") or "")
         for scenario in documents
-        if any(
-            isinstance(one, dict) and one.get("id") == actor_id
-            for one in scenario.get("actors") or []
-        )
+        if _takes_part(scenario, actor_id)
+    )
+
+
+def _takes_part(scenario: dict[str, Any], actor_id: str) -> bool:
+    """Whether an actor is in a scenario: listed, sending its start, or writing a pre-run session.
+
+    The caller is the person in every scenario a person starts, so only one started by a task or an event has none.
+    """
+    start = scenario.get("starts_with")
+    if actor_id == CALLER:
+        return not start
+    if isinstance(start, dict) and start.get("actor") == actor_id:
+        return True
+    if any(
+        isinstance(one, dict) and one.get("id") == actor_id
+        for one in scenario.get("actors") or []
+    ):
+        return True
+    return any(
+        isinstance(session, dict) and actor_id in (session.get("actors") or [])
+        for session in scenario.get("pre_run") or []
     )
 
 
@@ -807,13 +871,15 @@ def write_actor_edit(
     body: ActorRecord | None,
     user: User | None,
     expected_revision: int | None,
+    share_actions: list[str] | None = None,
 ) -> Cast:
     """Create, replace or delete one actor in the environment draft and return the cast after it.
 
     `expected_revision` is the draft revision the caller read; an edit made elsewhere since is refused with
     `draft_changed` (409). Also refuses `actor_exists`, `actor_in_use` (409), `actor_not_found` (404) and
-    `actor_invalid` (400), `actor_id_missing` and `actor_id_mismatch` (400), and retires the builder chat's runtime
-    once the draft is written. `actor_id` is the id in the address, if any; a create may give it in the body instead.
+    `actor_invalid` (400), `actor_id_missing` and `actor_id_mismatch` (400), `permission_conflict` (409, with each
+    conflict) when the edit gives an actor an action only one other actor holds and `share_actions` does not confirm
+    it, and retires the builder chat's runtime once the draft is written. `actor_id` is the id in the address, if any; a create may give it in the body instead.
     """
     # The scenario count and the review decision are read-side only; they are never written into a record.
     body = {name: value for name, value in (body or {}).items() if name not in _READ_ONLY_FIELDS}
@@ -849,6 +915,17 @@ def write_actor_edit(
         )
     if problems:
         raise HostedHarnessError("actor_invalid", " ".join(problems), status_code=400)
+    if op != "delete":
+        confirmed = set(share_actions or [])
+        conflicts = [
+            one
+            for one in permission_conflicts(
+                before, next(one for one in actors if one.get("id") == actor_id)
+            )
+            if one["action"] not in confirmed
+        ]
+        if conflicts:
+            raise _conflict_error(conflicts)
     return _written(
         environment,
         _with_cast(environment_files, actors, rules),
