@@ -1034,6 +1034,29 @@ def test_a_change_touching_one_scenario_drops_only_its_proof_and_one_touching_al
     assert not HarnessSuiteValidation.no_workspace_objects.filter(
         environment_version=other
     ).exists()
+    # A change names the scenario by its folder, the proof by its key: still the same scenario.
+    HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=suite, environment_version=parent
+    ).update(proofs={"duplicate-refund": {"holds": True}, "other-case": {"holds": True}})
+    third = HarnessEnvironmentVersion.no_workspace_objects.create(
+        job=environment,
+        organization_id=environment.organization_id,
+        status="discarded",
+        origin="manual",
+        hash="sha256:" + "8" * 64,
+        archive_object_key="y",
+        archive_sha256="0" * 64,
+        archive_size=1,
+        parent=parent,
+    )
+    carry_untouched_proofs(
+        parent, third, suite, [{"decision": "accepted", "affects": ["duplicate_refund"]}]
+    )
+    assert sorted(
+        HarnessSuiteValidation.no_workspace_objects.get(
+            suite_version=suite, environment_version=third
+        ).proofs
+    ) == ["other-case"]
 
 
 def test_validate_returns_202_with_job(user, workspace, storage, auth_client):
