@@ -2515,8 +2515,10 @@
 
 ### SIM-E2E-005 — a reviewed draft saves only the accepted change, and only through Validate
 
-**Goal:** A builder reviews a chat-proposed rule and their own actor edit, keeps the rule, rejects the actor, validates and saves a named version holding only the rule  
-**Spec:** `flows/simulate/reviewed-change-save.spec.ts:27`  
+**Goal:** A builder reviews a chat-proposed rule and their own actor edit, keeps the rule, rejects the actor, validates and saves a named version holding only the rule
+
+**Spec:** `flows/simulate/reviewed-change-save.spec.ts:27`
+
 **Tags:** —
 
 **User steps:**
