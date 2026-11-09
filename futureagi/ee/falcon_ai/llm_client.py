@@ -83,6 +83,9 @@ class FalconLLMClient:
 
         # Gateway cost from agentcc.metadata SSE event (accumulated across iterations)
         self._gateway_cost = 0.0
+        # None preserves chat retries. Evaluations share one recovery budget
+        # across transport retries and the final structured-answer attempt.
+        self.retry_budget: int | None = None
 
         # Optional response format (e.g. {"type": "json_schema", ...}) — when set,
         # included in OpenAI-compatible and gateway requests to enforce
@@ -708,6 +711,15 @@ class FalconLLMClient:
                         last_usage = chunk["usage"]
                     yield chunk
 
+    def take_retry(self) -> bool:
+        """Consume an optional run-wide recovery budget (not a tool iteration)."""
+        if self.retry_budget is None:
+            return True
+        if self.retry_budget <= 0:
+            return False
+        self.retry_budget -= 1
+        return True
+
     async def stream_with_retry(self, messages, tools=None, max_retries=3):
         """Stream completion with retry on retryable errors.
 
@@ -726,7 +738,7 @@ class FalconLLMClient:
                     )
                 return
             except EmptyStreamError as e:
-                if attempt >= max_retries - 1:
+                if attempt >= max_retries - 1 or not self.take_retry():
                     raise
 
                 base_delay = min(2**attempt, 30)
@@ -742,7 +754,12 @@ class FalconLLMClient:
                 continue
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code
-                if status not in RETRYABLE_STATUS_CODES or attempt >= max_retries - 1:
+                if (
+                    status not in RETRYABLE_STATUS_CODES
+                    or attempt >= max_retries - 1
+                    or (self.retry_budget is not None and yielded_any_chunk)
+                    or not self.take_retry()
+                ):
                     raise
 
                 # Exponential backoff with 25% jitter
@@ -755,7 +772,7 @@ class FalconLLMClient:
                     retry_after = e.response.headers.get("Retry-After")
                     if retry_after:
                         try:
-                            delay = min(float(retry_after), 30.0)
+                            delay = max(0.0, min(float(retry_after), 30.0))
                         except (ValueError, TypeError):
                             pass  # Fall through to computed delay
                     logger.warning(
@@ -774,7 +791,11 @@ class FalconLLMClient:
                 await asyncio.sleep(delay)
                 continue
             except (httpx.TimeoutException, httpx.ConnectError) as e:
-                if attempt >= max_retries - 1:
+                if (
+                    attempt >= max_retries - 1
+                    or (self.retry_budget is not None and yielded_any_chunk)
+                    or not self.take_retry()
+                ):
                     raise
                 # Exponential backoff with 25% jitter
                 base_delay = min(2**attempt, 30)
