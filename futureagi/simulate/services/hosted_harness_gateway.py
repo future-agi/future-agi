@@ -858,6 +858,13 @@ _GUEST_INNER_EXCEPTION = re.compile(
 )
 
 
+# The labels of a guest's typed failures; the stored message adds the cause it printed.
+RUNTIME_VALIDATION_FAILED = (
+    "Generated environment failed real-runtime validation after bounded repair"
+)
+AUTHORING_FAILED = "Environment authoring failed before a runnable world was saved"
+
+
 def guest_failure_cause(tail: str) -> str:
     """The last typed failure the guest printed, with the agent's own exception when present.
 
@@ -4628,9 +4635,9 @@ class HostedHarnessGateway:
             )
             authoring_invalid = exit_code == 78 or authoring_failed
             label = (
-                "Generated environment failed real-runtime validation after bounded repair"
+                RUNTIME_VALIDATION_FAILED
                 if exit_code == 78
-                else "Environment authoring failed before a runnable world was saved"
+                else AUTHORING_FAILED
                 if authoring_failed
                 else f"guest entrypoint exited {exit_code}"
             )
