@@ -264,12 +264,15 @@ def _fields(before: Any, after: Any) -> list[str]:
     return []
 
 
-def _summary(action: str, kind: str, key: str, fields: list[str]) -> str:
-    noun = kind.replace("_", " ")
-    if action == "changed" and fields:
-        return f"Change {', '.join(fields)} of {noun} {key}"
+def _summary(action: str, item: Item, fields: list[str]) -> str:
+    noun = item.kind.replace("_", " ")
+    # A rule's key is a hash of its text, so the text names it; who last edited an item is not a change to it.
+    name = f'"{item.value}"' if item.kind == "rule" else item.key
+    shown = [field for field in fields if field != "provenance"]
+    if action == "changed" and shown:
+        return f"Change {', '.join(shown)} of {noun} {name}"
     verb = {"added": "Add", "removed": "Remove", "changed": "Change"}[action]
-    return f"{verb} {noun} {key}"
+    return f"{verb} {noun} {name}"
 
 
 def compute_changes(
@@ -304,7 +307,7 @@ def compute_changes(
                 "patch": patch,
                 "base_digest": old.digest if old else None,
                 "draft_digest": new.digest if new else None,
-                "summary": _summary(action, item.kind, item.key, fields),
+                "summary": _summary(action, item, fields),
                 **(
                     {
                         "rows": world_rows(
