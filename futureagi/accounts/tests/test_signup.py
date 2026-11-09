@@ -2288,62 +2288,161 @@ class TestWorkEmailGate:
         assert user.email == "owner@acmecorp.dev"
 
 
-@pytest.mark.unit
-class TestDisposableEmailDomains:
-    """The packaged blocklist and the hand-maintained free-provider set cover
-    different things, so the gate has to consult both."""
+@pytest.mark.django_db
+class TestBlockedEmailDomains:
+    """Domains the team blocks from Django admin, checked on every signup."""
 
-    def test_a_listed_throwaway_provider_is_disposable(self):
-        from accounts.utils import is_disposable_email_domain
+    def test_a_blocked_domain_is_blocked(self):
+        from accounts.models import BlockedEmailDomain
+        from accounts.utils import is_blocked_email_domain
 
-        assert is_disposable_email_domain("mailinator.com")
+        BlockedEmailDomain.objects.create(domain="fldubai.com")
 
-    def test_subdomains_of_a_listed_provider_are_disposable(self):
-        """Mailinator hands out `anything.mailinator.com`; matching the exact
-        domain alone would let every one of those through."""
-        from accounts.utils import is_disposable_email_domain
+        assert is_blocked_email_domain("fldubai.com")
 
-        assert is_disposable_email_domain("inbox.mailinator.com")
-        assert is_disposable_email_domain("deep.nested.mailinator.com")
+    def test_subdomains_of_a_blocked_domain_are_blocked(self):
+        from accounts.models import BlockedEmailDomain
+        from accounts.utils import is_blocked_email_domain
 
-    def test_a_company_domain_is_not_disposable(self):
-        from accounts.utils import is_disposable_email_domain
+        BlockedEmailDomain.objects.create(domain="fldubai.com")
 
-        assert not is_disposable_email_domain("futureagi.com")
-        assert not is_disposable_email_domain("mail.futureagi.com")
+        assert is_blocked_email_domain("mail.fldubai.com")
+        assert is_blocked_email_domain("deep.nested.fldubai.com")
 
-    def test_the_bare_tld_is_never_matched(self):
-        """The walk stops before the last label, so a stray `.com` in the
-        blocklist could not take out every commercial domain."""
-        from accounts.utils import is_disposable_email_domain
+    def test_a_blocked_subdomain_does_not_block_its_parent(self):
+        from accounts.models import BlockedEmailDomain
+        from accounts.utils import is_blocked_email_domain
 
-        assert not is_disposable_email_domain("com")
+        BlockedEmailDomain.objects.create(domain="spam.my.id")
 
-    def test_locally_added_providers_are_disposable(self):
-        """Domains we saw at signup before upstream listed them. The packaged
-        list is regenerated wholesale, so these live in a separate set that the
-        weekly refresh cannot clobber."""
-        from accounts.utils import is_disposable_email_domain
+        assert not is_blocked_email_domain("acme.my.id")
+        assert not is_blocked_email_domain("my.id")
 
-        assert is_disposable_email_domain("insight-travel.my.id")
-        assert is_disposable_email_domain("uberip.com")
-        assert is_disposable_email_domain("mail.uberip.com")
+    def test_an_unlisted_domain_is_not_blocked(self):
+        from accounts.models import BlockedEmailDomain
+        from accounts.utils import is_blocked_email_domain
 
-    def test_the_local_set_does_not_swallow_its_parent_domain(self):
-        """`insight-travel.my.id` is one host under the `my.id` public suffix,
-        not the whole namespace -- listing it must not block every `.my.id`."""
-        from accounts.utils import is_disposable_email_domain
+        BlockedEmailDomain.objects.create(domain="fldubai.com")
 
-        assert not is_disposable_email_domain("acme.my.id")
+        assert not is_blocked_email_domain("futureagi.com")
+        assert not is_blocked_email_domain("notfldubai.com")
 
-    def test_free_providers_are_absent_from_the_package_list(self):
-        """gmail and friends are permanent mailboxes, not throwaways, so the
-        package does not list them. Dropping the hand-maintained set in favour
-        of the package alone would silently reopen the gate to them."""
-        from accounts.utils import DISPOSABLE_EMAIL_DOMAINS
+    def test_a_bare_tld_entry_never_matches(self):
+        """The bare TLD is not looked up, so a stray `com` row cannot block
+        every commercial domain."""
+        from accounts.models import BlockedEmailDomain
+        from accounts.utils import is_blocked_email_domain
 
-        assert "gmail.com" not in DISPOSABLE_EMAIL_DOMAINS
-        assert "yahoo.com" not in DISPOSABLE_EMAIL_DOMAINS
+        BlockedEmailDomain.objects.create(domain="com")
+
+        assert not is_blocked_email_domain("acmecorp.com")
+
+    def test_the_domain_is_stored_normalized(self):
+        """Admins paste `@FLDubai.com` as often as `fldubai.com`."""
+        from accounts.models import BlockedEmailDomain
+        from accounts.utils import is_blocked_email_domain
+
+        row = BlockedEmailDomain.objects.create(domain="  @FLDubai.com. ")
+
+        assert row.domain == "fldubai.com"
+        assert is_blocked_email_domain("FLDUBAI.COM")
+
+    def test_an_email_address_is_rejected_as_a_domain(self):
+        from django.core.exceptions import ValidationError
+
+        from accounts.models import BlockedEmailDomain
+
+        with pytest.raises(ValidationError):
+            BlockedEmailDomain(domain="someone@fldubai.com").full_clean()
+
+    def test_first_signup_rejects_a_blocked_domain_and_creates_nothing(
+        self, no_outbound_email, monkeypatch
+    ):
+        from accounts.models import BlockedEmailDomain, User
+        from accounts.utils import EmailDomainBlocked, first_signup
+
+        BlockedEmailDomain.objects.create(domain="fldubai.com")
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch, cloud=True)
+
+        with pytest.raises(EmailDomainBlocked):
+            first_signup(_first_signup_payload("strixprobe77@fldubai.com"))
+
+        assert not User.objects.filter(email="strixprobe77@fldubai.com").exists()
+
+    def test_the_block_applies_even_when_any_email_is_allowed(
+        self, no_outbound_email, monkeypatch
+    ):
+        """Self-hosted installs allow any address by default; a domain the
+        operator blocked on purpose still stays blocked."""
+        from accounts.models import BlockedEmailDomain
+        from accounts.utils import EmailDomainBlocked, first_signup
+
+        BlockedEmailDomain.objects.create(domain="fldubai.com")
+        monkeypatch.setenv("ALLOW_ANY_EMAIL", "true")
+        _deployment(monkeypatch)
+
+        with pytest.raises(EmailDomainBlocked):
+            first_signup(_first_signup_payload("strixprobe77@fldubai.com"))
+
+    def test_self_hosted_still_accepts_a_disposable_list_domain(
+        self, no_outbound_email, monkeypatch
+    ):
+        """The disposable-email list only ever applied where a work email is
+        required. Loading it into the table must not change that."""
+        from accounts.models import BlockedEmailDomain
+        from accounts.models.blocked_email_domain import BlockedEmailDomainSource
+        from accounts.utils import first_signup
+
+        BlockedEmailDomain.objects.create(
+            domain="mailinator.com",
+            source=BlockedEmailDomainSource.DISPOSABLE_LIST,
+        )
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch)
+
+        user = first_signup(_first_signup_payload("solo.dev@mailinator.com"))
+
+        assert user.email == "solo.dev@mailinator.com"
+
+    def test_cloud_rejects_a_disposable_list_domain(
+        self, no_outbound_email, monkeypatch
+    ):
+        from accounts.models import BlockedEmailDomain
+        from accounts.models.blocked_email_domain import BlockedEmailDomainSource
+        from accounts.utils import EmailDomainBlocked, first_signup
+
+        BlockedEmailDomain.objects.create(
+            domain="throwaway.example",
+            source=BlockedEmailDomainSource.DISPOSABLE_LIST,
+        )
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch, cloud=True)
+
+        with pytest.raises(EmailDomainBlocked):
+            first_signup(_first_signup_payload("someone@inbox.throwaway.example"))
+
+    @patch.dict("os.environ", {"ENV_TYPE": "local"})
+    def test_signup_endpoint_returns_a_field_error_for_a_blocked_domain(
+        self, api_client
+    ):
+        from accounts.models import BlockedEmailDomain, User
+
+        BlockedEmailDomain.objects.create(domain="fldubai.com")
+
+        response = api_client.post(
+            "/accounts/signup/",
+            {
+                "email": "strixprobe77@fldubai.com",
+                "password": "SecurePass123!",
+                "full_name": "Strix Probe",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "not allowed" in str(response.data)
+        assert not User.objects.filter(email="strixprobe77@fldubai.com").exists()
 
 
 @pytest.mark.unit

@@ -256,6 +256,7 @@ def test_entrypoint_exposes_one_shot_bootstrap_service():
         in source
     )
     assert "python manage.py seed_system_evals" in source
+    assert "python manage.py sync_disposable_domains" in source
 
 
 def test_entrypoint_mutation_free_backend_still_collects_static_assets():

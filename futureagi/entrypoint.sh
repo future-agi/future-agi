@@ -320,6 +320,7 @@ if [ "$FAST_STARTUP" != "true" ]; then
             run_migrations
             if [ "$SERVICE_TYPE" = "bootstrap" ]; then
                 python manage.py seed_system_evals
+                python manage.py sync_disposable_domains
             fi
             collect_static
             if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then

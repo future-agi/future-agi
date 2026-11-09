@@ -4,11 +4,12 @@ from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.http import HttpResponseNotAllowed, HttpResponseRedirect, JsonResponse
 from django.template.response import TemplateResponse
-from django.urls import path
+from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html, format_html_join
 
 from accounts.models.auth_token import AuthToken
+from accounts.models.blocked_email_domain import BlockedEmailDomain
 from accounts.models.gcp_marketplace import (
     GCPMarketplaceEntitlement,
     GCPMarketplaceUsageCheckpoint,
@@ -119,6 +120,44 @@ class CustomUserAdmin(UserAdmin):
         return (
             super().get_queryset(request).select_related("organization", "invited_by")
         )
+
+
+@admin.register(BlockedEmailDomain)
+class BlockedEmailDomainAdmin(admin.ModelAdmin):
+    """Add a domain here to stop new signups from it straight away.
+
+    Rows with the "Disposable-email list" source are loaded on every deploy by
+    sync_disposable_domains; filter them out to see what the team added.
+    Accounts that already exist on a domain are left alone; the "Existing
+    users" link lists them for review.
+    """
+
+    list_display = [
+        "domain",
+        "source",
+        "reason",
+        "existing_users",
+        "created_by",
+        "created_at",
+    ]
+    list_filter = ["source"]
+    search_fields = ["domain", "reason"]
+    readonly_fields = ["source", "created_by", "created_at"]
+    fields = ["domain", "reason", "source", "created_by", "created_at"]
+    ordering = ["domain"]
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    @admin.display(description="Existing users")
+    def existing_users(self, obj):
+        count = User.objects.filter(email__iendswith=f"@{obj.domain}").count()
+        if not count:
+            return 0
+        url = reverse("admin:accounts_user_changelist")
+        return format_html('<a href="{}?q=%40{}">{}</a>', url, obj.domain, count)
 
 
 @admin.register(Workspace)
