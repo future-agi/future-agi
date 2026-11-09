@@ -6463,6 +6463,8 @@ class UpdateCellValueView(APIView):
                     if not new_value or (
                         isinstance(new_value, str) and new_value.strip() == ""
                     ):
+                        if payload.get("new_value") != []:
+                            return self._gm.bad_request("Invalid image value")
                         cell.value = None
                         cell.value_infos = json.dumps({})
                         cell.status = CellStatus.PASS.value
@@ -6496,6 +6498,8 @@ class UpdateCellValueView(APIView):
                     if not new_value or (
                         isinstance(new_value, str) and new_value.strip() == ""
                     ):
+                        if payload.get("new_value") != []:
+                            return self._gm.bad_request("Invalid audio value")
                         cell.value = None
                         cell.value_infos = json.dumps({})
                         cell.status = CellStatus.PASS.value
@@ -6534,6 +6538,8 @@ class UpdateCellValueView(APIView):
                     if not new_value or (
                         isinstance(new_value, str) and new_value.strip() == ""
                     ):
+                        if payload.get("new_value") != []:
+                            return self._gm.bad_request("Invalid document value")
                         cell.value = None
                         cell.value_infos = json.dumps({})
                         cell.status = CellStatus.PASS.value
@@ -6565,6 +6571,8 @@ class UpdateCellValueView(APIView):
                     if not new_value or (
                         isinstance(new_value, str) and new_value.strip() == ""
                     ):
+                        if payload.get("new_value") != []:
+                            return self._gm.bad_request("Invalid images value")
                         cell.value = None
                         cell.value_infos = json.dumps({})
                         cell.status = CellStatus.PASS.value
@@ -6592,6 +6600,9 @@ class UpdateCellValueView(APIView):
                                     object_key=image_key,
                                 )
                                 uploaded_urls.append(image_url)
+
+                        if not uploaded_urls and images_list != []:
+                            return self._gm.bad_request("Invalid images value")
 
                         # Store as JSON array
                         cell.value = json.dumps(uploaded_urls)

@@ -38,7 +38,7 @@ class SavedCell:
         self.value_infos = json.dumps({
             "document_name": "original.pdf", "annotation": "keep this metadata",
         })
-        self.status = CellStatus.PASS.value
+        self.status = CellStatus.ERROR.value
         self.persisted = self.snapshot()
         self.original = copy.deepcopy(self.persisted)
         self.saves = 0
@@ -162,15 +162,68 @@ def test_successful_replacement_saves_new_value(update, monkeypatch, media_type)
 
 
 @pytest.mark.parametrize("media_type", MEDIA)
-def test_explicit_clear_still_clears_saved_cell(update, monkeypatch, media_type):
+@pytest.mark.parametrize("empty", [None, "", "  ", []], ids=["null", "empty", "blank", "empty-list"])
+def test_explicit_clear_still_clears_saved_cell(update, monkeypatch, media_type, empty):
     upload = Mock(side_effect=AssertionError("explicit clear must not upload"))
     monkeypatch.setattr(views, HELPERS[media_type], upload)
 
-    response, cell = update(media_type, "")
+    response, cell = update(media_type, empty)
 
     assert response.status_code == 200
     upload.assert_not_called()
     assert cell.saves == 1
     assert cell.persisted["value"] is None
+    assert cell.persisted["value_infos"] == "{}"
+    assert cell.persisted["status"] == CellStatus.PASS.value
+
+
+@pytest.mark.parametrize("media_type", MEDIA)
+@pytest.mark.parametrize("value", [
+    "not-a-url", "example.com/document.pdf", {"url": "not-a-url"},
+    ["not-a-url"], False, 0, {},
+], ids=["unrecognized", "schemeless", "mapping", "list", "false", "zero", "empty-object"])
+def test_unrecognized_media_replacement_preserves_saved_cell(update, monkeypatch, media_type, value):
+    helper = HELPERS[media_type]
+    monkeypatch.setattr(views, helper, getattr(storage, helper))
+    boundaries = []
+    for name in ("get_storage_client", "download_image_from_url",
+                 "download_audio_from_url", "download_document_from_url"):
+        boundary = Mock(side_effect=AssertionError("invalid media must not reach I/O"))
+        monkeypatch.setattr(storage, name, boundary)
+        boundaries.append(boundary)
+
+    response, cell = update(media_type, value)
+
+    assert response.status_code == 400
+    assert_preserved(cell)
+    for boundary in boundaries:
+        boundary.assert_not_called()
+
+
+@pytest.mark.parametrize("value", [
+    [None, "", False], '[null, "", false]', "{}", '\"\"',
+], ids=["empty-entries", "json-empty-entries", "json-object", "json-empty-string"])
+def test_images_without_usable_entries_preserve_saved_cell(update, monkeypatch, value):
+    upload = Mock(side_effect=AssertionError("no image to upload"))
+    monkeypatch.setattr(views, "upload_image_to_s3", upload)
+
+    response, cell = update("images", value)
+
+    assert response.status_code == 400
+    upload.assert_not_called()
+    assert_preserved(cell)
+
+
+@pytest.mark.parametrize("empty", ["[]", "[  ]"], ids=["json-empty-list", "json-spaced-empty-list"])
+def test_explicit_json_empty_images_list_keeps_existing_clear_behavior(update, monkeypatch, empty):
+    upload = Mock(side_effect=AssertionError("explicit clear must not upload"))
+    monkeypatch.setattr(views, "upload_image_to_s3", upload)
+
+    response, cell = update("images", empty)
+
+    assert response.status_code == 200
+    upload.assert_not_called()
+    assert cell.saves == 1
+    assert cell.persisted["value"] == "[]"
     assert cell.persisted["value_infos"] == "{}"
     assert cell.persisted["status"] == CellStatus.PASS.value
