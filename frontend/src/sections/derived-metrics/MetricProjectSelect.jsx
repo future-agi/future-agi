@@ -16,6 +16,8 @@ export default function MetricProjectSelect({
   onChange,
   disabled,
   readOnly,
+  label = "Project",
+  placeholder,
 }) {
   const [catalog, setCatalog] = useState({ search, rows: [] });
   const [selected, setSelected] = useState(null);
@@ -127,7 +129,8 @@ export default function MetricProjectSelect({
       renderInput={(params) => (
         <TextField
           {...params}
-          label="Project"
+          label={label}
+          placeholder={placeholder}
           size="small"
           helperText={
             readOnly ? "Project cannot be changed after creation." : undefined
@@ -147,4 +150,6 @@ MetricProjectSelect.propTypes = {
   onChange: PropTypes.func.isRequired,
   disabled: PropTypes.bool,
   readOnly: PropTypes.bool,
+  label: PropTypes.string,
+  placeholder: PropTypes.string,
 };

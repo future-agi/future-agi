@@ -2,7 +2,6 @@ import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "src/utils/test-utils";
-import { ROW_HEIGHT } from "src/theme/sizes";
 import MetricProjectSelect from "../MetricProjectSelect";
 import MetricList from "../MetricList";
 import MetricDefinitionEditor from "../metric_definition_editor";
@@ -10,6 +9,9 @@ import { plainDefinitionSummary } from "../metric_calculation";
 import { initialForm } from "../metricForm";
 import wire from "./fixtures/committedResults.json";
 
+vi.mock("../api", () => ({
+  useMetricKpi: () => ({ readState: "ready", data: { current: null } }),
+}));
 const mock = vi.hoisted(() => ({ get: vi.fn(), projects: vi.fn() }));
 vi.mock("src/utils/axios", () => ({
   default: { get: mock.get },
@@ -43,7 +45,7 @@ function mountList() {
   return mount(
     <MetricList
       definitions={{ data: { results: [metric], next_cursor: null } }}
-      scope="org:ws"
+      scope={{ organizationId: "org", workspaceId: "ws" }}
       onSelect={vi.fn()}
     />,
   );
@@ -132,13 +134,11 @@ it("matches the sibling search field, shared default rows, project ellipsis/tool
   });
   expect(screen.queryByText("Search this page")).not.toBeInTheDocument();
   const name = await screen.findByRole("button", { name: metric.name });
-  // MetricList uses DataTable's single-line default, not a metrics-only size.
-  // sizes.js delegates to dsSize.row.default; pin that app contract as well as
-  // its rendered use so changing the shared token cannot make this self-pass.
-  expect(ROW_HEIGHT.default).toBe(36);
+  // V2 rows reserve room for the shared value's returned interval and freshness.
+  // Keep the table bounded rather than clipping the second line at legacy 36px.
   expect(name.closest('[role="row"]')).toHaveStyle({
-    minHeight: `${ROW_HEIGHT.default}px`,
-    maxHeight: `${ROW_HEIGHT.default}px`,
+    minHeight: "80px",
+    maxHeight: "80px",
   });
   const project = await screen.findByText(projectName);
   expect(project).toHaveStyle({
