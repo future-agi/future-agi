@@ -1,4 +1,4 @@
-"""Complete 59/64-pending-migration inventory and A9 scope regressions, without Django.
+"""Complete 61/66-pending-migration inventory and A9 scope regressions, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -22,6 +22,7 @@ from deploy.tests.test_update_usage_reference import ROOT, REVISIONS, source
 LATEST = (
     ('accounts','0029_demotracepublication_demoseedrequest'),
     ('accounts','0030_queue_existing_demo_trace_publications'),
+    ('accounts','0031_orgapikey_coding_agent'),
     ('usage','0030_add_jev_evaluator_call_type'),
     ('tracer','0116_insight_reports'),
     ('tracer','0117_instant_eval_scale'),
@@ -39,6 +40,7 @@ LATEST = (
     ('tracer','0129_project_analysis_source_generation_db_default'),
     ('tracer','0130_observationspan_internal_type'),
     ('simulate','0102_agent_fix_engine_notes'),
+    ('simulate','0103_harness_job_verify_of'),
 )
 # Eight SQL additions shared with the SQL-only candidate. These identities
 # account for the graph; they are not safety declarations for opaque operations.
@@ -329,7 +331,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         self.assertEqual(len(METRICS_ADDITIONS),23)
         self.assertTrue(set(BASELINE_ADDITIONS).isdisjoint(METRICS_ADDITIONS))
         self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
-        for revision,identities,count in ((REVISIONS[1],LATEST,59),(REVISIONS[0],LATEST+FLOOR_ONLY,64)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,61),(REVISIONS[0],LATEST+FLOOR_ONLY,66)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
 
@@ -337,8 +339,8 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # Preserve the SQL-layer negative controls when adding sampling's graph.
         # Same-count replacement must fail just as an extra or missing file does.
         unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
-        for revision, identities, count in ((REVISIONS[1], LATEST, 59),
-                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 64)):
+        for revision, identities, count in ((REVISIONS[1], LATEST, 61),
+                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 66)):
             paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
                 '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
                 'futureagi/**/migrations/*.py'], text=True).splitlines()
@@ -374,7 +376,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         with mock.patch.object(subprocess,'check_output',return_value=paths+
                 'futureagi/tracer/migrations/9999_unexpected.py\n'):
             with self.assertRaises(AssertionError):
-                self.assert_complete_inventory(REVISIONS[1],LATEST,59)
+                self.assert_complete_inventory(REVISIONS[1],LATEST,61)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected={
@@ -404,7 +406,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
 
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
         registry=p.load_high_volume_registry()
-        for revision,identities,count in ((REVISIONS[1],LATEST,59),(REVISIONS[0],LATEST+FLOOR_ONLY,64)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,61),(REVISIONS[0],LATEST+FLOOR_ONLY,66)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
                 state=baseline_state(revision); env=scope_environment(state)

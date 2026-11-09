@@ -716,8 +716,6 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         attrs["metadata"] = metadata
 
 
-
-
 LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
 CONNECTOR_ALIASES = {
     "livekit": LIVEKIT_ALIASES,

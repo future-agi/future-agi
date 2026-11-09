@@ -62,6 +62,9 @@ _ENDING_STATES = {
     Ending.FAILED: AgentFixRun.State.FAILED,
 }
 MAX_PATCH_BYTES = 2 * 1024 * 1024
+# The engine asks once more for a check run that failed on the platform's side, under its
+# label with this suffix and the same repeat: either one is the same check.
+AGAIN_SUFFIX = "-again"
 
 
 def _locked_running(fix_run_id: Any) -> AgentFixRun:
@@ -316,8 +319,9 @@ def _finished_earlier(
     parallelism: int,
 ) -> HostedHarnessJob | None:
     """The same check, finished by a failed fix this one retries: the user paid for it
-    once, so it is read again instead of run again. Same label, versions, scenarios, trials
-    and parallelism; a run that failed or was canceled is run again."""
+    once, so it is read again instead of run again. Same label (or the label the engine asked
+    again under), versions, scenarios, trials and parallelism; a run that failed or was
+    canceled is run again."""
     earlier = fix_lineage(fix_run)[1:]
     picks = options.get("picks")
     if not earlier or picks is None:
@@ -332,7 +336,7 @@ def _finished_earlier(
     )
     for run in HostedHarnessJob.no_workspace_objects.filter(
         fix_run_id__in=earlier,
-        fix_label=request.label,
+        fix_label__in=(request.label, f"{request.label}{AGAIN_SUFFIX}"),
         state=HostedHarnessJob.State.COMPLETED,
         deleted=False,
     ).order_by("-created_at"):

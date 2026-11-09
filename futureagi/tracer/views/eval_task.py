@@ -74,6 +74,7 @@ from tracer.serializers.eval_task import (
     EvalTaskDeleteRequestSerializer,
     EvalTaskDetailsQuerySerializer,
     EvalTaskDetailsResponseSerializer,
+    EvalTaskDetailsSamplingPolicySerializer,
     EvalTaskIdQuerySerializer,
     EvalTaskListQuerySerializer,
     EvalTaskListWithProjectNameQuerySerializer,
@@ -232,6 +233,10 @@ class _EvalTaskListRowResponseSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     evals_applied = serializers.ListField(child=serializers.CharField(allow_null=True))
     sampling_rate = serializers.FloatField(allow_null=True)
+    # Cohort tasks keep sampling_rate at its default; the policy is the truth.
+    sampling_policy = EvalTaskDetailsSamplingPolicySerializer(
+        allow_null=True, required=False
+    )
     last_run = serializers.DateTimeField(allow_null=True)
 
 
@@ -321,6 +326,7 @@ def _bounded_eval_task_compatibility_rows(queryset):
             "filters",
             "created_at",
             "sampling_rate",
+            "sampling_policy",
             "last_run",
         )
     if hasattr(queryset, "annotate") and hasattr(queryset, "values_list"):
@@ -1453,6 +1459,7 @@ def _serialize_eval_task_list_page(tasks, *, include_project_name):
                 eval_config.name for eval_config in eval_task._list_evals
             ],
             "sampling_rate": eval_task.sampling_rate,
+            "sampling_policy": eval_task.sampling_policy,
             "last_run": datetime_field.to_representation(eval_task.last_run)
             if eval_task.last_run is not None
             else None,

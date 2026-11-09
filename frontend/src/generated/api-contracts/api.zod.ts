@@ -573,8 +573,14 @@ export const AccountsKeyEnableKeyResponse = zod.object({
 
 export const accountsKeyGenerateSecretKeyBodyKeyNameMax = 100;
 
+export const accountsKeyGenerateSecretKeyBodyTypeDefault = `user`;
+
 export const AccountsKeyGenerateSecretKeyBody = zod.object({
   key_name: zod.string().min(1).max(accountsKeyGenerateSecretKeyBodyKeyNameMax),
+  type: zod
+    .enum(["user", "coding_agent"])
+    .default(accountsKeyGenerateSecretKeyBodyTypeDefault),
+  simulation_environment_id: zod.string().uuid().optional(),
 });
 
 export const AccountsKeyGenerateSecretKeyResponse = zod.object({
@@ -36481,7 +36487,8 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
   max_minutes: zod
     .number()
     .min(1)
-    .max(simulateApiAgentFixRunsCreateBodyMaxMinutesMax),
+    .max(simulateApiAgentFixRunsCreateBodyMaxMinutesMax)
+    .optional(),
 });
 
 /**
@@ -38454,7 +38461,8 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
 
 /**
  * Same shape whichever door built it. A section the pipeline has not reached
-yet is null, so the client renders "building" rather than an empty pane.
+yet is null, so the client renders "building" rather than an empty pane. A
+coding agent's read leaves out the held-back cases.
  * @summary One environment: overview, contract, world, scenarios, evaluations, settings.
  */
 export const SimulateApiHarnessEnvironmentsReadParams = zod.object({
@@ -40841,6 +40849,102 @@ export const SimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsBody =
   });
 
 /**
+ * Verify an agent version on the held-back cases, in a run no user read shows.
+Its live or completed verify is final: asking again returns it. After one that
+failed or was canceled, asking again starts a new one.
+ */
+export const SimulateApiHarnessEnvironmentsVerifyParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsVerifyBodyTrialsDefault = 3;
+export const simulateApiHarnessEnvironmentsVerifyBodyTrialsMax = 20;
+
+export const SimulateApiHarnessEnvironmentsVerifyBody = zod.object({
+  agent_version_id: zod
+    .string()
+    .uuid()
+    .describe(
+      "The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts.",
+    ),
+  trials: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsVerifyBodyTrialsMax)
+    .default(simulateApiHarnessEnvironmentsVerifyBodyTrialsDefault),
+});
+
+/**
+ * How the verified version did on the held-back cases, as counts only.
+ */
+export const SimulateApiHarnessEnvironmentsVerifyDetailParams = zod.object({
+  id: zod.string(),
+  verify_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponsePassedMin = 0;
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseFailedMin = 0;
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseTotalMin = 0;
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseTrialsMax = 20;
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateItemMin = 0;
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateItemMax = 1;
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateMin = 2;
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateMax = 2;
+
+export const SimulateApiHarnessEnvironmentsVerifyDetailResponse = zod.object({
+  state: zod.enum([
+    "received",
+    "queued",
+    "admitted",
+    "provisioning",
+    "running",
+    "finalizing",
+    "cleaning_up",
+    "retry_wait",
+    "completed",
+    "failed",
+    "canceled",
+  ]),
+  passed: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsVerifyDetailResponsePassedMin),
+  failed: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsVerifyDetailResponseFailedMin),
+  total: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsVerifyDetailResponseTotalMin),
+  trials: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsVerifyDetailResponseTrialsMax),
+  held_back_pass_rate: zod
+    .array(
+      zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateItemMin,
+        )
+        .max(
+          simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateItemMax,
+        ),
+    )
+    .min(simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateMin)
+    .max(simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateMax)
+    .describe(
+      "95% range of the trial pass rate, [low, high]; null until it ends.",
+    ),
+  limited_validation: zod
+    .boolean()
+    .describe("Too few cases were held back to call a version verified."),
+});
+
+/**
  * Every agent, environment and suite version of this environment, read-only.
  */
 export const SimulateApiHarnessEnvironmentsVersionsParams = zod.object({
@@ -41083,7 +41187,8 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
 
 /**
  * A new agent version from an upload, a prompt edit or a settings edit; it is
-checked next, then made this environment's default.
+checked next, then made this environment's default unless make_default is
+false. A coding agent key pushes only an upload, never made the default.
  */
 export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionParams =
   zod.object({
@@ -41131,6 +41236,12 @@ export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionBody =
         }),
       })
       .optional(),
+    make_default: zod
+      .boolean()
+      .optional()
+      .describe(
+        "False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default.",
+      ),
   });
 
 /**
@@ -41399,7 +41510,8 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionBody =
   zod.object({});
 
 /**
- * The scenarios in one suite version, by number.
+ * The scenarios in one suite version, by number; a coding agent's read leaves
+out the held-back cases.
  */
 export const SimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersParams =
   zod.object({
@@ -42717,10 +42829,11 @@ export const SimulateApiHarnessJobsSourceUploadBody = zod.object({
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ * One harness job. A coding agent key reads its own run narrowly, outside
+this schema: only `status` (its failure as domain, stage, code and a fixed
+message), `receipts`, `consumption`, `platform`, and `job` with its ids and
+five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
+`job.source`, which name every case of the suite.
  */
 export const SimulateApiHarnessJobsReadParams = zod.object({
   id: zod.string(),
@@ -53987,6 +54100,16 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         "skipped",
       ]),
       csat_reason: zod.string().min(1),
+      failure_domain: zod.enum([
+        "agent",
+        "simulator",
+        "environment",
+        "connectivity",
+        "infrastructure",
+        "grading",
+        "platform_sync",
+      ]),
+      failure_code: zod.string().min(1),
     }),
   ),
   groups: zod.array(
@@ -70025,6 +70148,71 @@ export const TracerEvalTaskListEvalTasksQueryParams = zod.object({
 
 export const tracerEvalTaskListEvalTasksResponseResultMetadataMinOne = 0;
 
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyVersionMax = 1;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyUnitAttributeSourceDefault = `span`;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyUnitAttributeKeyMax = 200;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyMissingIdDefault = `exclude`;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyModeDefault = `closed`;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemNameMax = 80;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemFiltersItemSourceDefault = `span`;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemFiltersItemKeyMax = 200;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemFiltersItemOpDefault = `in`;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemFiltersItemValuesMax = 100;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemRateMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemRateMax = 100;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemTargetNMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemTargetNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemMinNMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemMinNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemMaxNMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemMaxNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemRareBelowMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemRareBelowMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyGroupByItemSourceDefault = `span`;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyGroupByItemKeyMax = 200;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultNameMax = 80;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultFiltersItemSourceDefault = `span`;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultFiltersItemKeyMax = 200;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultFiltersItemOpDefault = `in`;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultFiltersItemValuesMax = 100;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultRateMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultRateMax = 100;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultTargetNMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultTargetNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultMinNMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultMinNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultMaxNMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultMaxNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultRareBelowMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyPrnStartMax = 100;
+
 export const TracerEvalTaskListEvalTasksResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
@@ -70044,6 +70232,325 @@ export const TracerEvalTaskListEvalTasksResponse = zod.object({
         created_at: zod.string().datetime({ offset: true }),
         evals_applied: zod.array(zod.string().min(1)),
         sampling_rate: zod.number(),
+        sampling_policy: zod
+          .object({
+            version: zod
+              .number()
+              .min(1)
+              .max(
+                tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyVersionMax,
+              ),
+            sampling_unit: zod.enum([
+              "span",
+              "trace",
+              "session",
+              "user",
+              "attribute",
+            ]),
+            unit_attribute: zod
+              .object({
+                source: zod
+                  .enum(["span", "resource", "metadata"])
+                  .default(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyUnitAttributeSourceDefault,
+                  ),
+                key: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyUnitAttributeKeyMax,
+                  ),
+              })
+              .optional(),
+            missing_id: zod
+              .enum(["exclude", "row"])
+              .default(
+                tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyMissingIdDefault,
+              ),
+            mode: zod
+              .enum(["closed", "live"])
+              .default(
+                tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyModeDefault,
+              ),
+            window: zod.object({
+              start: zod
+                .string()
+                .min(1)
+                .describe("Inclusive ISO 8601 UTC event time."),
+              end: zod
+                .string()
+                .min(1)
+                .optional()
+                .describe(
+                  "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+                ),
+            }),
+            strata: zod
+              .array(
+                zod.object({
+                  name: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemNameMax,
+                    )
+                    .optional(),
+                  filters: zod
+                    .array(
+                      zod.object({
+                        source: zod
+                          .enum(["span", "resource", "metadata"])
+                          .default(
+                            tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemFiltersItemSourceDefault,
+                          ),
+                        key: zod
+                          .string()
+                          .min(1)
+                          .max(
+                            tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemFiltersItemKeyMax,
+                          ),
+                        op: zod
+                          .enum([
+                            "in",
+                            "not_in",
+                            "exists",
+                            "missing",
+                            "gt",
+                            "gte",
+                            "lt",
+                            "lte",
+                          ])
+                          .default(
+                            tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemFiltersItemOpDefault,
+                          ),
+                        values: zod
+                          .array(
+                            zod
+                              .object({})
+                              .passthrough()
+                              .describe("Any valid JSON value."),
+                          )
+                          .max(
+                            tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemFiltersItemValuesMax,
+                          )
+                          .optional(),
+                      }),
+                    )
+                    .optional(),
+                  rate: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemRateMin,
+                    )
+                    .max(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemRateMax,
+                    )
+                    .optional()
+                    .describe(
+                      "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                    ),
+                  target_n: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemTargetNMin,
+                    )
+                    .max(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemTargetNMax,
+                    )
+                    .optional(),
+                  min_n: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemMinNMin,
+                    )
+                    .max(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemMinNMax,
+                    )
+                    .optional(),
+                  max_n: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemMaxNMin,
+                    )
+                    .max(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemMaxNMax,
+                    )
+                    .optional(),
+                  rare_below: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemRareBelowMin,
+                    )
+                    .max(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyStrataItemRareBelowMax,
+                    )
+                    .optional(),
+                }),
+              )
+              .optional(),
+            group_by: zod
+              .array(
+                zod.object({
+                  source: zod
+                    .enum(["span", "resource", "metadata"])
+                    .default(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyGroupByItemSourceDefault,
+                    ),
+                  key: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyGroupByItemKeyMax,
+                    ),
+                }),
+              )
+              .optional(),
+            default: zod
+              .object({
+                name: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultNameMax,
+                  )
+                  .optional(),
+                filters: zod
+                  .array(
+                    zod.object({
+                      source: zod
+                        .enum(["span", "resource", "metadata"])
+                        .default(
+                          tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultFiltersItemSourceDefault,
+                        ),
+                      key: zod
+                        .string()
+                        .min(1)
+                        .max(
+                          tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultFiltersItemKeyMax,
+                        ),
+                      op: zod
+                        .enum([
+                          "in",
+                          "not_in",
+                          "exists",
+                          "missing",
+                          "gt",
+                          "gte",
+                          "lt",
+                          "lte",
+                        ])
+                        .default(
+                          tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultFiltersItemOpDefault,
+                        ),
+                      values: zod
+                        .array(
+                          zod
+                            .object({})
+                            .passthrough()
+                            .describe("Any valid JSON value."),
+                        )
+                        .max(
+                          tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultFiltersItemValuesMax,
+                        )
+                        .optional(),
+                    }),
+                  )
+                  .optional(),
+                rate: zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultRateMin,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultRateMax,
+                  )
+                  .optional()
+                  .describe(
+                    "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                  ),
+                target_n: zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultTargetNMin,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultTargetNMax,
+                  )
+                  .optional(),
+                min_n: zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultMinNMin,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultMinNMax,
+                  )
+                  .optional(),
+                max_n: zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultMaxNMin,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultMaxNMax,
+                  )
+                  .optional(),
+                rare_below: zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultRareBelowMin,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyDefaultRareBelowMax,
+                  )
+                  .optional(),
+              })
+              .optional(),
+            cell_quotas: zod
+              .record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyCellQuotasMinOne,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyCellQuotasMaxOne,
+                  ),
+              )
+              .optional()
+              .describe(
+                "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+              ),
+            coordination: zod
+              .enum(["independent", "project"])
+              .optional()
+              .describe(
+                "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+              ),
+            panel: zod
+              .string()
+              .max(
+                tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyPanelMax,
+              )
+              .optional()
+              .describe(
+                "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+              ),
+            prn_start: zod
+              .number()
+              .min(
+                tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyPrnStartMin,
+              )
+              .max(
+                tracerEvalTaskListEvalTasksResponseResultTableItemSamplingPolicyPrnStartMax,
+              )
+              .optional()
+              .describe(
+                "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+              ),
+          })
+          .optional(),
         last_run: zod.string().datetime({ offset: true }),
       }),
     ),
@@ -70094,6 +70601,71 @@ export const TracerEvalTaskListEvalTasksWithProjectNameQueryParams = zod.object(
 
 export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultMetadataMinOne = 0;
 
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyVersionMax = 1;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyUnitAttributeSourceDefault = `span`;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyUnitAttributeKeyMax = 200;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyMissingIdDefault = `exclude`;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyModeDefault = `closed`;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemNameMax = 80;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemFiltersItemSourceDefault = `span`;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemFiltersItemKeyMax = 200;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemFiltersItemOpDefault = `in`;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemFiltersItemValuesMax = 100;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemRateMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemRateMax = 100;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemTargetNMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemTargetNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemMinNMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemMinNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemMaxNMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemMaxNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemRareBelowMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemRareBelowMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyGroupByItemSourceDefault = `span`;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyGroupByItemKeyMax = 200;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultNameMax = 80;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultFiltersItemSourceDefault = `span`;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultFiltersItemKeyMax = 200;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultFiltersItemOpDefault = `in`;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultFiltersItemValuesMax = 100;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultRateMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultRateMax = 100;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultTargetNMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultTargetNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultMinNMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultMinNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultMaxNMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultMaxNMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultRareBelowMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyPrnStartMax = 100;
+
 export const TracerEvalTaskListEvalTasksWithProjectNameResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
@@ -70117,6 +70689,325 @@ export const TracerEvalTaskListEvalTasksWithProjectNameResponse = zod.object({
         created_at: zod.string().datetime({ offset: true }),
         evals_applied: zod.array(zod.string().min(1)),
         sampling_rate: zod.number(),
+        sampling_policy: zod
+          .object({
+            version: zod
+              .number()
+              .min(1)
+              .max(
+                tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyVersionMax,
+              ),
+            sampling_unit: zod.enum([
+              "span",
+              "trace",
+              "session",
+              "user",
+              "attribute",
+            ]),
+            unit_attribute: zod
+              .object({
+                source: zod
+                  .enum(["span", "resource", "metadata"])
+                  .default(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyUnitAttributeSourceDefault,
+                  ),
+                key: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyUnitAttributeKeyMax,
+                  ),
+              })
+              .optional(),
+            missing_id: zod
+              .enum(["exclude", "row"])
+              .default(
+                tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyMissingIdDefault,
+              ),
+            mode: zod
+              .enum(["closed", "live"])
+              .default(
+                tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyModeDefault,
+              ),
+            window: zod.object({
+              start: zod
+                .string()
+                .min(1)
+                .describe("Inclusive ISO 8601 UTC event time."),
+              end: zod
+                .string()
+                .min(1)
+                .optional()
+                .describe(
+                  "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+                ),
+            }),
+            strata: zod
+              .array(
+                zod.object({
+                  name: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemNameMax,
+                    )
+                    .optional(),
+                  filters: zod
+                    .array(
+                      zod.object({
+                        source: zod
+                          .enum(["span", "resource", "metadata"])
+                          .default(
+                            tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemFiltersItemSourceDefault,
+                          ),
+                        key: zod
+                          .string()
+                          .min(1)
+                          .max(
+                            tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemFiltersItemKeyMax,
+                          ),
+                        op: zod
+                          .enum([
+                            "in",
+                            "not_in",
+                            "exists",
+                            "missing",
+                            "gt",
+                            "gte",
+                            "lt",
+                            "lte",
+                          ])
+                          .default(
+                            tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemFiltersItemOpDefault,
+                          ),
+                        values: zod
+                          .array(
+                            zod
+                              .object({})
+                              .passthrough()
+                              .describe("Any valid JSON value."),
+                          )
+                          .max(
+                            tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemFiltersItemValuesMax,
+                          )
+                          .optional(),
+                      }),
+                    )
+                    .optional(),
+                  rate: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemRateMin,
+                    )
+                    .max(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemRateMax,
+                    )
+                    .optional()
+                    .describe(
+                      "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                    ),
+                  target_n: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemTargetNMin,
+                    )
+                    .max(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemTargetNMax,
+                    )
+                    .optional(),
+                  min_n: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemMinNMin,
+                    )
+                    .max(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemMinNMax,
+                    )
+                    .optional(),
+                  max_n: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemMaxNMin,
+                    )
+                    .max(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemMaxNMax,
+                    )
+                    .optional(),
+                  rare_below: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemRareBelowMin,
+                    )
+                    .max(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyStrataItemRareBelowMax,
+                    )
+                    .optional(),
+                }),
+              )
+              .optional(),
+            group_by: zod
+              .array(
+                zod.object({
+                  source: zod
+                    .enum(["span", "resource", "metadata"])
+                    .default(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyGroupByItemSourceDefault,
+                    ),
+                  key: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyGroupByItemKeyMax,
+                    ),
+                }),
+              )
+              .optional(),
+            default: zod
+              .object({
+                name: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultNameMax,
+                  )
+                  .optional(),
+                filters: zod
+                  .array(
+                    zod.object({
+                      source: zod
+                        .enum(["span", "resource", "metadata"])
+                        .default(
+                          tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultFiltersItemSourceDefault,
+                        ),
+                      key: zod
+                        .string()
+                        .min(1)
+                        .max(
+                          tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultFiltersItemKeyMax,
+                        ),
+                      op: zod
+                        .enum([
+                          "in",
+                          "not_in",
+                          "exists",
+                          "missing",
+                          "gt",
+                          "gte",
+                          "lt",
+                          "lte",
+                        ])
+                        .default(
+                          tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultFiltersItemOpDefault,
+                        ),
+                      values: zod
+                        .array(
+                          zod
+                            .object({})
+                            .passthrough()
+                            .describe("Any valid JSON value."),
+                        )
+                        .max(
+                          tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultFiltersItemValuesMax,
+                        )
+                        .optional(),
+                    }),
+                  )
+                  .optional(),
+                rate: zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultRateMin,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultRateMax,
+                  )
+                  .optional()
+                  .describe(
+                    "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                  ),
+                target_n: zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultTargetNMin,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultTargetNMax,
+                  )
+                  .optional(),
+                min_n: zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultMinNMin,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultMinNMax,
+                  )
+                  .optional(),
+                max_n: zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultMaxNMin,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultMaxNMax,
+                  )
+                  .optional(),
+                rare_below: zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultRareBelowMin,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyDefaultRareBelowMax,
+                  )
+                  .optional(),
+              })
+              .optional(),
+            cell_quotas: zod
+              .record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyCellQuotasMinOne,
+                  )
+                  .max(
+                    tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyCellQuotasMaxOne,
+                  ),
+              )
+              .optional()
+              .describe(
+                "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+              ),
+            coordination: zod
+              .enum(["independent", "project"])
+              .optional()
+              .describe(
+                "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+              ),
+            panel: zod
+              .string()
+              .max(
+                tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyPanelMax,
+              )
+              .optional()
+              .describe(
+                "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+              ),
+            prn_start: zod
+              .number()
+              .min(
+                tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyPrnStartMin,
+              )
+              .max(
+                tracerEvalTaskListEvalTasksWithProjectNameResponseResultTableItemSamplingPolicyPrnStartMax,
+              )
+              .optional()
+              .describe(
+                "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+              ),
+          })
+          .optional(),
         last_run: zod.string().datetime({ offset: true }),
       }),
     ),

@@ -399,3 +399,60 @@ def test_untranslatable_eval_name_filter_keeps_filter_engine_semantics(
     assert data["metadata"]["total_rows"] == 1
     assert [row["id"] for row in data["table"]] == [str(second.id)]
     assert str(first.id) not in {row["id"] for row in data["table"]}
+
+
+_COUNT_POLICY = {
+    "version": 1,
+    "sampling_unit": "session",
+    "mode": "closed",
+    "window": {"start": "2026-11-01T00:00:00Z", "end": "2026-11-08T00:00:00Z"},
+    "default": {"target_n": 10},
+    "strata": [],
+}
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/tracer/eval-task/list_eval_tasks/",
+        "/tracer/eval-task/list_eval_tasks_with_project_name/",
+    ],
+)
+@pytest.mark.parametrize("compatibility", [False, True])
+def test_list_rows_carry_the_saved_sampling_policy(
+    auth_client, project, custom_eval_config, path, compatibility
+):
+    """A cohort task keeps sampling_rate at its default; the list must expose
+    the saved policy so it is not presented as "100%"."""
+    cohort, legacy = _tasks(
+        project,
+        custom_eval_config,
+        [{"name": "Cohort"}, {"name": "Legacy", "sampling_rate": 40}],
+    )
+    EvalTask.objects.filter(id=cohort.id).update(sampling_policy=_COUNT_POLICY)
+    params = _list_params(path, project, page_number=0, page_size=10)
+    if compatibility:
+        # A Python-semantics text filter takes the bounded compatibility path.
+        params["filters"] = json.dumps(
+            [
+                {
+                    "column_id": "name",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "not_equals",
+                        "filter_value": "i̇stanbul",
+                    },
+                }
+            ]
+        )
+
+    response = auth_client.get(path, params)
+
+    assert response.status_code == 200, response.json()
+    rows = {row["name"]: row for row in _result(response)["table"]}
+    assert rows["Cohort"]["sampling_policy"] == _COUNT_POLICY
+    assert rows["Cohort"]["sampling_rate"] == 100
+    assert rows["Legacy"]["sampling_policy"] is None
+    assert rows["Legacy"]["sampling_rate"] == 40

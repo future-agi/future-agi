@@ -92,6 +92,9 @@ class EngineBrief(BaseModel):
     last_attempt: int
     committed_usd: float
     deadline_at: str
+    # The source run's trials that failed a sub-goal on the targets the engine searches:
+    # Diagnose reads them while Reproduce runs. Never a held-back target.
+    source_failures: list["CheckRecord"] = Field(default_factory=list)
 
 
 class CandidateCreated(BaseModel):
