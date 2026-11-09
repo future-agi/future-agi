@@ -883,3 +883,80 @@ class TestScope:
         ]
 
         assert changed["since"] is None
+
+
+def test_a_production_only_tool_holds_its_cases_for_another_agent_version_too(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness import (
+        VersionPicks,
+        create_selected_harness_run,
+    )
+
+    environment, a2 = _with_a2(user, workspace, storage, "prod-a2")
+    _suite(environment, _ten())
+    _certify(environment, storage)
+    _built(environment, contract=PRODUCTION_ONLY)
+    cache.clear()
+
+    # a2 has no pair check of its own: its routing evidence is Stale, but the contract
+    # still says the refund tool reaches production.
+    routing = _rows(_select(environment, pairing=_pairing(environment, a2)))[
+        "tool_routing"
+    ]
+    run, _ = create_selected_harness_run(
+        environment,
+        scenario_keys=REFUND_KEYS + LOOKUP_KEYS,
+        trials=1,
+        idempotency_key="prod-a2",
+        picks=VersionPicks(agent_version_id=a2.id),
+    )
+    sent = [one["scenario_key"] for one in _run_metadata(run)["execution_manifest"]]
+
+    assert (routing["status"], routing["reason_code"]) == ("blocked", "production_only")
+    assert not set(REFUND_KEYS) & set(sent)
+    assert set(LOOKUP_KEYS) <= set(sent)
+
+
+def test_another_agent_s_tool_gap_keeps_the_production_only_tool_held(
+    user, workspace, storage
+):
+    environment, a2 = _with_a2(
+        user,
+        workspace,
+        storage,
+        "gap-prod",
+        tools=(
+            _tool("lookup_order", "order_id"),
+            _tool("issue_refund", "order_ref", "amount"),
+        ),
+    )
+    _suite(environment, _ten())
+    _certify(environment, storage)
+    _certify(environment, storage, agent=a2)
+    _built(
+        environment,
+        contract={
+            **WORLD,
+            "tool_entrypoints": [{"tool": "lookup_order", "mode": "in_process"}],
+            "dependencies": [
+                {
+                    "name": "orders-db",
+                    "engine": "",
+                    "reached": {},
+                    "used_by": ["lookup_order"],
+                }
+            ],
+        },
+    )
+    cache.clear()
+
+    report = _select(environment, pairing=_pairing(environment, a2))
+    row = _rows(report)["tool_routing"]
+
+    # Both findings hold: the signature gap on issue_refund and production lookup_order.
+    assert row["status"] == "blocked"
+    assert {"lookup_order", "issue_refund"} <= {one["name"] for one in row["targets"]}
+    assert set(report["selection"]["lists"]["blocked"]["keys"]) == set(
+        REFUND_KEYS + LOOKUP_KEYS
+    )

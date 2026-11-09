@@ -960,8 +960,9 @@ class TestDoneWhen:
         self, user, workspace, storage, auth_client
     ):
         """A reference agent with a production-only refund tool: tool routing is
-        Blocked with its reason and fix, every other row reads its real status, and
-        the report turns Stale once the agent version changes."""
+        Blocked with its reason and fix, every other row reads its real status; once
+        the agent version changes the other rows turn Stale and routing stays Blocked.
+        """
         environment, a2 = _with_a2(user, workspace, storage, "rd-done-when")
         _certify(environment, storage)
         _built(environment, contract=PRODUCTION_ONLY)
@@ -1008,13 +1009,16 @@ class TestDoneWhen:
         after = _get(auth_client, environment.id).json()
 
         assert after["pairing"]["agent_version"]["id"] == str(a2.id)
-        assert after["answer"]["kind"] == "stale"
+        # The other agent's evidence is Stale, but the contract still says the refund
+        # tool reaches production: that holds whatever the agent.
+        assert after["answer"]["kind"] == "blocked"
         routing = _rows(after)["tool_routing"]
-        assert (routing["status"], routing["was"], routing["stale_because"]) == (
-            "stale",
+        assert (routing["status"], routing["reason_code"]) == (
             "blocked",
-            "agent_version",
+            "production_only",
         )
+        start = _rows(after)["start"]
+        assert (start["status"], start["stale_because"]) == ("stale", "agent_version")
 
 
 class TestReviewFollowUps:
