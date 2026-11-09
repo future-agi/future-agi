@@ -4,7 +4,7 @@
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -72,6 +72,27 @@ def test_scalar_bucket_projection_never_reads_sketches_and_binds_scope():
     assert params["read_bucket_kin_0"] == (metric.id,)
     assert params["read_workspace"] == str(metric.workspace_id)
     assert sql.index("LIMIT 1 BY") < sql.index("WHERE is_deleted = 0")
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_rows_preserve_every_server_computed_uncertainty_field(packed):
+    ci = (10.5, 36.0, 84.0, 24.0, 11, "stratified_wor_fpc", "ok", "", "wald_t")
+    expected = {
+        "group_key": "",
+        "value": 60.0,
+        **dict(zip(reads.UNCERTAINTY_COLUMNS, ci, strict=True)),
+    }
+    columns = [("group_key", "String"), ("value", "Float64")]
+    if packed:
+        columns.append(("ci", "Tuple"))
+        values = ("", 60.0, ci)
+    else:
+        columns.extend((name, "unused") for name in reads.UNCERTAINTY_COLUMNS)
+        values = ("", 60.0, *ci)
+    client = Mock()
+    client.execute.return_value = ([values], columns)
+    assert reads._rows(reads.MetricReadStore(client), "query", {}) == [expected]
+    assert client.execute.call_args.kwargs["settings"]["use_query_cache"] == 0
 
 
 @pytest.mark.django_db

@@ -1,6 +1,7 @@
 # ruff: noqa: F811 -- shared isolated ClickHouse fixtures
 """Batched KPI periods must equal independent complete statistical reads."""
 
+from contextlib import contextmanager
 from datetime import timedelta
 from unittest.mock import patch
 from uuid import uuid4
@@ -19,7 +20,7 @@ from tracer.tests.test_derived_metric_reads_clickhouse import (
     case,
     stage_parts,
 )
-from tracer.tests.test_derived_metric_uncertainty import unit
+from tracer.tests.test_derived_metric_uncertainty import reference, unit
 
 PREVIOUS = {
     **WINDOW,
@@ -38,10 +39,10 @@ def assert_periods(store, metric, definition, manifest):
             store, metric, definition, manifest, WINDOW, PREVIOUS
         )
     assert query.call_count == 1
-    for row, reference in zip(actual, expected, strict=True):
-        assert_same(row, reference)
+    for row, expected_row in zip(actual, expected, strict=True):
+        assert_same(row, expected_row)
         actual_point = reads.point(row, definition)
-        expected_point = reads.point(reference, definition)
+        expected_point = reads.point(expected_row, definition)
         # Use the established CI-equivalence tolerance at both wire levels:
         # aggregation order can change the last floating-point bit.
         assert_same(actual_point.pop("uncertainty"), expected_point.pop("uncertainty"))
@@ -77,6 +78,82 @@ def test_periods_keep_independent_scopes_and_all_ci_fields(
         )
     rows = assert_periods(publication_store, metric, definition, manifest)
     assert all(row["status"] == "ok" for row in rows)
+
+
+@pytest.mark.parametrize("text", ["sum(y)", "ratio(y, x)", "mean(y > 0)"])
+@pytest.mark.parametrize("design", ["closed", "live", "unweighted"])
+def test_stored_cohorts_keep_the_oracle_and_backfill_invariant_ci(
+    publication_store, text, design
+):
+    scope, metric, definition, attempt, manifest = case(text)
+    definition.cohort_key = "region"
+    values = [0, 0, 0, 1, 1, 1, 2, 2, 3, 4, 0, 1]
+    probability = 1 if design == "unweighted" else 0.5
+    for period, start in enumerate([AT, PREVIOUS["window_start"]]):
+        for quarter in range(2):
+            units = []
+            for cohort in ["east", "west"]:
+                for index in range(quarter * 6, (quarter + 1) * 6):
+                    row = unit(
+                        values[index] + period,
+                        probability,
+                        design=design,
+                        population=48 if design == "closed" else None,
+                        x=index + 1,
+                    )
+                    units.append((row[0], cohort, *row[2:]))
+            stage_parts(
+                publication_store,
+                scope,
+                metric,
+                definition,
+                attempt,
+                units,
+                start=start + timedelta(minutes=quarter * 15),
+                scope_key=f"period-{period}",
+                rollup="cohort",
+            )
+    current, _ = assert_periods(publication_store, metric, definition, manifest)
+    # Independently centered domain estimator: the persisted cohort/stratum
+    # cells retain their full design size, including the outside-domain zeros.
+    # Pooling the two cohorts before correction incorrectly changes SE and df.
+    expected = reference(
+        "sum" if text == "sum(y)" else "ratio",
+        design,
+        y=([int(value > 0) for value in values] if "> 0" in text else values) * 2,
+        p=[probability] * 24,
+        x=list(range(1, 13)) * 2 if text == "ratio(y, x)" else None,
+        stratum=["east/h1"] * 12 + ["west/h1"] * 12,
+        population=[48] * 24,
+        rate=text == "mean(y > 0)",
+    )
+    assert current["value"] == pytest.approx(expected["value"])
+    assert current["unit_count"] == current["valid_count"] == 24
+    if design == "unweighted" and text == "sum(y)":
+        assert current["ci_reason"] == "unweighted_total"
+    else:
+        assert current["ci_status"] == "ok"
+        for name in ("std_error", "ci_low", "ci_high", "effective_n", "ci_df"):
+            assert current[name] == pytest.approx(expected[name], rel=1e-9, abs=1e-12)
+        assert current["ci_interval"] == expected["interval"]
+
+    @contextmanager
+    def pin(*args, **kwargs):
+        yield publication_store, manifest, definition
+
+    with (
+        patch.object(reads, "metric_read", pin),
+        patch.object(reads, "provenance", return_value={}),
+    ):
+        definition.backfill_cursor = {"start": AT.isoformat()}
+        without_previous = reads.read_kpi(metric, WINDOW)
+        definition.backfill_cursor = {"start": PREVIOUS["window_start"].isoformat()}
+        with_previous = reads.read_kpi(metric, WINDOW)
+    assert without_previous["previous"] is None
+    assert with_previous["previous"]["point_status"] == "ok"
+    before, after = without_previous["current"], with_previous["current"]
+    assert_same(before.pop("uncertainty"), after.pop("uncertainty"))
+    assert_same(before, after)
 
 
 @pytest.mark.parametrize("text", ["sum(y)", "ratio(y, x)", "mean(y > 0)"])
@@ -237,6 +314,8 @@ def test_sketch_periods_keep_real_states_and_empty_metadata(
         field, params = field_query(
             metric=metric.id, start=[AT, PREVIOUS["window_start"]][period], n=4 + period
         )
+        field = f"SELECT * REPLACE(%(period_scope)s AS sampling_scope) FROM ({field})"
+        params["period_scope"] = f"period-{period}"
         parts = live_parts_select(definition, field)
         params.update(
             org=scope.organization,

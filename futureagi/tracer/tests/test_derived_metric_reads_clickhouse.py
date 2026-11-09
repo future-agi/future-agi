@@ -106,6 +106,7 @@ def stage_parts(
     table="metric_bucket_totals_checkpoint",
     start=AT,
     scope_key=None,
+    rollup="overall",
 ):
     snapshot = uuid4()
     insert_units(store.client, scope, snapshot, units)
@@ -119,7 +120,9 @@ def stage_parts(
         **formula.parameters,
         "scope_key": scope_key,
     }
-    parts = stratum_parts_select(source, formula, bucket_column="bucket_start")
+    parts = stratum_parts_select(
+        source, formula, bucket_column="bucket_start", rollup=rollup
+    )
     columns = (
         "org_id",
         "workspace_id",

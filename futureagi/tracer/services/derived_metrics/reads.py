@@ -30,7 +30,7 @@ from tracer.services.derived_metrics.publication import (
     committed_rows_select,
     pinned_read,
 )
-from tracer.services.derived_metrics.queries import QUERY_SETTINGS
+from tracer.services.derived_metrics.queries import QUERY_SETTINGS, UNCERTAINTY_COLUMNS
 from tracer.services.derived_metrics.retention import retention_cutoff
 from tracer.services.derived_metrics.service import MetricUnavailableError, shape_result
 from tracer.services.derived_metrics.spec import require_computable
@@ -184,7 +184,13 @@ def _rows(store, sql, params):
         store if isinstance(store, MetricReadStore) else MetricReadStore(store.client)
     )
     rows, columns = reader.execute(sql, params, with_column_types=True)
-    return [dict(zip((c[0] for c in columns), row, strict=True)) for row in rows]
+    result = []
+    for values in rows:
+        row = dict(zip((c[0] for c in columns), values, strict=True))
+        if "ci" in row:
+            row.update(zip(UNCERTAINTY_COLUMNS, row.pop("ci"), strict=True))
+        result.append(row)
+    return result
 
 
 def bucket_select(metric, definition, manifest, window):
@@ -230,12 +236,16 @@ def bucket_select(metric, definition, manifest, window):
     )
 
 
-def _aggregate_select(sql, definition, params, *, grouped=False):
+def _aggregate_select(sql, definition, params, *, grouped=False, per_period=False):
     recipe = field_recipe(definition)
     if definition.kind not in {"unique_count", "percentile"}:
         params.update(recipe.formula.parameters)
         return combine_parts_select(
-            sql, recipe.formula, rollup="cohort" if grouped else "overall"
+            sql,
+            recipe.formula,
+            rollup="cohort" if grouped else "overall",
+            per_period=per_period,
+            packed_uncertainty=True,
         )
     # Sketches are only meaningful for census inputs; never infer an IPW sketch.
     params["read_percentile"] = recipe.source.field_spec.get("percentile", 0.95)
@@ -244,8 +254,10 @@ def _aggregate_select(sql, definition, params, *, grouped=False):
         if definition.kind == "unique_count"
         else "quantileTDigestMerge(%(read_percentile)s)(quantile_state)"
     )
-    group = "group_key" if grouped else "''"
-    return f"""SELECT {group} AS group_key, if(status = 'ok', raw_value, NULL) AS value,
+    group = "period_key" if per_period else ("group_key" if grouped else "''")
+    group_clause = f"GROUP BY {group}" if grouped or per_period else ""
+    scope_partition = "PARTITION BY period_key" if per_period else ""
+    return f"""SELECT group_key, if(status = 'ok', raw_value, NULL) AS value,
         value AS numerator, CAST(NULL, 'Nullable(Float64)') AS denominator,
         status, unit_count, valid_count, missing_count, invalid_probability_count,
         'not_estimable' AS ci_status, 'not_computed' AS ci_reason, '' AS ci_method, '' AS ci_interval,
@@ -259,9 +271,9 @@ def _aggregate_select(sql, definition, params, *, grouped=False):
             multiIf(unit_count = 0, 'no_data', invalid_probability_count > 0, 'invalid_probability',
                 sampled_count > 0, 'sampled_inputs_not_supported', valid_count = 0, 'missing_inputs',
                 NOT isFinite(raw_value), 'non_finite', 'ok') AS status
-            FROM (SELECT *, minIf(scope_min, nonempty_scope_count > 0) OVER () !=
-                maxIf(scope_max, nonempty_scope_count > 0) OVER () AS mixed_scope FROM ({sql})) AS src
-            {"GROUP BY group_key" if grouped else ""})"""
+            FROM (SELECT *, minIf(scope_min, nonempty_scope_count > 0) OVER ({scope_partition}) !=
+                maxIf(scope_max, nonempty_scope_count > 0) OVER ({scope_partition}) AS mixed_scope FROM ({sql})) AS src
+            {group_clause})"""
 
 
 def _aggregate(store, metric, definition, manifest, window):
@@ -270,14 +282,10 @@ def _aggregate(store, metric, definition, manifest, window):
 
 
 def _aggregate_periods(store, metric, definition, manifest, current, previous):
-    """Compute both KPI periods in one statement, without pooling their scopes.
+    """Compute independent periods without replacing stored cohort/scope keys.
 
-    The shared statistics compiler has a window-wide scope guard (also required
-    by trend). Only periods with conflicting scopes should expose scope evidence
-    to that guard. A valid period is marked unscoped, with its original scope
-    encoded in the stratum key so independent closed strata never merge. Invalid
-    periods retain their scopes and receive the compiler's existing full masking,
-    while valid periods cannot be rejected by a conflict in their neighbour.
+    The shared compiler partitions its scope guard and stratum merge by period,
+    applying exactly the same estimator as an independent overall read.
     """
     sql, params = bucket_select(
         metric,
@@ -286,19 +294,11 @@ def _aggregate_periods(store, metric, definition, manifest, current, previous):
         {**current, "window_start": previous["window_start"]},
     )
     params["read_current_start"] = current["window_start"]
-    sql = f"""SELECT * REPLACE(
-            if(read_mixed_scope, scope_key, '') AS scope_key,
-            if(read_mixed_scope, nonempty_scope_count, toUInt64(0)) AS nonempty_scope_count,
-            if(read_mixed_scope, scope_min, '') AS scope_min,
-            if(read_mixed_scope, scope_max, '') AS scope_max)
-        FROM (SELECT * REPLACE(toJSONString(tuple(scope_key, stratum_key)) AS stratum_key),
-            minIf(scope_min, nonempty_scope_count > 0) OVER (PARTITION BY group_key) !=
-            maxIf(scope_max, nonempty_scope_count > 0) OVER (PARTITION BY group_key) AS read_mixed_scope
-            FROM (SELECT * REPLACE(
-                if(bucket_start >= %(read_current_start)s, 'current', 'previous') AS group_key)
-                FROM ({sql})))"""
+    sql = f"""SELECT *,
+        if(bucket_start >= %(read_current_start)s, 'current', 'previous') AS period_key
+        FROM ({sql})"""
     rows = _rows(
-        store, _aggregate_select(sql, definition, params, grouped=True), params
+        store, _aggregate_select(sql, definition, params, per_period=True), params
     )
     by_period = {row["group_key"]: {**row, "group_key": ""} for row in rows}
     # GROUP BY returns no row for an empty period. Match the overall compiler's
