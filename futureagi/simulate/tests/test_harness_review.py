@@ -443,3 +443,31 @@ def test_rejected_rule_leaves_no_amendment():
         default, draft, changes, {rule: "rejected", "tool:issue_refund": "rejected"}
     )
     assert nothing["contract.json"] == default["contract.json"]
+
+
+def test_a_rule_change_reads_as_the_rule_and_bookkeeping_is_left_out_of_a_summary():
+    rule = "The assistant must state the discount percentage back to the customer before applying it."
+    default = _tree(
+        {"hard_constraints": ["a"]},
+        **{"actors.json": {"actors": [{"id": "morgan_lee", "role": "CEO"}]}},
+    )
+    draft = _tree(
+        {"hard_constraints": ["a", rule]},
+        **{
+            "actors.json": {
+                "actors": [
+                    {
+                        "id": "morgan_lee",
+                        "role": "CEO who signs off",
+                        "provenance": {"origin": "editor"},
+                    }
+                ]
+            }
+        },
+    )
+
+    summaries = {one["kind"]: one["summary"] for one in compute_changes(default, draft)}
+    assert summaries == {
+        "rule": f'Add rule "{rule}"',
+        "actor": "Change role of actor morgan_lee",
+    }
