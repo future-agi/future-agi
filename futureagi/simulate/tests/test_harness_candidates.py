@@ -1477,30 +1477,29 @@ def test_a_check_unavailable_on_our_side_lets_the_validated_changes_save_uncerti
     )
     first = _result(_validate(auth_client, environment, digest))
     _check_unavailable_on_our_side(environment, monkeypatch)
-    # Before Validate runs again the set reads retry, and Save waits for it.
-    assert _drafts(auth_client, environment)["validation"]["state"] == "retry"
+    # The set says so at once: no second Validate only to learn the check could not run.
+    assert _drafts(auth_client, environment)["validation"]["state"] == "check_unavailable"
 
-    again = _validate(auth_client, environment, digest)
-    assert again.status_code == 200, again.content
-    body = _result(again)
-    assert body["validation"]["state"] == "check_unavailable"
-    assert body["candidates"] == first["candidates"]
-
-    saved = _save(auth_client, environment, body["candidates"], digest=digest)
+    saved = _save(auth_client, environment, first["candidates"], digest=digest)
     assert saved.status_code == 200, saved.content
     environment.refresh_from_db()
     assert str(environment.environment_version_id) == (
-        body["candidates"]["environment_version_id"]
+        first["candidates"]["environment_version_id"]
     )
 
 
-def test_a_set_validated_before_the_check_failed_on_our_side_still_needs_validate_again(
+def test_a_check_that_failed_on_our_side_under_an_older_template_still_reads_retry(
     user, workspace, storage, auth_client, monkeypatch
 ):
+    """A cause the current template would not repeat is worth trying again: retry, and Save waits."""
+    from simulate.services.harness_versioning import validation as pair_validation
+
     environment = _with_world(user, workspace, "cand-unavailable-old", storage)
     _two_actors(auth_client, environment)
     first = _result(_validate(auth_client, environment))
-    _check_unavailable_on_our_side(environment, monkeypatch)
+    _check_unavailable_on_our_side(environment, monkeypatch, template="tpl:old")
+    monkeypatch.setattr(pair_validation, "_template", lambda: "tpl:new")
+    assert _drafts(auth_client, environment)["validation"]["state"] == "retry"
 
     refused = _save(auth_client, environment, first["candidates"])
     assert refused.status_code == 409, refused.content
