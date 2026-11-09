@@ -307,15 +307,11 @@ const ExperimentTab = React.forwardRef(
 
     // ── Selection sync ───────────────────────────────────────────────
     const handleRowSelectionChange = useCallback(
-      (sel) => {
+      (sel, selected) => {
         setRowSelection(sel);
-        const selected = Object.keys(sel)
-          .filter((k) => sel[k])
-          .map((k) => rows[parseInt(k, 10)])
-          .filter(Boolean);
         setRowSelected(selected);
       },
-      [rows, setRowSelected],
+      [setRowSelected],
     );
 
     // ── Row click → navigate ─────────────────────────────────────────
@@ -459,6 +455,7 @@ const ExperimentTab = React.forwardRef(
           rowCount={totalCount}
           enableSelection
           rowSelection={rowSelection}
+          selectionScope={[dataset, page, PAGE_SIZE, experimentSearch, debouncedSearch]}
           onRowSelectionChange={handleRowSelectionChange}
           onRowClick={handleRowClick}
           getRowId={(row) => row.id}

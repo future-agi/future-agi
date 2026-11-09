@@ -25,6 +25,7 @@ const ExperimentTabHeader = ({
 }) => {
   const theme = useTheme();
   const [openDialog, setOpenDialog] = useState(null);
+  const [dialogRows, setDialogRows] = useState([]);
   const timeoutRef = useRef(null);
   const { role } = useAuthContext();
   const { initiateCreateMode } = useRunExperimentStoreShallow((state) => ({
@@ -41,6 +42,7 @@ const ExperimentTabHeader = ({
         tabRef.current.clearRowSelection();
       }
     } else {
+      setDialogRows(rowSelected.map((row) => ({ ...row })));
       setOpenDialog(action);
     }
   };
@@ -68,9 +70,10 @@ const ExperimentTabHeader = ({
   });
 
   const handleRerun = () => {
-    const data = { experiment_ids: rowSelected.map((item) => item.id) };
+    if (!dialogRows.length) return;
+    const data = { experiment_ids: dialogRows.map((item) => item.id) };
     trackEvent(Events.expRowReRunSuccess, {
-      experiment_name: rowSelected.map((item) => item.name),
+      experiment_name: dialogRows.map((item) => item.name),
     });
     mutation.mutate(data);
   };
@@ -94,11 +97,12 @@ const ExperimentTabHeader = ({
   });
 
   const handleDelete = () => {
-    const data = { experiment_ids: rowSelected.map((item) => item.id) };
+    if (!dialogRows.length) return;
+    const data = { experiment_ids: dialogRows.map((item) => item.id) };
     trackEvent(Events.expRowDeleted, {
       [PropertyName.expRowDelete]: {
-        dataset: rowSelected.map((item) => item.dataset),
-        experimentId: rowSelected.map((item) => item.id),
+        dataset: dialogRows.map((item) => item.dataset),
+        experimentId: dialogRows.map((item) => item.id),
       },
     });
 
@@ -254,14 +258,14 @@ const ExperimentTabHeader = ({
       <CustomDialog
         open={openDialog === "Delete"}
         onClose={closeDialog}
-        title={`Delete Experiment${rowSelected?.length > 1 ? "s" : ""}`}
+        title={`Delete Experiment${dialogRows.length > 1 ? "s" : ""}`}
         actionButton="Delete"
         onClickAction={handleDelete}
         // preTitleIcon="solar:trash-bin-trash-bold"
         color="error"
       >
         <Typography style={{ color: "text.secondary" }}>
-          {`Are you sure you want to delete the selected ${rowSelected?.length} experiment${rowSelected?.length > 1 ? "s" : ""}?`}
+          {`Are you sure you want to delete the selected ${dialogRows.length} experiment${dialogRows.length > 1 ? "s" : ""}?`}
         </Typography>
       </CustomDialog>
 
@@ -269,14 +273,14 @@ const ExperimentTabHeader = ({
       <CustomDialog
         open={openDialog === "Re-Run"}
         onClose={closeDialog}
-        title={`Re-Run Experiment${rowSelected?.length > 1 ? "s" : ""}`}
+        title={`Re-Run Experiment${dialogRows.length > 1 ? "s" : ""}`}
         actionButton="Re-Run"
         onClickAction={handleRerun}
         // preTitleIcon="token:rune"
         color="primary"
       >
         <Typography style={{ color: "text.secondary" }}>
-          {`Are you sure you want to re-run the selected ${rowSelected?.length} experiment${rowSelected?.length > 1 ? "s" : ""}? Existing run data will be overwritten`}
+          {`Are you sure you want to re-run the selected ${dialogRows.length} experiment${dialogRows.length > 1 ? "s" : ""}? Existing run data will be overwritten`}
         </Typography>
       </CustomDialog>
     </Box>

@@ -78,7 +78,7 @@ vi.mock("src/components/data-table", () => ({
         Sort by name
       </button>
       {data.length > 0 && (
-        <button type="button" onClick={() => onRowSelectionChange({ 0: true })}>
+        <button type="button" onClick={() => onRowSelectionChange({ [data[0].id]: true }, [data[0]])}>
           Select first row
         </button>
       )}
@@ -358,3 +358,5 @@ describe("TaskListView server pagination", () => {
     });
   });
 });
+
+/* eslint-enable react/prop-types */

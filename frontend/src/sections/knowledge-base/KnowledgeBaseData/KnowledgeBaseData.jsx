@@ -30,6 +30,7 @@ const KnowledgeBaseData = React.forwardRef(
     const [selectedIds, setSelectedIds] = useState([]);
     const [searchQuery, setSearchQuery] = useState("");
     const [openDelete, setOpenDelete] = useState(false);
+    const [deleteTargets, setDeleteTargets] = useState([]);
     const [page, setPage] = useState(0);
     const [pageSize, setPageSize] = useState(25);
 
@@ -85,14 +86,14 @@ const KnowledgeBaseData = React.forwardRef(
       }
     }, [isEntitlementBlocked, setHasData]);
 
-    // Own stable KB IDs; DataTable's index keys are only a current-page adapter.
+    // Own stable KB IDs end to end, including DataTable's controlled selection.
     // The checkboxes, count and delete payload all use these same current rows.
     const { selectedItems, rowSelection } = useMemo(() => {
       const ids = new Set(selectedIds);
       const nextRowSelection = {};
-      const nextSelectedItems = items.filter((item, index) => {
+      const nextSelectedItems = items.filter((item) => {
         if (!ids.has(item.id)) return false;
-        nextRowSelection[index] = true;
+        nextRowSelection[item.id] = true;
         return true;
       });
       return {
@@ -125,16 +126,10 @@ const KnowledgeBaseData = React.forwardRef(
     }));
 
     const handleRowSelectionChange = useCallback(
-      (newSelection) => {
-        setSelectedIds(
-          Object.keys(newSelection)
-            .filter((k) => newSelection[k])
-            .map((k) => items[parseInt(k, 10)])
-            .filter(Boolean)
-            .map((item) => item.id),
-        );
+      (_selection, selected) => {
+        setSelectedIds(selected.map((item) => item.id));
       },
-      [items],
+      [],
     );
 
     const columns = useMemo(
@@ -289,6 +284,7 @@ const KnowledgeBaseData = React.forwardRef(
                     if (
                       RolePermission.KNOWLEDGE_BASE[PERMISSIONS.DELETE][role]
                     ) {
+                      setDeleteTargets(selectedItems.map((item) => ({ ...item })));
                       setOpenDelete(true);
                     }
                   }}
@@ -365,6 +361,7 @@ const KnowledgeBaseData = React.forwardRef(
           isLoading={isLoading}
           rowCount={total}
           rowSelection={rowSelection}
+          selectionScope={[page, pageSize, searchQuery, debouncedSearchQuery]}
           onRowSelectionChange={handleRowSelectionChange}
           onRowClick={handleRowClick}
           getRowId={(row) => row.id}
@@ -394,12 +391,13 @@ const KnowledgeBaseData = React.forwardRef(
         <DeleteKnowledgeBase
           open={
             openDelete &&
+            deleteTargets.every((target) => items.some((item) => item.id === target.id)) &&
             selectedItems.length > 0 &&
             selectedItems.length === selectedIds.length
           }
           onClose={closeModal}
           refreshGrid={refreshGrid}
-          selected={selectedItems}
+          selected={deleteTargets}
         />
       </Box>
     );

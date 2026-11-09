@@ -57,6 +57,7 @@ export default function AgentListView({ embedded = false }) {
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
   const [rowSelection, setRowSelection] = useState({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState([]);
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
@@ -82,11 +83,7 @@ export default function AgentListView({ embedded = false }) {
   const total = data?.metadata?.total_count ?? 0;
 
   const selectedItems = useMemo(
-    () =>
-      Object.keys(rowSelection)
-        .filter((k) => rowSelection[k])
-        .map((k) => items[parseInt(k, 10)])
-        .filter(Boolean),
+    () => items.filter((item) => rowSelection[item.id]),
     [rowSelection, items],
   );
 
@@ -103,7 +100,8 @@ export default function AgentListView({ embedded = false }) {
   });
 
   const handleDeleteConfirm = () => {
-    const ids = selectedItems.map((item) => item.id);
+    const ids = deleteTargets.map((item) => item.id);
+    if (!ids.length) return;
     deleteMutation.mutate({ ids });
   };
 
@@ -391,7 +389,10 @@ export default function AgentListView({ embedded = false }) {
                     />
                   }
                   sx={{ color: "text.secondary" }}
-                  onClick={() => setDeleteDialogOpen(true)}
+                  onClick={() => {
+                    setDeleteTargets(selectedItems.map((item) => ({ ...item })));
+                    setDeleteDialogOpen(true);
+                  }}
                 >
                   <Typography
                     typography="s1"
@@ -472,6 +473,7 @@ export default function AgentListView({ embedded = false }) {
         isLoading={isLoading}
         rowCount={total}
         rowSelection={rowSelection}
+        selectionScope={[page, pageSize, searchQuery, debouncedSearch]}
         onRowSelectionChange={setRowSelection}
         onRowClick={handleRowClick}
         getRowId={(row) => row.id}
@@ -497,7 +499,7 @@ export default function AgentListView({ embedded = false }) {
           if (!deleteMutation.isPending) setDeleteDialogOpen(false);
         }}
         onConfirm={handleDeleteConfirm}
-        agentCount={selectedCount}
+        agentCount={deleteTargets.length}
         isLoading={deleteMutation.isPending}
       />
     </Box>

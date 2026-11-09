@@ -55,6 +55,9 @@ const ProjectWrapperView = () => {
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [observeFilters, setObserveFilters] = useState(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState({
+    ids: [], type: null, wrapperQueryKey: [],
+  });
   const location = useLocation();
   const gridRef = useRef(null);
   const currentTab = location.pathname.split("/").pop();
@@ -120,19 +123,23 @@ const ProjectWrapperView = () => {
   };
 
   const handleDelete = () => {
+    setDeleteTarget({
+      ids: [...selectedRowsData],
+      type: currentTab === "observe" ? "observe" : "experiment",
+      wrapperQueryKey: [`project-${currentTab}-list`],
+    });
     setDeleteModalOpen(true);
   };
 
   const { mutate: confirmDelete, isPending: isDeleting } = useMutation({
-    mutationFn: () =>
-      axiosInstance.delete(endpoints.project.deleteObservePrototype, {
-        data: {
-          project_ids: selectedRowsData,
-          project_type: currentTab === "observe" ? "observe" : "experiment",
-        },
-      }),
+    mutationFn: () => {
+      if (!deleteTarget.ids.length) return Promise.resolve();
+      return axiosInstance.delete(endpoints.project.deleteObservePrototype, {
+        data: { project_ids: deleteTarget.ids, project_type: deleteTarget.type },
+      });
+    },
     onSuccess: () => {
-      const filesLength = selectedRowsData.length;
+      const filesLength = deleteTarget.ids.length;
       const message =
         filesLength === 1
           ? "Project has been deleted."
@@ -142,11 +149,11 @@ const ProjectWrapperView = () => {
         variant: "success",
       });
       queryClient.invalidateQueries({
-        queryKey: [`project-${currentTab}-list`],
+        queryKey: deleteTarget.wrapperQueryKey,
       });
       queryClient.invalidateQueries({
         queryKey: [
-          currentTab === "observe" ? "observe-projects" : "experiment-projects",
+          deleteTarget.type === "observe" ? "observe-projects" : "experiment-projects",
         ],
       });
       gridRef?.current?.clearSelection?.();
@@ -382,9 +389,9 @@ const ProjectWrapperView = () => {
             content={
               <Typography color="text.secondary">
                 Are you sure you want to delete{" "}
-                {selectedRowsData.length === 1
+                {deleteTarget.ids.length === 1
                   ? "this project?"
-                  : `these ${selectedRowsData.length} projects?`}
+                  : `these ${deleteTarget.ids.length} projects?`}
               </Typography>
             }
             action={

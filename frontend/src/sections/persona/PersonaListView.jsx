@@ -104,6 +104,7 @@ const PersonaListView = ({
   const [rowSelection, setRowSelection] = useState({});
   const [columnVisibility, setColumnVisibility] = useState({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState([]);
   const [columnsAnchorEl, setColumnsAnchorEl] = useState(null);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
 
@@ -139,8 +140,8 @@ const PersonaListView = ({
     if (!isSelectable) return rowSelection;
     const selectedIds = new Set(selectedPersonas.map((p) => p.id));
     const map = {};
-    items.forEach((item, idx) => {
-      if (selectedIds.has(item.id)) map[idx] = true;
+    items.forEach((item) => {
+      if (selectedIds.has(item.id)) map[item.id] = true;
     });
     return map;
   }, [isSelectable, selectedPersonas, items, rowSelection]);
@@ -152,9 +153,9 @@ const PersonaListView = ({
         return;
       }
       const selectedIds = new Set(selectedPersonas.map((p) => p.id));
-      items.forEach((item, idx) => {
+      items.forEach((item) => {
         const wasSelected = selectedIds.has(item.id);
-        const nowSelected = Boolean(next?.[idx]);
+        const nowSelected = Boolean(next?.[item.id]);
         if (wasSelected !== nowSelected) {
           onToggleSelect?.(item, nowSelected);
         }
@@ -164,11 +165,7 @@ const PersonaListView = ({
   );
 
   const selectedItems = useMemo(
-    () =>
-      Object.keys(rowSelection)
-        .filter((key) => rowSelection[key])
-        .map((key) => items[parseInt(key, 10)])
-        .filter(Boolean),
+    () => items.filter((item) => rowSelection[item.id]),
     [rowSelection, items],
   );
 
@@ -182,7 +179,7 @@ const PersonaListView = ({
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
-    const ids = deletableSelected.map((p) => p.id);
+    const ids = deleteTargets.filter((p) => !p?.isDefault).map((p) => p.id);
     if (!ids.length) {
       setDeleteDialogOpen(false);
       return;
@@ -201,7 +198,7 @@ const PersonaListView = ({
         { variant: "error" },
       );
     }
-  }, [deletableSelected, bulkDelete, handleCancelSelection]);
+  }, [deleteTargets, bulkDelete, handleCancelSelection]);
 
   const columns = useMemo(
     () => [
@@ -595,7 +592,10 @@ const PersonaListView = ({
             <PersonasBulkActionsBar
               selectedCount={selectedItems.length}
               deletableCount={deletableSelected.length}
-              onDelete={() => setDeleteDialogOpen(true)}
+              onDelete={() => {
+                setDeleteTargets(selectedItems.map((item) => ({ ...item })));
+                setDeleteDialogOpen(true);
+              }}
               onCancel={handleCancelSelection}
             />
           ) : (
@@ -696,6 +696,8 @@ const PersonaListView = ({
         isLoading={isLoading || isFetching}
         rowCount={total}
         rowSelection={effectiveRowSelection}
+        selectionScope={isSelectable ? undefined : [page, pageSize, searchQuery, debouncedSearch, typeFilter, simulationFilter, lockedType, lockedSimulationType]}
+        preserveSelectionOnUnmount={isSelectable}
         onRowSelectionChange={handleRowSelectionChange}
         columnVisibility={columnVisibility}
         onColumnVisibilityChange={setColumnVisibility}
@@ -753,8 +755,8 @@ const PersonaListView = ({
       {/* Delete confirmation */}
       <PersonasBulkDeleteDialog
         open={deleteDialogOpen}
-        count={deletableSelected.length}
-        skippedCount={selectedItems.length - deletableSelected.length}
+        count={deleteTargets.filter((p) => !p?.isDefault).length}
+        skippedCount={deleteTargets.filter((p) => p?.isDefault).length}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteDialogOpen(false)}
         isLoading={bulkDelete.isPending}

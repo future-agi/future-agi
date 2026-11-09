@@ -190,6 +190,7 @@ const DevelopView = () => {
   const [addDatasetDrawerOpen, setAddDatasetDrawerOpen] = useState(false);
   const [openDuplicate, setOpenDuplicate] = useState(false);
   const [openDelete, setOpenDelete] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState([]);
   const [baseColumnDrawerVisible, setBaseColumnDrawerVisible] = useState(false);
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
@@ -210,10 +211,7 @@ const DevelopView = () => {
 
   // Selected rows
   const selectedItems = useMemo(() => {
-    return Object.keys(rowSelection)
-      .filter((key) => rowSelection[key])
-      .map((key) => items[parseInt(key, 10)])
-      .filter(Boolean);
+    return items.filter((item) => rowSelection[item.id]);
   }, [rowSelection, items]);
 
   const handleCancelSelection = useCallback(() => setRowSelection({}), []);
@@ -409,7 +407,10 @@ const DevelopView = () => {
               onCompare={() => {
                 setBaseColumnDrawerVisible(true);
               }}
-              onDelete={() => setOpenDelete(true)}
+              onDelete={() => {
+                setDeleteTargets(selectedItems.map((item) => ({ ...item })));
+                setOpenDelete(true);
+              }}
               onCancel={handleCancelSelection}
               canCreate={RolePermission.DATASETS[PERMISSIONS.CREATE][role]}
               canDelete={RolePermission.DATASETS[PERMISSIONS.DELETE][role]}
@@ -441,6 +442,7 @@ const DevelopView = () => {
         sorting={sorting}
         onSortingChange={setSorting}
         rowSelection={rowSelection}
+        selectionScope={[page, pageSize, searchQuery, debouncedSearch]}
         onRowSelectionChange={setRowSelection}
         onRowClick={(row) => {
           trackEvent(Events.datasetOpened, {
@@ -482,7 +484,7 @@ const DevelopView = () => {
         open={openDelete}
         onClose={handleCloseModals}
         refreshGrid={refreshGrid}
-        selected={selectedItems}
+        selected={deleteTargets}
       />
       {selectedItems.length > 1 && (
         <BaseColumnDrawer

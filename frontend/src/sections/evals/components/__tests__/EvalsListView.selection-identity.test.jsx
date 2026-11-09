@@ -42,31 +42,23 @@ vi.mock("../DisplayOptionsPopover", async (importOriginal) => ({
 }));
 
 /* eslint-disable react/prop-types */
-vi.mock("src/components/data-table", async (importOriginal) => ({
-  ...(await importOriginal()),
-  // Match DataTable's public contract: selection keys are page-local indexes,
-  // not UUIDs. Deliberately do not auto-clear them when cached rows change.
-  DataTable: ({ data, rowSelection, onRowSelectionChange, onSortingChange }) => (
+vi.mock("src/components/data-table", async () => ({
+  DataTable: (await import("src/components/data-table/DataTable")).default,
+  DataTablePagination: (await import("src/components/data-table/DataTablePagination")).default,
+}));
+vi.mock("@mui/x-data-grid", () => ({
+  DataGrid: ({ rows, getRowId, rowSelectionModel, onRowSelectionModelChange, onSortModelChange }) => (
     <section aria-label="Evaluation rows">
-      {data.map((item, index) => (
-        <label key={item.id}>
-          <input
-            type="checkbox"
-            checked={Boolean(rowSelection[index])}
-            onChange={(event) =>
-              onRowSelectionChange({
-                ...rowSelection,
-                [index]: event.target.checked,
-              })
-            }
-          />
+      {rows.map((item) => (
+        <label key={getRowId(item)}>
+          <input type="checkbox" checked={rowSelectionModel.includes(getRowId(item))}
+            onChange={(event) => onRowSelectionModelChange(event.target.checked
+              ? [...rowSelectionModel, getRowId(item)]
+              : rowSelectionModel.filter((id) => id !== getRowId(item)))} />
           {item.name}
         </label>
       ))}
-      <button
-        type="button"
-        onClick={() => onSortingChange([{ id: "name", desc: false }])}
-      >
+      <button type="button" onClick={() => onSortModelChange([{ field: "name", sort: "asc" }])}>
         Sort by name
       </button>
     </section>
@@ -233,7 +225,7 @@ describe("evaluation selection identity", () => {
   });
 
   it.each(["sort", "filter", "search", "page size", "quick tag"])(
-    "keeps the selected UUID after cached %s changes",
+    "clears selected UUIDs after cached %s changes",
     async (transition) => {
       mount();
       choose(A.name);
@@ -257,6 +249,9 @@ describe("evaluation selection identity", () => {
       }
       await waitFor(() => expect(screen.getByLabelText(B.name)).toBeInTheDocument());
       expect(h.post).not.toHaveBeenCalled();
+      await deleteIfAvailable();
+      expect(deletePayloads()).toEqual([]);
+      choose(A.name);
       await deleteIfAvailable();
       expect(deletePayloads()).toEqual([[A.id]]);
     },

@@ -159,7 +159,9 @@ export const useAlertStore = create((set, get) => ({
 
   handleOpenActionModal: (type) => {
     if (!["delete", "mute", "unmute"].includes(type)) return;
-    set({ actionModal: { state: true, type } });
+    set({ actionModal: {
+      state: true, type, rows: get().selectedRows.map((row) => ({ ...row })),
+    } });
   },
 
   handleCloseActionModal: () => {
@@ -231,21 +233,15 @@ export const useAlertStore = create((set, get) => ({
   },
 
   handleRemoveRow: (rowId) => {
-    if (!rowId) return;
-    const { gridRef, selectedRows } = get();
-    const gridApi = gridRef?.current?.api;
-    if (!gridApi) return;
-
-    if (selectedRows?.length === 1) {
-      gridApi.deselectAll();
-      get().handleCloseActionModal();
-      get().handleClearSelection();
-    }
-
-    gridApi.forEachNode((node) => {
-      if (node.isSelected() && node.data.id === rowId) {
-        node.setSelected(false);
-      }
+    if (rowId == null) return;
+    const { gridRef, selectedRows, actionModal } = get();
+    const rows = (actionModal.rows || []).filter((row) => row.id !== rowId);
+    set({
+      selectedRows: selectedRows.filter((row) => row.id !== rowId),
+      actionModal: { ...actionModal, rows, state: rows.length > 0 },
+    });
+    gridRef?.current?.api?.forEachNode((node) => {
+      if (node.isSelected() && node.data.id === rowId) node.setSelected(false);
     });
   },
 

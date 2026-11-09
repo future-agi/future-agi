@@ -4,6 +4,7 @@ import { formatDistanceToNow, differenceInHours } from "date-fns";
 import React, {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useState,
@@ -78,9 +79,15 @@ const ObserveListView = forwardRef(
       [filters],
     );
 
+    useEffect(() => {
+      setPage(0);
+    }, [debouncedSearch, apiFilters]);
+
     const {
       data: apiData,
       isLoading,
+      isFetching,
+      isPlaceholderData,
       isError,
       error,
       refetch,
@@ -116,18 +123,29 @@ const ObserveListView = forwardRef(
     const items = apiData?.rows || [];
     const total = apiData?.totalRows ?? 0;
 
+    useEffect(() => {
+      // Only a settled response for this query can bound the current page.
+      if (!apiData || isFetching || isPlaceholderData || isError) return;
+      const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+      if (page > lastPage) {
+        setPage((current) => Math.min(current, lastPage));
+      }
+    }, [
+      apiData,
+      isFetching,
+      isPlaceholderData,
+      isError,
+      total,
+      pageSize,
+      page,
+    ]);
+
     const handleRowSelectionChange = useCallback(
-      (sel) => {
+      (sel, selected) => {
         setRowSelection(sel);
-        if (setSelectedRowsData) {
-          const ids = Object.keys(sel)
-            .filter((k) => sel[k])
-            .map((k) => items[parseInt(k, 10)]?.id)
-            .filter(Boolean);
-          setSelectedRowsData(ids);
-        }
+        setSelectedRowsData?.(selected.map((row) => row.id));
       },
-      [items, setSelectedRowsData],
+      [setSelectedRowsData],
     );
 
     const columns = useMemo(
@@ -286,6 +304,7 @@ const ObserveListView = forwardRef(
           sorting={sorting}
           onSortingChange={setSorting}
           rowSelection={rowSelection}
+          selectionScope={[page, pageSize, searchQuery, debouncedSearch, apiFilters]}
           onRowSelectionChange={handleRowSelectionChange}
           onRowClick={(row) =>
             navigate(`/dashboard/observe/${row.id}/llm-tracing`)

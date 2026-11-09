@@ -44,7 +44,6 @@ export default function AlertsListView() {
     searchQuery,
     setHasData,
     selectedRows,
-    setSelectedRows,
     setTotalRows,
     setCurrentPageAlertList,
     setColumns,
@@ -184,22 +183,18 @@ export default function AlertsListView() {
 
   // Sync row selection → store selectedRows
   const handleRowSelectionChange = useCallback(
-    (newSelection) => {
+    (newSelection, selected) => {
       setRowSelection(newSelection);
-      const newSelected = Object.keys(newSelection)
-        .filter((k) => newSelection[k])
-        .map((k) => items[parseInt(k, 10)])
-        .filter(Boolean);
-      setSelectedRows(newSelected);
+      useAlertStore.setState({
+        selectedRows: selected, selectedAll: false, excludingIds: new Set(),
+      });
     },
-    [items, setSelectedRows],
+    [],
   );
 
   // When store's handleCancelSelection is called, also clear local rowSelection
   useEffect(() => {
-    if (selectedRows.length === 0) {
-      setRowSelection({});
-    }
+    setRowSelection(Object.fromEntries(selectedRows.map((row) => [row.id, true])));
   }, [selectedRows]);
 
   const columns = useMemo(
@@ -381,6 +376,15 @@ export default function AlertsListView() {
           isLoading={isLoading}
           rowCount={total}
           rowSelection={rowSelection}
+          selectionScope={[
+            page,
+            pageSize,
+            searchQuery,
+            debouncedSearchTerm,
+            extractedFilterObject,
+            observeId,
+            mainPage,
+          ]}
           onRowSelectionChange={handleRowSelectionChange}
           columnVisibility={columnVisibility}
           onRowClick={handleRowClick}
