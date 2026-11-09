@@ -337,10 +337,12 @@ def _responds_with_exception(handler):
     return False
 
 
-def test_eval_runs_show_exception_text_only_for_code_eval_setup_errors():
-    """Where these views run an eval, which may raise anything, only a
-    CodeEvalSetupError's text reaches the response: its message is always one
-    of the backend's own (sandbox.SETUP_ERROR_MESSAGES)."""
+def test_eval_runs_show_exception_text_only_for_safe_setup_errors():
+    """Only backend-authored setup messages may reach the response.
+
+    EvalConfigError joins CodeEvalSetupError as an explicit safe type; arbitrary
+    ValueError and provider exceptions must still use the private-error boundary.
+    """
     run_evals = set()
     for (view, _), method in zip(_TARGET_METHODS, _target_method_nodes(), strict=True):
         for node in ast.walk(method):
@@ -357,7 +359,7 @@ def test_eval_runs_show_exception_text_only_for_code_eval_setup_errors():
                 if handler.name and _responds_with_exception(handler):
                     assert (
                         isinstance(handler.type, ast.Name)
-                        and handler.type.id == "CodeEvalSetupError"
+                        and handler.type.id in {"CodeEvalSetupError", "EvalConfigError"}
                     ), f"{view}.{method.name} line {handler.lineno}"
     assert run_evals == {
         "TraceEvalView",

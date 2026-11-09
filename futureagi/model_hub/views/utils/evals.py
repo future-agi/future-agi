@@ -9,7 +9,12 @@ from django.db import close_old_connections
 
 from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.run_prompt.litellm_models import MissingProviderKeyError
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
+from model_hub.utils.eval_input_validation import (
+    EvalConfigError,
+    validate_eval_configuration,
+)
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
@@ -378,6 +383,7 @@ def run_eval_func(
         from model_hub.utils.eval_input_validation import validate_eval_inputs
 
         partial_input_warning, _run_kwargs = validate_eval_inputs(template, _run_kwargs)
+        validate_eval_configuration(eval_id, eval_instance)
 
         eval_result = eval_instance.run(**_run_kwargs)
         end_time = time.time()
@@ -611,7 +617,10 @@ def run_eval_func(
             logger.exception(f"Error updating api call log row status: {str(exc)}")
             pass
 
-        logger.exception(f"Error running evaluation: {str(e)}")
+        if isinstance(e, (EvalConfigError, MissingProviderKeyError)):
+            logger.warning("evaluation_configuration_invalid", error_type=type(e).__name__)
+        else:
+            logger.exception(f"Error running evaluation: {str(e)}")
         raise e
 
 

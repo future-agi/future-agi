@@ -9,7 +9,10 @@ from model_hub.queries.tts_voices import resolve_voice_id
 
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
 
-from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+from agentic_eval.core_evals.run_prompt.litellm_models import (
+    LiteLLMModelManager,
+    MissingProviderKeyError,
+)
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.queries.tts_voices import resolve_voice_id
 from model_hub.utils import call_websocket
@@ -3216,6 +3219,10 @@ class RunPrompt:
             # Convert to legacy format (response, value_info)
             return handler_response.to_value_info()
 
+        except MissingProviderKeyError:
+            # Expected setup failure: preserve the type for the run boundary.
+            # Logging here would multiply the warning for multi-row runs.
+            raise
         except Exception as e:
             context = ErrorContext(
                 model=self.model,
@@ -3228,7 +3235,6 @@ class RunPrompt:
                 template_id=template_id,
             )
             concise_error = handle_api_error(e, logger, context)
-            logger.error(f"[NEW] An error occurred: {concise_error}")
             raise Exception(concise_error) from e
 
     async def _litellm_response_async_new(
@@ -3312,6 +3318,10 @@ class RunPrompt:
             # Convert to legacy format (response, value_info)
             return handler_response.to_value_info()
 
+        except MissingProviderKeyError:
+            # Expected setup failure: preserve the type for the run boundary.
+            # Logging here would multiply the warning for multi-row runs.
+            raise
         except Exception as e:
             context = ErrorContext(
                 model=self.model,
@@ -3324,7 +3334,6 @@ class RunPrompt:
                 template_id=template_id,
             )
             concise_error = handle_api_error(e, logger, context)
-            logger.error(f"[NEW] An error occurred: {concise_error}")
             raise Exception(concise_error) from e
 
     # =========================================================================

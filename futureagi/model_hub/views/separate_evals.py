@@ -36,6 +36,7 @@ from agentic_eval.core_evals.run_prompt.litellm_models import (
     MissingProviderKeyError,
     missing_provider_key_message,
 )
+from model_hub.utils.eval_input_validation import EvalConfigError
 from model_hub.constants import (
     EVAL_PLAYGROUND_CURL_CODE,
     EVAL_PLAYGROUND_JS_CODE,
@@ -6811,6 +6812,24 @@ class TraceEvalView(APIView):
             except EvaluationDenied as denial:
                 logger.warning("trace_evaluation_denied", code=denial.code)
                 return denial.response(self._gm)
+            except (EvalConfigError, MissingProviderKeyError) as eval_error:
+                from tfc.ee_gates import jev_error_message
+
+                # Trace runs keep their explicit failed-result contract (HTTP 200).
+                # The shared runner already emitted the configuration warning.
+                response = TraceEvalResponse(
+                    template_id=str(template_id),
+                    trace_id=req.trace_id,
+                    status="failed",
+                    reason=(
+                        jev_error_message(eval_error)
+                        or (
+                            missing_provider_key_message(eval_error.provider)
+                            if isinstance(eval_error, MissingProviderKeyError)
+                            else str(eval_error)
+                        )
+                    ),
+                )
             except Exception as eval_error:
                 from tfc.ee_gates import jev_error_message
 
@@ -7411,6 +7430,9 @@ class EvalPlayGroundAPIView(APIView):
                 return self._gm.success_response(
                     response if response else "Evaluation has been updated."
                 )
+            except EvalConfigError as exc:
+                # The runner records the failed call and logs this once at WARNING.
+                return self._gm.bad_request(str(exc))
             except CodeEvalSetupError as exc:
                 # This install cannot run the code eval (no executor, or no
                 # Node.js for JavaScript); the sandbox's message says how to
@@ -8134,6 +8156,8 @@ class TestEvaluationTemplateAPIView(APIView):
 
             return self._gm.success_response(response)
 
+        except EvalConfigError as exc:
+            return self._gm.bad_request(str(exc))
         except CodeEvalSetupError as exc:
             # As in the eval playground: the sandbox's setup hint is safe to show.
             logger.warning(

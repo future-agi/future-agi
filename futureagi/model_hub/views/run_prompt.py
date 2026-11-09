@@ -27,7 +27,11 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
 # (available_models always available)
-from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+from agentic_eval.core_evals.run_prompt.litellm_models import (
+    LiteLLMModelManager,
+    MissingProviderKeyError,
+    missing_provider_key_message,
+)
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
@@ -1915,6 +1919,23 @@ class PreviewRunPromptColumnView(APIView):
                 except Exception:
                     pass
 
+            # Use the execution scope, including custom-model credentials and
+            # the existing workspace-over-organization precedence. A missing key
+            # is a run-wide setup failure, never a generated response per row.
+            organization_id = dataset.organization_id
+            workspace_id = dataset.workspace_id
+            model_manager = LiteLLMModelManager(
+                config.get("model", ""), organization_id=organization_id
+            )
+            provider = model_manager.get_provider(
+                model_name=config.get("model", ""), organization_id=organization_id
+            )
+            model_manager.get_api_key(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                provider=provider,
+            )
+
             responses = []
             for row in rows:
                 try:
@@ -1931,8 +1952,7 @@ class PreviewRunPromptColumnView(APIView):
 
                     run_prompt = RunPrompt(
                         model=config.get("model", ""),
-                        organization_id=getattr(request, "organization", None)
-                        or request.user.organization.id,
+                        organization_id=organization_id,
                         messages=messages,
                         temperature=config.get("temperature"),
                         frequency_penalty=config.get("frequency_penalty"),
@@ -1944,11 +1964,7 @@ class PreviewRunPromptColumnView(APIView):
                         tools=tools_config,
                         output_format=config.get("output_format", "string"),
                         run_prompt_config=config.get("run_prompt_config"),
-                        workspace_id=(
-                            dataset.workspace.id
-                            if dataset and dataset.workspace
-                            else None
-                        ),
+                        workspace_id=workspace_id,
                     )
                     response, value_infos = run_prompt.litellm_response()
 
@@ -1968,6 +1984,9 @@ class PreviewRunPromptColumnView(APIView):
                     else:
                         responses.append(response)
 
+                except MissingProviderKeyError:
+                    # Credentials may have been removed after preflight.
+                    raise
                 except Exception as e:
                     responses.append(str(e))
                     value_infos = {"metadata": {"usage": {}, "cost": {}}}
@@ -1979,6 +1998,11 @@ class PreviewRunPromptColumnView(APIView):
                 }
             )
 
+        except MissingProviderKeyError as exc:
+            logger.warning(
+                "prompt_preview_configuration_invalid", error_type=type(exc).__name__
+            )
+            return self._gm.bad_request(missing_provider_key_message(exc.provider))
         except Exception as e:
             error_message = get_specific_error_message(e)
             logger.exception(f"Error in preview run prompt column: {error_message}")
