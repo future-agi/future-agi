@@ -1,7 +1,9 @@
 import os
 
 import structlog
-from mixpanel import Consumer, Mixpanel
+from mixpanel import Consumer, Mixpanel, MixpanelException
+from opentelemetry import metrics
+from requests.exceptions import ConnectionError, ProxyError, SSLError, Timeout
 
 from accounts.models import User
 from tfc.middleware.workspace_context import get_current_organization
@@ -21,6 +23,30 @@ _token_warning_logged = False
 # login makes three of them.
 MIXPANEL_REQUEST_TIMEOUT_SECONDS = 5
 MIXPANEL_RETRY_LIMIT = 0
+_delivery_failures = metrics.get_meter(__name__).create_counter(
+    "analytics.mixpanel.delivery_failures",
+    description="Best-effort analytics transport failures",
+)
+
+
+def _log_delivery_failure(error, operation, failure_event):
+    # The SDK wraps requests errors, including programming errors. Only a
+    # transport disconnect/timeout is expected for this best-effort integration.
+    cause = error.__cause__ if isinstance(error, MixpanelException) else error
+    if isinstance(cause, (ConnectionError, Timeout)) and not isinstance(
+        cause, (SSLError, ProxyError)
+    ):
+        _delivery_failures.add(1, {"operation": operation})
+        logger.warning(
+            "mixpanel_delivery_unavailable",
+            reason="transport_unavailable",
+            outcome="handled",
+            operation=operation,
+            error_type=type(cause).__name__,
+            exc_info=True,
+        )
+    else:
+        logger.exception(failure_event)
 
 
 class MixpanelTracker:
@@ -71,7 +97,7 @@ class MixpanelTracker:
                 },
             )
         except Exception as e:
-            logger.exception(f"Error updating organization details in Mixpanel: {e}")
+            _log_delivery_failure(e, "update_org_details", "mixpanel_update_org_failed")
 
     def set_details(self, user: User):
         """Set the user's Mixpanel profile and org group. Never raises: this
@@ -80,8 +106,8 @@ class MixpanelTracker:
             return
         try:
             self._set_details(user)
-        except Exception:
-            logger.exception("mixpanel_set_details_failed", user_id=str(user.id))
+        except Exception as e:
+            _log_delivery_failure(e, "set_details", "mixpanel_set_details_failed")
 
     def _set_details(self, user: User):
         from accounts.utils import get_user_organization
@@ -144,7 +170,7 @@ class MixpanelTracker:
             user_id = str(properties.get("$user_id", "unknown"))
             self.mp.track(user_id, event_name, properties)
         except Exception as e:
-            logger.exception(f"Error tracking Mixpanel event: {e}")
+            _log_delivery_failure(e, "track_event", "mixpanel_track_event_failed")
 
 
 mixpanel_tracker = MixpanelTracker()

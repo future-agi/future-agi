@@ -765,12 +765,18 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             offset = call_metadata.get("recording_offset_ms", 0)
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
+            rows = CallTranscriptSerializer(
+                filtered_transcripts,
+                many=True,
+                context={"recording_offset_ms": offset},
+            ).data
+            # Pending calls commonly have neither transcripts nor provider data.
+            # Resolve only when there are roles to align; nonempty transcripts
+            # still diagnose missing/unsupported provider metadata.
+            if not rows:
+                return []
             return SpeakerRoleResolver.align_transcript_rows(
-                CallTranscriptSerializer(
-                    filtered_transcripts,
-                    many=True,
-                    context={"recording_offset_ms": offset},
-                ).data,
+                rows,
                 provider=SpeakerRoleResolver.detect_provider(
                     getattr(obj, "provider_call_data", None)
                 ),
@@ -1579,12 +1585,18 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             offset = call_metadata.get("recording_offset_ms", 0)
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
+            rows = CallTranscriptSerializer(
+                filtered_transcripts,
+                many=True,
+                context={"recording_offset_ms": offset},
+            ).data
+            # Pending calls commonly have neither transcripts nor provider data.
+            # Resolve only when there are roles to align; nonempty transcripts
+            # still diagnose missing/unsupported provider metadata.
+            if not rows:
+                return []
             return SpeakerRoleResolver.align_transcript_rows(
-                CallTranscriptSerializer(
-                    filtered_transcripts,
-                    many=True,
-                    context={"recording_offset_ms": offset},
-                ).data,
+                rows,
                 provider=SpeakerRoleResolver.detect_provider(
                     getattr(obj, "provider_call_data", None)
                 ),

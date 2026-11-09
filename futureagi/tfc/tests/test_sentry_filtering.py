@@ -5,7 +5,7 @@ import without the Sentry SDK or Django settings. They lock in the two things
 that keep the issue stream clean and safe:
 
 - Infrastructure / expected events are dropped (logger prefix, ignored
-  exception types, expected 4xx, expected log messages).
+  explicitly classified log-only outcomes).
 - Real errors survive, with their secrets/PII redacted before send.
 """
 
@@ -57,24 +57,21 @@ def test_drops_saml_dependency_loggers_but_keeps_saml2_auth():
         assert before_send({"logger": name, "message": "boom"}, {}) is not None
 
 
-def test_drops_ignored_exception_types():
-    assert before_send({}, _hint(ConnectionResetError(104, "reset"))) is None
-    assert before_send({}, _hint(BrokenPipeError())) is None
+def test_keeps_disconnects_and_security_failures():
+    from django.core.exceptions import SuspiciousOperation
+
+    for error in (ConnectionResetError(104, "reset"), BrokenPipeError(), SuspiciousOperation()):
+        assert before_send({}, _hint(error)) is not None
 
 
-def test_drops_expected_4xx_but_keeps_auth_failures():
-    assert before_send({}, _hint(_Exc(404))) is None
-    assert before_send({}, _hint(_Exc(429))) is None
-    # 401/403 are kept for security monitoring.
-    assert before_send({}, _hint(_Exc(401))) is not None
-    assert before_send({}, _hint(_Exc(403))) is not None
-    # 5xx is always kept.
-    assert before_send({}, _hint(_Exc(500))) is not None
+def test_keeps_http_errors_without_explicit_outcome_classification():
+    for code in (400, 401, 403, 404, 422, 429, 500, 503):
+        assert before_send({}, _hint(_Exc(code))) is not None
 
 
-def test_drops_known_expected_messages():
-    event = {"message": "trace_payload_not_found_in_redis"}
-    assert before_send(event, {}) is None
+def test_keeps_messages_that_only_resemble_expected_outcomes():
+    for message in ("trace_payload_not_found_in_redis", "Failed to load vertex credentials"):
+        assert before_send({"message": message}, {}) is not None
 
 
 # Real errors: kept
