@@ -17,6 +17,7 @@ from tracer.services.derived_metrics.parts import (
 )
 from tracer.services.derived_metrics.queries import (
     QUERY_SETTINGS,
+    UNCERTAINTY_COLUMNS,
     WINDOW_SCOPE_GUARD_SQL,
     Scope,
     aggregate_select,
@@ -280,6 +281,44 @@ UNCERTAINTY_FIXTURES = {
         *_cohort([unit(y, 0.5, population=8) for y in (1, 1)], "west"),
     ],
 }
+
+
+@pytest.mark.parametrize("fixture", sorted(UNCERTAINTY_FIXTURES))
+def test_packed_projection_matches_every_unpacked_statistic(metric_ch, fixture):
+    """The shallow read projection is equivalent to the persisted CI pipeline.
+
+    Cover every frozen uncertainty fixture, including cancellation, absent design,
+    missing/invalid inputs, padding and heterogeneous weights. Compare all fields,
+    not just the point or the presence of an interval, at the existing tolerance.
+    """
+    scope, snapshot = Scope(uuid4(), uuid4(), uuid4()), uuid4()
+    insert_units(metric_ch, scope, snapshot, UNCERTAINTY_FIXTURES[fixture]())
+    source = "SELECT * FROM derived_metric_inputs WHERE snapshot_id = %(snapshot)s"
+    for text in FORMULAS:
+        formula = compile_formula(text, ["y", "x"])
+        params = {"snapshot": str(snapshot), **formula.parameters}
+        for rollup in ("overall", "cohort"):
+            parts = stratum_parts_select(
+                source, formula, rollup=rollup, scope_column=LEGACY_SCOPE
+            )
+            expected = by_group(
+                rows_as_dicts(
+                    metric_ch,
+                    combine_parts_select(parts, formula, rollup=rollup),
+                    params,
+                )
+            )
+            actual = rows_as_dicts(
+                metric_ch,
+                combine_parts_select(
+                    parts, formula, rollup=rollup, packed_uncertainty=True
+                ),
+                params,
+            )
+            assert by_group(actual).keys() == expected.keys(), (text, rollup)
+            for row in actual:
+                row.update(zip(UNCERTAINTY_COLUMNS, row.pop("ci"), strict=True))
+                assert_same(row, expected[row["group_key"]])
 
 
 @pytest.fixture

@@ -160,6 +160,8 @@ def _merge_parts_sql(parts_sql: str, *, per_period: bool = False) -> str:
     Missing and locally invalid rows carry scope evidence too. Reject scoped
     rows before pooling their points/moments, just as snapshot_select does, even
     if two closed scopes share a stratum label or occur in different batches.
+    Closed-design factors are derived here from the merged, guarded cells, never
+    per bucket. Keeping their projection here avoids another wide subquery.
     """
     bounds = {
         "p_min": ("minIf", "valid_count > 0"),
@@ -212,11 +214,24 @@ def _merge_parts_sql(parts_sql: str, *, per_period: bool = False) -> str:
         masked.append(f"{expr} AS {name}_h")
     period_key = "period_key, " if per_period else ""
     scope_partition = "PARTITION BY period_key" if per_period else ""
-    return f"""SELECT {period_key}group_key, scope_key, stratum_key, {", ".join(masked)} FROM (
-        SELECT *, minIf(scope_min_merged, nonempty_scope_count_merged > 0) OVER ({scope_partition}) !=
-                  maxIf(scope_max_merged, nonempty_scope_count_merged > 0) OVER ({scope_partition}) AS mixed_scope
-        FROM (SELECT {period_key}group_key, scope_key, stratum_key, {", ".join(fields)}
-              FROM ({parts_sql}) GROUP BY {period_key}scope_key, stratum_key, group_key)
+    # Window functions run after GROUP BY. Evaluate the guard on the same merged
+    # extrema here, rather than adding another SELECT over every statistic.
+    return f"""SELECT {period_key}group_key, scope_key, stratum_key, {", ".join(masked)},
+        ifNull(weighted_n_h, 0) AS a_y_h, ifNull(weighted_d_h, 0) AS a_x_h,
+        ifNull(p_min_h * toFloat64(population_min_h), 0) AS stratum_n_raw_h,
+        round(stratum_n_raw_h) AS stratum_n_h,
+        valid_count_h > 0 AND population_missing_h = 0 AND ifNull(
+            p_min_h != p_max_h OR population_min_h != population_max_h
+            OR valid_count_h > stratum_n_h
+            OR abs(stratum_n_raw_h - stratum_n_h) > 1e-6 * greatest(1, stratum_n_h), 1) AS inconsistent_h,
+        valid_count_h > 0 AND ifNull(p_max_h < 1, 0) AND stratum_n_h < 2 AS singleton_h,
+        if(valid_count_h = 0 OR inconsistent_h OR ifNull(p_min_h >= 1, 1) OR stratum_n_h < 2,
+            0, (1 - assumeNotNull(p_min_h)) * stratum_n_h / (stratum_n_h - 1)) AS fpc_h
+    FROM (
+        SELECT {period_key}group_key, scope_key, stratum_key, {", ".join(fields)},
+            minIf(scope_min_merged, nonempty_scope_count_merged > 0) OVER ({scope_partition}) !=
+            maxIf(scope_max_merged, nonempty_scope_count_merged > 0) OVER ({scope_partition}) AS mixed_scope
+        FROM ({parts_sql}) GROUP BY {period_key}scope_key, stratum_key, group_key
     )"""
 
 
@@ -293,21 +308,28 @@ def combine_parts_select(
             for i, name in enumerate(UNCERTAINTY_COLUMNS, 1)
         )
     )
-    return f"""
-        SELECT group_key,
-            if(status = 'ok', computed_value, NULL) AS value,
-            if(valid_count > 0 AND isFinite(weighted_n), weighted_n, NULL) AS numerator,
-            if(valid_count > 0 AND isFinite({denominator}), {denominator}, NULL) AS denominator,
-            status, unit_count, valid_count, missing_count, invalid_probability_count,
-            {ci_columns}
-        FROM (
-            SELECT *,
-                {value} AS computed_value,
-                multiIf(unit_count = 0, 'no_data', invalid_probability_count > 0, 'invalid_probability',
-                    valid_count = 0, 'missing_inputs', {zero}, 'zero_denominator',
-                    NOT isFinite(weighted_n) OR NOT isFinite(weighted_d) OR NOT isFinite(computed_value), 'non_finite', 'ok') AS status,
-                arrayJoin({uncertainty_array_sql(ratio_kind, rate_eligible=formula.rate_eligible)}) AS ci
-            FROM (
+    value_column = "_metric_read_value" if packed_uncertainty else "computed_value"
+    status_column = "_metric_read_status" if packed_uncertainty else "status"
+    output_columns = f"""group_key,
+        if({status_column} = 'ok', {value_column}, NULL) AS value,
+        if(valid_count > 0 AND isFinite(weighted_n), weighted_n, NULL) AS numerator,
+        if(valid_count > 0 AND isFinite({denominator}), {denominator}, NULL) AS denominator,
+        {status_column} AS status, unit_count, valid_count, missing_count, invalid_probability_count"""
+    value_bindings = f"""{value} AS {value_column},
+        multiIf(unit_count = 0, 'no_data', invalid_probability_count > 0, 'invalid_probability',
+            valid_count = 0, 'missing_inputs', {zero}, 'zero_denominator',
+            NOT isFinite(weighted_n) OR NOT isFinite(weighted_d) OR NOT isFinite({value_column}), 'non_finite', 'ok') AS {status_column}"""
+    interval_array = uncertainty_array_sql(
+        ratio_kind, rate_eligible=formula.rate_eligible
+    )
+    if packed_uncertainty:
+        # WITH bindings propagate into subqueries. Never shadow a source field's
+        # status (e.g. live_parts_select's open-unit filter). Bind the CI inputs
+        # lexically, and reserve distinct names for the final point expressions.
+        interval_array = f"""arrayMap((computed_value, status) -> ({interval_array})[1],
+            [{value_column}], [{status_column}])"""
+    interval = f"arrayJoin({interval_array}) AS ci"
+    aggregates = f"""
                 SELECT {group_output} AS group_key, sum(unit_count_h) AS unit_count, sum(valid_count_h) AS valid_count,
                     sum(missing_count_h) AS missing_count, sum(invalid_count_h) AS invalid_probability_count,
                     sum(weighted_n_h) AS weighted_n, sum(weighted_d_h) AS weighted_d,
@@ -332,22 +354,15 @@ def combine_parts_select(
                         AS support_bad,
                     if(design_low = 'unweighted', {iid_tail},
                         countIf(known_sampled_h > 0 AND ({cell_tail})) > 0) AS support_missing_tail
-                FROM (
-                    SELECT *,
-                        ifNull(weighted_n_h, 0) AS a_y_h, ifNull(weighted_d_h, 0) AS a_x_h,
-                        ifNull(p_min_h * toFloat64(population_min_h), 0) AS stratum_n_raw_h,
-                        round(stratum_n_raw_h) AS stratum_n_h,
-                        valid_count_h > 0 AND population_missing_h = 0 AND ifNull(
-                            p_min_h != p_max_h OR population_min_h != population_max_h
-                            OR valid_count_h > stratum_n_h
-                            OR abs(stratum_n_raw_h - stratum_n_h) > 1e-6 * greatest(1, stratum_n_h), 1) AS inconsistent_h,
-                        valid_count_h > 0 AND ifNull(p_max_h < 1, 0) AND stratum_n_h < 2 AS singleton_h,
-                        if(valid_count_h = 0 OR inconsistent_h OR ifNull(p_min_h >= 1, 1) OR stratum_n_h < 2,
-                            0, (1 - assumeNotNull(p_min_h)) * stratum_n_h / (stratum_n_h - 1)) AS fpc_h
-                    FROM (
-                        {_merge_parts_sql(parts_sql, per_period=per_period)}
-                    )
-                ) WHERE {group_filter} {group_clause}
-            )
-        )
+                FROM ({_merge_parts_sql(parts_sql, per_period=per_period)})
+                WHERE {group_filter} {group_clause}
     """
+    if packed_uncertainty:
+        # One CI projection needs no separate SELECT to unpack the tuple. Keeping
+        # its bindings in this final SELECT avoids re-analyzing the entire wide
+        # source through another subquery. The estimator and all scope/stratum
+        # boundaries are unchanged; only the projection depth is reduced.
+        return f"WITH {value_bindings} SELECT {output_columns}, {interval} FROM ({aggregates})"
+    return f"""SELECT {output_columns}, {ci_columns} FROM (
+        SELECT *, {value_bindings}, {interval} FROM ({aggregates})
+    )"""
