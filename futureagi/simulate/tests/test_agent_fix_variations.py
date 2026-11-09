@@ -42,6 +42,7 @@ from simulate.services.hosted_harness import (
 )
 from simulate.services.hosted_harness_conversation import (
     promote_conversation_checkpoint,
+    publish_conversation_workspace,
 )
 from simulate.temporal.types.agent_fix import VariationsStep
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixture
@@ -155,9 +156,24 @@ def _builder_save(environment, numbers=(1, 2, 3), *, extra=()):
     return archives.pack_archive(files)
 
 
+def _turn_ended(command, sequence):
+    HostedHarnessConversationEvent.no_workspace_objects.get_or_create(
+        event_id=f"turn-{command.id}",
+        defaults={
+            "conversation": command.conversation,
+            "sequence": sequence,
+            "kind": "turn_completed",
+            "payload": {"command_message_id": str(command.id), "outcome": "success"},
+            "digest": "sha256:" + "e" * 64,
+            "emitted_at": timezone.now(),
+        },
+    )
+
+
 def _land(fix_run, storage, body, *, sequence=1):
     """The builder's turn finished: its checkpoint is promoted as any chat turn's is."""
     command = _command(fix_run)
+    _turn_ended(command, 1000 + sequence)
     key, digest = _put_conversation_checkpoint(command.conversation, storage, body)
     return promote_conversation_checkpoint(
         command.conversation,
@@ -397,6 +413,44 @@ class TestThePrivateSuite:
             str(conversation.id)
         ]
         assert drafts.expected_for(published, token) is None
+
+    def test_a_save_while_the_builder_works_neither_lands_nor_ends_the_fix(
+        self, environment, fix_run, storage
+    ):
+        command = _command(fix_run)
+        conversation = command.conversation
+        token = drafts.compose_workspace(environment, conversation).token
+        # The builder saves its workspace before it has written anything.
+        key, digest = _put_conversation_checkpoint(
+            conversation, storage, _builder_save(environment, ())
+        )
+        # The turn is running: its command was delivered to the builder.
+        HostedHarnessConversationMessage.no_workspace_objects.filter(
+            id=command.id
+        ).update(state="delivered")
+        conversation.latest_workspace_object_key = key
+        conversation.latest_workspace_digest = digest
+        conversation.save(
+            update_fields=["latest_workspace_object_key", "latest_workspace_digest"]
+        )
+
+        published = publish_conversation_workspace(conversation, digest=digest)
+
+        assert (published["applied"], published["code"]) == (
+            False,
+            "fix_variations_not_final",
+        )
+        fix_run.refresh_from_db()
+        assert (fix_run.state, fix_run.suite_version_id) == (
+            AgentFixRun.State.RUNNING,
+            None,
+        )
+        assert drafts.open_draft(environment, "suite") is None
+        environment.refresh_from_db()
+        checkpoint = environment.payload["metadata"]["conversation_checkpoints"][
+            str(conversation.id)
+        ]
+        assert drafts.expected_for(checkpoint, token) is None
 
     def test_is_made_once_however_often_the_save_lands(
         self, environment, fix_run, storage

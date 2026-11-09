@@ -280,7 +280,23 @@ def land(
     """Make the builder's save of a fix's variations the fix's private suite version: the
     source run's suite and the variations of its failing cases, under keys of the fix's
     own, each with the sub-goals of the case it varies. The environment's suite, drafts
-    and scenarios do not change. A save that cannot be used ends the fix."""
+    and scenarios do not change. A save that cannot be used ends the fix.
+
+    Only the finished turn's save lands: the builder also saves while it works, and those
+    are refused as not saved. Every save of the turn outdates the chat's workspace, so a
+    later chat save from that sandbox never carries the variations into a draft."""
+    _outdate_workspace(environment, conversation)
+    if not HostedHarnessConversationEvent.no_workspace_objects.filter(
+        conversation=conversation,
+        kind="turn_completed",
+        payload__command_message_id=str(command.id),
+    ).exists():
+        raise HostedHarnessError(
+            "fix_variations_not_final",
+            "Kept for the fix, not saved to the environment: the fix takes these"
+            " variations when this turn ends",
+            status_code=409,
+        )
     fix_run = (
         AgentFixRun.no_workspace_objects.select_related(
             "source_run__suite_version", "source_run__environment_version"
@@ -370,10 +386,6 @@ def land(
         ).update(deleted=True, deleted_at=timezone.now())
         locked.suite_version = version
         locked.save(update_fields=["suite_version", "updated_at"])
-        _outdate_workspace(locked_environment, conversation)
-        transaction.on_commit(
-            lambda: drafts.retire_chat_runtime(locked_environment, conversation)
-        )
     logger.info(
         "agent_fix_variations_landed",
         fix_run=str(fix_run.id),
@@ -476,21 +488,25 @@ def _with_fields(body: bytes, fields: Mapping[str, Any]) -> bytes:
 def _outdate_workspace(
     environment: HostedHarnessJob, conversation: HostedHarnessConversation
 ) -> None:
-    """The chat's sandbox still holds the variations. A new token for its composed
-    workspace makes any later save from that sandbox an outdated one, refused as
-    ``draft_changed``, so they never reach the environment's drafts."""
-    payload = dict(environment.payload or {})
-    metadata = dict(payload.get("metadata") or {})
-    checkpoints = dict(metadata.get("conversation_checkpoints") or {})
-    entry = dict(checkpoints.get(str(conversation.id)) or {})
-    if not isinstance(entry.get("draft_basis"), dict):
-        return
-    entry["draft_basis"] = {**entry["draft_basis"], "token": uuid.uuid4().hex}
-    checkpoints[str(conversation.id)] = entry
-    metadata["conversation_checkpoints"] = checkpoints
-    payload["metadata"] = metadata
-    environment.payload = payload
-    environment.save(update_fields=["payload", "updated_at"])
+    """The chat's sandbox holds the variations. A new token for its composed workspace
+    makes any later save from that sandbox an outdated one, refused as ``draft_changed``,
+    so they never reach the environment's drafts; once idle, the sandbox is retired."""
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=environment.id
+        )
+        payload = dict(locked.payload or {})
+        metadata = dict(payload.get("metadata") or {})
+        checkpoints = dict(metadata.get("conversation_checkpoints") or {})
+        entry = dict(checkpoints.get(str(conversation.id)) or {})
+        if isinstance(entry.get("draft_basis"), dict):
+            entry["draft_basis"] = {**entry["draft_basis"], "token": uuid.uuid4().hex}
+            checkpoints[str(conversation.id)] = entry
+            metadata["conversation_checkpoints"] = checkpoints
+            payload["metadata"] = metadata
+            locked.payload = payload
+            locked.save(update_fields=["payload", "updated_at"])
+        transaction.on_commit(lambda: drafts.retire_chat_runtime(locked, conversation))
 
 
 def _settle(
