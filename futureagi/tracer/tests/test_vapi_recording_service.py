@@ -6,7 +6,7 @@ import json
 import sys
 import uuid
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, PropertyMock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import httpx
 import pytest
