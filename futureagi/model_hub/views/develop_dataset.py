@@ -23,7 +23,14 @@ import pandas as pd
 import requests
 import structlog
 from django.core.exceptions import ValidationError
-from django.db import DatabaseError, close_old_connections, connection, transaction
+from django.db import (
+    DatabaseError,
+    InterfaceError,
+    OperationalError,
+    close_old_connections,
+    connection,
+    transaction,
+)
 from django.db.models import (
     Case,
     Count,
@@ -7236,75 +7243,83 @@ class DownloadDatasetView(APIView):
         # Get dataset and verify it exists
         dataset = get_object_or_404(Dataset, id=dataset_id)
 
-        # Get all columns in the correct order
-        _exp_sources = [
-            SourceChoices.EXPERIMENT.value,
-            SourceChoices.EXPERIMENT_EVALUATION.value,
-            SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-        ]
-        column_order = dataset.column_order or []
-        if column_order:
-            from django.db.models import Case, IntegerField, Value, When
-
-            order_cases = [
-                When(id=uuid.UUID(col_id), then=Value(idx))
-                for idx, col_id in enumerate(column_order)
+        try:
+            # Get all columns in the correct order
+            _exp_sources = [
+                SourceChoices.EXPERIMENT.value,
+                SourceChoices.EXPERIMENT_EVALUATION.value,
+                SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
             ]
-            columns = (
-                Column.objects.filter(dataset_id=dataset_id, deleted=False)
-                .annotate(
-                    custom_order=Case(
-                        *order_cases,
-                        default=Value(len(column_order)),
-                        output_field=IntegerField(),
+            column_order = dataset.column_order or []
+            if column_order:
+                from django.db.models import Case, IntegerField, Value, When
+
+                order_cases = [
+                    When(id=uuid.UUID(col_id), then=Value(idx))
+                    for idx, col_id in enumerate(column_order)
+                ]
+                columns = (
+                    Column.objects.filter(dataset_id=dataset_id, deleted=False)
+                    .annotate(
+                        custom_order=Case(
+                            *order_cases,
+                            default=Value(len(column_order)),
+                            output_field=IntegerField(),
+                        )
                     )
+                    .order_by("custom_order")
                 )
-                .order_by("custom_order")
+            else:
+                columns = Column.objects.filter(
+                    dataset_id=dataset_id, deleted=False
+                ).order_by("id")
+            if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
+                columns = columns.exclude(source__in=_exp_sources)
+
+            # Create DataFrame
+            rows = Row.objects.filter(dataset=dataset, deleted=False).order_by("order")
+
+            # Initialize data dictionary with empty lists of the correct length
+            num_rows = rows.count()
+            data = {col.name: ["" for _ in range(num_rows)] for col in columns}
+
+            # Fetch all cells in bulk to improve performance
+            cells = Cell.objects.filter(
+                row__in=rows, column__in=columns, deleted=False
+            ).select_related("row", "column")
+
+            # Create a mapping of (row_id, column_id) to cell value
+            cell_mapping = {
+                (str(cell.row_id), str(cell.column_id)): cell.value for cell in cells
+            }
+
+            # Fill the data dictionary
+            for idx, row in enumerate(rows):
+                for col in columns:
+                    value = cell_mapping.get((str(row.id), str(col.id)), "")
+                    data[col.name][idx] = value if value is not None else ""
+
+            df = pd.DataFrame(data)
+
+            # Convert to CSV buffer
+            buffer = io.BytesIO()
+            df.to_csv(buffer, index=False, encoding="utf-8")
+            buffer.seek(0)
+
+            # Create the response with the file
+            filename = f"{dataset.name or 'dataset'}.csv"
+            response = FileResponse(
+                buffer, as_attachment=True, filename=filename, content_type="text/csv"
             )
-        else:
-            columns = Column.objects.filter(
-                dataset_id=dataset_id, deleted=False
-            ).order_by("id")
-        if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
-            columns = columns.exclude(source__in=_exp_sources)
 
-        # Create DataFrame
-        rows = Row.objects.filter(dataset=dataset, deleted=False).order_by("order")
-
-        # Initialize data dictionary with empty lists of the correct length
-        num_rows = rows.count()
-        data = {col.name: ["" for _ in range(num_rows)] for col in columns}
-
-        # Fetch all cells in bulk to improve performance
-        cells = Cell.objects.filter(
-            row__in=rows, column__in=columns, deleted=False
-        ).select_related("row", "column")
-
-        # Create a mapping of (row_id, column_id) to cell value
-        cell_mapping = {
-            (str(cell.row_id), str(cell.column_id)): cell.value for cell in cells
-        }
-
-        # Fill the data dictionary
-        for idx, row in enumerate(rows):
-            for col in columns:
-                value = cell_mapping.get((str(row.id), str(col.id)), "")
-                data[col.name][idx] = value if value is not None else ""
-
-        df = pd.DataFrame(data)
-
-        # Convert to CSV buffer
-        buffer = io.BytesIO()
-        df.to_csv(buffer, index=False, encoding="utf-8")
-        buffer.seek(0)
-
-        # Create the response with the file
-        filename = f"{dataset.name or 'dataset'}.csv"
-        response = FileResponse(
-            buffer, as_attachment=True, filename=filename, content_type="text/csv"
-        )
-
-        return response
+            return response
+        except (OperationalError, InterfaceError):
+            raise
+        except Exception:
+            logger.exception("dataset_download_failed")
+            return self._gm.internal_server_error_response(
+                get_error_message("FAILED_TO_DOWNLOAD_DATASET")
+            )
 
 
 from rest_framework import serializers  # noqa: E402

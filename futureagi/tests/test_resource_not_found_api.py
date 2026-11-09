@@ -145,6 +145,9 @@ def test_unexpected_processing_failure_remains_observable_500(
 
     assert response.status_code == 500
     assert "synthetic private" not in response.content.decode()
+    if endpoint == "download":
+        assert response.json()["status"] is False
+        assert response.json()["type"] == "server_error"
     assert any(
         record.exc_info for record in caplog.records if record.levelno >= logging.ERROR
     )
