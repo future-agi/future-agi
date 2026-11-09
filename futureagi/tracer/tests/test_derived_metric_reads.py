@@ -198,6 +198,12 @@ def test_previous_period_uses_the_same_pin_and_equal_snapped_duration(saved):
             "valid_count": 3,
         }
 
+    def aggregate_periods(store, metric, version, head, current, previous):
+        return (
+            aggregate(store, metric, version, head, current),
+            aggregate(store, metric, version, head, previous),
+        )
+
     data = {
         "window_start": datetime.fromisoformat("2026-01-10T12:07:43+05:45"),
         "window_end": datetime.fromisoformat("2026-01-10T15:12:43+05:45"),
@@ -205,6 +211,7 @@ def test_previous_period_uses_the_same_pin_and_equal_snapped_duration(saved):
     with (
         patch.object(reads, "metric_read", pin),
         patch.object(reads, "_aggregate", aggregate),
+        patch.object(reads, "_aggregate_periods", aggregate_periods),
     ):
         result = reads.read_kpi(metric, data)
         assert len(pinned) == 1 and len(ranges) == 2

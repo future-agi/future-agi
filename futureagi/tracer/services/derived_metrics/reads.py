@@ -269,6 +269,57 @@ def _aggregate(store, metric, definition, manifest, window):
     return _rows(store, _aggregate_select(sql, definition, params), params)[0]
 
 
+def _aggregate_periods(store, metric, definition, manifest, current, previous):
+    """Compute both KPI periods in one statement, without pooling their scopes.
+
+    The shared statistics compiler has a window-wide scope guard (also required
+    by trend). Only periods with conflicting scopes should expose scope evidence
+    to that guard. A valid period is marked unscoped, with its original scope
+    encoded in the stratum key so independent closed strata never merge. Invalid
+    periods retain their scopes and receive the compiler's existing full masking,
+    while valid periods cannot be rejected by a conflict in their neighbour.
+    """
+    sql, params = bucket_select(
+        metric,
+        definition,
+        manifest,
+        {**current, "window_start": previous["window_start"]},
+    )
+    params["read_current_start"] = current["window_start"]
+    sql = f"""SELECT * REPLACE(
+            if(read_mixed_scope, scope_key, '') AS scope_key,
+            if(read_mixed_scope, nonempty_scope_count, toUInt64(0)) AS nonempty_scope_count,
+            if(read_mixed_scope, scope_min, '') AS scope_min,
+            if(read_mixed_scope, scope_max, '') AS scope_max)
+        FROM (SELECT * REPLACE(toJSONString(tuple(scope_key, stratum_key)) AS stratum_key),
+            minIf(scope_min, nonempty_scope_count > 0) OVER (PARTITION BY group_key) !=
+            maxIf(scope_max, nonempty_scope_count > 0) OVER (PARTITION BY group_key) AS read_mixed_scope
+            FROM (SELECT * REPLACE(
+                if(bucket_start >= %(read_current_start)s, 'current', 'previous') AS group_key)
+                FROM ({sql})))"""
+    rows = _rows(
+        store, _aggregate_select(sql, definition, params, grouped=True), params
+    )
+    by_period = {row["group_key"]: {**row, "group_key": ""} for row in rows}
+    # GROUP BY returns no row for an empty period. Match the overall compiler's
+    # explicit no-data result, including its unavailable-CI reason, not zero.
+    empty = {
+        **empty_row(),
+        "ci_status": "not_estimable",
+        "ci_reason": "not_computed"
+        if definition.kind in {"unique_count", "percentile"}
+        else "no_value",
+        "ci_method": "",
+        "ci_interval": "",
+        "std_error": None,
+        "ci_low": None,
+        "ci_high": None,
+        "effective_n": None,
+        "ci_df": None,
+    }
+    return tuple(by_period.get(period, empty) for period in ("current", "previous"))
+
+
 def point(row, definition):
     shaped = shape_result(row, include_uncertainty=True)
     recipe = field_recipe(definition)
@@ -317,14 +368,15 @@ def read_kpi(metric, data, *, store=None):
     }
     with metric_read(metric, store=store) as (store, manifest, definition):
         require_calculated_window(definition, window)
-        current = point(
-            _aggregate(store, metric, definition, manifest, window), definition
-        )
-        prior = (
-            point(_aggregate(store, metric, definition, manifest, previous), definition)
-            if window_is_calculated(definition, previous)
-            else None
-        )
+        if window_is_calculated(definition, previous):
+            current_row, previous_row = _aggregate_periods(
+                store, metric, definition, manifest, window, previous
+            )
+            prior = point(previous_row, definition)
+        else:
+            current_row = _aggregate(store, metric, definition, manifest, window)
+            prior = None
+        current = point(current_row, definition)
         delta = (
             current["value"] - prior["value"]
             if prior is not None
