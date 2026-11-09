@@ -637,6 +637,16 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
             {block.relationship === "unknown" ? (
               <UnknownParent sx={{ mt: 0.5, ml: 2.25 }} />
             ) : null}
+            {C.cutShort[worker?.state] ? (
+              <Chip
+                size="small"
+                variant="outlined"
+                color="warning"
+                label={C.cutShort[worker.state]}
+                data-testid="worker-cut-short"
+                sx={{ mt: 0.5, ml: 2.25 }}
+              />
+            ) : null}
           </Box>
         </TableCell>
         <TableCell>
@@ -793,6 +803,11 @@ export default function CallWorkersPanel({
       .map((one) => one.name)
       .join(", ");
   const notObserved = named((one) => !one.observed);
+  // Workers the trial's end stopped before they returned; their steps so far are kept above.
+  const cutShort = data.workers
+    .filter((one) => C.cutShort[one.state])
+    .map((one) => `${one.name} (${C.cutShort[one.state]})`)
+    .join(", ");
   const notDeclared = named((one) => one.undeclared);
 
   return (
@@ -888,6 +903,11 @@ export default function CallWorkersPanel({
       {notObserved ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.workersNotObserved(notObserved)}
+        </Typography>
+      ) : null}
+      {cutShort ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {C.workersCutShort(cutShort)}
         </Typography>
       ) : null}
       {notDeclared ? (

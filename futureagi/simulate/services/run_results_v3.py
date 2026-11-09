@@ -717,6 +717,8 @@ def build_call_rows(
             if isinstance(item, dict) and isinstance(item.get("evidence"), list):
                 # What it was decided from: world_state, tool_calls, transcript, recording.
                 entry["evidence"] = [str(one) for one in item["evidence"]]
+            if isinstance(item, dict) and item.get("subject") not in (None, "task"):
+                entry["subject"] = str(item["subject"])
             sub_goal_results.append(entry)
         ideal_outcome = (
             row_data.get("outcome")

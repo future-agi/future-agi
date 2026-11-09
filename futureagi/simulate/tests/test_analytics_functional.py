@@ -466,6 +466,7 @@ class TestRunResultsV3Views:
         goals = [
             {"name": "Verify identity", "held": True},
             {"name": "Create refund", "held": False},
+            {"name": "Lookup stayed read-only", "held": False, "subject": "worker:order_lookup"},
             {"name": "Send confirmation", "held": None},
             {
                 "name": "Offer upgrade",
@@ -489,6 +490,7 @@ class TestRunResultsV3Views:
         expected = [
             {"name": "Verify identity", "passed": True},
             {"name": "Create refund", "passed": False},
+            {"name": "Lookup stayed read-only", "passed": False, "subject": "worker:order_lookup"},
             {"name": "Send confirmation", "passed": None},
             {
                 "name": "Offer upgrade",

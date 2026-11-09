@@ -1084,13 +1084,15 @@ def _apply_receipt_to_call(
     call.save(update_fields=list(dict.fromkeys(update_fields)))
     if resolved_modality == CallExecution.SimulationCallType.VOICE:
         _ensure_run_agent_is_voice(job)
+    # Every trial that ended, however it ended: a worker's end state is what the trial's ending made it.
+    finished_id = call.id
+    transaction.on_commit(lambda: _dispatch_worker_read(finished_id), robust=True)
     if call.status == CallExecution.CallStatus.COMPLETED:
         call_id = call.id
         run_test_id = getattr(call.test_execution, "run_test_id", None)
         transaction.on_commit(
             lambda: _dispatch_csat_once(CallExecution.objects.get(id=call_id))
         )
-        transaction.on_commit(lambda: _dispatch_worker_read(call_id), robust=True)
         # A hosted receipt never travels the SDK result path, so dispatch here, after commit.
         lookup_failed = False
         try:

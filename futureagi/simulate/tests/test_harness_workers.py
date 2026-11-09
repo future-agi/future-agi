@@ -2577,3 +2577,234 @@ def test_the_coordinator_s_own_calls_in_the_rows_do_not_make_it_a_worker():
     )
     assert timeline["coordinator"] == {"name": "root"}
     assert "root" not in {one["id"] for one in timeline["workers"]}
+
+
+def test_a_receipt_sub_goal_names_the_task_or_one_worker_as_its_subject():
+    from simulate.serializers.hosted_harness import HarnessSubGoalSerializer
+
+    worker = {
+        "name": "lookup_read_only",
+        "held": False,
+        "reason": "wrote an order",
+        "judged": False,
+        "verdict": "fail",
+        "subject": "worker:order_lookup",
+    }
+    task = {"name": "reply_truthful", "held": True, "reason": None, "judged": False}
+    for goal in (worker, task):
+        assert HarnessSubGoalSerializer(data=goal).is_valid()
+    assert not HarnessSubGoalSerializer(
+        data={**task, "subject": "order_lookup"}
+    ).is_valid()
+
+
+def _ended(trial, past_deadline=()):
+    from simulate.services.harness_workers import worker_states
+
+    spans = [
+        _span("c", None, "agent", "coordinator", "t0", "t9"),
+        _span("cl", "c", "llm", "generation", "t0", "t0"),
+        _span("d1", "c", "tool", "order_lookup", "t1", "t3"),
+        _span("o", "d1", "agent", "Order-lookup worker", "t1", "t3"),
+        _span("og", "o", "tool", "get_order", "t2", "t2"),
+        _span("d2", "c", "tool", "refund", "t4", "t5"),
+        _span("r", "d2", "agent", "Refund worker", "t4", "t5", status="ERROR"),
+        _span("d3", "c", "tool", "audit", "t6", None),
+        _span("a", "d3", "agent", "Audit worker", "t6", None),
+        _span("al", "a", "llm", "generation", "t6", "t6"),
+    ]
+    declared = [*DECLARED, {"id": "notifier", "name": "Notifier"}]
+    timeline = worker_states(
+        worker_timeline(spans, declared, run_key=RUN),
+        trial=trial,
+        past_deadline=past_deadline,
+    )
+    return {one["id"]: one["state"] for one in timeline["workers"]}, timeline
+
+
+def test_each_worker_ends_in_one_state_and_a_worker_still_out_takes_the_trial_s_ending():
+    states, timeline = _ended("ended")
+    # Returned: done, or failed when its return carries an error. Still out when the trial ended: no return, nothing
+    # more claimed about why.
+    assert states == {
+        "order_lookup": "completed",
+        "refund": "failed",
+        "audit": "no_return",
+        "notifier": "not_observed",
+    }
+    # Its partial events are kept, and no return is made up for it.
+    kinds = [(one["type"], one["worker_id"]) for one in timeline["events"]]
+    assert ("delegated", "run-1/audit") in kinds
+    assert ("returned", "run-1/audit") not in kinds
+    for trial, still_out in [
+        ("infrastructure", "infrastructure"),
+        ("cancel_requested", "cancel_requested"),
+        ("cancelled", "cancelled"),
+    ]:
+        states, _ = _ended(trial)
+        # A worker that already ended keeps its state whatever happened to the trial after.
+        assert (states["order_lookup"], states["refund"], states["audit"]) == (
+            "completed",
+            "failed",
+            still_out,
+        )
+
+
+def test_a_worker_the_world_refused_past_its_deadline_ends_timed_out_even_after_a_late_return():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_workers import deadline_refused
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    states, _ = _ended("ended", past_deadline={"order_lookup"})
+    assert (states["order_lookup"], states["refund"]) == ("timed_out", "failed")
+
+    def entry(who, code):
+        return {"who": who, "refused_actions": [{"action": "x", "code": code}]}
+
+    call = SimpleNamespace(
+        call_metadata={
+            TRIAL_STATE_KEY: {
+                "state_changes": [
+                    entry("worker:refund", "deadline_passed"),
+                    entry("worker:order_lookup", "not_permitted"),
+                    entry("agent", "deadline_passed"),
+                ]
+            }
+        }
+    )
+    assert deadline_refused(call) == {"refund"}
+    assert deadline_refused(SimpleNamespace(call_metadata={})) == set()
+
+
+def test_a_trial_s_ending_is_read_from_its_call_its_receipt_and_its_job():
+    from types import SimpleNamespace
+
+    from simulate.models import CallExecution, HostedHarnessJob
+    from simulate.services.harness_workers import trial_ending
+
+    def call(status, receipt=None):
+        return SimpleNamespace(
+            status=status,
+            call_metadata={"hosted_harness_receipt": receipt} if receipt else {},
+        )
+
+    stopped = SimpleNamespace(state=HostedHarnessJob.State.CANCELED, failure=None)
+    stopping = SimpleNamespace(state=HostedHarnessJob.State.RUNNING, failure=None)
+    lost = SimpleNamespace(
+        state=HostedHarnessJob.State.FAILED, failure={"domain": "infrastructure"}
+    )
+    cancelled = CallExecution.CallStatus.CANCELLED
+    assert trial_ending(call(cancelled), stopped) == "cancelled"
+    # Stopping our observation is not a confirmed cancel.
+    assert trial_ending(call(cancelled), stopping) == "cancel_requested"
+    assert (
+        trial_ending(
+            call("completed", {"failure": {"domain": "connectivity"}}), stopping
+        )
+        == "infrastructure"
+    )
+    assert (
+        trial_ending(call("completed", {"failure": {"domain": "agent"}}), stopping)
+        == "ended"
+    )
+    assert trial_ending(call("completed", {"failure": None}), stopping) == "ended"
+    # A call the job closed without a receipt ended the way the job did.
+    assert trial_ending(call(CallExecution.CallStatus.FAILED), lost) == "infrastructure"
+
+
+@pytest.mark.django_db
+def test_a_cancelled_run_reads_each_call_it_cut_short(
+    user, workspace, storage, settings, django_capture_on_commit_callbacks
+):
+    from unittest.mock import patch
+
+    from django.utils import timezone
+
+    from simulate.models import CallExecution, HostedHarnessJob
+    from simulate.services.hosted_harness import project_terminal_job_onto_run
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-cancel", storage), key="c")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.ONGOING
+    )
+    HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+        state=HostedHarnessJob.State.CANCELED
+    )
+    run.refresh_from_db()
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion._dispatch_worker_read"
+        ) as read,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        project_terminal_job_onto_run(run, timezone.now())
+    # A call cut short keeps what its workers did before the end.
+    assert [one.args for one in read.call_args_list] == [(call.id,)]
+
+
+def test_a_worker_seen_only_through_its_tool_calls_gets_no_invented_end_state():
+    from simulate.services.harness_workers import worker_states
+
+    traced = [
+        {"name": "get_order", "ok": True, "at": 1.0, "worker_id": "order_lookup"},
+        {"name": "issue_refund", "ok": True, "at": 2.0, "worker_id": "refund"},
+    ]
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=traced)
+    workers = worker_states(timeline, trial="ended")["workers"]
+    # No hand-off was recorded, so nothing says the worker was still out when the trial ended.
+    assert [one.get("state") for one in workers if one["observed"]] == [None, None]
+    # The world refusing one past its deadline is still a recorded end.
+    late = worker_states(timeline, trial="ended", past_deadline={"refund"})["workers"]
+    assert {one["id"]: one.get("state") for one in late}["refund"] == "timed_out"
+
+
+def test_a_worker_refused_past_its_deadline_by_its_own_calls_ends_timed_out():
+    from simulate.services.harness_workers import worker_states
+
+    traced = [
+        {
+            "name": "get_order",
+            "ok": False,
+            "refused": True,
+            "at": 1.0,
+            "worker_id": "order_lookup",
+            "error": "the deadline for order_lookup has passed",
+            "refusal_code": "deadline_passed",
+        },
+        {"name": "list_refunds", "ok": True, "at": 2.0, "worker_id": "refund"},
+    ]
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=traced)
+    refused = next(e for e in timeline["events"] if e["tool"] == "get_order")
+    assert refused["refusal_code"] == "deadline_passed"
+    states = {
+        one["id"]: one.get("state")
+        for one in worker_states(timeline, trial="ended")["workers"]
+    }
+    # The world's own refusal is the record; a worker with no such call gets no invented end.
+    assert (states["order_lookup"], states["refund"]) == ("timed_out", None)
+
+
+def test_a_worker_handed_control_gets_no_end_state_since_a_control_pass_never_returns():
+    from simulate.services.harness_workers import worker_states
+
+    traced = [
+        {
+            "name": "transfer_to_agent",
+            "ok": True,
+            "at": 1.0,
+            "worker_label": "root_agent",
+            "kind": "transferred",
+            "delegated_to": "inspiration_agent",
+        },
+    ]
+    timeline = worker_timeline([], [], run_key=RUN, traced_calls=traced)
+    states = {
+        one["id"]: one.get("state")
+        for one in worker_states(timeline, trial="ended")["workers"]
+    }
+    assert states["inspiration_agent"] is None

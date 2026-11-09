@@ -62,7 +62,7 @@ export default function TrialChangesPanel({ trialState }) {
       {changes.map((one) => (
         <Box key={one.who}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {one.name}
+            {one.who?.startsWith("worker:") ? C.worker(one.name) : one.name}
           </Typography>
           <Typography sx={quiet}>{C.counts(one)}</Typography>
           {one.committed_actions?.length > 0 && (
@@ -72,6 +72,19 @@ export default function TrialChangesPanel({ trialState }) {
           )}
           {one.no_change && !one.committed_actions?.length && (
             <Typography sx={quiet}>{C.noChange}</Typography>
+          )}
+          {/* An attempted violation stays on the record: what was tried and why the world said no. */}
+          {one.refused_actions?.length > 0 && (
+            <Box data-testid="refused-attempts">
+              <Typography sx={{ ...quiet, fontWeight: 600 }}>
+                {C.refusedHeading}
+              </Typography>
+              {one.refused_actions.map((refused, index) => (
+                <Typography key={`${refused.action}-${index}`} sx={quiet}>
+                  {C.refused(refused)}
+                </Typography>
+              ))}
+            </Box>
           )}
         </Box>
       ))}

@@ -149,6 +149,19 @@ class HarnessWorker(TypedDict):
     instance_ids: list[str]
     model: NotRequired[str]
     tokens: NotRequired[int]
+    # How the worker ended in this call; absent on a timeline read before end states were recorded.
+    state: NotRequired[
+        Literal[
+            "completed",
+            "failed",
+            "no_return",
+            "timed_out",
+            "cancel_requested",
+            "cancelled",
+            "infrastructure",
+            "not_observed",
+        ]
+    ]
 
 
 class WorkerEvent(TypedDict, total=False):
@@ -169,6 +182,7 @@ class WorkerEvent(TypedDict, total=False):
     output_omitted: bool
     relationship: Literal["observed", "unknown"]
     parent_delegation_id: str
+    refusal_code: str
     runtime_event_id: str
     runtime_parent_event_id: str
     # Internal: the sealed row this event came from or that a span showed, to join reads; never sent to the client.

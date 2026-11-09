@@ -326,4 +326,37 @@ describe("TrialChangesPanel", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("shows a worker the world told apart, with each attempt it refused and why", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "worker:order_lookup",
+              name: "order_lookup",
+              attempted: 2,
+              committed: 1,
+              refused: 1,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: ["get_order"],
+              refused_actions: [
+                {
+                  action: "update_order_status",
+                  code: "not_permitted",
+                  reason:
+                    "orders.update_status is not permitted for order_lookup",
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Worker · order_lookup")).toBeInTheDocument();
+    expect(screen.getByTestId("refused-attempts")).toHaveTextContent(
+      "update_order_status: orders.update_status is not permitted for order_lookup",
+    );
+  });
 });
