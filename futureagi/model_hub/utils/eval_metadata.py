@@ -68,10 +68,14 @@ def _read_metadata(read: Callable[[], _T], *, using: str) -> _T:
 
 
 def read_evaluation_column_types(column_ids: Iterable[str | UUID]) -> dict[str, str]:
-    columns = Column.objects.filter(id__in=list(column_ids)).values("id", "data_type")
-    # Rebuild the queryset on each attempt, including its lazy materialization.
+    columns = Column.objects.filter(id__in=list(column_ids))
+    # Keep routing on the queryset, not its iterable values. Each attempt builds
+    # and materializes a fresh values query inside the retry boundary.
     return _read_metadata(
-        lambda: {str(col["id"]): col["data_type"] for col in columns.all()},
+        lambda: {
+            str(col["id"]): col["data_type"]
+            for col in columns.values("id", "data_type")
+        },
         using=columns.db,
     )
 

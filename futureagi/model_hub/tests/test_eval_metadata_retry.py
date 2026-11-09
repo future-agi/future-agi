@@ -481,6 +481,48 @@ def test_retry_does_not_close_or_replay_inside_atomic(evaluation_case):
     close.assert_not_called()
 
 
+@pytest.mark.parametrize("has_columns", [False, True])
+def test_column_types_accept_materialized_values(has_columns):
+    from uuid import UUID
+
+    from model_hub.utils.eval_metadata import read_evaluation_column_types
+
+    column_id = UUID("00000000-0000-0000-0000-000000000001")
+    rows = [{"id": column_id, "data_type": "text"}] if has_columns else []
+    with patch.object(Column.objects, "filter") as columns:
+        columns.return_value.db = "default"
+        columns.return_value.values.return_value = rows
+        result = read_evaluation_column_types(iter([column_id]))
+
+    assert result == ({str(column_id): "text"} if has_columns else {})
+    columns.assert_called_once_with(id__in=[column_id])
+    columns.return_value.values.assert_called_once_with("id", "data_type")
+
+
+def test_materializing_column_values_is_inside_retry_boundary():
+    from model_hub.utils.eval_metadata import read_evaluation_column_types
+
+    rows = [{"id": "column-id", "data_type": "text"}]
+    with (
+        patch.object(Column.objects, "filter") as columns,
+        patch("model_hub.utils.eval_metadata.connections") as connections,
+        patch("model_hub.utils.eval_metadata.time.sleep") as sleep,
+    ):
+        columns.return_value.db = "metadata"
+        columns.return_value.values.side_effect = [connection_timeout(), rows]
+        connections["metadata"].in_atomic_block = False
+
+        assert read_evaluation_column_types(iter(["column-id"])) == {
+            "column-id": "text"
+        }
+
+    columns.assert_called_once_with(id__in=["column-id"])
+    assert columns.return_value.values.call_count == 2
+    connections.__getitem__.assert_called_with("metadata")
+    connections["metadata"].close.assert_called_once()
+    sleep.assert_called_once_with(0.25)
+
+
 def test_statement_timeout_is_not_retried(evaluation_case):
     from model_hub.utils.eval_metadata import read_evaluation_column_types
 
