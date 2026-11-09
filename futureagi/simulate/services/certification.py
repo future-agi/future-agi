@@ -444,6 +444,7 @@ def reconcile_case(case, *, expected_terminal: str = "completed") -> dict:
     from simulate.models import (
         HostedHarnessArtifact,
         HostedHarnessCleanupReceipt,
+        HostedHarnessEvent,
         HostedHarnessExecution,
         HostedHarnessManifest,
         HostedHarnessReceipt,
@@ -505,6 +506,29 @@ def reconcile_case(case, *, expected_terminal: str = "completed") -> dict:
                 attempt.terminal_event_received
                 and attempt.terminal_stage == expected_terminal,
                 f"received={attempt.terminal_event_received} stage={attempt.terminal_stage}",
+            )
+            terminal_event = (
+                HostedHarnessEvent.no_workspace_objects.filter(
+                    attempt=attempt,
+                    event_type="terminal",
+                    accepted=True,
+                )
+                .order_by("-sequence")
+                .first()
+            )
+            expected_certification = ((job.payload or {}).get("metadata") or {}).get(
+                "certification"
+            )
+            echoed_certification = (
+                (terminal_event.payload or {}).get("certification")
+                if terminal_event is not None
+                else None
+            )
+            _record(
+                "terminal_provenance",
+                bool(expected_certification)
+                and echoed_certification == expected_certification,
+                "terminal certification metadata must match the submitted job",
             )
             _record(
                 "manifest", attempt.manifest_acked, f"acked={attempt.manifest_acked}"
