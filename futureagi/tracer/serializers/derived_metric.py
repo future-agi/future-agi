@@ -672,6 +672,7 @@ class MetricUnavailableSerializer(serializers.Serializer):
     code = serializers.CharField()
     message = serializers.CharField()
     retryable = serializers.BooleanField()
+    value_mode = serializers.ChoiceField(choices=["on_demand"], required=False)
 
 
 class MetricWindowSerializer(StrictInputSerializer):
