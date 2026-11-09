@@ -8,6 +8,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "src/utils/test-utils";
 import MetricList from "../MetricList";
 import MetricDefinitionEditor from "../metric_definition_editor";
@@ -145,12 +146,18 @@ describe("polish r5 discriminating regressions", () => {
       );
       mount(mode);
       const row = await screen.findByRole("button", { name: long });
+      // Shared Button sizing owns density; the text span owns ellipsis.
+      expect(row).toHaveClass("MuiButton-sizeSmall");
       expect(row).toHaveStyle({
         whiteSpace: "nowrap",
         minWidth: "0",
-        height: "auto",
         width: "100%",
         overflow: "hidden",
+      });
+      expect(within(row).getByText(long)).toHaveStyle({
+        minWidth: "0",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
       });
       expect(row).toHaveAttribute("title", long);
       expect(screen.getByRole("cell", { name: "v2" })).toBeInTheDocument();

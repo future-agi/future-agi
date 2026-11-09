@@ -51,7 +51,7 @@ export default function QueryExamples({ examples, datasets, onUse }) {
                 }
                 primaryTypographyProps={{ fontSize: 12 }}
                 secondaryTypographyProps={{
-                  fontSize: 10,
+                  variant: "caption",
                   fontFamily: "monospace",
                 }}
               />

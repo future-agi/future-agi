@@ -7,8 +7,6 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Dialog,
-  DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
@@ -21,6 +19,9 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
+import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
+import ClosableDialog from "src/components/custom-dialog/closable-dialog";
 import { useDashboardList } from "src/hooks/useDashboards";
 import { useAuthContext } from "src/auth/hooks";
 import { closeSnackbar, enqueueSnackbar } from "notistack";
@@ -339,7 +340,7 @@ export default function SQLQueryView() {
                           fontFamily: "monospace",
                           fontSize: 12,
                         }}
-                        secondaryTypographyProps={{ fontSize: 10 }}
+                        secondaryTypographyProps={{ variant: "caption" }}
                       />
                     </ListItemButton>
                   ))}
@@ -609,13 +610,18 @@ export default function SQLQueryView() {
           </Stack>
         </Box>
       </Stack>
-      <Dialog
+      <ModalWrapper
         open={dialog === "save"}
-        onClose={() => !saving && setDialog("")}
-        fullWidth
-        maxWidth="xs"
+        onClose={() => setDialog("")}
+        title="Save query"
+        modalWidth="444px"
+        isLoading={saving}
+        isValid={Boolean(name.trim())}
+        onSubmit={save}
+        actionBtnTitle="Save"
+        cancelBtnTitle="Back"
+        actionBtnProps={{ color: "inherit" }}
       >
-        <DialogTitle>Save query</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error">{error}</Alert>}
           <Stack spacing={2} sx={{ pt: 1 }}>
@@ -641,22 +647,19 @@ export default function SQLQueryView() {
             </Typography>
           </Stack>
         </DialogContent>
-        <DialogActions>
-          <Button disabled={saving} onClick={() => setDialog("")}>
-            Back
-          </Button>
-          <Button disabled={!name.trim() || saving} onClick={save}>
-            Save
-          </Button>
-        </DialogActions>
-      </Dialog>
-      <Dialog
+      </ModalWrapper>
+      <ModalWrapper
         open={dialog === "dashboard"}
-        onClose={() => !saving && setDialog("")}
-        fullWidth
-        maxWidth="xs"
+        onClose={() => setDialog("")}
+        title="Add query to dashboard"
+        modalWidth="444px"
+        isLoading={saving}
+        isValid={Boolean(dashboardId)}
+        onSubmit={addWidget}
+        actionBtnTitle="Add query"
+        cancelBtnTitle="Back"
+        actionBtnProps={{ color: "inherit" }}
       >
-        <DialogTitle>Add query to dashboard</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error">{error}</Alert>}
           <TextField
@@ -678,27 +681,24 @@ export default function SQLQueryView() {
             permissions.
           </Typography>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDialog("")}>Back</Button>
-          <Button disabled={!dashboardId || saving} onClick={addWidget}>
-            Add query
-          </Button>
-        </DialogActions>
-      </Dialog>
-      <Dialog
+      </ModalWrapper>
+      <ConfirmDialog
         open={dialog === "delete"}
         onClose={() => !saving && setDialog("")}
-      >
-        <DialogTitle>Delete saved query?</DialogTitle>
-        <DialogContent>
-          {error && <Alert severity="error">{error}</Alert>}
-          Dashboard widgets using this query will stop running. Existing
-          personal results keep their normal expiry.
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDialog("")}>Keep query</Button>
+        closeDisabled={saving}
+        disableEscapeKeyDown={saving}
+        title="Delete saved query?"
+        content={
+          <>
+            {error && <Alert severity="error">{error}</Alert>}
+            Dashboard widgets using this query will stop running. Existing
+            personal results keep their normal expiry.
+          </>
+        }
+        action={
           <Button
             color="error"
+            size="small"
             disabled={saving}
             onClick={async () => {
               setSaving(true);
@@ -717,9 +717,9 @@ export default function SQLQueryView() {
           >
             Delete query
           </Button>
-        </DialogActions>
-      </Dialog>
-      <Dialog
+        }
+      />
+      <ClosableDialog
         open={dialog === "history"}
         onClose={() => setDialog("")}
         fullWidth
@@ -744,7 +744,7 @@ export default function SQLQueryView() {
           </List>
           {!history.length && <Typography>No queries yet.</Typography>}
         </DialogContent>
-      </Dialog>
+      </ClosableDialog>
     </Box>
   );
 }

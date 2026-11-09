@@ -1,14 +1,18 @@
 """Independent old-entry-point loader and deterministic Sessions parity hashes."""
 
-import ast
+import builtins
 import hashlib
 import json
+import sys
+import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from uuid import UUID
 
+from tracer.selectors.filter_seed_width import EMPTY_DENSITY_ESTIMATE
 from tracer.services.derived_metrics.base_list_current import CurrentFactsRead
 from tracer.services.derived_metrics.publication import pinned_read
 
@@ -29,45 +33,127 @@ def baseline_fixture():
     for path in BASELINE_PATHS:
         entry = fixture["builders"][path]
         assert hashlib.sha256(entry["source"].encode()).hexdigest() == entry["sha256"]
+    for key, commit in (
+        ("historical_closure", "9fc537515f48ae3b2da48d9084892de987a84028"),
+        ("native_dev_closure", "13b60b8954e784ce9444903bf3e88cdb868a2012"),
+    ):
+        closure = fixture[key]
+        assert closure["source_commit"] == commit
+        for entry in (*closure["modules"].values(), *closure["data_files"].values()):
+            assert hashlib.sha256(entry["source"].encode()).hexdigest() == entry["sha256"]
+    for path in BASELINE_PATHS:
+        name = "tracer.services.clickhouse." + path.removesuffix(".py").replace("/", ".")
+        assert fixture["builders"][path]["source"] == fixture["historical_closure"]["modules"][name]["source"]
     return fixture
 
 
-def old_session_builder():
-    """Run the vendored old entry points with installed application dependencies.
+def historical_session_builder():
+    """Historical 9fc537515 compiler, including its historical SQL helpers.
 
-    The fixture includes generated SQL and hash-verified source so randomized
-    project IDs, windows and cursor parameters still use the historical compiler.
-    Never fall back to the current builder when history or the fixture is absent.
+    This is NOT the native fallback oracle after the pinned-dev merge: dev
+    intentionally changed cost nullability, remap identity and usage coverage.
+    Keep it for historical controls, never mix it with installed SQL helpers.
     """
-    return _load_old_session_builder(baseline_fixture()["builders"])
+    return _load_frozen_session_builder(baseline_fixture()["historical_closure"])
 
 
-def _load_old_session_builder(builders):
-    def source(path):
-        return builders[path]["source"]
+def native_session_builder():
+    """Independent native oracle from the exact dev parent merged into B1.
 
-    old = {"__name__": "baseline_session_builder"}
-    exec(
-        compile(
-            source("query_builders/session_list.py"), "baseline_session_builder", "exec"
-        ),
-        old,
-    )
-    v2 = ast.parse(source("v2/query_builders/session_list.py"))
-    v2.body = [
-        node
-        for node in v2.body
-        if not (
-            isinstance(node, ast.ImportFrom)
-            and node.module == "tracer.services.clickhouse.query_builders.session_list"
-        )
-    ]
-    namespace = {
-        "__name__": "baseline_session_builder_v2",
-        "SessionListQueryBuilder": old["SessionListQueryBuilder"],
-    }
-    exec(compile(v2, "baseline_session_builder_v2", "exec"), namespace)
-    return namespace["SessionListQueryBuilderV2"]
+    13b60b895 predates the Metrics source seam and owns the approved native
+    semantic changes. Its source and SQL helper closure are not current snapshots.
+    """
+    return _load_frozen_session_builder(baseline_fixture()["native_dev_closure"])
+
+
+def old_session_builder():
+    """Compatibility entry point for native-vs-Metrics integration comparisons.
+
+    'Old' now explicitly means the pre-seam native dev parent (13b60b895), not
+    9fc537515 plus today's helpers. Historical replay uses the separately named
+    historical_session_builder and unchanged recorded statements. This keeps
+    existing hydration/application parity consumers on the intended native
+    contract without teaching them exceptions for approved dev deltas.
+    """
+    return native_session_builder()
+
+
+def _load_frozen_session_builder(closure):
+    """Private import graph; no global application module replacement or Git.
+
+    Declared Django/ORM interfaces and the opaque density-result sentinel are
+    the explicit live boundaries. SQL helpers and density reducers stay frozen.
+    Filter-contract data is materialized privately, so __file__-relative reads
+    cannot accidentally use today's contract. No fake installed packages.
+    """
+    root = tempfile.TemporaryDirectory(prefix="session-parity-")
+    modules = closure["modules"]
+    loaded = {}
+    identity = hashlib.sha256(json.dumps(closure, sort_keys=True).encode()).hexdigest()
+    prefix = "_session_parity_" + identity + "_" + Path(root.name).name.replace("-", "_")
+    for path, entry in closure["data_files"].items():
+        destination = Path(root.name) / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(entry["source"])
+
+    def frozen_import(name, globals=None, locals=None, fromlist=(), level=0):
+        assert level == 0, "new relative import requires explicit frozen resolution"
+        if name in modules:
+            assert fromlist, "compiler imports must name their imported interface"
+            return load(name)
+        children = {item: name + "." + item for item in (fromlist or ())}
+        if children and all(child in modules for child in children.values()):
+            return SimpleNamespace(**{item: load(child) for item, child in children.items()})
+        if name.startswith(("tracer.", "model_hub.")):
+            assert name in closure["external_application_interfaces"], name
+        return builtins.__import__(name, globals, locals, fromlist, level)
+
+    def load(name):
+        if name not in loaded:
+            entry = modules[name]
+            assert hashlib.sha256(entry["source"].encode()).hexdigest() == entry["sha256"]
+            module = ModuleType(prefix + "." + name)
+            module.__file__ = str(Path(root.name) / entry["path"])
+            module.__dict__["__builtins__"] = {**vars(builtins), "__import__": frozen_import}
+            loaded[name] = module
+            # Dataclasses consult their defining module; production names stay untouched.
+            sys.modules[module.__name__] = module
+            exec(compile(entry["source"], module.__file__, "exec"), module.__dict__)
+            if name == "tracer.selectors.filter_seed_width":
+                # Live selectors compare this non-SQL result by identity. Share
+                # only the marker, not the module's reducers or compiler helpers.
+                module.EMPTY_DENSITY_ESTIMATE = EMPTY_DENSITY_ESTIMATE
+        return loaded[name]
+
+    builder = load("tracer.services.clickhouse.v2.query_builders.session_list").SessionListQueryBuilderV2
+    builder._parity_fixture_root = root
+    return builder
+
+
+def assert_sql_and_parameters_equal(actual, expected):
+    """Ignore ONLY lexer whitespace, never literals, comments, operators or params.
+
+    sqlparse is the maintained Django dependency pinned to 0.5.5 in uv.lock.
+    Its lexer preserves exact token values; this is not split/join, SQL rendering,
+    alias folding or an optimizer. Parameter type/value equality remains exact.
+    """
+    from sqlparse import lexer, tokens
+
+    def significant(sql):
+        return tuple((kind, value) for kind, value in lexer.tokenize(sql) if kind not in tokens.Whitespace)
+
+    def parameter_types(value):
+        if isinstance(value, dict):
+            return (type(value), {key: parameter_types(item) for key, item in value.items()})
+        if isinstance(value, list | tuple):
+            return (type(value), tuple(parameter_types(item) for item in value))
+        return type(value)
+
+    assert (
+        actual[1] == expected[1]
+        and parameter_types(actual[1]) == parameter_types(expected[1])
+    ), "SQL parameter drift"
+    assert significant(actual[0]) == significant(expected[0]), "SQL token drift"
 
 
 def baseline_statements(builder_type):
@@ -97,47 +183,6 @@ def baseline_statements(builder_type):
         for name, args in calls.items()
         for result in [getattr(builder, name)(*args)]
     }
-
-
-def regenerate_baseline():
-    """Explicit maintenance command only; never invoked by the test suite."""
-    import subprocess
-
-    repo = Path(__file__).resolve().parents[3]
-    folder = "futureagi/tracer/services/clickhouse/"
-    commit = subprocess.check_output(
-        ["git", "-C", str(repo), "rev-parse", BASELINE], text=True
-    ).strip()
-    builders = {}
-    for path in BASELINE_PATHS:
-        source = subprocess.check_output(
-            ["git", "-C", str(repo), "show", f"{commit}:{folder}{path}"], text=True
-        )
-        builders[path] = {
-            "source": source,
-            "sha256": hashlib.sha256(source.encode()).hexdigest(),
-        }
-    fixture = {
-        "header": {
-            "source_commit": commit,
-            "regeneration_command": (
-                "cd futureagi && DJANGO_SETTINGS_MODULE=tfc.settings.test "
-                "NO_STARTUP_DB_MUTATIONS=true FI_SKIP_CH25_SCHEMA_APPLY=1 python -c "
-                "'import django; django.setup(); "
-                "from tracer.tests._base_list_parity import regenerate_baseline; "
-                "regenerate_baseline()'"
-            ),
-            "description": (
-                "Native Sessions SQL/parameters generated from the pinned v1/v2 "
-                "builders, with hash-verified source for arbitrary application "
-                "inputs. Regeneration alone requires Git history; tests read only "
-                "this fixture. Shared dependencies are the installed application."
-            ),
-        },
-        "builders": builders,
-        "statements": baseline_statements(_load_old_session_builder(builders)),
-    }
-    BASELINE_FIXTURE.write_text(json.dumps(fixture, indent=2) + "\n")
 
 
 @dataclass(frozen=True)

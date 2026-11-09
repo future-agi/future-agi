@@ -1029,7 +1029,7 @@
 
 **Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly
 
-**Spec:** `flows/evals/catalog-result-types.spec.ts:137`
+**Spec:** `flows/evals/catalog-result-types.spec.ts:139`
 
 **Tags:** —
 

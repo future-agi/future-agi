@@ -110,6 +110,7 @@ export default function MetricList({
       enableSorting: false,
       cell: ({ row: { original: item } }) => (
         <Button
+          size="small"
           disabled={disabled}
           onClick={(event) => {
             event.stopPropagation();
@@ -123,11 +124,8 @@ export default function MetricList({
             textAlign: "left",
             width: "100%",
             minWidth: 0,
-            height: "auto",
-            p: 0,
             whiteSpace: "nowrap",
             overflow: "hidden",
-            fontSize: 13,
           }}
         >
           <Box

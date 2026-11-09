@@ -1,15 +1,12 @@
 import PropTypes from "prop-types";
 import {
   Alert,
-  Button,
-  Dialog,
-  DialogActions,
   DialogContent,
-  DialogTitle,
   MenuItem,
   Stack,
   Typography,
 } from "@mui/material";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import TextField from "./MetricField";
 
 export default function MetricResultActions({
@@ -36,16 +33,24 @@ export default function MetricResultActions({
 }) {
   const dashboard = action === "dashboard";
   return (
-    <Dialog
+    <ModalWrapper
       open={Boolean(action)}
-      onClose={busy ? undefined : onClose}
-      fullWidth
-      maxWidth="sm"
-      aria-labelledby="metric-action-title"
+      onClose={onClose}
+      isLoading={busy}
+      title={dashboard ? "Create dashboard from this run" : "Create monitor"}
+      actionBtnTitle={dashboard ? "Create dashboard" : "Create monitor"}
+      cancelBtnTitle="Close"
+      actionBtnProps={{ color: "inherit" }}
+      modalWidth="600px"
+      isValid={
+        !readOnly &&
+        (dashboard
+          ? Boolean(dashboardName.trim()) && matched && !pending && !dashboardBlocked
+          : !dirty && Boolean(monitorName.trim()) && threshold.trim() !== "" &&
+            Number.isFinite(Number(threshold)) && !monitorLocked)
+      }
+      onSubmit={dashboard ? onDashboard : onMonitor}
     >
-      <DialogTitle id="metric-action-title">
-        {dashboard ? "Create dashboard from this run" : "Create monitor"}
-      </DialogTitle>
       <DialogContent>
         <Stack gap={2}>
           {error && <Alert severity="error">{error}</Alert>}
@@ -133,44 +138,7 @@ export default function MetricResultActions({
           )}
         </Stack>
       </DialogContent>
-      <DialogActions>
-        <Button disabled={busy} onClick={onClose}>
-          Close
-        </Button>
-        {dashboard ? (
-          <Button
-            variant="contained"
-            disabled={
-              busy ||
-              readOnly ||
-              !dashboardName.trim() ||
-              !matched ||
-              pending ||
-              dashboardBlocked
-            }
-            onClick={onDashboard}
-          >
-            Create dashboard
-          </Button>
-        ) : (
-          <Button
-            variant="contained"
-            disabled={
-              busy ||
-              readOnly ||
-              dirty ||
-              !monitorName.trim() ||
-              threshold.trim() === "" ||
-              !Number.isFinite(Number(threshold)) ||
-              monitorLocked
-            }
-            onClick={onMonitor}
-          >
-            Create monitor
-          </Button>
-        )}
-      </DialogActions>
-    </Dialog>
+    </ModalWrapper>
   );
 }
 MetricResultActions.propTypes = {

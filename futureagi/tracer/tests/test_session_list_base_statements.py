@@ -24,10 +24,12 @@ from tracer.services.derived_metrics.storage import (
 from tracer.tests._base_list_parity import (
     FixtureAuthority,
     FixtureCurrentFactsRead,
+    assert_sql_and_parameters_equal,
     baseline_fixture,
     baseline_statements,
     filters,
-    old_session_builder,
+    historical_session_builder,
+    native_session_builder,
     parity_hashes,
 )
 
@@ -82,12 +84,15 @@ def test_vendored_baseline_runs_without_git_history(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "check_output", reject_git)
     fixture = baseline_fixture()
     expected = fixture["statements"]
-    assert baseline_statements(old_session_builder()) == expected
+    assert baseline_statements(historical_session_builder()) == expected
+    # The old recorded fixture remains an exact historical control. Native
+    # fallback instead follows the independently pinned dev parent of B1, which
+    # intentionally added coverage/null-cost/remap semantics before this seam.
     actual = baseline_statements(SessionListQueryBuilderV2)
-    for name, statement in expected.items():
-        assert actual[name]["params"] == statement["params"]
-        assert " ".join(actual[name]["sql"].split()) == " ".join(
-            statement["sql"].split()
+    for name, statement in baseline_statements(native_session_builder()).items():
+        assert_sql_and_parameters_equal(
+            (actual[name]["sql"], actual[name]["params"]),
+            (statement["sql"], statement["params"]),
         )
 
 
@@ -115,13 +120,15 @@ def test_production_current_facts_read_has_no_caller_authority_switch():
 
 
 def test_native_unbound_entry_point_is_identical_to_recorded_baseline():
-    current, old = builder(), builder(old_session_builder())
+    current, old = builder(), builder(native_session_builder())
     for method in (
         "build_candidate_page_query",
         "build_candidate_count_query",
         "build_candidate_cursor_page_query",
     ):
-        assert getattr(current, method)() == getattr(old, method)()
+        assert_sql_and_parameters_equal(
+            getattr(current, method)(), getattr(old, method)()
+        )
 
 
 @pytest.mark.parametrize(
@@ -347,10 +354,9 @@ def test_source_ceiling_keeps_microseconds_and_rejects_unbounded_key_input():
 def test_native_hydration_source_seam_preserves_baseline_sql_and_parameters():
     ids = [str(UUID(int=101))]
     sql, params = builder().build_page_hydration_query(ids)
-    old_sql, old_params = builder(old_session_builder()).build_page_hydration_query(ids)
-    # CTE extraction changes indentation only on the unqualified/native path.
-    assert " ".join(sql.split()) == " ".join(old_sql.split())
-    assert params == old_params
+    old_sql, old_params = builder(native_session_builder()).build_page_hydration_query(ids)
+    # CTE extraction changes only lexer whitespace relative to pinned native dev.
+    assert_sql_and_parameters_equal((sql, params), (old_sql, old_params))
 
 
 def test_current_hydration_uses_members_and_loses_access_after_pin_release():

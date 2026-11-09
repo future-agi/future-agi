@@ -153,8 +153,8 @@ from simulate.services.harness_evals import (
     is_regrading_a_finished_harness_run,
     runnable_eval_config_ids,
 )
-from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_run_evals import stamp_eval_queued
+from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.run_regrade import (
     RegradeAlreadyRunning,
     RegradeDispatchFailed,
@@ -7001,6 +7001,31 @@ class CallExecutionRerunView(APIView):
                 )
 
             rerun_type = request.validated_data["rerun_type"]
+            if request.validated_data.get("unfinished_only"):
+                # Resume: the calls an interrupted run did not finish, in that same run.
+                from simulate.services.hosted_harness import (
+                    HostedHarnessError,
+                    resume_run,
+                )
+
+                try:
+                    resumed = resume_run(test_execution, user=request.user)
+                except HostedHarnessError as exc:
+                    return Response(exc.as_dict(), status=exc.status_code)
+                return Response(
+                    {
+                        "message": "The calls that did not finish are running again in this run",
+                        "test_execution_id": str(test_execution.id),
+                        "rerun_type": rerun_type,
+                        "total_processed": len(resumed),
+                        "successful_reruns": [str(call_id) for call_id in resumed],
+                        "failed_reruns": [],
+                        "success_count": len(resumed),
+                        "failure_count": 0,
+                        "dispatch_error": None,
+                    },
+                    status=status.HTTP_202_ACCEPTED,
+                )
             select_all = request.validated_data.get("select_all", False)
             call_execution_ids = request.validated_data.get("call_execution_ids", [])
 
