@@ -19,13 +19,11 @@ def consolidate_and_seed(apps, schema_editor):
     Skill = apps.get_model("falcon_ai", "Skill")
     Conversation = apps.get_model("falcon_ai", "Conversation")
 
-    from ee.falcon_ai.builtin_skills_loader import (
-        consolidate_per_org_builtins,
-        seed_builtin_skills,
-    )
+    from ._builtin_skills import consolidate_per_org_builtins, seed_builtin_skills
 
-    consolidate_per_org_builtins(Skill, Conversation)
-    seed_builtin_skills(skill_model=Skill)
+    alias = schema_editor.connection.alias
+    consolidate_per_org_builtins(Skill, Conversation, alias)
+    seed_builtin_skills(Skill, alias)
 
 
 def reverse_noop(apps, schema_editor):

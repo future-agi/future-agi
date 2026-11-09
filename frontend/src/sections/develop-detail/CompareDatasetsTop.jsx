@@ -7,6 +7,10 @@ import BaseColumnDrawer from "./BaseColumnsDrawer";
 import { getUniqueColorPalette } from "src/utils/utils";
 import Tooltip from "@mui/material/Tooltip";
 
+/** Removing datasets down to one leaves compare for Data; a mount never does. */
+const shouldLeaveToData = (prevCount, count) =>
+  prevCount != null && prevCount > 1 && count <= 1;
+
 const CompareDatasetsTop = ({
   setIsChooseWinnerSelected,
   setBaseColumn,
@@ -79,19 +83,25 @@ const CompareDatasetsTop = ({
     }
   };
 
+  // Fewer than 2 datasets ends compare mode. Only a user LEAVING compare
+  // (2+ → 1 by removing a dataset) lands on Data; a mount never moves the
+  // tab, so a deep link such as ?tab=experiments stays put (critic r3 #1).
+  const prevCountRef = useRef(null);
   useEffect(() => {
-    if (localSelectedDatasets.length <= 1) {
-      setIsChooseWinnerButtonVisible(false);
-      setIsCompareDataset(false);
-      setLocalSelectedDatasets([]);
-      setBaseColumn(null);
-      setIsChooseWinnerSelected(false);
-      setCompareFromOutSide(false);
-      setCurrentTab("data");
-      setPendingSelectedDatasets([]);
-      setPendingSelectedValues([]);
-      setPendingBaseColumn(null);
-    }
+    const count = localSelectedDatasets.length;
+    const prev = prevCountRef.current;
+    prevCountRef.current = count;
+    if (count > 1) return;
+    setIsChooseWinnerButtonVisible(false);
+    setIsCompareDataset(false);
+    if (count) setLocalSelectedDatasets([]);
+    setBaseColumn(null);
+    setIsChooseWinnerSelected(false);
+    setCompareFromOutSide(false);
+    if (shouldLeaveToData(prev, count)) setCurrentTab("data");
+    setPendingSelectedDatasets([]);
+    setPendingSelectedValues([]);
+    setPendingBaseColumn(null);
   }, [localSelectedDatasets]);
 
   // Calculate text truncation and dataset visibility
@@ -282,6 +292,7 @@ const CompareDatasetsTop = ({
                   >
                     <IconButton
                       size="small"
+                      aria-label={`Remove ${item} from the comparison`}
                       sx={{ color: "text.secondary", padding: 0, margin: 0 }}
                       onClick={() => {
                         handleRemoveDataset(item);

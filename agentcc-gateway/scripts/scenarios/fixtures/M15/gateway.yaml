@@ -1,0 +1,53 @@
+# Gateway config template for 70_m15_meter.sh: one static YAML MCP server,
+# "primary", on the mock scn_mcp_up started as "primary", and the log webhook
+# pointed at the X0 mock, whose /__logs collects the tool-call records.
+#
+# scn_mcp_gateway_template (lib_mcp.sh) renders @@MCP_<NAME>_URL@@ and adds
+# the fixed test state key under `mcp:`; scn_up then renders base.yaml's
+# placeholders (see config/base.yaml) and appends `redis:`. Every key and
+# token below is a fake value for the local mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  # Org keys are person-owned (733): under a control plane config.yaml holds
+  # only deployment identities (key_type internal, no org_id, no user_id).
+  # Both keys are org-acme's, registered with the mock's control plane, which
+  # lists them on the key sync (lib.sh, Org keys): key A is scn_up's acme-app
+  # (SCN_KEY), key B acme-quiet (70_m15_meter.sh's SCN_CP_KEYS), whose
+  # log_content none keeps its records free of arguments and results. A
+  # listed key carries no MCP tool lists, so key A's ACL denial is the
+  # request's x-agentcc-mcp-allow-tools list (70_m15_meter.sh).
+providers:
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+# The X0 mock stands in for Django: the webhook batch reaches its /__logs.
+# Its control plane lists the person-owned keys scn_up registers and does
+# not answer the org sync, so configs pushed with scn_org_config stay; the
+# gateway syncs keys on startup (scn_up waits for the first list).
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: true
+  sync_interval: 60s
+mcp:
+  enabled: true
+  tool_call_timeout: 1s
+  # The YAML servers serve org-acme's principals (M9 reads it; inert before).
+  static:
+    org_id: "org-acme"
+  servers:
+    primary:
+      url: "@@MCP_PRIMARY_URL@@/mcp" # used exactly (M13): the mock's path
+      transport: "http"

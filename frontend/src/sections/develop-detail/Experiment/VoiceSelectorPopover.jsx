@@ -9,7 +9,6 @@ import {
 import _ from "lodash";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
-import { LabelButton } from "src/components/FormSelectField/FormSelectFieldStyle";
 
 export default function VoiceSelectorPopover({
   anchorEl,
@@ -18,8 +17,6 @@ export default function VoiceSelectorPopover({
   options,
   setValue,
   currentValue = [],
-  isCustomAudio = false,
-  openModal,
 }) {
   // Work with voice strings internally for selection UI
   const toVoiceString = (v) => (typeof v === "string" ? v : v.voice);
@@ -79,28 +76,6 @@ export default function VoiceSelectorPopover({
           overflow: "scroll",
         }}
       >
-        {isCustomAudio && (
-          <LabelButton
-            onClick={openModal}
-            sx={{
-              typography: "s2_1",
-              borderTop: "0",
-              marginTop: "5px",
-              borderRadius: "6px",
-              height: "34px",
-              backgroundColor: "background.paper",
-              paddingLeft: "8px",
-              "&:hover": {
-                backgroundColor: "action.hover",
-              },
-            }}
-          >
-            <Typography type="span" sx={{ fontSize: "20px" }}>
-              +
-            </Typography>{" "}
-            &nbsp; Add Custom Voice
-          </LabelButton>
-        )}
         {options?.map((option) => (
           <FormControlLabel
             key={option?.value}
@@ -157,6 +132,4 @@ VoiceSelectorPopover.propTypes = {
   options: PropTypes.array,
   setValue: PropTypes.func,
   currentValue: PropTypes.array,
-  isCustomAudio: PropTypes.bool,
-  openModal: PropTypes.func,
 };

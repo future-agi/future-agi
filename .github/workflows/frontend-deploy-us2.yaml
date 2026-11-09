@@ -12,6 +12,10 @@ on:
         required: true
         default: "main"
         type: string
+      runtime_config_only:
+        description: "Update public runtime config only (no rebuild or asset upload)"
+        type: boolean
+        default: false
 
 jobs:
   deploy-us2:
@@ -34,9 +38,11 @@ jobs:
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies
-        run: yarn
+        if: inputs.runtime_config_only != true
+        run: yarn --frozen-lockfile
 
       - name: Create .env file from secrets
+        if: inputs.runtime_config_only != true
         run: |
           cat <<EOF > .env
           VITE_ENVIRONMENT=${{ inputs.branch == 'main' && 'production' || 'dev' }}
@@ -60,7 +66,13 @@ jobs:
           EOF
 
       - name: Build project
+        if: inputs.runtime_config_only != true
         run: yarn build
+
+      - name: Write public runtime configuration from repository variables
+        env:
+          RUNTIME_CONFIG_VARIABLES_JSON: ${{ toJSON(vars) }}
+        run: node scripts/write-runtime-config.mjs --prefix US2_ --output dist/config.js
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -75,6 +87,7 @@ jobs:
       # Hashed assets (Vite content-hashed filenames in /assets/) — safe
       # to cache forever. -d cleans up hashes from previous deploys.
       - name: Upload hashed assets with long-lived immutable cache
+        if: inputs.runtime_config_only != true
         run: |
           gsutil -m -h "Cache-Control:public, max-age=31536000, immutable" \
             rsync -R -d dist/assets/ gs://futureagi-frontend-us/assets/
@@ -82,11 +95,24 @@ jobs:
       # Non-hashed root files (index.html, config.js, favicons) must NOT
       # be cached. -x "^assets/" excludes hashed assets from this pass.
       - name: Upload root files with no-cache
+        if: inputs.runtime_config_only != true
         run: |
           gsutil -m -h "Cache-Control:no-cache, must-revalidate" \
-            rsync -R -d -x "^assets/" dist/ gs://futureagi-frontend-us
+            rsync -R -d -x "^(assets/|config\\.js$)" dist/ gs://futureagi-frontend-us
+
+      - name: Upload runtime configuration with no-cache
+        run: |
+          gsutil -h "Cache-Control:no-cache, no-store, must-revalidate" \
+            -h "Content-Type:application/javascript" cp dist/config.js gs://futureagi-frontend-us/config.js
+
+      - name: Invalidate runtime configuration
+        run: |
+          gcloud compute url-maps invalidate-cdn-cache futureagi-frontend-us-url-map \
+            --path "/config.js" \
+            --project=${{ secrets.GCP_PROJECT_ID }}
 
       - name: Invalidate Cloud CDN cache
+        if: inputs.runtime_config_only != true
         run: |
           gcloud compute url-maps invalidate-cdn-cache futureagi-frontend-us-url-map \
             --path "/*" \

@@ -61,7 +61,7 @@ const SetEmptyRow = ({
       trackEvent(Events.addRowsSuccess, {
         [PropertyName.method]: "add empty row",
       });
-      enqueueSnackbar("Dataset created successfully", {
+      enqueueSnackbar("Rows added to this dataset.", {
         variant: "success",
       });
       onSuccess?.();
@@ -98,19 +98,20 @@ const SetEmptyRow = ({
               fontWeight={"fontWeightBold"}
               color="text.primary"
             >
-              Add Empty Rows
+              Add empty rows
             </Typography>
             <IconButton onClick={onCloseClick}>
               <Iconify icon="mdi:close" color="text.primary" />
             </IconButton>
           </Box>
-          <HelperText text="Add empty rows and columns to your dataset" />
+          <HelperText text="Add 1 to 10 empty rows to this dataset." />
         </Box>
         <DialogContent sx={{ padding: 0, margin: 0 }}>
           <FormSearchSelectFieldControl
             control={control}
             fieldName="row"
             size="small"
+            placeholder="Select option"
             label="No. of rows to create"
             options={Array.from({ length: 10 }, (_, i) => ({
               label: String(i + 1),
@@ -121,7 +122,7 @@ const SetEmptyRow = ({
         </DialogContent>
         <DialogActions sx={{ padding: 0, margin: "32px 0 0" }}>
           <Button size="small" onClick={onCloseClick} variant="outlined">
-            Cancel
+            Close
           </Button>
           <LoadingButton
             onClick={handleSubmit(onSubmit, onError)}
@@ -130,7 +131,7 @@ const SetEmptyRow = ({
             size="small"
             loading={isPending}
           >
-            Next
+            Add rows
           </LoadingButton>
         </DialogActions>
       </Box>

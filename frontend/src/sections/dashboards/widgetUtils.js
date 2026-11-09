@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import { getExactAggregationReadState } from "src/utils/queryReadState";
 
 export const DEFAULT_DECIMALS = 2;
@@ -982,6 +983,11 @@ export const formatValueWithConfig = (
   { fallbackDecimals = DEFAULT_DECIMALS, includeUnit = true } = {},
 ) => {
   if (val == null) return "-";
+  if (["$", "usd", "USD"].includes(cfg?.unit)) {
+    const unit = includeUnit ? cfg.unit : "";
+    const text = formatExactMoney(val, { prefix: "", missing: "-" });
+    return cfg?.prefixSuffix === "suffix" ? `${text}${unit}` : `${unit}${text}`;
+  }
   const num = Number(val);
   if (!Number.isFinite(num)) return "-";
   const dec = Math.max(0, Math.min(6, cfg?.decimals ?? fallbackDecimals));

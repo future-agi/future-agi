@@ -8,6 +8,7 @@ from itertools import islice
 
 import structlog
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError, connection, models, transaction
 from django.db.models import (
     Count,
@@ -22,6 +23,7 @@ from django.db.models import (
     Value,
 )
 from django.db.models.functions import Cast, Coalesce, Left, Length, NullIf
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
@@ -52,6 +54,7 @@ from tfc.utils.api_serializers import (
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.tenant_scope import caller_organization, set_related_queryset
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     RESUMABLE_TASK_STATUSES,
@@ -84,10 +87,7 @@ from tracer.serializers.eval_task import (
 )
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.eval_tasks.edit_options import validate_edit_action
-from tracer.services.eval_tasks.entries import (
-    soft_delete_eval_results,
-    soft_delete_live,
-)
+from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -1601,7 +1601,15 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         """Return one task without unbounded JSON or relation hydration."""
 
-        queryset = self.filter_queryset(self.get_queryset())
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+        except DjangoValidationError as exc:
+            # get_queryset filters on the URL id, and Django's UUIDField
+            # refuses one that is not a UUID. It names no task: the same 404
+            # as an id that names nothing, never a 500.
+            raise Http404(
+                f"No {EvalTask._meta.object_name} matches the given query."
+            ) from exc
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
         lookup_value = self.kwargs[lookup_url_kwarg]
         preflight_queryset = (
@@ -1669,16 +1677,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         )
 
     def _get_request_organization(self):
-        # Returns None for unauthenticated requests (e.g. drf-yasg's fake view
-        # during OpenAPI generation) instead of raising on AnonymousUser, which
-        # would otherwise silently drop request bodies from the generated schema.
-        org = getattr(self.request, "organization", None)
-        if org is not None:
-            return org
-        user = getattr(self.request, "user", None)
-        if user is None or not user.is_authenticated:
-            return None
-        return getattr(user, "organization", None)
+        # The organization authentication resolved, None included (a user
+        # whose memberships are all inactive has none). Returns None for
+        # unauthenticated requests (e.g. drf-yasg's fake view during OpenAPI
+        # generation) instead of raising on AnonymousUser, which would
+        # otherwise silently drop request bodies from the generated schema.
+        return caller_organization(self.request)
 
     def _project_workspace_scope_q(self, organization_id):
         return project_workspace_scope_q(
@@ -1750,12 +1754,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         if not fields:
             return serializer
         if "project" in fields:
-            fields["project"].queryset = self._scope_project_queryset(
-                Project.objects.all()
+            set_related_queryset(
+                fields["project"],
+                self._scope_project_queryset(Project.objects.all()),
             )
         if "evals" in fields:
-            fields["evals"].queryset = self._scope_custom_eval_config_queryset(
-                CustomEvalConfig.objects.all()
+            set_related_queryset(
+                fields["evals"],
+                self._scope_custom_eval_config_queryset(CustomEvalConfig.objects.all()),
             )
         return serializer
 
@@ -1853,7 +1859,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             }
         return tasks
 
-    @validated_request(request_serializer=EvalTaskSerializer)
+    @validated_request(
+        request_serializer=EvalTaskSerializer,
+        serializer_context=lambda request: {"request": request},
+    )
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
@@ -1861,6 +1870,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         request_serializer=EvalTaskSerializer,
         partial_request_validation=True,
         strict_request_validation=False,
+        serializer_context=lambda request: {"request": request},
     )
     def partial_update(self, request, *args, **kwargs):
         kwargs["partial"] = True
@@ -1873,11 +1883,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         EvalTaskLogger.objects.filter(eval_task_id=instance.id).update(
             deleted=True, deleted_at=now
         )
-        soft_delete_eval_results(EvalLogger.objects.filter(eval_task_id=instance.id))
+        EvalLogger.objects.filter(eval_task_id=instance.id).update(
+            deleted=True, deleted_at=now
+        )
         instance.delete()
 
     @validated_request(
         request_serializer=EvalTaskSerializer,
+        serializer_context=lambda request: {"request": request},
         responses={
             200: EvalTaskCreateResponseSerializer,
             400: ApiErrorResponseSerializer,
@@ -2750,8 +2763,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             EvalTaskLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
                 deleted=True, deleted_at=timezone.now()
             )
-            soft_delete_eval_results(
-                EvalLogger.objects.filter(eval_task_id__in=eval_task_ids)
+            EvalLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
+                deleted=True, deleted_at=timezone.now()
             )
 
             return self._gm.success_response(
@@ -2999,7 +3012,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("Eval task ID is required")
 
             # Validate input data
-            serializer = EditEvalTaskSerializer(data=self.request.data)
+            serializer = EditEvalTaskSerializer(
+                data=self.request.data, context={"request": request}
+            )
             if not serializer.is_valid():
                 logger.error(
                     f"Invalid data for eval task update {eval_task_id}: {serializer.errors}"
@@ -3161,7 +3176,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 eval_task_id=eval_task_id,
                 error_type=type(exc).__name__,
             )
-            return self._gm.bad_request("Evaluation task could not be updated")
+            return self._gm.internal_server_error_response(
+                "Evaluation task could not be updated"
+            )
 
     def _extract_update_fields(self, validated_data):
         """Extract valid update fields from validated data.

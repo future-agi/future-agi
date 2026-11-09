@@ -1,3 +1,5 @@
+import pytest
+
 from agentcc.serializers.contracts import (
     AgentccEmptyRequestSerializer,
     AgentccErrorResponseSerializer,
@@ -35,17 +37,59 @@ def test_agentcc_empty_request_serializer_rejects_non_empty_body():
     assert "non_field_errors" in serializer.errors
 
 
-def test_gateway_mcp_status_accepts_normalized_fallback_servers():
+def test_gateway_mcp_status_accepts_gateway_server_statuses():
+    # M6: the items are the gateway's own (mcp-admin-status-v1, by server_id);
+    # Django no longer builds {id, status: configured} fallback items.
     serializer = GatewayMCPStatusResponseSerializer(
         data={
             "status": True,
             "result": {
+                "features": {
+                    "upstream_oauth": False,
+                    "client_oauth": False,
+                    "k2_apps": False,
+                    "client_installs": False,
+                    "tool_call_explorer": False,
+                    "tool_call_download": False,
+                    "siem_export": False,
+                },
                 "enabled": True,
+                "sessions": 0,
+                "tools": 2,
+                "resources": 0,
+                "prompts": 0,
+                "servers": [{"server_id": "github", "healthy": True, "tool_count": 2}],
+            },
+        }
+    )
+
+    assert serializer.is_valid(), serializer.errors
+
+
+@pytest.mark.parametrize(
+    "reason", ["gateway_mcp_disabled", "gateway_unreachable", "gateway_not_org_scoped"]
+)
+def test_gateway_mcp_status_disabled_carries_a_reason(reason):
+    serializer = GatewayMCPStatusResponseSerializer(
+        data={
+            "status": True,
+            "result": {
+                "features": {
+                    "upstream_oauth": False,
+                    "client_oauth": False,
+                    "k2_apps": False,
+                    "client_installs": False,
+                    "tool_call_explorer": False,
+                    "tool_call_download": False,
+                    "siem_export": False,
+                },
+                "enabled": False,
+                "reason": reason,
                 "sessions": 0,
                 "tools": 0,
                 "resources": 0,
                 "prompts": 0,
-                "servers": [{"id": "github", "status": "configured"}],
+                "servers": [],
             },
         }
     )
@@ -58,6 +102,15 @@ def test_gateway_mcp_status_accepts_empty_server_list():
         data={
             "status": True,
             "result": {
+                "features": {
+                    "upstream_oauth": False,
+                    "client_oauth": False,
+                    "k2_apps": False,
+                    "client_installs": False,
+                    "tool_call_explorer": False,
+                    "tool_call_download": False,
+                    "siem_export": False,
+                },
                 "enabled": False,
                 "sessions": 0,
                 "tools": 0,
@@ -128,6 +181,15 @@ def test_api_key_bulk_response_is_typed():
                     "expires_at": None,
                 }
             ],
+            "snapshot": {"complete": True, "issued_ever": 1},
+            "retired": [],
+            "config_conflicts": [],
+            "delegation": {
+                "complete": True,
+                "fetched_at": "2026-10-28T00:00:00Z",
+                "members": [],
+                "revoked_grants": [],
+            },
         }
     )
 

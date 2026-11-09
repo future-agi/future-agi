@@ -1,0 +1,92 @@
+# G1 scenario gateway config (scripts/scenarios/11_g1_attempts.sh), rendered
+# by scn_up like config/base.yaml (same placeholders; scn_up appends redis:).
+# The mock serves fixtures/G1/mock, whose catalog adds mock/ok-1, mock/ok-2
+# and mock/fail-503 to the common one.
+#
+# Two keys:
+# - scn-test-key-acme (byok), org-acme's person-owned key, which scn_up
+#   registers with the mock's control plane (733), reaches the managed
+#   OpenRouter provider once the org opts in. Its requests are in the request
+#   log.
+# - scn-test-key-g1-internal (internal), a deployment identity with no org,
+#   is the only kind of key provider failover, and so retries, run for. It
+#   reaches mock-a and mock-b, which both serve mock/ok-1, under the node's
+#   routing. The request log leaves internal keys out, so the script reads
+#   their attempts from the gateway's debug log.
+# Every key and token below is a fake value for the local mock upstream.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  # Org keys are person-owned (733): under a control plane config.yaml holds
+  # only deployment identities (key_type internal, no org_id, no user_id).
+  # scn_up registers acme-app (SCN_KEY of org-acme, user SCN_USER) with the
+  # mock's control plane, which lists it on the key sync (lib.sh, Org keys).
+  keys:
+    - name: "g1-internal"
+      key: "scn-test-key-g1-internal"
+      owner: "acme"
+      key_type: "internal"
+providers:
+  # FutureAGI-credentialed and managed: opted-in orgs may use it, billed.
+  openrouter:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-managed-upstream"
+    api_format: "openai"
+    type: "openrouter"
+    managed: true
+    auto_discover: false
+  mock-a:
+    base_url: "@@MOCK_URL@@"
+    api_key: "scn-test-g1-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["mock/ok-1"]
+  mock-b:
+    base_url: "@@MOCK_URL@@"
+    api_key: "scn-test-g1-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["mock/ok-1"]
+managed:
+  markup_percent: 5
+  require_credits: true
+  catalog_refresh: 1m
+routing:
+  # Least latency picks the first target until either has a latency.
+  default_strategy: "least-latency"
+  # g1-internal is a deployment identity (733: no org_id), so no org config
+  # reaches it: section 2's failover and retries are the node's, set as the
+  # scenario sets org-acme's (an org key never fails over, so they change
+  # nothing for acme-app).
+  failover:
+    enabled: true
+  retry:
+    enabled: true
+    max_retries: 2
+    initial_delay: 10ms
+    max_delay: 20ms
+  targets:
+    "mock/ok-1":
+      - provider: "mock-a"
+        weight: 1
+      - provider: "mock-b"
+        weight: 1
+cost_tracking:
+  enabled: true
+logging:
+  level: "debug"
+  request_logging:
+    enabled: true
+# The mock stands in for Django: request logs reach its /__logs.
+# Its control plane lists the person-owned keys scn_up registers and does
+# not answer the org sync, so configs pushed with scn_org_config stay; the
+# gateway syncs keys on startup (scn_up waits for the first list).
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: true
+  sync_interval: 60s

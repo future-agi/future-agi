@@ -32,6 +32,7 @@ def process_huggingface_dataset_activity(
     num_rows: int,
     column_order: list,
     rows: dict,
+    revision: str | None = None,
 ):
     """
     Process HuggingFace dataset creation/import asynchronously.
@@ -47,6 +48,7 @@ def process_huggingface_dataset_activity(
         num_rows,
         column_order,
         rows,
+        **({"revision": revision} if revision else {}),
     )
 
 

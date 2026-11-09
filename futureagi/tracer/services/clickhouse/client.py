@@ -409,27 +409,36 @@ class ClickHouseClient:
         )
 
         from tfc.telemetry.instrumentation import instrument_clickhouse_client
+        from tracer.services.background_transport import guard_native_client
 
         return instrument_clickhouse_client(
-            CHDriver(
-                host=self.host,
-                port=self.port,
-                user=self.user,
-                password=self.password,
-                database=self.database,
-                connect_timeout=self.connect_timeout,
-                send_receive_timeout=(
-                    max(self.send_timeout, self.receive_timeout)
-                    if send_receive_timeout_seconds is None
-                    else send_receive_timeout_seconds
-                ),
-                settings=driver_settings,
-                compression="lz4",
+            guard_native_client(
+                CHDriver(
+                    host=self.host,
+                    port=self.port,
+                    user=self.user,
+                    password=self.password,
+                    database=self.database,
+                    connect_timeout=self.connect_timeout,
+                    send_receive_timeout=(
+                        max(self.send_timeout, self.receive_timeout)
+                        if send_receive_timeout_seconds is None
+                        else send_receive_timeout_seconds
+                    ),
+                    settings=driver_settings,
+                    compression="lz4",
+                )
             )
         )
 
     def _get_client(self) -> CHDriver:
         """Acquire a ClickHouse client connection from the pool."""
+        from tracer.services.background_transport import current_guard
+
+        # A background guard must never be installed on a pooled interactive
+        # connection, nor returned with a captured principal to that pool.
+        if current_guard() is not None:
+            return self._create_client()
         try:
             client = self._pool.get_nowait()
             return client
@@ -439,6 +448,9 @@ class ClickHouseClient:
 
     def _return_client(self, client: CHDriver) -> None:
         """Return a ClickHouse client connection to the pool."""
+        if getattr(client, "_analysis_transport_guard", None) is not None:
+            client.disconnect()
+            return
         try:
             self._pool.put_nowait(client)
         except queue.Full:

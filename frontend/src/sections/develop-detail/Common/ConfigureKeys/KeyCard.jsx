@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Box, Typography, useTheme } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -273,7 +274,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
               }}
             >
               <Image
-                src={data?.logoUrl}
+                src={localProviderLogo(data)}
                 alt={data?.display_name}
                 width={25}
                 height={25}
@@ -340,7 +341,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                 }}
               >
                 <Image
-                  src={data?.logoUrl}
+                  src={localProviderLogo(data)}
                   alt={data?.display_name}
                   width={25}
                   height={25}

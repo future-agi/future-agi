@@ -1,94 +1,43 @@
-import { Box, LinearProgress } from "@mui/material";
-import React, { useMemo } from "react";
-import ExperimentSummaryTable from "./ExperimentSummaryTable";
-import ExperimentEvaluationChart from "./ExperimentEvaluationChart";
-import { useQuery } from "@tanstack/react-query";
-import { useParams } from "react-router";
-import axios, { endpoints } from "src/utils/axios";
-import { ExperimentSummaryStaticColumnDefs } from "./tableConfig";
-import ExperimentEvalCellRenderer from "./CustomRenderers/ExperimentEvalCellRenderer";
-import SpiderChartExperiment from "./ExperimentSummaryChart/SpiderChartExperiment";
-import RankWithIndexRenderer from "./CustomRenderers/RankWithIndexRenderer";
+import React from "react";
+import { LinearProgress } from "@mui/material";
+import { useParams, useSearchParams } from "react-router-dom";
+import { useExperimentDetail } from "src/api/develop/runs";
+import ExperimentAnalysisView from "./Analysis/ExperimentAnalysisView";
 
+/**
+ * `/dashboard/develop/experiment/:id/summary`: the analysis of the
+ * experiment's runs (PRODUCT-SPEC §3.13). Baseline = `baseline=` when it is
+ * one of the experiment's runs (or `none`), else the pinned dataset
+ * baseline when it is in the experiment, else run A; a one-run
+ * experiment shows absolute values.
+ */
 const ExperimentSummaryView = () => {
   const { experimentId } = useParams();
+  const [searchParams] = useSearchParams();
+  const { data: experiment, isLoading } = useExperimentDetail(experimentId);
 
-  const { data, isLoading, isFetching } = useQuery({
-    queryKey: ["experiment-summary", experimentId],
-    queryFn: () =>
-      axios.get(endpoints.develop.experiment.getSummary(experimentId)),
-    select: (e) => e?.data?.result,
-  });
+  if (isLoading || !experiment) return <LinearProgress />;
 
-  const columns = useMemo(() => {
-    let colData = [];
-    if (data?.metadata?.is_winner_chosen || data?.metadata?.isWinnerChosen) {
-      colData.push({
-        field: "rank",
-        headerComponent: null,
-        headerName: "Ranking",
-        width: 100,
-        cellRenderer: RankWithIndexRenderer,
-        cellStyle: {
-          marginX: "auto",
-        },
-      });
-    }
-
-    colData = [...colData, ...ExperimentSummaryStaticColumnDefs];
-
-    for (const eachCol of data?.column_config || data?.columnConfig || []) {
-      colData.push({
-        field: eachCol?.name,
-        headerName: eachCol?.name,
-        cellRenderer: ExperimentEvalCellRenderer,
-        cellStyle: {
-          padding: 0,
-        },
-        col: eachCol,
-        flex: 1,
-        minWidth: 150,
-      });
-    }
-
-    return colData;
-  }, [data]);
-  if (isLoading) {
-    return <LinearProgress />;
-  }
+  const runs = experiment.runs ?? [];
+  const runIds = runs.map((r) => r.run_id);
+  const requested = searchParams.get("baseline");
+  // No `baseline=`: the analysis picks the dataset's pinned baseline when it
+  // is one of these runs, else run A (R3 P5 MUST 3).
+  const baselineId =
+    runIds.length < 2
+      ? "none"
+      : requested === "none" || runIds.includes(requested)
+        ? requested
+        : undefined;
 
   return (
-    <Box
-      sx={{
-        padding: "12px",
-        flex: 1,
-        overflowY: "auto",
-        display: "flex",
-        gap: 2,
-        flexDirection: "column",
-      }}
-    >
-      <ExperimentSummaryTable
-        columns={columns}
-        rows={data?.table_data || data?.tableData}
-        evalsList={data?.column_config || data?.columnConfig}
-        loading={isFetching}
-      />
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <SpiderChartExperiment
-          data={data?.table_data || data?.tableData}
-          cols={data?.column_config || data?.columnConfig}
-        />
-
-        {(data?.column_config || data?.columnConfig)?.map((col) => (
-          <ExperimentEvaluationChart
-            key={col.id}
-            col={col}
-            rows={data?.table_data || data?.tableData}
-          />
-        ))}
-      </Box>
-    </Box>
+    <ExperimentAnalysisView
+      datasetId={experiment.dataset_id}
+      runIds={runIds}
+      baselineId={baselineId}
+      mode="experiment"
+    />
   );
 };
+
 export default ExperimentSummaryView;

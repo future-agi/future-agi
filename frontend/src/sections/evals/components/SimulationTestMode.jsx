@@ -33,6 +33,7 @@ import DraggableColResizer from "src/components/draggable-col-resizer";
 import { JsonValueTree } from "./DatasetTestMode";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import EvalResultDisplay from "./EvalResultDisplay";
+import DecisionCallPanel from "src/sections/common/DecisionJudges/DecisionCallPanel";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import {
   useExecuteCompositeEval,
@@ -189,6 +190,9 @@ const SimulationTestMode = React.forwardRef(
     {
       templateId,
       model = "turing_large",
+      // W1: a decision judge's question and the eval's prompt as edited
+      // ({decision, rule_prompt, threshold}); sent with the Test.
+      decisionTest = null,
       variables = [],
       codeParams = {},
       onTestResult,
@@ -323,6 +327,8 @@ const SimulationTestMode = React.forwardRef(
     // Eval result
     const [, setIsRunning] = useState(false);
     const [result, setResult] = useState(null);
+    // W1: the decision call behind the last Test (or the refusal).
+    const [decisionCall, setDecisionCall] = useState(null);
     const [error, setError] = useState(null);
     // Async error localization poll — see DatasetTestMode for rationale.
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
@@ -1177,6 +1183,7 @@ const SimulationTestMode = React.forwardRef(
       }
       setIsRunning(true);
       setResult(null);
+      setDecisionCall(null);
       setError(null);
       try {
         const evalMapping = {};
@@ -1238,6 +1245,7 @@ const SimulationTestMode = React.forwardRef(
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
                   : {}),
+                ...(decisionTest && !isComposite ? decisionTest : {}),
               },
               ...(_callId
                 ? { call_id: _callId, run_test_id: selectedRunTestId }
@@ -1255,6 +1263,7 @@ const SimulationTestMode = React.forwardRef(
                 compositeResult: data.result,
               }
             : data.result;
+          setDecisionCall(data.result?.metadata?.decision ?? null);
           setResult(nextResult);
           onTestResult?.(true, nextResult);
           if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
@@ -1270,6 +1279,8 @@ const SimulationTestMode = React.forwardRef(
           err,
           "Failed to run evaluation. Please retry.",
         );
+        // W1: the gateway's refusal of a decision call (status, code).
+        setDecisionCall(err?.response?.data?.decision ?? null);
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1297,6 +1308,7 @@ const SimulationTestMode = React.forwardRef(
       loadingCalls,
       loadingDetail,
       selectedRunTestId,
+      decisionTest,
     ]);
 
     useImperativeHandle(
@@ -1673,6 +1685,7 @@ const SimulationTestMode = React.forwardRef(
                 onClick={() => {
                   setCurrentCallIndex((i) => Math.max(0, i - 1));
                   setResult(null);
+                  setDecisionCall(null);
                   setError(null);
                   onClearResult?.();
                 }}
@@ -1686,6 +1699,7 @@ const SimulationTestMode = React.forwardRef(
                 onClick={() => {
                   setCurrentCallIndex((i) => Math.min(calls.length - 1, i + 1));
                   setResult(null);
+                  setDecisionCall(null);
                   setError(null);
                   onClearResult?.();
                 }}
@@ -2290,6 +2304,13 @@ const SimulationTestMode = React.forwardRef(
           />
         )}
 
+        {/* W1: a decision judge's own call (or the gateway's refusal) */}
+        {decisionCall && (
+          <Box sx={{ mt: 1 }}>
+            <DecisionCallPanel decision={decisionCall} />
+          </Box>
+        )}
+
         {error && (
           <Box
             sx={{
@@ -2314,6 +2335,7 @@ SimulationTestMode.displayName = "SimulationTestMode";
 
 SimulationTestMode.propTypes = {
   templateId: PropTypes.string,
+  decisionTest: PropTypes.object,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
   onTestResult: PropTypes.func,

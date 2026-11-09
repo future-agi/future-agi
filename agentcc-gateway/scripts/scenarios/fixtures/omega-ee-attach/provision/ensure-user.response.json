@@ -1,0 +1,19 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": true,
+    "result": {
+      "vs_id": "vs_01K7CN5EEPERS0NM0DE0000002",
+      "url": "https://gateway.example.com/mcp/v/vs_01K7CN5EEPERS0NM0DE0000002",
+      "mode": "user",
+      "workspace": "3f6c1e2a-8b4d-4c6e-9a1f-2b7d5e8c0a14",
+      "connection_id": "int_8d1b6e3a5c90",
+      "created": true
+    }
+  }
+}

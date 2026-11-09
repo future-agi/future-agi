@@ -1,3 +1,4 @@
+{{- if not .Values.hosted.enabled -}}
 {{- /*
 `python manage.py bootstrap_install`: migrations, seeds, ClickHouse schema,
 observed-attribute index, change data capture and Temporal schedules. The
@@ -31,11 +32,14 @@ bundled datastores (wave -2) are ready and before the rest of the release
 {{- end -}}
 {{- /* Database changes are authorized for this job only: the explicit local
 mode, plus the operator pair a hosted ENV_TYPE (production) requires. */ -}}
-{{- $component := dict
+{{- /* It registers the Temporal schedules: the Omega revocation drain's
+interval depends on whether it sees the delegation issuer (omega/_omega.tpl),
+which config.extraEnvFrom cannot supply (futureagi.omega.envFromPins). */ -}}
+{{- $component := merge (dict
       "SERVICE_TYPE" "bootstrap"
       "STARTUP_DB_MUTATION_MODE" "operator"
       "NO_STARTUP_DB_MUTATIONS" "false"
-      "REGISTER_TEMPORAL_SCHEDULES" "true" -}}
+      "REGISTER_TEMPORAL_SCHEDULES" "true") (include "futureagi.omega.scheduleEnv" . | fromYaml) (include "futureagi.omega.envFromPins" . | fromYaml) -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -111,3 +115,5 @@ spec:
         {{- with $extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+
+{{- end -}}

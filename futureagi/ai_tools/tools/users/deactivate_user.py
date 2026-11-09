@@ -16,8 +16,8 @@ class DeactivateUserInput(PydanticBaseModel):
 class DeactivateUserTool(BaseTool):
     name = "deactivate_user"
     description = (
-        "Deactivates a user account (soft disable). The user will no longer "
-        "be able to log in but their data is preserved. Requires admin permissions."
+        "Deactivates a membership in the acting organization. The user will no longer "
+        "have access to this organization; other organizations are unchanged. Requires admin permissions."
     )
     category = "users"
     input_model = DeactivateUserInput
@@ -26,12 +26,16 @@ class DeactivateUserTool(BaseTool):
 
         from accounts.models.user import User
         from accounts.models.workspace import OrganizationRoles
+        from accounts.services.offboarding import offboard_organization_member
+        from accounts.utils import resolve_org_role
+        from tfc.utils.tenant_scope import counts_as_member
 
         org = context.organization
         actor = context.user
 
         # Permission check
-        if actor.organization_role not in [
+        actor_role = resolve_org_role(actor, org)
+        if actor_role not in [
             OrganizationRoles.OWNER,
             OrganizationRoles.ADMIN,
         ]:
@@ -42,7 +46,9 @@ class DeactivateUserTool(BaseTool):
             )
 
         try:
-            target_user = User.objects.get(id=params.user_id, organization=org)
+            target_user = User.objects.get(id=params.user_id)
+            if not counts_as_member(target_user, org):
+                return ToolResult.not_found("User", str(params.user_id))
         except User.DoesNotExist:
             return ToolResult.not_found("User", str(params.user_id))
 
@@ -55,29 +61,28 @@ class DeactivateUserTool(BaseTool):
 
         # Prevent deactivating owners unless you're an owner
         if (
-            target_user.organization_role == OrganizationRoles.OWNER
-            and actor.organization_role != OrganizationRoles.OWNER
+            resolve_org_role(target_user, org) == OrganizationRoles.OWNER
+            and actor_role != OrganizationRoles.OWNER
         ):
             return ToolResult.error(
                 "Only Owners can deactivate another Owner.",
                 error_code="PERMISSION_DENIED",
             )
 
-        if not target_user.is_active:
-            return ToolResult.error(
-                f"User {target_user.email} is already deactivated.",
-                error_code="VALIDATION_ERROR",
-            )
-
-        target_user.is_active = False
-        target_user.save()
+        try:
+            offboard_organization_member(target_user, org, actor=actor)
+        except ValueError as exc:
+            return ToolResult.error(str(exc), error_code="VALIDATION_ERROR")
 
         info = key_value_block(
             [
                 ("User", f"{target_user.name} ({target_user.email})"),
                 ("User ID", f"`{target_user.id}`"),
                 ("Status", "Deactivated"),
-                ("Action", "User can no longer log in. Data is preserved."),
+                (
+                    "Action",
+                    "Access to this organization is disabled. Other organizations are unchanged.",
+                ),
             ]
         )
         content = section("User Deactivated", info)

@@ -645,7 +645,7 @@ class OptimizationDetailView(RetrieveAPIView):
         # Replace column IDs with column names in the optimized prompts
         if obj.optimized_k_prompts:
             obj.optimized_k_prompts = [
-                replace_ids_with_column_name(prompt)
+                replace_ids_with_column_name(prompt, self.request)
                 for prompt in obj.optimized_k_prompts
             ]
         return obj

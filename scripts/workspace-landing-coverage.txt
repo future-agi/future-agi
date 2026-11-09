@@ -1,0 +1,81 @@
+E2E: exempt (harness-gap deterministic multi-workspace landing fixtures with absent or stale preferences and scoped defaults)
+
+Approval: ruling 715 addendum 1 (2026-10-28 01:30 PDT) approves this bounded
+exemption for lane fa-ws-default-703. The backend decisive tests below are
+evidence, not browser equivalence. Shared e2e/lib and e2e/stack are untouched.
+
+Release obligation, not closed by this exemption: AUTH-E2E-004
+workspace-landing is a release-blocking browser journey for Tue 11-03.
+- Built by main's one-harness E2E lane as a harness extension with
+  deterministic multi-workspace fixtures: reversed-UUID order, is_default,
+  stale and cross-org preference, SAML scoped default, Owner without
+  WorkspaceMembership, Member without membership.
+- Runs on integrated staging in the nightly journey set after this lane's
+  head is accepted and picked onto the FA dev integration branch.
+- Lane owner of record: fa-ws-default-703. Harness owner: main's E2E lane.
+
+Scope: the shared workspace landing resolver changes behavior; this is not a
+backend-internal or refactor exemption. No existing browser flow is claimed to
+cover the precedence matrix.
+
+The current fixture boundary is concrete:
+- e2e/lib/provisioning.ts provisions a signed-in actor with its default workspace.
+- e2e/lib/scope-actors.ts provisions a second workspace and invited members using
+  public APIs. It does not provide a state factory for reversed workspace UUID
+  order, absent/invalid persisted preferences, or membership creation-time ties.
+- e2e/lib/state-probe.ts is read-only by the e2e/README.md flow contract. A flow
+  cannot silently add SQL writes to manufacture those states. The authoring
+  policy requires a separately planned harness extension, not a helper
+  assembled inside a spec.
+- AUTH-E2E-002 (e2e/flows/auth/default-workspace-switch.spec.ts) explicitly switches
+  to A1, then A2, and checks saved-preference reuse. It does not prove a first
+  landing with no usable saved preference, stale membership fallback, or order.
+- SAML-E2E-005 (e2e/flows/auth/saml-tenant-isolation.spec.ts) checks organization
+  binding and unchanged User.config, not multi-workspace default precedence.
+
+The backend regression evidence is deliberately narrower than browser proof:
+  futureagi/accounts/tests/test_workspace_landing.py
+  futureagi/accounts/tests/test_workspace_landing_resolver.py
+  futureagi/accounts/tests/test_workspace_landing_contexts.py
+  futureagi/accounts/tests/test_workspace_landing_boundary.py
+  futureagi/accounts/tests/test_workspace_landing_unscoped.py
+  futureagi/accounts/tests/test_workspace_landing_prebuilt.py
+  futureagi/ee/falcon_ai/tests/test_workspace_scope.py
+  futureagi/ee/falcon_ai/tests/test_mcp_workspace_scope.py
+  futureagi/ee/falcon_ai/tests/test_delegated_workspace_scope.py
+These exercise normal/scoped selection, configured/default precedence, invalid
+preferences, eligibility through User.can_access_workspace (Owner and Admin
+without WorkspaceMembership land on the org default; a Member without one gets
+no workspace; every seeded user and workspace pair), deterministic fallback,
+and invite callers. Normal auth preserves None without provisioning workspace
+access, including in an empty organization; onboarding and invitation remain
+separate provisioning flows. User-list and role-update default contexts use the
+same resolver, with no org-default bypass. A None landing binds an empty data
+scope for both workspace-filtering managers rather than querying every workspace.
+The real API-key dataset view and manager read/update/delete cases cover absent
+and deactivated memberships, with no grant, plus authorized-context and cleanup
+controls. Nested contexts retain and restore the authenticated scope requirement;
+the generated MCP list_datasets tool is covered through its real API executor.
+Explicit no_workspace_objects operations also deny workspace-owned data when
+landing is empty, including rows owned through forward relations. The same
+boundary applies to prebuilt viewset querysets and absent-workspace predicates.
+Real API-key feedback, session and knowledge-base lists return no inaccessible
+workspace data. Authorization metadata remains readable so canonical access
+checks and explicit organization provisioning can still operate. Background
+queries without an authenticated scope retain their existing semantics.
+Falcon binds the same requirement inside its synchronous native-tool boundary,
+including when its access-checked landing is None. Native search and nested-tool
+cases cover absent/deactivated membership, no implicit grants, accessible
+landings, async dispatch, and caller-context restoration on success and failure.
+External connector discovery now uses the authenticated scope too. Cached tools
+re-check current workspace access before synchronous, asynchronous, and nested
+execution; background evaluators without an identified caller offer no connectors.
+Controls cover active access, absent/deactivated membership, removal after discovery,
+connector movement, and disabling. Cluster-analysis delegation binds the caller in
+its worker thread and checks access before resolving or executing workspace tools.
+These tests do not prove browser rendering, IdP round trips, or invite email delivery.
+
+Local review only. This file is input to e2e/scripts/e2e-coverage.mjs --body. It
+is not a PR or public post, and not a claim that AUTH-E2E-004 has passed or
+that the head may ship. The eight legacy accounts cases are handled under
+ruling 713 in the lane's CONTRACT-UPDATE ledger.

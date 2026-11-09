@@ -16,12 +16,12 @@ from typing import Any
 
 import structlog
 
+from agentic_eval.core.llm.llm import LLM
+from agentic_eval.core.utils.model_config import ModelConfigs
 from ee.agenthub.traceerroragent.prompts_v2 import (
     build_judge_user_prompt,
     get_judge_system_prompt,
 )
-from agentic_eval.core.llm.llm import LLM
-from agentic_eval.core.utils.model_config import ModelConfigs
 
 # Keep last N tool results in full, compact older ones
 COMPACT_KEEP_RECENT = 6
@@ -291,6 +291,7 @@ class JudgeAgent:
         span_map: dict[str, Any],
         parent_map: dict[str, list[str]],
         chauffeur: Any = None,
+        completion_witness=None,
     ):
         """
         Args:
@@ -299,6 +300,7 @@ class JudgeAgent:
             chauffeur: ChauffeurAgent instance for on-demand content summarization.
         """
         self.span_map = span_map
+        self.completion_witness = completion_witness
         self.parent_map = parent_map
         self.chauffeur = chauffeur
         self.content_threshold = AGENT_COMPASS_SPAN_CONTENT_THRESHOLD
@@ -310,7 +312,13 @@ class JudgeAgent:
         self._investigation_complete = False
 
         config = ModelConfigs.SONNET_4_5_BEDROCK_ARN
-        self.llm = LLM(
+        llm_class, llm_kwargs = LLM, {}
+        if completion_witness is not None:
+            from ee.agenthub.traceerroragent.background_llm import BackgroundLLM
+
+            llm_class, llm_kwargs = BackgroundLLM, {"witness": completion_witness}
+        self.llm = llm_class(
+            **llm_kwargs,
             provider=config.provider,
             model_name=config.model_name,
             temperature=0.2,
@@ -334,6 +342,11 @@ class JudgeAgent:
         Returns:
             dict with "errors", "scores", "summary" keys.
         """
+        witness = getattr(self, "completion_witness", None)
+        if witness is not None:
+            from ee.agenthub.traceerroragent.background_payloads import require_payload
+
+            chauffeur_report = require_payload(chauffeur_report, witness, "chauffeur")
         system_prompt = get_judge_system_prompt()
         user_prompt = build_judge_user_prompt(
             trace_outline=trace_outline,
@@ -371,11 +384,29 @@ class JudgeAgent:
             },
         ]
 
+        tools = JUDGE_TOOLS
+        if witness is not None:
+            from ee.agenthub.traceerroragent.background_payload_schemas import (
+                JUDGE_ARGUMENTS,
+            )
+
+            # Advertise the same no-default evidence contract that we enforce.
+            tools = [
+                {
+                    **tool,
+                    "function": {
+                        **tool["function"],
+                        "parameters": JUDGE_ARGUMENTS[tool["function"]["name"]],
+                    },
+                }
+                for tool in JUDGE_TOOLS
+            ]
+
         for turn in range(self.max_turns):
             try:
                 response = self.llm._get_completion_with_tools(
                     messages=messages,
-                    tools=JUDGE_TOOLS,
+                    tools=tools,
                 )
 
                 choice = response.choices[0]
@@ -392,10 +423,22 @@ class JudgeAgent:
 
                     for tool_call in choice.message.tool_calls:
                         tool_name = tool_call.function.name
-                        try:
-                            tool_args = json.loads(tool_call.function.arguments)
-                        except json.JSONDecodeError:
-                            tool_args = {}
+                        if witness is not None:
+                            from ee.agenthub.traceerroragent.background_payload_reports import (
+                                judge_arguments,
+                            )
+
+                            tool_args = judge_arguments(
+                                tool_name,
+                                tool_call.function.arguments,
+                                witness,
+                                decode=True,
+                            )
+                        else:
+                            try:
+                                tool_args = json.loads(tool_call.function.arguments)
+                            except json.JSONDecodeError:
+                                tool_args = {}
 
                         result = self._execute_tool(tool_name, tool_args)
 
@@ -412,7 +455,16 @@ class JudgeAgent:
 
                     if self._investigation_complete:
                         logger.info(f"Judge submitted summary after {turn + 1} turns")
-                        break
+                        if getattr(self, "completion_witness", None) is None:
+                            break
+                        # Background publication needs a normal final response,
+                        # not only a tool_calls finish that submitted a summary.
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": "Investigation submitted. Finish with a brief final response without further tool calls.",
+                            }
+                        )
                 else:
                     # No tool calls and didn't stop — shouldn't happen but break to be safe
                     logger.warning(
@@ -421,8 +473,16 @@ class JudgeAgent:
                     break
 
             except Exception as e:
+                if witness is not None:
+                    witness.failed = True
                 logger.error(f"Judge turn {turn + 1} failed: {str(e)}")
                 break
+
+        # Explicitly reject every fallback before constructing or persisting it.
+        # Foreground/no-lifecycle callers retain their historical fallback.
+        witness = getattr(self, "completion_witness", None)
+        if witness is not None:
+            witness.require(fallback=not self.scores or not self.summary)
 
         # Build fallback scores/summary if Judge didn't submit them
         if not self.scores:
@@ -430,14 +490,23 @@ class JudgeAgent:
         if not self.summary:
             self.summary = self._compute_fallback_summary()
 
-        return {
-            "errors": self.errors,
-            "scores": self.scores,
-            "summary": self.summary,
-        }
+        result = {"errors": self.errors, "scores": self.scores, "summary": self.summary}
+        if witness is not None:
+            from ee.agenthub.traceerroragent.background_payload_reports import (
+                judge_report,
+            )
+
+            return judge_report(result, witness)
+        return result
 
     def _execute_tool(self, tool_name: str, args: dict) -> dict:
         """Execute a tool call and return the result."""
+        if getattr(self, "completion_witness", None) is not None:
+            from ee.agenthub.traceerroragent.background_payload_judge import (
+                execute_judge_tool,
+            )
+
+            return execute_judge_tool(self, tool_name, args)
         handlers = {
             "read_span": self._tool_read_span,
             "read_span_exact": self._tool_read_span_exact,
@@ -648,6 +717,19 @@ class JudgeAgent:
 
     def _tool_submit_scores(self, **scores: Any) -> dict:
         """Submit quality scores."""
+        witness = getattr(self, "completion_witness", None)
+        if witness is not None and any(
+            not isinstance(scores.get(key), dict)
+            or scores[key].get("score") is None
+            or "reason" not in scores[key]
+            for key in (
+                "factual_grounding",
+                "privacy_and_safety",
+                "instruction_adherence",
+                "optimal_plan_execution",
+            )
+        ):
+            witness.fallback_used = True
         self.scores = {
             "factual_grounding": scores.get(
                 "factual_grounding", {"score": 3, "reason": ""}
@@ -666,6 +748,17 @@ class JudgeAgent:
 
     def _tool_submit_summary(self, **summary: Any) -> dict:
         """Submit final summary and end investigation."""
+        witness = getattr(self, "completion_witness", None)
+        if witness is not None and any(
+            summary.get(key) is None
+            for key in (
+                "overall_score",
+                "error_count",
+                "insights",
+                "recommended_priority",
+            )
+        ):
+            witness.fallback_used = True
         self.summary = {
             "overall_score": summary.get("overall_score", 3.0),
             "error_count": summary.get("error_count", len(self.errors)),

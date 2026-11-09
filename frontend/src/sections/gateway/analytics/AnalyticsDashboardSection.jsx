@@ -1,129 +1,140 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Tabs, Tab } from "@mui/material";
+import Box from "@mui/material/Box";
+import Tab from "@mui/material/Tab";
 import { useNavigate, useParams } from "react-router-dom";
+
+import { paths } from "src/routes/paths";
+import { CustomTabs } from "src/components/tabs/tabs";
+
 import { useGatewayContext } from "../context/useGatewayContext";
-import TimeRangeSelector from "./TimeRangeSelector";
-import OverviewKPIs from "./OverviewKPIs";
+import { GatewayEmptyState, GatewayPageFrame } from "../components/frame";
+import AnalyticsKpis from "./AnalyticsKpis";
 import UsageCharts from "./UsageCharts";
+import RangeToggle from "./RangeToggle";
 import CostAnalytics from "./CostAnalytics";
 import LatencyAnalytics from "./LatencyAnalytics";
 import ErrorAnalytics from "./ErrorAnalytics";
 import ModelComparison from "./ModelComparison";
-import SectionHeader from "../components/SectionHeader";
-import { GATEWAY_ICONS } from "../constants/gatewayIcons";
+import { useAnalyticsOverview } from "./hooks/useAnalyticsOverview";
+import { ANALYTICS_RANGES, DEFAULT_RANGE, rangeWindow } from "./analyticsRange";
+import { zoneNote } from "../utils/timeZone";
+import { useGatewayConfig } from "../providers/hooks/useGatewayConfig";
+import { sectionEnforcement } from "../settings/sectionEnforcement";
 
-// ---------------------------------------------------------------------------
-// Time range preset → { start, end } converter
-// ---------------------------------------------------------------------------
+// Gateway analytics: one page. The overview strip, then usage, cost,
+// latency, errors and models over the chosen range, each tab at its own URL
+// (/analytics/<tab>, which Monitoring links to). Every chart asks for the
+// range's bucket size (analyticsRange.js).
 
-const TIME_RANGE_OFFSETS = {
-  "1h": 1 * 60 * 60 * 1000,
-  "6h": 6 * 60 * 60 * 1000,
-  "24h": 24 * 60 * 60 * 1000,
-  "7d": 7 * 24 * 60 * 60 * 1000,
-  "30d": 30 * 24 * 60 * 60 * 1000,
-  "90d": 90 * 24 * 60 * 60 * 1000,
+const TABS = [
+  { slug: "usage", label: "Usage" },
+  { slug: "cost", label: "Cost" },
+  { slug: "latency", label: "Latency" },
+  { slug: "errors", label: "Errors" },
+  { slug: "models", label: "Models" },
+];
+
+const PANELS = {
+  usage: UsageCharts,
+  cost: CostAnalytics,
+  latency: LatencyAnalytics,
+  errors: ErrorAnalytics,
+  models: ModelComparison,
 };
 
-function computeDateRange(preset) {
-  const now = new Date();
-  const offsetMs = TIME_RANGE_OFFSETS[preset] || TIME_RANGE_OFFSETS["24h"];
-  const start = new Date(now.getTime() - offsetMs);
-  return {
-    start: start.toISOString(),
-    end: now.toISOString(),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Tab definitions
-// ---------------------------------------------------------------------------
-
-const TAB_LABELS = ["Usage", "Cost", "Latency", "Errors", "Models"];
-const TAB_SLUGS = ["usage", "cost", "latency", "errors", "models"];
-
-function tabSlugToIndex(slug) {
-  const idx = TAB_SLUGS.indexOf(slug);
-  return idx >= 0 ? idx : 0;
-}
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
-
-const AnalyticsDashboardSection = ({ gatewayId: gatewayIdProp } = {}) => {
+export default function AnalyticsDashboardSection({
+  gatewayId: gatewayIdProp,
+} = {}) {
   const { gatewayId: ctxGatewayId } = useGatewayContext();
   const gatewayId = gatewayIdProp || ctxGatewayId;
-  const { tab: tabSlug } = useParams();
+  const { tab } = useParams();
   const navigate = useNavigate();
-  const activeTab = tabSlugToIndex(tabSlug);
+  const active = TABS.some((t) => t.slug === tab) ? tab : "usage";
 
-  const handleTabChange = useCallback(
-    (_event, newIndex) => {
-      if (newIndex === 0) {
-        navigate("/dashboard/gateway/analytics", { replace: true });
-      } else {
-        navigate(`/dashboard/gateway/analytics/${TAB_SLUGS[newIndex]}`, {
-          replace: true,
-        });
-      }
+  const [range, setRange] = useState(DEFAULT_RANGE);
+  const { start, end, granularity } = useMemo(
+    () => rangeWindow(range),
+    [range],
+  );
+
+  const overview = useAnalyticsOverview({ start, end, gatewayId });
+  // Keep historical cache figures visible; state current enforcement separately.
+  const cacheOff =
+    sectionEnforcement(
+      useGatewayConfig(gatewayId, { meta: { errorHandled: true } }),
+      "cache",
+    ) === "not_enforced";
+
+  const onTab = useCallback(
+    (_event, slug) => {
+      const root = paths.dashboard.gateway.analytics;
+      navigate(slug === "usage" ? root : `${root}/${slug}`, { replace: true });
     },
     [navigate],
   );
 
-  const [timeRange, setTimeRange] = useState("24h");
-
-  const { start, end } = useMemo(
-    () => computeDateRange(timeRange),
-    [timeRange],
-  );
-
-  // Common props passed to all analytics sub-components
-  const analyticsProps = { start, end, gatewayId };
+  const Panel = PANELS[active];
 
   return (
-    <Box p={3}>
-      {/* ---- Header: Title + Time Range Selector ---- */}
-      <SectionHeader
-        icon={GATEWAY_ICONS.analytics}
-        title="Analytics"
-        subtitle="Explore usage, cost, latency, and error trends"
-      >
-        <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
-      </SectionHeader>
-
-      {/* ---- Overview KPIs (always visible) ---- */}
-      <Box mb={3}>
-        <OverviewKPIs {...analyticsProps} />
-      </Box>
-
-      {/* ---- Tab navigation ---- */}
-      <Tabs
-        value={activeTab}
-        onChange={handleTabChange}
-        variant="standard"
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
-      >
-        {TAB_LABELS.map((label, index) => (
-          <Tab key={label} label={label} value={index} />
-        ))}
-      </Tabs>
-
-      {/* ---- Active tab content ---- */}
-      <Box>
-        {activeTab === 0 && <UsageCharts {...analyticsProps} />}
-        {activeTab === 1 && <CostAnalytics {...analyticsProps} />}
-        {activeTab === 2 && <LatencyAnalytics {...analyticsProps} />}
-        {activeTab === 3 && <ErrorAnalytics {...analyticsProps} />}
-        {activeTab === 4 && <ModelComparison {...analyticsProps} />}
-      </Box>
-    </Box>
+    <GatewayPageFrame
+      title="Analytics"
+      description={`Requests, cost, latency and errors through the gateway over time, by model and provider. ${zoneNote()}`}
+      actions={
+        <RangeToggle
+          value={range}
+          options={ANALYTICS_RANGES}
+          onChange={setRange}
+        />
+      }
+    >
+      {overview.error ? (
+        <GatewayEmptyState
+          icon="alertCircle"
+          title="Analytics could not be loaded"
+          description={
+            overview.error.message || "The gateway API did not answer."
+          }
+          actionLabel="Retry"
+          onAction={() => overview.refetch()}
+        />
+      ) : (
+        <>
+          <AnalyticsKpis
+            overview={overview.data}
+            cacheOff={cacheOff}
+            loading={overview.isLoading}
+            period={
+              ANALYTICS_RANGES.find((r) => r.value === range)?.period ||
+              "period"
+            }
+          />
+          <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
+            <CustomTabs
+              value={active}
+              onChange={onTab}
+              variant="scrollable"
+              allowScrollButtonsMobile
+              aria-label="Analytics views"
+            >
+              {TABS.map((t) => (
+                <Tab key={t.slug} value={t.slug} label={t.label} />
+              ))}
+            </CustomTabs>
+          </Box>
+          <Box sx={{ minWidth: 0 }}>
+            <Panel
+              start={start}
+              end={end}
+              granularity={granularity}
+              gatewayId={gatewayId}
+              cacheOff={cacheOff}
+            />
+          </Box>
+        </>
+      )}
+    </GatewayPageFrame>
   );
-};
+}
 
-AnalyticsDashboardSection.propTypes = {
-  gatewayId: PropTypes.string,
-};
-
-export default AnalyticsDashboardSection;
+AnalyticsDashboardSection.propTypes = { gatewayId: PropTypes.string };

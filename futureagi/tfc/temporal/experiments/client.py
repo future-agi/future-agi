@@ -5,8 +5,6 @@ Domain-specific workflow starters and status checkers.
 Uses the centralized client from tfc.temporal.common.
 """
 
-from typing import Optional
-
 from temporalio.client import WorkflowExecutionStatus
 
 from tfc.temporal.common.client import (
@@ -106,6 +104,25 @@ def start_experiment_workflow(
     return handle.id
 
 
+def _ensure_v2_run_admitted(
+    experiment_id,
+    rerun_prompt_config_ids,
+    rerun_agent_config_ids,
+    rerun_eval_template_ids,
+    column_changed,
+) -> None:
+    """Validate the stored agent targets this run will actually execute."""
+    from model_hub.services.experiment_target_admission import ensure_v2_run_admitted
+
+    ensure_v2_run_admitted(
+        experiment_id,
+        rerun_prompt_config_ids=rerun_prompt_config_ids,
+        rerun_agent_config_ids=rerun_agent_config_ids,
+        rerun_eval_template_ids=rerun_eval_template_ids,
+        column_changed=column_changed,
+    )
+
+
 async def start_experiment_v2_workflow_async(
     experiment_id: str,
     max_concurrent_rows: int = 10,
@@ -114,6 +131,7 @@ async def start_experiment_v2_workflow_async(
     rerun_agent_config_ids: list = None,
     rerun_eval_template_ids: list = None,
     column_changed: bool = False,
+    admission_id: str | None = None,
 ) -> str:
     """
     Start a V2 experiment workflow asynchronously.
@@ -133,12 +151,61 @@ async def start_experiment_v2_workflow_async(
     Returns:
         The workflow ID
     """
+    from asgiref.sync import sync_to_async
+
+    await sync_to_async(_ensure_v2_run_admitted)(
+        experiment_id,
+        rerun_prompt_config_ids,
+        rerun_agent_config_ids,
+        rerun_eval_template_ids,
+        column_changed,
+    )
+    return await _start_admitted_v2_workflow_async(
+        experiment_id=experiment_id,
+        max_concurrent_rows=max_concurrent_rows,
+        task_queue=task_queue,
+        rerun_prompt_config_ids=rerun_prompt_config_ids,
+        rerun_agent_config_ids=rerun_agent_config_ids,
+        rerun_eval_template_ids=rerun_eval_template_ids,
+        column_changed=column_changed,
+        admission_id=admission_id,
+    )
+
+
+async def _start_admitted_v2_workflow_async(
+    experiment_id: str,
+    max_concurrent_rows: int,
+    task_queue: str,
+    rerun_prompt_config_ids: list,
+    rerun_agent_config_ids: list,
+    rerun_eval_template_ids: list,
+    column_changed: bool,
+    admission_id: str | None,
+) -> str:
+    """Start a V2 run whose agent targets were already admitted."""
     from tfc.temporal.experiments.workflows import (
         RunExperimentInput,
         RunExperimentV2Workflow,
     )
 
     workflow_id = _get_experiment_workflow_id(experiment_id)
+
+    if admission_id:
+        from tfc.temporal.experiments.admission import admit_v2_workflow
+
+        return await admit_v2_workflow(
+            RunExperimentInput(
+                experiment_id=experiment_id,
+                max_concurrent_rows=max_concurrent_rows,
+                task_queue=task_queue,
+                rerun_prompt_config_ids=rerun_prompt_config_ids or [],
+                rerun_agent_config_ids=rerun_agent_config_ids or [],
+                rerun_eval_template_ids=rerun_eval_template_ids or [],
+                column_changed=column_changed,
+            ),
+            admission_id,
+            task_queue,
+        )
 
     handle = await start_workflow_async(
         workflow_class=RunExperimentV2Workflow,
@@ -166,6 +233,7 @@ def start_experiment_v2_workflow(
     rerun_agent_config_ids: list = None,
     rerun_eval_template_ids: list = None,
     column_changed: bool = False,
+    admission_id: str | None = None,
 ) -> str:
     """
     Start a V2 experiment workflow synchronously.
@@ -192,6 +260,27 @@ def start_experiment_v2_workflow(
 
     workflow_id = _get_experiment_workflow_id(experiment_id)
 
+    _ensure_v2_run_admitted(
+        experiment_id,
+        rerun_prompt_config_ids,
+        rerun_agent_config_ids,
+        rerun_eval_template_ids,
+        column_changed,
+    )
+    if admission_id:
+        return _run_async_in_sync_context(
+            lambda: _start_admitted_v2_workflow_async(
+                experiment_id=experiment_id,
+                max_concurrent_rows=max_concurrent_rows,
+                task_queue=task_queue,
+                rerun_prompt_config_ids=rerun_prompt_config_ids,
+                rerun_agent_config_ids=rerun_agent_config_ids,
+                rerun_eval_template_ids=rerun_eval_template_ids,
+                column_changed=column_changed,
+                admission_id=admission_id,
+            )
+        )
+
     handle = start_workflow_sync(
         workflow_class=RunExperimentV2Workflow,
         workflow_input=RunExperimentInput(
@@ -210,7 +299,7 @@ def start_experiment_v2_workflow(
     return handle.id
 
 
-async def get_experiment_workflow_status_async(experiment_id: str) -> Optional[dict]:
+async def get_experiment_workflow_status_async(experiment_id: str) -> dict | None:
     """
     Get the status of an experiment workflow.
 
@@ -224,7 +313,7 @@ async def get_experiment_workflow_status_async(experiment_id: str) -> Optional[d
     return await get_workflow_status_async(workflow_id)
 
 
-def get_experiment_workflow_status(experiment_id: str) -> Optional[dict]:
+def get_experiment_workflow_status(experiment_id: str) -> dict | None:
     """
     Get experiment workflow status synchronously.
 
@@ -299,9 +388,7 @@ async def cancel_all_experiment_workflows_async(experiment_id: str) -> dict:
 
     # 2. Find and cancel all rerun workflows via visibility query
     rerun_prefix = f"rerun-experiment-cells-{experiment_id}-"
-    query = (
-        f'WorkflowId STARTS_WITH "{rerun_prefix}" ' f"AND ExecutionStatus = 'Running'"
-    )
+    query = f"WorkflowId STARTS_WITH \"{rerun_prefix}\" AND ExecutionStatus = 'Running'"
     try:
         async for wf_info in client.list_workflows(query=query):
             try:
@@ -343,8 +430,22 @@ async def start_rerun_cells_v2_workflow_async(
     """
     import uuid as _uuid
 
+    from model_hub.services.experiment_target_admission import (
+        ensure_agent_configs_admitted,
+    )
+    from tfc.telemetry import otel_sync_to_async
     from tfc.temporal.experiments.types import RerunCellsV2WorkflowInput
     from tfc.temporal.experiments.workflows import RerunCellsV2Workflow
+
+    # The target check now reads ORM bindings, so do not run it on the event loop.
+
+    await otel_sync_to_async(ensure_agent_configs_admitted, thread_sensitive=False)(
+        agent_config_ids,
+        experiment_id=experiment_id,
+        dataset_id=dataset_id,
+        row_ids=row_ids,
+        eval_only=eval_only,
+    )
 
     workflow_id = f"rerun-experiment-cells-{experiment_id}-{_uuid.uuid4()}"
 
@@ -391,8 +492,20 @@ def start_rerun_cells_v2_workflow(
     """
     import uuid as _uuid
 
+    from model_hub.services.experiment_target_admission import (
+        ensure_agent_configs_admitted,
+    )
     from tfc.temporal.experiments.types import RerunCellsV2WorkflowInput
     from tfc.temporal.experiments.workflows import RerunCellsV2Workflow
+
+    # Eval-only reruns start no agent child and stay admitted.
+    ensure_agent_configs_admitted(
+        agent_config_ids,
+        experiment_id=experiment_id,
+        dataset_id=dataset_id,
+        row_ids=row_ids,
+        eval_only=eval_only,
+    )
 
     workflow_id = f"rerun-experiment-cells-{experiment_id}-{_uuid.uuid4()}"
 

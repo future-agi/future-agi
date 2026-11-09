@@ -1,6 +1,8 @@
+import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, userEvent } from "src/utils/test-utils";
+import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CAPABILITIES_QUERY_KEY } from "src/hooks/useCapabilities";
 import ModelSelector from "../ModelSelector";
 
 const mockGet = vi.fn();
@@ -55,7 +57,7 @@ describe("ModelSelector — BYOK model logos", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the provider logo from the API's snake_case `logo_url` field", async () => {
+  it("maps a realistic remote API logo to the local provider asset", async () => {
     mockModelList([
       { model_name: "gpt-5.5", providers: "openai", logo_url: OPENAI_LOGO },
     ]);
@@ -65,19 +67,25 @@ describe("ModelSelector — BYOK model logos", () => {
     await userEvent.click(screen.getByText("Select model"));
 
     expect(await screen.findByText("gpt-5.5")).toBeInTheDocument();
-    const logo = document.querySelector(`img[src="${OPENAI_LOGO}"]`);
+    const logo = document.querySelector(
+      'img[src="/icons/settings/openai.png"]',
+    );
     expect(logo).toBeTruthy();
   });
 
-  it("falls back to the cube icon (no <img>) when the model has no logo", async () => {
+  it("uses a local generic provider image for an unknown provider", async () => {
     mockModelList([{ model_name: "local-model", providers: "custom" }]);
     renderSelector();
 
     await userEvent.click(screen.getByText("Select model"));
 
     expect(await screen.findByText("local-model")).toBeInTheDocument();
-    // No raster logo should render — the component uses an Iconify <svg> cube.
-    expect(document.querySelector("img")).toBeNull();
+    expect(
+      document.querySelector(
+        'img[src="/assets/icons/settings/AIProviders.svg"]',
+      ),
+    ).toBeTruthy();
+    expect(document.querySelector('img[src^="http"]')).toBeNull();
   });
 
   it("treats a model with snake_case `is_available: false` as unavailable (no selection on click)", async () => {
@@ -93,5 +101,99 @@ describe("ModelSelector — BYOK model logos", () => {
     // Clicking an unavailable model opens the keys drawer instead of selecting it.
     await userEvent.click(row);
     expect(onModelChange).not.toHaveBeenCalled();
+  });
+});
+
+// Connectors in the "+" menu are Falcon AI's MCP connectors, and their
+// settings page is registered only where Falcon AI is allowed. The menu
+// offers Connectors, and with it Manage connectors, only where the
+// capabilities answer says falcon_ai is allowed; anywhere else, or while the
+// answer is not in yet, the other options are offered without it.
+describe("ModelSelector — Connectors where Falcon AI is allowed", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.history.pushState({}, "", "/dashboard/evaluations");
+  });
+
+  function answerCapabilities(falconAI) {
+    mockGet.mockImplementation((url) => {
+      if (url === "/api/capabilities/") {
+        if (falconAI === "pending") return new Promise(() => {});
+        return Promise.resolve({
+          data: {
+            features: {
+              falcon_ai: {
+                allowed: falconAI === "allowed",
+                reason_code: falconAI === "allowed" ? null : "LICENSE_REQUIRED",
+              },
+            },
+          },
+        });
+      }
+      return Promise.resolve({ data: { results: [] } });
+    });
+  }
+
+  // The selector with the query client it reads capabilities through, so a
+  // test can wait for the capabilities answer to be in.
+  function renderWithClient() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <ModelSelector model="" onModelChange={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    return qc;
+  }
+  const capabilitiesStatus = (qc) =>
+    qc.getQueryState(CAPABILITIES_QUERY_KEY)?.status;
+
+  const openPlusMenu = async () => {
+    await userEvent.click(screen.getByRole("button"));
+    await screen.findByText("Knowledge Base");
+  };
+
+  it.each([
+    ["denies Falcon AI", "denied"],
+    ["has not answered yet", "pending"],
+  ])(
+    "offers no Connectors and no Manage connectors where the deployment %s",
+    async (_where, falconAI) => {
+      answerCapabilities(falconAI);
+      const qc = renderWithClient();
+      await openPlusMenu();
+      if (falconAI === "denied") {
+        await waitFor(() => expect(capabilitiesStatus(qc)).toBe("success"));
+      } else {
+        expect(capabilitiesStatus(qc)).toBe("pending");
+      }
+      expect(screen.getByText("Data Injection")).toBeInTheDocument();
+      expect(screen.getByText("Summary")).toBeInTheDocument();
+      expect(screen.queryByText("Connectors")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Connect external tools to enhance evaluations."),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("Manage connectors")).not.toBeInTheDocument();
+      expect(
+        mockGet.mock.calls.some(([url]) => url === "/falcon-ai/connectors/"),
+      ).toBe(false);
+    },
+  );
+
+  it("offers Connectors and Manage connectors where Falcon AI is allowed", async () => {
+    answerCapabilities("allowed");
+    const qc = renderWithClient();
+    await openPlusMenu();
+    await waitFor(() => expect(capabilitiesStatus(qc)).toBe("success"));
+    await userEvent.click(await screen.findByText("Connectors"));
+    expect(
+      await screen.findByText("No connectors configured"),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Manage connectors"));
+    expect(window.location.pathname).toBe(
+      "/dashboard/settings/falcon-ai-connectors",
+    );
   });
 });

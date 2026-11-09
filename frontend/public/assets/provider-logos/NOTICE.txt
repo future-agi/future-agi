@@ -1,0 +1,26 @@
+Provider artwork
+
+These marks identify the same providers already named in the product. Logos and
+trademarks remain the property of their respective owners. Their inclusion does
+not imply endorsement.
+
+manifest.json records, for every asset (including reused files), the URL the
+product used before, the local source or the exact fetched object, the provider
+identities, and the SHA-256 of the file.
+
+- Ten existing public assets under /icons/settings/ and the existing ElevenLabs
+  SVG (frontend/src/assets/brand-logos/elevenlabs.svg) are reused.
+- Deepgram artwork comes from the project's pinned @iconify/json 2.2.548 Simple
+  Icons data, the source frontend/src/sections/common/RunSources/brandLogos.js
+  already uses for brand marks; its CC0-1.0 license is recorded in the manifest.
+- The remaining 25 files are byte-exact copies of the provider-logo objects the
+  product already loaded. Three are renamed without "+" so every static server
+  maps the path to the same file: vertex-ai.png, nlp-cloud.png and voyage-ai.png.
+
+The backend's logo_url fields contain application-origin-relative paths.
+Browsers load them from this frontend deployment; non-browser display clients
+resolve them against the FA application origin, not the API origin. No provider
+host or object-storage connection is needed to display these marks.
+
+These names carry no content hash and frontend/nginx.conf serves them immutable
+for a year: a changed logo gets a new file name, never an edit in place.

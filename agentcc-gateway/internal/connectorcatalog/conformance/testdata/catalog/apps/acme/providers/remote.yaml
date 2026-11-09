@@ -1,0 +1,96 @@
+# Fixture for the L3 conformance harness tests, not catalog data. A K1
+# provider with an API key in a header, a URL variable in its path, three
+# declared tools (one per posture) and a recorded cassette under
+# remote/fixtures that serves a fourth, undeclared tool.
+schema: "connector-manifest/v1#provider"
+app: acme
+id: remote
+version: 1.2.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: ga, source: https://acme.example/docs/mcp }
+transport:
+  kind: http
+  url: "https://mcp.acme.example/{workspace}/mcp"
+  urlVariables:
+    workspace:
+      description: The Acme workspace the server serves.
+      pattern: "^[a-z][a-z0-9-]{2,30}$"
+      scope: org
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: X-Acme-Key
+      secret: true
+      label: API key
+      helpUrl: https://acme.example/docs/keys
+tools:
+  source: upstream_mcp
+  defaultPosture: auto
+  items:
+    - name: search_docs
+      title: Search documents
+      description: "Search the workspace's documents by a free-text query, such as roadmap."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: auto
+      inputSchema:
+        type: object
+        properties:
+          query: { type: string }
+          limit: { type: integer, minimum: 1, maximum: 50 }
+        required: [query]
+    - name: update_doc
+      title: Update a document
+      description: "Replace a document's body; doc_id is the id search_docs returns."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      inputSchema:
+        type: object
+        properties:
+          doc_id: { type: string }
+          body: { type: string }
+        required: [doc_id, body]
+    - name: purge_docs
+      title: Purge documents
+      description: "Delete every document in a folder, such as archive."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: true
+        idempotentHint: false
+        openWorldHint: false
+      posture: deny
+      inputSchema:
+        type: object
+        properties:
+          folder: { type: string }
+        required: [folder]
+rateLimits:
+  - scope: org
+    requests: 100
+    per: 1m
+    source: https://acme.example/docs/limits
+pricing: { model: vendor_plan }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://acme.example/docs/mcp
+    fetchedAt: 2026-10-19
+  - fact: auth.credentialParts
+    url: https://acme.example/docs/keys
+    fetchedAt: 2026-10-19
+x-omega: { ee: exclude, oss: exclude }

@@ -3677,7 +3677,7 @@ def test_locked_trace_temporal_candidates_use_resource_safe_union_batches() -> N
 @pytest.mark.parametrize(
     ("fetch_name", "namespace"),
     [
-        ("fetch_eval_chart_series_ch", "observe-eval-chart-series"),
+        ("fetch_eval_chart_series_ch", "observe-eval-chart-series-nk20-v1"),
     ],
 )
 def test_public_graph_wrappers_use_exact_snapshot_without_inline_reads(

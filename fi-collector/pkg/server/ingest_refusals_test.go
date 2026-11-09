@@ -64,7 +64,13 @@ func TestQuotaRefusalIsCountedWithoutShortRetryHint(t *testing.T) {
 // The OTLP/HTTP auth middleware's 401s are counted with the other refusals.
 func TestOTLPHTTPAuthRefusalsAreCounted(t *testing.T) {
 	pg := "postgres://u:p@127.0.0.1:1/x?connect_timeout=1"
-	authn, err := auth.New(context.Background(), auth.Config{PGWrite: pg, PGRead: pg}, nil, slog.Default())
+	// The resolver verifies hashed secrets, so it needs a pepper; a test install
+	// derives one from its SECRET_KEY (auth.ResolveSecretPeppers).
+	peppers, err := auth.ResolveSecretPeppers("", nil, "test", "fi-collector-test-secret-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authn, err := auth.New(context.Background(), auth.Config{PGWrite: pg, PGRead: pg, Peppers: peppers}, nil, slog.Default())
 	if err != nil || authn == nil {
 		t.Fatalf("auth.New: %v", err)
 	}

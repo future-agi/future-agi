@@ -23,6 +23,8 @@ import {
   CircularProgress,
   Typography,
   Box,
+  Link,
+  ListSubheader,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { useQueryClient } from "@tanstack/react-query";
@@ -38,6 +40,7 @@ import {
   parseTimeoutSeconds,
   withApiPathPrefix,
 } from "./utils";
+import { PROVIDER_GROUPS, PROVIDER_PRESETS } from "./byok-presets";
 import {
   MODEL_LIST_SOURCE_HELP,
   RESPONSES_ONLY_HELP,
@@ -45,103 +48,6 @@ import {
   defaultSelectableModels,
   responsesOnlyModelSet,
 } from "./modelCompatibility";
-
-const PROVIDER_PRESETS = {
-  openai: {
-    label: "OpenAI",
-    baseUrl: "https://api.openai.com/v1",
-    apiFormat: "openai",
-    keyPlaceholder: "sk-...",
-    supportedFormats: ["openai", "anthropic"],
-  },
-  anthropic: {
-    label: "Anthropic",
-    baseUrl: "https://api.anthropic.com",
-    apiFormat: "anthropic",
-    keyPlaceholder: "sk-ant-...",
-    supportedFormats: ["openai", "anthropic"],
-  },
-  google: {
-    label: "Google (Gemini)",
-    baseUrl: "https://generativelanguage.googleapis.com",
-    apiFormat: "google",
-    keyPlaceholder: "AIza...",
-    supportedFormats: ["openai", "google"],
-  },
-  vertex: {
-    label: "Google Vertex AI",
-    baseUrl: "",
-    apiFormat: "gemini",
-    authType: "gcp",
-    supportedFormats: ["gemini"],
-  },
-  azure: {
-    label: "Azure OpenAI",
-    baseUrl: "",
-    apiFormat: "azure",
-    keyPlaceholder: "Enter your Azure API key",
-    supportedFormats: ["openai", "anthropic"],
-  },
-  cohere: {
-    label: "Cohere",
-    baseUrl: "https://api.cohere.ai/compatibility/v1",
-    apiFormat: "openai",
-    keyPlaceholder: "Enter your Cohere API key",
-    supportedFormats: ["openai"],
-  },
-  bedrock: {
-    label: "AWS Bedrock",
-    baseUrl: "",
-    apiFormat: "bedrock",
-    authType: "aws",
-    supportedFormats: ["anthropic"],
-  },
-  groq: {
-    label: "Groq",
-    baseUrl: "https://api.groq.com/openai/v1",
-    apiFormat: "openai",
-    keyPlaceholder: "gsk_...",
-    supportedFormats: ["openai"],
-  },
-  together: {
-    label: "Together AI",
-    baseUrl: "https://api.together.xyz/v1",
-    apiFormat: "openai",
-    keyPlaceholder: "Enter your Together API key",
-    supportedFormats: ["openai"],
-  },
-  fireworks: {
-    label: "Fireworks AI",
-    baseUrl: "https://api.fireworks.ai/inference/v1",
-    apiFormat: "openai",
-    keyPlaceholder: "Enter your Fireworks API key",
-    supportedFormats: ["openai"],
-  },
-  mistral: {
-    label: "Mistral AI",
-    baseUrl: "https://api.mistral.ai/v1",
-    apiFormat: "openai",
-    keyPlaceholder: "Enter your Mistral API key",
-    supportedFormats: ["openai"],
-  },
-  // Perplexity's Agent API (/v1/responses). Its Sonar chat completions are
-  // served without the version segment: add them as a custom provider with an
-  // empty API Path Prefix.
-  perplexity: {
-    label: "Perplexity",
-    baseUrl: "https://api.perplexity.ai/v1",
-    apiFormat: "openai",
-    keyPlaceholder: "pplx-...",
-    supportedFormats: ["openai"],
-  },
-  custom: {
-    label: "Custom / Self-hosted",
-    baseUrl: "",
-    apiFormat: "openai",
-    keyPlaceholder: "Enter API key",
-    supportedFormats: ["openai", "anthropic", "google"],
-  },
-};
 
 const AWS_REGIONS = [
   { value: "us-east-1", label: "US East (N. Virginia)" },
@@ -170,13 +76,6 @@ const customNameError = (value, existingNames) => {
   }
   return "";
 };
-
-const PROVIDER_OPTIONS = Object.entries(PROVIDER_PRESETS).map(
-  ([key, preset]) => ({
-    value: key,
-    label: preset.label,
-  }),
-);
 
 const API_FORMATS = [
   "openai",
@@ -208,13 +107,16 @@ const toModelId = (value) => {
 const normalizeModels = (list) =>
   Array.isArray(list) ? list.map(toModelId).filter(Boolean) : [];
 
+// A message as a sentence: it ends with a full stop unless it already ends
+// with one, a question mark or an exclamation mark.
+const asSentence = (text) => {
+  const trimmed = String(text || "").trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+};
+
 const KEY_FETCH_FAILED =
   "Couldn't load any models with this key. Check that it is valid for this " +
   "provider, or add model IDs manually below.";
-
-const STORED_KEY_UNVERIFIED =
-  "Couldn't list this provider's models with the stored key. Enter a new API " +
-  "key, or add model IDs manually below, to save changes.";
 
 // Summary labels, in form order so the summary reads like the dialog.
 const FIELD_LABELS = {
@@ -245,6 +147,40 @@ const ResponsesOnlyTag = () => (
     {RESPONSES_ONLY_TAG}
   </Typography>
 );
+
+// Under the provider picker: the key used for requests and, for a named
+// vendor, a link to its API docs.
+const PresetNote = ({ preset }) => {
+  const vendor = preset.source === "custom" ? null : preset.label;
+  return (
+    <>
+      {vendor
+        ? `Requests use your own ${vendor} key.`
+        : "Requests use your own provider key."}
+      {preset.docsUrl && (
+        <>
+          {" "}
+          <Link
+            href={preset.docsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            underline="hover"
+          >
+            {vendor} docs
+          </Link>
+        </>
+      )}
+    </>
+  );
+};
+
+PresetNote.propTypes = {
+  preset: PropTypes.shape({
+    label: PropTypes.string,
+    source: PropTypes.string,
+    docsUrl: PropTypes.string,
+  }).isRequired,
+};
 
 const AddProviderDialog = ({
   open,
@@ -561,7 +497,7 @@ const AddProviderDialog = ({
     setGcpProject("");
     setGcpLocation("us-central1");
     setServiceAccountJSON("");
-    setApiPathPrefix(DEFAULT_API_PATH_PREFIX);
+    setApiPathPrefix(preset?.apiPathPrefix ?? DEFAULT_API_PATH_PREFIX);
     // Clear models since provider changed
     setModels([]);
     setModelOptions([]);
@@ -595,12 +531,14 @@ const AddProviderDialog = ({
   // What "Select All" covers. Tagged models stay out, which is what keeps them
   // unselected by default; they remain individually selectable.
   const bulkSelectable = useMemo(
-    () => defaultSelectableModels(modelOptions, { providerName: name, baseUrl }),
+    () =>
+      defaultSelectableModels(modelOptions, { providerName: name, baseUrl }),
     [modelOptions, name, baseUrl],
   );
 
   const allSelected =
-    bulkSelectable.length > 0 && bulkSelectable.every((m) => models.includes(m));
+    bulkSelectable.length > 0 &&
+    bulkSelectable.every((m) => models.includes(m));
 
   const handleSelectAll = () => {
     if (allSelected) {
@@ -736,9 +674,12 @@ const AddProviderDialog = ({
     updateProvider.mutate(
       { gatewayId, name: providerName, config },
       {
+        // A save the gateway did not apply never reaches onSuccess:
+        // useUpdateProvider reports it once, as a warning, and the dialog
+        // stays open with the same sentence in its Alert.
         onSuccess: () => {
-          // The write landed. Only the re-read that follows it can still have
-          // failed, and that is a stale screen, not a lost save — say which.
+          // The write landed, and the re-read that follows can still have
+          // failed: a stale screen, not a lost save. Say which.
           const saved = isEditMode
             ? `Provider "${providerName}" updated`
             : `Provider "${providerName}" added`;
@@ -772,17 +713,18 @@ const AddProviderDialog = ({
   // A typed key answered with an empty list; hand-entered models lift it.
   const typedKeyUnverified = !!keyFetchError && !manualModels;
 
-  // The stored credential listed nothing and no replacement key has been typed.
-  // AWS is exempt: Bedrock has no list endpoint and no API Key field to explain
-  // a block on, so gating there would lock those providers out of editing.
-  const savedKeyUnverified =
+  // The stored credential's model list failed or came back empty, and no
+  // replacement key has been typed: that is no verdict on the key (the
+  // provider's upstream may be down), so Save keeps the provider's current
+  // models and the failure reads as a warning beside them.
+  const storedListFailed =
     isEditMode &&
     !isAwsAuth &&
     !isVertexAuth &&
-    hasFetched &&
+    Boolean(fetchError) &&
     modelOptions.length === 0 &&
     !apiKey.trim() &&
-    !manualModels;
+    models.length > 0;
 
   const preset = PROVIDER_PRESETS[name] || PROVIDER_PRESETS.custom;
 
@@ -799,7 +741,7 @@ const AddProviderDialog = ({
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{isEditMode ? "Edit Provider" : "Add Provider"}</DialogTitle>
+      <DialogTitle>{isEditMode ? "Edit provider" : "Add provider"}</DialogTitle>
       <DialogContent ref={contentRef}>
         <Stack spacing={2} mt={1}>
           {errorList.length > 0 && !summaryDismissed && (
@@ -841,13 +783,21 @@ const AddProviderDialog = ({
               value={name}
               onChange={(e) => handleProviderChange(e.target.value)}
               error={!!errors.name}
-              helperText={errors.name}
+              helperText={errors.name || <PresetNote preset={preset} />}
+              SelectProps={{
+                MenuProps: { PaperProps: { sx: { maxHeight: 420 } } },
+              }}
             >
-              {PROVIDER_OPTIONS.map((opt) => (
-                <MenuItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </MenuItem>
-              ))}
+              {PROVIDER_GROUPS.flatMap((group) => [
+                <ListSubheader key={`group-${group.label}`}>
+                  {group.label}
+                </ListSubheader>,
+                ...group.ids.map((id) => (
+                  <MenuItem key={id} value={id}>
+                    {PROVIDER_PRESETS[id].label}
+                  </MenuItem>
+                )),
+              ])}
             </TextField>
           )}
 
@@ -1005,7 +955,9 @@ const AddProviderDialog = ({
                   errors.baseUrl ||
                   (preset.baseUrl
                     ? "Auto-filled from provider preset"
-                    : "Required — enter your endpoint URL")
+                    : baseUrl.trim()
+                      ? undefined
+                      : "Required — enter your endpoint URL")
                 }
               />
 
@@ -1026,14 +978,8 @@ const AddProviderDialog = ({
                     ? "Leave blank to keep current key"
                     : preset.keyPlaceholder
                 }
-                error={
-                  !!errors.apiKey || typedKeyUnverified || savedKeyUnverified
-                }
-                helperText={
-                  errors.apiKey ||
-                  keyFetchError ||
-                  (savedKeyUnverified ? STORED_KEY_UNVERIFIED : undefined)
-                }
+                error={!!errors.apiKey || typedKeyUnverified}
+                helperText={errors.apiKey || keyFetchError || undefined}
               />
             </>
           )}
@@ -1133,6 +1079,7 @@ const AddProviderDialog = ({
               renderTags={(value, getTagProps) =>
                 value.map((option, index) => (
                   <Chip
+                    variant="outlined"
                     label={
                       <>
                         <span>{option}</span>
@@ -1179,7 +1126,9 @@ const AddProviderDialog = ({
                 variant="outlined"
                 sx={{ mt: 1, py: 0 }}
               >
-                {fetchError}
+                {storedListFailed
+                  ? `${asSentence(fetchError)} Save keeps this provider's current models.`
+                  : fetchError}
               </Alert>
             )}
             {!isAwsAuth && !isVertexAuth && (
@@ -1250,13 +1199,13 @@ const AddProviderDialog = ({
             enter a key that lists them. */}
         <Button
           variant="contained"
+          color="primary"
           onClick={handleSave}
           disabled={
             !name.trim() ||
             updateProvider.isPending ||
             modelsLoading ||
             typedKeyUnverified ||
-            savedKeyUnverified ||
             models.length === 0
           }
         >
@@ -1268,7 +1217,7 @@ const AddProviderDialog = ({
                 : "Adding..."
               : isEditMode
                 ? "Save Changes"
-                : "Add Provider"}
+                : "Add provider"}
         </Button>
       </DialogActions>
     </Dialog>

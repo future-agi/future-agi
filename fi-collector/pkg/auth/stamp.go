@@ -31,6 +31,15 @@ var ErrTooManyNewProjects = errors.New("stamp: too many new project names in one
 // ResourceSpans with an unresolvable project name are dropped.
 // Returns the number of dropped ResourceSpans (0 in the happy path).
 func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, traces ptrace.Traces, result *ResolveResult) (int, error) {
+	return StampResourceAttrsExpected(ctx, a, cacheKey, traces, result, nil)
+}
+
+// StampResourceAttrsExpected applies the optional exporter assertion before any project
+// auto-create. Expected-target requests are read-only: an unknown project is a 403 mismatch.
+func StampResourceAttrsExpected(ctx context.Context, a *Authenticator, cacheKey string, traces ptrace.Traces, result *ResolveResult, expected *ExpectedTarget) (int, error) {
+	if err := expected.CheckScope(result); err != nil {
+		return 0, err
+	}
 	if result == nil {
 		return 0, nil
 	}
@@ -59,6 +68,9 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 		nameSet[pn] = struct{}{}
 	}
 	if len(missing) > 0 {
+		if expected != nil {
+			return 0, ErrExpectedTargetMismatch
+		}
 		return 0, fmt.Errorf("stamp: %d ResourceSpan(s) have no project_name (indices: %s)",
 			len(missing), formatIndices(missing))
 	}
@@ -67,20 +79,27 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	for n := range nameSet {
 		names = append(names, n)
 	}
-	if a != nil {
-		if missing, ok := result.MissingProjectsInWorkspace(result.WorkspaceID, names); ok && len(missing) > MaxNewProjectsPerRequest {
-			// The first names, in order, are added; deterministic value
-			// failures are skipped for a while, so each retry
-			// gets further either way.
-			sort.Strings(missing)
-			if err := a.ResolveProjectsForKey(ctx, cacheKey, result, missing[:MaxNewProjectsPerRequest]); err != nil {
-				return 0, fmt.Errorf("stamp: resolve projects: %w", err)
+	var err error
+	if expected != nil {
+		// Expected-target lookup is read-only at every cardinality. In
+		// particular it must bypass the ordinary bounded-create branch.
+		err = a.ResolveProjectsForExpectedTarget(ctx, cacheKey, result, names, expected.ProjectID)
+	} else {
+		if a != nil {
+			if missing, ok := result.MissingProjectsInWorkspace(result.WorkspaceID, names); ok && len(missing) > MaxNewProjectsPerRequest {
+				// The first names, in order, are added; deterministic value
+				// failures are skipped for a while, so each retry
+				// gets further either way.
+				sort.Strings(missing)
+				if err := a.ResolveProjectsForKey(ctx, cacheKey, result, missing[:MaxNewProjectsPerRequest]); err != nil {
+					return 0, fmt.Errorf("stamp: resolve projects: %w", err)
+				}
+				return 0, ErrTooManyNewProjects
 			}
-			return 0, ErrTooManyNewProjects
 		}
+		err = a.ResolveProjectsForKey(ctx, cacheKey, result, names)
 	}
-
-	if err := a.ResolveProjectsForKey(ctx, cacheKey, result, names); err != nil {
+	if err != nil {
 		return 0, fmt.Errorf("stamp: resolve projects: %w", err)
 	}
 
@@ -90,6 +109,9 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 		attrs := rss.At(i).Resource().Attributes()
 		projectName := getStrAttr(attrs, "project_name")
 		projectID, ok := result.GetProjectInWorkspace(result.WorkspaceID, projectName)
+		if expected != nil && (!ok || projectID != expected.ProjectID) {
+			return 0, ErrExpectedTargetMismatch
+		}
 		if !ok || projectID == "" {
 			unresolvable[projectName] = struct{}{}
 			continue

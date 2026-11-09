@@ -1,0 +1,101 @@
+# Salesforce Hosted MCP Servers for production orgs (GA for Enterprise
+# Edition and above). The host is fixed, api.salesforce.com; what each org
+# picks is the server its admin enabled in Setup > API Catalog > MCP Servers.
+# {server} admits the four SObject servers Salesforce documents, from
+# sobject-reads (read only, Salesforce's suggested start) to sobject-all.
+#
+# OAuth is the authorization code flow with PKCE against an External Client
+# App the customer registers in its own org (Connected Apps are refused, and
+# there is no dynamic registration), with the mcp_api and refresh_token
+# scopes. The consumer key is the org's own client (CN11): BYO by design.
+# Every call runs as the authorizing user, with that user's object, field
+# and sharing permissions.
+#
+# EE receives no MCP URL for a templated URL and OSS needs a fixed one, so
+# neither receives this provider.
+schema: "connector-manifest/v1#provider"
+app: salesforce
+id: hosted-mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://developer.salesforce.com/blogs/2026/04/salesforce-hosted-mcp-servers-are-now-generally-available
+transport:
+  kind: http
+  url: https://api.salesforce.com/platform/mcp/v1/platform/{server}
+  urlVariables:
+    server:
+      description: "The SObject server your admin enabled: sobject-reads (read only), sobject-mutations (create and update), sobject-deletes or sobject-all."
+      pattern: "^sobject-(reads|mutations|deletes|all)$"
+      default: sobject-reads
+      scope: org
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://login.salesforce.com/services/oauth2/authorize
+    tokenUrl: https://login.salesforce.com/services/oauth2/token
+    scopes: [mcp_api, refresh_token]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  notes: "Needs Salesforce Flex Credits; Salesforce may bill server usage."
+  source: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/hosted-mcp-servers-overview.html
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/postman.html
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/references/reference/sobject-reads.html
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.server
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/references/reference/servers-reference.html
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.server
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/references/reference/sobject-all.html
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.server
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/references/reference/sobject-reads.html
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.server
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/references/reference/sobject-mutations.html
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.server
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/references/reference/sobject-deletes.html
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/client-connection-overview.html
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/postman.html
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/postman.html
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/postman.html
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/postman.html
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/client-connection-overview.html
+    fetchedAt: 2026-10-21
+  - fact: accountModes
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/hosted-mcp-servers-overview.html
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

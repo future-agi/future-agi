@@ -16,10 +16,42 @@ function Write-EnvLines {
   [System.IO.File]::WriteAllLines((Join-Path (Get-Location) '.env'), [string[]]$Lines, $utf8)
 }
 
-function Get-EnvValue {
+# The value of a .env line, from the text after its '=', as Compose reads it:
+# leading whitespace goes; a value in matching double or single quotes is what
+# lies between them, when only whitespace or a # comment follows the closing
+# quote; an unquoted value ends before ' #' (a space, then #) and loses
+# trailing whitespace. Text Compose reads no other way, an unclosed quote, is
+# kept as written. Escapes and ${VAR} in values are left as they are.
+function ConvertFrom-EnvText {
+  param([string]$Text)
+  $value = $Text.TrimStart()
+  if ($value -match '^["'']') {
+    $quote = $value[0]
+    $close = $value.IndexOf($quote, 1)
+    if ($close -gt 0) {
+      $rest = $value.Substring($close + 1).TrimStart()
+      if ($rest -eq '' -or $rest -like '#*') { return $value.Substring(1, $close - 1) }
+    }
+    return $Text
+  }
+  $comment = $value.IndexOf(' #', [System.StringComparison]::Ordinal)
+  if ($comment -ge 0) { $value = $value.Substring(0, $comment) }
+  return $value.TrimEnd()
+}
+
+# The text after the '=' of Var's last line in .env, as written, or ''. Copy
+# this, not Get-EnvValue, from one key to another: Compose then reads the same
+# value from both lines, quotes, ' #' and surrounding spaces included.
+function Get-EnvText {
   param([string]$Var)
   $line = Read-EnvLines | Where-Object { $_ -match "^$Var=" } | Select-Object -Last 1
   if ($line) { ($line -split '=', 2)[1] } else { '' }
+}
+
+# Value of Var in .env (its last line) as Compose reads it, or '' when unset.
+function Get-EnvValue {
+  param([string]$Var)
+  ConvertFrom-EnvText (Get-EnvText $Var)
 }
 
 # Var as Compose resolves it: exported in the shell, else from .env, else

@@ -9,6 +9,11 @@ import { Box, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
+import { captureFalconRequest } from "src/sections/falcon-ai/store/falconRequestGuard";
+import {
+  beginFalconSubmission,
+  clearFalconSubmission,
+} from "src/sections/falcon-ai/store/falconSubmission";
 import { useFalconSocket } from "src/sections/falcon-ai/hooks/useFalconSocket";
 import { createConversation } from "src/sections/falcon-ai/hooks/useFalconAPI";
 import MessageList from "src/sections/falcon-ai/components/MessageList";
@@ -33,6 +38,8 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
   const addMessage = useFalconStore((s) => s.addMessage);
   const setStreaming = useFalconStore((s) => s.setStreaming);
   const imagineConversationId = useImagineStore((s) => s.conversationId);
+  const isConversationCurrent = useImagineStore((s) => s.isConversationCurrent);
+  const resetGeneration = useFalconStore((s) => s.resetGeneration);
   const setImagineConversationId = useImagineStore((s) => s.setConversationId);
 
   const { sendChat, sendStop } = useFalconSocket();
@@ -40,25 +47,53 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
   // When the imagine tab opens, switch to its dedicated conversation
   // (or create one on first message)
   useEffect(() => {
+    if (imagineConversationId && !isConversationCurrent?.()) {
+      setImagineConversationId(null);
+      return;
+    }
     if (
       imagineConversationId &&
       imagineConversationId !== currentConversationId
     ) {
       setCurrentConversation(imagineConversationId);
     }
-  }, [imagineConversationId, currentConversationId, setCurrentConversation]);
+  }, [
+    imagineConversationId,
+    currentConversationId,
+    setCurrentConversation,
+    isConversationCurrent,
+    setImagineConversationId,
+    resetGeneration,
+  ]);
 
   const handleSend = useCallback(
     async (text) => {
-      let convId = imagineConversationId;
+      const isCurrent = captureFalconRequest({ conversation: true });
+      const attachedFiles = useFalconStore.getState().attachedFiles;
+      const submissionId = beginFalconSubmission(
+        text,
+        attachedFiles,
+        isCurrent,
+      );
+      let convId = isConversationCurrent?.() ? imagineConversationId : null;
 
       if (!convId) {
         try {
-          const resp = await createConversation(text.slice(0, 50), "imagine");
+          const resp = await createConversation(text.slice(0, 50), "imagine", {
+            submissionId,
+          });
+          if (
+            !isCurrent() ||
+            useFalconStore.getState().pendingDraft?.id !== submissionId
+          ) {
+            clearFalconSubmission(submissionId);
+            return;
+          }
           convId = resp.result?.id || resp.id;
           setImagineConversationId(convId);
           setCurrentConversation(convId);
         } catch {
+          clearFalconSubmission(submissionId);
           return;
         }
       }
@@ -72,9 +107,11 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
         id: `user-${Date.now()}`,
         role: "user",
         content: text,
+        files: attachedFiles.map((file) => ({ ...file })),
         created_at: new Date().toISOString(),
       };
       addMessage(userMsg);
+      useFalconStore.getState().clearAttachedFiles();
 
       const assistantMsgId = `assistant-${Date.now()}`;
       addMessage({
@@ -157,10 +194,18 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
             entityType === "voice" ? VOICE_INSTRUCTION : TRACE_INSTRUCTION,
         },
       };
-      sendChat(text, convId, context);
+      sendChat(
+        text,
+        convId,
+        context,
+        attachedFiles.map((file) => file.id),
+        attachedFiles,
+        submissionId,
+      );
     },
     [
       imagineConversationId,
+      isConversationCurrent,
       traceId,
       projectId,
       entityType,

@@ -5,6 +5,17 @@ import userEvent from "@testing-library/user-event";
 import { render, screen } from "src/utils/test-utils";
 import VoiceRightPanel from "../VoiceRightPanel";
 
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  .../** @type {typeof import("src/hooks/useCapabilities")} */ (
+    await importOriginal()
+  ),
+  useFeatureAllowed: () => ({
+    allowed: true,
+    isLoading: false,
+    isError: false,
+  }),
+}));
+
 vi.mock("src/sections/falcon-ai/helpers/openFixWithFalcon", () => ({
   openFixWithFalcon: vi.fn(),
 }));
@@ -200,7 +211,9 @@ describe("VoiceRightPanel", () => {
       };
       renderWithQueryClient(<VoiceRightPanel data={withRollup} />);
       await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
-      expect(screen.getByPlaceholderText("Search evals...")).toBeInTheDocument();
+      expect(
+        screen.getByPlaceholderText("Search evals..."),
+      ).toBeInTheDocument();
       expect(screen.getAllByText("Fix with Falcon")).toHaveLength(1);
       await userEvent.click(screen.getByText("Concise replies"));
       expect(screen.getAllByText("Fix with Falcon")).toHaveLength(2);
@@ -210,7 +223,9 @@ describe("VoiceRightPanel", () => {
     });
 
     it("hides when the host has no Falcon flow wired", async () => {
-      renderWithQueryClient(<VoiceRightPanel data={failingEval} showFixWithFalcon={false} />);
+      renderWithQueryClient(
+        <VoiceRightPanel data={failingEval} showFixWithFalcon={false} />,
+      );
       await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
       await userEvent.click(screen.getByText("Concise replies"));
       expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
@@ -245,7 +260,12 @@ describe("VoiceRightPanel", () => {
           provider: "livekit",
           transcript: [],
           scenario_columns: {},
-          persona_details: { name: "Siddharth Nair", voice: null, age: null, traits: [] },
+          persona_details: {
+            name: "Siddharth Nair",
+            voice: null,
+            age: null,
+            traits: [],
+          },
         }}
       />,
     );
@@ -303,6 +323,8 @@ describe("VoiceRightPanel", () => {
         }}
       />,
     );
-    expect(screen.queryByRole("tab", { name: "Scenario" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Scenario" }),
+    ).not.toBeInTheDocument();
   });
 });

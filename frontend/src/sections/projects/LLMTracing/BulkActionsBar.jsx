@@ -119,6 +119,18 @@ const BulkActionsBar = ({
             </MenuItem>
           );
 
+          // An optional one-line hint on an enabled action (`tooltip`).
+          if (!disabled && action.tooltip)
+            return (
+              <Tooltip
+                key={action.id}
+                title={action.tooltip}
+                placement="left"
+                describeChild
+              >
+                {item}
+              </Tooltip>
+            );
           if (!disabled || !action.disabledReason) return item;
 
           return (

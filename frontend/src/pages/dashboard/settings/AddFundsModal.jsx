@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import React, { useState } from "react";
 import PropType from "prop-types";
 import {
@@ -215,7 +216,9 @@ const AddFundsModal = ({
                     fontWeight="fontWeightRegular"
                     color="text.primary"
                   >
-                    {amount > 0 ? `US$${amount.toFixed(2)}` : "-"}
+                    {amount > 0
+                      ? formatExactMoney(amount, { prefix: "US$" })
+                      : "-"}
                   </Typography>
                 </Box>
 
@@ -232,7 +235,9 @@ const AddFundsModal = ({
                     fontWeight="fontWeightRegular"
                     color="text.primary"
                   >
-                    {amount > 0 ? `US$${estimatedTaxes.toFixed(2)}` : "-"}
+                    {amount > 0
+                      ? formatExactMoney(estimatedTaxes, { prefix: "US$" })
+                      : "-"}
                   </Typography>
                 </Box>
 
@@ -249,7 +254,9 @@ const AddFundsModal = ({
                     fontWeight="fontWeightSemiBold"
                     color="text.primary"
                   >
-                    {amount > 0 ? `US$${total.toFixed(2)}` : "-"}
+                    {amount > 0
+                      ? formatExactMoney(total, { prefix: "US$" })
+                      : "-"}
                   </Typography>
                 </Box>
               </Box>

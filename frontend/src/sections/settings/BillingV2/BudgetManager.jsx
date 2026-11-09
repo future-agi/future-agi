@@ -7,7 +7,7 @@
  * - pause: block further usage
  */
 
-import { useState, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Box,
@@ -29,6 +29,7 @@ import {
   Skeleton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import LoadFailedState from "src/components/load-failed-state";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
@@ -69,7 +70,13 @@ export default function BudgetManager() {
 
   const queryClient = useQueryClient();
 
-  const { data: budgets, isLoading } = useQuery({
+  const {
+    data: budgets,
+    isLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ["v2-budgets"],
     queryFn: () => axios.get(endpoints.settings.v2.budgets),
     select: (res) => res.data?.result?.budgets || [],
@@ -148,6 +155,16 @@ export default function BudgetManager() {
     !(/^\d+\.?\d*$/.test(thresholdRaw) && parseFloat(thresholdRaw) > 0);
 
   if (isLoading) return <Skeleton variant="rounded" height={150} />;
+
+  if (isError && !budgets) {
+    return (
+      <LoadFailedState
+        title="Usage budgets couldn't be loaded"
+        onRetry={refetch}
+        retrying={isRefetching}
+      />
+    );
+  }
 
   return (
     <Box>

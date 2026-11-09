@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import React, { useEffect, useState, useRef } from "react";
 import { TreeView, treeItemClasses } from "@mui/x-tree-view";
 import { TreeItem } from "@mui/x-tree-view";
@@ -806,9 +807,7 @@ const RightSection = ({
               >
                 {(() => {
                   const cost = node?.cost;
-                  return cost > 0 && cost < 0.0001
-                    ? "<0.0001"
-                    : `< ${cost.toFixed(4)}`;
+                  return formatExactMoney(cost);
                 })()}
               </Typography>
             </Box>

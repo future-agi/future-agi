@@ -1,4 +1,4 @@
-import { test as base, expect, request as pwRequest } from '@playwright/test';
+import { test as base, expect, request as pwRequest } from '../../lib/trace-hygiene/fixture';
 import { E2E } from '../../lib/env';
 import { provisionActor } from '../../lib/provisioning';
 import { ApiClient, type Tokens } from '../../lib/api-client';

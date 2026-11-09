@@ -17,6 +17,7 @@ import Iconify from "src/components/iconify";
 import { useValidateCredentials } from "src/api/integrations";
 import { backButtonSx } from "../../styles";
 import { getErrorMessage, unwrapResponse } from "../../utils";
+import { isDestinationListed } from "../../constants";
 
 const AWS_REGIONS = [
   "us-east-1",
@@ -35,6 +36,10 @@ const SUB_PLATFORMS = [
   { id: "pubsub", label: "Google Pub/Sub", icon: "mdi:google-cloud" },
 ];
 
+const LISTED_SUB_PLATFORMS = SUB_PLATFORMS.filter((sp) =>
+  isDestinationListed("message_queue", sp.id),
+);
+
 export default function MessageQueueCredentials({
   data,
   onUpdate,
@@ -42,7 +47,8 @@ export default function MessageQueueCredentials({
   onBack,
 }) {
   const [subPlatform, setSubPlatform] = useState(
-    data.credentials?.sub_platform || "",
+    data.credentials?.sub_platform ||
+      (LISTED_SUB_PLATFORMS.length === 1 ? LISTED_SUB_PLATFORMS[0].id : ""),
   );
 
   // SQS fields
@@ -144,7 +150,7 @@ export default function MessageQueueCredentials({
 
       {/* Sub-platform selector */}
       <Stack direction="row" spacing={1.5}>
-        {SUB_PLATFORMS.map((sp) => (
+        {LISTED_SUB_PLATFORMS.map((sp) => (
           <Card
             key={sp.id}
             variant="outlined"

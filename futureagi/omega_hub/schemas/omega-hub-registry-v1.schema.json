@@ -1,0 +1,432 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/schemas/omega-hub-registry-v1.json",
+  "title": "omega-hub-registry/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generatedAt",
+    "registry",
+    "app",
+    "discord",
+    "publishers",
+    "entries",
+    "picks",
+    "tombstones",
+    "redirects",
+    "rules"
+  ],
+  "properties": {
+    "schema": {
+      "const": "omega-hub-registry/v1"
+    },
+    "generatedAt": {
+      "type": "string"
+    },
+    "registry": {
+      "type": "string"
+    },
+    "app": {
+      "type": "string"
+    },
+    "discord": {
+      "const": "https://discord.com/invite/n2tCUKBkAw"
+    },
+    "publishers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "handle",
+          "displayName",
+          "tier",
+          "verifiedAt",
+          "avatarUrl",
+          "bio",
+          "website",
+          "entryCount",
+          "likes",
+          "installs30d",
+          "firstPublishedAt"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "official",
+              "verified",
+              "community"
+            ]
+          },
+          "verifiedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "avatarUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bio": {
+            "type": "string"
+          },
+          "website": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entryCount": {
+            "type": "integer"
+          },
+          "likes": {
+            "type": "integer"
+          },
+          "installs30d": {
+            "type": "integer"
+          },
+          "firstPublishedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "publisher",
+          "name",
+          "kind",
+          "title",
+          "tagline",
+          "cover",
+          "tags",
+          "difficulty",
+          "license",
+          "tier",
+          "vendors",
+          "noKeyNeeded",
+          "requires",
+          "likes",
+          "installs30d",
+          "installs7d",
+          "likes7d",
+          "opens30d",
+          "installsDaily30",
+          "remixOf",
+          "remixCount",
+          "pick",
+          "ranked",
+          "unrankedReason",
+          "firstPublishedAt",
+          "latest",
+          "versions"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]+/[a-z][a-z0-9-]+$"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "app",
+              "agent",
+              "team",
+              "skill",
+              "plugin",
+              "mcp",
+              "workflow"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "tagline": {
+            "type": "string"
+          },
+          "cover": {
+            "type": "object"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "difficulty": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "license": {
+            "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "official",
+              "verified",
+              "community"
+            ]
+          },
+          "vendors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "noKeyNeeded": {
+            "type": "boolean"
+          },
+          "requires": {
+            "type": "object"
+          },
+          "likes": {
+            "type": "integer"
+          },
+          "installs30d": {
+            "type": "integer"
+          },
+          "installs7d": {
+            "type": "integer"
+          },
+          "likes7d": {
+            "type": "integer"
+          },
+          "opens30d": {
+            "type": "integer"
+          },
+          "installsDaily30": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 30,
+            "maxItems": 30
+          },
+          "remixOf": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remixCount": {
+            "type": "integer"
+          },
+          "pick": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "ranked": {
+            "type": "boolean"
+          },
+          "unrankedReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "firstPublishedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "digest",
+              "bundleSha256",
+              "publishedAt",
+              "approvedAt",
+              "capabilities",
+              "checkSummary",
+              "disclosure",
+              "rulesVersion",
+              "sourceCommit",
+              "keys",
+              "models"
+            ],
+            "properties": {
+              "version": {
+                "type": "string",
+                "pattern": "^\\d+\\.\\d+\\.\\d+$"
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "bundleSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "publishedAt": {
+                "type": "string"
+              },
+              "approvedAt": {
+                "type": "string"
+              },
+              "capabilities": {
+                "type": "object",
+                "required": [
+                  "cli",
+                  "openInStudio",
+                  "deploy",
+                  "consoleTemplate"
+                ]
+              },
+              "checkSummary": {
+                "type": "object",
+                "required": [
+                  "steps",
+                  "flagsReviewed"
+                ]
+              },
+              "disclosure": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "summary",
+                  "network",
+                  "files",
+                  "shell",
+                  "background",
+                  "credentials"
+                ],
+                "properties": {
+                  "summary": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 200
+                  },
+                  "network": {
+                    "type": "string",
+                    "minLength": 4,
+                    "maxLength": 1200
+                  },
+                  "files": {
+                    "type": "string",
+                    "minLength": 4,
+                    "maxLength": 1200
+                  },
+                  "shell": {
+                    "type": "string",
+                    "minLength": 4,
+                    "maxLength": 300
+                  },
+                  "background": {
+                    "type": "string",
+                    "minLength": 4,
+                    "maxLength": 300
+                  },
+                  "credentials": {
+                    "type": "string",
+                    "minLength": 4,
+                    "maxLength": 1200
+                  }
+                }
+              },
+              "rulesVersion": {
+                "type": "integer"
+              },
+              "sourceCommit": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "keys": {
+                "type": "array"
+              },
+              "models": {
+                "type": "object"
+              }
+            }
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "version",
+                "publishedAt",
+                "yanked"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "picks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "ref",
+          "week",
+          "why"
+        ]
+      }
+    },
+    "tombstones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "ref",
+          "category",
+          "at"
+        ]
+      }
+    },
+    "redirects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ]
+      }
+    },
+    "rules": {
+      "type": "object",
+      "required": [
+        "schema",
+        "version",
+        "checklist",
+        "counts",
+        "trending",
+        "reviewMeans",
+        "contacts"
+      ]
+    }
+  }
+}

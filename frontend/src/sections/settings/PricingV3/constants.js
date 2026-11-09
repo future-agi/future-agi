@@ -18,8 +18,8 @@ export const FEATURE_LABELS = {
   has_synthetic_data: "Synthetic Data Generation",
   has_agentic_eval: "Agentic Evaluation",
   has_optimization: "Optimization",
-  has_scim: "SCIM Provisioning",
-  has_project_rbac: "Project RBAC",
+  // has_scim and has_project_rbac have no label on purpose: neither capability
+  // is built (ruling 383), so neither is offered (see planFormatters).
   has_custom_roles: "Custom Roles",
   has_data_masking: "Data Masking",
   has_oauth_sso: "OAuth SSO",
@@ -56,7 +56,6 @@ export const ADDON_DESCRIPTIONS = {
   scale: [
     "Everything in Boost",
     "Unlimited resources",
-    "SCIM provisioning",
     "Custom roles",
     "Optimization",
     "1-year data retention",
@@ -121,9 +120,7 @@ export function getFeatureGroups(formatCompact) {
           type: "bool",
         },
         { label: "Required Labels", key: "has_required_labels", type: "bool" },
-        { label: "Project RBAC", key: "has_project_rbac", type: "bool" },
         { label: "Custom Roles", key: "has_custom_roles", type: "bool" },
-        { label: "SCIM Provisioning", key: "has_scim", type: "bool" },
         { label: "Audit Logs", key: "has_audit_logs", type: "bool" },
         { label: "Data Masking", key: "has_data_masking", type: "bool" },
         { label: "Optimization", key: "has_optimization", type: "bool" },

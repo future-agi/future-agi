@@ -28,6 +28,7 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
 import { parseThinkingContent } from "./thinkingUtils";
 import ThinkingBlock from "./ThinkingBlock";
+import PromptRunSteps, { finalAnswerOf } from "./PromptRunSteps";
 import TestAudioPlayer from "src/components/custom-audio/TestAudioPlayer";
 import { ShowComponent } from "src/components/show";
 
@@ -38,6 +39,7 @@ const SingleResult = ({
   getWaveSurferInstance,
   storeWaveSurferInstance,
   updateWaveSurferInstance,
+  promptIndex = 0,
 }) => {
   const outputFormat = result?.outputFormat;
   const [outputType, setOutputType] = useState(PROMPT_RESULT_TYPES.RAW);
@@ -50,27 +52,56 @@ const SingleResult = ({
   const { setOpenSaveTemplate } = usePromptStoreShallow((state) => ({
     setOpenSaveTemplate: state.setOpenSaveTemplate,
   }));
-  const { promptName, selectedVersions } = usePromptWorkbenchContext();
+  const workbench = usePromptWorkbenchContext();
+  const { promptName, selectedVersions } = workbench;
+  // IT-R2 G4 P1: `Set Required` sets the tool choice and runs again once
+  // the edit is saved (the run reads the saved version).
+  const latest = useRef(workbench);
+  latest.current = workbench;
+  const setRequiredAndRun = () => {
+    latest.current.setModelConfigByIndex(promptIndex, (pre) => ({
+      ...pre,
+      tool_choice: "required",
+    }));
+    const startedAt = Date.now();
+    const tryRun = () => {
+      const v = latest.current.selectedVersions?.[promptIndex];
+      if (v?.version || Date.now() - startedAt > 4000) {
+        // The same run as pressing Run Prompt (a click: the run's state and
+        // the stream handler it binds commit together; a timer-time call
+        // binds the handler to the pre-run state and drops every frame).
+        const run = document.querySelector('[data-testid="run-prompt"]');
+        if (run && !run.disabled) run.click();
+        else latest.current.saveAndRun();
+      } else setTimeout(tryRun, 150);
+    };
+    // The editor saves 0.5 s after a change; run once that save has landed.
+    setTimeout(tryRun, 1500);
+  };
   const baseVersion = mainSelectedVersion ?? selectedVersions[0];
   const { versions, refetch } = usePromptVersions(id);
   const [openTagsModal, setOpenTagsModal] = useState(false);
 
+  // IT-R1 G4: with run steps (prototype metadata) the answer is the final
+  // reply; the model / tool steps list under it.
+  const runSteps = result?.metadata?.steps;
+  const answerText = useMemo(
+    () => (runSteps?.length ? finalAnswerOf(runSteps) : null) ?? result?.text,
+    [runSteps, result?.text],
+  );
   const {
     thinking,
     content: displayText,
     isThinking,
-  } = useMemo(() => parseThinkingContent(result?.text), [result?.text]);
+  } = useMemo(() => parseThinkingContent(answerText), [answerText]);
 
   const hasThinking = thinking !== null;
 
   // Determine if we should render as image
   const isImageOutput = useMemo(
     () =>
-      shouldRenderAsImage(
-        outputFormat,
-        hasThinking ? displayText : result?.text,
-      ),
-    [outputFormat, hasThinking, displayText, result?.text],
+      shouldRenderAsImage(outputFormat, hasThinking ? displayText : answerText),
+    [outputFormat, hasThinking, displayText, answerText],
   );
 
   const isAudioOutput = useMemo(() => outputFormat === "audio", [outputFormat]);
@@ -81,9 +112,9 @@ const SingleResult = ({
       !isImageOutput &&
       shouldRenderAsJson(
         responseFormat,
-        hasThinking ? displayText : result?.text,
+        hasThinking ? displayText : answerText,
       ),
-    [isImageOutput, responseFormat, hasThinking, displayText, result?.text],
+    [isImageOutput, responseFormat, hasThinking, displayText, answerText],
   );
 
   const selectedVersion = useMemo(() => {
@@ -130,7 +161,7 @@ const SingleResult = ({
       );
     }
 
-    const text = hasThinking ? displayText : result?.text;
+    const text = hasThinking ? displayText : answerText;
 
     const renderOutput = () => {
       // Image output takes priority
@@ -225,6 +256,13 @@ const SingleResult = ({
             outputType={outputType}
           />
         )}
+        <PromptRunSteps
+          steps={result?.metadata?.steps}
+          tools={result?.metadata?.tools}
+          toolChoice={result?.metadata?.toolChoice}
+          request={result?.metadata?.request}
+          onSetRequired={canWrite ? setRequiredAndRun : undefined}
+        />
         {renderOutput()}
       </>
     );
@@ -289,63 +327,93 @@ const SingleResult = ({
               showClear={false}
             />
           </ShowComponent>
-          <CustomTooltip show arrow size="small" title="Add Tags/Labels">
-            <IconButton
-              disabled={selectedVersion?.is_draft || !canWrite}
-              onClick={() => {
-                setOpenTagsModal(true);
-              }}
-              sx={{
-                bgcolor: "background.paper",
-                padding: theme.spacing(0.75, 1.5),
-                borderRadius: theme.spacing(0.5),
-                border: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <SvgColor
-                sx={{
-                  height: 20,
-                  width: 20,
-                  color: selectedVersion?.is_draft ? "divider" : "text.primary",
+          <CustomTooltip
+            show
+            arrow
+            size="small"
+            title={
+              selectedVersion?.is_draft
+                ? "Add tags / labels · commit this version first"
+                : !canWrite
+                  ? "Add tags / labels · you can view this prompt, not edit it"
+                  : "Add tags / labels"
+            }
+          >
+            <span>
+              <IconButton
+                disabled={selectedVersion?.is_draft || !canWrite}
+                onClick={() => {
+                  setOpenTagsModal(true);
                 }}
-                src="/assets/icons/ic_tag.svg"
-              />
-            </IconButton>
+                sx={{
+                  bgcolor: "background.paper",
+                  padding: theme.spacing(0.75, 1.5),
+                  borderRadius: theme.spacing(0.5),
+                  border: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <SvgColor
+                  sx={{
+                    height: 20,
+                    width: 20,
+                    color: selectedVersion?.is_draft
+                      ? "divider"
+                      : "text.primary",
+                  }}
+                  src="/assets/icons/ic_tag.svg"
+                />
+              </IconButton>
+            </span>
           </CustomTooltip>
-          <CustomTooltip show arrow size="small" title="Save as template">
-            <IconButton
-              disabled={
-                selectedVersion?.is_draft || !selectedVersion || !canWrite
-              }
-              onClick={() => {
-                trackEvent(Events.promptSaveAsTemplateClicked, {
-                  [PropertyName.id]: id,
-                });
-                setOpenSaveTemplate({
-                  ...baseVersion,
-                  promptName,
-                  versionId: selectedVersion?.id,
-                  createdBy: selectedVersion?.created_by,
-                });
-              }}
-              sx={{
-                bgcolor: "background.paper",
-                padding: theme.spacing(0.75, 1.5),
-                borderRadius: theme.spacing(0.5),
-                border: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <SvgColor
-                sx={{
-                  height: 20,
-                  width: 20,
-                  color: selectedVersion?.is_draft ? "divider" : "text.primary",
+          <CustomTooltip
+            show
+            arrow
+            size="small"
+            title={
+              selectedVersion?.is_draft || !selectedVersion
+                ? "Save as template · commit this version first"
+                : !canWrite
+                  ? "Save as template · you can view this prompt, not edit it"
+                  : "Save as template"
+            }
+          >
+            <span>
+              <IconButton
+                disabled={
+                  selectedVersion?.is_draft || !selectedVersion || !canWrite
+                }
+                onClick={() => {
+                  trackEvent(Events.promptSaveAsTemplateClicked, {
+                    [PropertyName.id]: id,
+                  });
+                  setOpenSaveTemplate({
+                    ...baseVersion,
+                    promptName,
+                    versionId: selectedVersion?.id,
+                    createdBy: selectedVersion?.created_by,
+                  });
                 }}
-                src="/assets/icons/ic_template.svg"
-              />
-            </IconButton>
+                sx={{
+                  bgcolor: "background.paper",
+                  padding: theme.spacing(0.75, 1.5),
+                  borderRadius: theme.spacing(0.5),
+                  border: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <SvgColor
+                  sx={{
+                    height: 20,
+                    width: 20,
+                    color: selectedVersion?.is_draft
+                      ? "divider"
+                      : "text.primary",
+                  }}
+                  src="/assets/icons/ic_template.svg"
+                />
+              </IconButton>
+            </span>
           </CustomTooltip>
         </Stack>
       </Stack>
@@ -359,7 +427,7 @@ const SingleResult = ({
             <OutputMeta metadata={result?.metadata} />
           </Box>
           {!isJsonOutput && !isImageOutput && !isAudioOutput && (
-            <CopyButton value={result?.text || ""} />
+            <CopyButton value={answerText || ""} />
           )}
         </Box>
         <Box className="streaming-text">{renderContent()}</Box>
@@ -382,6 +450,7 @@ SingleResult.propTypes = {
   selectedVersion: PropTypes.object,
   responseFormat: PropTypes.object,
   getWaveSurferInstance: PropTypes.func,
+  promptIndex: PropTypes.number,
   storeWaveSurferInstance: PropTypes.func,
   updateWaveSurferInstance: PropTypes.func,
 };

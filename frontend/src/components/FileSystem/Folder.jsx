@@ -137,6 +137,7 @@ export default function Folder({
         {hasChildren && (
           <IconButton
             size="small"
+            aria-label={`Show or hide folders in ${label}`}
             onClick={handleToggleClick}
             sx={{ zIndex: 1 }} // Ensure it's above the link
           >
@@ -198,6 +199,8 @@ export default function Folder({
 
         <IconButton
           disabled={isSample || !isChildren}
+          aria-label={`More actions for ${label}`}
+          aria-hidden={isSample || !isChildren ? true : undefined}
           sx={{
             opacity: isSample || !isChildren ? 0 : 1,
             flexShrink: 0,

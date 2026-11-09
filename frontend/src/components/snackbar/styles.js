@@ -1,10 +1,13 @@
 import { MaterialDesignContent } from "notistack";
 import { styled, alpha, keyframes } from "@mui/material/styles";
 
-// Shared duration constants (ms)
-export const SNACKBAR_AUTO_HIDE_MS = 6000;
-const EXIT_TRANSITION_MS = 200;
-// CSS animation covers autoHide + exit transition so the bar reaches 0% as the toast disappears
+// Shared duration constants (ms). IT-R1 G2 P8: 4 s by default (undo toasts
+// 6 s, sections/common/ux/toast.js); never longer than MAX unless `persist`.
+export const SNACKBAR_AUTO_HIDE_MS = 4000;
+export const SNACKBAR_MAX_HIDE_MS = 6000;
+export const EXIT_TRANSITION_MS = 200;
+// CSS animation covers autoHide + exit transition so the bar reaches 0% as
+// the toast disappears; each toast sets `--fa-toast-life` to its own length.
 const TOTAL_ANIMATION_S = (SNACKBAR_AUTO_HIDE_MS + EXIT_TRANSITION_MS) / 1000;
 
 // Progress bar animation — shrinks from full width to 0 over the toast lifetime
@@ -52,7 +55,11 @@ export const StyledNotistack = styled(MaterialDesignContent)(({ theme }) => {
       left: 0,
       height: 3,
       borderRadius: "0 2px 2px 0",
-      animation: `${shrink} ${TOTAL_ANIMATION_S}s linear forwards`,
+      animation: `${shrink} var(--fa-toast-life, ${TOTAL_ANIMATION_S}s) linear forwards`,
+    },
+    // A toast that stays until closed has no countdown bar.
+    "&.notistack-MuiContent.fa-toast-persist::after": {
+      display: "none",
     },
     "&.notistack-MuiContent-success::after": {
       backgroundColor: theme.palette.success.main,

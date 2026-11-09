@@ -1,10 +1,8 @@
 /* eslint-disable react/prop-types */
 import React, { useState, useMemo } from "react";
 import {
-  Drawer,
   Stack,
   Typography,
-  IconButton,
   List,
   ListItem,
   Button,
@@ -16,16 +14,29 @@ import {
   DialogContent,
   DialogActions,
 } from "@mui/material";
-import Iconify from "src/components/iconify";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useOrgConfigHistory,
   useActivateOrgConfig,
 } from "../providers/hooks/useOrgConfig";
+import { refreshGatewayConfig } from "../providers/hooks/useGatewayConfig";
+import { reportConfigWarnings } from "../hooks/useConfigPatch";
+import ConfigDiffView from "./ConfigDiffView";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import GatewayDetailDrawer from "../components/frame/GatewayDetailDrawer";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
+import { maskSecrets } from "./maskSecrets";
+import { GATEWAY_MONO } from "../utils/fonts";
 
 const ConfigHistoryDrawer = ({ open, onClose }) => {
+  const queryClient = useQueryClient();
   const { data: history, isLoading } = useOrgConfigHistory();
   const activateMutation = useActivateOrgConfig();
+  // Activating a version pushes it: Owner or Admin only (useGatewayAdmin).
+  const { canEdit } = useGatewayAdmin();
   const [viewConfig, setViewConfig] = useState(null);
+  // The version whose Activate was clicked: its diff is shown first.
+  const [pendingVersion, setPendingVersion] = useState(null);
 
   const versions = useMemo(() => {
     if (!history) return [];
@@ -33,30 +44,28 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
     return [...arr].sort((a, b) => (b.version || 0) - (a.version || 0));
   }, [history]);
 
-  const handleActivate = (id) => {
-    activateMutation.mutate(id);
+  const activeVersion = versions.find((cfg) => cfg.is_active) || null;
+
+  // useActivateOrgConfig re-reads the org config and its history; the gateway
+  // config it pushed is re-read here.
+  const handleConfirmActivate = () => {
+    activateMutation.mutate(pendingVersion.id, {
+      onSuccess: (result) => {
+        setPendingVersion(null);
+        reportConfigWarnings(result?.warnings);
+        return refreshGatewayConfig(queryClient);
+      },
+    });
   };
 
   return (
     <>
-      <Drawer
-        anchor="right"
+      <GatewayDetailDrawer
         open={open}
         onClose={onClose}
-        PaperProps={{ sx: { width: 480, p: 2 } }}
+        title="Config History"
+        width={480}
       >
-        <Stack
-          direction="row"
-          justifyContent="space-between"
-          alignItems="center"
-          mb={2}
-        >
-          <Typography variant="h6">Config History</Typography>
-          <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" width={20} />
-          </IconButton>
-        </Stack>
-
         {isLoading ? (
           <Stack spacing={1}>
             {[...Array(5)].map((_, i) => (
@@ -128,21 +137,32 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
                     View
                   </Button>
                   {!cfg.is_active && (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => handleActivate(cfg.id)}
-                      disabled={activateMutation.isPending}
-                    >
-                      Activate
-                    </Button>
+                    <GatewayAdminOnly allowed={canEdit}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => setPendingVersion(cfg)}
+                        disabled={activateMutation.isPending || !canEdit}
+                      >
+                        Activate
+                      </Button>
+                    </GatewayAdminOnly>
                   )}
                 </Stack>
               </ListItem>
             ))}
           </List>
         )}
-      </Drawer>
+      </GatewayDetailDrawer>
+
+      <ConfigDiffView
+        open={Boolean(pendingVersion)}
+        target={pendingVersion}
+        active={activeVersion}
+        onConfirm={handleConfirmActivate}
+        onCancel={() => setPendingVersion(null)}
+        isActivating={activateMutation.isPending}
+      />
 
       {/* View config dialog */}
       <Dialog
@@ -158,7 +178,7 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
               bgcolor: "action.hover",
               borderRadius: 1,
               p: 2,
-              fontFamily: "monospace",
+              fontFamily: GATEWAY_MONO,
               fontSize: "0.75rem",
               whiteSpace: "pre-wrap",
               maxHeight: 400,
@@ -166,13 +186,14 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
             }}
           >
             {JSON.stringify(
-              {
+              // Stored secrets are masked here as in Full config.
+              maskSecrets({
                 guardrails: viewConfig?.guardrails,
                 alerting: viewConfig?.alerting,
                 budgets: viewConfig?.budgets,
                 routing: viewConfig?.routing,
                 cache: viewConfig?.cache,
-              },
+              }),
               null,
               2,
             )}

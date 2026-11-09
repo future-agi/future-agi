@@ -1,3 +1,4 @@
+import { completeAgMenuCheckedState } from "src/sections/common/ux/oneview/headerMenuItems";
 import CustomDevelopDetailColumn from "src/sections/common/CustomDevelopDetailColumn";
 import { parseCellValue } from "src/utils/agUtils";
 import {
@@ -27,14 +28,29 @@ import {
   useRunPromptStore,
   useShowSummaryStore,
   useExtractJsonKeyStore,
-  useExecuteCodeStore,
   useClassificationStore,
 } from "../states";
+import {
+  CODE_COLUMNS_DISABLED_REASON,
+  isCodeColumn,
+} from "../AddColumn/ExecuteCode/codeDisabled";
 import axios, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
 import { format } from "date-fns";
 import { StatusTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import { enqueueSnackbar } from "notistack";
+import { cellIndex, useChangeSetStore } from "./Versions/changeSetStore";
+import { MEDIA_TYPES, versionedCellEdit } from "./Versions/versionedCellEdit";
+import { gridWritesClassic } from "src/sections/develop/realBackendCaps";
+import {
+  columnWidthFor,
+  ROLE_LABEL,
+  USER_ROLES,
+} from "./DataGrid/dataGridView";
+import { saveColumnRole } from "./DataGrid/columnRole";
+import { datatypeColumnMenuItems } from "src/sections/common/Values/columnMenuItems";
+import EmptyColumnHeader from "./DataGrid/EmptyColumnHeader";
+import { cellWriteDisplay } from "./cellWriteDisplay";
 
 const STATUS = {
   PASSED: "Passed",
@@ -42,6 +58,16 @@ const STATUS = {
 };
 
 const DEFAULT_MIN_WIDTH = 300;
+const EMPTY_COLUMN_THRESHOLD = 0.8;
+// Wide enough for a readable header (layout #5): name + `229 of 248 empty`.
+const EMPTY_COLUMN_WIDTH = 132;
+const EXPANDED_EMPTY_COLUMN_WIDTH = 240;
+
+export const isMostlyEmptyColumn = (column) => {
+  const total = Number(column?.stats?.total);
+  const empty = Number(column?.stats?.empty_count);
+  return total > 0 && empty / total >= EMPTY_COLUMN_THRESHOLD;
+};
 
 const NonEditableColumns = [
   "run_prompt",
@@ -284,12 +310,6 @@ const onConfigureDynamicColumn = (column) => {
         editId: column.id,
       },
     });
-  } else if (column.originType === "python_code") {
-    useExecuteCodeStore.setState({
-      openExecuteCode: {
-        editId: column.id,
-      },
-    });
   } else if (column.originType === "classification") {
     useClassificationStore.setState({
       openClassification: {
@@ -309,13 +329,18 @@ export const getColumnConfig = ({
   removeWaveSurferInstance,
   updateWaveSurferInstance,
   isViewerRole = false,
+  versioned = false,
+  layout,
 }) => {
   const setFeedBack =
     useAddEvaluationFeebackStore.getState().setAddEvaluationFeeback;
 
   const setImprovement = useImprovePromptStore.getState().setImprovePrompt;
 
-  const onCellValueChanged = onCellValueChangedWrapper(queryClient, dataset);
+  const onCellValueChanged = cellWriter({ versioned, queryClient, dataset });
+  // L1: on the real backend the versioned grid still shows row numbers and
+  // stats, but an edit is written at once (no change-set, no versions).
+  const staged = versioned && !gridWritesClassic();
 
   const editCell = useEditCellStore.getState().editCell;
   const setEditCell = useEditCellStore.getState().setEditCell;
@@ -324,21 +349,67 @@ export const getColumnConfig = ({
   const colOriginType = eachCol?.origin_type;
   const colIsFrozen = eachCol?.is_frozen;
   const colIsVisible = eachCol?.is_visible;
+  // A Run Prompt column is empty only until it runs: never collapsed.
+  const mostlyEmpty =
+    versioned && colOriginType !== "run_prompt" && isMostlyEmptyColumn(eachCol);
+  const userWidth = layout?.columns?.find((c) => c.id === eachCol?.id)?.width;
+  const emptyColumnWidth = mostlyEmpty
+    ? userWidth ?? EMPTY_COLUMN_WIDTH
+    : undefined;
+  const collapsedEmpty =
+    mostlyEmpty && (userWidth == null || userWidth <= EMPTY_COLUMN_WIDTH);
+  const expandEmptyColumn = () => {
+    try {
+      layout?.setWidth?.(eachCol?.id, EXPANDED_EMPTY_COLUMN_WIDTH);
+    } catch {
+      // A blocked preference store should never prevent the column opening.
+    }
+  };
 
   const isEditable =
     !isViewerRole &&
     !NonEditableColumns.includes(colOriginType) &&
     !["audio", "persona"].includes(colDataType);
+  // Media cells edit in their own dialogs (double-click, Upload / Replace /
+  // Link / Delete), never in AG's text editor (the interface contract C1).
+  const inlineEditable = isEditable && !MEDIA_TYPES.includes(colDataType);
+
+  // Versioned grid (R7): an inline edit becomes a pending `update_cell` op in
+  // the change-set instead of a write, and pending values show in the cell.
+  const pendingValue = (data) => {
+    if (!staged || !data?.row_id) return undefined;
+    const ops = useChangeSetStore.getState().getOps(dataset);
+    const hit = cellIndex(ops)[data.row_id]?.[eachCol?.id];
+    return hit ? hit.after : undefined;
+  };
 
   const baseConfig = {
     field: eachCol?.id,
     headerName: eachCol?.name,
     valueGetter: (v) => {
+      const pending = pendingValue(v?.data);
       const cell = v?.data?.[eachCol?.id];
-      const rawValue = cell?.cell_value;
+      const rawValue = pending !== undefined ? pending : cell?.cell_value;
       return parseCellValue(rawValue, AGGridCellDataType[colDataType]);
     },
     valueSetter: (params) => {
+      if (staged) {
+        const before = params.data?.[eachCol?.id]?.cell_value ?? null;
+        const raw = params?.newValue;
+        const value =
+          raw !== null && typeof raw === "object" && !(raw instanceof Date)
+            ? JSON.stringify(raw)
+            : raw ?? "";
+        useChangeSetStore.getState().addOp(dataset, {
+          op: "update_cell",
+          row_id: params.data?.row_id,
+          column_id: eachCol?.id,
+          value,
+          before,
+        });
+        // The change-set subscription refreshes the cell.
+        return false;
+      }
       const cell = params.data[eachCol?.id];
       if (cell && "cell_value" in cell) {
         cell.cell_value = params?.newValue;
@@ -347,17 +418,35 @@ export const getColumnConfig = ({
       }
       return true;
     },
-    editable: isEditable,
+    editable: inlineEditable,
     cellDataType: AGGridCellDataType[colDataType],
     dataType: colDataType,
     pinned: colIsFrozen,
     hide: !colIsVisible,
-    minWidth: DEFAULT_MIN_WIDTH,
+    ...(collapsedEmpty ? { resizable: false } : {}),
+    ...(versioned
+      ? mostlyEmpty
+        ? {
+            ...(userWidth == null
+              ? { initialWidth: EMPTY_COLUMN_WIDTH }
+              : { width: emptyColumnWidth }),
+            minWidth: EMPTY_COLUMN_WIDTH,
+            maxWidth: userWidth ? undefined : EMPTY_COLUMN_WIDTH,
+          }
+        : { width: columnWidthFor(eachCol), minWidth: 90 }
+      : { minWidth: DEFAULT_MIN_WIDTH }),
     // suppressSizeToFit: true,
     originType: colOriginType,
-    headerComponent: CustomDevelopDetailColumn,
+    headerComponent: collapsedEmpty
+      ? EmptyColumnHeader
+      : CustomDevelopDetailColumn,
     headerComponentParams: {
-      col: eachCol,
+      col: versioned
+        ? { ...eachCol, originType: colOriginType, dataType: colDataType }
+        : eachCol,
+      versioned,
+      datasetId: dataset,
+      ...(collapsedEmpty ? { onExpand: expandEmptyColumn } : {}),
     },
     // equals: (a, b) => a?.cellValue === b?.cellValue,
     col: {
@@ -394,7 +483,11 @@ export const getColumnConfig = ({
       onCellValueChanged,
     },
     cellEditorPopup: true,
-    mainMenuItems: getMainMenuItems("test", isViewerRole),
+    mainMenuItems: getMainMenuItems("test", isViewerRole, {
+      versioned,
+      datasetId: dataset,
+      queryClient,
+    }),
     cellRenderer: CustomCellRender,
     cellRendererParams: {
       onEditCell: (params) => {
@@ -403,6 +496,8 @@ export const getColumnConfig = ({
       onCellValueChanged,
       editCell,
       editable: isEditable,
+      versioned,
+      datasetId: dataset,
     },
     children,
     headerGroupComponent: CustomDevelopGroupCellHeader,
@@ -449,6 +544,9 @@ const menuOrder = [
   "Configure Dynamic Column",
   "Edit Column Name",
   "Edit Column Type",
+  "View as",
+  "Column from path…",
+  "Set role",
   "Delete Column",
   "separator",
   "Pin Column",
@@ -471,105 +569,164 @@ const DynamicColumnOriginTypes = [
   "conditional",
 ];
 
-const getMainMenuItems =
-  (currentDataset, isViewerRole = false) =>
-  (params) => {
-    const allMenuItems = setMenuIcons(params, currentDataset?.name); // Pass dataset name
-    const menuItems = allMenuItems.slice(0);
-    // const menuItems = params.defaultItems.slice(0);
-    const column = params.column.colDef.col;
-    const extraMenuItems = [];
-    if (column?.originType === "evaluation") {
+/**
+ * The column's own actions (Edit eval, Configure run, Edit column name /
+ * type, Set role, Delete column, View as, Column from path…). The versioned
+ * Data grid puts them above the one-view header items (Sort, Freeze, Move,
+ * Hide, Columns…, Reset — A1-10), so the grid has one menu.
+ */
+export const columnActionMenuItems = (
+  column,
+  isViewerRole = false,
+  roleContext = {},
+) => {
+  const extraMenuItems = [];
+  if (column?.originType === "evaluation") {
+    extraMenuItems.push({
+      name: "Edit Eval",
+      action: () => {
+        // Open the new EvaluationDrawer pre-seeded to edit this user-eval.
+        // EvaluationDrawer watches pendingEditEvalId and, once the saved-
+        // evals list is loaded, routes straight into the EvalPicker at the
+        // config step (same as clicking Edit on the saved-evals row).
+        useRunEvaluationStore
+          .getState()
+          .openEditEvalFromColumn(column?.sourceId);
+      },
+      icon: menuIcons["Configure Eval"],
+    });
+  }
+  if (column?.originType === "run_prompt") {
+    extraMenuItems.push({
+      name: "Configure Run",
+      action: () => {
+        useRunPromptStore.getState().setOpenRunPrompt(column);
+      },
+      icon: menuIcons["Configure Run"],
+    });
+  }
+  if (DynamicColumnOriginTypes.includes(column?.originType)) {
+    extraMenuItems.push(
+      isCodeColumn(column)
+        ? {
+            // the capability contract: custom Python code is turned off; the door stays
+            // visible, disabled, with the reason, and opens nothing.
+            name: "Configure Dynamic Column",
+            disabled: true,
+            tooltip: CODE_COLUMNS_DISABLED_REASON,
+            action: () => {},
+            icon: menuIcons["Configure Run"],
+          }
+        : {
+            name: "Configure Dynamic Column",
+            action: () => {
+              onConfigureDynamicColumn(column);
+            },
+            icon: menuIcons["Configure Run"],
+          },
+    );
+  }
+  if (
+    column?.originType === "evaluation" ||
+    column?.originType === "evaluation_reason"
+  ) {
+    const { showSummary, toggleSummary } = useShowSummaryStore.getState();
+    // Key the toggle by sourceId — when the reasoning children are
+    // expanded, AG Grid splits the column into a group whose headers
+    // use the underlying eval / eval_reason column ids, so the old
+    // `column.id` key no longer matched what was stored and the
+    // "Hide Reasoning" state was lost.
+    const key = column?.source_id || column?.id;
+    extraMenuItems.push({
+      name: showSummary.includes(key) ? "Hide Reasoning" : "Show Reasoning",
+      action: () => {
+        toggleSummary({ id: key });
+      },
+      icon: menuIcons["Show Reasoning"],
+    });
+  }
+  if (!isViewerRole) {
+    // "Edit Column Name" doesn't make sense for evaluation columns — the
+    // name is derived from the eval template and is changed by editing
+    // the eval itself.
+    if (column?.originType !== "evaluation") {
       extraMenuItems.push({
-        name: "Edit Eval",
+        name: "Edit Column Name",
         action: () => {
-          // Open the new EvaluationDrawer pre-seeded to edit this user-eval.
-          // EvaluationDrawer watches pendingEditEvalId and, once the saved-
-          // evals list is loaded, routes straight into the EvalPicker at the
-          // config step (same as clicking Edit on the saved-evals row).
-          useRunEvaluationStore
-            .getState()
-            .openEditEvalFromColumn(column?.sourceId);
+          useEditColumnNameStore.setState({
+            editColumnName: column,
+          });
         },
-        icon: menuIcons["Configure Eval"],
-      });
-    }
-    if (column?.originType === "run_prompt") {
-      extraMenuItems.push({
-        name: "Configure Run",
-        action: () => {
-          useRunPromptStore.getState().setOpenRunPrompt(column);
-        },
-        icon: menuIcons["Configure Run"],
-      });
-    }
-    if (DynamicColumnOriginTypes.includes(column?.originType)) {
-      extraMenuItems.push({
-        name: "Configure Dynamic Column",
-        action: () => {
-          onConfigureDynamicColumn(column);
-        },
-        icon: menuIcons["Configure Run"],
+        icon: menuIcons["Edit Column Name"],
       });
     }
     if (
-      column?.originType === "evaluation" ||
-      column?.originType === "evaluation_reason"
+      column?.originType !== "evaluation" &&
+      !DevelopDataBlockedChangeDataType.includes(column?.originType)
     ) {
-      const { showSummary, toggleSummary } = useShowSummaryStore.getState();
-      // Key the toggle by sourceId — when the reasoning children are
-      // expanded, AG Grid splits the column into a group whose headers
-      // use the underlying eval / eval_reason column ids, so the old
-      // `column.id` key no longer matched what was stored and the
-      // "Hide Reasoning" state was lost.
-      const key = column?.source_id || column?.id;
       extraMenuItems.push({
-        name: showSummary.includes(key) ? "Hide Reasoning" : "Show Reasoning",
+        name: "Edit Column Type",
         action: () => {
-          toggleSummary({ id: key });
-        },
-        icon: menuIcons["Show Reasoning"],
-      });
-    }
-    if (!isViewerRole) {
-      // "Edit Column Name" doesn't make sense for evaluation columns — the
-      // name is derived from the eval template and is changed by editing
-      // the eval itself.
-      if (column?.originType !== "evaluation") {
-        extraMenuItems.push({
-          name: "Edit Column Name",
-          action: () => {
-            useEditColumnNameStore.setState({
-              editColumnName: column,
-            });
-          },
-          icon: menuIcons["Edit Column Name"],
-        });
-      }
-      if (
-        column?.originType !== "evaluation" &&
-        !DevelopDataBlockedChangeDataType.includes(column?.originType)
-      ) {
-        extraMenuItems.push({
-          name: "Edit Column Type",
-          action: () => {
-            useEditColumnTypeStore.setState({
-              editColumnType: column,
-            });
-          },
-          icon: menuIcons["Edit Column Type"],
-        });
-      }
-      extraMenuItems.push({
-        name: "Delete Column",
-        action: () => {
-          useDeleteColumnStore.setState({
-            deleteColumn: column,
+          useEditColumnTypeStore.setState({
+            editColumnType: column,
           });
         },
-        icon: menuIcons["Delete Column"],
+        icon: menuIcons["Edit Column Type"],
       });
     }
+    // L4: a data column's role is stored by edit_dataset_behavior (and read
+    // back from get-dataset-table) on every dataset grid, not only versioned.
+    if (roleContext.datasetId && column?.originType === "OTHERS") {
+      const current = column?.role ?? null;
+      const choose = (role) => () =>
+        saveColumnRole({
+          queryClient: roleContext.queryClient,
+          datasetId: roleContext.datasetId,
+          column,
+          role,
+        });
+      extraMenuItems.push({
+        name: "Set role",
+        icon: menuIcons["Edit Column Type"],
+        subMenu: [
+          ...USER_ROLES.map((role) => ({
+            name: ROLE_LABEL[role],
+            checked: current === role,
+            action: choose(role),
+          })),
+          { name: "None", checked: !current, action: choose(null) },
+        ],
+      });
+    }
+    extraMenuItems.push({
+      name: "Delete Column",
+      action: () => {
+        useDeleteColumnStore.setState({
+          deleteColumn: column,
+        });
+      },
+      icon: menuIcons["Delete Column"],
+    });
+  }
+  // R2 (P6): `View as` / `Column from path…` for every role (L6 fills the
+  // items; viewers get the read-only ones).
+  extraMenuItems.push(
+    ...datatypeColumnMenuItems(column, { isViewerRole, roleContext }),
+  );
+  return reorderMenuList(extraMenuItems, menuOrder, ["Show Reasoning"]);
+};
+
+const getMainMenuItems =
+  (currentDataset, isViewerRole = false, roleContext = {}) =>
+  (params) => {
+    const allMenuItems = setMenuIcons(params, currentDataset?.name); // Pass dataset name
+    const menuItems = allMenuItems.slice(0);
+    const column = params.column.colDef.col;
+    const extraMenuItems = columnActionMenuItems(
+      column,
+      isViewerRole,
+      roleContext,
+    ).filter((i) => i !== "separator");
     const mainMenuItems = [...extraMenuItems, ...menuItems];
     const separatorAfter = [
       "Show Reasoning",
@@ -578,6 +735,17 @@ const getMainMenuItems =
     ];
     return reorderMenuList(mainMenuItems, menuOrder, separatorAfter);
   };
+
+/**
+ * The one cell writer of a grid: on the versioned dataset page every edit,
+ * media included, becomes ONE pending `update_cell` op (Save version commits
+ * it); scenario grids keep the immediate writer (`update_cell_value`, which
+ * CONTRACT row 61 keeps scenario-only).
+ */
+export const cellWriter = ({ versioned, queryClient, dataset }) =>
+  versioned && !gridWritesClassic()
+    ? versionedCellEdit({ datasetId: dataset, mediaPending: true })
+    : onCellValueChangedWrapper(queryClient, dataset);
 
 export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
   const handlerOnSuccess = params?.onSuccess;
@@ -622,6 +790,7 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
   const rowNode = gridApi.getRowNode(rowId);
 
   if (rowNode) {
+    const display = cellWriteDisplay(gridApi, rowNode, columnId, oldValue);
     try {
       if (newValue instanceof File) {
         const formData = new FormData();
@@ -632,9 +801,9 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
           formData,
           () => {
             const tempUrl = URL.createObjectURL(newValue);
-            rowNode.setDataValue(columnId, tempUrl);
+            display.saved(tempUrl);
           },
-          () => rowNode.setDataValue(columnId, oldValue),
+          display.failed,
         );
       } else if (
         typeof newValue === "string" &&
@@ -642,8 +811,8 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
       ) {
         updateCellValue(
           { column_id: columnId, row_id: rowId, new_value: newValue },
-          () => rowNode.setDataValue(columnId, newValue),
-          () => rowNode.setDataValue(columnId, oldValue),
+          () => display.saved(newValue),
+          display.failed,
         );
       } else if (dataType === "datetime") {
         const date = new Date(newValue);
@@ -651,16 +820,17 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
 
         updateCellValue(
           { column_id: columnId, row_id: rowId, new_value: formattedDate },
-          () => rowNode.setDataValue(columnId, date),
-          () => rowNode.setDataValue(columnId, oldValue),
+          () => display.saved(date),
+          display.failed,
         );
       } else if (dataType === "document") {
         updateCellValue(
           { column_id: columnId, row_id: rowId, new_value: newValue },
           () => {
+            display.saved(newValue);
             gridApi?.refreshServerSide({});
           },
-          () => rowNode.setDataValue(columnId, oldValue),
+          display.failed,
         );
       } else {
         const formattedValue =
@@ -670,13 +840,13 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
 
         updateCellValue(
           { column_id: columnId, row_id: rowId, new_value: formattedValue },
-          () => rowNode.setDataValue(columnId, formattedValue),
-          () => rowNode.setDataValue(columnId, oldValue),
+          () => display.saved(formattedValue),
+          display.failed,
         );
       }
     } catch (e) {
       logger.warn("Warning:", e);
-      rowNode.setDataValue(columnId, oldValue);
+      display.failed();
       enqueueSnackbar(
         "An unexpected error occurred. Reverting to previous value.",
         {
@@ -1082,6 +1252,7 @@ export const postProcessPopup = (params) => {
   }
 
   const ePopup = params.ePopup;
+  completeAgMenuCheckedState(ePopup);
   ePopup.style.backgroundColor = "var(--bg-paper, #fff)";
   ePopup.style.borderRadius = "12px";
   ePopup.style.border = "1px solid var(--border-default, #e5e7eb)";
@@ -1128,7 +1299,7 @@ export const postProcessPopup = (params) => {
       element.style.color = "var(--primary-main)";
     }
     if (element.textContent.trim() === "Delete Column") {
-      element.style.color = "#fa0c0c";
+      element.style.color = "var(--ds-status-danger-fg)";
     }
     element.style.fontWeight = 400;
     element.style.fontSize = "12px";

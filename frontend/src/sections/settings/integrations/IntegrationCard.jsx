@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -19,19 +19,26 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { fDateTime } from "src/utils/format-time";
-import { useDeleteConnection, useStartSlackInstall } from "src/api/integrations";
+import {
+  useDeleteConnection,
+  useStartSlackInstall,
+} from "src/api/integrations";
 import PlatformLogo from "./PlatformLogo";
 import StatusBadge from "./StatusBadge";
-import { SKIP_SYNC_SETTINGS_PLATFORMS } from "./constants";
-import { getErrorMessage } from "./utils";
+import { EXPORT_PLATFORMS, SKIP_SYNC_SETTINGS_PLATFORMS } from "./constants";
+import { connectionDestination, getErrorMessage } from "./utils";
+import { useCanManageIntegrations } from "./access";
+import IntegrationAdminOnly from "./IntegrationAdminOnly";
 
 export default function IntegrationCard({ connection }) {
   const theme = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
+  const canManage = useCanManageIntegrations();
   const isActionOnly = SKIP_SYNC_SETTINGS_PLATFORMS.includes(
     connection.platform,
   );
+  const isExport = EXPORT_PLATFORMS.includes(connection.platform);
   const workspaceIntegrationsMatch = location.pathname.match(
     /^\/dashboard\/settings\/workspace\/([^/]+)\/integrations\/?$/,
   );
@@ -41,7 +48,7 @@ export default function IntegrationCard({ connection }) {
     connection.external_project_name ||
     connection.externalProjectName ||
     "Unnamed";
-  const hostUrl = connection.host_url || connection.hostUrl;
+  const destination = connectionDestination(connection);
   const createdAt = connection.created_at || connection.createdAt;
   const totalTracesSynced =
     connection.total_traces_synced ?? connection.totalTracesSynced;
@@ -69,20 +76,28 @@ export default function IntegrationCard({ connection }) {
   };
 
   const handleDisconnect = () => {
+    if (!canManage) return;
     deleteConnection(connection.id, {
       onSuccess: () => setDisconnectOpen(false),
     });
   };
 
   const handleReconnectSlack = () => {
+    if (!canManage) return;
     setConnectionError("");
     startSlackInstall.mutate(connection.id, {
       onSuccess: (response) => {
         const authorizationUrl = response.data?.result?.authorization_url;
         if (authorizationUrl) window.location.assign(authorizationUrl);
-        else setConnectionError("Could not start Slack authorization. Please try again.");
+        else
+          setConnectionError(
+            "Could not start Slack authorization. Please try again.",
+          );
       },
-      onError: (error) => setConnectionError(getErrorMessage(error, "Could not reconnect Slack.")),
+      onError: (error) =>
+        setConnectionError(
+          getErrorMessage(error, "Could not reconnect Slack."),
+        ),
     });
   };
 
@@ -111,10 +126,11 @@ export default function IntegrationCard({ connection }) {
               </Typography>
               <Typography
                 noWrap
-                title={hostUrl}
+                title={destination}
+                data-testid="integration-card-destination"
                 sx={{ typography: "s2", color: "text.disabled" }}
               >
-                {hostUrl || "—"}
+                {destination || "—"}
               </Typography>
             </Box>
             {isActionOnly ? (
@@ -125,7 +141,7 @@ export default function IntegrationCard({ connection }) {
                 icon={<Iconify icon="solar:check-circle-bold" width={16} />}
               />
             ) : (
-              <StatusBadge status={connection.status} />
+              <StatusBadge status={connection.status} isExport={isExport} />
             )}
           </Box>
 
@@ -146,7 +162,9 @@ export default function IntegrationCard({ connection }) {
             ) : (
               <>
                 <Typography sx={{ typography: "s2", color: "text.disabled" }}>
-                  {totalTracesSynced?.toLocaleString() || 0} traces
+                  {isExport
+                    ? `${(totalTracesSynced || 0).toLocaleString()} request log deliveries (including repeats)`
+                    : `${(totalTracesSynced || 0).toLocaleString()} traces`}
                 </Typography>
                 <Typography sx={{ typography: "s2", color: "text.disabled" }}>
                   {lastSyncedAt
@@ -173,26 +191,40 @@ export default function IntegrationCard({ connection }) {
                 ? `Connected ${createdAt ? fDateTime(createdAt) : "—"}. Reconnect to renew Slack access, or disconnect to stop Error Feed notifications using this workspace.`
                 : `Connected ${createdAt ? fDateTime(createdAt) : "—"}. Disconnecting will remove the API key and disable issue creation from Error Feed.`}
             </Typography>
-            {connectionError && <Alert severity="error" sx={{ mt: 2 }}>{connectionError}</Alert>}
+            {connectionError && (
+              <Alert severity="error" sx={{ mt: 2 }}>
+                {connectionError}
+              </Alert>
+            )}
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setDisconnectOpen(false)} size="small">
               Cancel
             </Button>
             {connection.platform === "slack" && (
-              <Button onClick={handleReconnectSlack} size="small" disabled={startSlackInstall.isPending}>
-                {startSlackInstall.isPending ? "Connecting…" : "Reconnect Slack"}
-              </Button>
+              <IntegrationAdminOnly allowed={canManage}>
+                <Button
+                  onClick={handleReconnectSlack}
+                  size="small"
+                  disabled={!canManage || startSlackInstall.isPending}
+                >
+                  {startSlackInstall.isPending
+                    ? "Connecting…"
+                    : "Reconnect Slack"}
+                </Button>
+              </IntegrationAdminOnly>
             )}
-            <Button
-              onClick={handleDisconnect}
-              color="error"
-              variant="contained"
-              size="small"
-              disabled={deleting}
-            >
-              {deleting ? "Disconnecting…" : "Disconnect"}
-            </Button>
+            <IntegrationAdminOnly allowed={canManage}>
+              <Button
+                onClick={handleDisconnect}
+                color="error"
+                variant="contained"
+                size="small"
+                disabled={!canManage || deleting}
+              >
+                {deleting ? "Disconnecting…" : "Disconnect"}
+              </Button>
+            </IntegrationAdminOnly>
           </DialogActions>
         </Dialog>
       )}

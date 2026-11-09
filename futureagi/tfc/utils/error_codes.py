@@ -675,7 +675,12 @@ err_dict = {
     "RATE_LIMIT_REACHED": [
         "Rate limit reached. Please try again later or upgrade your plan."
     ],
-    "INSUFFICIENT_CREDITS": ["Insufficient credits. Please recharge your account."],
+    # PROPOSED copy: site gate supplies final wording. The legacy key is unchanged.
+    # This normalizer also handles generic "insufficient" failures, not balances.
+    "INSUFFICIENT_CREDITS": [
+        "This request could not be completed. Try again later; "
+        "if it keeps happening, contact your administrator."
+    ],
     "INSUFFICIENT_VOICE_CALL_BALANCE": [
         "Insufficient balance for voice call. Please recharge your account to make calls."
     ],
@@ -735,6 +740,9 @@ err_dict = {
     "EMPTY_DATA": ["The provided data is empty."],
     "FAILED_TO_GET_DATA_FROM_HUGGINGFACE": [
         "Unable to get data from Hugging Face. Please try again later."
+    ],
+    "HUGGINGFACE_IMPORT_UNAVAILABLE": [
+        "Hugging Face import is not available in this build."
     ],
     "INVALID_ROW_ID": ["The provided row ID is invalid."],
     "UNSUPPORTED_AUDIO_FORMAT": ["The provided audio format is not supported."],
@@ -850,11 +858,14 @@ err_dict = {
     "MEMBER_ALREADY_ACTIVE": ["Cannot Update Role of Active User."],
     "ROLE_NOT_MENTIONED": ["Please mention the updated role of the user."],
     "USER_CANNOT_CHANGE_ROLE": ["You cannot change your own role."],
-    "MEMBER_NOT_IN_ORG": ["User not found in the organization."],
     "UNABLE_TO_UPDATE_ROLE": ["Unable to update role. Please try again."],
     "FAILED_TO_RUN_EVAL": ["Unable to run evaluation. Please try again."],
     "ERROR_AUDIO_UPLOAD": ["Audio upload failed. Try again."],
     "FAILED_TO_RERUN_OPERATION": ["Unable to rerun operation. Please try again."],
+    "CODE_EXECUTION_DISABLED": [
+        "Custom Python code is turned off. Existing values stay readable, but "
+        "code cannot be tested, added, edited or re-run."
+    ],
     "MONITOR_NOT_FOUND": ["Alert Monitor not found for the provided ID."],
     "MONITOR_PROJECT_REQUIRED": [
         "This alert is not linked to a project. Link it to a project to evaluate it."
@@ -1119,6 +1130,287 @@ err_dict = {
     "ANALYTICS_METRICS_ERROR": ["Unable to fetch simulation metrics."],
     "ANALYTICS_RUNS_ERROR": ["Unable to fetch simulation runs."],
     "ANALYTICS_ERROR": ["Unable to fetch simulation analytics."],
+    # --- Omega Hub ---
+    "OMEGA_HUB_UNAUTHENTICATED": [
+        "Sign in to Future AGI to do this.",
+        "Sign in, or send a Hub token in the X-Omega-Hub-Token header.",
+    ],
+    "OMEGA_HUB_FORBIDDEN": [
+        "You are not allowed to do this.",
+        "Ask an owner or admin of the publisher, or a Hub maintainer.",
+    ],
+    "OMEGA_HUB_NOT_FOUND": [
+        "Nothing on the Omega Hub matches this reference.",
+        "Check the publisher and name with omega hub search.",
+    ],
+    "OMEGA_HUB_GONE": [
+        "This entry was removed from the Omega Hub.",
+        "See the tombstone for the reason; run omega hub outdated in projects that use it.",
+    ],
+    "OMEGA_HUB_MOVED": [
+        "This entry moved to a new reference.",
+        "Use the reference in movedTo.",
+    ],
+    "OMEGA_HUB_INVALID": [
+        "The request is not valid.",
+        "Fix the fields named in the message and send it again.",
+    ],
+    "OMEGA_HUB_THROTTLED": [
+        "Too many requests.",
+        "Wait and try again later.",
+    ],
+    "OMEGA_HUB_TOKEN_SCOPE": [
+        "A Hub token cannot be used for this request.",
+        "Hub tokens can publish, read status and yank. Use the Future AGI app for everything else.",
+    ],
+    "OMEGA_HUB_LIKE_NEEDS_SESSION": [
+        "Likes need a signed-in Future AGI browser session.",
+        "Like the entry in the Future AGI app; API keys and Hub tokens cannot like.",
+    ],
+    "OMEGA_HUB_NOT_MAINTAINER": [
+        "Only Omega Hub maintainers can do this.",
+        "Ask a Hub maintainer.",
+    ],
+    "OMEGA_HUB_NOT_PUBLISHER_OWNER": [
+        "You cannot act for this publisher.",
+        "Use a publisher you own, or ask an owner or admin of its organisation.",
+    ],
+    "OMEGA_HUB_HANDLE_INVALID": [
+        "A handle is 2-39 lowercase letters, digits and hyphens, starting with a letter.",
+        "Choose another handle.",
+    ],
+    "OMEGA_HUB_HANDLE_RESERVED": [
+        "This handle is reserved.",
+        "Choose a handle without a reserved or trust word.",
+    ],
+    "OMEGA_HUB_HANDLE_TAKEN": [
+        "This handle is taken or was used before.",
+        "Choose another handle.",
+    ],
+    "OMEGA_HUB_DISPLAY_NAME_RESERVED": [
+        "The display name uses a reserved trust word.",
+        "Remove words such as official or verified from the display name.",
+    ],
+    "OMEGA_HUB_ONE_USER_PUBLISHER": [
+        "You already have a user publisher.",
+        "Use your existing publisher, or publish through an organisation publisher.",
+    ],
+    "OMEGA_HUB_PUBLISHER_SUSPENDED": [
+        "This publisher is suspended.",
+        "Reply to the moderation email to appeal.",
+    ],
+    "OMEGA_SESSION_VIEWER": [
+        "Viewers cannot open Omega.",
+        "Ask a workspace admin for member access.",
+    ],
+    "OMEGA_SESSION_THROTTLED": [
+        "Too many Omega sign-ins in a minute.",
+        "Wait for the time in Retry-After and try again.",
+    ],
+    "OMEGA_OBSERVE_TARGET_THROTTLED": [
+        "Too many Observe target lookups for this API key.",
+        "Wait for the time in Retry-After and try again.",
+    ],
+    "OMEGA_HUB_BUNDLE_TOO_LARGE": [
+        "The upload is larger than 2 MiB.",
+        "Remove large files; omega hub pack shows the bundle size.",
+    ],
+    "OMEGA_HUB_BODY_TOO_LARGE": [
+        "The request body is larger than this Hub endpoint accepts.",
+        "Send a smaller body; the API reference lists each endpoint's limit.",
+    ],
+    "OMEGA_HUB_EMAIL_UNVERIFIED": [
+        "Confirm your email address first.",
+        "Likes, reports and new publishers need a confirmed email. Send yourself the link from the Hub and open it while signed in.",
+    ],
+    "OMEGA_HUB_EMAIL_LINK_INVALID": [
+        "This confirmation link is not valid.",
+        "Send a new link from the Hub and open the newest one while signed in as the account it was sent to.",
+    ],
+    "OMEGA_HUB_EMAIL_LINK_EXPIRED": [
+        "This confirmation link has expired.",
+        "Links last 24 hours. Send a new one from the Hub.",
+    ],
+    "OMEGA_HUB_BUNDLE_TYPE": [
+        "The upload must be a .tar.gz or .zip file.",
+        "Pack the entry with omega hub pack.",
+    ],
+    "OMEGA_HUB_TOO_MANY_OPEN": [
+        "This publisher already has 3 submissions waiting for checks.",
+        "Wait for the open checks to finish.",
+    ],
+    "OMEGA_HUB_DAILY_LIMIT": [
+        "This publisher reached 10 submissions today.",
+        "Try again tomorrow.",
+    ],
+    "OMEGA_HUB_CHANNEL_NOT_ALLOWED": [
+        "The github channel is only for the Official publisher.",
+        "Publish with channel cli or web.",
+    ],
+    "OMEGA_HUB_VERSION_EXISTS": [
+        "This version is already published for this entry.",
+        "Bump version in omega.hub.json and publish again.",
+    ],
+    "OMEGA_HUB_REF_TAKEN": [
+        "This reference exists, existed or is reserved.",
+        "Choose another publisher or name.",
+    ],
+    "OMEGA_HUB_BAD_STATE": [
+        "The submission is not in a state that allows this.",
+        "Reload the submission and check its status.",
+    ],
+    "OMEGA_HUB_SELF_APPROVAL": [
+        "You cannot approve your own submission.",
+        "Another maintainer has to review it.",
+    ],
+    "OMEGA_HUB_RULES_CHANGED": [
+        "The Hub rules changed since this form was loaded.",
+        "Reload the review page and complete the current checklist.",
+    ],
+    "OMEGA_HUB_CHECKLIST_INCOMPLETE": [
+        "Every checklist item must be ticked to approve.",
+        "Tick each item, or request changes.",
+    ],
+    "OMEGA_HUB_FLAGS_UNACKNOWLEDGED": [
+        "Every flagged finding must be acknowledged to approve.",
+        "Acknowledge each flag id in acknowledgedFlags.",
+    ],
+    "OMEGA_HUB_DISCLOSURE_REQUIRED": [
+        "Approving needs a confirmed disclosure.",
+        "Confirm or rewrite the five disclosure parts and the summary.",
+    ],
+    "OMEGA_HUB_DISCLOSURE_INVALID": [
+        "The disclosure is not in the required shape.",
+        "Give summary (20-200 characters) and network, files, shell, background and credentials (4-300 each).",
+    ],
+    "OMEGA_HUB_DISCLOSURE_GAP": [
+        "A disclosure part is empty while the checks observed something for it.",
+        "Describe what the checks observed in that part.",
+    ],
+    "OMEGA_HUB_REASON_LENGTH": [
+        "A reason must be 20 to 2,000 characters.",
+        "Write a reason the submitter can act on.",
+    ],
+    "OMEGA_HUB_NOTES_INVALID": [
+        "Change notes are allowed only when requesting changes, at most 30, each with a file and a note of at most 500 characters.",
+        "Fix the notes and send the decision again.",
+    ],
+    "OMEGA_HUB_CHECKS_NOT_PASSED": [
+        "The latest automated checks did not pass.",
+        "Re-run the checks, or request changes.",
+    ],
+    "OMEGA_HUB_REVIEW_LOCKED": [
+        "Another maintainer is reviewing this submission.",
+        "Take over the review explicitly if you need to.",
+    ],
+    "OMEGA_HUB_CHECKER_DISABLED": [
+        "The checker endpoints are not configured.",
+        "Set OMEGA_HUB_CHECKER_TOKEN on the server.",
+    ],
+    "OMEGA_HUB_CHECKER_NOT_CONFIGURED": [
+        "This Hub cannot check uploads: its sandboxed checker is not configured. Nothing was stored.",
+        "Ask the Hub's administrator to run the checker with OMEGA_HUB_CHECKER_TOKEN set, then upload again.",
+    ],
+    "OMEGA_HUB_CHECKER_AUTH": [
+        "The checker token is missing or wrong.",
+        "Send X-Omega-Hub-Checker-Token.",
+    ],
+    "OMEGA_HUB_LEASE_LOST": [
+        "This check job is not leased to this checker.",
+        "Claim a new job.",
+    ],
+    "OMEGA_HUB_BUNDLE_MISMATCH": [
+        "The bundle does not match the report.",
+        "Re-run the check job.",
+    ],
+    "OMEGA_HUB_REPORT_INVALID": [
+        "The check report is not valid.",
+        "Send an omega-hub-check-report/v1 document.",
+    ],
+    "OMEGA_HUB_APPEAL_SELF": [
+        "You made the original decision, so another maintainer must handle the appeal.",
+        "Ask another maintainer.",
+    ],
+    "OMEGA_HUB_PICKS_FULL": [
+        "There are already 6 picks this week.",
+        "Remove a pick first.",
+    ],
+    "OMEGA_HUB_AVATAR_INVALID": [
+        "An avatar must be a PNG or JPEG of at most 256 KiB.",
+        "Upload a smaller PNG or JPEG.",
+    ],
+    "OMEGA_HUB_SESSION_REQUIRED": [
+        "An organisation API key cannot act on the Omega Hub; it stands for no one person.",
+        "Sign in to the Future AGI app, or use a Hub token for one publisher (omega hub login).",
+    ],
+    "AGENTCC_KEY_METADATA_RESERVED": [
+        "These metadata keys are reserved for the platform and cannot be set "
+        "on an API key: {}."
+    ],
+    "KEY_LIMIT_NOT_ENFORCED": [
+        "These API key settings are not enforced by the gateway yet, so "
+        "they cannot be set: {}."
+    ],
+    "AGENTCC_KEY_DELETE_GATEWAY_UNREACHABLE": [
+        "The API key was revoked but not deleted: the gateway could not revoke "
+        "it, so it keeps working there until the gateway's next key sync or "
+        "restart. Delete it again once the gateway is reachable."
+    ],
+    # Webhooks (webhooks/api_errors.py holds the same copy; DESIGN.md section 10).
+    "WEBHOOK_URL_NOT_HTTPS": ["Webhook URLs must use HTTPS."],
+    "WEBHOOK_URL_INVALID": [
+        "Use a host name or a standard IP address, with no user name, password or fragment."
+    ],
+    "WEBHOOK_URL_UNSAFE_ADDRESS": [
+        "This URL points to a private, local or internal address. Private, local and cloud metadata addresses are blocked."
+    ],
+    "WEBHOOK_HOST_NOT_ALLOWED": ["This host is not in the allowed hosts for webhooks."],
+    "WEBHOOK_HEADER_RESERVED": [
+        "This header name is reserved: Future AGI sets it on every request."
+    ],
+    "WEBHOOK_HEADER_INVALID": [
+        "Headers need RFC 7230 token names and values without control characters: at most 20, 4 KB in total."
+    ],
+    "WEBHOOK_SECRET_INVALID": [
+        "A signing secret is whsec_ followed by the base64 of 24 to 64 bytes."
+    ],
+    "WEBHOOK_EVENT_TYPE_UNKNOWN": [
+        "This event type is not in the webhooks event catalog."
+    ],
+    "WEBHOOK_FILTER_INVALID": ["This filter is not valid for the event type."],
+    "WEBHOOK_ENDPOINT_LIMIT": ["You have reached the limit of webhooks here."],
+    "WEBHOOK_ENDPOINT_DISABLED": ["Turn this webhook on first."],
+    "WEBHOOK_BODY_EXPIRED": [
+        "This delivery is older than 30 days, so its body is no longer kept."
+    ],
+    "WEBHOOK_PAYLOAD_FULL_NOT_ALLOWED": [
+        "Your organization doesn't allow prompt text in webhooks. An org admin can change this."
+    ],
+    "WEBHOOK_RATE_LIMITED": [
+        "Too many webhook changes in a short time. Wait a moment and try again."
+    ],
+    "WEBHOOK_TEST_RATE_LIMITED": ["Wait a moment before sending another test."],
+    "WEBHOOK_LISTEN_EXPIRED": ["This listen session has expired."],
+    "WEBHOOK_KIND_UNAVAILABLE": ["Only HTTPS endpoints can be created here."],
+    "WEBHOOK_SENDING_OFF": ["Sending is off on this install, so a test can't be sent."],
+    "WEBHOOK_KEYS_MISSING": [
+        "Webhooks can't store URLs or secrets on this install yet: WEBHOOKS_ENCRYPTION_KEYS is not set."
+    ],
+    "WEBHOOK_DELIVERY_IN_FLIGHT": [
+        "This delivery is being sent right now. Try again in a moment."
+    ],
+    "WEBHOOK_DELIVERY_NOT_REDELIVERABLE": [
+        "A cancelled delivery can't be redelivered."
+    ],
+    "WEBHOOK_BULK_TOO_LARGE": [
+        "A bulk redelivery takes at most 1,000 deliveries. Narrow the filter."
+    ],
+    "WEBHOOK_NAME_TAKEN": ["A webhook with this name already exists here."],
+    "WEBHOOK_POLICY_INVALID": [
+        "A workspace can narrow the organization's allowed hosts, never widen them."
+    ],
+    "WEBHOOK_NOT_FOUND": ["Not found."],
+    "WEBHOOK_FORBIDDEN": ["You don't have permission to do this with webhooks."],
 }
 
 
@@ -1178,7 +1470,7 @@ def get_specific_error_message(error, is_llm_error=None):
     ):
         return get_error_message("RATE_LIMIT_REACHED")
 
-    # Check for insufficient credits errors
+    # Preserve legacy matches and recognize the replacement copy on re-normalization.
     if error_status and (
         "insufficient_credits" in error_status or "Credits" in error_status
     ):
@@ -1187,6 +1479,7 @@ def get_specific_error_message(error, is_llm_error=None):
         "insufficient_credits" in error_message
         or "insufficient" in error_message.lower()
         or "Insufficient Credits" in error_message
+        or get_error_message("INSUFFICIENT_CREDITS").lower() in error_message_lower
     ):
         return get_error_message("INSUFFICIENT_CREDITS")
 
@@ -1246,7 +1539,11 @@ def get_usage_error_code(error):
         or "429" in haystack
     ):
         return "RATE_LIMITED"
-    if "insufficient_credits" in haystack or "insufficient credits" in haystack:
+    if (
+        "insufficient_credits" in haystack
+        or "insufficient credits" in haystack
+        or get_error_message("INSUFFICIENT_CREDITS").lower() in haystack
+    ):
         return "FREE_TIER_LIMIT"
     return None
 
@@ -1349,5 +1646,153 @@ LOGIN_ERROR_CODES = {
 }
 
 err_dict.update(LOGIN_ERROR_CODES)
+
+# Controlled rollout of the hosted Omega products (READINESS 3.13, L07). The codes are the same on
+# every wall (Django views, the Hub, the gateway, EE), so they stay lower-case like the gateway's.
+OMEGA_ROLLOUT_ERROR_CODES = {
+    "product_not_admitted": ["Not found.", ""],
+    "product_paused": [
+        "This product is paused for maintenance.",
+        "Your data is kept. Try again later.",
+    ],
+    "verification_unavailable": [
+        "Access could not be verified just now.",
+        "Try again in a few seconds.",
+    ],
+}
+
+err_dict.update(OMEGA_ROLLOUT_ERROR_CODES)
+
+# A Console agent's learning curves (learning-service P1-09, tracer/views/omega_agent_curves.py).
+OMEGA_AGENT_CURVES_ERROR_CODES = {
+    "OMEGA_AGENT_CURVES_INVALID_ID": [
+        "This agent id is not valid. Open the agent from the Console."
+    ],
+    "OMEGA_AGENT_CURVES_WORKSPACE_REQUIRED": [
+        "Choose a workspace before opening this agent's curves."
+    ],
+    "OMEGA_AGENT_CURVES_PROJECT_NOT_FOUND": [
+        "This agent's Observe project was not found in your workspace."
+    ],
+    "OMEGA_AGENT_CURVES_INVALID_WINDOW": [
+        "Choose a window of 1 to {} days that ends no later than today (UTC), with the "
+        "start date on or before the end date."
+    ],
+    "OMEGA_AGENT_CURVES_TOO_MANY_RUNS": [
+        "This agent has more than {} runs in the chosen window. Choose a shorter window."
+    ],
+    "OMEGA_AGENT_CURVES_FAILED": [
+        "This agent's curves could not be read just now. Try again in a minute."
+    ],
+}
+
+err_dict.update(OMEGA_AGENT_CURVES_ERROR_CODES)
+
+# The Observe link of an Omega deployment (SPEC 5.3, tracer/views/omega_deployments.py).
+OMEGA_DEPLOYMENT_OBSERVE_ERROR_CODES = {
+    "OMEGA_DEPLOYMENT_OBSERVE_INVALID_ID": [
+        "This deployment id is not valid. Open the deployment from the Deployments tab."
+    ],
+    "OMEGA_DEPLOYMENT_OBSERVE_INVALID_NAME": [
+        "A deployment name starts with a lowercase letter and has at most 40 lowercase "
+        "letters, digits and dashes."
+    ],
+    "OMEGA_DEPLOYMENT_OBSERVE_WORKSPACE_REQUIRED": [
+        "Choose a workspace before linking this deployment to Observe."
+    ],
+    "OMEGA_DEPLOYMENT_OBSERVE_NOT_FOUND": [
+        "This deployment was not found in your workspace."
+    ],
+    "OMEGA_DEPLOYMENT_OBSERVE_NAME_TAKEN": [
+        "The project {} already exists in this workspace and is not an Observe project. "
+        "Rename or delete it, then open the deployment again."
+    ],
+    "OMEGA_DEPLOYMENT_OBSERVE_FAILED": [
+        "The Observe project for this deployment could not be set up. Try again in a minute."
+    ],
+    # 200 with the project linked: the two default alerts wait (ensure/quota.py).
+    # The plan's monitor limit is used up. Muted monitors count; deleted ones do not.
+    "OMEGA_DEPLOYMENT_OBSERVE_ALERTS_AT_LIMIT": [
+        "The two default alerts are not set up yet: they need {needed} monitors, and "
+        "your plan allows {limit} for your organization with {current} in use. To make "
+        "room, delete {to_free} of your monitors in Observe, under Alerts, in any of "
+        "your organization's workspaces (a muted monitor still counts), or upgrade your "
+        "plan. The alerts are created the next time this deployment's Overview opens."
+    ],
+    # The plan's number is below the pair's: deleting monitors can never make room.
+    "OMEGA_DEPLOYMENT_OBSERVE_ALERTS_PLAN_TOO_SMALL": [
+        "The two default alerts are not set up: they need {needed} monitors, and your "
+        "plan allows {limit} in all. Upgrade your plan to add them; they are created "
+        "the next time this deployment's Overview opens."
+    ],
+    # The plan answered: monitors are not part of it (or not configured for it).
+    "OMEGA_DEPLOYMENT_OBSERVE_ALERTS_NOT_ON_PLAN": [
+        "The two default alerts are not set up: your plan does not include alert "
+        "monitors. Upgrade your plan to add them; they are created the next time this "
+        "deployment's Overview opens."
+    ],
+    # The entitlement service did not answer; nothing for the user to free.
+    "OMEGA_DEPLOYMENT_OBSERVE_ALERTS_PLAN_UNAVAILABLE": [
+        "The two default alerts are not set up yet: your plan could not be checked just "
+        "now. They are created the next time this deployment's Overview opens."
+    ],
+}
+
+err_dict.update(OMEGA_DEPLOYMENT_OBSERVE_ERROR_CODES)
+
+# The Observe link of a Console agent (learning-service P1-08, tracer/views/omega_agents.py).
+OMEGA_AGENT_OBSERVE_ERROR_CODES = {
+    "OMEGA_AGENT_OBSERVE_INVALID_ID": [
+        "This agent id is not valid. Open the agent from the Console."
+    ],
+    "OMEGA_AGENT_OBSERVE_INVALID_NAME": [
+        "An agent name has 1 to 200 characters, with no control characters and no "
+        "spaces at either end."
+    ],
+    "OMEGA_AGENT_OBSERVE_WORKSPACE_REQUIRED": [
+        "Choose a workspace before linking this agent to Observe."
+    ],
+    "OMEGA_AGENT_OBSERVE_NOT_FOUND": ["This agent was not found in your workspace."],
+    "OMEGA_AGENT_OBSERVE_NAME_TAKEN": [
+        "The project {} already exists in this workspace for something else. Rename or "
+        "delete it, then open the agent again."
+    ],
+    "OMEGA_AGENT_OBSERVE_FAILED": [
+        "The Observe project for this agent could not be set up. Try again in a minute."
+    ],
+    # 200 with the project linked: the two default alerts wait (ensure/quota.py).
+    "OMEGA_AGENT_OBSERVE_ALERTS_AT_LIMIT": [
+        "The two default alerts are not set up yet: they need {needed} monitors, and "
+        "your plan allows {limit} for your organization with {current} in use. To make "
+        "room, delete {to_free} of your monitors in Observe, under Alerts, in any of "
+        "your organization's workspaces (a muted monitor still counts), or upgrade your "
+        "plan. The alerts are created the next time this agent's page opens."
+    ],
+    "OMEGA_AGENT_OBSERVE_ALERTS_PLAN_TOO_SMALL": [
+        "The two default alerts are not set up: they need {needed} monitors, and your "
+        "plan allows {limit} in all. Upgrade your plan to add them; they are created "
+        "the next time this agent's page opens."
+    ],
+    "OMEGA_AGENT_OBSERVE_ALERTS_NOT_ON_PLAN": [
+        "The two default alerts are not set up: your plan does not include alert "
+        "monitors. Upgrade your plan to add them; they are created the next time this "
+        "agent's page opens."
+    ],
+    "OMEGA_AGENT_OBSERVE_ALERTS_PLAN_UNAVAILABLE": [
+        "The two default alerts are not set up yet: your plan could not be checked just "
+        "now. They are created the next time this agent's page opens."
+    ],
+    # 200 with the project linked: this agent's runs are not analysed (ensure/mistakes.py).
+    "OMEGA_AGENT_OBSERVE_MISTAKES_NOT_ON_PLAN": [
+        "Mistakes are not analysed for this agent: your plan does not include Error "
+        "Feed. Analysis starts the next time this agent's page opens after it is added."
+    ],
+    "OMEGA_AGENT_OBSERVE_MISTAKES_TURNED_OFF": [
+        "Mistakes are not analysed for this agent: analysis is turned off, or set to 0%, "
+        "in its Observe project's settings."
+    ],
+}
+
+err_dict.update(OMEGA_AGENT_OBSERVE_ERROR_CODES)
 
 # get_error_message("METRIC_VALID_CONTENT")

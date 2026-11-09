@@ -6,37 +6,53 @@
 #   2. Read-only root (-R /) with a 16 MB tmpfs at /tmp
 #   3. rlimits: address space, CPU time, open files, and file size for Python
 #   4. A wall-clock time limit
-# There is no seccomp filter, and a run shares the container's network (-N).
+#   5. Shared uid-scoped nftables egress policy and a child socket seccomp filter
 #
 # System packages, the nsjail build and the sandbox Python libs live in
 # Dockerfile.base, published as futureagi/code-executor-base by
 # .github/workflows/base-image-publish.yml.
 #
-# v1.1.0 is the multi-stage base (~185 MB gzip instead of v1.0.0's 331 MB) with
-# the sandbox libs pinned to futureagi/uv.lock. It must be published before a
-# release builds this file; pin it by digest once it is:
-#   CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.0@sha256:<index digest>
+# v1.1.1 rebuilds the multi-stage base (~185 MB gzip instead of v1.0.0's 331 MB)
+# with the T6 dependency pins (certifi, AnyIO, NLTK) from requirements.sandbox.txt / uv.lock.
+# It must be published before a release builds this file; pin it by digest once it is:
+#   CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.1@sha256:<index digest>
 # To build without publishing, build the base locally under that tag first:
-#   docker build -f Dockerfile.base -t futureagi/code-executor-base:v1.1.0 .
-ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.0
+#   docker build -f Dockerfile.base -t futureagi/code-executor-base:v1.1.1 .
+ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:v1.1.1
+FROM ${CODE_EXECUTOR_BASE} AS init-build
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY executor_init.c /tmp/executor_init.c
+RUN gcc -O2 -Wall -Wextra -Werror /tmp/executor_init.c -o /executor-init
+
 FROM ${CODE_EXECUTOR_BASE}
+# Only this fixed launcher receives a file capability, never Python or nft.
+# The container bounding set must contain NET_ADMIN and nothing else. Init runs
+# as uid 65534 already, so SETUID/SETGID are neither needed nor granted.
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends nftables libcap2-bin \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=init-build /executor-init /usr/local/bin/executor-init
+RUN chown root:root /usr/local/bin/executor-init \
+    && chmod 0755 /usr/local/bin/executor-init \
+    && setcap cap_net_admin=ep /usr/local/bin/executor-init \
+    && mkdir -p /sandbox/scripts && chown 65534:65534 /sandbox/scripts
 
 # config/python.cfg is not read: server.py passes nsjail flags (see above).
 COPY config/ /sandbox/config/
-COPY server.py /sandbox/server.py
+COPY server.py egress_guard.py egress_runtime.py executor_init.py /sandbox/
 
 WORKDIR /sandbox
 
 EXPOSE 8060
 
-# Runs as root (https://docs.futureagi.com/docs/self-hosting/images#users):
-# nsjail needs it, with `privileged: true`, to
-# create the namespaces and cgroups of each jail. server.py runs nsjail with
-# command-line flags, not config/python.cfg, so evaluated code runs inside
-# the jail as uid 0 with every capability dropped, without a seccomp filter,
-# and on the container's network (-N).
-# hadolint ignore=DL3002
-USER root
+# No root process at startup or runtime. The fixed entrypoint enables only
+# NET_ADMIN, installs and verifies the policy, then drops every capability and
+# sets no_new_privs before exec. User namespaces give nsjail its mount isolation;
+# their capabilities cannot administer the outer, shared network namespace.
+USER 65534:65534
+ENTRYPOINT ["/usr/local/bin/executor-init"]
 STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD ["python", "-I", "-S", "-c", "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://127.0.0.1:8060/health', timeout=5).close()"]

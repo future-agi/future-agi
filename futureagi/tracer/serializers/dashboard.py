@@ -1,4 +1,5 @@
 from django.conf import settings
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
@@ -426,6 +427,7 @@ class DashboardSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    @swagger_serializer_method(serializer_or_field=serializers.IntegerField())
     def get_widget_count(self, obj):
         return obj.widgets.filter(deleted=False).count()
 
@@ -457,6 +459,7 @@ class DashboardDetailSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    @swagger_serializer_method(serializer_or_field=DashboardWidgetSerializer(many=True))
     def get_widgets(self, obj):
         widgets = obj.widgets.filter(deleted=False).order_by("position", "created_at")
         return DashboardWidgetSerializer(widgets, many=True).data
@@ -471,6 +474,38 @@ class DashboardCreateUpdateSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             raise serializers.ValidationError("Dashboard name cannot be empty.")
         return value.strip()
+
+
+# Response contracts of the dashboard and widget CRUD actions, which answer
+# GeneralMethods.success_response() ({status, result}, HTTP 200). Only the
+# wrapper is inlined (ref_name = None): it renders exactly like the envelope
+# the generator infers for an un-annotated success_response() action.
+
+
+class DashboardListApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DashboardSerializer(many=True)
+
+    class Meta:
+        ref_name = None
+
+
+class DashboardDetailApiResponseSerializer(serializers.Serializer):
+    """Retrieve, create and update all answer the dashboard detail."""
+
+    status = serializers.BooleanField(default=True)
+    result = DashboardDetailSerializer()
+
+    class Meta:
+        ref_name = None
+
+
+class DashboardWidgetApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DashboardWidgetSerializer()
+
+    class Meta:
+        ref_name = None
 
 
 class DashboardQuerySerializer(StrictInputSerializer):

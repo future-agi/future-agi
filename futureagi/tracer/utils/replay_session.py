@@ -1,6 +1,5 @@
 import json
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import structlog
 from django.db.models import QuerySet
@@ -19,9 +18,6 @@ from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession
 from tracer.models.trace import Trace
-from tracer.services.clickhouse.span_attribute_lookups import (
-    trace_ids_with_simulator_call_execution_id,
-)
 from tracer.utils.attribute_accessor import span_raw_log, vapi_customer
 from tracer.utils.otel import ConversationAttributes
 from tracer.utils.sql_queries import SQL_query_handler
@@ -32,7 +28,7 @@ logger = structlog.get_logger(__name__)
 def _build_trace_query(
     project_id: str,
     replay_type: str,
-    ids: Optional[list[str]] = None,
+    ids: list[str] | None = None,
     select_all: bool = False,
 ) -> QuerySet:
     """
@@ -65,9 +61,9 @@ def _build_trace_query(
 def get_system_prompt(
     project_id: str,
     replay_type: str,
-    ids: Optional[list[str]] = None,
+    ids: list[str] | None = None,
     select_all: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """
     Extract the system prompt from spans based on replay parameters.
 
@@ -103,7 +99,7 @@ def get_system_prompt(
 
 def _resolve_agent_definition_for_project(
     project: Project,
-) -> Optional[AgentDefinition]:
+) -> AgentDefinition | None:
     """
     Get agent definition from existing replay sessions or observability provider for this project.
 
@@ -147,7 +143,7 @@ def _resolve_agent_definition_for_project(
 
 def _get_next_replay_scenario_version(
     project: Project,
-    agent_def: Optional[AgentDefinition],
+    agent_def: AgentDefinition | None,
 ) -> int:
     """
     Determine the next version number for a replay scenario.
@@ -172,7 +168,7 @@ def get_agent_suggestions(
     replay_type: str,
     ids: list[str],
     select_all: bool,
-) -> tuple[bool, dict, Optional[AgentDefinition]]:
+) -> tuple[bool, dict, AgentDefinition | None]:
     """
     Get agent definition suggestions for creating a replay session.
 
@@ -216,11 +212,13 @@ def get_agent_suggestions(
     # Generate defaults if no existing agent_def
     # Check if these are voice traces first
     trace_query = _build_trace_query(str(project.id), replay_type, ids, select_all)
-    is_voice = _is_voice_trace_query(trace_query)
+    is_voice = _is_voice_trace_query(trace_query, project_id=str(project.id))
 
     if is_voice:
-        # Extract the original Vapi/Retell config from the trace
-        original_config = _extract_voice_trace_original_config(trace_query)
+        # The UUID is not a tenant boundary: pin every configuration read.
+        original_config = _extract_voice_trace_original_config(
+            trace_query, project_id=str(project.id)
+        )
 
         # The voice system prompt lives on the external provider (Vapi/Retell)
         # and is reachable via assistant_id on the AgentDefinition — don't
@@ -327,15 +325,16 @@ def get_or_create_agent_definition(
         return existing
 
     # New agent definition
-    create_kwargs = dict(
-        agent_name=agent_name,
-        description=agent_description,
-        agent_type=agent_type,
-        inbound=True,
-        organization=project.organization,
-        workspace=project.workspace,
-        languages=["en"],
-    )
+    copied_api_key = None
+    create_kwargs = {
+        "agent_name": agent_name,
+        "description": agent_description,
+        "agent_type": agent_type,
+        "inbound": True,
+        "organization": project.organization,
+        "workspace": project.workspace,
+        "languages": ["en"],
+    }
     if is_voice:
         create_kwargs.update(
             assistant_id=original_voice_config.get("assistant_id", ""),
@@ -347,12 +346,14 @@ def get_or_create_agent_definition(
         obs_agent = AgentDefinition.objects.filter(
             observability_provider__project=project,
         ).first()
-        if obs_agent and obs_agent.api_key:
-            create_kwargs["api_key"] = obs_agent.api_key
+        if obs_agent:
+            copied_api_key = obs_agent.get_api_key()
 
-    agent_def = AgentDefinition.objects.create(**create_kwargs)
+    agent_def = AgentDefinition(**create_kwargs)
+    agent_def.set_api_key(copied_api_key)
+    agent_def.save()
     # create_version() calls create_snapshot() internally, which reads
-    # the agent definition's current fields (api_key, assistant_id, etc.)
+    # the agent definition's non-credential fields (assistant_id, etc.)
     # to build configuration_snapshot — no need to pass it explicitly.
     agent_def.create_version(
         description=agent_description,
@@ -367,24 +368,40 @@ def get_or_create_agent_definition(
     return agent_def
 
 
+def replay_session_for_agent_link(replay_session_id, request):
+    """Resolve and lock a live, caller-scoped target inside the create transaction."""
+    from tracer.utils.workspace_scope import project_workspace_scope_q
+
+    workspace = getattr(request, "workspace", None) or getattr(
+        getattr(request, "user", None), "workspace", None
+    )
+    if workspace is None:
+        raise ReplaySession.DoesNotExist
+    # ReplaySession has no workspace column: use exactly the project scope
+    # policy used by ReplaySessionView, including default-workspace legacy rows.
+    return (
+        ReplaySession.no_workspace_objects.select_for_update(of=("self",))
+        .filter(
+            project_workspace_scope_q(request),
+            deleted=False,
+            project__deleted=False,
+        )
+        .get(id=replay_session_id)
+    )
+
+
 def link_agent_to_replay_session(
     replay_session_id: str,
     agent: AgentDefinition,
-    organization,
+    *,
+    request,
 ) -> None:
-    """
-    Link an agent definition to a replay session.
+    """Link within the caller's transaction; never accept organization-only scope.
 
-    Args:
-        replay_session_id: UUID of the replay session
-        agent: The AgentDefinition instance to link
-        organization: The organization for validation
+    Create callers must preflight with replay_session_for_agent_link before any
+    writes. Rechecking here ensures every use of this utility is also scoped.
     """
-
-    replay_session = ReplaySession.objects.get(
-        id=replay_session_id,
-        project__organization=organization,
-    )
+    replay_session = replay_session_for_agent_link(replay_session_id, request)
     replay_session.agent_definition = agent
     replay_session.save(update_fields=["agent_definition"])
 
@@ -398,9 +415,9 @@ def link_agent_to_replay_session(
 def get_transcripts(
     project_id: str,
     replay_type: str,
-    ids: Optional[list[str]] = None,
+    ids: list[str] | None = None,
     select_all: bool = False,
-) -> Optional[dict[str, dict]]:
+) -> dict[str, dict] | None:
     """
     Get transcripts from sessions or traces as a dictionary keyed by session/trace ID.
 
@@ -423,11 +440,11 @@ def get_transcripts(
     trace_query = _build_trace_query(project_id, replay_type, ids, select_all)
 
     # Check if these are voice traces (have conversation-type spans)
-    is_voice = _is_voice_trace_query(trace_query)
+    is_voice = _is_voice_trace_query(trace_query, project_id=project_id)
 
     if is_voice:
         # Load conversation spans once and extract both recordings and transcripts
-        voice_spans = _load_voice_conversation_spans(trace_query)
+        voice_spans = _load_voice_conversation_spans(trace_query, project_id=project_id)
         recordings_map = _extract_recording_urls_from_spans(voice_spans)
         if recordings_map:
             return {
@@ -440,9 +457,13 @@ def get_transcripts(
         # Fallback to text transcripts if no recordings found
         transcripts_map = _extract_transcripts_from_spans(voice_spans)
     elif replay_type == "session":
-        transcripts_map = _get_transcripts_from_session_query(trace_query)
+        transcripts_map = _get_transcripts_from_session_query(
+            trace_query, project_id=project_id
+        )
     elif replay_type == "trace":
-        transcripts_map = _get_transcripts_from_trace_query(trace_query)
+        transcripts_map = _get_transcripts_from_trace_query(
+            trace_query, project_id=project_id
+        )
     else:
         raise ValueError(f"Invalid replay type: {replay_type}")
 
@@ -459,7 +480,39 @@ def get_transcripts(
     }
 
 
-def _get_transcripts_from_trace_query(trace_query: QuerySet) -> dict[str, list[dict]]:
+def _query_project_id(trace_query: QuerySet, project_id=None) -> str:
+    # Request paths pass their validated project explicitly. Retain the private
+    # QuerySet helpers' old call shape by deriving scope from the trusted ORM
+    # query, never from the trace UUID or an unscoped telemetry lookup.
+    if project_id is None:
+        project_id = trace_query.values_list("project_id", flat=True).first()
+    if not project_id:
+        raise ValueError("Project ID is required")
+    return str(project_id)
+
+
+def trace_ids_with_simulator_call_execution_id(trace_ids, *, project_id):
+    """Project-scoped replacement for the legacy cross-project attribute lookup."""
+    from tracer.services.clickhouse.v2 import get_reader
+
+    if not project_id:
+        raise ValueError("Project ID is required")
+    ids = [str(tid) for tid in trace_ids]
+    if not ids:
+        return set()
+    with get_reader() as reader:
+        spans = reader.list_by_trace_ids(ids, project_id=str(project_id))
+    key = "fi.simulator.call_execution_id"
+    return {
+        str(span.trace_id)
+        for span in spans
+        if merge_span_attrs(_chspan_to_legacy_dict(span)).get(key) is not None
+    }
+
+
+def _get_transcripts_from_trace_query(
+    trace_query: QuerySet, *, project_id: str | None = None
+) -> dict[str, list[dict]]:
     """
     Get transcripts from a trace queryset.
     Each trace is treated as a separate conversation with one turn.
@@ -475,8 +528,9 @@ def _get_transcripts_from_trace_query(trace_query: QuerySet) -> dict[str, list[d
     if not traces:
         return {}
 
+    project_id = _query_project_id(trace_query, project_id)
     simulator_trace_ids = trace_ids_with_simulator_call_execution_id(
-        str(t["id"]) for t in traces
+        (str(t["id"]) for t in traces), project_id=project_id
     )
 
     return {
@@ -537,7 +591,9 @@ def _chspan_to_legacy_dict(span) -> dict:
     }
 
 
-def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list[dict]]:
+def _get_transcripts_from_session_query(
+    trace_query: QuerySet, *, project_id: str | None = None
+) -> dict[str, list[dict]]:
     """
     Get transcripts from a session-filtered trace queryset, ordered by root span start time.
 
@@ -565,6 +621,8 @@ def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list
     traces = list(
         trace_query.values("id", "session_id", "input", "output", "created_at")
     )
+    if not traces:
+        return {}
 
     # Step 2 — bulk root-span start_time lookup in one CH query. Returns
     # {trace_id: start_time or None} — empty dict iff trace_ids is empty
@@ -573,8 +631,11 @@ def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list
 
     trace_ids = [str(t["id"]) for t in traces]
     if trace_ids:
+        project_id = _query_project_id(trace_query, project_id)
         with get_reader() as reader:
-            root_starts = reader.per_trace_root_span_start_times(trace_ids)
+            root_starts = reader.per_trace_root_span_start_times(
+                trace_ids, project_ids=[str(project_id)]
+            )
     else:
         root_starts = {}
 
@@ -593,7 +654,7 @@ def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list
     def _as_aware_utc(d):
         if d is None:
             return None
-        return d if d.tzinfo is not None else d.replace(tzinfo=timezone.utc)
+        return d if d.tzinfo is not None else d.replace(tzinfo=UTC)
 
     def _sort_key(t):
         rs = root_starts.get(str(t["id"]))
@@ -605,8 +666,9 @@ def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list
     # The has-key check used to run as a Django Exists() subquery against
     # ``span_attributes`` (PG JSONB). Now sourced from ClickHouse — see
     # migration 0074 / span_attribute_lookups.
+    project_id = _query_project_id(trace_query, project_id)
     simulator_trace_ids = trace_ids_with_simulator_call_execution_id(
-        str(t["id"]) for t in traces
+        (str(t["id"]) for t in traces), project_id=project_id
     )
 
     sessions_map: dict[str, list[dict]] = {}
@@ -626,7 +688,9 @@ def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list
     return sessions_map
 
 
-def _is_voice_trace_query(trace_query: QuerySet) -> bool:
+def _is_voice_trace_query(
+    trace_query: QuerySet, *, project_id: str | None = None
+) -> bool:
     """
     Check if the traces in the query are voice traces by looking for
     conversation-type observation spans.
@@ -644,12 +708,17 @@ def _is_voice_trace_query(trace_query: QuerySet) -> bool:
     # the first conversation-typed span. CH-side observation_type filtering
     # is not exposed on the reader yet (D-027 review queue), so we filter
     # in Python — sampled set is bounded at 10 traces.
+    project_id = _query_project_id(trace_query, project_id)
     with get_reader() as reader:
-        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+        spans = reader.list_by_trace_ids(
+            [str(t) for t in trace_ids], project_id=project_id
+        )
     return any(s.observation_type == "conversation" for s in spans)
 
 
-def _get_first_voice_span_raw_log(trace_query: QuerySet) -> dict | None:
+def _get_first_voice_span_raw_log(
+    trace_query: QuerySet, *, project_id: str | None = None
+) -> dict | None:
     """Fetch the raw_log from the first conversation span in the trace query."""
     from tracer.services.clickhouse.v2 import get_reader
 
@@ -657,8 +726,9 @@ def _get_first_voice_span_raw_log(trace_query: QuerySet) -> dict | None:
     if not trace_id:
         return None
 
+    project_id = _query_project_id(trace_query, project_id)
     with get_reader() as reader:
-        spans = reader.list_by_trace(str(trace_id))
+        spans = reader.list_by_trace(str(trace_id), project_id=project_id)
 
     conversation_span = next(
         (s for s in spans if s.observation_type == "conversation"), None
@@ -720,11 +790,13 @@ def _extract_model_name_from_raw_log(raw_log: dict) -> str:
     return ""
 
 
-def _extract_voice_trace_original_config(trace_query: QuerySet) -> dict | None:
+def _extract_voice_trace_original_config(
+    trace_query: QuerySet, *, project_id: str | None = None
+) -> dict | None:
     """Extract the original Vapi/Retell config from the first voice trace's raw_log.
     Returns a dict suitable for AgentVersion.configuration_snapshot.
     """
-    raw_log = _get_first_voice_span_raw_log(trace_query)
+    raw_log = _get_first_voice_span_raw_log(trace_query, project_id=project_id)
     if not raw_log:
         return None
 
@@ -758,7 +830,7 @@ def _extract_voice_trace_original_config(trace_query: QuerySet) -> dict | None:
 
 
 def _extract_voice_trace_system_prompt(
-    trace_query: QuerySet, _config: dict | None = None
+    trace_query: QuerySet, _config: dict | None = None, *, project_id: str | None = None
 ) -> str | None:
     """Extract system prompt from the first voice trace.
     Uses pre-extracted config if available to avoid a redundant DB query.
@@ -766,14 +838,16 @@ def _extract_voice_trace_system_prompt(
     if _config is not None:
         return _config.get("description") or None
 
-    raw_log = _get_first_voice_span_raw_log(trace_query)
+    raw_log = _get_first_voice_span_raw_log(trace_query, project_id=project_id)
     if not raw_log:
         return None
 
     return _extract_system_prompt_from_raw_log(raw_log) or None
 
 
-def _load_voice_conversation_spans(trace_query: QuerySet) -> list[dict]:
+def _load_voice_conversation_spans(
+    trace_query: QuerySet, *, project_id: str | None = None
+) -> list[dict]:
     """
     Load conversation-type spans for all traces in the query.
     Returns a list of dicts shaped like ``{trace_id, span_attributes, eval_attributes}``
@@ -788,13 +862,14 @@ def _load_voice_conversation_spans(trace_query: QuerySet) -> list[dict]:
     if not trace_ids:
         return []
 
+    project_id = _query_project_id(trace_query, project_id)
     with get_reader() as reader:
-        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+        spans = reader.list_by_trace_ids(
+            [str(t) for t in trace_ids], project_id=project_id
+        )
 
     return [
-        _chspan_to_legacy_dict(s)
-        for s in spans
-        if s.observation_type == "conversation"
+        _chspan_to_legacy_dict(s) for s in spans if s.observation_type == "conversation"
     ]
 
 

@@ -1,0 +1,53 @@
+# ThoughtSpot's Spotter MCP Server, hosted by ThoughtSpot at
+# agent.thoughtspot.app, on its OAuth endpoint. The person signs in to their
+# own ThoughtSpot instance during authorization; clients that cannot
+# register dynamically register one by hand on ThoughtSpot's page. The URL
+# pins api-version 2026-05-01 (Spotter 3 tools), as ThoughtSpot advises for
+# integrations: a URL without a version follows the latest tools.
+#
+# Not offered: the bearer-token endpoint (/token/mcp). It needs the
+# instance in an x-ts-host header, a per-customer setting that nothing
+# carries to the gateway (AM-C20), and its token is one a backend mints per
+# session from ThoughtSpot's token API, not a key an org stores once.
+schema: "connector-manifest/v1#provider"
+app: thoughtspot
+id: mcp
+version: 1.0.1
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://agent.thoughtspot.app/mcp?api-version=2026-05-01
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: mcp_oauth
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.thoughtspot.com/docs/custom-chatbot-integration-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://developers.thoughtspot.com/docs/mcp-server-changelog
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developers.thoughtspot.com/docs/custom-chatbot-integration-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://github.com/thoughtspot/mcp-server
+    fetchedAt: 2026-10-21
+x-omega:
+  publicClient:
+    supported: false
+    evidence:
+      - url: https://github.com/thoughtspot/mcp-server
+        fetchedAt: 2026-10-21
+        sha256: 77db6fb3f21d05ee766919d7c1a3d9f4897ad70648ec9f4b639296e6019b342e
+        quote: "The most relevant values are Oauth Client Id and Oauth Client Secret which should be added when adding ThoughtSpot as an MCP connector in the MCP client"
+    notes: "Its record is mcp_oauth: it declares no authorize or token URL for omega mcp login to be given either."

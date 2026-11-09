@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/credits-v1.schema.json",
+  "title": "credits-v1",
+  "description": "Credits reads: the admin GET /-/orgs/{org_id}/credits ($defs/Admin) and the customer GET /v1/credits ($defs/Customer). balance_usd and markup_percent are kept because Django's managed-models status view reads them. ledger names the backing store: redis, or memory only when managed.require_redis=false (tests).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["admin", "customer"],
+  "properties": {
+    "admin": { "$ref": "#/$defs/Admin" },
+    "customer": { "$ref": "#/$defs/Customer" }
+  },
+  "$defs": {
+    "Admin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "org_id",
+        "granted_total_micros",
+        "granted_version",
+        "spent_micros",
+        "held_micros",
+        "available_micros",
+        "balance_usd",
+        "markup_percent",
+        "outbox_pending",
+        "ledger"
+      ],
+      "properties": {
+        "org_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The org the account belongs to, as the path names it."
+        },
+        "granted_total_micros": { "type": "integer", "minimum": 0 },
+        "granted_version": { "type": "integer", "minimum": 0 },
+        "spent_micros": { "type": "integer", "minimum": 0 },
+        "held_micros": { "type": "integer", "minimum": 0 },
+        "available_micros": { "type": "integer" },
+        "balance_usd": { "type": "number" },
+        "markup_percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "outbox_pending": { "type": "integer", "minimum": 0 },
+        "ledger": { "type": "string", "enum": ["redis", "memory"] }
+      }
+    },
+    "Customer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "total_credits",
+            "total_usage",
+            "balance",
+            "held",
+            "managed_enabled"
+          ],
+          "properties": {
+            "total_credits": { "type": "number", "minimum": 0 },
+            "total_usage": { "type": "number", "minimum": 0 },
+            "balance": { "type": "number" },
+            "held": { "type": "number", "minimum": 0 },
+            "managed_enabled": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

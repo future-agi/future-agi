@@ -1,0 +1,20 @@
+# Synthetic-only M26 scenario. No hosted providers or customer credentials.
+server:
+  host: "127.0.0.1"
+  port: 18910
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "synthetic-approval-caller"
+      key: "scn-test-key-acme"
+      owner: "synthetic"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+mcp:
+  enabled: true
+  egress:
+    private_allow:
+      - "127.0.0.1:@@APPROVAL_PORT@@"

@@ -202,7 +202,7 @@ const RunAnnotationsForm = ({ onClose, setRenderAnnotationTable }) => {
     const mappedAnnoUserDataForm = annotationUserData.map(({ id, name }) => ({
       id: id,
       label: name,
-      img: "https://cdn-icons-png.flaticon.com/512/149/149071.png",
+      img: "/assets/icons/navbar/ic_user.svg",
     }));
 
     // Map annotation users with additional fields

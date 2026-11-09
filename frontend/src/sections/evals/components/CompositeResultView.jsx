@@ -6,6 +6,7 @@ import {
   getLabel,
   getStatusColor,
 } from "src/sections/develop-detail/DataTab/common";
+import { levelText } from "src/sections/common/EvalTypes/compositeModel";
 
 const AGGREGATION_LABELS = {
   weighted_avg: "Weighted Average",
@@ -13,7 +14,19 @@ const AGGREGATION_LABELS = {
   min: "Minimum",
   max: "Maximum",
   pass_rate: "Pass Rate",
+  majority: "Majority",
+  all_pass: "All pass",
 };
+
+/** W7-5: the scored children's verdicts split (`Judges disagree (2–1)`). */
+function splitOf(children) {
+  const scored = children.filter((c) => c.status === "completed");
+  const pass = scored.filter((c) => c.output === "Passed").length;
+  const fail = scored.length - pass;
+  return scored.length > 1 && pass && fail
+    ? `Judges disagree (${Math.max(pass, fail)}–${Math.min(pass, fail)})`
+    : null;
+}
 
 /**
  * Renders the result of executing a composite eval:
@@ -104,6 +117,15 @@ const CompositeResultView = ({ compositeResult }) => {
         </Stack>
       </Box>
 
+      {splitOf(children) ? (
+        <Typography
+          variant="caption"
+          sx={{ display: "block", mb: 1, fontWeight: 600 }}
+          data-testid="composite-test-split"
+        >
+          {splitOf(children)}
+        </Typography>
+      ) : null}
       <Divider sx={{ mb: 1.5 }} />
 
       {/* Per-child results */}
@@ -119,7 +141,7 @@ const CompositeResultView = ({ compositeResult }) => {
           const statusColor = child.status === "failed" ? "error" : "default";
           return (
             <Box
-              key={child.child_id}
+              key={`${child.child_id}#${child.order}`}
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
@@ -158,6 +180,20 @@ const CompositeResultView = ({ compositeResult }) => {
                       sx={{ height: 18, fontSize: "10px" }}
                     />
                   )}
+                  {/* W7-5: the seat's judge and the child's level */}
+                  {child.judge_model && (
+                    <Chip
+                      size="small"
+                      label={child.judge_model}
+                      variant="outlined"
+                      sx={{ height: 18, fontSize: "10px" }}
+                    />
+                  )}
+                  {child.level && (
+                    <Typography variant="caption" color="text.secondary">
+                      {levelText(child)}
+                    </Typography>
+                  )}
                 </Box>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                   {child.score != null && (
@@ -195,6 +231,20 @@ const CompositeResultView = ({ compositeResult }) => {
                   <CellMarkdown fontSize={11} text={child.reason} />
                 </Box>
               )}
+              {child.steps?.length ? (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", mt: 0.5 }}
+                >
+                  {child.steps
+                    .map(
+                      (st) =>
+                        `Step ${st.n} ${st.passed == null ? "skipped" : st.passed ? "pass" : "fail"}`,
+                    )
+                    .join(" · ")}
+                </Typography>
+              ) : null}
               {child.error && (
                 <Typography
                   variant="caption"

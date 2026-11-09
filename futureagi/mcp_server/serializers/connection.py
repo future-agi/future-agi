@@ -13,13 +13,20 @@ class MCPConnectionSerializer(serializers.ModelSerializer):
             "id",
             "connection_mode",
             "is_active",
+            "reconnect_required",
             "client_name",
             "client_version",
             "created_at",
             "updated_at",
             "tool_config",
         ]
-        read_only_fields = ["id", "created_at", "updated_at", "tool_config"]
+        read_only_fields = [
+            "id",
+            "created_at",
+            "updated_at",
+            "tool_config",
+            "reconnect_required",
+        ]
 
 
 class MCPConnectionUpdateSerializer(serializers.ModelSerializer):

@@ -25,6 +25,7 @@ from model_hub.models.annotation_queues import (
 )
 from model_hub.models.choices import AnnotationQueueStatusChoices, AnnotatorRole
 from model_hub.models.develop_annotations import AnnotationsLabels
+from model_hub.serializers.pagination import PageSizeField
 from model_hub.serializers.scores import ScoreSerializer
 from model_hub.utils.annotation_queue_helpers import (
     FIELD_MAPPING,
@@ -34,6 +35,7 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_object,
     resolve_source_preview,
 )
+from tfc.utils.pagination import MAX_PAGE_SIZE
 from tfc.utils.serializer_fields import JsonValueField
 from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
@@ -222,7 +224,9 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
 
     def _workspace_visibility_q(self, organization, workspace):
         if not workspace:
-            return Q()
+            from tfc.utils.workspace_scope import empty_workspace_filter
+
+            return empty_workspace_filter()
         if getattr(workspace, "is_default", False):
             return (
                 Q(workspace=workspace)
@@ -776,7 +780,7 @@ class AnnotationQueueListQuerySerializer(StrictInputSerializer):
     search = serializers.CharField(required=False, allow_blank=True)
     include_counts = serializers.BooleanField(required=False)
     archived = serializers.BooleanField(required=False, default=False)
-    page_size = serializers.IntegerField(required=False, min_value=1)
+    page_size = PageSizeField(required=False, min_value=1, max_value=MAX_PAGE_SIZE)
 
 
 class QueueHardDeleteRequestSerializer(StrictInputSerializer):

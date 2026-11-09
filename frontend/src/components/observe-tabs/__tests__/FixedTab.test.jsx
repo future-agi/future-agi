@@ -2,6 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { render, screen } from "src/utils/test-utils";
 import FixedTab from "../FixedTab";
+import { registerOfflineIcon } from "src/components/iconify/registry";
+import bundled from "src/components/iconify/offline-icons.json";
+
+// The fixture, not FixedTab, owns this prop icon.
+registerOfflineIcon("mdi:link-variant", bundled["mdi:link-variant"]);
 
 describe("FixedTab", () => {
   const defaultProps = {
@@ -14,8 +19,9 @@ describe("FixedTab", () => {
   };
 
   it("renders the label text", () => {
-    render(<FixedTab {...defaultProps} />);
+    const { container } = render(<FixedTab {...defaultProps} />);
     expect(screen.getByText("Trace")).toBeInTheDocument();
+    expect(container.querySelector("[data-missing-icon]")).toBeNull();
   });
 
   it("calls onClick with tabKey when clicked", async () => {

@@ -1,15 +1,9 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 export const LOGO_WITH_BLACK_BACKGROUND = ["openai", "cerebras", "ollama"];
 
-// `<Image>` call sites gate the dark-mode invert on the model's `providers`
-// field, but raw `<img>` sites don't always have one (simulator agent rows
-// carry only the URL). Each allowlisted provider owns exactly one filename in
-// ProviderLogoUrls, so the URL answers the same question.
+// Raw img callers use the resolved local asset for dark-mode inversion.
 export const isBlackBackgroundLogo = (logoUrl) =>
-  typeof logoUrl === "string" &&
-  logoUrl.includes("provider-logos") &&
-  LOGO_WITH_BLACK_BACKGROUND.some((provider) =>
-    logoUrl.toLowerCase().includes(provider),
-  );
+  logoUrl === "/icons/settings/openai.png";
 
 // model_detail objects exist in two shapes: the backend contract is snake_case
 // (models_list, prompt template snapshots) while dropdown-picked values carry
@@ -26,8 +20,8 @@ export const normalizeModelOption = (option) => {
     providers: option.providers ?? option.provider ?? "",
     isAvailable: option.isAvailable ?? option.is_available ?? false,
     is_available: option.is_available ?? option.isAvailable ?? false,
-    logoUrl: option.logoUrl ?? option.logo_url ?? "",
-    logo_url: option.logo_url ?? option.logoUrl ?? "",
+    logoUrl: localProviderLogo(option),
+    logo_url: localProviderLogo(option),
     // Never fabricate `type`: the backend's modality filter treats a MISSING
     // model_detail.type as "chat", but an empty string matches nothing —
     // stamping "" here would drop resaved prompts from modality tabs.

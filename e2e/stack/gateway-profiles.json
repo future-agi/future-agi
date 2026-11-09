@@ -1,0 +1,145 @@
+{
+  "_comment": "H5: the gateway profiles bin/e2e accepts (names as e2e/lib/profile.ts GATEWAY_PROFILES) and what each needs from the head it runs on. e2e/scripts/gateway-profile.mjs reads this file for bin/e2e. requires: each {file} must exist in the checkout and, with contains, hold that exact text (the gateway loads its file with KnownFields, so a yaml tag it lacks stops it at start). overlays are added to the compose command, services are started next to the stack's own. A profile with a requirement missing is refused before anything starts; unblockedBy names the head that has it.",
+  "stock": {
+    "file": "e2e/stack/gateway.e2e.yaml",
+    "stacks": ["distributed", "standalone"],
+    "requires": [],
+    "overlays": [],
+    "services": [],
+    "unblockedBy": ""
+  },
+  "r7alt": {
+    "file": "e2e/stack/gateway.r7alt.yaml",
+    "stacks": ["standalone"],
+    "requires": [],
+    "overlays": [],
+    "services": [],
+    "unblockedBy": ""
+  },
+  "mcp": {
+    "file": "e2e/stack/gateway.mcp.yaml",
+    "stacks": ["standalone"],
+    "requires": [
+      {
+        "file": "agentcc-gateway/internal/config/config.go",
+        "contains": "yaml:\"state_keys\""
+      },
+      {
+        "file": "agentcc-gateway/internal/config/config.go",
+        "contains": "yaml:\"connectors\""
+      },
+      {
+        "file": "e2e/stack/docker-compose.mcp-e2e.yml"
+      }
+    ],
+    "overlays": ["e2e/stack/docker-compose.mcp-e2e.yml"],
+    "services": ["mcp-mock"],
+    "unblockedBy": "the MCP line (release-next/mcp-apps c584a4486a, gw/MCP-CRED-REVOKE-W4-1): the gateway connectors section, the mcp-mock overlay and bin/e2e build mcpmock; mock extensions from gw/E2E-WALK-MOCKS-1"
+  },
+  "mcp-catalog": {
+    "file": "e2e/stack/gateway.mcp-catalog.yaml",
+    "stacks": ["standalone"],
+    "requires": [
+      {
+        "file": "agentcc-gateway/internal/config/config.go",
+        "contains": "yaml:\"state_keys\""
+      },
+      {
+        "file": "e2e/stack/docker-compose.mcp-catalog-e2e.yml"
+      }
+    ],
+    "overlays": ["e2e/stack/docker-compose.mcp-catalog-e2e.yml"],
+    "services": [],
+    "unblockedBy": ""
+  },
+  "mcp-signin": {
+    "file": "e2e/stack/gateway.mcp-signin.yaml",
+    "stacks": ["standalone"],
+    "requires": [
+      {
+        "file": "agentcc-gateway/internal/config/config.go",
+        "contains": "yaml:\"state_keys\""
+      },
+      {
+        "file": "agentcc-gateway/internal/config/config.go",
+        "contains": "yaml:\"connectors\""
+      },
+      {
+        "file": "agentcc-gateway/internal/config/config.go",
+        "contains": "yaml:\"public_url\""
+      },
+      {
+        "file": "e2e/stack/docker-compose.mcp-e2e.yml"
+      }
+    ],
+    "overlays": ["e2e/stack/docker-compose.mcp-e2e.yml"],
+    "services": ["mcp-mock"],
+    "unblockedBy": "the MCP line (gw/MCP-CRED-REVOKE-W4-1 and the G13b build): the gateway connectors section and MCP client sign-in, the mcp-mock overlay; mock /register and /revoke from gw/E2E-WALK-MOCKS-1"
+  },
+  "mcp-otel": {
+    "file": "e2e/stack/gateway.mcp-otel.yaml",
+    "stacks": ["standalone"],
+    "requires": [
+      {
+        "file": "agentcc-gateway/internal/config/config.go",
+        "contains": "yaml:\"state_keys\""
+      },
+      {
+        "file": "agentcc-gateway/internal/config/config.go",
+        "contains": "yaml:\"connectors\""
+      },
+      {
+        "file": "agentcc-gateway/internal/config/config.go",
+        "contains": "yaml:\"default_content_mode\""
+      },
+      {
+        "file": "agentcc-gateway/internal/tenant/config.go",
+        "contains": "json:\"trace_content,omitempty\""
+      },
+      {
+        "file": "e2e/stack/docker-compose.mcp-otel-e2e.yml"
+      },
+      {
+        "file": "e2e/stack/docker-compose.walk-mocks.yml",
+        "contains": "otlp-sink:"
+      }
+    ],
+    "overlays": ["e2e/stack/docker-compose.mcp-otel-e2e.yml"],
+    "services": ["mcp-mock", "otlp-sink"],
+    "unblockedBy": "G16 spans (gw/G16-W5-SPANS-1 5431964337: tenant privacy.trace_content and MCP full-content capture) on the MCP line, plus the otlp-sink service from gw/E2E-WALK-MOCKS-1 in e2e/stack/docker-compose.walk-mocks.yml"
+  },
+  "pricefeed": {
+    "file": "e2e/stack/gateway.pricefeed.yaml",
+    "stacks": ["standalone"],
+    "requires": [
+      {
+        "file": "agentcc-gateway/internal/config/config.go",
+        "contains": "yaml:\"public_price_feed\""
+      }
+    ],
+    "overlays": [],
+    "services": [],
+    "unblockedBy": "G8-A public price feed (gw/G8-PRICE-FEED-1 12d24e74da: agentcc-gateway/internal/config public_price_feed)"
+  },
+  "onekey-cat": {
+    "file": "e2e/stack/gateway.onekey-cat.yaml",
+    "stacks": ["standalone"],
+    "requires": [
+      {
+        "file": "e2e/stack/gateway.onekey-cat.yaml"
+      }
+    ],
+    "overlays": [],
+    "services": [],
+    "unblockedBy": "INT-4: gw/ONEKEY-CAT-2 1ca0af80f5 has no configuration key for the CAT-2 opt-in (catalog.Model.InclusiveEnabled is an in-process gate set only in tests, agentcc-gateway/internal/catalog/catalog.go); the profile file and its delta are written once INT-4 names the operator setting"
+  },
+  "cloud-mode": {
+    "file": "e2e/stack/gateway.e2e.yaml",
+    "stacks": ["standalone"],
+    "requires": [],
+    "overlays": [],
+    "services": [],
+    "acceptance": "not-accepted",
+    "unblockedBy": "Contract 713: main must announce acceptance with a head and job; E2E_CLOUD_MODE_OVERLAY is VM-only attach metadata, never a signing file."
+  }
+}

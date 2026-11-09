@@ -1,6 +1,9 @@
 import { enqueueSnackbar } from "notistack";
 import { RESPONSE_CODES } from "./constants";
-import { getSafeActionErrorMessage } from "./errorUtils";
+import {
+  getGatewayAuthenticationErrorMessage,
+  getSafeActionErrorMessage,
+} from "./errorUtils";
 
 const _extractParts = (result) => {
   if (result == null || result === "") return "";
@@ -31,6 +34,11 @@ export const handleError = (error, variable, context, mutation) => {
     variable?.options?.meta?.errorHandled
   )
     return;
+  const gatewayRemedy = getGatewayAuthenticationErrorMessage(error);
+  if (gatewayRemedy) {
+    enqueueSnackbar(gatewayRemedy, { variant: "error" });
+    return;
+  }
   if (error?.result) {
     const message = getSafeActionErrorMessage(
       {

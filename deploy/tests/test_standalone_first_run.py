@@ -187,11 +187,31 @@ class BootSummaryTest(RunDir):
         )
 
     def test_telemetry(self):
+        # Admin emails go out only with FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS.
         self.assertEqual(
             self.row("Telemetry"),
-            "on: owner, admin and staff emails once, then usage counts every 6 h, "
-            "never content, to api.futureagi.com. FUTURE_AGI_TELEMETRY_DISABLED=true "
-            "turns it off",
+            "on: for install counts and release-test planning; registration once the first owner/admin account exists "
+            "(schema_version, instance_id, version, deployment_type, timestamp, "
+            "telemetry_disabled=false; no emails unless "
+            "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true), then usage counts every "
+            "6 h, never content, to api.futureagi.com. "
+            "FUTURE_AGI_TELEMETRY_DISABLED=true turns it off",
+        )
+        for value in ("false", "garbage"):
+            self.assertEqual(
+                self.row("Telemetry", FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=value),
+                self.row("Telemetry"),
+                value,
+            )
+        self.assertEqual(
+            self.row("Telemetry", FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS="true"),
+            "on: for install counts and release-test planning; registration once the first owner/admin account exists "
+            "(schema_version, instance_id, version, deployment_type, timestamp, "
+            "telemetry_disabled=false, plus the emails and domains of owner, "
+            "admin and staff/superuser accounts; "
+            "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true), then usage counts every "
+            "6 h, never content, to api.futureagi.com. "
+            "FUTURE_AGI_TELEMETRY_DISABLED=true turns it off",
         )
         # The sender's own rules: an interval it does not accept falls back to 6.
         for hours, shown in (("12", "12 h"), ("5", "6 h"), ("often", "6 h")):
@@ -206,11 +226,10 @@ class BootSummaryTest(RunDir):
                 "Telemetry", FUTURE_AGI_TELEMETRY_URL="https://t.example.com:8443/in/"
             ),
         )
-        # What the opt-out still sends (wire_reference.toml [opt_out], the telemetry page).
+        # Opt-out makes no deployment-telemetry requests, including registration.
         self.assertEqual(
             self.row("Telemetry", FUTURE_AGI_TELEMETRY_DISABLED="true"),
-            "off: one registration ping (instance id, version, deployment type, "
-            "timestamp) only",
+            "off: sends nothing to Future AGI",
         )
 
     def test_password_reset(self):

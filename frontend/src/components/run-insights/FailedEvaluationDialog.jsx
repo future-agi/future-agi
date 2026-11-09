@@ -20,13 +20,7 @@ import { ShowComponent } from "../show";
 import PropTypes from "prop-types";
 import { LoadingButton } from "@mui/lab";
 
-const ERROR_MESSAGES = {
-  RATE_LIMIT_MESSAGE:
-    "Rate limit reached. Please try again later or upgrade your plan.",
-  CREDIT_LIMIT_MESSAGE: "Insufficient credits. Please recharge your account.",
-  SUPPORT_MESSAGE:
-    "Required action could not be performed, please validate the input data. In case of query, please reach out to us at support@futureagi.com",
-};
+import { ERROR_MESSAGES, OPEN_BILLING_LABEL } from "src/constants/usageCopy";
 
 const FailedEvaluationsDialog = ({ open, onClose, data }) => {
   const theme = useTheme();
@@ -198,7 +192,7 @@ const FailedEvaluationsDialog = ({ open, onClose, data }) => {
                 paddingX: (theme) => theme.spacing(3),
               }}
             >
-              Add Credits
+              {OPEN_BILLING_LABEL}
             </Button>
           </ShowComponent>
           <ShowComponent condition={data?.showReRunButton}>

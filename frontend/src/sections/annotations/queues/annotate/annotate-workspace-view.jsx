@@ -38,6 +38,7 @@ import {
   useItemDiscussion,
 } from "src/api/annotation-queues/annotation-queues";
 import AnnotateHeader from "./annotate-header";
+import { openAddData } from "src/sections/common/AddData/addDataStore";
 import AnnotateFooter from "./annotate-footer";
 import ContentPanel from "./content-panel";
 import LabelPanel from "./label-panel";
@@ -59,6 +60,16 @@ import {
   resolveSelectedAnnotatorScope,
 } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
+import notify from "src/sections/common/ux/toast";
+import useShortcuts from "src/sections/common/ux/useShortcuts";
+import { savedChoiceText } from "src/sections/develop-detail/Review/reviewModel";
+import PropTypes from "prop-types";
+import ShortcutSheet from "src/sections/common/RowPanel/ShortcutSheet";
+import ExperimentReviewSummary from "src/sections/develop-detail/Review/ExperimentReviewSummary";
+// W4 C2: viewers inspect, members score; W4 C1/C3: the summary at any time.
+import RoleNotice from "./RoleNotice";
+import { useViewOnlyReviewer } from "./useViewOnlyReviewer";
+import ReviewSummaryButton from "./ReviewSummaryDrawer";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
 import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
 
@@ -226,8 +237,17 @@ function isLockedForReview({
   return currentUserHasAnnotations && !hasOpenReworkForCurrentUser;
 }
 
-export default function AnnotateWorkspaceView() {
+/**
+ * The annotate workspace. Mounted by the queue route (default exit: the
+ * queue page, "Back to Queue") and by the Develop review page
+ * (`/dashboard/develop/:dataset/review/:queueId`), which passes `exitTo` /
+ * `exitLabel` (PRODUCT-SPEC §3.12).
+ */
+export default function AnnotateWorkspaceView({ exitTo, exitLabel } = {}) {
   const { queueId } = useParams();
+  const exitPath = exitTo || `/dashboard/annotations/queues/${queueId}`;
+  const backLabel = exitLabel || "Back to Queue";
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuthContext();
@@ -282,11 +302,15 @@ export default function AnnotateWorkspaceView() {
   );
 
   const { canReview, canAnnotate } = queueRoleAccess(myQueueMembership);
+  const viewOnly = useViewOnlyReviewer();
   const canManageAssignments = hasQueueRole(
     myQueueMembership,
     QUEUE_ROLES.MANAGER,
   );
   const requiresReview = queueDetail?.requires_review === true;
+  // Experiment review queues (metadata.kind, PRODUCT-SPEC C9) end on a summary.
+  const isExperimentReview =
+    queueDetail?.metadata?.kind === "experiment_review";
   const requestedMode = searchParams.get("mode");
   const workspaceMode = resolveAnnotationWorkspaceMode({
     requestedMode,
@@ -687,6 +711,7 @@ export default function AnnotateWorkspaceView() {
     queueStatus: effectiveQueueStatus,
   });
   const labelPanelReadOnly =
+    viewOnly ||
     !canAnnotate ||
     isViewOnlyForReviewer ||
     isViewingOtherAnnotator ||
@@ -1011,6 +1036,7 @@ export default function AnnotateWorkspaceView() {
     setSearchParams(nextParams, { replace: true });
   }, [canUseCompletedControls, queueDetail, searchParams, setSearchParams]);
 
+  const lastUndoRef = useRef(null);
   const handleSubmitAndNext = useCallback(
     ({ annotations, notes, itemNotes }) => {
       if (!currentItemId || isSubmittingRef.current) return;
@@ -1036,17 +1062,47 @@ export default function AnnotateWorkspaceView() {
                   isSubmittingRef.current = false;
                   const result = data?.data?.result || data?.data;
                   const nextItem = result?.nextItem || result?.next_item;
-                  enqueueSnackbar(
-                    annotationSubmitSuccessMessage({
-                      requiresReview,
-                      hasNextItem: Boolean(nextItem?.id),
-                    }),
-                    { variant: "success" },
+                  // RW#5/#6: one toast naming the vote, with Undo (Z / ⌘Z)
+                  // that returns to the saved row to change it.
+                  const savedId = currentItemId;
+                  const said = savedChoiceText(
+                    annotations,
+                    detail?.review_context,
                   );
+                  const back = () => dispatch({ type: "push", id: savedId });
+                  // KH B3: a row waiting for more reviewers says so.
+                  const waiting =
+                    result?.item_status === "in_progress" && result?.coverage
+                      ? ` This row stays open: ${result.coverage} so far.`
+                      : "";
+                  const toast = notify(
+                    (said
+                      ? `Saved: ${said}.${nextItem?.id ? " Next row." : ""}`
+                      : annotationSubmitSuccessMessage({
+                          requiresReview,
+                          hasNextItem: Boolean(nextItem?.id),
+                        })) + waiting,
+                    {
+                      variant: "success",
+                      key: "annotate-saved",
+                      undo: { onUndo: back, ms: 8000 },
+                    },
+                  );
+                  lastUndoRef.current = () => {
+                    lastUndoRef.current = null;
+                    toast.close();
+                    back();
+                  };
+                  toast.undone.then(() => {
+                    if (lastUndoRef.current) lastUndoRef.current = null;
+                  });
                   if (nextItem?.id) {
                     dispatch({ type: "push", id: nextItem.id });
+                  } else if (isExperimentReview) {
+                    // Experiment reviews end on the "All Done!" summary.
+                    dispatch({ type: "clear" });
                   } else {
-                    navigate(`/dashboard/annotations/queues/${queueId}`);
+                    navigate(exitPath);
                   }
                 },
                 onError: () => {
@@ -1069,8 +1125,10 @@ export default function AnnotateWorkspaceView() {
       completeItem,
       requiresReview,
       includeCompletedItems,
-      enqueueSnackbar,
       navigate,
+      exitPath,
+      isExperimentReview,
+      detail?.review_context,
     ],
   );
 
@@ -1120,10 +1178,10 @@ export default function AnnotateWorkspaceView() {
       if (nextItem?.id) {
         dispatch({ type: "push", id: nextItem.id });
       } else {
-        navigate(`/dashboard/annotations/queues/${queueId}`);
+        navigate(exitPath);
       }
     },
-    [navigate, queueId],
+    [navigate, exitPath],
   );
 
   const handleApprove = useCallback(
@@ -1167,8 +1225,8 @@ export default function AnnotateWorkspaceView() {
   const handleBack = useCallback(() => {
     if (!confirmDiscardUnsaved("You have unsaved changes. Leave anyway?"))
       return;
-    navigate(`/dashboard/annotations/queues/${queueId}`);
-  }, [navigate, queueId, confirmDiscardUnsaved]);
+    navigate(exitPath);
+  }, [navigate, exitPath, confirmDiscardUnsaved]);
 
   const [isFetchingPrev, setIsFetchingPrev] = useState(false);
   // Direction of the in-flight navigation, so the footer can show the spinner
@@ -1334,12 +1392,20 @@ export default function AnnotateWorkspaceView() {
     isChangingCompletedVisibility ||
     (detailFetching && navDirection === "next");
 
+  // Review surface keys (G0 keymap): Z undoes the last submit while its toast
+  // shows, C opens comments.
+  useShortcuts("review", {
+    undo: () => lastUndoRef.current?.(),
+    comments: () => setCommentsOpen(true),
+  });
+
   useKeyboardShortcuts({
     onSubmit: handleKeyboardSubmit,
-    onSkip: handleSkip,
+    onSkip: viewOnly ? undefined : handleSkip,
     onPrev: handlePrev,
     onNext: handleNext,
-    onEscape: handleBack,
+    onEscape: shortcutsOpen ? null : handleBack,
+    onHelp: () => setShortcutsOpen((open) => !open),
     canPrev: canNavigatePrev,
     canNext: canNavigateNext,
   });
@@ -1455,7 +1521,7 @@ export default function AnnotateWorkspaceView() {
         <Button variant="outlined" onClick={handleSkip}>
           Skip to Next Item
         </Button>
-        <Button onClick={handleBack}>Back to Queue</Button>
+        <Button onClick={handleBack}>{backLabel}</Button>
       </Box>
     );
   }
@@ -1499,7 +1565,7 @@ export default function AnnotateWorkspaceView() {
           can only be submitted when the queue is active.
         </Typography>
         <Button variant="outlined" color="primary" onClick={handleBack}>
-          Back to Queue
+          {backLabel}
         </Button>
       </Box>
     );
@@ -1535,27 +1601,70 @@ export default function AnnotateWorkspaceView() {
           width={64}
           color="success.main"
         />
-        <Typography variant="h5">All Done!</Typography>
+        <Typography variant="h5">All done</Typography>
         <Typography color="text.secondary">
           {isReviewWorkspaceMode
             ? "No items are waiting for review."
             : completedCount > 0 &&
-              `${completedCount} of ${totalCount} items completed.`}
+              `You finished ${completedCount} of ${totalCount} ${totalCount === 1 ? "row" : "rows"}.`}
           {!isReviewWorkspaceMode &&
             completedCount === 0 &&
             "No more pending items in this queue."}
         </Typography>
 
         {skippedCount > 0 && (
-          <Alert severity="info" sx={{ maxWidth: 480 }}>
-            You have {skippedCount} skipped{" "}
-            {skippedCount === 1 ? "item" : "items"}. You can review them from
-            the queue items list.
+          <Alert
+            severity="info"
+            sx={{ maxWidth: 480 }}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() =>
+                  handleIncludeCompletedChange?.({ target: { checked: true } })
+                }
+              >
+                Review skipped
+              </Button>
+            }
+          >
+            {skippedCount} skipped. Turn on Show completed to step through them
+            again.
           </Alert>
         )}
 
+        {isExperimentReview && (
+          <ExperimentReviewSummary
+            queueId={queueId}
+            datasetId={queueDetail?.metadata?.dataset_id}
+            from={searchParams.get("from") ?? undefined}
+          />
+        )}
+
+        {/* R2 (P5): reviewer corrections become expected values. */}
+        {!isReviewWorkspaceMode &&
+          (completedCount > 0 || (progress?.completed ?? 0) > 0) && (
+            <Button
+              variant="text"
+              startIcon={
+                <Iconify icon="mdi:database-plus-outline" width={18} />
+              }
+              onClick={() =>
+                openAddData({
+                  source: {
+                    kind: "queue",
+                    queue_id: queueId,
+                    completed_only: true,
+                  },
+                })
+              }
+            >
+              Add corrected items to a dataset
+            </Button>
+          )}
+
         <Button variant="outlined" onClick={handleBack} sx={{ mt: 1 }}>
-          Back to Queue
+          {backLabel}
         </Button>
       </Box>
     );
@@ -1574,16 +1683,29 @@ export default function AnnotateWorkspaceView() {
         // pagination row.
         height: "100%",
         minHeight: 0,
+        // RW#2: the rail never pushes <main> wider than the shell.
+        width: "100%",
+        minWidth: 0,
       }}
     >
       <AnnotateHeader
         queueName={detail?.queue?.name}
         progress={detail?.progress}
         onBack={handleBack}
+        backLabel={backLabel}
         onSkip={handleSkip}
         isSkipping={isSkipping}
-        isReviewMode={isReviewWorkspaceMode}
+        isReviewMode={isReviewWorkspaceMode || viewOnly}
         isAssignedToOther={isAssignedToOther}
+        extraActions={
+          isExperimentReview ? (
+            <ReviewSummaryButton
+              queueId={queueId}
+              datasetId={queueDetail?.metadata?.dataset_id}
+              from={searchParams.get("from") ?? undefined}
+            />
+          ) : null
+        }
         isSkipDisabled={
           isAnnotateLockedForReview || isChangingCompletedVisibility
         }
@@ -1601,6 +1723,7 @@ export default function AnnotateWorkspaceView() {
         addressedFeedbackCount={addressedFeedbackCount}
         resolvedFeedbackCount={resolvedFeedbackCount}
       />
+      <RoleNotice />
 
       <ResizableSplit
         storageKey={
@@ -1615,7 +1738,12 @@ export default function AnnotateWorkspaceView() {
         rightBackground={
           isReviewWorkspaceMode ? "background.default" : "background.paper"
         }
-        left={<ContentPanel item={detail?.item} />}
+        left={
+          <ContentPanel
+            item={detail?.item}
+            reviewContext={detail?.review_context}
+          />
+        }
         right={
           <Box
             sx={{
@@ -1658,7 +1786,7 @@ export default function AnnotateWorkspaceView() {
                 annotators={queueAnnotators}
                 currentUserId={currentUserId}
                 canAnnotate={canAnnotate}
-                canManageAssignments={canManageAssignments}
+                canManageAssignments={canManageAssignments && !viewOnly}
                 onAssign={handleAssignCurrentItem}
                 isPending={isAssigningItem}
               />
@@ -1774,6 +1902,7 @@ export default function AnnotateWorkspaceView() {
                     queueId={queueId}
                     itemId={currentItemId}
                     detailItemId={detail?.item?.id}
+                    reviewContext={detail?.review_context}
                     onDirtyChange={handleDirtyChange}
                     readOnly={labelPanelReadOnly}
                     readOnlyReason={labelPanelReadOnlyReason}
@@ -1826,6 +1955,18 @@ export default function AnnotateWorkspaceView() {
         canComment={canDiscuss}
         onFocusScope={handleFocusCommentScope}
       />
+      <ShortcutSheet
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+        surface="review"
+      />
     </Box>
   );
 }
+
+AnnotateWorkspaceView.propTypes = {
+  // where Back / Esc / the end of the queue go (default: the queue page)
+  exitTo: PropTypes.string,
+  // label of that button (default "Back to Queue")
+  exitLabel: PropTypes.string,
+};

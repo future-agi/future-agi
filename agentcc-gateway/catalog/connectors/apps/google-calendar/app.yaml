@@ -1,0 +1,26 @@
+# The description covers what the default provider, FutureAGI's own
+# connector (futureagi-rest), does under the scopes it requests. Google's MCP
+# server (google-mcp) is read-only.
+schema: "connector-manifest/v1#app"
+id: google-calendar
+version: 1.1.0
+name: Google Calendar
+description: "See calendars, events and free/busy times, and create or change events."
+vendor:
+  name: Google
+  domains: [google.com, googleapis.com]
+eeCategory: productivity
+group: google
+categories: [productivity, calendar]
+tags: [calendar, events, scheduling, google-workspace]
+docsUrl: https://developers.google.com/workspace/calendar/api/guides/overview
+archetype: calendar
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: vendor.domains
+    url: https://developers.google.com/workspace/calendar/api/v3/reference
+    fetchedAt: 2026-10-21

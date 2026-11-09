@@ -194,7 +194,9 @@ const CustomJsonViewer = ({
 };
 
 CustomJsonViewer.propTypes = {
-  object: PropTypes.object,
+  // Any parsed JSON value the viewer renders: objects and arrays (e.g. an
+  // expected_tool_calls cell).
+  object: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
   searchable: PropTypes.bool,
   searchPlaceholder: PropTypes.string,
 };

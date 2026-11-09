@@ -7,6 +7,10 @@ from accounts.models.workspace import Workspace
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 from model_hub.models.api_key import ApiKey
 from model_hub.models.custom_models import CustomAIModel
+from model_hub.utils.model_endpoints import (
+    assert_model_config_endpoints_allowed,
+    whitelist_model_config,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -146,14 +150,24 @@ class LiteLLMModelManager:
         os.environ[api_key_name] = api_key
 
     def get_api_key(self, organization_id, workspace_id=None, provider=None):
-
+        """The stored credentials for a provider call. A stored openai,
+        azure, bedrock or sagemaker config is cut down to the keys that
+        provider needs (``whitelist_model_config``), and a stored base URL
+        (openai/azure ``api_base``, a custom model's endpoint) is checked
+        against the deployment's address policy, on every call, so rows saved
+        before the save-time checks are covered too; EndpointBlocked (a
+        ValueError with generic text) when it is refused."""
         try:
             custom_models = CustomAIModel.objects.get(
                 organization=organization_id,
                 user_model_id=self.model_name,
                 deleted=False,
             )
-            return custom_models.actual_json
+            key_config = whitelist_model_config(
+                custom_models.provider, custom_models.actual_json
+            )
+            assert_model_config_endpoints_allowed(key_config)
+            return key_config
         except CustomAIModel.DoesNotExist:
             pass
         if not provider:
@@ -174,7 +188,9 @@ class LiteLLMModelManager:
             return api_key_entry.actual_key
 
         if api_key_entry.actual_json:
-            return api_key_entry.actual_json
+            config_json = whitelist_model_config(provider, api_key_entry.actual_json)
+            assert_model_config_endpoints_allowed(config_json)
+            return config_json
 
         raise ValueError(
             f"API key not configured for {provider}. Please add your API key in settings."

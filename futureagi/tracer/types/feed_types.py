@@ -291,11 +291,10 @@ class TracesAggregates:
     total_traces: int = 0
     failing_traces: int = 0
     passing_traces: int = 0
-    # None = nothing measured; the UI shows "no data", not a fake zero.
-    avg_score: float | None = None
+    avg_score: float = 0.0
     p50_latency: int = 0
     p95_latency: int = 0
-    avg_turns: float | None = None
+    avg_turns: float = 0.0
 
 
 @dataclass
@@ -473,6 +472,7 @@ class DeepAnalysisResponse:
     root_causes: list[RootCause] = field(default_factory=list)
     recommendations: list[Recommendation] = field(default_factory=list)
     immediate_fix: str | None = None
+    code: str | None = None
 
 
 @dataclass

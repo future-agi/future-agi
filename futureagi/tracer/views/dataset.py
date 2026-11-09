@@ -2,7 +2,6 @@ import uuid
 
 import structlog
 from django.db.models import Q
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -15,6 +14,7 @@ from model_hub.views.utils.dataset_limit import (
     DatasetLimitReached,
     dataset_limit_check_failed_response,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
@@ -27,6 +27,13 @@ from tracer.serializers.dataset import (
     ObserveDatasetSerializer,
 )
 from tracer.services.clickhouse.v2 import get_reader
+from tracer.services.dataset_sources import (
+    DatasetImportResponseSerializer,
+    DatasetSourcePreviewSerializer,
+    DatasetSourceResponseSerializer,
+    preview_sources,
+    validate_import_mapping,
+)
 from tracer.tasks import CHUNK_SIZE, process_spans_chunk_task
 
 logger = structlog.get_logger(__name__)
@@ -57,12 +64,36 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
         return queryset
 
-    @swagger_auto_schema(responses={503: DatasetLimitCheckFailedErrorSerializer})
+    @validated_request(
+        request_serializer=DatasetSourcePreviewSerializer,
+        responses={200: DatasetSourceResponseSerializer},
+    )
+    @action(detail=False, methods=["post"])
+    def preview_sources(self, request, *args, **kwargs):
+        serializer = request.validated_serializer
+        org = _request_organization(request)
+        project = Project.no_workspace_objects.filter(
+            _workspace_scope_q("workspace", _request_workspace(request), org),
+            id=serializer.validated_data["project"],
+            organization=org,
+        ).first()
+        if project is None:
+            return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
+        return self._gm.success_response(
+            preview_sources(project, serializer.validated_data)
+        )
+
+    @validated_request(
+        request_serializer=AddToNewDatasetObserveSerializer,
+        responses={
+            200: DatasetImportResponseSerializer,
+            503: DatasetLimitCheckFailedErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def add_to_new_dataset(self, request, *args, **kwargs):
         try:
-            serializer = AddToNewDatasetObserveSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
+            serializer = request.validated_serializer
 
             span_ids = serializer.validated_data.get("span_ids")
             trace_ids = serializer.validated_data.get("trace_ids")
@@ -104,6 +135,10 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
             else:
                 raise ValueError("No trace or span ids provided")
+
+            if not span_id_list:
+                raise ValueError("No accessible observation spans selected")
+            validate_import_mapping(mapping_config)
 
             # Creating Dataset
             dataset = create_new_dataset(
@@ -153,11 +188,14 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 f"Error creating the dataset observe {str(e)}"
             )
 
+    @validated_request(
+        request_serializer=AddToExistingDatasetObserveSerializer,
+        responses={200: DatasetImportResponseSerializer},
+    )
     @action(detail=False, methods=["post"])
     def add_to_existing_dataset(self, request, *args, **kwargs):
         try:
-            serializer = AddToExistingDatasetObserveSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
+            serializer = request.validated_serializer
 
             span_ids = serializer.validated_data.get("span_ids")
             trace_ids = serializer.validated_data.get("trace_ids")
@@ -214,6 +252,18 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
             else:
                 raise ValueError("No trace or span ids provided")
+
+            if not span_id_list:
+                raise ValueError("No accessible observation spans selected")
+            if not mapping_config and not new_mapping_config:
+                raise ValueError("No column mapping provided")
+            validate_import_mapping(mapping_config, new_columns=False)
+            validate_import_mapping(new_mapping_config)
+            names = [
+                item.get("col_name") for item in mapping_config + new_mapping_config
+            ]
+            if len(names) != len(set(names)):
+                raise ValueError("Column names must be unique")
 
             columns_to_span_fields = []
             column_to_span_dict = {}
@@ -290,7 +340,9 @@ def _request_workspace(request):
 
 def _workspace_scope_q(field_name, workspace, organization):
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -382,10 +434,9 @@ def _root_span_ids_for_trace_ids(request, trace_ids, project_id=None):
             span for span in ch_spans if str(span.project_id) in allowed_project_ids
         ]
 
-    if ch_spans:
-        return [str(span.id) for span in ch_spans]
-
-    return []
+    if {str(span.trace_id) for span in ch_spans} != set(trace_id_list):
+        raise ValueError("One or more selected traces are unavailable in this project")
+    return list(dict.fromkeys(str(span.id) for span in ch_spans))
 
 
 def _span_ids_for_span_ids(request, span_ids, project_id=None):
@@ -411,10 +462,9 @@ def _span_ids_for_span_ids(request, span_ids, project_id=None):
         ]
 
     ch_span_ids = {str(span.id) for span in ch_spans}
-    if ch_span_ids:
-        return [span_id for span_id in span_id_list if span_id in ch_span_ids]
-
-    return []
+    if ch_span_ids != set(span_id_list):
+        raise ValueError("One or more selected spans are unavailable in this project")
+    return list(dict.fromkeys(span_id_list))
 
 
 def _span_ids_for_select_all(request, project_id, trace_ids, span_ids):

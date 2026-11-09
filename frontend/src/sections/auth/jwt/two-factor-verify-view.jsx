@@ -21,6 +21,12 @@ import { useSnackbar } from "src/components/snackbar";
 import { startAuthentication } from "@simplewebauthn/browser";
 
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 
 // ----------------------------------------------------------------------
 
@@ -515,12 +521,11 @@ export default function TwoFactorVerifyView() {
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+    <Box sx={authSplitSx}>
       {/* Left Side - Form */}
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           display: "flex",
           justifyContent: "center",
           bgcolor: "background.paper",
@@ -532,7 +537,7 @@ export default function TwoFactorVerifyView() {
             maxWidth: "640px",
             paddingY: "100px",
             width: "100%",
-            px: 10,
+            ...authFormGutterSx,
             height: "fit-content",
           }}
         >
@@ -541,13 +546,7 @@ export default function TwoFactorVerifyView() {
       </Box>
 
       {/* Right Side - Image with Text Overlay */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

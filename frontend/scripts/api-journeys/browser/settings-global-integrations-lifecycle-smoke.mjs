@@ -165,11 +165,6 @@ async function main() {
     await listResponse;
 
     await waitForVisibleText(page, "Integrations", { exact: true });
-    if (IS_WORKSPACE_ROUTE) {
-      await waitForVisibleText(page, "Manage workspace integrations", {
-        exact: true,
-      });
-    }
     await assertCurrentPath(page, expectedListPath);
     await waitForVisibleText(page, seeded.display_name, { exact: true });
     await waitForVisibleText(page, seeded.host_url, { exact: true });
@@ -360,11 +355,6 @@ async function main() {
 
     await assertCurrentPath(page, expectedListPath);
     await waitForVisibleText(page, "Integrations", { exact: true });
-    if (IS_WORKSPACE_ROUTE) {
-      await waitForVisibleText(page, "Manage workspace integrations", {
-        exact: true,
-      });
-    }
     await waitForNoVisibleText(page, updatedDisplayName, { exact: true });
     await page.screenshot({ path: DELETE_SCREENSHOT_PATH, fullPage: true });
 

@@ -1,3 +1,8 @@
+# Pre-existing lint debt, suppressed file-wide so a fix can touch this file
+# without reshuffling its import graph: the import blocks are interleaved with
+# module code and repeat names (E402, F401, F811, I001), and some handlers
+# re-raise without a cause (B904) or keep an unused local (F841).
+# ruff: noqa: B904, E402, F401, F811, F841, I001
 import ast
 import json
 import os
@@ -15,6 +20,12 @@ from model_hub.queries.tts_voices import resolve_voice_id
 from model_hub.utils import call_websocket
 from django.core.cache import cache
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
+from model_hub.utils.model_endpoints import (
+    calls_endpoint_url,
+    endpoint_call_error_message,
+    guarded_image_generation,
+    is_endpoint_error,
+)
 from model_hub.utils.utils import MyCustomLLM, convert_messages_to_text_only
 from model_hub.utils.websocket_manager import get_websocket_manager
 from channels.db import sync_to_async
@@ -566,9 +577,19 @@ class RunPrompt:
 
         # Call litellm image_generation
         try:
-            response = litellm.image_generation(**image_params, drop_params=True)
+            # A tenant api_base is called through a guarded client.
+            response = guarded_image_generation(**image_params, drop_params=True)
         except Exception as e:
-            logger.error(f"Image generation failed: {str(e)}")
+            if is_endpoint_error(e):
+                # A tenant endpoint's error: generic already; logged without
+                # its text.
+                logger.error(
+                    "Image generation failed",
+                    error_type=type(e).__name__,
+                    category=getattr(e, "category", None),
+                )
+            else:
+                logger.error(f"Image generation failed: {str(e)}")
             raise
 
         end_time = time.time()
@@ -680,7 +701,7 @@ class RunPrompt:
         2. From direct file upload:
            {"type": "audio_url", "audioUrl": {"url": "<s3_or_public_url>"}}
         """
-        logger.info(f"[STT] Searching for audio in messages")
+        logger.info("[STT] Searching for audio in messages")
         for msg in self.messages:
             content = msg.get("content")
             if not isinstance(content, list):
@@ -946,13 +967,19 @@ class RunPrompt:
         return " ".join(text_parts), image_urls
 
     def _custom_model_response(self, payload, start_time):
+        # Dormant while USE_NEW_RUNPROMPT_HANDLERS is True; guarded like
+        # CustomModelHandler so flipping the flag does not reopen the SSRF.
+        from model_hub.utils.model_endpoints import custom_endpoint_from_config
+        from tfc.utils.ssrf_guard import endpoint_status_message, guarded_post
+
         try:
             payload.pop("custom_llm_provider")
             api_key = payload.pop("api_key")
-            url = api_key.pop("api_base")
-            headers = api_key.pop("headers")
+            url, headers = custom_endpoint_from_config(api_key)
 
-            response = requests.post(url, headers=headers, json=payload)
+            response = guarded_post(url, json=payload, headers=headers, timeout=300)
+            if response.status_code >= 400:
+                raise RuntimeError(endpoint_status_message(response.status_code))
             response_content = response.text
             end_time = time.time()
 
@@ -1040,7 +1067,11 @@ class RunPrompt:
             }
             return response_content, value_info, "completed"
         except Exception as e:
-            logger.exception(f"An error occurred: {str(e)}")
+            logger.warning(
+                "custom model request failed",
+                error_type=type(e).__name__,
+                category=getattr(e, "category", None),
+            )
             return str(e), {}, "error"
 
     def _streaming_response(
@@ -1277,9 +1308,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"][
-                                    "arguments"
-                                ] += tool_call.function.arguments
+                                tc["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -2988,9 +3019,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"][
-                                    "arguments"
-                                ] += tool_call.function.arguments
+                                tc["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -3155,6 +3186,10 @@ class RunPrompt:
 
         Enable via environment variable: USE_NEW_RUNPROMPT_HANDLERS=true
         """
+        # Set when litellm is given a tenant base URL (an openai/azure custom
+        # model): its errors then reach the tenant as generic categorised
+        # text, not the provider's (which can carry the endpoint's body).
+        endpoint_call = False
         try:
             # Resolve voice_id if present in config (keep voice as display name)
             if self.run_prompt_config and "voice_id" in self.run_prompt_config:
@@ -3183,6 +3218,7 @@ class RunPrompt:
                 else:
                     api_key = api_key.get("key")
             self.api_key = api_key
+            endpoint_call = provider != "custom" and calls_endpoint_url(api_key)
 
             # Create handler context
             context = ModelHandlerContext.from_run_prompt(
@@ -3227,9 +3263,14 @@ class RunPrompt:
                 workspace_id=self.workspace_id,
                 template_id=template_id,
             )
-            concise_error = handle_api_error(e, logger, context)
+            if endpoint_call:
+                concise_error = endpoint_call_error_message(e)
+            else:
+                concise_error = handle_api_error(e, logger, context)
             logger.error(f"[NEW] An error occurred: {concise_error}")
-            raise Exception(concise_error) from e
+            # An endpoint call drops the chain: callers log the error with its
+            # traceback, which would carry the provider's text.
+            raise Exception(concise_error) from (None if endpoint_call else e)
 
     async def _litellm_response_async_new(
         self,
@@ -3248,6 +3289,10 @@ class RunPrompt:
 
         NOTE: Uses 'type' parameter (NOT 'run_type') - must preserve this for backward compatibility.
         """
+        # Set when litellm is given a tenant base URL (an openai/azure custom
+        # model): its errors then reach the tenant as generic categorised
+        # text, not the provider's (which can carry the endpoint's body).
+        endpoint_call = False
         try:
             # Resolve voice_id if present in config (keep voice as display name)
             if self.run_prompt_config and "voice_id" in self.run_prompt_config:
@@ -3278,6 +3323,7 @@ class RunPrompt:
                 else:
                     api_key = api_key.get("key")
             self.api_key = api_key
+            endpoint_call = provider != "custom" and calls_endpoint_url(api_key)
 
             # Create handler context
             # Note: Pass "type" as "run_type" for consistency in handler
@@ -3323,9 +3369,14 @@ class RunPrompt:
                 workspace_id=self.workspace_id,
                 template_id=template_id,
             )
-            concise_error = handle_api_error(e, logger, context)
+            if endpoint_call:
+                concise_error = endpoint_call_error_message(e)
+            else:
+                concise_error = handle_api_error(e, logger, context)
             logger.error(f"[NEW] An error occurred: {concise_error}")
-            raise Exception(concise_error) from e
+            # An endpoint call drops the chain: callers log the error with its
+            # traceback, which would carry the provider's text.
+            raise Exception(concise_error) from (None if endpoint_call else e)
 
     # =========================================================================
     # PUBLIC API - WRAPPER METHODS THAT TOGGLE BETWEEN OLD AND NEW

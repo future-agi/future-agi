@@ -23,9 +23,9 @@
 # explains every one of them.
 # =============================================================================
 
-# -- Override the chart name used in resource names.
+# -- Override the chart name used in resource names. Empty or a DNS label: 1-63 lowercase letters, digits or hyphens, starting and ending with a letter or digit.
 nameOverride: ""
-# -- Override the resource name prefix. Default: the release name, plus "-futureagi" unless the release name already contains it.
+# -- Override the resource name prefix. Empty or a DNS label (1-63 lowercase letters, digits or hyphens, starting and ending with a letter or digit). Default: the release name, plus "-futureagi" unless the release name already contains it.
 fullnameOverride: ""
 
 global:
@@ -35,7 +35,7 @@ global:
   imagePullSecrets: []
   # -- StorageClass of every PersistentVolumeClaim the chart creates. Empty uses the cluster default. Install-time only for the bundled datastores (see "Install-time settings" in README.md).
   storageClass: ""
-  # -- Air-gapped install: turns off the platform's own calls to the internet. Turns telemetry off [FUTURE_AGI_TELEMETRY_DISABLED=true] (one minimal registration attempt remains; offline it fails harmlessly and is retried), the license heartbeat off unless `license.heartbeat` is `true` [FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED=true], sets [LITELLM_LOCAL_MODEL_COST_MAP=True] on the Python pods and serving, and [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1] on serving, whose models must then be pre-seeded on `serving.persistence` (examples/airgap.yaml). Mirror the images first (`hack/list-images.sh`) and set `global.imageRegistry` and `global.imagePullSecrets`.
+  # -- Air-gapped install: turns off the platform's own calls to the internet. Turns telemetry off [FUTURE_AGI_TELEMETRY_DISABLED=true] (sends no deployment telemetry to Future AGI), the license heartbeat off unless `license.heartbeat` is `true` [FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED=true], sets [LITELLM_LOCAL_MODEL_COST_MAP=True] on the Python pods and serving, and [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1] on serving, whose models must then be pre-seeded on `serving.persistence` (examples/airgap.yaml). Mirror the images first (`hack/list-images.sh`) and set `global.imageRegistry` and `global.imagePullSecrets`.
   airgap: false
   # Outbound HTTP(S) proxy for the Future AGI pods (backend, workers, bootstrap job, frontend, fi-collector, agentcc-gateway, serving; never the code sandbox). The LLM gateway (agentcc-gateway) gets the variables but its provider connections do not use them yet: allow its egress to the providers directly.
   proxy:
@@ -98,8 +98,10 @@ config:
   corsAllowedOrigins: ""
   # -- [EXTRA_CSRF_ORIGINS] in addition to the UI URL, comma-separated.
   extraCsrfOrigins: ""
-  # -- Deployment telemetry: an instance id, the version, admin emails and usage counts every 6 hours, never traces, prompts or other content. `false` sets FUTURE_AGI_TELEMETRY_DISABLED=true (one minimal ping remains).
+  # -- Deployment telemetry, on by default: when the first owner/admin account exists, one registration with an instance id, the version and the deployment type (`schema_version`, `instance_id`, `version`, `deployment_type`, `timestamp`, `telemetry_disabled: false`) and no emails unless `telemetryShareAdminEmails` is `true`, then usage counts every 6 hours and content-free journey events; never traces, prompts, completions, datasets or API keys. `false` sets FUTURE_AGI_TELEMETRY_DISABLED=true (sends no deployment telemetry to Future AGI).
   telemetry: true
+  # -- [FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS] opt-in: `true` adds the emails and email domains of the owner, admin and staff/superuser accounts (`users[]` with `email` and `domain`) to the deployment telemetry registration. Off by default: the registration carries no emails, and with telemetry on and email sharing off an install that registered with them re-registers once without them.
+  telemetryShareAdminEmails: false
   # -- [RECAPTCHA_ENABLED] reCAPTCHA on sign-up, login and token refresh, for every Host but localhost. Needs `secrets.extra.RECAPTCHA_SECRET_KEY` (without it every such login is refused) and a frontend image built with VITE_GOOGLE_SITE_KEY (a build-time setting: the published image has none, so its logins fail).
   recaptcha: false
   # -- [OTEL_ENABLED] export the platform's own traces over OpenTelemetry (configure OTEL_* in `config.extraEnv`).
@@ -132,7 +134,9 @@ config:
 # uninstall, so a reinstall can still read encrypted data).
 # -----------------------------------------------------------------------------
 secrets:
-  # -- Existing Secret with the application keys: SECRET_KEY, INTEGRATION_ENCRYPTION_KEY, AGENTCC_INTERNAL_API_KEY, AGENTCC_ADMIN_TOKEN, PROPERTY_CATALOG_API_PASSWORD, PROPERTY_CATALOG_CONSUMER_PASSWORD and AGENTCC_WEBHOOK_SECRET (unless `agentccWebhookSecret` is set). Empty: generated. Required with Argo CD, which cannot `lookup` the generated Secret.
+  # -- Test-only: allow generated application keys in offline CI renders. Never enable for real installs; use secrets.existingSecret for GitOps.
+  allowGeneratedKeysWithoutCluster: false
+  # -- Existing Secret with the application keys: SECRET_KEY, INTEGRATION_ENCRYPTION_KEY, FI_API_SECRET_PEPPER, AGENTCC_INTERNAL_API_KEY, AGENTCC_ADMIN_TOKEN, PROPERTY_CATALOG_API_PASSWORD, PROPERTY_CATALOG_CONSUMER_PASSWORD and AGENTCC_WEBHOOK_SECRET (unless `agentccWebhookSecret` is set). Empty: generated. Required with Argo CD, which cannot `lookup` the generated Secret.
   existingSecret: ""
   llm:
     # -- Existing Secret with any of OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (missing keys are fine). Overrides the values below.
@@ -166,6 +170,10 @@ secrets:
 # -----------------------------------------------------------------------------
 # -- `oss` or `ee`. `ee` requires a license (`license.key` or `license.existingSecret`) and shows the license and SSO settings in the install notes. It never changes the image.
 edition: oss
+
+billing:
+  # -- Collector budget admission: `auto` derives EE/cloud intent from backend.extraEnv, config.extraEnv, secrets.extra and license settings; `true` or `false` overrides it. Hosted deployments using envFrom or external secrets must set `billing.enforcement=true` because Helm cannot inspect their contents. Plain OSS/self-hosted defaults to non-billable. The collector logs its mode once at startup; hosted go-check requires `admission_mode=billable`.
+  enforcement: auto
 
 license:
   # -- [EE_LICENSE_KEY] Enterprise license key, stored in <fullname>-secrets. Prefer `existingSecret`. Setting a license also turns on the Enterprise apps, whose migrations the bootstrap job runs.
@@ -315,8 +323,8 @@ postgres:
       storageClass: ""
     # -- Resources of the bundled PostgreSQL.
     resources:
-      requests: {cpu: 250m, memory: 512Mi}
-      limits: {cpu: "2", memory: 2Gi}
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { cpu: "2", memory: 2Gi }
     # -- Node selector of the bundled PostgreSQL. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled PostgreSQL. Empty: the top-level `tolerations`.
@@ -369,8 +377,8 @@ clickhouse:
       storageClass: ""
     # -- Resources of the bundled ClickHouse.
     resources:
-      requests: {cpu: 500m, memory: 1Gi}
-      limits: {cpu: "2", memory: 3Gi}
+      requests: { cpu: 500m, memory: 1Gi }
+      limits: { cpu: "2", memory: 3Gi }
     # -- Node selector of the bundled ClickHouse. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled ClickHouse. Empty: the top-level `tolerations`.
@@ -396,7 +404,7 @@ redis:
     host: ""
     # -- [REDIS_PORT]
     port: 6379
-    # -- Connect the app over TLS (`rediss://`). fi-collector has no Redis TLS: with TLS on it runs without Redis (key revocation then reaches it through its 5-minute auth cache).
+    # -- Connect the app and fi-collector over verified TLS. The collector receives FI_AUTH_REDIS_ADDR, its password reference and FI_AUTH_REDIS_TLS in both TLS and plain modes; TLS verifies the server certificate and hostname, with no plaintext fallback. Use global.caBundle for a private CA.
     tls: false
   bundled:
     image:
@@ -421,8 +429,8 @@ redis:
       storageClass: ""
     # -- Resources of the bundled Redis.
     resources:
-      requests: {cpu: 50m, memory: 64Mi}
-      limits: {cpu: 500m, memory: 512Mi}
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 512Mi }
     # -- Node selector of the bundled Redis. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled Redis. Empty: the top-level `tolerations`.
@@ -463,8 +471,8 @@ temporal:
     goMemLimit: 512MiB
     # -- Resources of the bundled Temporal server.
     resources:
-      requests: {cpu: 100m, memory: 256Mi}
-      limits: {cpu: "1", memory: 1Gi}
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
     # -- Node selector of the bundled Temporal. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled Temporal. Empty: the top-level `tolerations`.
@@ -522,8 +530,8 @@ objectStorage:
       downloadPort: 9005
     # -- Resources of the bundled object storage.
     resources:
-      requests: {cpu: 100m, memory: 256Mi}
-      limits: {cpu: "1", memory: 1Gi}
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
     # -- Node selector of the bundled object storage. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled object storage. Empty: the top-level `tolerations`.
@@ -574,8 +582,8 @@ backend:
     annotations: {}
   # -- Resources of each API pod.
   resources:
-    requests: {cpu: 250m, memory: 768Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "2", memory: 2Gi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the API.
     enabled: false
@@ -651,8 +659,8 @@ worker:
     maxConcurrentWorkflowTasks: 50
     # -- Resources of each all-queues worker pod.
     resources:
-      requests: {cpu: 250m, memory: 1Gi}
-      limits: {cpu: "2", memory: 3Gi}
+      requests: { cpu: 250m, memory: 1Gi }
+      limits: { cpu: "2", memory: 3Gi }
     autoscaling:
       # -- HorizontalPodAutoscaler for the all-queues worker.
       enabled: false
@@ -671,8 +679,8 @@ worker:
     enabled: true
     # -- Resources of the exact-aggregation worker.
     resources:
-      requests: {cpu: 100m, memory: 512Mi}
-      limits: {cpu: "1", memory: 1536Mi}
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { cpu: "1", memory: 1536Mi }
   # -- Dedicated per-queue Deployments, added to the all-queues worker (which stops polling them, see `allQueues.excludeDedicatedQueues`), e.g. `[{name: tasks_s, replicas: 2, maxConcurrentActivities: 200}]`; examples/sizes/large.yaml has a full split. Each entry: name (required), replicas, maxConcurrentActivities, maxConcurrentWorkflowTasks, resources, image, extraEnv (wins over `worker.extraEnv` and the chart's own values), autoscaling {enabled, minReplicas, maxReplicas, targetCPUUtilizationPercentage, targetMemoryUtilizationPercentage, behavior} (gaps filled from `allQueues.autoscaling`), gracefulShutdownSeconds, preStopSleepSeconds, pdb {enabled, maxUnavailable}, and nodeSelector, tolerations, affinity, topologySpreadConstraints, priorityClassName, podAnnotations, podLabels (each falling back to the `worker` one).
   queues: []
   pdb:
@@ -728,8 +736,8 @@ frontend:
     annotations: {}
   # -- Resources of each UI pod.
   resources:
-    requests: {cpu: 50m, memory: 64Mi}
-    limits: {cpu: 500m, memory: 256Mi}
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the UI.
     enabled: false
@@ -806,8 +814,8 @@ fiCollector:
   maxConnections: 0
   # -- Resources of each collector pod.
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: "1", memory: 1Gi}
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 1Gi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the collector.
     enabled: false
@@ -869,7 +877,7 @@ agentccGateway:
   terminationGracePeriodSeconds: 45
   # -- Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`.
   existingConfigMap: ""
-  # -- Gateway configuration (agentcc-gateway/config.example.yaml documents every field). `${VAR}` expands from the environment: provider keys come from `secrets.llm`. `server.port` is also the container port: the chart pins it with the AGENTCC_PORT variable, which wins over an `existingConfigMap` too.
+  # -- Gateway configuration (agentcc-gateway/config.example.yaml documents every field). `${VAR}` expands from the environment: provider keys come from `secrets.llm`. `server.port` is also the container port: the chart pins it with the AGENTCC_PORT variable, which wins over an `existingConfigMap` too. Provider `max_concurrent` and `conn_pool_size` are unset by default (1024 remote, 10 local); explicit overrides win. `queue_timeout` defaults to 5s; saturation returns HTTP 503 `provider_busy` with `Retry-After: 1` before streaming starts.
   config:
     server:
       port: 8080
@@ -887,8 +895,8 @@ agentccGateway:
         api_key: ${OPENAI_API_KEY}
         api_format: openai
         default_timeout: 60s
-        max_concurrent: 100
-        conn_pool_size: 100
+        # Leave max_concurrent and conn_pool_size unset: remote entries default
+        # to 1024 (local entries to 10). Explicit operator overrides still win.
         models:
           - gpt-4o
           - gpt-4o-mini
@@ -896,11 +904,47 @@ agentccGateway:
           - gpt-3.5-turbo
           - o1
           - o1-mini
+    managed:
+      # DEFAULT OFF. [cat2] enables the exact CAT-2 families, never mixed token chains.
+      # Node startup config: requires a rollout/restart, not an org-config refresh.
+      catalogue_families: []
     control_plane:
       # Replicas re-read keys and org settings from the backend this often.
       sync_interval: 60s
     logging:
       level: info
+    # The guardrail plugin, with no rule of the chart's own: every replica
+    # runs the checks an organization saves in the console (Gateway >
+    # Guardrails), and only those; an organization that saves no check is
+    # not checked. With enabled: false no check runs, an organization's
+    # included, and the console says guardrails are off.
+    guardrails:
+      enabled: true
+    # Org settings (Gateway > Org Config): with the control plane sync below,
+    # every replica enforces an org's ip_acl, budgets, tool_policy and
+    # alerting as the org saves them. The node switches of those four blocks
+    # stay off here; turning one on adds rules for every request. An org's
+    # ip_acl covers model calls (chat, responses, messages, embeddings,
+    # images, audio, rerank, OCR, search, async jobs) and the models list,
+    # files, job reads, MCP and the A2A request. A /-/batches item is judged
+    # by the address that submitted the batch (for a console batch, the
+    # backend's). An A2A task's model call is judged by the address of the
+    # A2A request that started it. IP rules read the TCP peer unless `server.trusted_proxies` (or
+    # `server.trusted_hops`) is set in this config: behind an ingress or load
+    # balancer set it. Until one is set an org's ip_acl is not enforced
+    # (`GET /-/config` org_sections_not_enforced: "client IP unknown
+    # (trusted_proxies not set)"), since every caller would seem to be the
+    # proxy. Backend calls made with an org's key (the Test Playground,
+    # console batch jobs) come from the backend's
+    # address: an org allow list without it refuses them. An org's budget
+    # starts from the period's spend the backend recorded when the replica
+    # started; one turned on while it runs counts from then until the next
+    # restart, which counts the whole period. An org's
+    # cache needs cache.enabled here; its rate limits need
+    # rate_limiting.enabled (on by default). With more than one replica keep
+    # redis on (enabled: auto does it): budget spend and rate limits are then
+    # shared, otherwise each replica counts its own. GET /-/config on the
+    # gateway lists what it enforces (org_sections_enforced).
   # -- Pull keys and org settings from the backend on start [AGENTCC_CONTROL_PLANE_URL, AGENTCC_SYNC_ON_STARTUP], so every replica and a restarted pod serve the same keys.
   controlPlaneSync: true
   # -- Let org providers use base URLs on private networks, such as a local Ollama or vLLM [AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS], for the gateway and the backend. Loopback, link-local and cloud metadata addresses stay refused. Only when everyone who can add a provider is trusted: it puts every in-cluster service in reach of a provider URL. Gateway and backend images from before this setting ignore it and refuse every private URL.
@@ -926,8 +970,8 @@ agentccGateway:
   goMemLimit: 450MiB
   # -- Resources of each gateway pod.
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: "1", memory: 512Mi}
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the gateway.
     enabled: false
@@ -967,6 +1011,211 @@ agentccGateway:
   # -- Topology spread constraints. Empty: the top-level `topologySpreadConstraints`.
   topologySpreadConstraints: []
 
+# -----------------------------------------------------------------------------
+# Omega: the gateway (services/omega-gateway), the fail-closed edge between a
+# Future AGI browser session and Omega EE, and the session exchange on the API
+# that mints its one-use keys. Omega EE itself runs from its own chart
+# (omega-os). Off by default: with omega.enabled false nothing here renders.
+# -----------------------------------------------------------------------------
+omega:
+  # -- Run the Omega gateway, route `/omega/api` on the UI host to it, and give the API the session exchange's signing key, and the API and workers the revocation channel to Omega EE. Needs `omega.issuer`, `omega.hostEvents`, `omega.gateway.image`, `omega.gateway.ee.url`, `omega.gateway.jwks` and `omega.gateway.rateLimitRedis`; the chart says which is missing.
+  enabled: false
+  issuer:
+    # -- [OMEGA_SQUAD_DELEGATION_ISSUER, OMEGA_ASSERTION_ISSUER] Issuer URL the session exchange signs as (https). Omega EE trusts it through the matching public JWKS (omega-os `hostAssertions.issuer`).
+    url: ""
+    # -- [OMEGA_SQUAD_DELEGATION_KEY_ID] `kid` of the signing key; the public JWKS needs a key with this id.
+    keyId: ""
+    privateKey:
+      # -- Existing Secret with the RSA private key (2048 bits or more, PEM), mounted read-only at /var/run/secrets/futureagi/omega-issuer with mode 0440: owned by root and readable through the pod's fsGroup, never by other users [OMEGA_SQUAD_DELEGATION_PRIVATE_KEY_FILE]. Only the API pods mount it.
+      existingSecret: ""
+      # -- Key of the PEM in `existingSecret`.
+      key: private.pem
+  hostEvents:
+    # -- [OMEGA_HOST_EVENTS_URL] Omega EE's revocation receiver as the API and worker pods reach it inside the cluster, `https://<ee>/host/events` (a DNS name or IPv4 address, an optional port 1-65535, no user, query or fragment), e.g. `https://omega-os.omega.svc:8443/host/events`. Set it here only: an extraEnv or secrets.extra entry naming any OMEGA_HOST_EVENTS_* variable is refused. Required with `omega.enabled`: without it a member removed or downgraded here keeps their open Omega Console streams for up to 15 minutes.
+    url: ""
+    # -- [OMEGA_HOST_EVENTS_KEY_ID] Id of the shared secret: the `keyId` Omega EE lists it under in its OMEGA_HOST_EVENTS_SECRETS_FILE (letters, digits, `.` `_` `-`, starting with a letter or digit; at most 64). Required with `omega.enabled`.
+    keyId: ""
+    # -- Existing Secret with the raw shared secret (32 bytes or more), e.g. `omega-host-events`, mounted read-only at /var/run/secrets/futureagi/omega-host-events with mode 0440: owned by root and readable through the pod's fsGroup, never by other users [OMEGA_HOST_EVENTS_SECRET_FILE]. The API and every worker pod mount it. Required with `omega.enabled`. EE holds the same secret in its own format (README "Omega host events secret").
+    existingSecret: ""
+    # -- Key of the shared secret in `existingSecret`.
+    secretKey: secret
+    # -- [OMEGA_HOST_EVENTS_ALLOW_HTTP] Accept a plain `http` `url`, on a private network only: the events are signed, not encrypted. Off: the chart, and the pods, refuse it.
+    allowHttp: false
+    ca:
+      # -- Existing Secret with the PEM CA that signed Omega EE's certificate at `url` (e.g. omega-internal-ca), mounted read-only at /etc/futureagi/omega-host-events-ca on the API and worker pods [OMEGA_HOST_EVENTS_CA_FILE]. The sender checks EE's certificate against it alone, and no other outbound call of those pods changes its trust. Empty, with `existingConfigMap` empty too: `omega.gateway.upstreamCa`, the CA the gateway trusts EE with; with neither, the pods' default trust (`global.caBundle` when set, else public roots). Use this or `existingConfigMap`.
+      existingSecret: ""
+      # -- Existing ConfigMap with it instead.
+      existingConfigMap: ""
+      # -- Key of the PEM CA.
+      key: ca.crt
+  internalTls:
+    # -- A TLS listener on the API pods for the gateway and Omega EE (the session exchange and the observe-target lookup): a ghostunnel sidecar in front of the API's own port, added to the API Service as `https-internal`. Off: set `omega.gateway.sessionExchangeUrl` to another HTTPS URL of the API.
+    enabled: true
+    # -- Container and Service port of the internal TLS listener.
+    port: 8443
+    # -- Existing `kubernetes.io/tls` Secret with the listener's certificate and key. Its SANs must cover the API Service's names: `<backend>`, `<backend>.<namespace>`, `<backend>.<namespace>.svc` and `<backend>.<namespace>.svc.cluster.local`. Empty: a cert-manager Certificate from `certManager.issuerRef`.
+    existingSecret: ""
+    certManager:
+      # -- cert-manager issuer of the listener's certificate when `existingSecret` is empty, e.g. `{kind: Issuer, name: omega-internal-ca}`: a CA issuer whose CA the gateway (`omega.gateway.upstreamCa`) and EE trust.
+      issuerRef: {}
+      # -- Lifetime of the certificate.
+      duration: 2160h
+      # -- Renew it this long before it expires. The sidecar re-reads the files every `reloadInterval`.
+      renewBefore: 360h
+    # -- How often the sidecar re-reads its certificate and key (ghostunnel `--timed-reload`).
+    reloadInterval: 300s
+    image:
+      # -- Registry of the TLS sidecar image.
+      registry: docker.io
+      # -- Repository of the TLS sidecar image (ghostunnel: a TCP-level TLS proxy, so event streams and uploads pass unbuffered).
+      repository: ghostunnel/ghostunnel
+      # -- Tag.
+      tag: v1.11.3
+      # -- Digest of that tag's multi-arch index; keep it pinned.
+      digest: sha256:2599b8a04bae16d70a4209495618dea61b46a00a9a05fcf74da282688ad3517f
+      # -- Pull policy. Empty: `image.pullPolicy`.
+      pullPolicy: ""
+    # -- Resources of the TLS sidecar.
+    resources:
+      requests: { cpu: 20m, memory: 32Mi }
+      limits: { cpu: 500m, memory: 128Mi }
+    # -- Peers (NetworkPolicy `from` entries) that may reach the listener besides this release's pods, with `networkPolicy.enabled`: Omega EE's pods, e.g. `[{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: omega}}, podSelector: {matchLabels: {app.kubernetes.io/name: omega-os}}}]`. Empty: this release's pods only.
+    allowFrom: []
+  gateway:
+    image:
+      # -- Registry. Empty: `image.registry`.
+      registry: ""
+      # -- Repository of the gateway image (built from services/omega-gateway; not published with the platform yet).
+      repository: futureagi/omega-gateway
+      # -- Tag. Required with `omega.enabled` (or a digest): no gateway image is published under the chart's appVersion.
+      tag: ""
+      # -- Optional digest (`sha256:...`) pinned after the tag.
+      digest: ""
+      # -- Pull policy. Empty: `image.pullPolicy`.
+      pullPolicy: ""
+    # -- Replicas when autoscaling is off. Rate limits hold across replicas (they live in Redis).
+    replicas: 2
+    # -- Seconds each gateway pod waits before it stops (preStop, the kubelet's sleep action: Kubernetes 1.30 or newer), so Services stop sending it requests first. 0: none.
+    preStopSleepSeconds: 5
+    # -- [OMEGA_GATEWAY_DRAIN_MS] On SIGTERM the gateway ends open event streams at once (browsers reconnect to another replica) and gives other in-flight requests this long (0-30000).
+    drainMs: 10000
+    # -- Seconds a stopping gateway gets: at least the preStop sleep + `drainMs` + 5 s (its last span flush). The chart refuses less.
+    terminationGracePeriodSeconds: 25
+    serviceAccount:
+      # -- Run the gateway, the internet-facing pod, as its own ServiceAccount instead of the API's, so a workload-identity grant made to the API's account (the issuer key's secret, a cloud role) never reaches it. The gateway calls no Kubernetes API, so its token is never mounted, whatever `serviceAccount.automountServiceAccountToken` says.
+      create: true
+      # -- Name of the gateway's ServiceAccount. Empty: <fullname>-omega-gateway when created, else the API's (`serviceAccount.name`). Set it with `create: false` to use one made outside the chart, e.g. bound to a cloud identity before the install.
+      name: ""
+      # -- Annotations of the gateway's ServiceAccount, e.g. a cloud identity binding.
+      annotations: {}
+    ee:
+      # -- [OMEGA_REMOTE_BASE_URL] HTTPS URL of Omega EE as the gateway reaches it inside the cluster, e.g. `https://omega-os.omega.svc:8443` (omega-os with `tls.enabled`). Required. Never route browsers to EE directly.
+      url: ""
+      # -- [OMEGA_GATEWAY_EE_READY_PATH] EE path probed by gateway `/readyz`; probes require HTTP 200, `application/json`, and a JSON object containing `status: "ready"` and `ready: true` in at most 64 KiB; redirects and other responses fail; results are cached.
+      readyPath: /readyz
+    # -- [OMEGA_SESSION_EXCHANGE_URL] HTTPS URL of the session exchange. Empty: the API's internal TLS listener, `https://<backend>.<namespace>.svc:<omega.internalTls.port>/accounts/omega/session-exchange/`.
+    sessionExchangeUrl: ""
+    jwks:
+      # -- Existing ConfigMap with the issuer's public JWKS (`{"keys": [...]}`, public keys only), mounted at /etc/omega-gateway/jwks [OMEGA_ASSERTION_JWKS_FILE]. The gateway checks every assertion's signature with it. Use this or `existingSecret`.
+      existingConfigMap: ""
+      # -- Existing Secret with the JWKS instead of a ConfigMap.
+      existingSecret: ""
+      # -- Key of the JWKS in the ConfigMap or Secret.
+      key: jwks.json
+    rateLimitRedis:
+      # -- Existing Secret with the rate-limit store's URL, `redis://` or `rediss://` with a database 0-15 [OMEGA_GATEWAY_RATE_LIMIT_REDIS_URL]. Required: limits must hold across replicas. If Redis fails, reads fall back to per-replica limits and writes and model starts are refused (owner decision OD-07).
+      existingSecret: ""
+      # -- Key of the URL in `existingSecret`.
+      key: url
+    # -- [OMEGA_ALLOWED_ORIGINS] HTTPS browser origins allowed to call the gateway. Empty: the UI's URL (`urls.app`, else the ingress or Gateway API host).
+    allowedOrigins: []
+    # -- [OMEGA_GATEWAY_TRUSTED_PROXY_HOPS] Proxies in front of the gateway whose X-Forwarded-For entries are believed, 0-5 (an ingress controller in front is 1; add one per load balancer that appends to it).
+    trustedProxyHops: 1
+    # -- [OMEGA_MAX_BODY_BYTES] Largest JSON request body, in bytes.
+    maxBodyBytes: 1048576
+    # -- [OMEGA_MAX_BUNDLE_BYTES] Largest deployment bundle or sandbox file upload, in bytes. Keep the ingress's body limit at least this (`omega.ingress.annotations`).
+    maxBundleBytes: 67108864
+    upstreamCa:
+      # -- Existing Secret with the PEM CA that signed EE's and the internal TLS listener's certificates, added to Node's trust store [NODE_EXTRA_CA_CERTS]. Empty: `global.caBundle` when set, else public roots only. Use this or `existingConfigMap`. The API and worker pods check EE's certificate for `omega.hostEvents` against it too, unless `omega.hostEvents.ca` names another.
+      existingSecret: ""
+      # -- Existing ConfigMap with it instead.
+      existingConfigMap: ""
+      # -- Key of the PEM CA.
+      key: ca.crt
+    console:
+      # -- Serve the Omega Console on its own origin from the gateway's second listener [OMEGA_CONSOLE_ORIGIN] (Console plan P6, D1): its own CSP with `frame-ancestors` the UI origin, pre-minted keys only. Needs `host`, and a gateway image that holds the Console build (`staticDir`).
+      enabled: false
+      # -- Host of the Console origin, routed by the Omega Ingress or Gateway API route. It must differ from the UI and API hosts, and `ingress.tls` (or the Gateway listener) must cover it.
+      host: ""
+      # -- [OMEGA_CONSOLE_STATIC_DIR] Absolute path of the Console build inside the image. Empty: the Console origin serves its API only.
+      staticDir: ""
+      # -- [OMEGA_CONSOLE_TRUSTED_TYPES] `report` or `enforce`.
+      trustedTypes: report
+    otlp:
+      # -- [OMEGA_GATEWAY_OTLP_TRACES_URL] HTTPS OTLP/HTTP traces endpoint of a Future AGI Observe project for the gateway's request spans. Empty: no spans (the JSON access log on stdout stays).
+      tracesUrl: ""
+      # -- [OMEGA_GATEWAY_OTLP_PROJECT] Observe project of the spans.
+      project: omega-console-ops
+      credentials:
+        # -- Existing Secret with `{"apiKey": ..., "secretKey": ...}` for that project, mounted read-only [OMEGA_GATEWAY_OTLP_CREDENTIALS_FILE].
+        existingSecret: ""
+        # -- Key of the JSON in `existingSecret`.
+        key: credentials.json
+    service:
+      # -- Service type of the gateway. Keep it ClusterIP: browsers reach it through the ingress.
+      type: ClusterIP
+      # -- Service port of the gateway's API listener.
+      port: 8080
+      # -- Service port of the Console-origin listener (`console.enabled`).
+      consolePort: 8081
+      # -- Service annotations.
+      annotations: {}
+    # -- Resources of each gateway pod. Responses are piped, never buffered, so memory stays flat during large downloads.
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: "1", memory: 256Mi }
+    autoscaling:
+      # -- HorizontalPodAutoscaler for the gateway.
+      enabled: false
+      # -- Minimum replicas.
+      minReplicas: 2
+      # -- Maximum replicas.
+      maxReplicas: 6
+      # -- Target average CPU utilization (percent of requests).
+      targetCPUUtilizationPercentage: 70
+      # -- Target average memory utilization (percent of requests). Empty: not used.
+      targetMemoryUtilizationPercentage: ""
+      # -- HorizontalPodAutoscaler `behavior` (autoscaling/v2). Empty: the Kubernetes defaults.
+      behavior: {}
+    pdb:
+      # -- PodDisruptionBudget for the gateway.
+      enabled: true
+      # -- At most this many gateway pods down during voluntary disruptions.
+      maxUnavailable: 1
+    # -- Extra environment variables of the gateway, as `NAME: value` (they win over the chart's).
+    extraEnv: {}
+    # -- Pod annotations.
+    podAnnotations: {}
+    # -- Extra pod labels.
+    podLabels: {}
+    # -- Merged over the chart's pod security context (non-root uid 1000, the image's `node` user).
+    podSecurityContext: {}
+    # -- Merged over the chart's container security context (read-only root filesystem).
+    containerSecurityContext: {}
+    # -- Node selector. Empty: the top-level `nodeSelector`.
+    nodeSelector: {}
+    # -- Tolerations. Empty: the top-level `tolerations`.
+    tolerations: []
+    # -- Affinity. Empty: the top-level `affinity`.
+    affinity: {}
+    # -- Topology spread constraints. Empty: the top-level `topologySpreadConstraints`.
+    topologySpreadConstraints: []
+  ingress:
+    # -- Annotations of the Omega Ingress (`/omega/api` on the UI host, and the Console host), over `ingress.annotations`. Event streams need unbuffered responses and long read timeouts, uploads a body limit of at least `omega.gateway.maxBundleBytes`; ingress-nginx: `nginx.ingress.kubernetes.io/proxy-buffering: "off"`, `proxy-request-buffering: "off"`, `proxy-read-timeout: "3600"`, `proxy-send-timeout: "3600"`, `proxy-body-size: 64m`.
+    annotations: {}
+    # -- Gateway API only: timeout of the `/omega/api` route (event streams stay open for minutes). Empty: the Gateway's default.
+    timeout: 1h
+
 serving:
   # -- Embedding model server for embedding-based evals, knowledge bases, Vector DB columns and (with an Enterprise Edition license) Error Feed clustering [MODEL_SERVING_URL]. Off: those features are unavailable and the setup screen marks them off.
   enabled: false
@@ -985,8 +1234,8 @@ serving:
   replicas: 1
   # -- Resources of each model server pod (add `nvidia.com/gpu` for the GPU image).
   resources:
-    requests: {cpu: 500m, memory: 2Gi}
-    limits: {cpu: "4", memory: 6Gi}
+    requests: { cpu: 500m, memory: 2Gi }
+    limits: { cpu: "4", memory: 6Gi }
   persistence:
     # -- Keep downloaded models on a volume (ReadWriteOnce: one replica). Off: an emptyDir, downloaded again after each restart.
     enabled: false
@@ -1031,8 +1280,8 @@ codeExecutor:
   replicas: 1
   # -- Resources of each sandbox pod.
   resources:
-    requests: {cpu: 250m, memory: 256Mi}
-    limits: {cpu: "2", memory: 1Gi}
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "2", memory: 1Gi }
   # -- With `networkPolicy.enabled`: let eval code reach the internet (every private, link-local and metadata range stays blocked). `false` blocks all egress but DNS.
   allowInternetEgress: true
   # -- Extra environment variables, as `NAME: value`.
@@ -1047,6 +1296,70 @@ codeExecutor:
   tolerations: []
   # -- Affinity. Empty: the top-level `affinity`.
   affinity: {}
+
+# -----------------------------------------------------------------------------
+# Omega Hub: the agent registry in the backend (futureagi/omega_hub) and its
+# checker (services/omega-hub-checker), which claims each upload, judges it and
+# runs its keyless test and demo with the network off on the runner host: a
+# dedicated machine whose Docker runs containers on gVisor (deploy/hub-runner).
+# README.md, "Omega Hub".
+# -----------------------------------------------------------------------------
+hub:
+  # -- Run the Hub checker, give the backend, workers and bootstrap job the Hub's settings, and turn on the UI's Omega products (`VITE_OMEGA_CONSOLE`), which show to the organisations their rollout admits (`manage.py omega_rollout`). Needs `hub.checker.image` and `hub.checker.runner`. Off: no Hub object renders.
+  enabled: false
+  # -- [OMEGA_HUB_MAINTAINER_ORG_ID] id of the organisation whose Admins and Owners can be granted Hub maintainer (`manage.py omega_hub_maintainer grant`). Empty until it exists: nobody can review, so nothing is listed.
+  maintainerOrgId: ""
+  # -- [OMEGA_HUB_BUCKET] private bucket of the Hub's uploads and bundles, in `objectStorage`; created on first use, with no bucket policy.
+  bucket: omega-hub
+  # -- [OMEGA_HUB_APP_URL] the Hub in the UI, for the links in its emails. Empty: `<urls.app>/dashboard/hub`.
+  appUrl: ""
+  # -- [OMEGA_HUB_PUBLIC_API_URL] the Hub's API as `omega hub` reaches it. Empty: `<urls.api>/omega-hub/v1`.
+  publicApiUrl: ""
+  # -- [OMEGA_HUB_TRUSTED_PROXY_DEPTH] proxies in front of the backend that append to X-Forwarded-For (an ingress controller is 1). Empty: the Hub trusts the connection's address only, so behind a proxy every anonymous client shares one throttle.
+  trustedProxyDepth: ""
+  # -- [OMEGA_HUB_CLIENT_IP_HEADER] a header your edge proxy always overwrites with the client's address, used instead of the depth.
+  clientIpHeader: ""
+  checker:
+    # -- [OMEGA_HUB_CHECKER_TOKEN] existing Secret with the key OMEGA_HUB_CHECKER_TOKEN, which the checker and the backend share. Empty: generated into <fullname>-secrets and kept on upgrade. Required with Argo CD, which cannot `lookup` the generated Secret.
+    tokenSecret: ""
+    image:
+      # -- Registry. Empty: `image.registry`.
+      registry: ""
+      # -- Repository of the checker image (services/omega-hub-checker/Dockerfile).
+      repository: futureagi/omega-hub-checker
+      # -- Tag. Required (or `digest`): the checker is not yet published with the chart's release.
+      tag: ""
+      # -- Optional digest (`sha256:...`) pinned after the tag.
+      digest: ""
+      # -- Pull policy. Empty: `image.pullPolicy`.
+      pullPolicy: ""
+    # -- Checkers. Each claims one upload at a time under a lease; a stopped checker's job is claimed again when its lease expires.
+    replicas: 1
+    # -- Resources of each checker pod (the uploads run on the runner host, not here).
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
+    runner:
+      # -- [OMEGA_HUB_RUNNER_IMAGE] required: the image every upload runs in on the runner host, pinned by digest (the release manifest's `runtimes.hubRunner`). The checker pulls it there when it is missing.
+      image: ""
+      # -- [DOCKER_HOST] required: the runner host's Docker, `tcp://<host>:2376` (mutual TLS). The checker refuses to start unless its default runtime is gVisor.
+      dockerHost: ""
+      # -- Required: Secret with the runner host's client certificate, keys `ca.pem`, `cert.pem` and `key.pem`.
+      tlsSecret: ""
+      # -- With `networkPolicy.enabled`: where the checker may reach the runner host's Docker port, as NetworkPolicy `to` peers, e.g. `[{ipBlock: {cidr: 10.20.0.7/32}}]`. Empty: any address, on that port only.
+      networkPolicyTo: []
+    # -- Extra environment variables, as `NAME: value`.
+    extraEnv: {}
+    # -- Pod annotations.
+    podAnnotations: {}
+    # -- Extra pod labels.
+    podLabels: {}
+    # -- Node selector. Empty: the top-level `nodeSelector`.
+    nodeSelector: {}
+    # -- Tolerations. Empty: the top-level `tolerations`.
+    tolerations: []
+    # -- Affinity. Empty: the top-level `affinity`.
+    affinity: {}
 
 # -----------------------------------------------------------------------------
 # Bootstrap job: `python manage.py bootstrap_install` (migrations, seeds,
@@ -1069,8 +1382,8 @@ bootstrap:
   ttlSecondsAfterFinished: 86400
   # -- Resources of the bootstrap job.
   resources:
-    requests: {cpu: 250m, memory: 768Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "2", memory: 2Gi }
   serviceAccount:
     # -- Create a dedicated ServiceAccount for the job (it exists before any other resource on install).
     create: true
@@ -1161,7 +1474,7 @@ gatewayApi:
   llmGateway:
     # -- An HTTPRoute to the LLM gateway (agentcc-gateway), for applications outside the cluster; every call needs a virtual key. It also opens the gateway in the NetworkPolicies.
     enabled: false
-    # -- Hostname of the LLM gateway. It must differ from the app and API hosts: each route sends `/` to its own service.
+    # -- Hostname of the LLM gateway. It must differ from the app and API hosts: each route sends `/` to its own service. With the route on, it is also the backend's public gateway origin [AGENTCC_GATEWAY_PUBLIC_URL], `https://<host>` (`http` when `gatewayApi.tls` is false), on which the backend builds the virtual-server addresses it hands Omega EE. A gateway exposed another way sets AGENTCC_GATEWAY_PUBLIC_URL in `config.extraEnv`.
     host: ""
     # -- Route timeout (Gateway API duration) of LLM calls; keep it above the gateway's `config.server.write_timeout`. Empty: the Gateway's default.
     timeout: 310s
@@ -1209,3 +1522,35 @@ topologySpread:
 priorityClassName: ""
 # -- Extra labels on every resource.
 commonLabels: {}
+
+# Hosted preparation is explicitly selected; it does not authorize deployment.
+hosted:
+  # -- Explicit single-gateway launch mode: requires exactly one replica and autoscaling off; omits the gateway PDB so drains cannot be blocked. Rolling updates retain maxSurge=1 and maxUnavailable=0. When false, hosted requires at least two replicas.
+  singleReplica: false
+  # -- Enable strict operator-owned hosted preparation policy and dependency readiness.
+  enabled: false
+  # -- Explicit gateway-only AGENTCC_HOSTED_ONEKEY_ACTIVATION. Default OFF; requires the final money pair, strict walks, coordinated backend/gateway deploy, non-evicting Redis and owner go. Only verified HTTPS OpenAI-compatible one-key providers; no native formats or fallback profiles.
+  onekeyActivation: false
+  # -- Exact reviewed source revision of the backend/operator/gateway candidate; required for hosted.
+  releaseRevision: ""
+  # -- SHA-256 of the effective mounted existingConfigMap; required only when hosted uses one. Runtime still validates the mounted bytes.
+  existingConfigChecksum: ""
+  migration:
+    # -- Explicit standalone operator Job: empty emits none; schema, backfill or check emits a non-hook Job. Never enables bootstrap_install.
+    phase: ""
+    # -- Apply the approved phase rather than plan it. Requires independently rehearsed sequence and operator go.
+    apply: false
+    # -- Operator assertion of the approved quiet window, write and worker/schedule quiescence. Not evidence by itself.
+    quiesced: false
+    # -- Backfill apply requires the exact revision of the already rolled-out compatible runtime.
+    compatibleRuntimeRevision: ""
+    # -- Kubernetes deadline of the operator Job, in seconds. At least the operator's 900 s schema deadline plus 30 s process grace (930), so Kubernetes never stops a valid schema phase before the operator's own deadline handling.
+    activeDeadlineSeconds: 960
+# Independent MCP deployment gates; never org-writable.
+mcpFeatures:
+  # -- [AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED] Enable upstream OAuth app connections after their acceptance walk passes. Independent of core MCP.
+  upstreamOAuth: false
+  # -- [AGENTCC_MCP_CLIENT_OAUTH_ENABLED] Enable gateway MCP client OAuth after its acceptance walk passes; also configure mcp.oauth and the issuer.
+  clientOAuth: false
+  # -- [AGENTCC_MCP_K2_APPS_ENABLED] Enable K2 Google, Microsoft and Arcade apps after their acceptance walk passes. OAuth apps additionally require upstreamOAuth.
+  k2Apps: false

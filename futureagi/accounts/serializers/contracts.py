@@ -597,15 +597,9 @@ class PasskeyRenameResponseSerializer(serializers.Serializer):
     name = serializers.CharField()
 
 
-class SecretKeyDataResponseSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    api_key = serializers.CharField()
-    secret_key = serializers.CharField()
-
-
-class SecretKeysResponseSerializer(serializers.Serializer):
-    status = serializers.CharField()
-    data = SecretKeyDataResponseSerializer()
+class SecretKeysRetiredResponseSerializer(serializers.Serializer):
+    code = serializers.CharField(default="org_keys_retired")
+    create_url = serializers.CharField()
 
 
 class SecretKeyListMetadataSerializer(serializers.Serializer):

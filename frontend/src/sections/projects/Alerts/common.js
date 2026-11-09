@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import { endOfToday, sub } from "date-fns";
 import _ from "lodash";
 import { formatDate } from "src/utils/report-utils";
@@ -5,7 +6,8 @@ import { getYAxisUnit } from "../LLMTracing/GraphSection/common";
 import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
 
 // Helper function to format y-axis values with proper precision
-const formatYAxisValue = (value) => {
+const formatYAxisValue = (value, money = false) => {
+  if (money) return formatExactMoney(value, { prefix: "" });
   if (value == null) return "0.00";
 
   const absValue = Math.abs(value);
@@ -680,7 +682,12 @@ export function getCompareChartConfig(
         text: "Value",
       },
       labels: {
-        formatter: formatYAxisValue,
+        formatter: (value) =>
+          formatYAxisValue(
+            value,
+            getYAxisUnit(_.snakeCase(_.toLower(customOptions?.seriesName))) ===
+              "$",
+          ),
       },
     },
     fill: {
@@ -808,7 +815,12 @@ export function getSimpleLineChartConfig(
       max: yAxisMax,
       labels: {
         style: { fontSize: "12px", colors: isDark ? "#a1a1aa" : "#999" },
-        formatter: formatYAxisValue,
+        formatter: (value) =>
+          formatYAxisValue(
+            value,
+            getYAxisUnit(_.snakeCase(_.toLower(customOptions?.seriesName))) ===
+              "$",
+          ),
       },
       title: {
         text:

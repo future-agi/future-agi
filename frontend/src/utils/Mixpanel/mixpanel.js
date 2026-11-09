@@ -6,13 +6,28 @@ import logger from "../logger";
 import { Events } from "./EventNames";
 import { MIXPANEL_HOST } from "src/config-global";
 import { isSessionReplayBlockedPath } from "src/utils/sessionReplayPolicy";
+import { installMixpanelReplayGuard } from "src/sections/omega/embed/telemetry/mixpanel-replay";
+import { cleanStoredMixpanelPersistence } from "src/sections/omega/embed/telemetry/mixpanel-persistence";
+import {
+  normalizeMixpanelProperties,
+  scrubMixpanelProperties,
+  shouldDropMixpanelEvent,
+} from "src/sections/omega/embed/telemetry/sdk-guards";
+
+// Replay stays off on the configured heavy routes and on every page that
+// frames an Omega surface (Studio, the Console).
+const isReplayBlockedPath = (pathname) =>
+  isSessionReplayBlockedPath(pathname) || shouldDropMixpanelEvent(pathname);
 
 // Mixpanel is opt-in: skip init entirely on OSS builds where no token
 // is set. mixpanel-browser's init(undefined, ...) silently produces a
 // half-broken object that throws on every track() — flooding the console
 // with "Cannot read properties of undefined (reading 'disable_all_events')".
 const MIXPANEL_TOKEN = import.meta.env.VITE_MIXPANEL_TOKEN;
-const MIXPANEL_ENABLED = Boolean(MIXPANEL_TOKEN);
+// Existing queues can flush inside init before hooks run. Fail closed if the
+// upgrade cleanup cannot inspect and rewrite this project's persisted state.
+const MIXPANEL_ENABLED =
+  Boolean(MIXPANEL_TOKEN) && cleanStoredMixpanelPersistence(MIXPANEL_TOKEN);
 const runtimeSessionReplayPercent =
   typeof window === "undefined"
     ? undefined
@@ -30,9 +45,12 @@ const MIXPANEL_SESSION_REPLAY_PERCENT = Number.isFinite(
   : 0;
 const INITIAL_PATHNAME =
   typeof window === "undefined" ? "/" : window.location.pathname;
+const mixpanelReplayGuardReady =
+  MIXPANEL_ENABLED && installMixpanelReplayGuard();
 let mixpanelReplayMayBeActive =
+  mixpanelReplayGuardReady &&
   MIXPANEL_SESSION_REPLAY_PERCENT > 0 &&
-  !isSessionReplayBlockedPath(INITIAL_PATHNAME);
+  !isReplayBlockedPath(INITIAL_PATHNAME);
 let mixpanelReplayConfigDisabled = false;
 let mixpanelReplayStopScript = null;
 
@@ -42,6 +60,12 @@ if (MIXPANEL_ENABLED) {
       debug: true,
       persistence: "localStorage",
       ignore_dnt: true,
+      // 2.53.0 applies this AFTER merging SDK defaults and persisted props.
+      // Caller-only scrubbing cannot remove its automatically added URL.
+      property_blacklist: ["$current_url", "$referrer", "$initial_referrer"],
+      // The first track may occur after leaving a credential URL. Do not save
+      // that same-origin document.referrer into SDK localStorage (2.53.0).
+      save_referrer: false,
       // Product analytics events remain enabled. Session replay is intentionally
       // opt-in because multiple rrweb recorders retained hundreds of MiB on
       // mutation-heavy grids. High-mutation routes are blocked even when an
@@ -61,7 +85,7 @@ export const syncMixpanelSessionReplay = (pathname) => {
   if (
     !MIXPANEL_ENABLED ||
     !mixpanelReplayMayBeActive ||
-    !isSessionReplayBlockedPath(pathname)
+    !isReplayBlockedPath(pathname)
   ) {
     return;
   }
@@ -196,21 +220,26 @@ export const PropertyName = {
   goals: "goals",
 };
 
+// Events are dropped on pages that frame an Omega surface, and scrubbed of any
+// connect fragment or local-server URL everywhere else.
 export const trackEvent = (eventName, properties) => {
-  if (!MIXPANEL_ENABLED) return;
+  if (!MIXPANEL_ENABLED || shouldDropMixpanelEvent()) return;
   try {
-    mixpanel.track(eventName, properties);
+    mixpanel.track(
+      eventName,
+      scrubMixpanelProperties(normalizeMixpanelProperties(properties)),
+    );
   } catch (error) {
     logger.error("Failed to track event:", error);
   }
 };
 
 export const trackError = (properties, where) => {
-  if (!MIXPANEL_ENABLED) return;
+  if (!MIXPANEL_ENABLED || shouldDropMixpanelEvent()) return;
   try {
     mixpanel.track(
       `Client Error : ${where || window.location.pathname}`,
-      properties,
+      scrubMixpanelProperties(normalizeMixpanelProperties(properties)),
     );
   } catch (error) {
     logger.error("Failed to track error:", error);
@@ -224,7 +253,10 @@ export const identifyUser = (userData = {}) => {
     logger.error("User ID is required for identification");
     return;
   }
-  if (!MIXPANEL_ENABLED) return;
+  if (!MIXPANEL_ENABLED) {
+    if (window.Appcues) window.Appcues.identify(id, { email });
+    return;
+  }
 
   try {
     // Mixpanel identification

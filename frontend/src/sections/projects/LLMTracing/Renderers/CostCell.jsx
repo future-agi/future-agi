@@ -1,16 +1,14 @@
+import {
+  formatExactMoney,
+  isMoneyValue,
+} from "src/sections/common/format/money";
 import React from "react";
 import PropTypes from "prop-types";
 import { Box, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { formatCost } from "../formatters";
 
 function fmt(v) {
-  if (v == null || Math.abs(v) < 0.0001) return formatCost(v);
-  const abs = Math.abs(v);
-  if (abs >= 1) return `$${v.toFixed(2)}`;
-  if (abs >= 0.01) return `$${v.toFixed(4)}`;
-  if (abs >= 0.001) return `$${v.toFixed(5)}`;
-  return `$${v.toFixed(7).replace(/0+$/, "0")}`;
+  return formatExactMoney(v);
 }
 
 const BreakdownTooltip = ({ inputCost, outputCost, totalCost }) => (
@@ -72,14 +70,11 @@ BreakdownTooltip.propTypes = {
 
 const CostCell = ({ value, data }) => {
   const totalCost = value ?? data?.cost;
-  const promptTokens = data?.prompt_tokens ?? 0;
-  const completionTokens = data?.completion_tokens ?? 0;
-  const total = promptTokens + completionTokens || 1;
-  const inputCost = data?.input_cost ?? totalCost * (promptTokens / total);
-  const outputCost =
-    data?.output_cost ?? totalCost * (completionTokens / total);
+  // Token shares do not establish a billed component price. Unknown stays unknown.
+  const inputCost = data?.input_cost;
+  const outputCost = data?.output_cost;
 
-  if (totalCost == null || !Number.isFinite(totalCost)) {
+  if (!isMoneyValue(totalCost)) {
     return (
       <Typography
         variant="body2"
@@ -119,6 +114,7 @@ const CostCell = ({ value, data }) => {
         {fmt(totalCost)}
       </Typography>
       <Tooltip
+        enterTouchDelay={0}
         title={
           <BreakdownTooltip
             inputCost={inputCost}
@@ -133,9 +129,18 @@ const CostCell = ({ value, data }) => {
         }}
       >
         <Box
+          component="button"
+          type="button"
+          aria-label="Show exact cost breakdown"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           sx={{
+            border: 0,
+            background: "transparent",
+            color: "inherit",
+            p: 0,
+            minWidth: 24,
+            minHeight: 24,
             display: "flex",
             cursor: "default",
             opacity: 0.4,

@@ -1169,6 +1169,14 @@ class ClusterAnalysisAgent:
 
     def _execute_tool(self, tool_name: str, args: dict) -> dict:
         """Dispatch a tool call to its handler. Returns a plain dict."""
+        context = getattr(self, "_falcon_tool_context", None)
+        if context is not None:
+            from ee.falcon_ai.tool_scope import workspace_access_allowed
+
+            if not workspace_access_allowed(context, context.workspace):
+                return tool_error(
+                    ERROR_CODE_UNAVAILABLE, "Workspace is no longer available."
+                )
         handlers = {
             "list": self._tool_list,
             "search": self._tool_search,

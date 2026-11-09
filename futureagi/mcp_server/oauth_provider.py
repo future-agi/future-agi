@@ -121,7 +121,7 @@ class FutureAGIOAuthProvider:
     ) -> str:
         """DEBUG mode: auto-approve using first active user."""
         from accounts.models.user import User
-        from accounts.models.workspace import Workspace
+        from accounts.services.workspace_landing import resolve_user_workspace
 
         user = await sync_to_async(
             lambda: User.objects.all()
@@ -134,11 +134,7 @@ class FutureAGIOAuthProvider:
             raise ValueError("No users found for auto-approve")
 
         org = user.organization
-        workspace = await sync_to_async(
-            lambda: Workspace.objects.all()
-            .filter(organization=org, is_default=True, is_active=True)
-            .first()
-        )()
+        workspace = await sync_to_async(resolve_user_workspace)(user, org)
 
         # Generate authorization code
         code_value = secrets.token_urlsafe(32)

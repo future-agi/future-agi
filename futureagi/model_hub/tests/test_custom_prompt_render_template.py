@@ -8,24 +8,18 @@ multi-turn variable-substitution feature.
 """
 
 import pytest
-from jinja2.sandbox import SandboxedEnvironment
 
+from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core_evals.fi_evals.llm.custom_prompt_evaluator.evaluator import (
     CustomPromptEvaluator,
 )
-from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 
 
 @pytest.fixture
-def stub_evaluator():
-    """Mirrors production env exactly so SSTI tests exercise the same sandbox."""
-    inst = CustomPromptEvaluator.__new__(CustomPromptEvaluator)
-    inst.env = SandboxedEnvironment(
-        variable_start_string="{{",
-        variable_end_string="}}",
-        undefined=PreserveUndefined,
-    )
-    return inst
+def stub_evaluator(monkeypatch):
+    """Use production sandbox construction, without constructing a provider."""
+    monkeypatch.setattr(LLM, "__init__", lambda self, **kwargs: None)
+    return CustomPromptEvaluator(rule_prompt="unused", model="test-model")
 
 
 class TestRenderTemplatePlainSubstitution:
@@ -77,9 +71,7 @@ class TestRenderTemplateJinjaBlockConstructs:
         assert out == "a,b,c,"
 
     def test_filter_pipe(self, stub_evaluator):
-        out = stub_evaluator._render_template(
-            "{{ name | upper }}", {"name": "karthik"}
-        )
+        out = stub_evaluator._render_template("{{ name | upper }}", {"name": "karthik"})
         assert out == "KARTHIK"
 
 
@@ -98,9 +90,7 @@ class TestRenderTemplateEdgeCases:
     ):
         """When the spaced-name key is missing from context AND from the
         fallback_kwargs, the raw {{name}} form is preserved."""
-        out = stub_evaluator._render_template(
-            "Result: {{TTS Testing}}", {}, {}
-        )
+        out = stub_evaluator._render_template("Result: {{TTS Testing}}", {}, {})
         assert out == "Result: {{TTS Testing}}"
 
     def test_variable_name_with_spaces_fallback_kwargs(self, stub_evaluator):
@@ -184,40 +174,32 @@ class TestRenderTemplateSSTIProtection:
 
     def test_class_mro_subclasses_walk_is_blocked(self, stub_evaluator):
         payload = "{{ ''.__class__.__mro__[1].__subclasses__() }}"
-        out = stub_evaluator._render_template(payload, {})
-        assert "subprocess" not in out.lower()
-        assert "popen" not in out.lower()
-        assert "<class " not in out
+        with pytest.raises(ValueError, match="unsafe"):
+            stub_evaluator._render_template(payload, {})
 
     def test_globals_walk_is_blocked(self, stub_evaluator):
         payload = "{{ ''.__class__.__init__.__globals__ }}"
-        out = stub_evaluator._render_template(payload, {})
-        assert "__builtins__" not in out
-        assert "'os'" not in out
-        assert "posix" not in out.lower()
+        with pytest.raises(ValueError, match="unsafe"):
+            stub_evaluator._render_template(payload, {})
 
     def test_getattr_via_pipe_is_blocked(self, stub_evaluator):
         payload = "{{ '' | attr('__class__') | attr('__mro__') }}"
-        out = stub_evaluator._render_template(payload, {})
-        assert "<class " not in out
-        assert "type '" not in out
+        with pytest.raises(ValueError, match="unsafe"):
+            stub_evaluator._render_template(payload, {})
 
     def test_dict_class_walk_is_blocked(self, stub_evaluator):
         payload = "{{ {}.__class__.__base__.__subclasses__() }}"
-        out = stub_evaluator._render_template(payload, {})
-        assert "subprocess" not in out.lower()
-        assert "popen" not in out.lower()
+        with pytest.raises(ValueError, match="unsafe"):
+            stub_evaluator._render_template(payload, {})
 
     def test_user_object_class_access_is_blocked(self, stub_evaluator):
         class Marker:
             secret = "should-not-leak"
 
         payload = "{{ obj.__class__.__name__ }}"
-        out = stub_evaluator._render_template(payload, {"obj": Marker()})
-        assert "Marker" not in out
+        with pytest.raises(ValueError, match="unsafe"):
+            stub_evaluator._render_template(payload, {"obj": Marker()})
 
     def test_plain_variable_still_works_under_sandbox(self, stub_evaluator):
-        out = stub_evaluator._render_template(
-            "Hello {{ name }}", {"name": "Karthik"}
-        )
+        out = stub_evaluator._render_template("Hello {{ name }}", {"name": "Karthik"})
         assert out == "Hello Karthik"

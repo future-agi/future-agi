@@ -23,6 +23,7 @@ from ee.usage.schemas.billing_config import (
     ApiCallTypeConfig,
     BillingConfigSchema,
     DimensionConfig,
+    DimensionSettlement,
     EEBandConfig,
     PlanConfig,
     PricingTier,
@@ -167,6 +168,13 @@ class BillingConfig:
         """Get all dimension configurations."""
         return dict(self._schema.dimensions)
 
+    def dimension_settlement(self, dim_key: str) -> DimensionSettlement:
+        """How a dimension is paid: "metered" or "prepaid".
+
+        Raises KeyError for an unknown dimension, like get_dimension.
+        """
+        return self.get_dimension(dim_key).settlement
+
     # ── Pricing accessors ───────────────────────────────────────────────
 
     def get_pricing_tiers(self, dim_key: str) -> list[PricingTier]:
@@ -223,6 +231,30 @@ class BillingConfig:
     def get_all_call_types(self) -> dict[str, ApiCallTypeConfig]:
         """Get all API call type configurations."""
         return dict(self._schema.api_call_types)
+
+    @classmethod
+    def event_type_dimension(cls, event_type: str) -> str | None:
+        """Dimension the loaded billing.yaml maps an event type to, or None.
+
+        None when `api_call_types` has no mapping for the event type or the
+        config cannot load, for any reason (a file that is not UTF-8 raises
+        UnicodeDecodeError, deeply nested YAML RecursionError); never raises.
+        The usage consumer acknowledges and drops an event it cannot map, so an
+        emitter that must not lose usage asks this first and holds the event
+        back until the mapping ships.
+        """
+        try:
+            config = cls.get()
+        except Exception as e:
+            logger.warning(
+                "billing_config_unavailable_for_event_type",
+                event_type=getattr(event_type, "value", event_type),
+                error=str(e),
+                exc_info=True,
+            )
+            return None
+        call_type = config._schema.api_call_types.get(event_type)
+        return call_type.dimension if call_type else None
 
     # ── EE band accessors ───────────────────────────────────────────────
 

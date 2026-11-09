@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 /* eslint-disable react/prop-types */
 import {
   Box,
@@ -29,6 +30,10 @@ import React, {
 } from "react";
 import Iconify from "src/components/iconify";
 import KeysDrawer from "src/components/custom-model-dropdown/KeysDrawer";
+import DecisionModelsSection from "src/sections/common/DecisionJudges/DecisionModelsSection";
+import { useDecisionJudgesEnabled } from "src/sections/common/DecisionJudges/DecisionJudgesContext";
+import { isDecisionModel } from "src/sections/common/DecisionJudges/decisionModels";
+
 import { useDebounce } from "src/hooks/use-debounce";
 import {
   useFeatureAllowed,
@@ -38,6 +43,24 @@ import {
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { getProviderLogoFilterSx } from "./modelLogo";
+import { isPrototypeMode } from "src/utils/prototype";
+
+// A Your Models row the workspace cannot call yet (models_list
+// is_available false) names the key it needs; clicking it opens the Keys
+// drawer, as the decision-model rows do.
+const PROVIDER_NAMES = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  google: "Google Gemini",
+  custom: "custom model",
+};
+const addKeyHint = (provider) => {
+  const id = String(provider ?? "").toLowerCase();
+  if (id === "custom") return "Add the custom model's base URL";
+  const name =
+    PROVIDER_NAMES[id] ?? (id ? id.charAt(0).toUpperCase() + id.slice(1) : "");
+  return name ? `Add your ${name} key` : "Add a provider key";
+};
 
 // ---------------------------------------------------------------------------
 // Modes — how the evaluator runs
@@ -372,7 +395,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
             size="small"
             onClick={handleSave}
             disabled={
-              !editName.trim() || !editCriteria.trim() || saveMutation.isLoading
+              !editName.trim() || !editCriteria.trim() || saveMutation.isPending
             }
             sx={{ color: "primary.main" }}
           >
@@ -689,6 +712,8 @@ const ModelSelector = ({
   const [kbSearch, setKbSearch] = useState("");
   const debouncedKbSearch = useDebounce(kbSearch.trim(), 400);
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
+  // W1: the evaluator picker lists decision models (BYOK) too.
+  const decisionJudges = useDecisionJudgesEnabled();
   const navigate = useNavigate();
   // Fail closed while capabilities load: never flash Turing models as
   // selectable during the fetch. `fagiModelsDenied` is the *confirmed* denial
@@ -697,7 +722,12 @@ const ModelSelector = ({
   const { locked: fagiModelsLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.TURING_MODELS);
   const fagiModelsDenied = fagiModelsLocked && !capabilitiesLoading;
-  const { allowed: falconAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
+  const {
+    allowed: falconAllowed,
+    isLoading: falconLoading,
+    isError: falconError,
+  } = useFeatureAllowed(CAPABILITY.FALCON_AI);
+  const connectorsAvailable = falconAllowed && !falconLoading && !falconError;
 
   const currentMode = MODES.find((m) => m.value === mode) || MODES[1];
 
@@ -710,7 +740,7 @@ const ModelSelector = ({
     getNextPageParam: () => null,
     initialPageParam: 1,
     staleTime: 60000,
-    enabled: falconAllowed,
+    enabled: connectorsAvailable,
   });
 
   const connectors = useMemo(() => {
@@ -792,6 +822,7 @@ const ModelSelector = ({
   // — still resolves to its FAGI label instead of rendering as "small".
   const modelDisplayName = useMemo(() => {
     if (!model) return "Select model";
+    if (isDecisionModel(model)) return `${model} · decision`;
     const exact = FAGI_MODELS.find((m) => m.value === model);
     if (exact) return exact.label;
     const suffix = FAGI_MODELS.find((m) => m.value.endsWith(`_${model}`));
@@ -907,6 +938,7 @@ const ModelSelector = ({
         <IconButton
           size="small"
           disabled={disabled}
+          aria-label="Evaluation options"
           onClick={(e) => setPlusAnchor(e.currentTarget)}
           sx={{
             border: "1px solid",
@@ -1265,10 +1297,33 @@ const ModelSelector = ({
             </>
           )}
 
-          {/* Divider between sections */}
-          {filteredFagiModels.length > 0 && apiModels.length > 0 && (
-            <Divider sx={{ my: 0.5 }} />
+          {/* W1: decision models, on the workspace's own provider keys */}
+          {decisionJudges && (
+            <>
+              {filteredFagiModels.length > 0 && <Divider sx={{ my: 0.5 }} />}
+              <DecisionModelsSection
+                model={model}
+                search={modelSearch}
+                onPick={(id) => {
+                  onModelChange(id);
+                  setModelAnchor(null);
+                  setModelSearch("");
+                }}
+                onAddKey={(row) => {
+                  // Close the menu so its backdrop does not cover the drawer.
+                  setModelAnchor(null);
+                  setKeysDrawerModel({
+                    model_name: row.model,
+                    providers: row.provider,
+                  });
+                }}
+              />
+            </>
           )}
+
+          {/* Divider between sections */}
+          {(filteredFagiModels.length > 0 || decisionJudges) &&
+            apiModels.length > 0 && <Divider sx={{ my: 0.5 }} />}
 
           {/* Section 2: Your LLM Models (BYOK) */}
           {(apiModels.length > 0 || modelsLoading) && (
@@ -1291,7 +1346,7 @@ const ModelSelector = ({
               </Typography>
               {apiModels.map((m) => {
                 const available = m.is_available !== false;
-                const logoUrl = m.logo_url;
+                const logoUrl = localProviderLogo(m);
                 return (
                   <MenuItem
                     key={m.model_name}
@@ -1351,7 +1406,7 @@ const ModelSelector = ({
                       >
                         {m.model_name}
                       </Typography>
-                      {m.providers && (
+                      {(m.providers || !available) && (
                         <Typography
                           variant="caption"
                           noWrap
@@ -1360,7 +1415,7 @@ const ModelSelector = ({
                             color: available ? "text.secondary" : "error.light",
                           }}
                         >
-                          {m.providers}
+                          {available ? m.providers : addKeyHint(m.providers)}
                         </Typography>
                       )}
                     </Box>
@@ -1486,12 +1541,20 @@ const ModelSelector = ({
           <Divider sx={{ my: 0.5 }} />
 
           {[
-            {
-              key: "connectors",
-              icon: "mdi:puzzle-outline",
-              label: "Connectors",
-              desc: "Connect external tools to enhance evaluations.",
-            },
+            // Connectors are Falcon AI's MCP connectors, managed on its
+            // falcon-ai-connectors settings page: the menu offers them, and
+            // Manage connectors with them, only where the capabilities answer
+            // says Falcon AI is allowed.
+            ...(falconAllowed && !isPrototypeMode()
+              ? [
+                  {
+                    key: "connectors",
+                    icon: "mdi:puzzle-outline",
+                    label: "Connectors",
+                    desc: "Connect external tools to enhance evaluations.",
+                  },
+                ]
+              : []),
             {
               key: "knowledge",
               icon: "mdi:book-open-outline",
@@ -1510,42 +1573,44 @@ const ModelSelector = ({
               label: "Summary",
               desc: "Control how detailed or brief the evaluation output should be",
             },
-          ].map((item) => (
-            <MenuItem
-              key={item.key}
-              onClick={() =>
-                setPlusSubmenu(plusSubmenu === item.key ? null : item.key)
-              }
-              selected={plusSubmenu === item.key}
-              sx={{ borderRadius: "6px", py: 1 }}
-            >
-              <Iconify
-                icon={item.icon}
-                width={18}
-                sx={{ mr: 1.5, color: "text.secondary" }}
-              />
-              <Box sx={{ flex: 1 }}>
-                <Typography
-                  variant="body2"
-                  sx={{ fontSize: "13px", fontWeight: 500 }}
-                >
-                  {item.label}
-                </Typography>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ fontSize: "11px" }}
-                >
-                  {item.desc}
-                </Typography>
-              </Box>
-              <Iconify
-                icon="mdi:chevron-right"
-                width={16}
-                sx={{ color: "text.disabled" }}
-              />
-            </MenuItem>
-          ))}
+          ]
+            .filter((item) => item.key !== "connectors" || connectorsAvailable)
+            .map((item) => (
+              <MenuItem
+                key={item.key}
+                onClick={() =>
+                  setPlusSubmenu(plusSubmenu === item.key ? null : item.key)
+                }
+                selected={plusSubmenu === item.key}
+                sx={{ borderRadius: "6px", py: 1 }}
+              >
+                <Iconify
+                  icon={item.icon}
+                  width={18}
+                  sx={{ mr: 1.5, color: "text.secondary" }}
+                />
+                <Box sx={{ flex: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontSize: "13px", fontWeight: 500 }}
+                  >
+                    {item.label}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "11px" }}
+                  >
+                    {item.desc}
+                  </Typography>
+                </Box>
+                <Iconify
+                  icon="mdi:chevron-right"
+                  width={16}
+                  sx={{ color: "text.disabled" }}
+                />
+              </MenuItem>
+            ))}
         </Box>
 
         {/* Submenu */}
@@ -1558,7 +1623,7 @@ const ModelSelector = ({
               pl: 0.5,
             }}
           >
-            {plusSubmenu === "connectors" && (
+            {plusSubmenu === "connectors" && connectorsAvailable && (
               <>
                 {connectors.length > 3 && (
                   <Box sx={{ p: 1 }}>
@@ -1959,6 +2024,18 @@ ModelSelector.propTypes = {
   disabled: PropTypes.bool,
   showMode: PropTypes.bool,
   showPlus: PropTypes.bool,
+  mode: PropTypes.string,
+  onModeChange: PropTypes.func,
+  useInternet: PropTypes.bool,
+  onUseInternetChange: PropTypes.func,
+  activeSummary: PropTypes.string,
+  onActiveSummaryChange: PropTypes.func,
+  activeConnectorIds: PropTypes.arrayOf(PropTypes.string),
+  onActiveConnectorIdsChange: PropTypes.func,
+  selectedKBs: PropTypes.array,
+  onSelectedKBsChange: PropTypes.func,
+  activeContextOptions: PropTypes.arrayOf(PropTypes.string),
+  onActiveContextOptionsChange: PropTypes.func,
   hideDatasetContextToggle: PropTypes.bool,
   openModelMenuSignal: PropTypes.number,
 };

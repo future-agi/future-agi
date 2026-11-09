@@ -1,0 +1,44 @@
+# The Grafana Cloud MCP server, hosted by Grafana Labs, with MCP OAuth: each
+# person authorizes in the browser and picks the Grafana Cloud stack there,
+# and the agent gets that person's Grafana permissions (read, query and
+# write are chosen on the consent page). Most clients register themselves;
+# a client can also be registered by hand. Self-hosted Grafana is not
+# served. Use counts toward the stack's Grafana Assistant usage. EE takes
+# only a declared oauth2 spec, so it gets none. OSS is left out until omega
+# mcp login can register a client itself (DCR): a client registered by hand
+# comes with a client secret, which its public-client sign-in never sends.
+schema: "connector-manifest/v1#provider"
+app: grafana
+id: cloud-mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.grafana.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: mcp_oauth
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  notes: "Counts toward Grafana Assistant usage; each person who connects is an active user."
+  source: https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

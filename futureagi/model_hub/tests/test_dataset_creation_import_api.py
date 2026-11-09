@@ -8,7 +8,15 @@ from accounts.models.workspace import Workspace
 from model_hub.models.choices import DataTypeChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
+from model_hub.tests.network_isolation import (  # noqa: F401
+    no_external_lookups,
+    stub_eval_recommender,
+    stub_url_resolution,
+)
 from model_hub.views.datasets.create import file_upload
+
+# Dataset creation and import stay on local services and local model stubs.
+pytestmark = pytest.mark.usefixtures("no_external_lookups")
 
 
 class _SuccessfulResourceCallLog:
@@ -399,8 +407,15 @@ def test_add_rows_from_file_rejects_ssrf_url_for_image_column(
     upload_calls = []
     monkeypatch.setattr(
         "model_hub.views.develop_dataset.upload_image_to_s3",
-        lambda *a, **kw: upload_calls.append((a, kw))
-        or "https://s3.bucket/should-not-be-reached.png",
+        lambda *a, **kw: (
+            upload_calls.append((a, kw))
+            or "https://s3.bucket/should-not-be-reached.png"
+        ),
+    )
+    # The URL host is an address literal; answer it the way the system
+    # resolver does, so the SSRF classification runs on the real result.
+    resolved_hosts = stub_url_resolution(
+        monkeypatch, {"169.254.169.254": ["169.254.169.254"]}, "tfc.utils.ssrf_guard"
     )
 
     response = auth_client.post(
@@ -410,8 +425,7 @@ def test_add_rows_from_file_rejects_ssrf_url_for_image_column(
             "file": _csv_file(
                 name="ssrf_rows.csv",
                 content=(
-                    b"image_col,other\n"
-                    b"http://169.254.169.254/latest/meta-data/,x\n"
+                    b"image_col,other\nhttp://169.254.169.254/latest/meta-data/,x\n"
                 ),
             ),
         },
@@ -423,6 +437,8 @@ def test_add_rows_from_file_rejects_ssrf_url_for_image_column(
     # upload_image_to_s3 must never be reached -- validate_file_url should
     # have rejected the SSRF target before any fetch/upload was attempted.
     assert upload_calls == []
+    # Column type detection and the upload validation each resolve the host.
+    assert resolved_hosts and set(resolved_hosts) == {"169.254.169.254"}
     column = Column.no_workspace_objects.get(dataset=dataset, name="image_col")
     cell = Cell.no_workspace_objects.get(dataset=dataset, column=column)
     assert not cell.value
@@ -773,6 +789,7 @@ def test_create_huggingface_dataset_sets_workspace_after_validation(
     )
     activity_calls = []
     _patch_hf_start_activity(monkeypatch, activity_calls)
+    recommender = stub_eval_recommender(monkeypatch)
 
     response = auth_client.post(
         "/model-hub/develops/create-dataset-from-huggingface/",
@@ -799,6 +816,10 @@ def test_create_huggingface_dataset_sets_workspace_after_validation(
     assert len(preview_calls) == 1
     assert activity_calls
     assert set(activity_calls[0][1][7].keys()) == {0, 1}
+    # Composition fix 746f / T-059: accepted F33 keeps HF imports independent.
+    assert recommender.clients == []
+    assert recommender.prompts == []
+    assert "eval_recommendations" not in dataset.dataset_config
 
 
 @pytest.mark.django_db

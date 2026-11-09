@@ -1,0 +1,41 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Connect your Linear account to use this tool [auth_required]"
+        }
+      ],
+      "isError": true,
+      "_meta": {
+        "io.futureagi/error": {
+          "type": "authentication_error",
+          "code": "auth_required",
+          "message": "Connect your Linear account to use this tool",
+          "param": null,
+          "metadata": {
+            "server_id": "linear",
+            "reason": "no_token",
+            "connect_url": "https://api.example.com/agentcc/mcp/connect/linear/start/?binding={{CONNECT_BINDING}}"
+          }
+        },
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01K7CN5TC00000000000000002",
+          "executed": false,
+          "billing_mode": "byok",
+          "billed_usd": 0,
+          "latency_ms": 4
+        }
+      }
+    }
+  }
+}

@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from tracer.constants.provider_icons import provider_icon_path
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
@@ -424,6 +425,8 @@ _EXPORT_COLUMN_SQL: dict[str, str] = {
     "attributes_extra": "attributes_extra",
     "eval_status": "eval_status",
     "semconv_source": "semconv_source",
+    # shared-edit(F54): a row's session id, read only when a caller asks for it.
+    "trace_session_id": "toString(trace_session_id)",
 }
 
 _EXPORT_FIELD_COLUMNS: dict[str, set[str]] = {
@@ -469,11 +472,21 @@ _EXPORT_FIELD_COLUMNS: dict[str, set[str]] = {
 }
 
 
+# shared-edit(F54): export columns only the row-source feature reads. While its
+# server switch is OFF the export selects exactly the columns it did before.
+_ROW_SOURCE_EXPORT_COLUMNS = frozenset({"trace_session_id"})
+
+
 def _export_columns_for_fields(field_names: set[str]) -> set[str]:
+    from model_hub.services.row_source_gate import row_source_enabled
+
     columns: set[str] = set()
     for field_name in field_names:
         columns.update(_EXPORT_FIELD_COLUMNS.get(field_name, {field_name}))
-    return {column for column in columns if column in _EXPORT_COLUMN_SQL}
+    exported = {column for column in columns if column in _EXPORT_COLUMN_SQL}
+    if not row_source_enabled():
+        exported -= _ROW_SOURCE_EXPORT_COLUMNS
+    return exported
 
 
 # CH returns the toString() forms with literal 'NULL' for missing UUIDs in some
@@ -805,7 +818,7 @@ class CHSpanReader:
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = ["trace_id = %(trace_id)s"]
         params: dict[str, Any] = {"trace_id": trace_id}
-        if project_id:
+        if project_id is not None:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
         rows = self._client.query(
@@ -3227,27 +3240,13 @@ def chspan_to_annotation_source_dict(span: CHSpan) -> dict[str, Any]:
     }
 
 
-# Provider → logo URL map. Mirrors what the serializer's get_provider_logo() does
-# in tracer/serializers/observation_span.py. Cached as a module constant.
-_PROVIDER_LOGOS: dict[str, str] = {
-    "openai": "https://app.futureagi.com/static/providers/openai.svg",
-    "anthropic": "https://app.futureagi.com/static/providers/anthropic.svg",
-    "google": "https://app.futureagi.com/static/providers/google.svg",
-    "gcp.vertex.agent": "https://app.futureagi.com/static/providers/google.svg",
-    "vapi": "https://app.futureagi.com/static/providers/vapi.svg",
-    "retell": "https://app.futureagi.com/static/providers/retell.svg",
-}
-
-
 def _provider_logo_url(provider: str | None) -> str | None:
-    """Return the provider logo URL, or None if the provider isn't mapped.
-
-    Kept simple — the serializer has more elaborate fallback logic but
-    most callers just render the URL or fall back to a generic icon.
+    """Return the provider's icon as a root-relative path the install's own UI
+    serves, or None if the provider isn't mapped (the UI then draws its
+    generic model icon). Never an absolute URL on another host: see
+    tracer/constants/provider_icons.py.
     """
-    if not provider:
-        return None
-    return _PROVIDER_LOGOS.get(provider.lower())
+    return provider_icon_path(provider)
 
 
 def _maybe_json(s: str) -> Any:

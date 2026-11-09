@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import React from "react";
 import PropTypes from "prop-types";
 import CustomTooltip from "../tooltip";
@@ -5,7 +6,7 @@ import ModelHoverState from "./ModelHoverState";
 import { Box, Typography, useTheme } from "@mui/material";
 import Image from "../image";
 
-const CustomModelView = ({ modelName, logoUrl }) => {
+const CustomModelView = ({ modelName, logoUrl, provider }) => {
   const theme = useTheme();
 
   return (
@@ -51,7 +52,7 @@ const CustomModelView = ({ modelName, logoUrl }) => {
         {logoUrl && (
           <Image
             ratio="1/1"
-            src={logoUrl}
+            src={localProviderLogo(provider)}
             alt={modelName}
             flexShrink={0}
             style={{ width: "16px", height: "16px" }}
@@ -78,6 +79,7 @@ const CustomModelView = ({ modelName, logoUrl }) => {
 CustomModelView.propTypes = {
   modelName: PropTypes.string,
   logoUrl: PropTypes.string,
+  provider: PropTypes.string,
 };
 
 export default CustomModelView;

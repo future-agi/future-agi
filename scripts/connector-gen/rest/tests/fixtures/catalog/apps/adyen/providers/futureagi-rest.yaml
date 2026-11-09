@@ -1,0 +1,46 @@
+# Fixture for the REST generator's tests, not catalog data (see ../../gmail/app.yaml).
+# Adyen's Postman collection points at the test environment.
+schema: "connector-manifest/v1#provider"
+app: adyen
+id: futureagi-rest
+version: 1.0.0
+kind: rest
+publisher: futureagi
+vendorStatus:
+  label: ga
+  source: https://docs.adyen.com/api-explorer/transfers/4/overview
+transport:
+  kind: http
+  url: "https://{connectorsHost}/adyen/mcp"
+  variant: streamable
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: X-API-Key
+      secret: true
+      label: API key
+      help: "An Adyen API key for a balance platform web service user."
+      helpUrl: https://docs.adyen.com/development-resources/api-credentials/
+  verify: { tool: list_transfers }
+tools:
+  source: operations
+  defaultPosture: ask
+  generated: tools.generated.json
+pricing: { model: vendor_metered }
+upstream:
+  spec:
+    url: https://raw.githubusercontent.com/Adyen/adyen-postman/b3db00765bdffef013eab5912cd6fe94968cfb8b/postman/TransferService-v4.json
+    format: postman-2.1
+    sha256: 0ad32a74b560dafa332172bf0493a55b9950c458aa88ff00038ffb8cea4b31da
+    licence: MIT (Adyen/adyen-postman)
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: auth.credentialParts
+    url: https://docs.adyen.com/development-resources/api-credentials/
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

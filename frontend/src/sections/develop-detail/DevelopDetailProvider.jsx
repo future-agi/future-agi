@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useCallback } from "react";
 import { DevelopDetailContext } from "./Context/DevelopDetailContext";
 import PropTypes from "prop-types";
 import { useQueryClient } from "@tanstack/react-query";
+import useProductionImportRefresh from "../common/AddData/useProductionImportRefresh";
 
 const DevelopDetailProvider = ({ children }) => {
   const gridApi = useRef(null);
@@ -24,6 +25,8 @@ const DevelopDetailProvider = ({ children }) => {
     gridApi.current?.refreshServerSide();
   }, [queryClient]);
 
+  // hook(F33): refresh only the destination of a completed Observe import.
+  useProductionImportRefresh(refreshGrid);
   const contextValue = useMemo(
     () => ({
       gridApi,

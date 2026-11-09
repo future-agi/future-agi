@@ -25,6 +25,7 @@ import SharedVoiceView from "./SharedVoiceView";
 import SharedSimulationCallView from "./SharedSimulationCallView";
 import SharedErrorIssueView from "./SharedErrorIssueView";
 import { isVoiceCall, simulationCallKind } from "./sharedViewHelpers";
+import SharedDatasetView from "./SharedDatasetView";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
@@ -185,6 +186,10 @@ export default function SharedView() {
       </>
     );
   }
+
+  // W4-6: a public dataset link (no app chrome, read-only).
+  if (resourceType === "dataset" && resourceData)
+    return <SharedDatasetView token={token} shared={shared} />;
 
   return (
     <>

@@ -820,10 +820,17 @@ def load_numeric_settings(
 ) -> dict[str, Numeric]:
     """Resolve a complete bounded setting group from mappings or objects."""
 
-    return {
-        name: spec.parse(name, _read_value(source, fallback, name))
-        for name, spec in specs.items()
-    }
+    values = {}
+    for name, spec in specs.items():
+        raw = _read_value(source, fallback, name)
+        if name == "PG_CONNECT_TIMEOUT_SECONDS" and _is_missing(raw):
+            # Long-lived worker processes absorb handshake contention. Request
+            # processes retain the one-second default; explicit values win.
+            service_type = _read_value(source, fallback, "SERVICE_TYPE")
+            if service_type in ("temporal-worker", "worker"):
+                raw = 5
+        values[name] = spec.parse(name, raw)
+    return values
 
 
 def _read_value(source: object, fallback: object | None, name: str) -> object:

@@ -2,7 +2,7 @@ from django.db.models import Q
 from rest_framework import serializers
 
 from model_hub.models.choices import OwnerChoices
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EXTERNAL_EVAL_TYPE, EvalTemplate
 from model_hub.utils.function_eval_params import normalize_eval_runtime_config
 from tracer.models.eval_ci_cd import EvaluationRun
 from tracer.models.project import Project
@@ -19,7 +19,7 @@ class CICDEvaluationItemSerializer(serializers.Serializer):
     def _get_eval_template(self, eval_template_name, user):
         """Fetches and returns the evaluation template."""
         try:
-            return EvalTemplate.no_workspace_objects.get(
+            template = EvalTemplate.no_workspace_objects.get(
                 Q(name=eval_template_name)
                 & (Q(organization=user.organization) | Q(organization__isnull=True))
             )
@@ -29,6 +29,17 @@ class CICDEvaluationItemSerializer(serializers.Serializer):
                     "eval_template": f"Evaluation template with name '{eval_template_name}' not found."
                 }
             )
+        if template.eval_type == EXTERNAL_EVAL_TYPE:
+            raise serializers.ValidationError(
+                {
+                    "eval_template": (
+                        f"Evaluation template '{eval_template_name}' is an external "
+                        "metric: it is scored by the caller and is never executed "
+                        "by the server."
+                    )
+                }
+            )
+        return template
 
     def _check_model(self, eval_template, model_name):
         """Validates the model for system-owned evaluation templates."""
@@ -109,6 +120,10 @@ class CICDEvaluationItemSerializer(serializers.Serializer):
             data["config"] = normalize_eval_runtime_config(
                 eval_template.config, data.get("config", {})
             )
+            # The queued evaluation runs this config through SDK evaluate.
+            from sdk.utils.evaluations import validate_sdk_choice_score_override
+
+            validate_sdk_choice_score_override(eval_template, data["config"])
         except ValueError as e:
             raise serializers.ValidationError({"config": str(e)})  # noqa: B904
 

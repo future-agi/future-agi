@@ -5,6 +5,7 @@ import ButtonBase from "@mui/material/ButtonBase";
 import Typography from "@mui/material/Typography";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { isPrototypeMode } from "src/utils/prototype";
 
 const QUICK_ACTIONS = [
   {
@@ -39,9 +40,12 @@ const QUICK_ACTIONS = [
   },
 ];
 
+// The settled prototype-only starter action is removed; real actions are unchanged.
+
 export default function QuickActions({ onAction }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+  const actions = isPrototypeMode() ? [] : QUICK_ACTIONS;
 
   return (
     <Box
@@ -54,7 +58,7 @@ export default function QuickActions({ onAction }) {
         mx: "auto",
       }}
     >
-      {QUICK_ACTIONS.map((action) => (
+      {actions.map((action) => (
         <ButtonBase
           key={action.label}
           onClick={() => onAction?.(action.prompt)}

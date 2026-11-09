@@ -1,17 +1,13 @@
-import { darkElevatedStyles } from "../dark-elevated";
-
-// ----------------------------------------------------------------------
-
+// Design system dialog: bg.overlay, radius.xl, modal shadow (ring + soft drop).
 export function dialog(theme) {
   return {
     MuiDialog: {
       styleOverrides: {
         paper: ({ ownerState }) => ({
           boxShadow: theme.customShadows.dialog,
-          borderRadius: theme.shape.borderRadius * 2,
-          ...darkElevatedStyles(theme, {
-            boxShadow: "0px 24px 64px -8px rgba(0, 0, 0, 0.8)",
-          }),
+          borderRadius: 12,
+          backgroundImage: "none",
+          backgroundColor: theme.palette.background.overlay,
           ...(!ownerState.fullScreen && {
             margin: theme.spacing(2),
           }),
@@ -24,28 +20,33 @@ export function dialog(theme) {
     MuiDialogTitle: {
       styleOverrides: {
         root: {
-          padding: theme.spacing(3),
+          padding: theme.spacing(2, 2.5, 1),
+          fontSize: 16,
+          lineHeight: "24px",
+          fontWeight: 600,
         },
       },
     },
     MuiDialogContent: {
       styleOverrides: {
         root: {
-          padding: theme.spacing(0, 3),
+          padding: theme.spacing(1, 2.5),
+          fontSize: 14,
+          lineHeight: "22px",
         },
         dividers: {
           borderTop: 0,
-          borderBottomStyle: "dashed",
-          paddingBottom: theme.spacing(3),
+          borderBottom: `1px solid ${theme.palette.divider}`,
+          paddingBottom: theme.spacing(2),
         },
       },
     },
     MuiDialogActions: {
       styleOverrides: {
         root: {
-          padding: theme.spacing(3),
+          padding: theme.spacing(1.5, 2.5),
           "& > :not(:first-of-type)": {
-            marginLeft: theme.spacing(1.5),
+            marginLeft: theme.spacing(1),
           },
         },
       },

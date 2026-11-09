@@ -1558,6 +1558,9 @@ CREATE TABLE IF NOT EXISTS simulate_scenarios (
 ORDER BY id;
 """
 
+# simulate.0102 removed api_key after the encrypted_api_key migration (0100/0101); a fresh migrated install has no such column.
+# Keep it out of this declaration. Do not put a comment line ending in a semicolon inside these CREATE strings:
+# v2.apply_schema_rewriter.split_statements splits on a semicolon at a line end and is not comment aware.
 CDC_SIMULATE_AGENT_DEFINITION = """
 CREATE TABLE IF NOT EXISTS simulate_agent_definition (
     id UUID,
@@ -1573,7 +1576,6 @@ CREATE TABLE IF NOT EXISTS simulate_agent_definition (
     websocket_url Nullable(String),
     websocket_headers String DEFAULT '{}',
     knowledge_base_id Nullable(UUID),
-    api_key Nullable(String),
     observability_provider_id Nullable(UUID),
     authentication_method Nullable(String),
     languages Array(String),

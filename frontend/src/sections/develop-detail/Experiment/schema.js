@@ -9,9 +9,9 @@ import {
   TextContent,
 } from "../RunPrompt/common";
 import { normalizeForComparison } from "src/sections/workbench/createPrompt/Playground/common";
-import axios, { endpoints } from "src/utils/axios";
 import { isUUID } from "src/utils/utils";
 import { promptConfigTransform } from "./utils";
+import { targetTypeOf } from "./runPlan";
 
 const getMessageValidationSchema = () =>
   z
@@ -122,6 +122,8 @@ const modelSchema = z.object({
   value: z.string().nullable().optional(),
   logoUrl: z.string().optional(),
   providers: z.string().optional(),
+  // Edit mode: the run this model row already is (PUT keeps or re-runs it).
+  runId: z.string().optional(),
   voices: z
     .array(
       z.object({
@@ -244,7 +246,7 @@ export const getPromptConfigValidation = (allColumns) =>
 export const getNewExperimentValidationSchema = (
   allColumns,
   isEditing = false,
-  dataset = null,
+  _dataset = null,
 ) =>
   z
     .object({
@@ -259,33 +261,23 @@ export const getNewExperimentValidationSchema = (
         .min(1, { message: "Name is required" })
         .refine((name) => name.trim().length > 0, {
           message: "Name is required",
-        })
-        .refine(
-          async (name) => {
-            // Skip validation if editing or name is empty
-            if (isEditing || !name?.trim()) {
-              return true;
-            }
-
-            // Validate name via API
-            try {
-              const response = await axios.get(
-                endpoints.develop.experiment.validateName,
-                {
-                  params: { dataset_id: dataset, name },
-                },
-              );
-              return response?.data?.result?.isValid ?? true;
-            } catch (error) {
-              // If validation fails, return false to block submission
-              return false;
-            }
-          },
-          {
-            message:
-              "Experiment name already exists. Please choose another name.",
-          },
-        ),
+        }),
+      description: z.string().optional().default(""),
+      datasetVersionId: z.string().optional().nullable(),
+      rowIds: z.array(z.string()).optional().default([]),
+      splitIds: z.array(z.string()).optional().default([]),
+      trials: z.coerce.number().int().min(1).max(10).optional().default(1),
+      maxConcurrency: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .optional()
+        .default(10),
+      metadata: z
+        .array(z.object({ key: z.string(), value: z.any() }))
+        .optional()
+        .default([]),
       experimentType: z
         .enum(["llm", "tts", "stt", "image"], {
           errorMap: () => ({ message: "Model Type is required" }),
@@ -320,13 +312,70 @@ export const getNewExperimentValidationSchema = (
               isDraft: z.boolean().optional().default(false),
               versionLabel: z.string().optional(),
               name: z.string().optional(),
-              unmappedVariables: z
-                .number()
-                .default(0)
-                .refine((val) => val === 0, {
-                  message:
-                    "Variable mismatch: The prompt variables don't match the dataset columns.",
-                }),
+              // Run target (PRODUCT-SPEC §3.8, R2-SPEC P3): prompt | agent |
+              // external | http | code | traces | harness.
+              targetType: z
+                .enum([
+                  "prompt",
+                  "agent",
+                  "external",
+                  "http",
+                  "code",
+                  "traces",
+                  "harness",
+                  "voice",
+                  // options-truth L1 G5: Already running › A2A / MCP tool.
+                  "a2a",
+                  "mcp_tool",
+                ])
+                .optional(),
+              // R4 run-source cards (lane Ra): the Level 3 draft, passed through.
+              r4: z.record(z.any()).optional(),
+              wantedVersion: z.any().optional(),
+              // R2 cards: permissive pass-through (R2 manifest row 42c).
+              code: z.record(z.any()).optional(),
+              traces: z.record(z.any()).optional(),
+              harness_config: z.record(z.any()).optional(),
+              // options-truth L1 G5: A2A agent / MCP tool cards, passed through.
+              a2a: z.record(z.any()).optional(),
+              mcp_tool: z.record(z.any()).optional(),
+              runId: z.string().optional(),
+              runName: z.string().optional(),
+              http: z
+                .object({
+                  url: z.string().optional(),
+                  method: z.string().optional(),
+                  bodyTemplate: z.string().optional(),
+                  outputPath: z.string().optional(),
+                  // options-truth L1 G5: headers by secret, streaming, audio.
+                  headers: z.array(z.any()).optional(),
+                  streaming: z.boolean().optional(),
+                  audio: z.any().optional(),
+                  // W6 B2: the response transform and header preset survive
+                  // the form (RunSettings/cardExtras/endpoint.js sends them).
+                  transform: z.any().optional(),
+                  preset: z.any().optional(),
+                })
+                .optional(),
+              // W6 B5: a variable retrieved at run time (contextSourceModel).
+              contextSource: z.any().optional(),
+              // Variables are mapped on the Data step (stepIssues.dataIssues).
+              variables: z.array(z.string()).optional().default([]),
+              // IT-R4 G1 P1: a column id, `{kind: "empty"}` or
+              // `{kind: "constant", value}`.
+              variableMapping: z
+                .record(
+                  z.union([
+                    z.string(),
+                    z.object({
+                      kind: z.enum(["empty", "constant"]),
+                      value: z.string().optional(),
+                    }),
+                  ]),
+                )
+                .optional()
+                .default({}),
+              unmappedVariables: z.number().optional().default(0),
             }),
             z.object({
               experimentType: z.literal("tts"),
@@ -371,16 +420,14 @@ export const getNewExperimentValidationSchema = (
             }),
           ]),
         )
-        .min(1, {
-          message: "At least one prompt/agent configuration is required",
-        })
+        .min(1, { message: "Add at least one run" })
         .superRefine((items, ctx) => {
           items.forEach((item, index) => {
             if (item.experimentType !== "llm") return;
 
-            // Model check only applies to prompt rows; agents don't
-            // pick models here.
-            if (!item.agentId) {
+            // Model check only applies to prompt runs; agents, From code
+            // and HTTP runs pick no model here.
+            if (targetTypeOf(item) === "prompt") {
               if (
                 item.model.length === 0 ||
                 item.model.some((m) => m.value === "" || m.value === null)
@@ -415,7 +462,7 @@ export const getNewExperimentValidationSchema = (
         }),
       userEvalMetrics: z
         .array(z.any())
-        .min(1, { message: "At least one evaluation metric is required" }),
+        .min(1, { message: "Add at least one evaluation" }),
     })
     .superRefine((data, ctx) => {
       const allowedFormats = {
@@ -459,7 +506,8 @@ export const getNewExperimentValidationSchema = (
         name:
           evalItem.name || evalItem.evalTemplateName || "Unnamed Evaluation",
         config: evalItem.config,
-        model: evalItem.model,
+        // `model` is optional on the wire and not nullable (EvalMetricEntry).
+        ...(evalItem.model ? { model: evalItem.model } : {}),
         error_localizer: evalItem.errorLocalizer ?? evalItem.error_localizer,
         kb_id: evalItem.kbId || evalItem.kb_id || null,
       })),

@@ -35,14 +35,22 @@ const UserHeaders = (props) => {
     setSelectedRole,
   } = props;
 
+  // Below md (the compact Settings shell) the filters wrap to the screen width.
   return (
-    <Box display={"flex"} gap={2}>
+    <Box
+      display={"flex"}
+      gap={2}
+      sx={{
+        flexWrap: { xs: "wrap", md: "nowrap" },
+        width: { xs: "100%", md: "auto" },
+      }}
+    >
       <FormSearchField
         autoFocus
         searchQuery={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         size="small"
-        sx={{ width: 400 }}
+        sx={{ width: { xs: "100%", md: 400 } }}
         placeholder="Search by name or email"
         InputProps={{
           startAdornment: (
@@ -56,14 +64,14 @@ const UserHeaders = (props) => {
         options={statusOptions}
         value={selectedStatus}
         onChange={setSelectedStatus}
-        sx={{ width: "200px" }}
+        sx={{ width: { xs: "100%", sm: "200px" } }}
         size="small"
       />
       <FormStaticDropdown
         options={roleFilterOptions}
         value={selectedRole}
         onChange={setSelectedRole}
-        sx={{ width: "200px" }}
+        sx={{ width: { xs: "100%", sm: "200px" } }}
         size="small"
       />
     </Box>

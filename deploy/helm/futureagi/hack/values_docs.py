@@ -44,14 +44,24 @@ PERCENT_OR_EMPTY = {
     "anyOf": [{"type": "integer", "minimum": 1}, {"type": "string", "maxLength": 0}]
 }
 
+# Empty means the chart/release default. Keep these in the schema as well as
+# validate.yaml: Helm lint ignores template fail(), even in --strict mode.
+DNS_LABEL_OR_EMPTY = {
+    "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$",
+    "maxLength": 63,
+}
+
 # path pattern -> schema fragment merged over the one derived from the default.
 RULES: list[tuple[str, dict]] = [
+    ("nameOverride", DNS_LABEL_OR_EMPTY),
+    ("fullnameOverride", DNS_LABEL_OR_EMPTY),
     ("*.mode", {"enum": ["external", "bundled"]}),
     ("objectStorage.backend", {"enum": ["s3", "gcs", "minio"]}),
     ("config.envType", {"enum": ["production", "local"]}),
     ("config.cdcMode", {"enum": ["outbox", "off"]}),
     ("config.logLevel", {"enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]}),
     ("bootstrap.installHook", {"enum": ["auto", "pre-install", "post-install"]}),
+    ("hosted.migration.phase", {"enum": ["", "schema", "backfill", "check"]}),
     (
         "postgres.external.sslMode",
         {"enum": ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]},
@@ -88,6 +98,9 @@ RULES: list[tuple[str, dict]] = [
     ("*.service.port", PORT),
     ("bootstrap.ttlSecondsAfterFinished", {"type": ["integer", "string"]}),
     ("*Seconds", {"type": "integer", "minimum": 1}),
+    # The operator's 900 s schema deadline plus 30 s process grace
+    # (agentcc.hosted_migration_progress; deploy/tests/test_hosted_deployment.py).
+    ("hosted.migration.activeDeadlineSeconds", {"minimum": 930}),
     ("*.extraEnv", SCALAR_MAP),
     ("secrets.extra", SCALAR_MAP),
     ("*Annotations", STRING_MAP),
@@ -173,8 +186,38 @@ RULES: list[tuple[str, dict]] = [
     ("gatewayApi.llmGateway.timeout", {"pattern": "^(([0-9]{1,5}(h|m|s|ms)){1,4})?$"}),
     ("gatewayApi.parentRefs", {"items": {"type": "object", "required": ["name"]}}),
     ("*.preStopSleepSeconds", {"minimum": 0}),
+    # Omega gateway (services/omega-gateway/src/config.mjs bounds the same).
+    ("omega.issuer.url", {"pattern": "^(https://[^/?#@ ]+(/[^?#@ ]*)?)?$"}),
+    ("omega.gateway.ee.url", {"pattern": "^(https://[^/?#@ ]+(/[^?#@ ]*)?)?$"}),
+    (
+        "omega.gateway.sessionExchangeUrl",
+        {"pattern": "^(https://[^/?#@ ]+(/[^?#@ ]*)?)?$"},
+    ),
+    ("omega.gateway.otlp.tracesUrl", {"pattern": "^(https://[^/?#@ ]+(/[^?#@ ]*)?)?$"}),
+    (
+        "omega.gateway.allowedOrigins",
+        {"items": {"type": "string", "pattern": "^https://[^/?#@ ]+$"}},
+    ),
+    ("omega.gateway.drainMs", {"minimum": 0, "maximum": 30000}),
+    ("omega.gateway.trustedProxyHops", {"minimum": 0, "maximum": 5}),
+    ("omega.gateway.maxBodyBytes", {"minimum": 1024, "maximum": 10485760}),
+    ("omega.gateway.maxBundleBytes", {"minimum": 1048576, "maximum": 268435456}),
+    ("omega.gateway.console.trustedTypes", {"enum": ["report", "enforce"]}),
+    ("omega.gateway.console.staticDir", {"pattern": "^(/.*)?$"}),
+    ("omega.ingress.timeout", {"pattern": "^(([0-9]{1,5}(h|m|s|ms)){1,4})?$"}),
+    ("omega.internalTls.reloadInterval", {"pattern": "^([0-9]{1,5}(h|m|s)){1,3}$"}),
+    ("omega.internalTls.allowFrom", {"items": {"type": "object"}}),
     # Enterprise and hardened operations; validate.yaml enforces the same.
     ("edition", {"enum": ["oss", "ee"]}),
+    (
+        "billing.enforcement",
+        {
+            "anyOf": [
+                {"type": "boolean"},
+                {"type": "string", "enum": ["auto", "true", "false"]},
+            ]
+        },
+    ),
     (
         "global.compatibility.openshift.adaptSecurityContext",
         {"enum": ["auto", "force", "disabled"]},
@@ -235,6 +278,17 @@ RULES: list[tuple[str, dict]] = [
             }
         },
     ),
+    # Omega Hub (templates/hub/_hub.tpl refuses the same when hub.enabled).
+    (
+        "hub.maintainerOrgId",
+        {"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})?$"},
+    ),
+    (
+        "hub.trustedProxyDepth",
+        {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "string", "pattern": "^[0-9]*$"}]},
+    ),
+    ("hub.checker.runner.dockerHost", {"pattern": "^(tcp://[^/:]+(:[0-9]+)?/?)?$"}),
+    ("hub.checker.runner.networkPolicyTo", {"items": {"type": "object"}}),
 ]
 
 

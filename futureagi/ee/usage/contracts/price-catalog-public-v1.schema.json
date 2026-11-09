@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/billing/price-catalog-public-v1.schema.json",
+  "title": "price-catalog-public-v1",
+  "description": "The public projection of price-catalog-v1 that the site vendors as src/data/price-catalog.public.json, pinned by catalog_id and sha256. It is generated from catalog/price-catalog.v<N>.json and never hand-edited. It holds only elements whose catalog visibility is public, and every value is {value, status}. It carries no source, note, alternative, Stripe object, event mapping, cost basis or margin. Every object is closed, so adding an internal field needs a new contract version. Strings that look like a Stripe object id or API key fail validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "catalog_id", "version", "status", "effective_at", "currency", "generated_from", "plans", "add_ons", "dimensions", "entitlements", "ai_credits", "model_pricing", "model_rates", "rate_cards", "topups", "programs", "sla", "self_hosted"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "contract": {"const": "price-catalog-public-v1"},
+    "catalog_id": {"$ref": "#/$defs/CatalogId"},
+    "version": {"type": "integer", "minimum": 0, "maximum": 999999},
+    "status": {"enum": ["unconfirmed", "approved"]},
+    "effective_at": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/PeriodStart"}]},
+    "currency": {"const": "USD"},
+    "generated_from": {
+      "type": "object", "additionalProperties": false, "required": ["contract", "catalog_id", "sha256"],
+      "properties": {
+        "contract": {"const": "price-catalog-v1"},
+        "catalog_id": {"$ref": "#/$defs/CatalogId"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the RFC 8785 canonical JSON of the internal catalog file."}
+      }
+    },
+    "plans": {"type": "array", "items": {"$ref": "#/$defs/Plan"}},
+    "add_ons": {"type": "array", "items": {"$ref": "#/$defs/AddOn"}},
+    "dimensions": {"type": "array", "items": {"$ref": "#/$defs/Dimension"}},
+    "entitlements": {"type": "array", "items": {"$ref": "#/$defs/Entitlement"}},
+    "ai_credits": {"$ref": "#/$defs/AiCredits"},
+    "model_pricing": {"$ref": "#/$defs/ModelPricing"},
+    "model_rates": {"type": "array", "items": {"$ref": "#/$defs/ModelRate"}},
+    "rate_cards": {"type": "array", "items": {"$ref": "#/$defs/RateCard"}},
+    "topups": {"$ref": "#/$defs/Topups"},
+    "programs": {"type": "array", "items": {"$ref": "#/$defs/Program"}},
+    "sla": {"type": "array", "items": {"$ref": "#/$defs/SlaTerm"}},
+    "self_hosted": {"$ref": "#/$defs/SelfHosted"}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "unconfirmed"}}, "required": ["status"]}, "then": {"properties": {"effective_at": {"type": "null"}}}},
+    {"if": {"properties": {"status": {"const": "approved"}}, "required": ["status"]}, "then": {"properties": {"effective_at": {"$ref": "#/$defs/PeriodStart"}}}}
+  ],
+  "$defs": {
+    "CatalogId": {"type": "string", "maxLength": 32, "pattern": "^price-catalog\\.v(0|[1-9][0-9]{0,5})$"},
+    "PeriodStart": {"type": "string", "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-01T00:00:00Z$"},
+    "Status": {"enum": ["unconfirmed", "confirmed"]},
+    "Text": {"type": "string", "minLength": 1, "maxLength": 1000, "not": {"pattern": "(^|[^A-Za-z0-9])((prod|price|mtr|cus|sub|si|pi|cs|in|ii|pm|seti|bmes|evt|whsec)_[A-Za-z0-9]{14,}|(sk|rk|pk)_(live|test)_)"}},
+    "Cents": {"type": "integer", "minimum": 0, "maximum": 100000000000},
+    "Dec8": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,7})(\\.[0-9]{1,8})?$"},
+    "Dec4": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,11})(\\.[0-9]{1,4})?$"},
+    "PlanId": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,19}$"},
+    "DimensionId": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,29}$"},
+    "Key": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,59}$"},
+    "Id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$"},
+    "PV": {"type": "object", "additionalProperties": false, "required": ["value", "status"], "properties": {"value": true, "status": {"$ref": "#/$defs/Status"}}},
+    "PVText": {"$ref": "#/$defs/PV", "properties": {"value": {"$ref": "#/$defs/Text"}}},
+    "PVBool": {"$ref": "#/$defs/PV", "properties": {"value": {"type": "boolean"}}},
+    "PVCents": {"$ref": "#/$defs/PV", "properties": {"value": {"$ref": "#/$defs/Cents"}}},
+    "PVCentsOrNull": {"$ref": "#/$defs/PV", "properties": {"value": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/Cents"}]}}},
+    "PVCentsList": {"$ref": "#/$defs/PV", "properties": {"value": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/Cents"}}}},
+    "PVDec": {"$ref": "#/$defs/PV", "properties": {"value": {"$ref": "#/$defs/Dec8"}}},
+    "PVBps": {"$ref": "#/$defs/PV", "properties": {"value": {"type": "integer", "minimum": 0, "maximum": 10000}}},
+    "PVBpsOrNull": {"$ref": "#/$defs/PV", "properties": {"value": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0, "maximum": 10000}]}}},
+    "PVIntOrNull": {"$ref": "#/$defs/PV", "properties": {"value": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0}]}}},
+    "Plan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "family", "kind", "rank", "requires_plan", "status", "display_name", "monthly_price_usd_cents", "annual_price_usd_cents", "seat_pricing", "usage_caps", "sellable", "marketed_features"],
+      "properties": {
+        "id": {"$ref": "#/$defs/PlanId"},
+        "family": {"enum": ["fa_hosted", "ee_standalone"]},
+        "kind": {"enum": ["base", "addon", "custom"]},
+        "rank": {"type": "integer", "minimum": 0},
+        "requires_plan": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/PlanId"}]},
+        "status": {"$ref": "#/$defs/Status"},
+        "display_name": {"$ref": "#/$defs/PVText"},
+        "monthly_price_usd_cents": {"$ref": "#/$defs/PVCents"},
+        "annual_price_usd_cents": {"$ref": "#/$defs/PVCentsOrNull"},
+        "seat_pricing": {"$ref": "#/$defs/PV", "properties": {"value": {"oneOf": [{"type": "null"}, {
+          "type": "object", "additionalProperties": false, "required": ["usd_cents_per_seat_monthly", "representative_seats", "seat_range"],
+          "properties": {"usd_cents_per_seat_monthly": {"$ref": "#/$defs/Cents"}, "representative_seats": {"type": "integer", "minimum": 1}, "seat_range": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/Text"}]}}}]}}},
+        "usage_caps": {"$ref": "#/$defs/PV", "properties": {"value": {"enum": ["hard", "soft"]}}},
+        "sellable": {"$ref": "#/$defs/PVBool"},
+        "marketed_features": {"type": "array", "items": {
+          "type": "object", "additionalProperties": false, "required": ["label", "backing_kind", "backing_ref", "status"],
+          "properties": {"label": {"$ref": "#/$defs/Text"}, "backing_kind": {"enum": ["entitlement", "sla", "program", "support", "compliance", "unbacked"]}, "backing_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/Key"}]}, "status": {"$ref": "#/$defs/Status"}}}}
+      }
+    },
+    "AddOn": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "display_name", "pricing_kind", "monthly_price_usd_cents", "included_from_plan", "description", "status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/Id"},
+        "display_name": {"$ref": "#/$defs/Text"},
+        "pricing_kind": {"enum": ["monthly", "from_monthly", "included_from_plan", "contact_sales"]},
+        "monthly_price_usd_cents": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/Cents"}]},
+        "included_from_plan": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/PlanId"}]},
+        "description": {"type": "string", "maxLength": 500, "not": {"pattern": "(^|[^A-Za-z0-9])((prod|price|mtr|cus|sub|si|pi|cs|in|ii|pm|seti|bmes|evt|whsec)_[A-Za-z0-9]{14,}|(sk|rk|pk)_(live|test)_)"}},
+        "status": {"$ref": "#/$defs/Status"}
+      }
+    },
+    "Dimension": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "product", "status", "display_name", "native_unit", "display_unit", "native_to_display_divisor", "lifecycle", "settlement_class", "free_entitlement_key", "pricing"],
+      "properties": {
+        "id": {"$ref": "#/$defs/DimensionId"},
+        "product": {"enum": ["gateway", "agents", "sandboxes", "deployments", "evals", "platform"]},
+        "status": {"$ref": "#/$defs/Status"},
+        "display_name": {"$ref": "#/$defs/PVText"},
+        "native_unit": {"$ref": "#/$defs/Text"},
+        "display_unit": {"$ref": "#/$defs/Text"},
+        "native_to_display_divisor": {"type": "integer", "minimum": 1},
+        "lifecycle": {"$ref": "#/$defs/PV", "properties": {"value": {"enum": ["live", "planned", "retiring"]}}},
+        "settlement_class": {"$ref": "#/$defs/PV", "properties": {"value": {"enum": ["prepaid_only", "wallet_then_invoice", "invoice"]}}},
+        "free_entitlement_key": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/Key"}]},
+        "pricing": {"oneOf": [
+          {"type": "object", "additionalProperties": false, "required": ["kind", "tiers", "display_block", "status"],
+           "properties": {"kind": {"const": "graduated"}, "display_block": {"type": "integer", "minimum": 1}, "status": {"$ref": "#/$defs/Status"},
+             "tiers": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["up_to", "unit_price_usd"], "properties": {"up_to": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/Dec4"}]}, "unit_price_usd": {"$ref": "#/$defs/Dec8"}}}}}},
+          {"type": "object", "additionalProperties": false, "required": ["kind", "basis", "multiplier", "status"],
+           "properties": {"kind": {"const": "pass_through"}, "basis": {"enum": ["billed_micros", "producer_usd_micros"]}, "multiplier": {"$ref": "#/$defs/Dec8"}, "status": {"$ref": "#/$defs/Status"}}}
+        ]}
+      }
+    },
+    "Entitlement": {
+      "type": "object", "additionalProperties": false, "required": ["key", "family", "kind", "unit", "values", "status"],
+      "properties": {
+        "key": {"$ref": "#/$defs/Key"},
+        "family": {"enum": ["fa_hosted", "ee_standalone"]},
+        "kind": {"enum": ["int", "bool", "string_list"]},
+        "unit": {"enum": ["count", "days", "rpm", "epm", "flag", "usd_cents", "list", "gb", "minutes", "per_day"]},
+        "values": {"type": "object", "minProperties": 1, "propertyNames": {"anyOf": [{"const": "_all"}, {"$ref": "#/$defs/PlanId"}]},
+          "additionalProperties": {"anyOf": [{"type": "integer", "minimum": -1}, {"type": "boolean"}, {"type": "array", "items": {"$ref": "#/$defs/Text"}}]}},
+        "status": {"$ref": "#/$defs/Status"}
+      }
+    },
+    "AiCredits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dimension", "credit_value_usd", "min_credits_when_cost_unknown", "eval_run_fee_usd", "excluded_billing_modes", "model_credit_rates"],
+      "properties": {
+        "dimension": {"const": "ai_credits"},
+        "credit_value_usd": {"$ref": "#/$defs/PVDec"},
+        "min_credits_when_cost_unknown": {"$ref": "#/$defs/PVDec"},
+        "eval_run_fee_usd": {"$ref": "#/$defs/PVDec"},
+        "excluded_billing_modes": {"$ref": "#/$defs/PV", "properties": {"value": {"type": "array", "uniqueItems": true, "items": {"enum": ["byok", "managed"]}}}},
+        "model_credit_rates": {"type": "array", "items": {
+          "type": "object", "additionalProperties": false, "required": ["model_id", "credits_per_1k_input_tokens", "credits_per_1k_output_tokens", "status"],
+          "properties": {"model_id": {"$ref": "#/$defs/Text"}, "credits_per_1k_input_tokens": {"$ref": "#/$defs/Dec8"}, "credits_per_1k_output_tokens": {"$ref": "#/$defs/Dec8"}, "status": {"$ref": "#/$defs/Status"}}}}
+      }
+    },
+    "ModelPricing": {
+      "type": "object", "additionalProperties": false,
+      "required": ["list_price_basis", "list_price_source", "markup_bps", "tool_markup_bps", "byok_model_cost_billed", "byok_request_fee_dimension", "rounding", "managed_models_live", "site_display"],
+      "properties": {
+        "list_price_basis": {"$ref": "#/$defs/PV", "properties": {"value": {"enum": ["host_list_price"]}}},
+        "list_price_source": {"$ref": "#/$defs/PVText"},
+        "markup_bps": {"$ref": "#/$defs/PVBps"},
+        "tool_markup_bps": {"$ref": "#/$defs/PVBpsOrNull"},
+        "byok_model_cost_billed": {"$ref": "#/$defs/PVBool"},
+        "byok_request_fee_dimension": {"$ref": "#/$defs/PV", "properties": {"value": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/DimensionId"}]}}},
+        "rounding": {"$ref": "#/$defs/PV", "properties": {"value": {"enum": ["half_up_per_attempt_micros"]}}},
+        "managed_models_live": {"$ref": "#/$defs/PVBool"},
+        "site_display": {"$ref": "#/$defs/PV", "properties": {"value": {"enum": ["host_list_price_only", "host_and_futureagi_price"]}}}
+      }
+    },
+    "ModelRate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rate_set", "model_id", "vendor", "input_usd_per_1m", "output_usd_per_1m", "cached_input_usd_per_1m", "cache_write_usd_per_1m", "billability", "platform_multiplier", "model_status", "effective_from", "status"],
+      "properties": {
+        "rate_set": {"$ref": "#/$defs/Text"}, "model_id": {"$ref": "#/$defs/Text"}, "vendor": {"$ref": "#/$defs/Text"},
+        "input_usd_per_1m": {"$ref": "#/$defs/Dec8"}, "output_usd_per_1m": {"$ref": "#/$defs/Dec8"},
+        "cached_input_usd_per_1m": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/Dec8"}]},
+        "cache_write_usd_per_1m": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/Dec8"}]},
+        "billability": {"enum": ["omega_served", "byo_only", "included"]},
+        "platform_multiplier": {"$ref": "#/$defs/Dec8"},
+        "model_status": {"enum": ["active", "retired"]},
+        "effective_from": {"type": "string", "format": "date-time"},
+        "status": {"$ref": "#/$defs/Status"}
+      }
+    },
+    "RateCard": {
+      "type": "object", "additionalProperties": false, "required": ["id", "family", "applies_to_plans", "rows", "status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/Id"},
+        "family": {"enum": ["fa_hosted", "ee_standalone"]},
+        "applies_to_plans": {"type": "array", "items": {"$ref": "#/$defs/PlanId"}},
+        "rows": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["limit_dimension", "usd_cents_per_unit"], "properties": {"limit_dimension": {"$ref": "#/$defs/Text"}, "usd_cents_per_unit": {"$ref": "#/$defs/Cents"}}}},
+        "status": {"$ref": "#/$defs/Status"}
+      }
+    },
+    "Topups": {
+      "type": "object", "additionalProperties": false,
+      "required": ["minimum_usd_cents", "maximum_usd_cents", "presets_usd_cents", "signup_credit_usd_cents", "purchased_credit_expiry_days", "promotional_credit_expiry_days", "auto_topup", "credit_packs"],
+      "properties": {
+        "minimum_usd_cents": {"$ref": "#/$defs/PVCents"},
+        "maximum_usd_cents": {"$ref": "#/$defs/PVCentsOrNull"},
+        "presets_usd_cents": {"$ref": "#/$defs/PVCentsList"},
+        "signup_credit_usd_cents": {"$ref": "#/$defs/PVCents"},
+        "purchased_credit_expiry_days": {"$ref": "#/$defs/PVIntOrNull"},
+        "promotional_credit_expiry_days": {"$ref": "#/$defs/PVIntOrNull"},
+        "auto_topup": {
+          "type": "object", "additionalProperties": false,
+          "required": ["default_enabled", "daily_count_cap", "daily_amount_cap_usd_cents", "max_in_flight", "funding"],
+          "properties": {
+            "default_enabled": {"$ref": "#/$defs/PVBool"},
+            "daily_count_cap": {"$ref": "#/$defs/PVIntOrNull"},
+            "daily_amount_cap_usd_cents": {"$ref": "#/$defs/PVCentsOrNull"},
+            "max_in_flight": {"$ref": "#/$defs/PVIntOrNull"},
+            "funding": {"$ref": "#/$defs/PV", "properties": {"value": {"enum": ["any", "card_only"]}}}
+          }
+        },
+        "credit_packs": {"type": "array", "items": {
+          "type": "object", "additionalProperties": false, "required": ["id", "family", "name", "price_usd_cents", "credit_usd_cents", "status"],
+          "properties": {"id": {"$ref": "#/$defs/Id"}, "family": {"enum": ["fa_hosted", "ee_standalone"]}, "name": {"$ref": "#/$defs/Text"}, "price_usd_cents": {"$ref": "#/$defs/Cents"}, "credit_usd_cents": {"$ref": "#/$defs/Cents"}, "status": {"$ref": "#/$defs/Status"}}}}
+      }
+    },
+    "Program": {
+      "type": "object", "additionalProperties": false, "required": ["id", "display_name", "terms"],
+      "properties": {
+        "id": {"$ref": "#/$defs/Id"},
+        "display_name": {"$ref": "#/$defs/Text"},
+        "terms": {"type": "array", "minItems": 1, "items": {
+          "type": "object", "additionalProperties": false, "required": ["key", "value", "unit", "status"],
+          "properties": {"key": {"$ref": "#/$defs/Key"}, "value": {"anyOf": [{"type": ["integer", "boolean", "null"]}, {"$ref": "#/$defs/Text"}, {"type": "object", "additionalProperties": {"anyOf": [{"type": ["integer", "boolean", "null"]}, {"$ref": "#/$defs/Text"}]}}]}, "unit": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/Text"}]}, "status": {"$ref": "#/$defs/Status"}}}}
+      }
+    },
+    "SlaTerm": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "applies_to_plans", "uptime_pct", "service_credits", "support_response_hours", "support_channels", "text", "status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/Id"},
+        "applies_to_plans": {"type": "array", "items": {"$ref": "#/$defs/PlanId"}},
+        "uptime_pct": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/Dec8"}]},
+        "service_credits": {"type": ["boolean", "null"]},
+        "support_response_hours": {"type": ["integer", "null"], "minimum": 0},
+        "support_channels": {"type": "array", "items": {"$ref": "#/$defs/Text"}},
+        "text": {"$ref": "#/$defs/Text"},
+        "status": {"$ref": "#/$defs/Status"}
+      }
+    },
+    "SelfHosted": {
+      "type": "object", "additionalProperties": false, "required": ["license_bands"],
+      "properties": {"license_bands": {"type": "array", "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "display_name", "monthly_price_usd_cents", "annual_price_usd_cents", "limits", "features", "status"],
+        "properties": {"id": {"$ref": "#/$defs/Id"}, "display_name": {"$ref": "#/$defs/Text"}, "monthly_price_usd_cents": {"$ref": "#/$defs/Cents"}, "annual_price_usd_cents": {"$ref": "#/$defs/Cents"}, "limits": {"type": "object", "additionalProperties": {"type": "integer", "minimum": -1}}, "features": {"type": "array", "items": {"$ref": "#/$defs/Text"}}, "status": {"$ref": "#/$defs/Status"}}}}}
+    }
+  }
+}

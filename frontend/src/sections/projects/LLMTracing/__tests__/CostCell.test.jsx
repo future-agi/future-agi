@@ -7,7 +7,7 @@ vi.mock("src/components/iconify", () => ({ default: () => null }));
 
 describe("CostCell precision", () => {
   it.each([
-    [3e-8, "< $0.0000001"],
+    [3e-8, "$0.00000003"],
     [2.37e-5, "$0.0000237"],
     [0, "$0.00"],
     [null, "-"],

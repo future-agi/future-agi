@@ -141,9 +141,16 @@ spec:
   parentRefs: {{- $parentRefs }}
   hostnames: [{{ $g.llmGateway.host | quote }}]
   rules:
-    # The LLM gateway (agentcc-gateway): virtual keys authenticate every call.
+    # Hosted public routes must not expose the admin/control-plane /-/ surface.
+    # Backend callers retain the internal Service; generic installs keep /.
     - matches:
+        {{- if .Values.hosted.enabled }}
+        {{- range list "/v1" "/v1beta" "/a2a" "/deepgram" "/cartesia" }}
+        - path: {type: PathPrefix, value: {{ . | quote }}}
+        {{- end }}
+        {{- else }}
         - path: {type: PathPrefix, value: /}
+        {{- end }}
       backendRefs:
         - name: {{ include "futureagi.component" (dict "root" . "component" "agentcc-gateway") }}
           port: {{ .Values.agentccGateway.service.port }}
@@ -160,7 +167,7 @@ port has no /, so each Service a route uses gets its component's health
 endpoint. GKE applies a policy only to a Service a route references. */ -}}
 {{- $checks := list
       (dict "component" "frontend" "check" (dict "requestPath" "/"))
-      (dict "component" "backend" "check" (dict "requestPath" "/health/" "host" "localhost")) -}}
+      (dict "component" "backend" "check" (dict "requestPath" (ternary "/readyz/" "/health/" .Values.hosted.enabled) "host" "localhost")) -}}
 {{- if or $g.otlp.enabled $g.otlpGrpc.enabled -}}
 {{- /* The admin port serves /healthz; it is the one the readiness probe uses. */ -}}
 {{- $checks = append $checks (dict "component" "fi-collector" "check" (dict "portSpecification" "USE_FIXED_PORT" "port" 9464 "requestPath" "/healthz")) -}}

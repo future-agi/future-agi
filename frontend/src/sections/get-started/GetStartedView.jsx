@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import Box from "@mui/material/Box/Box";
 import React, { Suspense, useState } from "react";
 import GetStartedHeaderView from "./GetStartedHeaderView";
@@ -104,7 +105,7 @@ const GetStartedView = () => {
                 width: "100%",
               }}
             >
-              <iframe
+              <ExternalContentFrame
                 src={getStartedVideo}
                 title="Quick Product Overview | Future AGI"
                 frameBorder="0"

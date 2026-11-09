@@ -1,0 +1,3968 @@
+{
+  "conformance_version": "1.4.0",
+  "file": "addresses",
+  "rules": {
+    "order": "URL rules run in this order and the first failure is reported: length, syntax, characters, scheme, fragment, userinfo, port, host form (IP literal or name), then the IP-literal class or the name rules, then the org and workspace allowlists",
+    "characters": "the path and the query (everything after the authority, up to a '#') may hold only U+0021-U+007E: no control character (CR, LF, tab, NUL, DEL), no space and no raw non-ASCII, else url.characters. They are sent byte for byte, so the caller percent-encodes (/caf%C3%A9, %20). The scheme is already letters, digits, '+', '-' and '.'. The host is judged by the host rules after IDNA, so a non-ASCII host (bücher.de) still passes; the userinfo and fragment are refused anyway",
+    "codes": {
+      "WEBHOOK_URL_NOT_HTTPS": [
+        "url.scheme"
+      ],
+      "WEBHOOK_URL_INVALID": [
+        "url.length",
+        "url.syntax",
+        "url.characters",
+        "url.fragment",
+        "url.userinfo",
+        "url.port",
+        "url.ip_literal_nonstandard",
+        "url.host_syntax"
+      ],
+      "WEBHOOK_URL_UNSAFE_ADDRESS": [
+        "addr.never",
+        "addr.private",
+        "addr.private_port",
+        "url.host_localhost",
+        "url.host_metadata",
+        "url.host_own",
+        "url.host_no_dot",
+        "url.host_internal_name"
+      ],
+      "WEBHOOK_HOST_NOT_ALLOWED": [
+        "policy.org_allowed_hosts",
+        "policy.workspace_allowed_hosts"
+      ]
+    },
+    "port": "the explicit port, else 443 for https and 80 for http; allowed: 443 or 1024-65535, minus 2375, 2376, 2379, 3306, 4191, 5432, 6379, 6443, 8500, 9200, 10250, 10255, 11211, 15000, 15020, 15021, 27017",
+    "ip_literal": "a host is an IP literal only as a standard dotted quad (no leading zeros) or a bracketed IPv6 address without a zone id; any other host whose last label is all digits or starts with 0x is refused before any lookup (url.ip_literal_nonstandard)",
+    "names": "lower-case, IDNA, trailing dot removed. Always refused: localhost and *.localhost, the metadata names. Refused unless (off hosted) listed in allowed_private_hosts: futureagi.com, deny_hosts and their subdomains; a name without a dot; a name under a special-use suffix (arpa, local, localhost, internal, test, example, invalid, onion, alt); a name whose public suffix (ICANN section of the PSL) is missing or is the whole name",
+    "metadata_names": [
+      "instance-data",
+      "instance-data.ec2.internal",
+      "metadata",
+      "metadata.goog",
+      "metadata.google.internal"
+    ],
+    "never_cidrs": [
+      "0.0.0.0/8",
+      "127.0.0.0/8",
+      "169.254.0.0/16",
+      "224.0.0.0/4",
+      "255.255.255.255/32",
+      "100.100.100.200/32",
+      "168.63.129.16/32",
+      "::/128",
+      "::1/128",
+      "fe80::/10",
+      "ff00::/8",
+      "fd00:ec2::254/128",
+      "64:ff9b:1::/48"
+    ],
+    "private_cidrs": [
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16",
+      "100.64.0.0/10",
+      "192.0.0.0/24",
+      "192.0.2.0/24",
+      "198.18.0.0/15",
+      "198.51.100.0/24",
+      "203.0.113.0/24",
+      "240.0.0.0/4",
+      "fc00::/7",
+      "2001::/23",
+      "2001:db8::/32",
+      "3fff::/20",
+      "100::/64",
+      "5f00::/16",
+      "2002::/16",
+      "every IPv6 address outside 2000::/3 that is not NEVER"
+    ],
+    "unwrapping": "IPv4-mapped (::ffff:0:0/96), IPv4-translated (::ffff:0:0:0/96, the RFC 2765 / RFC 6145 SIIT form ::ffff:0:a.b.c.d; from 1.2.0), IPv4-compatible (::/96 except :: and ::1, however it is spelled: ::127.0.0.1 is ::7f00:1) and NAT64 (64:ff9b::/96), each with the IPv4 address in its last 32 bits; 6to4 (2002::/16, bits 16-47); Teredo (2001::/32: server bits 32-63, client = NOT bits 96-127). The class is the strictest of the outer address and every embedded IPv4 address (never > private > public), so ::ffff:0:7f00:1 and ::7f00:1 are never, like 127.0.0.1. The local-use NAT64 prefix 64:ff9b:1::/48 (RFC 8215) is not unwrapped: it is NEVER as a whole, because its RFC 6052 layout (/48 to /96) is the operator's choice and so its embedded address cannot be read reliably",
+    "admission": "private addresses are admitted only off hosted, only inside private_cidrs, and only on private_ports (default [443]); an address that carries embedded IPv4 addresses (see unwrapping) is admitted only if each embedded IPv4 address is public or inside an IPv4 private_cidrs entry itself, so opting in a translator prefix (NAT64 64:ff9b::/96, 6to4 2002::/16, Teredo 2001::/32) admits public targets behind it, not every private IPv4 address behind it (from 1.4.0, ruling 76 addendum); never addresses are never admitted",
+    "resolution": "every answer must be allowed, else ssrf_blocked and nothing connects; duplicates removed in order; at most the first 2 are tried; no answer is dns_error",
+    "policy": "exact host or a leftmost '*.' wildcard matching one or more labels (not the apex); a workspace list can only narrow the org list",
+    "query_warning": "query parameter names matching /token|key|secret|sig|auth/i are listed in warn_query_params (the dialog warns; the URL is still allowed)",
+    "classification_source": "the CIDR tables above are normative and complete; do not rely on a language's 'is_private' flags, which change between versions (Python 3.11 vs 3.13). The tables are at least as strict as Python 3.11-3.14 is_global (2002::/16 is PRIVATE for that reason), so a core that also applies is_global on hosted (DESIGN.md section 6.2) gives the same answers",
+    "redirects": "a 3xx is never followed: outcome redirect_refused, standard class, and the Location is never fetched. The log names the Location host only for an absolute http(s) URL whose host is a DNS name (no userinfo, not an IP literal or numeric form, valid labels, IDNA, lower-case, port and trailing dot dropped); otherwise it says 'another address'"
+  },
+  "profiles": {
+    "hosted": {
+      "mode": "hosted",
+      "deny_hosts": [
+        "omega-ee.example.net",
+        "gateway.example.net"
+      ]
+    },
+    "hosted_with_dev_env": {
+      "mode": "hosted",
+      "allow_http": true,
+      "private_cidrs": [
+        "10.0.0.0/8"
+      ],
+      "allowed_private_hosts": [
+        "hooks.acme.test"
+      ],
+      "deny_hosts": []
+    },
+    "self_hosted": {
+      "mode": "self_hosted",
+      "allow_http": true,
+      "private_cidrs": [
+        "10.20.0.0/16",
+        "127.0.0.0/8",
+        "64:ff9b::/96",
+        "2002::/16",
+        "2001::/32"
+      ],
+      "private_ports": [
+        443,
+        8080
+      ],
+      "allowed_private_hosts": [
+        "host.docker.internal",
+        "hooks.acme.test"
+      ],
+      "deny_hosts": []
+    },
+    "self_hosted_strict": {
+      "mode": "self_hosted",
+      "deny_hosts": []
+    },
+    "self_hosted_wide": {
+      "mode": "self_hosted",
+      "private_cidrs": [
+        "0.0.0.0/0",
+        "::/0"
+      ],
+      "private_ports": [
+        443
+      ],
+      "deny_hosts": []
+    }
+  },
+  "url": [
+    {
+      "id": "ok-basic",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/omega",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.acme.ai",
+        "port": 443
+      },
+      "note": ""
+    },
+    {
+      "id": "ok-port-8443",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai:8443/x",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.acme.ai",
+        "port": 8443
+      },
+      "note": ""
+    },
+    {
+      "id": "ok-normalised",
+      "profile": "hosted",
+      "url": "https://HOOKS.Acme.AI./x",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.acme.ai",
+        "port": 443
+      },
+      "note": "lower-case, trailing dot removed"
+    },
+    {
+      "id": "ok-idna",
+      "profile": "hosted",
+      "url": "https://bücher.de/hook",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "xn--bcher-kva.de",
+        "port": 443
+      },
+      "note": "IDNA: xn--bcher-kva.de"
+    },
+    {
+      "id": "ok-public-ipv4",
+      "profile": "hosted",
+      "url": "https://8.8.8.8/hook",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "8.8.8.8",
+        "port": 443
+      },
+      "note": ""
+    },
+    {
+      "id": "ok-public-ipv6",
+      "profile": "hosted",
+      "url": "https://[2606:4700:4700::1111]/hook",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "[2606:4700:4700::1111]",
+        "port": 443
+      },
+      "note": ""
+    },
+    {
+      "id": "ok-co-uk",
+      "profile": "hosted",
+      "url": "https://hooks.co.uk/x",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.co.uk",
+        "port": 443
+      },
+      "note": ""
+    },
+    {
+      "id": "ok-query-warning",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/x?token=abc&team=7&api_key=z",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.acme.ai",
+        "port": 443,
+        "warn_query_params": [
+          "api_key",
+          "token"
+        ]
+      },
+      "note": "allowed, with the query warning"
+    },
+    {
+      "id": "ok-2048-chars",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.acme.ai",
+        "port": 443
+      },
+      "note": "exactly 2,048 characters"
+    },
+    {
+      "id": "too-long",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.length"
+      },
+      "note": "2,049 characters"
+    },
+    {
+      "id": "http-hosted",
+      "profile": "hosted",
+      "url": "http://hooks.acme.ai/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_NOT_HTTPS",
+        "rule": "url.scheme"
+      },
+      "note": ""
+    },
+    {
+      "id": "ftp",
+      "profile": "hosted",
+      "url": "ftp://hooks.acme.ai/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_NOT_HTTPS",
+        "rule": "url.scheme"
+      },
+      "note": ""
+    },
+    {
+      "id": "userinfo",
+      "profile": "hosted",
+      "url": "https://user:pw@hooks.acme.ai/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.userinfo"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "userinfo-empty",
+      "profile": "hosted",
+      "url": "https://@hooks.acme.ai/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.userinfo"
+      },
+      "note": ""
+    },
+    {
+      "id": "fragment",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/x#frag",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.fragment"
+      },
+      "note": ""
+    },
+    {
+      "id": "port-6379",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai:6379/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.port"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "port-6443",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai:6443/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.port"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "port-80",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai:80/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.port"
+      },
+      "note": "below 1024 and not 443"
+    },
+    {
+      "id": "port-1023",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai:1023/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.port"
+      },
+      "note": ""
+    },
+    {
+      "id": "port-1024",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai:1024/",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.acme.ai",
+        "port": 1024
+      },
+      "note": ""
+    },
+    {
+      "id": "port-65536",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai:65536/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.port"
+      },
+      "note": ""
+    },
+    {
+      "id": "port-empty",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai:/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.port"
+      },
+      "note": ""
+    },
+    {
+      "id": "metadata-ip",
+      "profile": "hosted",
+      "url": "https://169.254.169.254/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "mapped-metadata",
+      "profile": "hosted",
+      "url": "https://[::ffff:169.254.169.254]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "nat64-metadata",
+      "profile": "hosted",
+      "url": "https://[64:ff9b::a9fe:a9fe]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "WT-06b"
+    },
+    {
+      "id": "nat64-loopback",
+      "profile": "hosted",
+      "url": "https://[64:ff9b::7f00:1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "NAT64 holding 127.0.0.1; ruling 76"
+    },
+    {
+      "id": "nat64-local-use-metadata",
+      "profile": "hosted",
+      "url": "https://[64:ff9b:1:a9fe:a9:fe00::]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "RFC 6052 /48 layout"
+    },
+    {
+      "id": "6to4-loopback",
+      "profile": "hosted",
+      "url": "https://[2002:7f00:1::]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "WT-06b"
+    },
+    {
+      "id": "ipv4-compatible-loopback",
+      "profile": "hosted",
+      "url": "https://[::127.0.0.1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "WT-06b"
+    },
+    {
+      "id": "teredo-loopback-client",
+      "profile": "hosted",
+      "url": "https://[2001:0:4136:e378:8000:63bf:80ff:fffe]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "Teredo client 127.0.0.1"
+    },
+    {
+      "id": "localhost",
+      "profile": "hosted",
+      "url": "https://localhost/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_localhost"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "sub-localhost",
+      "profile": "hosted",
+      "url": "https://api.localhost/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_localhost"
+      },
+      "note": ""
+    },
+    {
+      "id": "metadata-name",
+      "profile": "hosted",
+      "url": "https://metadata.google.internal/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_metadata"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "metadata-bare",
+      "profile": "hosted",
+      "url": "https://metadata/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_metadata"
+      },
+      "note": ""
+    },
+    {
+      "id": "rfc1918",
+      "profile": "hosted",
+      "url": "https://10.0.0.5/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "cgnat",
+      "profile": "hosted",
+      "url": "https://100.64.0.1/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "ula",
+      "profile": "hosted",
+      "url": "https://[fd00::1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "link-local-v6",
+      "profile": "hosted",
+      "url": "https://[fe80::1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "zone-id",
+      "profile": "hosted",
+      "url": "https://[fe80::1%25eth0]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.ip_literal_nonstandard"
+      },
+      "note": "a zone id is not a standard form"
+    },
+    {
+      "id": "decimal-ip",
+      "profile": "hosted",
+      "url": "https://2852039166/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.ip_literal_nonstandard"
+      },
+      "note": "WT-05: refused before any lookup"
+    },
+    {
+      "id": "short-ip",
+      "profile": "hosted",
+      "url": "https://127.1/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.ip_literal_nonstandard"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "hex-ip",
+      "profile": "hosted",
+      "url": "https://0x7f.1/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.ip_literal_nonstandard"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "octal-ip",
+      "profile": "hosted",
+      "url": "https://0251.0376.0251.0376/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.ip_literal_nonstandard"
+      },
+      "note": "WT-05"
+    },
+    {
+      "id": "hex-whole",
+      "profile": "hosted",
+      "url": "https://0xa9fea9fe/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.ip_literal_nonstandard"
+      },
+      "note": ""
+    },
+    {
+      "id": "leading-zero-quad",
+      "profile": "hosted",
+      "url": "https://010.0.0.1/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.ip_literal_nonstandard"
+      },
+      "note": ""
+    },
+    {
+      "id": "numeric-tld",
+      "profile": "hosted",
+      "url": "https://hooks.acme.123/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.ip_literal_nonstandard"
+      },
+      "note": "a numeric last label is an IPv4 form"
+    },
+    {
+      "id": "svc",
+      "profile": "hosted",
+      "url": "https://redis.default.svc/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": "WT-05c"
+    },
+    {
+      "id": "dotless",
+      "profile": "hosted",
+      "url": "https://kubernetes/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_no_dot"
+      },
+      "note": "WT-05c"
+    },
+    {
+      "id": "cluster-local",
+      "profile": "hosted",
+      "url": "https://api.default.svc.cluster.local/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": ""
+    },
+    {
+      "id": "dot-internal",
+      "profile": "hosted",
+      "url": "https://vault.internal/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": ""
+    },
+    {
+      "id": "dot-local",
+      "profile": "hosted",
+      "url": "https://printer.local/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": ""
+    },
+    {
+      "id": "home-arpa",
+      "profile": "hosted",
+      "url": "https://nas.home.arpa/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": "special-use, not caught by the PSL rule alone"
+    },
+    {
+      "id": "dot-corp",
+      "profile": "hosted",
+      "url": "https://intranet.corp/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": "not a delegated TLD"
+    },
+    {
+      "id": "dot-lan",
+      "profile": "hosted",
+      "url": "https://router.lan/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": ""
+    },
+    {
+      "id": "dot-test",
+      "profile": "hosted",
+      "url": "https://hooks.acme.test/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": "special-use; allowed only through allowed_private_hosts off hosted"
+    },
+    {
+      "id": "public-suffix-itself",
+      "profile": "hosted",
+      "url": "https://co.uk/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": "not longer than its public suffix"
+    },
+    {
+      "id": "own-host",
+      "profile": "hosted",
+      "url": "https://api.futureagi.com/hook",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_own"
+      },
+      "note": "WT-05b"
+    },
+    {
+      "id": "own-apex",
+      "profile": "hosted",
+      "url": "https://FutureAGI.com./x",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_own"
+      },
+      "note": ""
+    },
+    {
+      "id": "own-ee-origin",
+      "profile": "hosted",
+      "url": "https://omega-ee.example.net/hooks",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_own"
+      },
+      "note": "WEBHOOKS_DENY_HOSTS"
+    },
+    {
+      "id": "own-gateway-sub",
+      "profile": "hosted",
+      "url": "https://eu.gateway.example.net/x",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_own"
+      },
+      "note": "subdomains of a denied host"
+    },
+    {
+      "id": "crlf-in-path",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/x\r\nX-Injected: 1",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.characters"
+      },
+      "note": "CR/LF: a request-splitting shape, refused at create"
+    },
+    {
+      "id": "lf-in-query",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/x?a=1\nb=2",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.characters"
+      },
+      "note": ""
+    },
+    {
+      "id": "space-in-path",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/a b",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.characters"
+      },
+      "note": "percent-encode it: /a%20b"
+    },
+    {
+      "id": "tab-in-path",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/a\tb",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.characters"
+      },
+      "note": ""
+    },
+    {
+      "id": "nul-in-path",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/\u0000",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.characters"
+      },
+      "note": ""
+    },
+    {
+      "id": "del-in-path",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/ab",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.characters"
+      },
+      "note": ""
+    },
+    {
+      "id": "non-ascii-path",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/café",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.characters"
+      },
+      "note": "percent-encode it: /caf%C3%A9"
+    },
+    {
+      "id": "non-ascii-query",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/x?q=é",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.characters"
+      },
+      "note": ""
+    },
+    {
+      "id": "bidi-in-path",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/x‮gpj",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.characters"
+      },
+      "note": "a bidi override"
+    },
+    {
+      "id": "space-in-query",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/x?q=a b",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_INVALID",
+        "rule": "url.characters"
+      },
+      "note": "checked before the scheme, so the first failure is this one"
+    },
+    {
+      "id": "ok-percent-encoded",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/caf%C3%A9?q=%C3%A9%20x",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.acme.ai",
+        "port": 443
+      },
+      "note": "allowed: the caller percent-encoded the non-ASCII and the space"
+    },
+    {
+      "id": "ok-idna-host-ascii-path",
+      "profile": "hosted",
+      "url": "https://bücher.de/caf%C3%A9",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "xn--bcher-kva.de",
+        "port": 443
+      },
+      "note": "the host is judged after IDNA, so a non-ASCII host passes"
+    },
+    {
+      "id": "arpa-in-addr",
+      "profile": "hosted",
+      "url": "https://foo.in-addr.arpa/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": ""
+    },
+    {
+      "id": "arpa-reverse-ipv4",
+      "profile": "hosted",
+      "url": "https://5.0.0.10.in-addr.arpa/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": ""
+    },
+    {
+      "id": "arpa-ip6",
+      "profile": "hosted",
+      "url": "https://x.ip6.arpa/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": ""
+    },
+    {
+      "id": "6to4-public",
+      "profile": "hosted",
+      "url": "https://[2002:808:808::]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private"
+      },
+      "note": "6to4 (RFC 7526, deprecated) is private even around a public IPv4 address"
+    },
+    {
+      "id": "nat64-local-use-96-loopback",
+      "profile": "hosted",
+      "url": "https://[64:ff9b:1:ab00::7f00:1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "a /96 layout inside 64:ff9b:1::/48 holding 127.0.0.1"
+    },
+    {
+      "id": "ipv4-compatible-loopback-hex",
+      "profile": "hosted",
+      "url": "https://[::7f00:1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "unwrapping: IPv4-compatible, ::127.0.0.1 spelled in hex; EE review 10-22"
+    },
+    {
+      "id": "ipv4-translated-loopback",
+      "profile": "hosted",
+      "url": "https://[::ffff:0:7f00:1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "unwrapping: IPv4-translated ::ffff:0:0:0/96 holding 127.0.0.1; EE review 10-22"
+    },
+    {
+      "id": "wide-metadata-ip",
+      "profile": "self_hosted_wide",
+      "url": "https://169.254.169.254/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "a CIDR covering everything cannot admit a NEVER address"
+    },
+    {
+      "id": "wide-loopback",
+      "profile": "self_hosted_wide",
+      "url": "https://127.0.0.1/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-link-local-v6",
+      "profile": "self_hosted_wide",
+      "url": "https://[fe80::1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-mapped-metadata",
+      "profile": "self_hosted_wide",
+      "url": "https://[::ffff:169.254.169.254]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-nat64-local-use",
+      "profile": "self_hosted_wide",
+      "url": "https://[64:ff9b:1:ab00::7f00:1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-6to4-loopback",
+      "profile": "self_hosted_wide",
+      "url": "https://[2002:7f00:1::]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-ipv4-compatible-loopback-hex",
+      "profile": "self_hosted_wide",
+      "url": "https://[::7f00:1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "unwrapping: IPv4-compatible, ::127.0.0.1 spelled in hex; EE review 10-22"
+    },
+    {
+      "id": "wide-ipv4-translated-loopback",
+      "profile": "self_hosted_wide",
+      "url": "https://[::ffff:0:7f00:1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "unwrapping: IPv4-translated ::ffff:0:0:0/96 holding 127.0.0.1; EE review 10-22"
+    },
+    {
+      "id": "wide-rfc1918-admitted",
+      "profile": "self_hosted_wide",
+      "url": "https://10.0.0.5/",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "10.0.0.5",
+        "port": 443
+      },
+      "note": "private and in the CIDRs"
+    },
+    {
+      "id": "wide-6to4-public-admitted",
+      "profile": "self_hosted_wide",
+      "url": "https://[2002:808:808::]/",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "[2002:808:808::]",
+        "port": 443
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-private-port-refused",
+      "profile": "self_hosted_wide",
+      "url": "https://10.0.0.5:8443/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private_port"
+      },
+      "note": "admitted addresses still use FI_WEBHOOKS_PRIVATE_PORTS only"
+    },
+    {
+      "id": "hosted-ignores-allow-http",
+      "profile": "hosted_with_dev_env",
+      "url": "http://hooks.acme.ai/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_NOT_HTTPS",
+        "rule": "url.scheme"
+      },
+      "note": "FI_WEBHOOKS_ALLOW_HTTP is ignored on hosted"
+    },
+    {
+      "id": "hosted-ignores-private-cidrs",
+      "profile": "hosted_with_dev_env",
+      "url": "https://10.0.0.5/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private"
+      },
+      "note": "FI_WEBHOOKS_PRIVATE_CIDRS is ignored on hosted"
+    },
+    {
+      "id": "hosted-ignores-allowed-private-hosts",
+      "profile": "hosted_with_dev_env",
+      "url": "https://hooks.acme.test/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": "FI_WEBHOOKS_ALLOWED_PRIVATE_HOSTS is ignored on hosted"
+    },
+    {
+      "id": "self-http-allowlisted-name",
+      "profile": "self_hosted",
+      "url": "http://hooks.acme.test:8080/x",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.acme.test",
+        "port": 8080
+      },
+      "note": ""
+    },
+    {
+      "id": "self-docker-internal",
+      "profile": "self_hosted",
+      "url": "https://host.docker.internal/x",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "host.docker.internal",
+        "port": 443
+      },
+      "note": "S7"
+    },
+    {
+      "id": "self-localhost-always",
+      "profile": "self_hosted",
+      "url": "https://localhost:9999/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_localhost"
+      },
+      "note": "localhost is refused on every install"
+    },
+    {
+      "id": "self-metadata-always",
+      "profile": "self_hosted",
+      "url": "https://metadata.google.internal/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_metadata"
+      },
+      "note": ""
+    },
+    {
+      "id": "self-private-admitted",
+      "profile": "self_hosted",
+      "url": "http://10.20.1.5:8080/hook",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "10.20.1.5",
+        "port": 8080
+      },
+      "note": "in FI_WEBHOOKS_PRIVATE_CIDRS"
+    },
+    {
+      "id": "self-private-port",
+      "profile": "self_hosted",
+      "url": "http://10.20.1.5:9000/hook",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private_port"
+      },
+      "note": "port not in FI_WEBHOOKS_PRIVATE_PORTS"
+    },
+    {
+      "id": "self-private-outside-cidr",
+      "profile": "self_hosted",
+      "url": "https://10.30.0.1/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private"
+      },
+      "note": ""
+    },
+    {
+      "id": "self-loopback-never",
+      "profile": "self_hosted",
+      "url": "https://127.0.0.1:9999/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "a CIDR holding a NEVER address cannot admit it"
+    },
+    {
+      "id": "self-nat64-never",
+      "profile": "self_hosted",
+      "url": "https://[64:ff9b::a9fe:a9fe]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "WT-06b with 64:ff9b::/96 in the CIDRs"
+    },
+    {
+      "id": "self-nat64-loopback-never",
+      "profile": "self_hosted",
+      "url": "https://[64:ff9b::7f00:1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.never"
+      },
+      "note": "NAT64 holding 127.0.0.1 with 64:ff9b::/96 and 127.0.0.0/8 in the CIDRs; ruling 76"
+    },
+    {
+      "id": "self-nat64-private-outside-cidr",
+      "profile": "self_hosted",
+      "url": "https://[64:ff9b::a00:1]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private"
+      },
+      "note": "NAT64 holding 10.0.0.1; ruling 76 addendum"
+    },
+    {
+      "id": "self-nat64-private-in-cidr",
+      "profile": "self_hosted",
+      "url": "https://[64:ff9b::a14:5]/",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "[64:ff9b::a14:5]",
+        "port": 443
+      },
+      "note": "NAT64 holding 10.20.0.5; ruling 76 addendum"
+    },
+    {
+      "id": "self-6to4-private-outside-cidr",
+      "profile": "self_hosted",
+      "url": "https://[2002:a00:1::]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private"
+      },
+      "note": "6to4 holding 10.0.0.1; ruling 76 addendum"
+    },
+    {
+      "id": "self-6to4-private-in-cidr",
+      "profile": "self_hosted",
+      "url": "https://[2002:a14:5::]/",
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "[2002:a14:5::]",
+        "port": 443
+      },
+      "note": "6to4 holding 10.20.0.5; ruling 76 addendum"
+    },
+    {
+      "id": "self-teredo-client-outside-cidr",
+      "profile": "self_hosted",
+      "url": "https://[2001:0:808:808::f5ff:fffe]/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "addr.private"
+      },
+      "note": "Teredo client 10.0.0.1; ruling 76 addendum"
+    },
+    {
+      "id": "self-svc-not-allowlisted",
+      "profile": "self_hosted",
+      "url": "https://redis.default.svc/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": ""
+    },
+    {
+      "id": "self-strict-http",
+      "profile": "self_hosted_strict",
+      "url": "http://hooks.acme.ai:8080/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_NOT_HTTPS",
+        "rule": "url.scheme"
+      },
+      "note": "no FI_WEBHOOKS_ALLOW_HTTP"
+    },
+    {
+      "id": "self-strict-docker-internal",
+      "profile": "self_hosted_strict",
+      "url": "https://host.docker.internal/",
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_URL_UNSAFE_ADDRESS",
+        "rule": "url.host_internal_name"
+      },
+      "note": "not allowlisted"
+    },
+    {
+      "id": "policy-wildcard-ok",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/x",
+      "policy": {
+        "org_allowed_hosts": [
+          "*.acme.ai"
+        ]
+      },
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.acme.ai",
+        "port": 443
+      },
+      "note": ""
+    },
+    {
+      "id": "policy-wildcard-deep",
+      "profile": "hosted",
+      "url": "https://a.b.acme.ai/x",
+      "policy": {
+        "org_allowed_hosts": [
+          "*.acme.ai"
+        ]
+      },
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "a.b.acme.ai",
+        "port": 443
+      },
+      "note": "the leftmost wildcard matches any depth"
+    },
+    {
+      "id": "policy-apex-not-matched",
+      "profile": "hosted",
+      "url": "https://acme.ai/x",
+      "policy": {
+        "org_allowed_hosts": [
+          "*.acme.ai"
+        ]
+      },
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_HOST_NOT_ALLOWED",
+        "rule": "policy.org_allowed_hosts"
+      },
+      "note": "*.acme.ai does not match acme.ai"
+    },
+    {
+      "id": "policy-other-host",
+      "profile": "hosted",
+      "url": "https://hooks.other.ai/x",
+      "policy": {
+        "org_allowed_hosts": [
+          "*.acme.ai"
+        ]
+      },
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_HOST_NOT_ALLOWED",
+        "rule": "policy.org_allowed_hosts"
+      },
+      "note": "WT-26"
+    },
+    {
+      "id": "policy-workspace-narrows-ok",
+      "profile": "hosted",
+      "url": "https://hooks.acme.ai/x",
+      "policy": {
+        "org_allowed_hosts": [
+          "*.acme.ai"
+        ],
+        "workspace_allowed_hosts": [
+          "hooks.acme.ai"
+        ]
+      },
+      "expected": {
+        "allow": true,
+        "code": null,
+        "rule": null,
+        "host": "hooks.acme.ai",
+        "port": 443
+      },
+      "note": ""
+    },
+    {
+      "id": "policy-workspace-narrows-deny",
+      "profile": "hosted",
+      "url": "https://x.acme.ai/x",
+      "policy": {
+        "org_allowed_hosts": [
+          "*.acme.ai"
+        ],
+        "workspace_allowed_hosts": [
+          "hooks.acme.ai"
+        ]
+      },
+      "expected": {
+        "allow": false,
+        "code": "WEBHOOK_HOST_NOT_ALLOWED",
+        "rule": "policy.workspace_allowed_hosts"
+      },
+      "note": ""
+    }
+  ],
+  "address": [
+    {
+      "id": "public-v4",
+      "profile": "hosted",
+      "answers": [
+        "93.184.215.14"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "93.184.215.14",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          }
+        ],
+        "connect": [
+          "93.184.215.14"
+        ]
+      },
+      "note": ""
+    },
+    {
+      "id": "public-v4-v6",
+      "profile": "hosted",
+      "answers": [
+        "93.184.215.14",
+        "2606:2800:21f:cb07:6820:80da:af6b:8b2c"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "93.184.215.14",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          },
+          {
+            "address": "2606:2800:21f:cb07:6820:80da:af6b:8b2c",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          }
+        ],
+        "connect": [
+          "93.184.215.14",
+          "2606:2800:21f:cb07:6820:80da:af6b:8b2c"
+        ]
+      },
+      "note": ""
+    },
+    {
+      "id": "three-public",
+      "profile": "hosted",
+      "answers": [
+        "93.184.215.14",
+        "93.184.215.15",
+        "93.184.215.16"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "93.184.215.14",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          },
+          {
+            "address": "93.184.215.15",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          },
+          {
+            "address": "93.184.215.16",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          }
+        ],
+        "connect": [
+          "93.184.215.14",
+          "93.184.215.15"
+        ]
+      },
+      "note": "at most 2 addresses are tried"
+    },
+    {
+      "id": "duplicate-answers",
+      "profile": "hosted",
+      "answers": [
+        "93.184.215.14",
+        "93.184.215.14",
+        "93.184.215.15"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "93.184.215.14",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          },
+          {
+            "address": "93.184.215.14",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          },
+          {
+            "address": "93.184.215.15",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          }
+        ],
+        "connect": [
+          "93.184.215.14",
+          "93.184.215.15"
+        ]
+      },
+      "note": "duplicates are tried once"
+    },
+    {
+      "id": "public-and-private",
+      "profile": "hosted",
+      "answers": [
+        "93.184.215.14",
+        "10.0.0.5"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "93.184.215.14",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          },
+          {
+            "address": "10.0.0.5",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "EVERY answer must be allowed (rebinding)"
+    },
+    {
+      "id": "loopback",
+      "profile": "hosted",
+      "answers": [
+        "127.0.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "127.0.0.1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "WT-06"
+    },
+    {
+      "id": "metadata",
+      "profile": "hosted",
+      "answers": [
+        "169.254.169.254"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "169.254.169.254",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "WT-06"
+    },
+    {
+      "id": "mapped-metadata",
+      "profile": "hosted",
+      "answers": [
+        "::ffff:169.254.169.254"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::ffff:169.254.169.254",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "nat64-metadata",
+      "profile": "hosted",
+      "answers": [
+        "64:ff9b::a9fe:a9fe"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "64:ff9b::a9fe:a9fe",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "WT-06b"
+    },
+    {
+      "id": "nat64-loopback",
+      "profile": "hosted",
+      "answers": [
+        "64:ff9b::7f00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "64:ff9b::7f00:1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "NAT64 holding 127.0.0.1; ruling 76"
+    },
+    {
+      "id": "nat64-local-use",
+      "profile": "hosted",
+      "answers": [
+        "64:ff9b:1:a9fe:a9:fe00::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "64:ff9b:1:a9fe:a9:fe00::",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "6to4-loopback",
+      "profile": "hosted",
+      "answers": [
+        "2002:7f00:1::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "2002:7f00:1::",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "WT-06b"
+    },
+    {
+      "id": "v4-compatible-loopback",
+      "profile": "hosted",
+      "answers": [
+        "::127.0.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::127.0.0.1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "WT-06b"
+    },
+    {
+      "id": "teredo-test-net",
+      "profile": "hosted",
+      "answers": [
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "Teredo, client 192.0.2.45"
+    },
+    {
+      "id": "teredo-loopback",
+      "profile": "hosted",
+      "answers": [
+        "2001:0:4136:e378:8000:63bf:80ff:fffe"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "2001:0:4136:e378:8000:63bf:80ff:fffe",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "Teredo, client 127.0.0.1"
+    },
+    {
+      "id": "alibaba-metadata",
+      "profile": "hosted",
+      "answers": [
+        "100.100.100.200"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "100.100.100.200",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "azure-wireserver",
+      "profile": "hosted",
+      "answers": [
+        "168.63.129.16"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "168.63.129.16",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "aws-imds-v6",
+      "profile": "hosted",
+      "answers": [
+        "fd00:ec2::254"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "fd00:ec2::254",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "cgnat",
+      "profile": "hosted",
+      "answers": [
+        "100.64.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "100.64.0.1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "class-e",
+      "profile": "hosted",
+      "answers": [
+        "240.0.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "240.0.0.1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "broadcast",
+      "profile": "hosted",
+      "answers": [
+        "255.255.255.255"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "255.255.255.255",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "this-network",
+      "profile": "hosted",
+      "answers": [
+        "0.0.0.0"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "0.0.0.0",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "this-network-2",
+      "profile": "hosted",
+      "answers": [
+        "0.1.2.3"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "0.1.2.3",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "multicast-v4",
+      "profile": "hosted",
+      "answers": [
+        "224.0.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "224.0.0.1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "multicast-v6",
+      "profile": "hosted",
+      "answers": [
+        "ff02::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "ff02::1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "unspecified-v6",
+      "profile": "hosted",
+      "answers": [
+        "::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "loopback-v6",
+      "profile": "hosted",
+      "answers": [
+        "::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "ula",
+      "profile": "hosted",
+      "answers": [
+        "fc00::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "fc00::1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "doc-v6",
+      "profile": "hosted",
+      "answers": [
+        "2001:db8::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "2001:db8::1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "doc-v6-3fff",
+      "profile": "hosted",
+      "answers": [
+        "3fff::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "3fff::1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "RFC 9637"
+    },
+    {
+      "id": "test-net-1",
+      "profile": "hosted",
+      "answers": [
+        "192.0.2.10"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "192.0.2.10",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "benchmark",
+      "profile": "hosted",
+      "answers": [
+        "198.18.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "198.18.0.1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "ietf-192-0-0",
+      "profile": "hosted",
+      "answers": [
+        "192.0.0.8"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "192.0.0.8",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "srv6-sid",
+      "profile": "hosted",
+      "answers": [
+        "5f00::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "5f00::1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "outside 2000::/3"
+    },
+    {
+      "id": "outside-2000-3",
+      "profile": "hosted",
+      "answers": [
+        "4000::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "4000::1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "outside 2000::/3"
+    },
+    {
+      "id": "rfc1918-172",
+      "profile": "hosted",
+      "answers": [
+        "172.31.255.255"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "172.31.255.255",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "rfc1918-edge-public",
+      "profile": "hosted",
+      "answers": [
+        "172.32.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "172.32.0.1",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          }
+        ],
+        "connect": [
+          "172.32.0.1"
+        ]
+      },
+      "note": "just outside 172.16.0.0/12"
+    },
+    {
+      "id": "no-answer",
+      "profile": "hosted",
+      "answers": [],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "dns_error",
+        "rule": "addr.no_answer",
+        "answers": [],
+        "connect": []
+      },
+      "note": "an empty answer set is a dns_error, never a connect"
+    },
+    {
+      "id": "link-local-v4",
+      "profile": "hosted",
+      "answers": [
+        "169.254.1.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "169.254.1.1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "link-local-v6",
+      "profile": "hosted",
+      "answers": [
+        "fe80::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "fe80::1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "6to4-public",
+      "profile": "hosted",
+      "answers": [
+        "2002:808:808::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "2002:808:808::",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "RFC 7526: private as a whole"
+    },
+    {
+      "id": "nat64-local-use-96-loopback",
+      "profile": "hosted",
+      "answers": [
+        "64:ff9b:1:ab00::7f00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "64:ff9b:1:ab00::7f00:1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "a /96 layout inside the local-use prefix"
+    },
+    {
+      "id": "nat64-local-use-64-metadata",
+      "profile": "hosted",
+      "answers": [
+        "64:ff9b:1:cd00:a9:fea9:fe00:0"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "64:ff9b:1:cd00:a9:fea9:fe00:0",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "a /64 layout holding 169.254.169.254"
+    },
+    {
+      "id": "nat64-local-use-public",
+      "profile": "hosted",
+      "answers": [
+        "64:ff9b:1:808:8:800::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "64:ff9b:1:808:8:800::",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "the /48 layout of 8.8.8.8: still never, the layout cannot be known"
+    },
+    {
+      "id": "nat64-wkp-public",
+      "profile": "hosted",
+      "answers": [
+        "64:ff9b::808:808"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "64:ff9b::808:808",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "outside 2000::/3: private"
+    },
+    {
+      "id": "translated-loopback",
+      "profile": "hosted",
+      "answers": [
+        "::ffff:0:7f00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::ffff:0:7f00:1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: IPv4-translated ::ffff:0:0:0/96 holding 127.0.0.1; EE review 10-22"
+    },
+    {
+      "id": "v4-compatible-loopback-hex",
+      "profile": "hosted",
+      "answers": [
+        "::7f00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::7f00:1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: IPv4-compatible, ::127.0.0.1 spelled in hex; EE review 10-22"
+    },
+    {
+      "id": "translated-rfc1918",
+      "profile": "hosted",
+      "answers": [
+        "::ffff:0:a00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "::ffff:0:a00:1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: IPv4-translated holding 10.0.0.1; EE review 10-22"
+    },
+    {
+      "id": "translated-public",
+      "profile": "hosted",
+      "answers": [
+        "::ffff:0:808:808"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "::ffff:0:808:808",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: IPv4-translated holding 8.8.8.8 is private, the strictest of the outer (outside 2000::/3) and the embedded public address; EE review 10-22"
+    },
+    {
+      "id": "wide-loopback",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "127.0.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "127.0.0.1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "NEVER beats a CIDR covering everything"
+    },
+    {
+      "id": "wide-this-network",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "0.0.0.0"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "0.0.0.0",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-metadata",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "169.254.169.254"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "169.254.169.254",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-link-local-v4",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "169.254.1.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "169.254.1.1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-alibaba-metadata",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "100.100.100.200"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "100.100.100.200",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-azure-wireserver",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "168.63.129.16"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "168.63.129.16",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-aws-imds-v6",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "fd00:ec2::254"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "fd00:ec2::254",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-broadcast",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "255.255.255.255"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "255.255.255.255",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-multicast-v4",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "224.0.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "224.0.0.1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-loopback-v6",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-unspecified-v6",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-link-local-v6",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "fe80::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "fe80::1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-multicast-v6",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "ff02::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "ff02::1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "wide-mapped-loopback",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "::ffff:127.0.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::ffff:127.0.0.1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: IPv4-mapped"
+    },
+    {
+      "id": "wide-compatible-loopback",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "::127.0.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::127.0.0.1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: IPv4-compatible"
+    },
+    {
+      "id": "wide-nat64-metadata",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "64:ff9b::a9fe:a9fe"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "64:ff9b::a9fe:a9fe",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: NAT64 /96"
+    },
+    {
+      "id": "wide-nat64-local-use",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "64:ff9b:1:ab00::7f00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "64:ff9b:1:ab00::7f00:1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "local-use NAT64"
+    },
+    {
+      "id": "wide-6to4-metadata",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "2002:a9fe:a9fe::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "2002:a9fe:a9fe::",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: 6to4"
+    },
+    {
+      "id": "wide-teredo-server-loopback",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "2001:0:7f00:1::f7f7:f7f7"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "2001:0:7f00:1::f7f7:f7f7",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: Teredo server 127.0.0.1 (its client is 8.8.8.8)"
+    },
+    {
+      "id": "wide-teredo-client-loopback",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "2001:0:4136:e378:8000:63bf:80ff:fffe"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "2001:0:4136:e378:8000:63bf:80ff:fffe",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: Teredo client 127.0.0.1"
+    },
+    {
+      "id": "wide-mixed",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "10.0.0.5",
+        "169.254.169.254"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "10.0.0.5",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          },
+          {
+            "address": "169.254.169.254",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "one NEVER answer blocks the attempt"
+    },
+    {
+      "id": "wide-rfc1918",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "10.0.0.5"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "10.0.0.5",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "10.0.0.5"
+        ]
+      },
+      "note": "admitted"
+    },
+    {
+      "id": "wide-cgnat",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "100.64.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "100.64.0.1",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "100.64.0.1"
+        ]
+      },
+      "note": "admitted"
+    },
+    {
+      "id": "wide-ula",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "fd00::1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "fd00::1",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "fd00::1"
+        ]
+      },
+      "note": "admitted"
+    },
+    {
+      "id": "wide-6to4-public",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "2002:808:808::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "2002:808:808::",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "2002:808:808::"
+        ]
+      },
+      "note": "admitted"
+    },
+    {
+      "id": "wide-teredo-test-net",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "2001:0:4136:e378:8000:63bf:3fff:fdd2"
+        ]
+      },
+      "note": "admitted"
+    },
+    {
+      "id": "wide-translated-loopback",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "::ffff:0:7f00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::ffff:0:7f00:1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: IPv4-translated ::ffff:0:0:0/96 holding 127.0.0.1; EE review 10-22"
+    },
+    {
+      "id": "wide-compatible-loopback-hex",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "::7f00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "::7f00:1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "unwrapping: IPv4-compatible, ::127.0.0.1 spelled in hex; EE review 10-22"
+    },
+    {
+      "id": "wide-translated-rfc1918",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "::ffff:0:a00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "::ffff:0:a00:1",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "::ffff:0:a00:1"
+        ]
+      },
+      "note": "unwrapping: IPv4-translated holding 10.0.0.1, private: admitted; EE review 10-22"
+    },
+    {
+      "id": "wide-translated-public",
+      "profile": "self_hosted_wide",
+      "answers": [
+        "::ffff:0:808:808"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "::ffff:0:808:808",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "::ffff:0:808:808"
+        ]
+      },
+      "note": "unwrapping: IPv4-translated holding 8.8.8.8, private: admitted; EE review 10-22"
+    },
+    {
+      "id": "self-cidr-admitted",
+      "profile": "self_hosted",
+      "answers": [
+        "10.20.1.5"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "10.20.1.5",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "10.20.1.5"
+        ]
+      },
+      "note": ""
+    },
+    {
+      "id": "self-cidr-port-8080",
+      "profile": "self_hosted",
+      "answers": [
+        "10.20.1.5"
+      ],
+      "port": 8080,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "10.20.1.5",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "10.20.1.5"
+        ]
+      },
+      "note": ""
+    },
+    {
+      "id": "self-cidr-port-9000",
+      "profile": "self_hosted",
+      "answers": [
+        "10.20.1.5"
+      ],
+      "port": 9000,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private_port",
+        "answers": [
+          {
+            "address": "10.20.1.5",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private_port"
+          }
+        ],
+        "connect": []
+      },
+      "note": "FI_WEBHOOKS_PRIVATE_PORTS"
+    },
+    {
+      "id": "self-outside-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "10.30.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "10.30.0.1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": ""
+    },
+    {
+      "id": "self-loopback-in-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "127.0.0.1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "127.0.0.1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "NEVER beats any CIDR"
+    },
+    {
+      "id": "self-nat64-in-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "64:ff9b::a9fe:a9fe"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "64:ff9b::a9fe:a9fe",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "WT-06b"
+    },
+    {
+      "id": "self-nat64-loopback-in-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "64:ff9b::7f00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.never",
+        "answers": [
+          {
+            "address": "64:ff9b::7f00:1",
+            "class": "never",
+            "allow": false,
+            "rule": "addr.never"
+          }
+        ],
+        "connect": []
+      },
+      "note": "NAT64 holding 127.0.0.1 with 64:ff9b::/96 and 127.0.0.0/8 in the CIDRs: NEVER beats any CIDR; ruling 76"
+    },
+    {
+      "id": "self-nat64-private-outside-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "64:ff9b::a00:1"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "64:ff9b::a00:1",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "NAT64 holding 10.0.0.1, outside 10.20.0.0/16; ruling 76 addendum"
+    },
+    {
+      "id": "self-nat64-private-in-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "64:ff9b::a14:5"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "64:ff9b::a14:5",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "64:ff9b::a14:5"
+        ]
+      },
+      "note": "NAT64 holding 10.20.0.5, inside 10.20.0.0/16; ruling 76 addendum"
+    },
+    {
+      "id": "self-nat64-public",
+      "profile": "self_hosted",
+      "answers": [
+        "64:ff9b::808:808"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "64:ff9b::808:808",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "64:ff9b::808:808"
+        ]
+      },
+      "note": "NAT64 holding 8.8.8.8: the translator for a public target; ruling 76 addendum"
+    },
+    {
+      "id": "self-6to4-private-outside-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "2002:a00:1::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "2002:a00:1::",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "6to4 holding 10.0.0.1, outside 10.20.0.0/16; ruling 76 addendum"
+    },
+    {
+      "id": "self-6to4-private-in-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "2002:a14:5::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "2002:a14:5::",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "2002:a14:5::"
+        ]
+      },
+      "note": "6to4 holding 10.20.0.5, inside 10.20.0.0/16; ruling 76 addendum"
+    },
+    {
+      "id": "self-6to4-public",
+      "profile": "self_hosted",
+      "answers": [
+        "2002:808:808::"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "2002:808:808::",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "2002:808:808::"
+        ]
+      },
+      "note": "6to4 holding 8.8.8.8: a public target; ruling 76 addendum"
+    },
+    {
+      "id": "self-teredo-client-outside-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "2001:0:808:808::f5ff:fffe"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "2001:0:808:808::f5ff:fffe",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "Teredo, server 8.8.8.8, client 10.0.0.1 (outside 10.20.0.0/16); ruling 76 addendum"
+    },
+    {
+      "id": "self-teredo-server-outside-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "2001:0:a00:1::f7f7:f7f7"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": false,
+        "outcome": "ssrf_blocked",
+        "rule": "addr.private",
+        "answers": [
+          {
+            "address": "2001:0:a00:1::f7f7:f7f7",
+            "class": "private",
+            "allow": false,
+            "rule": "addr.private"
+          }
+        ],
+        "connect": []
+      },
+      "note": "Teredo, server 10.0.0.1 (outside 10.20.0.0/16), client 8.8.8.8; ruling 76 addendum"
+    },
+    {
+      "id": "self-teredo-in-cidr",
+      "profile": "self_hosted",
+      "answers": [
+        "2001:0:808:808::f5eb:fffa"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "2001:0:808:808::f5eb:fffa",
+            "class": "private",
+            "allow": true,
+            "rule": "addr.private_cidr_admitted"
+          }
+        ],
+        "connect": [
+          "2001:0:808:808::f5eb:fffa"
+        ]
+      },
+      "note": "Teredo, server 8.8.8.8, client 10.20.0.5 (inside 10.20.0.0/16); ruling 76 addendum"
+    },
+    {
+      "id": "self-public",
+      "profile": "self_hosted",
+      "answers": [
+        "93.184.215.14"
+      ],
+      "port": 443,
+      "expected": {
+        "allow": true,
+        "outcome": null,
+        "rule": null,
+        "answers": [
+          {
+            "address": "93.184.215.14",
+            "class": "public",
+            "allow": true,
+            "rule": "addr.public"
+          }
+        ],
+        "connect": [
+          "93.184.215.14"
+        ]
+      },
+      "note": ""
+    }
+  ],
+  "redirect": [
+    {
+      "id": "named-host",
+      "status": 301,
+      "location": "https://hooks.acme.ai/new",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "hooks.acme.ai"
+      },
+      "note": "the log names the new host"
+    },
+    {
+      "id": "port-and-dot",
+      "status": 308,
+      "location": "https://HOOKS.acme.ai.:8443/x",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "hooks.acme.ai"
+      },
+      "note": "normalised; the port is not shown"
+    },
+    {
+      "id": "private-ip-wt07",
+      "status": 302,
+      "location": "https://10.0.0.5/",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "another address"
+      },
+      "note": "WT-07: never fetched; no address shown"
+    },
+    {
+      "id": "ipv6-literal",
+      "status": 307,
+      "location": "https://[::1]/",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "another address"
+      },
+      "note": ""
+    },
+    {
+      "id": "userinfo",
+      "status": 302,
+      "location": "https://user:pw@evil.example.com/",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "another address"
+      },
+      "note": ""
+    },
+    {
+      "id": "relative",
+      "status": 302,
+      "location": "/v2/hooks",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "another address"
+      },
+      "note": ""
+    },
+    {
+      "id": "idna",
+      "status": 301,
+      "location": "http://bücher.de/",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "xn--bcher-kva.de"
+      },
+      "note": ""
+    },
+    {
+      "id": "javascript",
+      "status": 302,
+      "location": "javascript:alert(1)",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "another address"
+      },
+      "note": ""
+    },
+    {
+      "id": "missing",
+      "status": 302,
+      "location": null,
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "another address"
+      },
+      "note": "no Location header"
+    },
+    {
+      "id": "space",
+      "status": 302,
+      "location": "https://exa mple.com/",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "another address"
+      },
+      "note": ""
+    },
+    {
+      "id": "bad-label",
+      "status": 302,
+      "location": "https://-bad-.example.com/",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "another address"
+      },
+      "note": ""
+    },
+    {
+      "id": "bidi",
+      "status": 302,
+      "location": "https://evil‮gpj.example.com/",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "another address"
+      },
+      "note": "a bidi control character"
+    },
+    {
+      "id": "decimal-ip",
+      "status": 302,
+      "location": "https://2852039166/",
+      "expected": {
+        "outcome": "redirect_refused",
+        "follow": false,
+        "retry_class": "standard",
+        "log_location_host": "another address"
+      },
+      "note": ""
+    }
+  ]
+}

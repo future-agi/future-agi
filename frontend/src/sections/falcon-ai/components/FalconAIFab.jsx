@@ -1,104 +1,48 @@
-import React, { useCallback, useEffect } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import React, { useEffect } from "react";
+import PropTypes from "prop-types";
 import Fab from "@mui/material/Fab";
-import SvgIcon from "@mui/material/SvgIcon";
 import CustomTooltip from "src/components/tooltip";
-import useFalconStore from "../store/useFalconStore";
 import { useFeatureAllowed } from "src/hooks/useCapabilities";
+import FalconIcon from "./FalconIcon";
+import useFalconLauncher from "../hooks/useFalconLauncher";
+import { dsxOwnsCommandShortcut } from "src/sections/common/CommandPalette/shortcutOwner";
+import { usePathname } from "src/routes/hooks";
+import useFalconStore from "../store/useFalconStore";
+import useFabGutter, { fabHiddenOnRoute, useOverlayOpen } from "src/sections/common/ux/useFabGutter";
 
-function FalconIcon(props) {
-  return (
-    <SvgIcon {...props} viewBox="0 0 24 24">
-      {/* Falcon spaceship — pointing UP, geometric, matches brand */}
-      <g transform="rotate(180, 12, 12)">
-        <path
-          d="M12 3L8 10L7 17L12 20L17 17L16 10Z"
-          fill="currentColor"
-          opacity="0.25"
-        />
-        <path
-          d="M12 3L8 10L7 17L12 20L17 17L16 10Z"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M10.5 9L12 6.5L13.5 9"
-          fill="currentColor"
-          opacity="0.4"
-          stroke="currentColor"
-          strokeWidth="1"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M8 10L4 8.5V12L7 14"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M16 10L20 8.5V12L17 14"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M9.5 18L12 21.5L14.5 18"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          opacity="0.6"
-        />
-      </g>
-    </SvgIcon>
-  );
-}
-
-export default function FalconAIFab() {
-  const { pathname } = useLocation();
-  const navigate = useNavigate();
+// The floating launcher owns Cmd/Ctrl+K even when its button is docked.
+// A denied, pending or failed capability exposes neither button nor shortcut.
+export default function FalconAIFab({ docked = false }) {
+  const { openFalconAI, hidden } = useFalconLauncher();
   const { allowed: falconAllowed } = useFeatureAllowed("falcon_ai");
-  const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
-  const toggleSidebar = useFalconStore((s) => s.toggleSidebar);
 
-  const openFalconAI = useCallback(() => {
-    if (!falconAllowed) {
-      // Full page shows the capability upsell for unlicensed deployments.
-      navigate("/dashboard/falcon-ai");
-      return;
-    }
-    toggleSidebar();
-  }, [falconAllowed, navigate, toggleSidebar]);
-
-  // Global keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Windows)
   useEffect(() => {
+    if (!falconAllowed) return undefined;
     const handleKeyDown = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && String(e.key).toLowerCase() === "k" && !dsxOwnsCommandShortcut(e)) {
         e.preventDefault();
         e.stopPropagation();
-        openFalconAI();
+        if (!e.repeat) openFalconAI();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [openFalconAI]);
+  }, [falconAllowed, openFalconAI]);
 
-  // Hide FAB on Falcon AI full-page view
-  if (pathname.startsWith("/dashboard/falcon-ai")) return null;
-
-  // Hide FAB when sidebar is open
-  if (isSidebarOpen) return null;
+  const pathname = usePathname();
+  const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
+  const overlayOpen = useOverlayOpen();
+  const visible = falconAllowed && !hidden && !docked &&
+    !fabHiddenOnRoute(pathname) && !isSidebarOpen && !overlayOpen;
+  useFabGutter(visible);
+  if (!visible) return null;
 
   return (
     <CustomTooltip title="Falcon AI (⌘K)" show={true} placement="left" arrow>
       <Fab
         onClick={openFalconAI}
+        aria-label="Open Falcon AI"
         size="medium"
         sx={{
           position: "fixed",
@@ -125,3 +69,7 @@ export default function FalconAIFab() {
     </CustomTooltip>
   );
 }
+
+FalconAIFab.propTypes = {
+  docked: PropTypes.bool,
+};

@@ -21,12 +21,13 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Coalesce, Greatest
-from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.authentication import allows_no_workspace
 from accounts.models.auth_token import AuthToken, AuthTokenType
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
@@ -63,6 +64,15 @@ from accounts.serializers.workspace import (
     WorkspaceListRequestSerializer,
     WorkspaceListSerializer,
 )
+from accounts.services.hard_erase_issuance_entry import request_issuance_entry
+from accounts.services.identity_issuance import create_person, issue_membership
+from accounts.services.offboarding import offboard_organization_member
+from accounts.services.team_members import (
+    active_owner_count,
+    readmit_retained_member,
+    team_members_for_organization,
+)
+from accounts.services.workspace_landing import resolve_user_workspace
 from accounts.services.workspace_membership import (
     create_workspace_membership,
     resolve_org_membership,
@@ -81,6 +91,7 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from common.utils.page_limits import enforce_page_size, page_bounds
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
@@ -94,6 +105,7 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
+from tfc.utils.tenant_scope import counts_as_member
 
 try:
     from ee.usage.models.usage import (
@@ -293,6 +305,8 @@ class WorkspaceListAPIView(APIView):
 
             return paginator.get_paginated_response(data)
 
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error while fetching workspace list: {str(e)}")
             return self._gm.bad_request("Error while fetching workspace list")
@@ -310,6 +324,7 @@ class WorkspaceInviteAPIView(APIView):
         reject_unknown_fields=True,
     )
     @transaction.atomic
+    @request_issuance_entry
     def post(self, request):
         """Invite users to workspaces"""
         try:
@@ -494,21 +509,21 @@ class WorkspaceInviteAPIView(APIView):
                             membership = existing_deleted_membership
                         else:
                             # No soft-deleted membership exists, create or get existing active one
-                            membership, created = (
-                                WorkspaceMembership.no_workspace_objects.get_or_create(
-                                    workspace=workspace,
-                                    user=target_user,
-                                    defaults={
-                                        "role": workspace_role,
-                                        "invited_by": user,
-                                        "is_active": True,
-                                        "organization_membership": (
-                                            resolve_org_membership(
-                                                target_user, workspace.organization
-                                            )
-                                        ),
-                                    },
-                                )
+                            membership, created = issue_membership(
+                                WorkspaceMembership.no_workspace_objects,
+                                "get_or_create",
+                                workspace=workspace,
+                                user=target_user,
+                                defaults={
+                                    "role": workspace_role,
+                                    "invited_by": user,
+                                    "is_active": True,
+                                    "organization_membership": (
+                                        resolve_org_membership(
+                                            target_user, workspace.organization
+                                        )
+                                    ),
+                                },
                             )
 
                             if not created:
@@ -551,17 +566,6 @@ class WorkspaceInviteAPIView(APIView):
                             # Generate password for new user
                             password = generate_password()
 
-                            # Use first workspace as default workspace for user config
-                            first_workspace = workspaces.first()
-                            if not first_workspace:
-                                errors.append(
-                                    {
-                                        "email": email,
-                                        "error": "No valid workspace found for invitation",
-                                    }
-                                )
-                                continue
-
                             # Determine organization role
                             if role in organization_level_roles:
                                 # Role is organization-level, use it for org role
@@ -572,14 +576,14 @@ class WorkspaceInviteAPIView(APIView):
                                 org_role = None
 
                             # Create new user
-                            new_member = User.objects.create(
+                            new_member = create_person(
                                 email=email,
                                 name=name,
                                 organization=organization,
                                 organization_role=org_role,
                                 is_active=False,  # User needs to activate account
                                 invited_by=user,
-                                config={"defaultWorkspaceId": str(first_workspace.id)},
+                                config={},
                             )
 
                             # Set password
@@ -612,6 +616,16 @@ class WorkspaceInviteAPIView(APIView):
                                         invited_by=user,
                                     )
 
+                            landing_workspace = resolve_user_workspace(
+                                new_member, organization
+                            )
+                            if landing_workspace is None:
+                                raise ValueError("No active workspace for invitation")
+                            new_member.config["defaultWorkspaceId"] = str(
+                                landing_workspace.id
+                            )
+                            new_member.save(update_fields=["config"])
+
                             persist_pending_org_invite(
                                 organization=organization,
                                 target_email=email,
@@ -631,7 +645,7 @@ class WorkspaceInviteAPIView(APIView):
                                 {
                                     "org_name": organization.display_name
                                     or organization.name,
-                                    "workspace_name": first_workspace.name,
+                                    "workspace_name": landing_workspace.name,
                                     "invited_by": user.name,
                                     "email": email,
                                     "password": password,
@@ -711,7 +725,7 @@ class UserListAPIView(APIView):
                     get_error_message("USER_ORGANIZATION_CONNECTION_ERROR")
                 )
 
-            # Resolve workspace context: prefer explicit query param, else request-global, else org default
+            # Prefer explicit query param, then request-global, then user landing.
             workspace_id = query.get("workspace_id")
             current_workspace = None
             if workspace_id:
@@ -726,12 +740,9 @@ class UserListAPIView(APIView):
             else:
                 current_workspace = get_current_workspace()
                 if not current_workspace:
-                    try:
-                        current_workspace = Workspace.objects.get(
-                            organization=organization, is_default=True, is_active=True
-                        )
-                    except Workspace.DoesNotExist:
-                        return self._gm.bad_request("No workspace context available")
+                    current_workspace = resolve_user_workspace(user, organization)
+                if not current_workspace:
+                    return self._gm.bad_request("No workspace context available")
 
             # Check permissions: allow org-level OWNER/ADMIN or workspace-level ADMIN
             org_role = resolve_org_role(user, organization)
@@ -1002,6 +1013,8 @@ class UserListAPIView(APIView):
 
             return paginator.get_paginated_response(response_data)
 
+        except APIException:
+            raise
         except Exception as e:
             traceback.print_exc()
             logger.exception(f"Error in getting users list: {str(e)}")
@@ -1019,6 +1032,7 @@ class UserRoleUpdateAPIView(APIView):
         responses={200: UserRoleUpdateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @request_issuance_entry
     def post(self, request):
         """Update user role at organization or workspace level"""
         try:
@@ -1065,13 +1079,9 @@ class UserRoleUpdateAPIView(APIView):
             else:
                 current_workspace = get_current_workspace()
                 if not current_workspace:
-                    try:
-                        current_workspace = Workspace.objects.get(
-                            organization=organization, is_default=True, is_active=True
-                        )
-                    except Workspace.DoesNotExist:
-                        # No workspace context - will update organization role
-                        pass
+                    current_workspace = resolve_user_workspace(user, organization)
+                # None is valid for an organization-role update; workspace-role
+                # updates below require an accessible workspace context.
 
             # Define organization-level and workspace-level roles
             organization_level_roles = [
@@ -1345,14 +1355,22 @@ class ResendInviteAPIView(APIView):
             if current_workspace and current_workspace.organization != organization:
                 current_workspace = None
 
-            # Refresh the matching OrganizationInvite's expiry too, so this
-            # path behaves the same as InviteResendAPIView (#2437).
-            refresh_pending_invite_expiration(organization, target_user.email)
+            from accounts.models.organization_invite import (
+                InviteStatus,
+                OrganizationInvite,
+            )
 
-            # Generate new password and send email
-            new_password = generate_password()
-            target_user.set_password(new_password)
-            target_user.save()
+            if not OrganizationInvite.objects.filter(
+                organization=organization,
+                target_email__iexact=target_user.email,
+                status=InviteStatus.PENDING,
+            ).exists():
+                return self._gm.not_found(
+                    "Pending invitation not found in organization"
+                )
+
+            # Renew only this org's invitation, never the shared identity credential.
+            refresh_pending_invite_expiration(organization, target_user.email)
 
             # Send invitation email with workspace context
             try:
@@ -1361,7 +1379,6 @@ class ResendInviteAPIView(APIView):
                 uidb64 = urlsafe_base64_encode(force_bytes(target_user.pk))
 
                 email_context = {
-                    "password": new_password,
                     "email": target_user.email,
                     "org_name": organization.display_name or organization.name,
                     "app_url": settings.APP_URL,
@@ -1493,43 +1510,14 @@ class DeleteUserAPIView(APIView):
                         "User is not a member of the current workspace"
                     )
             else:
-                # Organization-level deletion - remove from all workspaces and delete user
-                # Prevent deleting the last owner
-                if target_user.organization_role == OrganizationRoles.OWNER:
-                    with transaction.atomic():
-                        owner_count = (
-                            User.objects.select_for_update()
-                            .filter(
-                                organization=organization,
-                                organization_role=OrganizationRoles.OWNER,
-                                is_active=True,
-                            )
-                            .count()
-                        )
-                        if owner_count <= 1:
-                            return self._gm.bad_request("Cannot delete the last owner")
-
-                        # Clear Redis cache for immediate logout
-                        clear_user_redis_cache(target_user_id)
-
-                        # Remove from all workspaces
-                        WorkspaceMembership.no_workspace_objects.filter(
-                            user=target_user, workspace__organization=organization
-                        ).update(is_active=False, deleted=True)
-
-                        # Delete user
-                        target_user.delete()
-                else:
-                    # Clear Redis cache for immediate logout
-                    clear_user_redis_cache(target_user_id)
-
-                    # Remove from all workspaces
-                    WorkspaceMembership.no_workspace_objects.filter(
-                        user=target_user, workspace__organization=organization
-                    ).update(is_active=False, deleted=True)
-
-                    # Delete user
-                    target_user.delete()
+                # Authoritative membership + owner census under the shared org lock.
+                # The service enforces this for every caller, including native tools.
+                try:
+                    offboard_organization_member(
+                        target_user, organization, actor=request.user
+                    )
+                except ValueError as exc:
+                    return self._gm.bad_request(str(exc))
 
                 return self._gm.success_response(
                     {
@@ -1545,7 +1533,7 @@ class DeleteUserAPIView(APIView):
 
 
 class DeactivateUserAPIView(APIView):
-    """API for deactivating users (marking as inactive)"""
+    """Deactivate access to the acting organization, retaining the person."""
 
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
@@ -1556,7 +1544,7 @@ class DeactivateUserAPIView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request):
-        """Deactivate user by marking is_active as False"""
+        """Deactivate only this organization's grants and credentials."""
         try:
             data = request.validated_data
 
@@ -1581,9 +1569,9 @@ class DeactivateUserAPIView(APIView):
             target_user_id = data["user_id"]
 
             try:
-                target_user = User.objects.get(
-                    id=target_user_id, organization=organization
-                )
+                target_user = User.objects.get(id=target_user_id)
+                if not counts_as_member(target_user, organization):
+                    raise User.DoesNotExist
             except User.DoesNotExist:
                 return self._gm.not_found("User not found in organization")
 
@@ -1591,63 +1579,29 @@ class DeactivateUserAPIView(APIView):
             if target_user == user:
                 return self._gm.bad_request("Cannot deactivate your own account")
 
-            # Prevent deactivating the last owner
-            if target_user.organization_role == OrganizationRoles.OWNER:
-                with transaction.atomic():
-                    owner_count = (
-                        User.objects.select_for_update()
-                        .filter(
-                            organization=organization,
-                            organization_role=OrganizationRoles.OWNER,
-                            is_active=True,
-                        )
-                        .count()
-                    )
+            with transaction.atomic():
+                # Serialize this route's owner removals on the organization,
+                # and consult authoritative memberships, not stale User roles.
+                type(organization).objects.select_for_update().get(pk=organization.pk)
+                membership = OrganizationMembership.no_workspace_objects.filter(
+                    user=target_user, organization=organization, is_active=True
+                ).first()
+                target_is_owner = (
+                    membership.level_or_legacy >= Level.OWNER
+                    if membership
+                    else resolve_org_role(target_user, organization)
+                    == OrganizationRoles.OWNER
+                )
+                if target_is_owner:
+                    owner_count = active_owner_count(organization)
                     if owner_count <= 1:
                         return self._gm.bad_request("Cannot deactivate the last owner")
 
-                    # Clear Redis cache for immediate logout
-                    clear_user_redis_cache(target_user_id)
-
-                    # Deactivate organization membership for this org
-                    OrganizationMembership.no_workspace_objects.filter(
-                        user=target_user, organization=organization
-                    ).update(is_active=False)
-
-                    # Deactivate all workspace memberships for this user in this org
-                    WorkspaceMembership.no_workspace_objects.filter(
-                        user=target_user, workspace__organization=organization
-                    ).update(is_active=False)
-
-                    # Only deactivate user globally if they have no other active org memberships
-                    has_other_orgs = OrganizationMembership.no_workspace_objects.filter(
-                        user=target_user, is_active=True
-                    ).exists()
-                    if not has_other_orgs:
-                        target_user.is_active = False
-                        target_user.save(update_fields=["is_active"])
-            else:
-                # Clear Redis cache for immediate logout
-                clear_user_redis_cache(target_user_id)
-
-                with transaction.atomic():
-                    # Deactivate organization membership for this org
-                    OrganizationMembership.no_workspace_objects.filter(
-                        user=target_user, organization=organization
-                    ).update(is_active=False)
-
-                    # Deactivate all workspace memberships for this user in this org
-                    WorkspaceMembership.no_workspace_objects.filter(
-                        user=target_user, workspace__organization=organization
-                    ).update(is_active=False)
-
-                    # Only deactivate user globally if they have no other active org memberships
-                    has_other_orgs = OrganizationMembership.no_workspace_objects.filter(
-                        user=target_user, is_active=True
-                    ).exists()
-                    if not has_other_orgs:
-                        target_user.is_active = False
-                        target_user.save(update_fields=["is_active"])
+                # Never make an unserialized zero-membership decision about
+                # User.is_active: foreign creation/reactivation may commit now.
+                offboard_organization_member(
+                    target_user, organization, actor=request.user
+                )
 
             return self._gm.success_response(
                 {
@@ -1674,6 +1628,7 @@ class SwitchWorkspaceAPIView(APIView):
         responses={200: SwitchWorkspaceResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @allows_no_workspace("POST")
     def post(self, request):
         """Switch to a different workspace with proper validation"""
         try:
@@ -1762,6 +1717,7 @@ class ManageTeamView(APIView):
         responses={200: TeamUsersResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
+        enforce_page_size(request.query_params.get("page_size"))
         user = request.user
         organization = resolve_org(request)
         org_role = resolve_org_role(user, organization)
@@ -1805,9 +1761,9 @@ class ManageTeamView(APIView):
             page_size = 10
             page = 1
 
-        # Get all organization members (primary + invited), deduplicated
-        team_members_qs = User.objects.filter(
-            Q(organization=organization) | Q(invited_organizations=organization),
+        # Filter authoritative membership before pagination and count. A stale
+        # legacy organization FK or invited-organizations M2M grants nothing.
+        team_members_qs = team_members_for_organization(organization).filter(
             is_active=is_active,
         )
         if search_query:
@@ -1823,13 +1779,29 @@ class ManageTeamView(APIView):
             return self._gm.not_found("Member not found in organization")
 
         # Apply pagination
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
+        start_idx, end_idx = page_bounds(page, page_size, total_count, first_page=1)
         team_members = list(team_members_qs[start_idx:end_idx])
 
         serializer = UserSerializer(team_members, many=True)
         user_data = serializer.data
+        org_memberships = {
+            row.user_id: row
+            for row in OrganizationMembership.no_workspace_objects.filter(
+                organization=organization,
+                user_id__in=[member.pk for member in team_members],
+            )
+        }
 
+        from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+
+        pending_invites = {
+            invite.target_email.lower(): invite
+            for invite in OrganizationInvite.objects.filter(
+                organization=organization,
+                status=InviteStatus.PENDING,
+                target_email__in=[member.email for member in team_members],
+            )
+        }
         for user in user_data:
             timestamp = user["created_at"]
             dt = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ")
@@ -1839,57 +1811,47 @@ class ManageTeamView(APIView):
             # Add status information
             user_obj = next((m for m in team_members if str(m.id) == user["id"]), None)
             if user_obj:
-                # Determine user status
-
-                if user_obj.invited_by and not user_obj.is_active:
-                    user["status"] = "Request Pending"
-                elif not user_obj.is_active:
-                    user["status"] = "Inactive"
-                elif user_obj.organization:
-                    user["status"] = "Active"
-                elif user_obj.invited_organizations.exists():
-                    # Check if any invitation is still active
-                    try:
-                        active_invitations = OrganizationMembership.objects.filter(
-                            user=user_obj, organization=organization, is_active=True
-                        )
-                        if active_invitations.exists():
-                            user["status"] = "Request Pending"
-                        else:
-                            user["status"] = "Request Expired"
-                    except Exception:
-                        user["status"] = "Request Expired"
+                membership = org_memberships.get(user_obj.pk)
+                user["membership_type"] = (
+                    "primary"
+                    if user_obj.organization_id == organization.pk
+                    else "invited"
+                )
+                if membership is not None:
+                    user["status"] = (
+                        "Active"
+                        if membership.is_active and user_obj.is_active
+                        else "Request Pending"
+                        if user_obj.invited_by_id and not user_obj.is_active
+                        else "Inactive"
+                    )
+                    user["role"] = (
+                        Level.to_org_string(membership.level)
+                        if membership.level is not None
+                        else membership.role
+                    )
+                    pending_invite = pending_invites.get(user_obj.email.lower())
+                    if user["status"] == "Request Pending" and pending_invite:
+                        # The provisional membership is deliberately least-privilege;
+                        # display the offer, not a grant the invitee does not yet own.
+                        user["role"] = Level.to_org_string(pending_invite.level)
+                    user["organization_role"] = user["role"]
                 else:
-                    user["status"] = "Active"
-
-                # Add membership type information
-                if user_obj.organization == organization:
-                    user["membership_type"] = "primary"
-                    # Return workspace role if organization_role is None, otherwise return org role
-                    if user_obj.organization_role:
-                        user["role"] = user_obj.organization_role
-                    elif workspace:
-                        # Try to get workspace role
-                        try:
-                            ws_membership = (
-                                WorkspaceMembership.no_workspace_objects.get(
-                                    workspace=workspace, user=user_obj, is_active=True
-                                )
-                            )
-                            user["role"] = ws_membership.role
-                        except WorkspaceMembership.DoesNotExist:
-                            user["role"] = None
-                    else:
-                        user["role"] = None
-                else:
-                    user["membership_type"] = "invited"
-                    try:
-                        membership = OrganizationMembership.objects.get(
-                            user=user_obj, organization=organization, is_active=True
-                        )
-                        user["role"] = membership.role
-                    except OrganizationMembership.DoesNotExist:
-                        user["role"] = "Unknown"
+                    # Only truly legacy identities reach this fallback; the
+                    # queryset already excluded inactive/deleted membership history.
+                    user["status"] = (
+                        "Request Pending"
+                        if user_obj.invited_by_id and not user_obj.is_active
+                        else "Active"
+                        if user_obj.is_active
+                        else "Inactive"
+                    )
+                    user["role"] = user_obj.organization_role
+                    if not user["role"] and workspace:
+                        ws_membership = WorkspaceMembership.no_workspace_objects.filter(
+                            workspace=workspace, user=user_obj, is_active=True
+                        ).first()
+                        user["role"] = ws_membership.role if ws_membership else None
 
                 # Add workspace membership information
                 if workspace:
@@ -1940,6 +1902,7 @@ class ManageTeamView(APIView):
         },
         reject_unknown_fields=True,
     )
+    @request_issuance_entry
     def post(self, request, *args, **kwargs):
         try:
             validated_data = request.validated_data
@@ -2153,29 +2116,77 @@ class ManageTeamView(APIView):
                             org_role = None
                             workspace_role = role
 
-                        # Check if user already exists in this organization
+                        # A retained identity is not an active member merely
+                        # because User.organization still points at this tenant.
                         existing_user = User.objects.filter(
-                            email=member_data["email"], organization=organization
+                            email=member_data["email"]
                         ).first()
-
                         if existing_user:
-                            errors.append(
-                                {
-                                    "index": index,
-                                    "email": member_data["email"],
-                                    "error": "User is already a member of this organization",
-                                }
-                            )
-                            continue
+                            if counts_as_member(existing_user, organization):
+                                errors.append(
+                                    {
+                                        "index": index,
+                                        "email": member_data["email"],
+                                        "error": "User is already a member of this organization",
+                                    }
+                                )
+                                continue
+                            departed = OrganizationMembership._base_manager.filter(
+                                user=existing_user, organization=organization
+                            ).exists()
+                            if existing_user.is_active and departed:
+                                readmit_retained_member(
+                                    existing_user,
+                                    organization,
+                                    role=org_role,
+                                    workspace=workspace,
+                                    workspace_role=workspace_role,
+                                    actor=request.user,
+                                )
+                                created_members.append(
+                                    UserSerializer(existing_user).data
+                                )
+                                continue
+                            if not existing_user.is_active and departed:
+                                from accounts.services.offboarding import (
+                                    reinvite_removed_member,
+                                )
+                                from accounts.utils import build_invite_accept_link
 
-                        # Check if user exists in other organizations
-                        user_in_other_org = (
-                            User.objects.filter(email=member_data["email"])
-                            .exclude(organization=organization)
-                            .first()
-                        )
-
-                        if user_in_other_org:
+                                reinvite_removed_member(
+                                    existing_user,
+                                    organization,
+                                    role=org_role,
+                                    workspace=workspace,
+                                    workspace_role=workspace_role,
+                                    actor=request.user,
+                                )
+                                member_response = UserSerializer(existing_user).data
+                                # Reuse the existing identity and password; send
+                                # the accept link, never a replacement password.
+                                try:
+                                    email_helper(
+                                        "You are invited to join - Future AGI",
+                                        "invite_user.html",
+                                        {
+                                            "org_name": organization.display_name
+                                            or organization.name,
+                                            "invited_by": request.user.name,
+                                            "invite_link": build_invite_accept_link(
+                                                existing_user
+                                            ),
+                                            "app_url": settings.APP_URL,
+                                            "ssl": ssl,
+                                        },
+                                        [existing_user.email],
+                                    )
+                                except Exception:
+                                    member_response["invite_email_warning"] = (
+                                        "Invitation created; use Members to resend the email."
+                                    )
+                                created_members.append(member_response)
+                                continue
+                            # Preserve the pre-existing flow for unrelated identities.
                             errors.append(
                                 {
                                     "index": index,
@@ -2184,73 +2195,11 @@ class ManageTeamView(APIView):
                                 }
                             )
                             continue
-                            # User exists in another organization - invite them to this organization
-                            # try:
-                            #     from accounts.models.organization_membership import OrganizationMembership
-
-                            #     # Check if already invited
-                            #     existing_invite = OrganizationMembership.objects.filter(
-                            #         user=user_in_other_org,
-                            #         organization=organization,
-                            #         is_active=True
-                            #     ).first()
-
-                            #     if existing_invite:
-                            #         errors.append(
-                            #             {
-                            #                 "email": member_data["email"],
-                            #                 "error": "User is already invited to this organization",
-                            #             }
-                            #         )
-                            #         continue
-
-                            #     # Create invitation
-                            #     OrganizationMembership.objects.create(
-                            #         user=user_in_other_org,
-                            #         organization=organization,
-                            #         role=member_data["organization_role"],
-                            #         invited_by=request.user,
-                            #         is_active=True
-                            #     )
-
-                            #     # Add user to workspace
-                            #     self._add_user_to_workspace(
-                            #         user_in_other_org,
-                            #         workspace,
-                            #         member_data.get("workspace_role", OrganizationRoles.WORKSPACE_MEMBER),
-                            #         request.user
-                            #     )
-
-                            #     # Send invitation email to existing user
-                            #     email_helper(
-                            #         f"You are invited to join {organization.display_name if organization.display_name else organization.name} - Future AGI",
-                            #         "existing_user_invite.html",
-                            #         {
-                            #             "org_name": organization.display_name or organization.name,
-                            #             "workspace_name": workspace.name,
-                            #             "invited_by": request.user.name,
-                            #             "app_url": settings.APP_URL,
-                            #             "ssl": ssl,
-                            #         },
-                            #         [member_data["email"]],
-                            #     )
-
-                            #     created_members.append(UserSerializer(user_in_other_org).data)
-                            #     continue
-
-                            # except Exception as e:
-                            #     errors.append(
-                            #         {
-                            #             "email": member_data["email"],
-                            #             "error": f"Failed to invite existing user: {str(e)}",
-                            #         }
-                            #     )
-                            #     continue
 
                         # Keep the member, membership and accept-invite record
                         # together. Email failure must not roll back these records.
                         with transaction.atomic():
-                            new_member = User.objects.create(
+                            new_member = create_person(
                                 email=member_data["email"],
                                 name=member_data["name"],
                                 organization=organization,
@@ -2426,15 +2375,23 @@ class ManageTeamView(APIView):
             except Workspace.DoesNotExist:
                 return self._gm.bad_request("Invalid workspace ID")
 
-        # Check if member is a primary member or invited member
-        member = get_object_or_404(User, id=member_id)
+        # Check if member is a primary member or invited member. An unknown
+        # id answers like a user outside this organization.
+        member = User.objects.filter(id=member_id).first()
+        if member is None:
+            return self._gm.not_found("Member not found in organization")
 
         if member == user:
             return self._gm.bad_request(get_error_message("USER_CANNOT_REMOVE_ORG"))
 
-        # Check if member belongs to this organization
-        if member.organization == organization:
-            # Primary member - remove from organization (this will delete the user entirely)
+        # Check if member belongs to this organization: the legacy
+        # organization field counts only with membership here or a pending
+        # invitation to it (counts_as_member), so a removed member is not a
+        # primary one.
+        if member.organization == organization and counts_as_member(
+            member, organization
+        ):
+            # Primary member - revoke only this organization's access.
             if workspace:
                 # Remove from specific workspace only
                 try:
@@ -2454,15 +2411,7 @@ class ManageTeamView(APIView):
                         f"Member is not part of workspace '{workspace.name}'"
                     )
             else:
-                # Remove from all workspaces and organization (full removal)
-                WorkspaceMembership.no_workspace_objects.filter(
-                    user=member, workspace__organization=organization
-                ).update(is_active=False)
-
-                # Clear Redis cache for immediate logout before deleting user
-                clear_user_redis_cache(member.id)
-
-                member.delete()
+                offboard_organization_member(member, organization, actor=request.user)
                 return self._gm.success_response(
                     {
                         "message": "Member removed from all workspaces and organization successfully.",
@@ -2473,7 +2422,7 @@ class ManageTeamView(APIView):
         elif member.invited_organizations.filter(id=organization.id).exists():
             # Invited member - remove from organization membership
             try:
-                membership = OrganizationMembership.objects.get(
+                OrganizationMembership.objects.get(
                     user=member, organization=organization, is_active=True
                 )
 
@@ -2498,11 +2447,9 @@ class ManageTeamView(APIView):
                             f"Invited member is not part of workspace '{workspace.name}'"
                         )
                 else:
-                    # Remove from all workspaces and organization invitation
-                    WorkspaceMembership.no_workspace_objects.filter(
-                        user=member, workspace__organization=organization
-                    ).update(is_active=False)
-                    membership.delete()
+                    offboard_organization_member(
+                        member, organization, actor=request.user
+                    )
                     return self._gm.success_response(
                         {
                             "message": "Invited member removed from all workspaces and organization successfully.",
@@ -2511,6 +2458,6 @@ class ManageTeamView(APIView):
                     )
 
             except OrganizationMembership.DoesNotExist:
-                return self._gm.bad_request("Member not found in organization")
+                return self._gm.not_found("Member not found in organization")
         else:
-            return self._gm.bad_request("Member not found in organization")
+            return self._gm.not_found("Member not found in organization")

@@ -1,0 +1,72 @@
+# Fixture for the REST generator's tests, not catalog data (see app.yaml).
+schema: "connector-manifest/v1#provider"
+app: gmail
+id: futureagi-rest
+version: 1.0.0
+kind: rest
+publisher: futureagi
+vendorStatus:
+  label: ga
+  source: https://developers.google.com/workspace/gmail/api
+transport:
+  kind: http
+  url: "https://{connectorsHost}/gmail/mcp"
+  variant: streamable
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://accounts.google.com/o/oauth2/v2/auth
+    tokenUrl: https://oauth2.googleapis.com/token
+    scopes:
+      - https://www.googleapis.com/auth/gmail.readonly
+      - https://www.googleapis.com/auth/gmail.compose
+      - https://www.googleapis.com/auth/gmail.send
+      - https://www.googleapis.com/auth/gmail.modify
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    extraAuthorizeParams:
+      access_type: offline
+      prompt: consent
+      include_granted_scopes: "true"
+    refresh: { supported: true, rotates: false }
+    revocation:
+      url: https://oauth2.googleapis.com/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered]
+    clientGroup: google
+  verify: { tool: get_profile }
+tools:
+  source: operations
+  defaultPosture: ask
+  generated: tools.generated.json
+retry: { "on": [429, 503], honorRetryAfter: true }
+pricing: { model: free }
+upstream:
+  spec:
+    url: https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/gmail/v1/gmail-api.json
+    format: google-discovery
+    sha256: f651441dcc942f428d92768e8b20c94a28ff82bf485b79872d9eef267a894225
+    licence: BSD-3-Clause (googleapis/google-api-go-client)
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developers.google.com/workspace/gmail/api/auth/scopes
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

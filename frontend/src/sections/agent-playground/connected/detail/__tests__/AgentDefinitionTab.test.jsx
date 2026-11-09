@@ -227,7 +227,7 @@ describe("AgentDefinitionTab", () => {
     renderAt(HOSTED_AGENT_DETAIL);
     expect(
       await screen.findByText(
-        "Turn on to track calls, monitor logs and debug this agent.",
+        "Calls imported from connected voice providers and spans from agents run in hosted sandboxes aren't stored in Observe in this release.",
       ),
     ).toBeInTheDocument();
   });
@@ -240,7 +240,7 @@ describe("AgentDefinitionTab", () => {
     renderAt(HOSTED_AGENT_DETAIL);
     expect(
       await screen.findByText(
-        "Tracking this agent's calls and logs in Observe.",
+        "Calls imported from connected voice providers and spans from agents run in hosted sandboxes aren't stored in Observe in this release.",
       ),
     ).toBeInTheDocument();
   });

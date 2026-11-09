@@ -20,9 +20,9 @@ const existingChannels = [
 ];
 
 async function fillAndSubmit(user, name, url) {
-  await user.type(screen.getByLabelText(/Channel Name/), name);
+  await user.type(screen.getByLabelText(/Channel name/), name);
   await user.type(screen.getByLabelText(/URL/), url);
-  await user.click(screen.getByRole("button", { name: "Add Channel" }));
+  await user.click(screen.getByRole("button", { name: "Add channel" }));
   return mockUpdateMutate.mock.calls[0][0];
 }
 
@@ -42,7 +42,11 @@ describe("CreateChannelDialog", () => {
       />,
     );
 
-    const payload = await fillAndSubmit(user, "oncall", "https://hooks.example/oncall");
+    const payload = await fillAndSubmit(
+      user,
+      "oncall",
+      "https://hooks.example/oncall",
+    );
 
     expect(payload.config.alerting.channels).toEqual([
       existingChannels[0],
@@ -61,7 +65,11 @@ describe("CreateChannelDialog", () => {
       />,
     );
 
-    const payload = await fillAndSubmit(user, "ops", "https://hooks.example/new");
+    const payload = await fillAndSubmit(
+      user,
+      "ops",
+      "https://hooks.example/new",
+    );
 
     expect(payload.config.alerting.channels).toEqual([
       { name: "ops", type: "webhook", url: "https://hooks.example/new" },

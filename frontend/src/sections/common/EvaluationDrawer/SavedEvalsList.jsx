@@ -9,15 +9,31 @@ import {
   IconButton,
   LinearProgress,
   Stack,
+  Switch,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@mui/material";
+import { useParams } from "react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import axios, { endpoints } from "src/utils/axios";
+import { enqueueSnackbar } from "notistack";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  useEditDatasetEvalConfig,
+  useSetExperimentDefaults,
+} from "src/api/develop/analysis";
+import { getUserEvalListKey } from "./getEvalsList";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useEvaluationContext } from "./context/EvaluationContext";
 import { formatDistanceToNow } from "date-fns";
 import { canonicalEntries, canonicalValues } from "src/utils/utils";
+import { isSurfaceShown } from "src/launch/launchSwitch";
 
 // ── Constants ──
 
@@ -75,7 +91,128 @@ const resolveColumnName = (value, allColumns) => {
 
 // ── Row ──
 
+const isScoreEval = (item) =>
+  ["percentage", "score", "numeric"].includes(
+    String(item.output_type ?? "").toLowerCase(),
+  );
+
+const versionNo = (v) => Number(String(v ?? "").replace(/^v/i, "")) || 0;
+
+/**
+ * L7c g7 (expdrawer:open): the output chip of an eval's output type: a
+ * score eval (`percentage`, `score`, `numeric`) reads Scoring, never
+ * Choices; an unknown type shows no chip.
+ */
+export function outputChipOf(type) {
+  const t = String(type ?? "").toLowerCase();
+  if (t === "pass_fail" || t === "pass/fail")
+    return { label: "Pass/fail", icon: "mdi:check-decagram" };
+  if (["percentage", "score", "numeric"].includes(t))
+    return { label: "Scoring", icon: "mdi:percent" };
+  if (t === "choices" || t === "deterministic")
+    return { label: "Choices", icon: "mdi:format-list-bulleted" };
+  return null;
+}
+/** L7c g7: the newer of two version labels ("v3"), or the one given. */
+export const newestOf = (a, b) =>
+  versionNo(b) > versionNo(a) ? b : a ?? b ?? null;
+
+/**
+ * `↑ Higher is better · Pass ≥ 0.70 · v3` (threshold only for score evals),
+ * with an amber `v2 → v3 available` when a newer version exists. HO D11: an
+ * eval added with a pinned version (`pinned_version_id`) reads `v3 · pinned`.
+ */
+export function evalDefinitionLine(item) {
+  if (item.higher_is_better == null && !item.version) return null;
+  const lower = item.higher_is_better === false;
+  const parts = [lower ? "↓ Lower is better" : "↑ Higher is better"];
+  if (isScoreEval(item) && item.pass_threshold != null)
+    parts.push(
+      `Pass ${lower ? "≤" : "≥"} ${Number(item.pass_threshold).toFixed(2)}`,
+    );
+  if (item.version) parts.push(item.version);
+  if (item.pinned_version_id) parts.push("pinned");
+  const newer =
+    item.latest_version &&
+    item.version &&
+    versionNo(item.latest_version) > versionNo(item.version)
+      ? `${item.version} → ${item.latest_version} available`
+      : null;
+  return { text: parts.join(" · "), newer };
+}
+
+/**
+ * Direction and pass threshold of a dataset eval (§3.15). Saves through
+ * edit_and_run_user_eval with run:false; the Summary, the leaderboard and
+ * Choose winner all read these.
+ */
+const ScoringEditor = ({ item, disabled, onSave, busy }) => {
+  const score = isScoreEval(item);
+  const [hib, setHib] = useState(item.higher_is_better !== false);
+  const [threshold, setThreshold] = useState(
+    item.pass_threshold == null ? "" : String(item.pass_threshold),
+  );
+  const t = threshold === "" ? null : Number(threshold);
+  const invalid = score && t != null && (!Number.isFinite(t) || t < 0 || t > 1);
+  const changed =
+    hib !== (item.higher_is_better !== false) ||
+    (score && t !== (item.pass_threshold ?? null));
+  return (
+    <Box
+      sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}
+    >
+      <ToggleButtonGroup
+        exclusive
+        size="small"
+        value={hib ? "higher" : "lower"}
+        disabled={disabled}
+        onChange={(e, v) => v && setHib(v === "higher")}
+        sx={{
+          "& .MuiToggleButton-root": {
+            py: 0.25,
+            px: 1,
+            fontSize: "11px",
+            textTransform: "none",
+          },
+        }}
+      >
+        <ToggleButton value="higher">↑ Higher is better</ToggleButton>
+        <ToggleButton value="lower">↓ Lower is better</ToggleButton>
+      </ToggleButtonGroup>
+      {score && (
+        <TextField
+          size="small"
+          label="Pass threshold"
+          value={threshold}
+          disabled={disabled}
+          onChange={(e) => setThreshold(e.target.value)}
+          error={invalid}
+          helperText={invalid ? "Between 0 and 1" : undefined}
+          inputProps={{ inputMode: "decimal", "aria-label": "Pass threshold" }}
+          sx={{ width: 120, "& input": { py: 0.6, fontSize: "12px" } }}
+        />
+      )}
+      <Button
+        size="small"
+        variant="contained"
+        disabled={disabled || !changed || invalid || busy}
+        onClick={() =>
+          onSave(item, {
+            higherIsBetter: hib,
+            passThreshold: score ? t : undefined,
+          })
+        }
+        sx={{ fontSize: "11px", py: 0.25, minWidth: 0 }}
+      >
+        Save
+      </Button>
+    </Box>
+  );
+};
+
 const EvalRow = ({
+  defaultSwitch,
+  scoring,
   item,
   selected,
   onToggle,
@@ -89,10 +226,54 @@ const EvalRow = ({
   allColumns,
   disableDelete,
   disableDeleteReason,
+  confirmRun = true,
 }) => {
   const [open, setOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null); // "run" | "delete" | null
   const isComposite = (item.template_type || item.templateType) === "composite";
+  // The version / pass-rule line and the newer-version notice are the
+  // dataset.evalVersionNotice surface. Where the build hides it, the row
+  // neither shows them nor reads the template's versions for them.
+  const noticeShown = isSurfaceShown("dataset.evalVersionNotice");
+  // L7c g7 (ver:saved-list-notice): the template's newest version, read
+  // now (GET …/versions/), so a version saved in the editor shows here as
+  // `v2 → v3 available` without the list being written again.
+  const templateId = item.template_id ?? item.eval_template_id ?? null;
+  const { data: newest } = useQuery({
+    // Under the template's detail key: a saved version invalidates it.
+    queryKey: ["evals", "detail", templateId, "versions"],
+    queryFn: () =>
+      axios
+        .get(endpoints.develop.eval.getEvalVersions(templateId))
+        .then((r) => {
+          const list = r.data?.result?.versions ?? [];
+          const n = Math.max(
+            0,
+            ...list.map((v) => Number(v.version_number) || 0),
+          );
+          return n ? `v${n}` : null;
+        }),
+    enabled: Boolean(noticeShown && templateId && item.version && !isComposite),
+    staleTime: 10_000,
+  });
+  const { data: templateDetail } = useQuery({
+    queryKey: ["evals", "detail", templateId],
+    queryFn: () =>
+      axios
+        .get(endpoints.develop.eval.getEvalDetail(templateId))
+        .then((r) => r.data?.result ?? null),
+    enabled: Boolean(open && templateId),
+    staleTime: 30_000,
+  });
+  const tags = Array.isArray(templateDetail?.tags)
+    ? templateDetail.tags
+    : item.eval_template_tags ?? [];
+  const definition = noticeShown
+    ? evalDefinitionLine({
+        ...item,
+        latest_version: newestOf(item.latest_version, newest),
+      })
+    : null;
   const t = isComposite
     ? {
         label: "Composite",
@@ -121,7 +302,10 @@ const EvalRow = ({
   const rc = item.run_config || {};
   const isSystem =
     (item.owner || item.eval_owner) === "system" ||
-    (!isComposite && item.template_name && item.eval_template_tags); // heuristic fallback
+    ((item.owner ?? item.eval_owner) == null &&
+      !isComposite &&
+      item.template_name &&
+      item.eval_template_tags); // heuristic fallback
 
   // Build mapping display pairs
   const mappingPairs = hasMappingNames
@@ -130,6 +314,7 @@ const EvalRow = ({
 
   return (
     <Box
+      data-testid="saved-eval-row"
       sx={{
         borderRadius: "8px",
         border: "1px solid",
@@ -167,15 +352,45 @@ const EvalRow = ({
           sx={{ color: t.color, flexShrink: 0 }}
         />
 
-        {/* Name */}
-        <Typography
-          variant="body2"
-          fontWeight={600}
-          noWrap
-          sx={{ fontSize: "13px", flex: 1, minWidth: 0 }}
-        >
-          {item.name}
-        </Typography>
+        {/* Name + definition line */}
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            variant="body2"
+            fontWeight={600}
+            noWrap
+            sx={{ fontSize: "13px" }}
+          >
+            {item.name}
+          </Typography>
+          {definition && (
+            <Typography
+              data-testid="saved-eval-definition"
+              noWrap
+              sx={{
+                fontSize: "11px",
+                color: "text.secondary",
+                lineHeight: 1.4,
+              }}
+            >
+              {definition.text}
+            </Typography>
+          )}
+          {/* L7c g7 (ver:saved-list-notice): the newer version on its own
+              line, so a narrow drawer never cuts it off. */}
+          {definition?.newer && (
+            <Typography
+              data-testid="saved-eval-newer-version"
+              sx={{
+                fontSize: "11px",
+                lineHeight: 1.4,
+                color: "warning.dark",
+                fontWeight: 600,
+              }}
+            >
+              {definition.newer}
+            </Typography>
+          )}
+        </Box>
 
         {/* Type badge */}
         <Box
@@ -251,30 +466,95 @@ const EvalRow = ({
 
         {/* Actions */}
         <Box
-          sx={{ display: "flex", gap: 0.25, ml: 0.25, flexShrink: 0 }}
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.25,
+            ml: 0.25,
+            flexShrink: 0,
+          }}
           onClick={(e) => e.stopPropagation()}
         >
+          {defaultSwitch && (
+            <Tooltip
+              arrow
+              title={
+                defaultSwitch.disabled
+                  ? "You need edit access to this dataset"
+                  : defaultSwitch.checked
+                    ? "Preselected when you create an experiment on this dataset"
+                    : "Not preselected in new experiments"
+              }
+            >
+              <Box
+                component="label"
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.25,
+                  mr: 0.5,
+                  cursor: defaultSwitch.disabled ? "default" : "pointer",
+                }}
+              >
+                <Switch
+                  size="small"
+                  checked={defaultSwitch.checked}
+                  disabled={defaultSwitch.disabled || defaultSwitch.busy}
+                  onChange={(e) => defaultSwitch.onChange(e.target.checked)}
+                  inputProps={{
+                    "aria-label": `Use ${item.name} in new experiments`,
+                  }}
+                />
+                <Typography
+                  sx={{
+                    fontSize: "11px",
+                    color: "text.secondary",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Use in new experiments
+                </Typography>
+              </Box>
+            </Tooltip>
+          )}
           {showRun &&
             !isProjectEvals &&
             (isRunning ? (
-              <Tooltip title="Stop" arrow>
-                <IconButton
+              // SVP-4.4: the red icon says what it does.
+              <Tooltip
+                title={`${item.name} is still scoring rows. Stop it; rows already scored keep their scores.`}
+                arrow
+              >
+                <Button
                   size="small"
+                  color="error"
+                  variant="text"
                   onClick={() => onStop?.(item)}
-                  sx={{ p: 0.4 }}
+                  startIcon={
+                    <Iconify icon="mdi:stop-circle-outline" width={15} />
+                  }
+                  aria-label={`Stop scoring with ${item.name}`}
+                  sx={{
+                    minWidth: 0,
+                    px: 0.75,
+                    py: 0.25,
+                    fontSize: "11px",
+                    textTransform: "none",
+                    "& .MuiButton-startIcon": { mr: 0.25 },
+                  }}
                 >
-                  <Iconify
-                    icon="mdi:stop-circle-outline"
-                    width={17}
-                    sx={{ color: "error.main" }}
-                  />
-                </IconButton>
+                  Stop
+                </Button>
               </Tooltip>
             ) : (
               <Tooltip title={isCompleted ? "Re-run" : "Run"} arrow>
                 <IconButton
                   size="small"
-                  onClick={() => setConfirmAction("run")}
+                  // W1-2: an experiment's Run opens the re-score confirm
+                  // (cost and new runs) instead of the inline one.
+                  onClick={() =>
+                    confirmRun ? setConfirmAction("run") : onRun?.(item)
+                  }
                   sx={{ p: 0.4 }}
                 >
                   <Iconify
@@ -482,6 +762,16 @@ const EvalRow = ({
           }}
         >
           <Stack spacing={1.25}>
+            {scoring && (
+              <Sec title="Scoring">
+                <ScoringEditor
+                  item={item}
+                  disabled={scoring.disabled}
+                  busy={scoring.busy}
+                  onSave={scoring.onSave}
+                />
+              </Sec>
+            )}
             {/* ── Mapping (full) ── */}
             {canonicalEntries(mapping).length > 0 && (
               <Sec title="Variable Mapping">
@@ -542,22 +832,10 @@ const EvalRow = ({
                       }
                     />
                   )}
-                  {item.output_type && (
+                  {outputChipOf(item.output_type) && (
                     <CChip
-                      icon={
-                        item.output_type === "pass_fail"
-                          ? "mdi:check-decagram"
-                          : item.output_type === "percentage"
-                            ? "mdi:percent"
-                            : "mdi:format-list-bulleted"
-                      }
-                      label={
-                        item.output_type === "pass_fail"
-                          ? "Pass/fail"
-                          : item.output_type === "percentage"
-                            ? "Scoring"
-                            : "Choices"
-                      }
+                      icon={outputChipOf(item.output_type).icon}
+                      label={outputChipOf(item.output_type).label}
                     />
                   )}
                 </Box>
@@ -599,18 +877,23 @@ const EvalRow = ({
                   }
                 />
                 <Row label="Owner" value={isSystem ? "System" : "User"} />
-                {item.evalGroup && <Row label="Group" value={item.evalGroup} />}
+                {(item.evalGroup ?? item.eval_group) && (
+                  <Row
+                    label="Group"
+                    value={item.evalGroup ?? item.eval_group}
+                  />
+                )}
                 {item.description && (
                   <Row label="About" value={item.description} />
                 )}
               </Box>
             </Sec>
 
-            {/* ── Tags ── */}
-            {item.eval_template_tags?.length > 0 && (
+            {/* ── Tags ── (L7c g7: the template's own, read when open) */}
+            {tags?.length > 0 && (
               <Sec title="Tags">
                 <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.4 }}>
-                  {item.eval_template_tags.slice(0, 8).map((tag) => (
+                  {tags.slice(0, 8).map((tag) => (
                     <Chip
                       key={tag}
                       label={tag}
@@ -619,13 +902,13 @@ const EvalRow = ({
                       sx={{ height: 18, fontSize: "10px", borderRadius: "4px" }}
                     />
                   ))}
-                  {item.eval_template_tags.length > 8 && (
+                  {tags.length > 8 && (
                     <Typography
                       variant="caption"
                       color="text.disabled"
                       sx={{ fontSize: "10px", lineHeight: "18px" }}
                     >
-                      +{item.eval_template_tags.length - 8}
+                      +{tags.length - 8}
                     </Typography>
                   )}
                 </Box>
@@ -744,10 +1027,115 @@ const SavedEvalsList = ({
   onClose,
   disableDelete = false,
   disableDeleteReason,
+  onRunEvalsClick,
+  headerExtra = null,
   autoSelectRequests,
   onAutoSelectApplied,
 }) => {
   const { setVisibleSection, setCurrentTab } = useEvaluationContext();
+  // `Use in new experiments` (§3.15): dataset evals only (the dataset route).
+  const { dataset: datasetId } = useParams();
+  const { role } = useAuthContext();
+  const canEdit = Boolean(
+    RolePermission.DATASETS?.[PERMISSIONS.UPDATE]?.[role] ?? true,
+  );
+  const queryClient = useQueryClient();
+  const [defaultOverrides, setDefaultOverrides] = useState({});
+  const setDefaults = useSetExperimentDefaults(datasetId);
+  const isDefault = (e) => defaultOverrides[e.id] ?? e.is_experiment_default;
+  const toggleDefault = (item, checked) => {
+    const ids = evals
+      .filter((e) => (e.id === item.id ? checked : isDefault(e)))
+      .map((e) => e.id);
+    setDefaultOverrides((p) => ({ ...p, [item.id]: checked }));
+    setDefaults.mutate(ids, {
+      onSuccess: () => {
+        enqueueSnackbar(
+          checked
+            ? `${item.name} will be preselected in new experiments`
+            : `${item.name} won't be preselected in new experiments`,
+          { variant: "success" },
+        );
+        queryClient.invalidateQueries({
+          queryKey: getUserEvalListKey("dataset", datasetId),
+        });
+      },
+      onError: () => {
+        setDefaultOverrides((p) => ({ ...p, [item.id]: !checked }));
+        enqueueSnackbar("Couldn't update the experiment defaults", {
+          variant: "error",
+        });
+      },
+    });
+  };
+  const editScoring = useEditDatasetEvalConfig(datasetId);
+  const saveScoring = (item, { higherIsBetter, passThreshold }) =>
+    editScoring.mutate(
+      {
+        evalId: item.id,
+        higherIsBetter,
+        passThreshold,
+        extra: {
+          name: item.name,
+          model: item.model ?? item.run_config?.model,
+          config: {
+            mapping: item.mapping ?? {},
+            config: item.config?.config ?? {},
+            params: item.params ?? {},
+            reason_column: true,
+          },
+          save_as_template: false,
+        },
+      },
+      {
+        onSuccess: () => {
+          enqueueSnackbar(
+            `${item.name}: ${higherIsBetter ? "higher" : "lower"} is better${
+              passThreshold != null
+                ? ` · pass ${higherIsBetter ? "≥" : "≤"} ${passThreshold}`
+                : ""
+            }`,
+            { variant: "success" },
+          );
+          queryClient.invalidateQueries({
+            queryKey: getUserEvalListKey("dataset", datasetId),
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["evals-summary", datasetId],
+          });
+        },
+        onError: (err) =>
+          enqueueSnackbar(
+            err?.result || err?.message || "Couldn't save the scoring",
+            { variant: "error" },
+          ),
+      },
+    );
+  // DSX L5: the Scoring editor (direction + pass threshold) saves keys the
+  // real edit_and_run_user_eval drops, and dev has no lower-is-better rule,
+  // so it needs its own scoring claim. "Use in new experiments" shows
+  // wherever the backend reports is_experiment_default (it stores it).
+  const scoringFor = (e) =>
+    isSurfaceShown("dataset.evalScoring") &&
+    datasetId &&
+    !isProjectEvals &&
+    typeof e.is_experiment_default === "boolean"
+      ? { disabled: !canEdit, busy: editScoring.isPending, onSave: saveScoring }
+      : null;
+  // L5 merge note 1c: the switch only preselects evals in New experiment,
+  // so it shows only where L6's dataset.experimentDefaults surface does.
+  const defaultSwitchFor = (e) =>
+    isSurfaceShown("dataset.experimentDefaults") &&
+    datasetId &&
+    !isProjectEvals &&
+    typeof e.is_experiment_default === "boolean"
+      ? {
+          checked: Boolean(isDefault(e)),
+          disabled: !canEdit,
+          busy: setDefaults.isPending,
+          onChange: (checked) => toggleDefault(e, checked),
+        }
+      : null;
   const handleAddClick = () => {
     if (onAddClick) {
       onAddClick();
@@ -837,6 +1225,7 @@ const SavedEvalsList = ({
               ? `${sel.size} of ${evals.length} selected`
               : `Evals (${evals.length})`}
           </Typography>
+          {headerExtra}
           <Button
             variant="outlined"
             size="small"
@@ -869,9 +1258,16 @@ const SavedEvalsList = ({
           <EvalRow
             key={e.id}
             item={e}
+            defaultSwitch={defaultSwitchFor(e)}
+            scoring={scoringFor(e)}
             selected={sel.has(e.id)}
             onToggle={toggle}
-            onRun={onRunEvalClick}
+            onRun={
+              onRunEvalsClick
+                ? (item) => onRunEvalsClick([item])
+                : onRunEvalClick
+            }
+            confirmRun={!onRunEvalsClick}
             onStop={onStopEvalClick}
             onEdit={onEditEvalClick}
             onDelete={onDeleteEvalClick}
@@ -931,7 +1327,14 @@ const SavedEvalsList = ({
             startIcon={<Iconify icon="mdi:play-circle-outline" width={16} />}
             onClick={async () => {
               const toRun = hasSel ? selected : evals;
-              await Promise.all(toRun.map((e) => onRunEvalClick?.(e)));
+              // W1-2: a door that runs several evals in one request (an
+              // experiment's re-score) confirms first; Cancel keeps the list.
+              if (onRunEvalsClick) {
+                const out = await onRunEvalsClick(toRun);
+                if (out?.cancelled) return;
+              } else {
+                await Promise.all(toRun.map((e) => onRunEvalClick?.(e)));
+              }
               onClose?.();
             }}
             sx={{
@@ -941,8 +1344,8 @@ const SavedEvalsList = ({
             }}
           >
             {hasSel
-              ? `Run Selected (${sel.size})`
-              : `Run All (${evals.length})`}
+              ? `Run selected (${sel.size})`
+              : `Run all (${evals.length})`}
           </Button>
         </Box>
       )}
@@ -985,6 +1388,8 @@ SavedEvalsList.propTypes = {
   onClose: PropTypes.func,
   disableDelete: PropTypes.bool,
   disableDeleteReason: PropTypes.string,
+  onRunEvalsClick: PropTypes.func,
+  headerExtra: PropTypes.node,
   autoSelectRequests: PropTypes.arrayOf(
     PropTypes.shape({
       name: PropTypes.string.isRequired,

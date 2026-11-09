@@ -116,6 +116,11 @@ func (t *Translator) ErrorFromCanonical(err *models.APIError) (statusCode int, b
 			Status:  mapErrorTypeToGeminiStatus(err.Type),
 		},
 	}
+	// A gateway admission refusal is a retryable 503, not an INTERNAL
+	// server error. Match the native GenAI error writer's status dialect.
+	if statusCode == http.StatusServiceUnavailable {
+		resp.Error.Status = "UNAVAILABLE"
+	}
 	body, _ = json.Marshal(resp)
 	contentType = "application/json"
 	return statusCode, body, contentType
@@ -130,7 +135,7 @@ func mapErrorTypeToGeminiStatus(errType string) string {
 		return "INVALID_ARGUMENT"
 	case models.ErrTypeAuthentication:
 		return "UNAUTHENTICATED"
-	case models.ErrTypePermission:
+	case models.ErrTypePermission, models.ErrTypeGuardrail: // a guardrail's refusal is a 403
 		return "PERMISSION_DENIED"
 	case models.ErrTypeNotFound:
 		return "NOT_FOUND"

@@ -28,9 +28,9 @@ const existingRules = [
 ];
 
 async function fillAndSubmit(user, name = "new-rule") {
-  await user.type(screen.getByLabelText(/Rule Name/), name);
+  await user.type(screen.getByLabelText(/Rule name/), name);
   await user.type(screen.getByLabelText(/Threshold/), "5");
-  await user.click(screen.getByRole("button", { name: "Create Rule" }));
+  await user.click(screen.getByRole("button", { name: "Create rule" }));
 }
 
 describe("CreateAlertRuleDialog", () => {
@@ -114,7 +114,7 @@ describe("CreateAlertRuleDialog", () => {
       />,
     );
 
-    await user.click(screen.getByLabelText(/Notify Channels/));
+    await user.click(screen.getByLabelText(/Notify channels/));
     await user.click(screen.getByRole("option", { name: "ops" }));
     await user.keyboard("{Escape}");
     await fillAndSubmit(user);

@@ -1,0 +1,454 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/8c562525694550601a232cb54014e48c6c7f6da0/openapi/v1.0/openapi.yaml",
+    "sha256": "533f6d86985584327109ba2c52c0e51454ce1ba2153c11f4d841e898b88c5b1b"
+  },
+  "tools": [
+    {
+      "name": "list_joined_teams",
+      "title": "List my teams",
+      "description": "List the teams the signed-in user is a member of, with their ids and display names.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Team.ReadBasic.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/me/joinedTeams"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_channels",
+      "title": "List a team's channels",
+      "description": "List the channels of a team, by its id from list_joined_teams, for example 19:4a95f7d8db4c4e7fae857bcebe0623e6@thread.tacv2 is a channel id.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Channel.ReadBasic.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/teams/{team-id}/channels"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "team-id": {
+            "type": "string",
+            "description": "The unique identifier of team"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["team-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_channel_messages",
+      "title": "Read a channel's messages",
+      "description": "Read the top-level messages of a channel, newest first, by team id and channel id. top is 1-50; each message's id is its chatMessage-id for list_replies and reply_to_channel_message.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["ChannelMessage.Read.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/teams/{team-id}/channels/{channel-id}/messages"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "team-id": {
+            "type": "string",
+            "description": "The unique identifier of team"
+          },
+          "channel-id": {
+            "type": "string",
+            "description": "The unique identifier of channel"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "expand": {
+            "type": "string",
+            "description": "Expand related entities. Comma-separated values.",
+            "x-wireName": "$expand"
+          }
+        },
+        "required": ["team-id", "channel-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "list_replies",
+      "title": "Read a thread's replies",
+      "description": "Read the replies to one channel message, by team id, channel id and the message's id.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["ChannelMessage.Read.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/teams/{team-id}/channels/{channel-id}/messages/{chatMessage-id}/replies"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "team-id": {
+            "type": "string",
+            "description": "The unique identifier of team"
+          },
+          "channel-id": {
+            "type": "string",
+            "description": "The unique identifier of channel"
+          },
+          "chatMessage-id": {
+            "type": "string",
+            "description": "The unique identifier of chatMessage"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          }
+        },
+        "required": ["team-id", "channel-id", "chatMessage-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "post_channel_message",
+      "title": "Post to a channel",
+      "description": "Post a new message to a channel. body is {\"contentType\": \"text\" or \"html\", \"content\": \"Release 2.4 is out\"}; subject is an optional headline.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["ChannelMessage.Send"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1.0/teams/{team-id}/channels/{channel-id}/messages"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "team-id": {
+            "type": "string",
+            "description": "The unique identifier of team"
+          },
+          "channel-id": {
+            "type": "string",
+            "description": "The unique identifier of channel"
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "body": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "description": "The content of the item."
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "enum": ["text", "html"],
+                    "description": "The type of the content. Possible values are text and html."
+                  }
+                }
+              },
+              "subject": {
+                "type": "string",
+                "description": "The subject of the chat message, in plaintext."
+              },
+              "importance": {
+                "type": "string",
+                "enum": ["normal", "high", "urgent", "unknownFutureValue"]
+              }
+            },
+            "additionalProperties": false,
+            "required": ["body"],
+            "description": "The message to post."
+          }
+        },
+        "required": ["team-id", "channel-id", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "fields": ["id", "webUrl", "createdDateTime"]
+      }
+    },
+    {
+      "name": "reply_to_channel_message",
+      "title": "Reply in a channel thread",
+      "description": "Reply to a channel message, by team id, channel id and the message's id. body is {\"contentType\": \"text\", \"content\": \"On it.\"}.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["ChannelMessage.Send"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1.0/teams/{team-id}/channels/{channel-id}/messages/{chatMessage-id}/replies"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "team-id": {
+            "type": "string",
+            "description": "The unique identifier of team"
+          },
+          "channel-id": {
+            "type": "string",
+            "description": "The unique identifier of channel"
+          },
+          "chatMessage-id": {
+            "type": "string",
+            "description": "The unique identifier of chatMessage"
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "body": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "description": "The content of the item."
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "enum": ["text", "html"],
+                    "description": "The type of the content. Possible values are text and html."
+                  }
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["body"],
+            "description": "The reply."
+          }
+        },
+        "required": ["team-id", "channel-id", "chatMessage-id", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "fields": ["id", "webUrl", "createdDateTime"]
+      }
+    },
+    {
+      "name": "list_chats",
+      "title": "List my chats",
+      "description": "List the user's one-on-one, group and meeting chats with their ids and topics. filter takes OData, for example \"chatType eq 'oneOnOne'\".",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Chat.ReadBasic"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/chats"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "expand": {
+            "type": "string",
+            "description": "Expand related entities. Comma-separated values.",
+            "x-wireName": "$expand"
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "list_chat_messages",
+      "title": "Read a chat's messages",
+      "description": "Read the messages of one chat, newest first, by its id from list_chats. top is 1-50.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Chat.Read"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/chats/{chat-id}/messages"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "chat-id": {
+            "type": "string",
+            "description": "The unique identifier of chat"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          }
+        },
+        "required": ["chat-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "send_chat_message",
+      "title": "Send a chat message",
+      "description": "Send a message in a chat, by its id. body is {\"contentType\": \"text\", \"content\": \"Can we move to 3pm?\"}.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["ChatMessage.Send"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1.0/chats/{chat-id}/messages"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "chat-id": {
+            "type": "string",
+            "description": "The unique identifier of chat"
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "body": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "description": "The content of the item."
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "enum": ["text", "html"],
+                    "description": "The type of the content. Possible values are text and html."
+                  }
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["body"],
+            "description": "The message to send."
+          }
+        },
+        "required": ["chat-id", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "fields": ["id", "chatId", "createdDateTime"]
+      }
+    }
+  ]
+}

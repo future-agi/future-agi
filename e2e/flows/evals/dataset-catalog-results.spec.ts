@@ -234,7 +234,7 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
   // DATA001 / file_upload.py: real upload, never insert equivalent rows ourselves.
   await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: 'Add Dataset', exact: true }).first().click();
-  await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click();
+  await page.getByText('Upload a file', { exact: true }).click();
   const uploadDialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
   await uploadFixture(uploadDialog.locator('input[type="file"]'), 'catalog-regions.csv');
   await uploadDialog.getByPlaceholder('Dataset Name').fill(datasetName);

@@ -11,7 +11,7 @@ import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 
 const FormStaticDropdownState = React.forwardRef(
-  (
+  /** @param {Omit<React.ComponentProps<typeof import("./index").default>, "ref"> & { onBlur?: React.FocusEventHandler<HTMLInputElement> }} props */ (
     {
       options = [],
       value = "",

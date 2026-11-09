@@ -20,6 +20,7 @@ import {
   useCreateOrganizationModal,
 } from "../states";
 import { useAuthContext } from "src/auth/hooks";
+import { signOutToSignIn } from "src/auth/sign-out";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import PropTypes from "prop-types";
@@ -27,6 +28,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { useLocation, useNavigate } from "react-router";
 import AllActionForm from "src/pages/dashboard/settings/UserManagementV2/AllActionForm";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { isPrototypeMode } from "src/utils/prototype";
 
 // --- Section header with optional + button -----------------------------------
 
@@ -247,9 +249,8 @@ const WorkspaceSwitcher = ({ collapsed }) => {
     ) || allowedToInvite.includes(currentOrganizationRole);
 
   const onLogoutClick = () => {
-    logout();
     trackEvent(Events.logoutConfirmed, { [PropertyName.click]: "click" });
-    navigate("/", { replace: true });
+    signOutToSignIn(logout, navigate);
   };
 
   // Close all sub-poppers
@@ -274,13 +275,31 @@ const WorkspaceSwitcher = ({ collapsed }) => {
     <Box sx={{ px: 0.5, width: collapsed ? "48px" : "auto" }}>
       {/* ---- Trigger button ---- */}
       <Box
+        // A keyboard user reaches and opens the switcher like a button.
+        role="button"
+        tabIndex={0}
+        aria-label="Switch workspace"
+        aria-haspopup="menu"
+        aria-expanded={open}
         sx={{
           cursor: "pointer",
           borderRadius: "6px",
           width: "100%",
+          outline: "none",
           "&:hover": { backgroundColor: "action.hover" },
+          "&:focus-visible": {
+            outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+            outlineOffset: "-2px",
+          },
         }}
         onClick={() => setOpen(!open)}
+        data-testid="workspace-switcher"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen(!open);
+          }
+        }}
       >
         <Box
           sx={{
@@ -363,7 +382,11 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         {/* ============ WORKSPACE section ============ */}
         <SectionHeader
           label="WORKSPACE"
+          // L7b absent-sweep (switcher:org-workspace-actions): creating a
+          // workspace or an organization and inviting members are not
+          // mocked, so prototype builds leave them out.
           onAdd={
+            !isPrototypeMode() &&
             user?.ws_enabled &&
             (user?.organization_role === "Owner" ||
               user?.organization_role === "Admin")
@@ -403,7 +426,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         )}
 
         {/* Invite members */}
-        {canInvite && (
+        {canInvite && !isPrototypeMode() && (
           <MenuRow
             icon={
               <Iconify
@@ -455,10 +478,14 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         {/* ============ ORGANIZATION section ============ */}
         <SectionHeader
           label="ORGANIZATION"
-          onAdd={() => {
-            setOpen(false);
-            useCreateOrganizationModal.getState().setOpen(true);
-          }}
+          onAdd={
+            isPrototypeMode()
+              ? undefined
+              : () => {
+                  setOpen(false);
+                  useCreateOrganizationModal.getState().setOpen(true);
+                }
+          }
         />
 
         {/* Current organization with sub-menu */}
@@ -498,7 +525,13 @@ const WorkspaceSwitcher = ({ collapsed }) => {
               "redirect-url-from-settings",
               location.pathname,
             );
-            navigate("/dashboard/settings/usage-summary");
+            // L7b absent-sweep: a prototype build has no usage summary (not
+            // mocked); its Organization settings open the Workspaces page.
+            navigate(
+              isPrototypeMode()
+                ? "/dashboard/settings/workspace"
+                : "/dashboard/settings/usage-summary",
+            );
             setOpen(false);
             closeAllPoppers(); // Close sub-poppers to prevent hover triggering during navigation
           }}
@@ -659,13 +692,17 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           </Button>
         }
       />
-      <AllActionForm
-        openActionForm={inviteUser ? { action: "invite-user" } : null}
-        onClose={() => setInviteUser(false)}
-        requiredKeys={{ email: true, role: true }}
-        showInviteLinks
-      />
-      <CreateOrganizationModal />
+      {!isPrototypeMode() && (
+        <>
+          <AllActionForm
+            openActionForm={inviteUser ? { action: "invite-user" } : null}
+            onClose={() => setInviteUser(false)}
+            requiredKeys={{ email: true, role: true }}
+            showInviteLinks
+          />
+          <CreateOrganizationModal />
+        </>
+      )}
     </Box>
   );
 };

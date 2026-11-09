@@ -1,0 +1,60 @@
+# CI only: the Omega gateway, the session exchange's key and internal TLS
+# listener, and the revocation channel to Omega EE (omega.*), over
+# examples/external.yaml and examples/ingress.yaml, with NetworkPolicies on
+# and EE's pods allowed to the listener. Rendered and kubeconform-checked like
+# every set; hack/rendered_checks.py asserts the gateway's cloud-mode
+# environment, mounts and policies, and the channel on the API and workers.
+omega:
+  enabled: true
+  issuer:
+    url: https://futureagi.example.com/omega
+    keyId: host-2026-10
+    privateKey:
+      existingSecret: omega-issuer-key
+  hostEvents:
+    url: https://omega-os.omega.svc:8443/host/events
+    keyId: fa-host-events-1
+    existingSecret: omega-host-events
+  internalTls:
+    certManager:
+      issuerRef: {kind: Issuer, name: omega-internal-ca}
+    allowFrom:
+      - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: omega}}
+        podSelector: {matchLabels: {app.kubernetes.io/name: omega-os}}
+  gateway:
+    image:
+      repository: futureagi/omega-gateway
+      tag: v0.1.0
+    ee:
+      url: https://omega-os.omega.svc:8443
+    jwks:
+      existingConfigMap: omega-issuer-jwks
+    rateLimitRedis:
+      existingSecret: omega-gateway-redis
+    upstreamCa:
+      existingSecret: omega-internal-ca
+    console:
+      enabled: true
+      host: console.futureagi.example.com
+    otlp:
+      tracesUrl: https://otlp.futureagi.example.com/v1/traces
+      credentials:
+        existingSecret: omega-gateway-otlp
+    autoscaling:
+      enabled: true
+  ingress:
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-body-size: 64m
+ingress:
+  tls:
+    - secretName: futureagi-tls
+      hosts:
+        - futureagi.example.com
+        - api.futureagi.example.com
+        - console.futureagi.example.com
+networkPolicy:
+  enabled: true

@@ -1,8 +1,11 @@
+import ipaddress
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from urllib.parse import urlparse
 
 import structlog
 from django.db import IntegrityError
+from django.db.models import Prefetch
 from django.http import Http404
 from django.utils.decorators import method_decorator
 from drf_yasg.utils import swagger_auto_schema
@@ -15,10 +18,14 @@ from rest_framework.viewsets import ModelViewSet
 from accounts.utils import get_request_organization
 from integrations.models import (
     ACTION_ONLY_PLATFORMS,
+    EXPORT_PLATFORMS,
+    HOST_URL_PLATFORMS,
     ConnectionStatus,
     IntegrationConnection,
     IntegrationPlatform,
+    SyncLog,
 )
+from integrations.permissions import CanManageIntegrations
 from integrations.serializers.contracts import (
     INTEGRATION_ERROR_RESPONSES,
     INTEGRATION_SYNC_ERROR_RESPONSES,
@@ -38,6 +45,8 @@ from integrations.serializers.integration_connection import (
 )
 from integrations.services.base import get_integration_service
 from integrations.services.credentials import CredentialManager
+from integrations.services.export_destinations import fixed_destination
+from integrations.services.export_failures import exception_fields
 from integrations.services.registry import ensure_services_loaded
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
@@ -46,6 +55,23 @@ from tracer.models.project import Project, ProjectSourceChoices
 from tracer.utils.otel import get_or_create_project
 
 logger = structlog.get_logger(__name__)
+
+# Mixpanel's /track accepts events from the last 5 days
+# (https://docs.mixpanel.com/reference/track-event).
+MIXPANEL_TRACK_DAYS = 5
+# Datadog's log intake accepts logs from the last 18 hours
+# (integrations/temporal/activities.py DATADOG_LOG_MAX_AGE).
+DATADOG_LOG_HOURS = 18
+
+# The credentials Edit replaces on an export, by the keys its wizard step
+# stores them under; the rest (the Datadog site, the bucket, region and
+# prefix) decide where it delivers and are set when it is added.
+EDITABLE_CREDENTIALS: dict[str, tuple[str, ...]] = {
+    IntegrationPlatform.DATADOG: ("api_key",),
+    IntegrationPlatform.POSTHOG: ("api_key",),
+    IntegrationPlatform.MIXPANEL: ("project_token", "api_secret"),
+    IntegrationPlatform.CLOUD_STORAGE: ("access_key_id", "secret_access_key"),
+}
 
 
 integration_errors = swagger_auto_schema(responses=INTEGRATION_ERROR_RESPONSES)
@@ -65,6 +91,39 @@ def _build_credentials(data: dict) -> dict:
     if pk or sk:
         return {"public_key": pk, "secret_key": sk}
     return {}
+
+
+_UNREACHABLE_HOST_MESSAGE = "This host URL cannot be used for an integration."
+
+
+def _unreachable_host_error(host_url) -> str | None:
+    """An error when ``host_url`` names a host the server must never reach.
+
+    Applies ``tfc.utils.ssrf_guard``'s never-reachable rule (loopback,
+    link-local and cloud metadata addresses) to an IP-literal host and to the
+    local and metadata host names, without a DNS lookup. Private network
+    addresses stay allowed, as for an operator's self-hosted service.
+    """
+    from tfc.utils.ssrf_guard import METADATA_HOSTNAMES, IPClass, classify_ip
+
+    if not host_url:
+        return None
+    try:
+        host = urlparse(str(host_url)).hostname
+    except ValueError:
+        return _UNREACHABLE_HOST_MESSAGE
+    if not host:
+        return None
+    host = host.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost") or host in METADATA_HOSTNAMES:
+        return _UNREACHABLE_HOST_MESSAGE
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if classify_ip(address) is IPClass.NEVER:
+        return _UNREACHABLE_HOST_MESSAGE
+    return None
 
 
 def _success_response(result, status_code=status.HTTP_200_OK):
@@ -88,7 +147,35 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
     """API endpoints for managing integration connections."""
 
     serializer_class = IntegrationConnectionListSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageIntegrations]
+    # Adding, changing and removing a connection: org Owner or Admin, or an
+    # Admin of the workspace. Listing, reading and Sync now stay open.
+    integration_admin_actions = frozenset(
+        {
+            "create",
+            "validate_credentials",
+            "update",
+            "partial_update",
+            "destroy",
+            "pause",
+            "resume",
+        }
+    )
+
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .prefetch_related(
+                Prefetch(
+                    "sync_logs",
+                    queryset=SyncLog.objects.filter(deleted=False).order_by(
+                        "-started_at"
+                    )[:1],
+                    to_attr="latest_sync_log",
+                )
+            )
+        )
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -142,7 +229,9 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 }
             )
         except Exception as e:
-            logger.exception("Error listing integration connections", error=str(e))
+            logger.warning(
+                "Error listing integration connections", **exception_fields(e)
+            )
             return _error_response(
                 "Failed to list integration connections.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -158,11 +247,6 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             logger.info(
                 "Retrieve connection detail",
                 connection_id=str(instance.id),
-                display_name=data.get("display_name"),
-                host_url=data.get("host_url"),
-                external_project_name=data.get("external_project_name"),
-                public_key_display=data.get("public_key_display"),
-                project_name=data.get("project_name"),
             )
             return _success_response(data)
         except Http404:
@@ -170,7 +254,9 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 "Integration connection not found.", status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            logger.exception("Error retrieving integration connection", error=str(e))
+            logger.warning(
+                "Error retrieving integration connection", **exception_fields(e)
+            )
             return _error_response(
                 "Failed to retrieve connection.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -198,13 +284,61 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     "Workspace context is required to create an integration."
                 )
 
+            host_error = _unreachable_host_error(data.get("host_url"))
+            if host_error:
+                return _error_response(host_error)
+
             ensure_services_loaded()
 
-            # 1. Validate credentials against the platform
-            service = get_integration_service(data["platform"])
+            platform = data["platform"]
             credentials = _build_credentials(data)
             ca_cert = data.get("ca_certificate") or None
-            host_url = data.get("host_url") or ""
+            # The connection stores where it delivers: the address the user
+            # entered for a Langfuse or PostHog instance, otherwise the
+            # destination its credentials name.
+            destination = fixed_destination(platform, credentials)
+            if destination is not None:
+                host_url = destination
+            else:
+                host_url = data.get("host_url") or ""
+                if platform in HOST_URL_PLATFORMS and not host_url:
+                    return _error_response(
+                        f"host_url: Enter the address of your "
+                        f"{IntegrationPlatform(platform).label} instance."
+                    )
+
+            # Mixpanel's /track, used without an API secret, accepts events
+            # from the last 5 days only.
+            backfill_from_date = data.get("backfill_from_date")
+            if (
+                platform == IntegrationPlatform.MIXPANEL
+                and not credentials.get("api_secret")
+                and data.get("backfill_option") == "from_date"
+                and backfill_from_date
+                and backfill_from_date
+                < datetime.now(UTC) - timedelta(days=MIXPANEL_TRACK_DAYS)
+            ):
+                return _error_response(
+                    "backfill_from_date: Without an API secret, Mixpanel accepts "
+                    f"request logs from the last {MIXPANEL_TRACK_DAYS} days. Add "
+                    "the API secret to export older ones."
+                )
+
+            # Datadog's log intake accepts logs from the last 18 hours.
+            if (
+                platform == IntegrationPlatform.DATADOG
+                and data.get("backfill_option") == "from_date"
+                and backfill_from_date
+                and backfill_from_date
+                < datetime.now(UTC) - timedelta(hours=DATADOG_LOG_HOURS)
+            ):
+                return _error_response(
+                    "backfill_from_date: Datadog accepts logs from the last "
+                    f"{DATADOG_LOG_HOURS} hours. Pick a start within them."
+                )
+
+            # 1. Validate credentials against the platform
+            service = get_integration_service(platform)
 
             validation = service.validate_credentials(
                 host_url=host_url,
@@ -213,22 +347,23 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             )
 
             if not validation.get("valid"):
-                return _error_response(
-                    validation.get("error", "Invalid credentials.")
-                )
+                return _error_response(validation.get("error", "Invalid credentials."))
 
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
             is_action_only = data["platform"] in ACTION_ONLY_PLATFORMS
-            if is_action_only and IntegrationConnection.objects.filter(
-                organization=organization,
-                workspace=workspace,
-                platform=data["platform"],
-            ).exists():
+            if (
+                is_action_only
+                and IntegrationConnection.objects.filter(
+                    organization=organization,
+                    workspace=workspace,
+                    platform=data["platform"],
+                ).exists()
+            ):
                 return _error_response(
                     f"{data['platform'].title()} is already connected for this workspace. "
-                    "Edit the existing connection in Settings > Integrations to rotate keys."
+                    "Disconnect it in Settings > Integrations to connect another key."
                 )
 
             # Resolve external project name from request or validation
@@ -241,10 +376,12 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             # 2. Encrypt credentials
             encrypted = CredentialManager.encrypt(credentials)
 
-            # 3. Resolve FutureAGI project
+            # 3. Resolve FutureAGI project. An export sends the gateway's
+            # request logs out and an action-only platform receives alerts or
+            # issues: neither imports into a project.
             project = None
             project_id = data.get("project_id")
-            if is_action_only:
+            if is_action_only or platform in EXPORT_PLATFORMS:
                 project = None
             elif project_id:
                 try:
@@ -291,8 +428,13 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 workspace=workspace,
                 created_by=request.user,
                 platform=data["platform"],
-                display_name=data.get("display_name") or ext_project_name,
-                host_url=host_url or f"https://{data['platform']}.com",
+                display_name=data.get("display_name")
+                or (
+                    IntegrationPlatform(platform).label
+                    if ext_project_name == platform
+                    else ext_project_name
+                ),
+                host_url=host_url,
                 encrypted_credentials=encrypted,
                 ca_certificate=ca_cert or "",
                 project=project,
@@ -315,7 +457,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     logger.warning(
                         "Failed to start backfill workflow",
                         connection_id=str(connection.id),
-                        error=str(e),
+                        **exception_fields(e),
                     )
 
             result = IntegrationConnectionDetailSerializer(connection).data
@@ -326,13 +468,15 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             if platform in ACTION_ONLY_PLATFORMS:
                 return _error_response(
                     f"{platform.title()} is already connected for this workspace. "
-                    "Edit the existing connection in Settings > Integrations to rotate keys."
+                    "Disconnect it in Settings > Integrations to connect another key."
                 )
             return _error_response(
                 "A connection with these settings already exists in this workspace."
             )
         except Exception as e:
-            logger.exception("Error creating integration connection", error=str(e))
+            logger.warning(
+                "Error creating integration connection", **exception_fields(e)
+            )
             return _error_response(
                 "Failed to create connection.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -368,19 +512,63 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
         try:
             instance = self.get_object()
             if instance.platform == IntegrationPlatform.SLACK:
-                return _error_response("Reconnect Slack through OAuth to change this connection.")
+                return _error_response(
+                    "Reconnect Slack through OAuth to change this connection."
+                )
             data = request.validated_data
+
+            if "host_url" in data and instance.platform not in HOST_URL_PLATFORMS:
+                return _error_response(
+                    f"host_url: A {instance.get_platform_display()} connection "
+                    "delivers where its credentials point; it has no host to change."
+                )
+            host_error = _unreachable_host_error(data.get("host_url"))
+            if host_error:
+                return _error_response(host_error)
 
             # Update display_name if provided
             if "display_name" in data:
                 instance.display_name = data["display_name"]
 
-            # If keys are being updated, re-validate
-            if "public_key" in data or "secret_key" in data:
+            replaced = data.get("credentials") or {}
+            if replaced:
+                editable = EDITABLE_CREDENTIALS.get(instance.platform, ())
+                refused = sorted(set(replaced) - set(editable))
+                if refused or not all(replaced.values()):
+                    return _error_response(
+                        f"credentials: A {instance.get_platform_display()} "
+                        "connection replaces only "
+                        f"{', '.join(editable) or 'no credentials'} here, each "
+                        "with a value."
+                    )
+
+            keys_changed = "public_key" in data or "secret_key" in data or bool(replaced)
+            # A new key, host or certificate is checked with the platform, as the
+            # Add Integration wizard checks them, before it is saved; a new host
+            # or certificate is checked with the stored keys.
+            endpoint_changed = (
+                "host_url" in data and data["host_url"] != instance.host_url
+            ) or (
+                "ca_certificate" in data
+                and (data["ca_certificate"] or None)
+                != (instance.ca_certificate or None)
+            )
+
+            # If keys or the endpoint are being updated, re-validate
+            if keys_changed or endpoint_changed:
                 current_creds = CredentialManager.decrypt(
                     bytes(instance.encrypted_credentials)
                 )
-                new_creds = {**current_creds}
+                if (
+                    instance.platform == IntegrationPlatform.CLOUD_STORAGE
+                    and replaced
+                    and current_creds.get("sub_platform") != "s3"
+                ):
+                    return _error_response(
+                        "credentials: Only an Amazon S3 connection replaces its "
+                        "keys here."
+                    )
+                new_creds = {**current_creds, **replaced}
                 if "public_key" in data:
                     new_creds["public_key"] = data["public_key"]
                 if "secret_key" in data:
@@ -403,9 +591,12 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                         validation.get("error", "Invalid credentials.")
                     )
 
-                instance.encrypted_credentials = CredentialManager.encrypt(new_creds)
+                if keys_changed:
+                    instance.encrypted_credentials = CredentialManager.encrypt(
+                        new_creds
+                    )
 
-                # Clear error state if keys were updated successfully
+                # A connection in error that passes the check is active again.
                 if instance.status == ConnectionStatus.ERROR:
                     instance.status = ConnectionStatus.ACTIVE
                     instance.status_message = ""
@@ -427,7 +618,9 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 "Integration connection not found.", status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            logger.exception("Error updating integration connection", error=str(e))
+            logger.warning(
+                "Error updating integration connection", **exception_fields(e)
+            )
             return _error_response(
                 "Failed to update connection.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -448,7 +641,9 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 "Integration connection not found.", status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            logger.exception("Error deleting integration connection", error=str(e))
+            logger.warning(
+                "Error deleting integration connection", **exception_fields(e)
+            )
             return _error_response(
                 "Failed to delete connection.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -473,8 +668,11 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             logger.info(
                 "Validate credentials request",
                 platform=data["platform"],
-                host_url=data["host_url"],
             )
+
+            host_error = _unreachable_host_error(data.get("host_url"))
+            if host_error:
+                return _error_response(host_error)
 
             ensure_services_loaded()
 
@@ -500,7 +698,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 return _error_response(result.get("error", "Invalid credentials."))
 
         except Exception as e:
-            logger.exception("Error validating credentials", error=str(e))
+            logger.warning("Error validating credentials", **exception_fields(e))
             return _error_response(
                 "Validation failed. Please check your credentials and try again."
             )
@@ -516,7 +714,11 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
     )
     @action(detail=True, methods=["post"], url_path="sync_now")
     def sync_now(self, request, pk=None):
-        """Trigger an immediate sync for this connection."""
+        """Sync this connection now; on a connection in Error, retry it.
+
+        Answers 200 only when a sync was dispatched; otherwise it refuses
+        with the reason (action-only, already syncing, paused, or within a
+        minute of the last attempt)."""
         try:
             instance = self.get_object()
 
@@ -537,36 +739,53 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     "Connection is paused. Resume it before triggering a sync."
                 )
 
-            # Cooldown: prevent sync spam (min 60s between manual syncs)
-            if instance.last_synced_at:
-                elapsed = (datetime.now(UTC) - instance.last_synced_at).total_seconds()
+            retry = instance.status == ConnectionStatus.ERROR
+
+            # Cooldown: at least 60 s since the last attempt, failed or not.
+            attempts = [instance.last_synced_at]
+            latest = (
+                SyncLog.objects.filter(connection=instance)
+                .order_by("-started_at")
+                .values_list("started_at", flat=True)
+                .first()
+            )
+            attempts.append(latest)
+            last_attempt = max((t for t in attempts if t), default=None)
+            if last_attempt:
+                elapsed = (datetime.now(UTC) - last_attempt).total_seconds()
                 if elapsed < 60:
-                    remaining = int(60 - elapsed)
+                    remaining = max(1, math.ceil(60 - elapsed))
+                    again = "retrying" if retry else "triggering another sync"
                     return _error_response(
-                        f"Please wait {remaining} seconds before triggering another sync."
+                        f"Please wait {remaining} seconds before {again}."
                     )
 
             # Dispatch sync activity
             try:
                 from integrations.temporal.activities import sync_integration_connection
 
-                sync_integration_connection.delay(str(instance.id))
+                if retry:
+                    sync_integration_connection.delay(str(instance.id), retry=True)
+                else:
+                    sync_integration_connection.delay(str(instance.id))
             except Exception as e:
                 logger.warning(
                     "Failed to dispatch sync activity",
                     connection_id=str(instance.id),
-                    error=str(e),
+                    **exception_fields(e),
                 )
                 return _error_response("Failed to trigger sync. Please try again.")
 
-            return _success_response({"message": "Sync triggered."})
+            return _success_response(
+                {"message": "Retry started." if retry else "Sync triggered."}
+            )
 
         except Http404:
             return _error_response(
                 "Integration connection not found.", status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            logger.exception("Error triggering sync", error=str(e))
+            logger.warning("Error triggering sync", **exception_fields(e))
             return _error_response(
                 "Failed to trigger sync.", status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -600,7 +819,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 "Integration connection not found.", status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            logger.exception("Error pausing connection", error=str(e))
+            logger.warning("Error pausing connection", **exception_fields(e))
             return _error_response(
                 "Failed to pause connection.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -624,8 +843,8 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             if instance.status != ConnectionStatus.PAUSED:
                 return _error_response("Only paused connections can be resumed.")
 
-            # Check if the project still exists
-            if not instance.project:
+            # An import needs the project it imports into; an export has none.
+            if instance.platform not in EXPORT_PLATFORMS and not instance.project:
                 return _error_response(
                     "The linked FutureAGI project has been deleted. "
                     "Please relink to a project before resuming."
@@ -643,7 +862,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 "Integration connection not found.", status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            logger.exception("Error resuming connection", error=str(e))
+            logger.warning("Error resuming connection", **exception_fields(e))
             return _error_response(
                 "Failed to resume connection.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,

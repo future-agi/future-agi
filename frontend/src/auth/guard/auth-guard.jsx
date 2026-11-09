@@ -8,6 +8,7 @@ import { useRouter } from "src/routes/hooks";
 import { SplashScreen } from "src/components/loading-screen";
 
 import { useAuthContext } from "../hooks";
+import { useAuthRedirectParams } from "../auth-url-intake";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
@@ -43,6 +44,8 @@ function Container({ children }) {
 
   const [checked, setChecked] = useState(false);
   const hydrateAttempted = useRef(false);
+  const redirecting = useRef(false);
+  const queryParams = useAuthRedirectParams();
 
   const {
     currentOrganizationName,
@@ -51,7 +54,9 @@ function Container({ children }) {
   } = useOrganization();
 
   const check = useCallback(() => {
-    const queryParams = new URLSearchParams(location.search);
+    // A full navigation is pending. Rechecks must not overwrite its returnTo
+    // after the first pass has removed redirectUrl from localStorage.
+    if (redirecting.current) return;
     const sso_token =
       queryParams.get("sso_token") || queryParams.get("access_token");
     const refreshToken = queryParams.get("refresh_token");
@@ -75,6 +80,9 @@ function Container({ children }) {
         // } else {
         const isRelativePath =
           returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//");
+        // Keep the handoff until navigation commits (index.html's pagehide
+        // cleanup) or this reader actually unmounts.
+        redirecting.current = true;
         if (isRelativePath) {
           localStorage.setItem("initial-render", "done");
           localStorage.removeItem("redirectUrl");
@@ -86,7 +94,6 @@ function Container({ children }) {
         // }
         return;
       }
-
 
       const existingToken = localStorage.getItem("accessToken");
       if (existingToken && !hydrateAttempted.current) {
@@ -106,6 +113,7 @@ function Container({ children }) {
 
       router.replace(href);
     } else {
+      queryParams.clear();
       const samlNext = sessionStorage.getItem("fai_saml_next");
       if (samlNext) {
         sessionStorage.removeItem("fai_saml_next");
@@ -114,7 +122,7 @@ function Container({ children }) {
       }
       setChecked(true);
     }
-  }, [authenticated, method, router, initialize]);
+  }, [authenticated, method, router, initialize, queryParams]);
 
   useEffect(() => {
     check();
@@ -126,7 +134,11 @@ function Container({ children }) {
   // from jwt-register-view.jsx at API-success time).
   useEffect(() => {
     // Skip redirect logic for standalone pages (e.g. MCP OAuth consent)
-    if (window.location.pathname.startsWith("/mcp/")) return;
+    if (
+      window.location.pathname.startsWith("/mcp/") ||
+      window.location.pathname === "/gateway/mcp/authorize"
+    )
+      return;
     if (!user) return;
     const isNewOAuthSignup = localStorage.getItem("isNewOAuthSignup") === "1";
     if (isNewOAuthSignup) {
@@ -213,7 +225,11 @@ function Container({ children }) {
   // redirects while org context is still hydrating.
   useEffect(() => {
     // Skip redirect logic for standalone pages (e.g. MCP OAuth consent)
-    if (window.location.pathname.startsWith("/mcp/")) return;
+    if (
+      window.location.pathname.startsWith("/mcp/") ||
+      window.location.pathname === "/gateway/mcp/authorize"
+    )
+      return;
     if (!user || !isOrgReady) return;
     if (user?.requires_org_setup) return;
     // Once onboarding is complete, users with an organization_role are fully

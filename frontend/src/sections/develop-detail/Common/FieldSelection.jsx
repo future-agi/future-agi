@@ -1,7 +1,14 @@
 import { Box, Checkbox, TextField, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
-import { useController } from "react-hook-form";
+import { useController, useWatch } from "react-hook-form";
+import PathPreviewStrip from "src/sections/common/Values/PathPreviewStrip";
+import { kindIcon } from "src/sections/common/Values/kindIcons";
+import {
+  coveragePercent,
+  dominantKind,
+  exampleText,
+} from "src/sections/common/Values/inferSchema";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import Iconify from "src/components/iconify";
@@ -33,7 +40,22 @@ const FieldSelection = ({
     // Note: dataType can be in col.dataType or col.col.dataType depending on context
     allColumns.forEach((col) => {
       const dataType = col?.dataType || col?.col?.dataType;
-      if (jsonSchemas?.[col?.field]?.keys?.length) {
+      // R2 (P6): typed paths (type icon, coverage, example) when the
+      // json-schema has them, else its keys.
+      if (jsonSchemas?.[col?.field]?.paths?.length) {
+        jsonSchemas[col.field].paths
+          .filter((p) => dominantKind(p.kinds) !== "null")
+          .forEach((p) => {
+            baseOptions.push({
+              label: p.path,
+              value: `${col.field}${p.rel.startsWith("[") ? "" : "."}${p.rel}`,
+              isJsonPath: true,
+              kind: dominantKind(p.kinds),
+              coverage: p.coverage,
+              example: p.example,
+            });
+          });
+      } else if (jsonSchemas?.[col?.field]?.keys?.length) {
         const schema = jsonSchemas[col?.field];
         schema.keys.forEach((path) => {
           baseOptions.push({
@@ -44,10 +66,11 @@ const FieldSelection = ({
         });
       }
 
-      // Add indexed options for images-type columns (maxImagesCount comes from jsonSchemas)
+      // Add indexed options for images-type columns (json-schema sends
+      // max_images_count)
       const imagesSchema = jsonSchemas?.[col?.field];
-      if (dataType === "images" && imagesSchema?.maxImagesCount) {
-        for (let idx = 0; idx < imagesSchema.maxImagesCount; idx++) {
+      if (dataType === "images" && imagesSchema?.max_images_count) {
+        for (let idx = 0; idx < imagesSchema.max_images_count; idx++) {
           baseOptions.push({
             label: `${col.headerName}[${idx}]`,
             value: `${col.field}[${idx}]`,
@@ -66,6 +89,10 @@ const FieldSelection = ({
   const {
     fieldState: { error },
   } = useController({
+    name: fieldName ? fieldName : `config.mapping.${field}`,
+    control,
+  });
+  const mappedValue = useWatch({
     name: fieldName ? fieldName : `config.mapping.${field}`,
     control,
   });
@@ -281,13 +308,52 @@ const FieldSelection = ({
                             padding: (theme) => theme.spacing(0.75, 1),
                           }}
                         >
-                          <Typography
-                            typography="s1"
-                            fontWeight={"fontWeightRegular"}
-                            color={"text.primary"}
-                          >
-                            {option.label}
-                          </Typography>
+                          {option.kind ? (
+                            <Iconify
+                              icon={kindIcon(option.kind)}
+                              width={14}
+                              sx={{ color: "text.secondary", flexShrink: 0 }}
+                            />
+                          ) : null}
+                          <Box sx={{ minWidth: 0, flex: 1 }}>
+                            <Typography
+                              typography="s1"
+                              fontWeight={"fontWeightRegular"}
+                              color={"text.primary"}
+                              noWrap
+                              sx={
+                                option.kind
+                                  ? { fontFamily: "monospace", fontSize: 13 }
+                                  : undefined
+                              }
+                            >
+                              {option.label}
+                            </Typography>
+                            {option.coverage && option.example != null ? (
+                              <Typography
+                                typography="s3"
+                                color="text.secondary"
+                                noWrap
+                              >
+                                {`e.g. ${exampleText(option.example)}`}
+                              </Typography>
+                            ) : null}
+                          </Box>
+                          {option.coverage ? (
+                            <Typography
+                              typography="s3"
+                              sx={{
+                                flexShrink: 0,
+                                color:
+                                  option.coverage.present ===
+                                  option.coverage.total
+                                    ? "text.disabled"
+                                    : "amber.700",
+                              }}
+                            >
+                              {coveragePercent(option.coverage)}
+                            </Typography>
+                          ) : null}
                         </Box>
                       </CustomTooltip>
                     ),
@@ -301,6 +367,11 @@ const FieldSelection = ({
                 {...rest}
               />
             )}
+            <PathPreviewStrip
+              value={mappedValue}
+              jsonSchemas={jsonSchemas}
+              columns={allColumns}
+            />
           </Box>
         </ShowComponent>
       </Box>

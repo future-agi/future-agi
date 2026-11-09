@@ -5,6 +5,9 @@
 {{- /* Empty VITE_HOST_API: the UI calls http://localhost:8000 (a port-forward). */ -}}
 {{- if $apiUrl }}{{ $_ := set $env "VITE_HOST_API" $apiUrl }}{{ end -}}
 {{- with $f.helpLink }}{{ $_ := set $env "VITE_HELP_LINK" . }}{{ end -}}
+{{- /* The Omega tabs (product switcher, "Agent infrastructure", the Omega routes) follow the gateway. */ -}}
+{{- if include "futureagi.omega.enabled" . }}{{ $_ := set $env "VITE_OMEGA_CONSOLE" "1" }}{{ end -}}
+{{- $env = mergeOverwrite $env (include "futureagi.hub.frontendEnv" . | fromYaml) -}}
 {{- $env = mergeOverwrite $env (include "futureagi.env.platform" (dict "root" . "kind" "frontend") | fromYaml) ($f.extraEnv | default dict) -}}
 apiVersion: apps/v1
 kind: Deployment

@@ -1,0 +1,54 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "tools": [
+        {
+          "name": "github__create_issue",
+          "title": "Create issue",
+          "description": "Create an issue in a repository.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "repo": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": ["repo", "title"]
+          },
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false
+          }
+        },
+        {
+          "name": "github__search_issues",
+          "title": "Search issues",
+          "description": "Search issues and pull requests.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "q": {
+                "type": "string"
+              }
+            },
+            "required": ["q"]
+          },
+          "annotations": {
+            "readOnlyHint": true
+          }
+        }
+      ]
+    }
+  }
+}

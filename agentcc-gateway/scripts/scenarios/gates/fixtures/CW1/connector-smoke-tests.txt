@@ -1,0 +1,8 @@
+# CW1 gate part 4 (integrator-owned; AM-C22): CN13's CONNECTORS-PLAN 3.4 acceptance names, one
+# "<file>::<test function>" per line, the file relative to the repository root, each asserted PASSED
+# by name in every parametrization, none SKIPPED (AM-C23 (b)), in the -v report of python3 -m pytest
+# scripts/connector-smoke/tests.
+scripts/connector-smoke/tests/test_gates.py::test_skips_without_key
+scripts/connector-smoke/tests/test_policy.py::test_readonly_by_default
+scripts/connector-smoke/tests/test_drift.py::test_hash_drift_reported
+scripts/connector-smoke/tests/test_drift.py::test_live_keys_superset_of_cassette

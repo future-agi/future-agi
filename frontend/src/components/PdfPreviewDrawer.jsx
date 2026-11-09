@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import {
   Box,
   Drawer,
@@ -9,6 +10,7 @@ import {
 import { LoadingScreen } from "src/components/loading-screen";
 import React, { useState, useEffect, useRef } from "react";
 import { Viewer, Worker } from "@react-pdf-viewer/core";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.js?url";
 import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
 import { usePdfPreviewStoreShallow } from "src/utils/CommonStores/pdfPreviewStore";
 import Iconify from "./iconify";
@@ -114,9 +116,13 @@ const PdfPreviewDrawer = () => {
       case "pdf":
         return (
           <Box sx={{ height: "100%", backgroundColor: "background.paper" }}>
-            <Worker workerUrl="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js">
+            <Worker workerUrl={pdfWorkerUrl}>
               <Viewer
                 fileUrl={fileUrl}
+                transformGetDocumentParams={(p) => ({
+                  ...p,
+                  isEvalSupported: false,
+                })}
                 plugins={[defaultLayoutPluginInstance]}
                 theme="light"
                 onDocumentLoad={() => setLoading(false)}
@@ -169,7 +175,8 @@ const PdfPreviewDrawer = () => {
 
         return (
           <div style={{ position: "relative", height: "100%" }}>
-            <iframe
+            <ExternalContentFrame
+              title="Office document preview"
               src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`}
               style={{ width: "100%", height: "100%", border: "none" }}
             />

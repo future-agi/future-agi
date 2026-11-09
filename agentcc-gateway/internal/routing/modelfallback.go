@@ -1,5 +1,16 @@
 package routing
 
+import "github.com/futureagi/agentcc-gateway/internal/models"
+
+// FallbackAttemptKind is the kind of an attempt that moves down a model
+// fallback chain: an auto-routed request's chain is its runners-up.
+func FallbackAttemptKind(autoRouted bool) models.AttemptKind {
+	if autoRouted {
+		return models.AttemptAutoFallback
+	}
+	return models.AttemptModelFallback
+}
+
 // ModelFallbacks holds model fallback chains.
 type ModelFallbacks struct {
 	chains map[string][]string // model → ordered fallback models
@@ -19,6 +30,17 @@ func (mf *ModelFallbacks) GetChain(model string) []string {
 		return nil
 	}
 	return mf.chains[model]
+}
+
+// LookupChain returns the fallback models configured for model and whether
+// model has an entry at all: an explicit empty entry is present, and means
+// the model has no chain rather than that another name's chain applies.
+func (mf *ModelFallbacks) LookupChain(model string) ([]string, bool) {
+	if mf == nil {
+		return nil, false
+	}
+	chain, present := mf.chains[model]
+	return chain, present
 }
 
 // HasFallbacks returns true if the model has any fallbacks configured.

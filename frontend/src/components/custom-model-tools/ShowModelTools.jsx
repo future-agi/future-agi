@@ -17,6 +17,51 @@ import EditTool from "./EditTool";
 import { useRunPromptOptions } from "src/api/develop/develop-detail";
 import { ShowComponent } from "../show";
 
+/**
+ * `Look up an order by id. · order_id (string, required)` — a tool's
+ * description and a peek at its parameters (IT-R1 G4). Pure.
+ */
+export function toolPeek(tool) {
+  const fn = tool?.config?.function ?? tool?.function ?? {};
+  const desc = tool?.description ?? fn.description ?? "";
+  const props = fn.parameters?.properties ?? {};
+  const required = new Set(fn.parameters?.required ?? []);
+  const params = Object.entries(props)
+    .map(
+      ([k, v]) =>
+        `${k} (${v?.type ?? "any"}${required.has(k) ? ", required" : ""})`,
+    )
+    .join(", ");
+  return [desc, params].filter(Boolean).join(" · ");
+}
+
+/** A picker row: the tool's name, then its description and parameters. */
+function ToolOptionPeek({ tool }) {
+  const peek = toolPeek(tool);
+  return (
+    <Box sx={{ minWidth: 0, py: 0.25 }}>
+      <Typography
+        typography="s1"
+        color="text.primary"
+        noWrap
+        sx={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
+      >
+        {tool?.name}
+      </Typography>
+      {peek ? (
+        <Typography
+          typography="s3"
+          color="text.secondary"
+          sx={{ whiteSpace: "normal", wordBreak: "break-word" }}
+        >
+          {peek}
+        </Typography>
+      ) : null}
+    </Box>
+  );
+}
+ToolOptionPeek.propTypes = { tool: PropTypes.object };
+
 const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
   const theme = useTheme();
   const [selectedTool, setSelectedTool] = useState(
@@ -93,7 +138,7 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
             fontWeight={"fontWeightRegular"}
             color="text.secondary"
           >
-            Explore all actions taken and their outcomes during the tool run.
+            Pick tools this prompt can call.
           </Typography>
         </Box>
         <IconButton
@@ -155,6 +200,8 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
           options={availableTools?.map((item) => ({
             label: item.name,
             value: item.id,
+            // IT-R2 G4 P3: what the tool does and takes, before you pick it.
+            component: <ToolOptionPeek tool={item} />,
           }))}
           multiple
           checkbox
@@ -191,20 +238,34 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
                 sx={{
                   padding: "8px",
                   borderRadius: "8px",
-                  height: "32px",
+                  minHeight: "32px",
                   backgroundColor: "background.neutral",
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
+                  gap: 1,
                 }}
               >
-                <Typography
-                  variant="s3"
-                  fontWeight={"fontWeightRegular"}
-                  color="text.primary"
-                >
-                  {item.name}
-                </Typography>
+                {/* IT-R1 G4: what the tool does and what it takes. */}
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography
+                    variant="s3"
+                    fontWeight={"fontWeightMedium"}
+                    color="text.primary"
+                  >
+                    {item.name}
+                  </Typography>
+                  {toolPeek(item) ? (
+                    <Typography
+                      variant="s3"
+                      color="text.secondary"
+                      component="div"
+                      sx={{ wordBreak: "break-word" }}
+                    >
+                      {toolPeek(item)}
+                    </Typography>
+                  ) : null}
+                </Box>
                 <Box sx={{ display: "flex", gap: "8px" }}>
                   <IconButton
                     onClick={() => handleEditTool(item)}

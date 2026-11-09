@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { LoadingButton } from "@mui/lab";
 import {
+  Alert,
   Box,
   Button,
   Dialog,
@@ -10,7 +11,8 @@ import {
   IconButton,
   Typography,
 } from "@mui/material";
-import React, { useEffect } from "react";
+import { useEffect } from "react";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { useForm } from "react-hook-form";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
@@ -27,6 +29,7 @@ import {
 import { useDevelopDetailContext } from "../Context/DevelopDetailContext";
 import { useSearchParams } from "react-router-dom";
 import PropTypes from "prop-types";
+import { runColumnMutation } from "./columnMutationRequest";
 
 const EditColumnName = ({ onSuccess }) => {
   const { dataset: paramId } = useParams();
@@ -52,7 +55,7 @@ const EditColumnName = ({ onSuccess }) => {
     defaultValues,
     resolver: zodResolver(
       z.object({
-        newColumnName: z.string().min(1, "Dataset name is required"),
+        newColumnName: z.string().min(1, "Column name is required"),
       }),
     ),
   });
@@ -65,14 +68,28 @@ const EditColumnName = ({ onSuccess }) => {
   const {
     mutate: updateColumn,
     isPending,
+    error,
     reset: resetMutation,
   } = useMutation({
+    networkMode: "always",
+    meta: { errorHandled: true },
     mutationFn: (d) =>
-      axios.put(
-        endpoints.develop.updateColumnName(dataset, editColumnName.id),
-        d,
+      runColumnMutation((config) =>
+        axios.put(
+          endpoints.develop.updateColumnName(dataset, editColumnName.id),
+          d,
+          config,
+        ),
       ),
-    onSuccess: () => {
+    onSuccess: (_res, data) => {
+      trackEvent(Events.editColumnNameSuccessful, {
+        [PropertyName.columnName]: {
+          dataset,
+          columnId: editColumnName.id,
+          old_column_name: editColumnName.name,
+          new_column_name: data.new_column_name,
+        },
+      });
       enqueueSnackbar("Column name updated successfully", {
         variant: "success",
       });
@@ -101,23 +118,19 @@ const EditColumnName = ({ onSuccess }) => {
     resetMutation();
   };
 
+  const handleClose = () => {
+    if (!isPending) onCloseCallback();
+  };
+
   const onSubmit = (data) => {
     // @ts-ignore
     updateColumn({ new_column_name: data.newColumnName });
-    trackEvent(Events.editColumnNameSuccessful, {
-      [PropertyName.columnName]: {
-        dataset: dataset,
-        columnId: editColumnName.id,
-        old_column_name: data.newColumnName,
-        new_column_name: editColumnName.name,
-      },
-    });
   };
 
   return (
     <Dialog
       open={Boolean(editColumnName)}
-      onClose={onCloseCallback}
+      onClose={handleClose}
       maxWidth="sm"
       fullWidth
     >
@@ -139,7 +152,11 @@ const EditColumnName = ({ onSuccess }) => {
           <Typography fontWeight={700} fontSize="18px">
             Edit Column Name
           </Typography>
-          <IconButton onClick={onCloseCallback}>
+          <IconButton
+            aria-label="Close edit column name"
+            disabled={isPending}
+            onClick={handleClose}
+          >
             <Iconify icon="mdi:close" />
           </IconButton>
         </Box>
@@ -150,7 +167,13 @@ const EditColumnName = ({ onSuccess }) => {
             paddingTop: 0.5,
           }}
         >
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {getSafeActionErrorMessage(error, "Couldn't save the column")}
+            </Alert>
+          )}
           <FormTextFieldV2
+            disabled={isPending}
             autoFocus
             label="Column Name"
             placeholder="Enter column name"
@@ -161,7 +184,7 @@ const EditColumnName = ({ onSuccess }) => {
           />
         </DialogContent>
         <DialogActions sx={{ padding: 2 }}>
-          <Button onClick={onCloseCallback} variant="outlined">
+          <Button onClick={handleClose} disabled={isPending} variant="outlined">
             Cancel
           </Button>
           <LoadingButton

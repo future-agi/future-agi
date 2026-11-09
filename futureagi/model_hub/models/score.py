@@ -98,6 +98,9 @@ class Score(BaseModel):
     )
     value = models.JSONField()
     value_history = models.JSONField(default=list, blank=True)
+    value_updated_at = models.DateTimeField(
+        null=True, default=timezone.now, editable=False
+    )
 
     # ── Who scored it ────────────────────────────────────────────────────
     annotator = models.ForeignKey(
@@ -287,18 +290,26 @@ class Score(BaseModel):
                     "value_history",
                     "created_at",
                     "updated_at",
+                    "value_updated_at",
                 ).get(pk=self.pk)
             except self.__class__.DoesNotExist:
                 previous = None
 
-            if previous is not None and previous.value != self.value:
-                self.value_history = self.appended_value_history(
-                    previous.value,
-                    previous.value_history,
-                    previous.updated_at or previous.created_at,
-                )
-                if update_fields is not None:
-                    kwargs["update_fields"] = set(update_fields) | {"value_history"}
+            if previous is not None:
+                # Metadata saves must not make an older review the latest vote.
+                self.value_updated_at = previous.value_updated_at
+                if previous.value != self.value:
+                    self.value_history = self.appended_value_history(
+                        previous.value,
+                        previous.value_history,
+                        previous.updated_at or previous.created_at,
+                    )
+                    self.value_updated_at = timezone.now()
+                    if update_fields is not None:
+                        kwargs["update_fields"] = set(update_fields) | {
+                            "value_history",
+                            "value_updated_at",
+                        }
 
         super().save(*args, **kwargs)
 

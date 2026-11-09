@@ -158,7 +158,11 @@ from tfc.utils.api_serializers import (
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.email import email_helper
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.pagination import (
+    MAX_PAGE_SIZE,
+    ExtendedPageNumberPagination,
+    PageSizeTooLarge,
+)
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
@@ -3038,6 +3042,8 @@ class AnnotationQueuePagination(ExtendedPageNumberPagination):
 
         page_size = getattr(request, "validated_query_data", {}).get("page_size")
         if page_size is not None:
+            if page_size > MAX_PAGE_SIZE:
+                raise PageSizeTooLarge()
             return page_size
 
         return super().get_page_size(request)
@@ -5597,6 +5603,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         responses={200: QueueSubmitAnnotationsResponseSerializer, **ERROR_RESPONSES},
     )
     @action(detail=True, methods=["post"], url_path="annotations/submit")
+    @transaction.atomic
     def submit_annotations(self, request, queue_id=None, pk=None):
         """Submit or update annotations for a queue item."""
         # Only allow annotation when queue is active
@@ -5801,6 +5808,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     queue_item=item,
                     deleted=False,
                 )
+                .select_for_update()
+                .order_by("id")
             }
             now = timezone.now()
             to_create, to_update = [], []
@@ -5840,6 +5849,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     # it. The row just read IS the previous version, so the entry
                     # is built here rather than re-reading it as save() must.
                     if score.value != value:
+                        score.value_updated_at = now
                         score.value_history = Score.appended_value_history(
                             score.value,
                             score.value_history,
@@ -5862,12 +5872,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # exactly the NULL/mismatched-workspace rows this manager exists to
             # reach, reporting them as submitted.
             #
-            # The old per-label update_or_create took a FOR UPDATE row lock and
-            # serialised concurrent writers; this read is unlocked. Only the same
-            # annotator can collide (annotator_id is in every applicable unique
-            # key), so the exposure is one user double-submitting an item: the
-            # update path is last-writer-wins and can lose one value_history
-            # entry, and the create path drops the loser's value below.
+            # Existing scores stay locked from the read through these writes.
+            # Concurrent submissions compare against the saved value and cannot
+            # restore a stale value timestamp or discard a history entry.
             with transaction.atomic():
                 if to_create:
                     # A concurrent submit of the same label can win the race; the
@@ -5883,6 +5890,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                             "source_type",
                             "value",
                             "value_history",
+                            "value_updated_at",
                             "score_source",
                             "notes",
                             "organization",

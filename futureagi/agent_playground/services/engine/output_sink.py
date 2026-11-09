@@ -71,7 +71,7 @@ class BaseOutputSink(ABC):
         """
         ...
 
-    def validate_config(self, config: dict[str, Any]) -> None:
+    def validate_config(self, config: dict[str, Any]) -> None:  # noqa: B027
         """
         Optional hook: validate sink-specific config before execution.
 
@@ -198,6 +198,13 @@ def call_sinks(
                 node_id=context_kwargs.get("node_id", ""),
                 error=str(e),
             )
-            results.append({"sink": name, "status": "FAILED", "error": str(e)})
+            results.append(
+                {
+                    "sink": name,
+                    "status": "FAILED",
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                }
+            )
 
     return results

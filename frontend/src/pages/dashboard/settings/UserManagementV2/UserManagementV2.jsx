@@ -302,6 +302,7 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
             paddingX: 0,
             paddingY: 2,
             display: "flex",
+            flexWrap: { xs: "wrap", md: "nowrap" },
             gap: 2,
             width: "100%",
             justifyContent: "space-between",

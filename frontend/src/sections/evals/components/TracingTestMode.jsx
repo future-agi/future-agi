@@ -69,6 +69,7 @@ import DateRangePill, {
 } from "src/sections/projects/LLMTracing/DateRangePill";
 import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
+import DecisionCallPanel from "src/sections/common/DecisionJudges/DecisionCallPanel";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import {
@@ -494,6 +495,9 @@ const TracingTestMode = React.forwardRef(
     {
       templateId,
       model = "turing_large",
+      // W1: a decision judge's question and the eval's prompt as edited
+      // ({decision, rule_prompt, threshold}); sent with the Test.
+      decisionTest = null,
       variables = [],
       codeParams = {},
       onTestResult,
@@ -721,6 +725,8 @@ const TracingTestMode = React.forwardRef(
     // Eval result
     const [isRunning, setIsRunning] = useState(false);
     const [result, setResult] = useState(null);
+    // W1: the decision call behind the last Test (or the refusal).
+    const [decisionCall, setDecisionCall] = useState(null);
     const [error, setError] = useState(null);
     // Async error localization poll — see DatasetTestMode for rationale.
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
@@ -1573,6 +1579,7 @@ const TracingTestMode = React.forwardRef(
       }
       setIsRunning(true);
       setResult(null);
+      setDecisionCall(null);
       setError(null);
 
       if (!variables.length) {
@@ -1651,6 +1658,7 @@ const TracingTestMode = React.forwardRef(
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
                   : {}),
+                ...(decisionTest && !isComposite ? decisionTest : {}),
               },
               ...autoCtx,
             });
@@ -1667,6 +1675,7 @@ const TracingTestMode = React.forwardRef(
                 compositeResult: data.result,
               }
             : data.result;
+          setDecisionCall(data.result?.metadata?.decision ?? null);
           setResult(nextResult);
           onTestResult?.(true, nextResult);
           if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
@@ -1685,6 +1694,8 @@ const TracingTestMode = React.forwardRef(
           err,
           "Failed to run evaluation. Please retry.",
         );
+        // W1: the gateway's refusal of a decision call (status, code).
+        setDecisionCall(err?.response?.data?.decision ?? null);
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1705,6 +1716,7 @@ const TracingTestMode = React.forwardRef(
       startErrorLocalizerPoll,
       codeParams,
       model,
+      decisionTest,
     ]);
 
     useImperativeHandle(
@@ -2007,6 +2019,7 @@ const TracingTestMode = React.forwardRef(
                   onClick={() => {
                     setCurrentRowIndex((i) => Math.max(0, i - 1));
                     setResult(null);
+                    setDecisionCall(null);
                     setError(null);
                     onClearResult?.();
                   }}
@@ -2023,6 +2036,7 @@ const TracingTestMode = React.forwardRef(
                       Math.min((rows?.length ?? 0) - 1, i + 1),
                     );
                     setResult(null);
+                    setDecisionCall(null);
                     setError(null);
                     onClearResult?.();
                   }}
@@ -2501,6 +2515,13 @@ const TracingTestMode = React.forwardRef(
           />
         )}
 
+        {/* W1: a decision judge's own call (or the gateway's refusal) */}
+        {decisionCall && !isRunning && (
+          <Box sx={{ mt: 1 }}>
+            <DecisionCallPanel decision={decisionCall} />
+          </Box>
+        )}
+
         {error && (
           <Box
             sx={(t) => ({
@@ -2528,6 +2549,7 @@ TracingTestMode.displayName = "TracingTestMode";
 
 TracingTestMode.propTypes = {
   templateId: PropTypes.string,
+  decisionTest: PropTypes.object,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
   onTestResult: PropTypes.func,

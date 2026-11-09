@@ -1,0 +1,32 @@
+{
+  "vendor": "fal",
+  "capability": "media",
+  "skus": [
+    {
+      "sku": "fal.kling_v3_pro_second",
+      "unit": "second",
+      "usd_per_unit": 0.14,
+      "free_on_failure": false
+    },
+    {
+      "sku": "fal.nano_banana_image",
+      "unit": "image",
+      "usd_per_unit": 0.0398,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "unconfirmed",
+  "resale_terms_ref": "",
+  "terms_url": "https://fal.ai/terms",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

@@ -62,12 +62,14 @@ def test_cloud_may_relay_to_its_own_api():
 
 
 @override_settings(
-    CLOUD_DEPLOYMENT="", WEBSOCKET_ENDPOINT="https://api.futureagi.com/call-websocket/"
+    CLOUD_DEPLOYMENT="",
+    CHANNEL_LAYER_BACKEND="memory",
+    WEBSOCKET_ENDPOINT="https://api.futureagi.com/call-websocket/",
 )
 def test_call_websocket_sends_nothing_to_the_vendor():
     with (
         patch("model_hub.utils.requests.post") as post,
-        patch("model_hub.utils.OrgApiKey.no_workspace_objects") as keys,
+        patch("accounts.models.OrgApiKey.no_workspace_objects") as keys,
     ):
         result = call_websocket("00000000-0000-0000-0000-000000000001", {"x": 1})
 
@@ -91,6 +93,9 @@ def _settings_urls(**env):
             "PATH": os.environ.get("PATH", ""),
             "HOME": os.environ.get("HOME", ""),
             "SECRET_KEY": "s" * 64,
+            "FI_API_SECRET_PEPPER": "p" * 64,
+            # A Fernet key: a non-local process refuses to start without one.
+            "INTEGRATION_ENCRYPTION_KEY": "Zm" * 21 + "w=",
             **env,
         },
         capture_output=True,

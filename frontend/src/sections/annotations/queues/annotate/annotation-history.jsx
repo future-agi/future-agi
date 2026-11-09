@@ -275,7 +275,15 @@ ScoreValue.propTypes = {
 };
 
 function ValueHistory({ ann, onShowRaw }) {
-  const history = Array.isArray(ann.value_history) ? ann.value_history : [];
+  // Revisions arrive as a list or as an object keyed by index ("0" oldest).
+  const raw = ann.value_history;
+  const history = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object"
+      ? Object.keys(raw)
+          .sort((a, b) => Number(a) - Number(b))
+          .map((k) => raw[k])
+      : [];
   if (!history.length) return null;
 
   return (

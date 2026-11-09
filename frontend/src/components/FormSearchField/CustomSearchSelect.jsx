@@ -574,7 +574,7 @@ const SelectContent = ({
 CustomSelectField.propTypes = {
   control: PropTypes.object.isRequired,
   name: PropTypes.string.isRequired,
-  data: PropTypes.object,
+  data: PropTypes.array,
   isPending: PropTypes.bool,
   fetchNextPage: PropTypes.func,
   hasNextPage: PropTypes.bool,

@@ -21,6 +21,7 @@ import {
   useQueueAnalytics,
 } from "src/api/annotation-queues/annotation-queues";
 import { fDateTime } from "src/utils/format-time";
+import { importWithRecovery } from "src/utils/chunkRecovery";
 
 function StatCard({ title, value, color = "text.primary" }) {
   return (
@@ -229,9 +230,7 @@ export default function QueueAnalyticsTab({ queueId }) {
   const { data: analytics, isLoading } = useQueueAnalytics(queueId);
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   if (!analytics) return null;
@@ -256,7 +255,9 @@ export default function QueueAnalyticsTab({ queueId }) {
 
   const handleExport = async (format) => {
     try {
-      const { default: axiosInstance } = await import("src/utils/axios");
+      const { default: axiosInstance } = await importWithRecovery(
+        () => import("src/utils/axios"),
+      );
       const response = await axiosInstance.get(
         annotationQueueEndpoints.export(queueId),
         { params: { export_format: format }, responseType: "blob" },
@@ -271,14 +272,17 @@ export default function QueueAnalyticsTab({ queueId }) {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      const { enqueueSnackbar } = await import("notistack");
+      const { enqueueSnackbar } = await importWithRecovery(
+        () => import("notistack"),
+      );
       let message = "Export failed";
       // The request uses responseType:"blob", so an error body arrives as a Blob —
       // read and parse it to surface the server's actionable message (e.g. the 413
       // export_too_large cap) instead of a generic failure.
       try {
         const data = err?.response?.data;
-        const parsed = data instanceof Blob ? JSON.parse(await data.text()) : data;
+        const parsed =
+          data instanceof Blob ? JSON.parse(await data.text()) : data;
         message = parsed?.result || parsed?.message || message;
       } catch {
         // non-JSON / unreadable error body — keep the generic message

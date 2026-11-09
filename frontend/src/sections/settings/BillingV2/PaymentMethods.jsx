@@ -7,7 +7,7 @@
  * a mount-time effect refetches the card list and shows a toast.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Box,
@@ -21,6 +21,7 @@ import {
   Alert,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import LoadFailedState from "src/components/load-failed-state";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
@@ -38,7 +39,13 @@ export default function PaymentMethods() {
   const [cardLoading, setCardLoading] = useState(false);
   const queryClient = useQueryClient();
 
-  const { data: methods, isLoading } = useQuery({
+  const {
+    data: methods,
+    isLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ["v2-payment-methods"],
     queryFn: () => axios.get(endpoints.settings.v2.paymentMethods),
     select: (res) => (Array.isArray(res.data?.result) ? res.data.result : []),
@@ -127,6 +134,16 @@ export default function PaymentMethods() {
   }, [queryClient]);
 
   if (isLoading) return <Skeleton variant="rounded" height={100} />;
+
+  if (isError && !methods) {
+    return (
+      <LoadFailedState
+        title="Payment methods couldn't be loaded"
+        onRetry={refetch}
+        retrying={isRefetching}
+      />
+    );
+  }
 
   return (
     <Box>

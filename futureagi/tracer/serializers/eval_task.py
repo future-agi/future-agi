@@ -4,6 +4,7 @@ from django.conf import settings
 from rest_framework import serializers
 
 from tfc.utils.serializer_fields import JsonValueField
+from tfc.utils.tenant_scope import scope_to_caller
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     EvalTask,
@@ -19,6 +20,7 @@ from tracer.serializers.filters import (
     eval_task_filters_field,
     filter_list_query_param_field,
 )
+from tracer.serializers.relation_scope import scope_relations
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -318,12 +320,24 @@ class EvalTaskUpdateResponseSerializer(serializers.Serializer):
     result = EvalTaskUpdateResultSerializer()
 
 
+def caller_custom_eval_configs(request=None):
+    """The caller's eval configs: those of its live projects, in its workspace."""
+    return scope_to_caller(
+        CustomEvalConfig.no_workspace_objects.filter(project__deleted=False),
+        request,
+        organization_field="project__organization",
+        workspace_field="project__workspace",
+    )
+
+
 class EvalTaskSerializer(serializers.ModelSerializer):
+    # The querysets below only name the models: __init__ replaces them with
+    # the caller's own rows on every instance.
     project = serializers.PrimaryKeyRelatedField(
-        queryset=Project.objects.all(), many=False
+        queryset=Project.no_workspace_objects.none(), many=False
     )
     evals = serializers.PrimaryKeyRelatedField(
-        queryset=CustomEvalConfig.objects.all(), many=True
+        queryset=CustomEvalConfig.no_workspace_objects.none(), many=True
     )
     name = serializers.CharField(min_length=1, max_length=255)
     sampling_rate = serializers.FloatField(min_value=1.0, max_value=100.0)
@@ -342,6 +356,16 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     # indefinitely and don't have a meaningful "expected" total.
     progress = serializers.SerializerMethodField()
     filters = eval_task_filters_field(required=False, allow_null=True, default=dict)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        scope_relations(
+            self,
+            {
+                "project": ("organization", "workspace"),
+                "evals": ("project__organization", "project__workspace"),
+            },
+        )
 
     def validate_filters(self, value):
         """Never persist a client-selected principal for user-relative filters."""
@@ -407,8 +431,14 @@ class EvalTaskSerializer(serializers.ModelSerializer):
 
 class EvalTaskLoggerSerializer(serializers.ModelSerializer):
     eval_task = serializers.PrimaryKeyRelatedField(
-        queryset=EvalTask.objects.all(), many=False
+        queryset=EvalTask.no_workspace_objects.none(), many=False
     )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        scope_relations(
+            self, {"eval_task": ("project__organization", "project__workspace")}
+        )
 
     class Meta:
         model = EvalTaskLogger
@@ -446,27 +476,39 @@ class EditEvalTaskSerializer(serializers.Serializer):
     def validate_evals(self, value):
         if not value:
             raise serializers.ValidationError("At least one eval config is required.")
-        try:
-            eval_objects = list(
-                CustomEvalConfig.objects.filter(id__in=value, deleted=False)
+        # Only the caller's eval configs count; another organization's id
+        # is reported like an id that does not exist. Unexpected DB failures
+        # must reach the action's generic handler, not become validation text.
+        eval_objects = list(
+            scope_to_caller(
+                CustomEvalConfig.no_workspace_objects.filter(
+                    id__in=value, deleted=False
+                ),
+                self.context.get("request"),
+                organization_field="project__organization",
+                workspace_field="project__workspace",
             )
+        )
 
-            if len(eval_objects) != len(value):
-                found_ids = [str(obj.id) for obj in eval_objects]
-                missing_ids = [
-                    str(uuid) for uuid in value if str(uuid) not in found_ids
-                ]
-                if missing_ids:
-                    raise serializers.ValidationError(
-                        f"Could not find eval configs with IDs: {', '.join(missing_ids)}"
-                    )
+        if len(eval_objects) != len(value):
+            found_ids = [str(obj.id) for obj in eval_objects]
+            missing_ids = [str(uuid) for uuid in value if str(uuid) not in found_ids]
+            if missing_ids:
+                # Preserve the existing client validation text without ever
+                # interpolating an exception (these are validated input UUIDs).
+                raise serializers.ValidationError(
+                    "Invalid eval config IDs: ['Could not find eval configs with IDs: "
+                    f"{', '.join(missing_ids)}']"
+                )
 
-            return value
-        except Exception as e:
-            raise serializers.ValidationError(
-                f"Invalid eval config IDs: {str(e)}"
-            ) from e
+        return value
 
 
 class EvalTaskUpdateRequestSerializer(EditEvalTaskSerializer):
     eval_task_id = serializers.UUIDField(required=True)
+
+    def validate_evals(self, value):
+        # The decorator validates the wire shape before entering the action.
+        # Leave the scoped DB read to EditEvalTaskSerializer inside the action,
+        # where unexpected failures are logged and receive its fixed response.
+        return value

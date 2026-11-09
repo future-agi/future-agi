@@ -16,6 +16,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/admission"
 	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
@@ -35,25 +36,28 @@ type Provider struct {
 	apiKey     string
 	apiVersion string
 	authType   string // "api-key" (default) or "bearer" (Azure AD)
+	headers    common.HeaderDefaults
 	httpClient *http.Client
-	semaphore  chan struct{}
+	slots      *admission.Limiter
 }
 
 // New creates a new Azure OpenAI provider.
 func New(id string, cfg config.ProviderConfig) (*Provider, error) {
+	headers, err := common.NewHeaderDefaults(cfg.Headers, "api-version", "auth-type")
+	if err != nil {
+		return nil, err
+	}
 	timeout := cfg.DefaultTimeout
 	if timeout == 0 {
 		timeout = 60 * time.Second
 	}
 
-	maxConcurrent := cfg.MaxConcurrent
-	if maxConcurrent == 0 {
-		maxConcurrent = 100
-	}
-
+	// max_concurrent, conn_pool_size and queue_timeout come resolved from the
+	// registry (local or remote defaults); admission and these defaults cover
+	// an instance built from a config that left them unset.
 	poolSize := cfg.ConnPoolSize
-	if poolSize == 0 {
-		poolSize = 100
+	if poolSize <= 0 {
+		poolSize = admission.DefaultConnPoolSize
 	}
 
 	apiVersion := cfg.Headers["api-version"]
@@ -84,33 +88,39 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		apiKey:     cfg.APIKey,
 		apiVersion: apiVersion,
 		authType:   authType,
+		headers:    headers,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   timeout,
 		},
-		semaphore: make(chan struct{}, maxConcurrent),
+		slots: admission.New(id, cfg.MaxConcurrent, cfg.QueueTimeout),
 	}, nil
 }
 
 func (p *Provider) ID() string { return p.id }
+
+// UpstreamModelName is the deployment every call names for model
+// (providers.UpstreamModelNamer).
+func (p *Provider) UpstreamModelName(model string) string { return resolveDeployment(model) }
 
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
 // request this provider serves.
 func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
 
+// acquireSemaphore takes one of the entry's upstream slots. Its error, a
+// provider_busy 503 once the queue wait ends or a gateway timeout when ctx
+// ends first, is the call's answer: nothing was sent upstream.
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
-	select {
-	case p.semaphore <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return p.slots.Acquire(ctx)
 }
 
 func (p *Provider) releaseSemaphore() {
-	<-p.semaphore
+	p.slots.Release()
 }
+
+// Admission is the instance's upstream slots (providers.SlotHolder).
+func (p *Provider) Admission() *admission.Limiter { return p.slots }
 
 // deploymentURL builds the Azure-specific URL for a deployment.
 func (p *Provider) deploymentURL(deployment, endpoint string) string {
@@ -121,6 +131,7 @@ func (p *Provider) deploymentURL(deployment, endpoint string) string {
 // setAuth sets Azure authentication headers.
 // Supports both api-key (default) and bearer token (Azure AD) auth.
 func (p *Provider) setAuth(req *http.Request) {
+	p.headers.Apply(req)
 	if p.apiKey == "" {
 		return
 	}
@@ -163,7 +174,7 @@ func supportsMaxCompletionTokens(apiVersion string) bool {
 // ChatCompletion sends a non-streaming chat completion request.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -224,7 +235,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer close(errs)
 
 		if err := p.acquireSemaphore(ctx); err != nil {
-			errs <- models.ErrGatewayTimeout("provider concurrency limit reached")
+			errs <- err
 			return
 		}
 		defer p.releaseSemaphore()
@@ -232,9 +243,6 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		deployment := resolveDeployment(req.Model)
 		reqCopy := *req
 		reqCopy.Stream = true
-		// An OpenAI-format stream reports usage only when asked; see the
-		// OpenAI provider.
-		reqCopy.StreamOptions = &models.StreamOptions{IncludeUsage: true}
 		p.normalizeMaxTokens(&reqCopy)
 
 		body, err := json.Marshal(&reqCopy)
@@ -298,11 +306,6 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 					"error", err, "data", data, "provider", p.id)
 				continue
 			}
-			if raw, ok := chunk.Extra["error"]; ok && string(raw) != "null" {
-				// The upstream failed mid-stream; see the OpenAI provider.
-				errs <- parseProviderError(http.StatusBadGateway, []byte(data))
-				return
-			}
 
 			select {
 			case chunks <- chunk:
@@ -351,7 +354,7 @@ func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error)
 // CreateEmbedding sends an embedding request to Azure OpenAI.
 func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -400,7 +403,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 // CreateImage sends an image generation request to Azure OpenAI (DALL-E).
 func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*models.ImageResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -449,7 +452,7 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 // CreateSpeech sends a text-to-speech request to Azure OpenAI and returns an audio stream.
 func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) (io.ReadCloser, string, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, "", models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, "", err
 	}
 	// NOTE: semaphore is released when the caller closes the returned ReadCloser.
 
@@ -515,7 +518,7 @@ func (s *semaphoreReadCloser) Close() error {
 // CreateTranscription sends an audio transcription request to Azure OpenAI (Whisper).
 func (p *Provider) CreateTranscription(ctx context.Context, req *models.TranscriptionRequest) (*models.TranscriptionResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -598,6 +601,7 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 
 // Close releases resources.
 func (p *Provider) Close() error {
+	p.slots.Close()
 	p.httpClient.CloseIdleConnections()
 	return nil
 }
@@ -605,11 +609,15 @@ func (p *Provider) Close() error {
 func parseProviderError(status int, body []byte) *models.APIError {
 	var errResp models.ErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
+		// Status is what the client gets (an upstream 5xx is a 502);
+		// UpstreamStatus keeps the provider's own for the status lists.
 		return &models.APIError{
-			Status:  mapProviderStatus(status),
-			Type:    errResp.Error.Type,
-			Code:    errResp.Error.Code,
-			Message: errResp.Error.Message,
+			Status:         mapProviderStatus(status),
+			Type:           errResp.Error.Type,
+			Code:           errResp.Error.Code,
+			Message:        errResp.Error.Message,
+			UpstreamStatus: status,
+			ProviderStatus: status,
 		}
 	}
 
@@ -617,7 +625,9 @@ func parseProviderError(status int, body []byte) *models.APIError {
 	if len(msg) > 500 {
 		msg = msg[:500] + "..."
 	}
-	return models.ErrUpstreamProvider(status, fmt.Sprintf("provider error (HTTP %d): %s", status, msg))
+	e := models.ErrUpstreamProvider(status, fmt.Sprintf("provider error (HTTP %d): %s", status, msg))
+	e.ProviderStatus = status // A real HTTP refusal, not a synthetic gateway failure.
+	return e
 }
 
 // resolveDeployment extracts the deployment name (strips provider prefix).

@@ -29,6 +29,7 @@ import { useModelParams } from "src/api/develop/prompt";
 import { useVoiceOptions } from "src/api/develop/develop-detail";
 import ResponseFormatSelector from "./ResponseFormatSelector";
 import TemplateFormatSelector from "./TemplateFormatSelector";
+import ToolChoiceSelect from "./ToolChoiceSelect";
 import { ShowComponent } from "../../../../components/show";
 
 const ModelContainer = ({
@@ -326,6 +327,7 @@ const ModelContainer = ({
         <Box sx={{ flexShrink: 0 }}>
           <CustomModelTools
             isModalContainer={true}
+            namesInLabel
             handleApply={handleApplyTool}
             tools={modelConfig?.tools || []}
             disableClick={!RolePermission.PROMPTS[PERMISSIONS.DELETE][userRole]}
@@ -341,6 +343,14 @@ const ModelContainer = ({
             }}
           />
         </Box>
+        <ToolChoiceSelect
+          value={modelConfig?.tool_choice}
+          tools={modelConfig?.tools}
+          onChange={(v) =>
+            setModelConfig((pre) => ({ ...pre, tool_choice: v }))
+          }
+          disabled={!RolePermission.PROMPTS[PERMISSIONS.DELETE][userRole]}
+        />
         <CustomTooltip
           show
           arrow
@@ -352,6 +362,7 @@ const ModelContainer = ({
           }
         >
           <IconButton
+            aria-label="Import template"
             size="small"
             sx={{
               border: "1px solid",

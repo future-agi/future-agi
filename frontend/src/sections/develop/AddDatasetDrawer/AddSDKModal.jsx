@@ -1,3 +1,6 @@
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import {
   Box,
   Button,
@@ -142,7 +145,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
   };
 
   return (
-    <>
+    <PersonalKeySnippet active={isNext}>
       <Dialog open={open} onClose={onCloseClick} maxWidth="sm" PaperProps={{}}>
         <Box sx={{ padding: 2 }}>
           <DialogTitle sx={{ padding: 0, margin: 0 }}>
@@ -357,76 +360,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                   </IconButton>
                 </Box>
               </Box>
-              <Box display="flex" alignItems="center">
-                <Typography
-                  fontWeight={"fontWeightMedium"}
-                  color="text.primary"
-                  variant="s1"
-                  component="span"
-                  width="141px"
-                >
-                  API Key:
-                </Typography>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Typography
-                    bgcolor="background.neutral"
-                    borderRadius="8px"
-                    variant="s1"
-                    fontWeight={"fontWeightRegular"}
-                    p="5px 12px"
-                    color="black"
-                  >
-                    {data?.data?.result?.api_keys?.api_key}
-                  </Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.api_keys?.api_key,
-                        "API Key",
-                      )
-                    }
-                    sx={{ color: "text.secondary" }}
-                  >
-                    <Iconify icon="eva:copy-outline" width={16} height={16} />
-                  </IconButton>
-                </Box>
-              </Box>
-              <Box display="flex" alignItems="center">
-                <Typography
-                  fontWeight={"fontWeightMedium"}
-                  color="text.primary"
-                  variant="s1"
-                  component="span"
-                  width="141px"
-                >
-                  Secret Key:
-                </Typography>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Typography
-                    bgcolor="background.neutral"
-                    borderRadius="8px"
-                    variant="s1"
-                    fontWeight={"fontWeightRegular"}
-                    p="5px 12px"
-                    color="black"
-                  >
-                    {data?.data?.result?.api_keys?.secret_key}
-                  </Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.api_keys?.secret_key,
-                        "Secret Key",
-                      )
-                    }
-                    sx={{ color: "text.secondary" }}
-                  >
-                    <Iconify icon="eva:copy-outline" width={16} height={16} />
-                  </IconButton>
-                </Box>
-              </Box>
+              <PersonalKeyControl />
             </Box>
           )}
           {!isPending && (
@@ -528,7 +462,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
           </Box>
         </Box>
       </Modal>
-    </>
+    </PersonalKeySnippet>
   );
 };
 

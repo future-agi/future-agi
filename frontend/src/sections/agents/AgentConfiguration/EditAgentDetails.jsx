@@ -1,3 +1,8 @@
+import {
+  OBSERVE_KNOWN_ISSUES_URL,
+  VOICE_OBSERVE_NOTICE,
+  SANDBOX_OBSERVE_NOTICE,
+} from "src/utils/platformObserveAvailability";
 import React, {
   useCallback,
   useEffect,
@@ -7,6 +12,7 @@ import React, {
 } from "react";
 import {
   Box,
+  Link,
   Typography,
   Grid,
   Stack,
@@ -38,6 +44,7 @@ import {
   VOICE_TRANSPORT,
   VOICE_TRANSPORT_COPY,
   isLiveKitProvider,
+  livekitValidationStatus,
   supportsConcurrency,
   validateLiveKitCredentials,
 } from "../constants";
@@ -124,10 +131,12 @@ const EditAgentDetails = ({
   const livekitAgentName = useWatch({ control, name: "livekitAgentName" });
   const [livekitValidation, setLivekitValidation] = useState("idle");
   const [livekitValidationError, setLivekitValidationError] = useState("");
+  const [livekitValidationMessage, setLivekitValidationMessage] = useState("");
 
   const validateLivekitCredentials = async () => {
     setLivekitValidation("validating");
     setLivekitValidationError("");
+    setLivekitValidationMessage("");
     const result = await validateLiveKitCredentials({
       livekitUrl,
       livekitApiKey,
@@ -135,12 +144,12 @@ const EditAgentDetails = ({
       livekitAgentName,
       agentDefinitionId,
     });
-    if (result.valid) {
-      setLivekitValidation("valid");
-    } else {
-      setLivekitValidation("invalid");
-      setLivekitValidationError(result.error);
-    }
+    // "skipped" (Future AGI Cloud) is shown as not verified, never as
+    // connected or failed; saving does not depend on this check.
+    const status = livekitValidationStatus(result);
+    setLivekitValidation(status);
+    if (status === "skipped") setLivekitValidationMessage(result.message);
+    if (status === "invalid") setLivekitValidationError(result.error);
   };
 
   const { mutate, isPending } = useMutation({
@@ -678,12 +687,23 @@ const EditAgentDetails = ({
                     ? "Connected"
                     : livekitValidation === "invalid"
                       ? "Failed"
-                      : "Test Connection"}
+                      : livekitValidation === "skipped"
+                        ? "Not verified"
+                        : "Test Connection"}
               </Button>
             </Stack>
             {livekitValidation === "invalid" && livekitValidationError && (
               <Typography typography="s3" color="error.main" sx={{ mt: -1 }}>
                 {livekitValidationError}
+              </Typography>
+            )}
+            {livekitValidation === "skipped" && livekitValidationMessage && (
+              <Typography
+                typography="s3"
+                color="text.secondary"
+                sx={{ mt: -1 }}
+              >
+                {livekitValidationMessage}
               </Typography>
             )}
             <FormTextFieldV2
@@ -1117,7 +1137,14 @@ const EditAgentDetails = ({
               sx={{ marginLeft: 1 }}
               fontWeight="500"
             >
-              Enable if you want to monitor this agent
+              {isSourceAgent ? SANDBOX_OBSERVE_NOTICE : VOICE_OBSERVE_NOTICE}{" "}
+              <Link
+                href={OBSERVE_KNOWN_ISSUES_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                2.0.0 release notes: Known issues
+              </Link>
             </Typography>
           </Stack>
         </ShowComponent>

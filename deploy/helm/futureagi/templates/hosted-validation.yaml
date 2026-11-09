@@ -1,0 +1,96 @@
+{{- if .Values.hosted.enabled -}}
+{{- $v := .Values -}}
+{{- $g := $v.agentccGateway -}}
+{{- if ne (dig "enforcement" "auto" ($v.billing | default dict) | toString) "true" -}}{{ fail "hosted requires billing.enforcement=true" }}{{- end -}}
+{{- if ne $v.config.envType "production" -}}{{ fail "hosted requires config.envType=production" }}{{- end -}}
+{{- if not $v.secrets.existingSecret -}}{{ fail "hosted requires secrets.existingSecret with stable shared keys" }}{{- end -}}
+{{- if not (regexMatch "^[0-9a-f]{40}$" $v.hosted.releaseRevision) -}}{{ fail "hosted requires an exact releaseRevision" }}{{- end -}}
+{{- if $v.hosted.singleReplica -}}
+{{- if $g.autoscaling.enabled -}}{{ fail "hosted singleReplica refuses autoscaling" }}{{- end -}}
+{{- if ne (int $g.replicas) 1 -}}{{ fail "hosted singleReplica requires exactly one gateway replica" }}{{- end -}}
+{{- else -}}
+{{- if or (lt (int $g.replicas) 2) (and $g.autoscaling.enabled (lt (int $g.autoscaling.minReplicas) 2)) -}}{{ fail "hosted requires at least two gateway replicas" }}{{- end -}}
+{{- end -}}
+{{- if not $g.controlPlaneSync -}}{{ fail "hosted requires controlPlaneSync" }}{{- end -}}
+{{- if $g.allowPrivateProviderURLs -}}{{ fail "hosted refuses private provider overrides" }}{{- end -}}
+{{- if ne (include "futureagi.gateway.redis" .) "true" -}}{{ fail "hosted requires shared Redis" }}{{- end -}}
+{{- if ne $g.service.type "ClusterIP" -}}{{ fail "hosted gateway admin surfaces must remain internal" }}{{- end -}}
+{{- if or (not $v.networkPolicy.enabled) (not $v.networkPolicy.ingressFrom) -}}{{ fail "hosted requires networkPolicy and explicit ingress peers" }}{{- end -}}
+{{- range $entry := list (dict "image" $v.backend.image "name" "backend") (dict "image" $g.image "name" "agentccGateway") -}}
+{{- $image := include "futureagi.image" (dict "root" $ "image" $entry.image "digestKey" $entry.name) -}}
+{{- if not (regexMatch "@sha256:[0-9a-f]{64}$" $image) -}}{{ fail "hosted backend and gateway images must be digest-pinned" }}{{- end -}}
+{{- end -}}
+{{- $backendImage := include "futureagi.image" (dict "root" . "image" $v.backend.image "digestKey" "backend") -}}
+{{- $workerImage := include "futureagi.image" (dict "root" . "image" $v.worker.image "fallback" $v.backend.image "digestKey" "backend") -}}
+{{- if ne $workerImage $backendImage -}}{{ fail "hosted workers must use the reviewed backend/operator image identity" }}{{- end -}}
+{{- range $queue := $v.worker.queues -}}
+{{- if $queue.image -}}{{ fail "hosted queue image overrides need a separately qualified composition" }}{{- end -}}
+{{- end -}}
+{{- if $g.existingConfigMap -}}
+{{- if not (regexMatch "^[0-9a-f]{64}$" $v.hosted.existingConfigChecksum) -}}{{ fail "hosted existingConfigMap requires an immutable effective config checksum" }}{{- end -}}
+{{- else -}}
+{{- if not (dig "auth" "enabled" false $g.config) -}}{{ fail "hosted requires auth.enabled=true" }}{{- end -}}
+{{- if not (dig "guardrails" "enabled" false $g.config) -}}{{ fail "hosted requires guardrails.enabled=true" }}{{- end -}}
+{{- if or (not (dig "server" "trusted_proxies" (list) $g.config)) (ne (int (dig "server" "trusted_hops" 0 $g.config)) 0) -}}{{ fail "hosted requires explicit trusted_proxies and no trusted_hops" }}{{- end -}}
+{{- if or (dig "tools" "enabled" false $g.config) (dig "mcp" "enabled" false $g.config) (dig "mcp" "dev_insecure_state" false $g.config) (dig "mcp" "allow_anonymous_dev" false $g.config) (dig "mcp" "egress" "private_allow" (list) $g.config) (dig "mcp" "managed_servers" (dict) $g.config) -}}{{ fail "hosted preparation refuses tools, MCP and private egress activation" }}{{- end -}}
+{{- if and $v.hosted.onekeyActivation (or (dig "routing" "model_fallbacks" (dict) $g.config) (dig "routing" "failover" "enabled" false $g.config) (dig "routing" "retry" "enabled" false $g.config)) -}}{{ fail "hosted refuses model fallback chains, failover and retries" }}{{- end -}}
+{{- if and $v.hosted.onekeyActivation (dig "managed" "mixed_billing_chains" false $g.config) -}}{{ fail "hosted one-key refuses managed.mixed_billing_chains=true" }}{{- end -}}
+{{- /* Reject kinds before Sprig float64 can coerce strings/bools into misleading numbers. */ -}}
+{{- $guard := dig "managed" "spend_guard" (dict) $g.config -}}
+{{- range $field := list "max_usd_per_minute" "max_usd_per_hour" "new_org_daily_cap_usd" "alert_usd_per_hour" -}}
+{{- if hasKey $guard $field -}}
+{{- $value := get $guard $field -}}
+{{- if not (or (kindIs "int" $value) (kindIs "int64" $value) (kindIs "float64" $value)) -}}
+{{- fail (printf "hosted refuses managed.spend_guard.%s: must be a number; use a values file or --set-json for fractional caps" $field) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (hasKey $guard "auto_pause") (not (kindIs "bool" (get $guard "auto_pause"))) -}}
+{{- fail "hosted refuses managed.spend_guard.auto_pause: must be a boolean" -}}
+{{- end -}}
+{{- if $v.hosted.onekeyActivation -}}
+{{- $relaxed := list -}}
+{{- if not (dig "managed" "require_credits" true $g.config) -}}{{ $relaxed = append $relaxed "managed.require_credits=false" }}{{- end -}}
+{{- if not (dig "managed" "require_redis" true $g.config) -}}{{ $relaxed = append $relaxed "managed.require_redis=false" }}{{- end -}}
+{{- if dig "managed" "grant_only_credits" false $g.config -}}{{ $relaxed = append $relaxed "managed.grant_only_credits=true" }}{{- end -}}
+{{- /* Keep this check at least as strict as billing.SpendCapMicros. Zero is unset. */ -}}
+{{- /* Helm rejects YAML .nan/.inf during parsing and the narrow Go rounding band below 0.0000005. */ -}}
+{{- $minute := float64 (dig "managed" "spend_guard" "max_usd_per_minute" 0 $g.config) -}}
+{{- $hour := float64 (dig "managed" "spend_guard" "max_usd_per_hour" 0 $g.config) -}}
+{{- $daily := float64 (dig "managed" "spend_guard" "new_org_daily_cap_usd" 25 $g.config) -}}
+{{- range $field, $cap := dict "max_usd_per_minute" $minute "max_usd_per_hour" $hour "new_org_daily_cap_usd" $daily -}}
+{{- if lt $cap 0.0 -}}
+{{- $relaxed = append $relaxed (printf "managed.spend_guard.%s is negative" $field) -}}
+{{- else if and (ne $cap 0.0) (lt $cap 0.0000005) -}}
+{{- $relaxed = append $relaxed (printf "managed.spend_guard.%s is sub-micro (rounds to zero micros)" $field) -}}
+{{- end -}}
+{{- end -}}
+{{- if and (lt $minute 0.0000005) (lt $hour 0.0000005) -}}
+{{- $relaxed = append $relaxed "managed.spend_guard requires an explicitly configured enforcing velocity cap (max_usd_per_minute or max_usd_per_hour)" -}}
+{{- end -}}
+{{- if $relaxed -}}{{ fail (printf "hosted one-key refuses %s" (join ", " $relaxed)) }}{{- end -}}
+{{- end -}}
+{{- range $provider := $g.config.providers -}}
+{{- if and (not $v.hosted.onekeyActivation) (or $provider.managed $provider.skip_tls $provider.local) -}}{{ fail "hosted preparation refuses credits-backed or insecure/local providers" }}{{- end -}}
+{{- if or $provider.skip_tls $provider.local -}}{{ fail "hosted refuses insecure/local providers" }}{{- end -}}
+{{- if $provider.managed -}}
+{{- $kind := default "" $provider.type -}}
+{{- if not (has $kind (list "" "openrouter")) -}}{{ fail "hosted one-key requires an allowed managed provider kind (unset or openrouter)" }}{{- end -}}
+{{- $format := default "" $provider.api_format -}}
+{{- if and (eq $kind "openrouter") (eq $format "") -}}{{ $format = "openai" }}{{- end -}}
+{{- if ne $format "openai" -}}{{ fail "hosted one-key requires managed providers.*.api_format=openai" }}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $envs := list $v.config.extraEnv $g.extraEnv $v.backend.extraEnv $v.worker.extraEnv -}}
+{{- range $queue := $v.worker.queues -}}{{ $envs = append $envs ($queue.extraEnv | default dict) }}{{- end -}}
+{{- range $env := $envs -}}
+{{- range $name, $value := $env -}}
+{{- if or (has $name (list "AGENTCC_DEPLOYMENT_PROFILE" "AGENTCC_HOSTED_ONEKEY_ACTIVATION" "AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN" "AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS" "AGENTCC_AUTH_ENABLED" "AGENTCC_SYNC_ON_STARTUP" "AGENTCC_SYNC_INTERVAL" "AGENTCC_CONTROL_PLANE_URL" "AGENTCC_CONTROL_PLANE_TOKEN" "AGENTCC_MCP_EGRESS_PRIVATE_ALLOW" "AGENTCC_INTERNAL_API_KEY" "AGENTCC_ADMIN_TOKEN" "AGENTCC_WEBHOOK_SECRET" "INTEGRATION_ENCRYPTION_KEY" "NO_STARTUP_DB_MUTATIONS" "STARTUP_DB_MUTATION_MODE" "REGISTER_TEMPORAL_SCHEDULES" "DJANGO_CACHE_BACKEND")) (hasPrefix "AGENTCC_TEST_" $name) (hasPrefix "INTEGRATIONS_TEST_" $name) -}}{{ fail "hosted refuses safety-setting or test-endpoint extraEnv overrides; use the hosted contract and secret references" }}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if or $v.config.extraEnvFrom $g.extraEnvFrom -}}{{ fail "hosted preparation refuses opaque extraEnvFrom; use explicit secret references" }}{{- end -}}
+{{- if and $v.hosted.migration.apply (eq $v.hosted.migration.phase "backfill") (ne $v.hosted.migration.compatibleRuntimeRevision $v.hosted.releaseRevision) -}}{{ fail "hosted backfill requires the exact compatible runtime revision" }}{{- end -}}
+{{- if not (has $v.hosted.migration.phase (list "" "schema" "backfill" "check")) -}}{{ fail "hosted migration phase must be schema, backfill or check" }}{{- end -}}
+{{- if and $v.hosted.migration.apply (or (not $v.hosted.migration.phase) (eq $v.hosted.migration.phase "check") (not $v.hosted.migration.quiesced)) -}}{{ fail "hosted migration apply requires schema/backfill and explicit quiescence" }}{{- end -}}
+{{- end -}}

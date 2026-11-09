@@ -108,7 +108,7 @@ const QdrantForm = ({ allColumns, control }) => {
             fieldName="key"
             fullWidth
             helperText={
-              <HelperText text="The key to extract from the Weaviate collection" />
+              <HelperText text="The payload key to read from each Qdrant point" />
             }
           />
         </RetrievalFormItemWrapper>

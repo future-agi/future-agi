@@ -119,6 +119,7 @@ def check(
     feature_id: str,
     *,
     org_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> CapabilityDecision:
     """Single entry point for all capability decisions.
 
@@ -144,6 +145,14 @@ def check(
             feature_id=feature_id,
             reason_code=DenialReason.FEATURE_UNKNOWN.value,
         )
+
+    # 1.5 A hosted Omega product → the rollout step decides (READINESS 3.13), on every flavor
+    if feature.rollout_product is not None:
+        return check_rollout(feature, org_id=org_id, workspace_id=workspace_id)
+
+    # 1.6 A part of one → readiness decides: shown only when it works today, on every flavor
+    if feature.readiness_part is not None:
+        return check_readiness_part(feature)
 
     # 2. OSS baseline → allow (quota enforcement is separate)
     if feature.oss_baseline:
@@ -173,14 +182,84 @@ def check(
     return _check_self_hosted_ee(feature, org_id)
 
 
+# Passed as `admission` when the caller already failed to read the rollout store (one read for all
+# products): the answer is RESOLVER_UNAVAILABLE without another read.
+ROLLOUT_UNREADABLE = object()
+
+
+def check_rollout(
+    feature: FeatureDefinition,
+    *,
+    org_id: str | None,
+    workspace_id: str | None,
+    admission=None,
+) -> CapabilityDecision:
+    """The rollout step: admitted and active → allowed; admitted and paused → PRODUCT_PAUSED; not
+    admitted → PRODUCT_NOT_ADMITTED; an unreadable rollout store → RESOLVER_UNAVAILABLE (fail closed).
+
+    `admission` lets a caller that decided several products from one read pass the answer in.
+    """
+    from omega_rollout import service as rollout
+    from omega_rollout.store import RolloutUnavailable
+
+    if admission is ROLLOUT_UNREADABLE:
+        return CapabilityDecision(
+            allowed=False,
+            feature_id=feature.id,
+            reason_code=DenialReason.RESOLVER_UNAVAILABLE.value,
+        )
+    if admission is None:
+        try:
+            admission = rollout.admission(
+                feature.rollout_product,
+                organization_id=org_id,
+                workspace_id=workspace_id,
+            )
+        except RolloutUnavailable:
+            logger.warning("capability_rollout_unavailable", feature=feature.id)
+            return CapabilityDecision(
+                allowed=False,
+                feature_id=feature.id,
+                reason_code=DenialReason.RESOLVER_UNAVAILABLE.value,
+            )
+    if not admission.admitted:
+        return CapabilityDecision(
+            allowed=False,
+            feature_id=feature.id,
+            reason_code=DenialReason.PRODUCT_NOT_ADMITTED.value,
+        )
+    if admission.paused:
+        return CapabilityDecision(
+            allowed=False,
+            feature_id=feature.id,
+            reason_code=DenialReason.PRODUCT_PAUSED.value,
+        )
+    return CapabilityDecision(allowed=True, feature_id=feature.id)
+
+
+def check_readiness_part(feature: FeatureDefinition) -> CapabilityDecision:
+    """A part of a hosted Omega product (omega_rollout.readiness): allowed when it works today, else
+    PRODUCT_NOT_ADMITTED, so the UI hides it exactly as it hides a dark product."""
+    from omega_rollout import readiness
+
+    if readiness.part_ready(feature.readiness_part):
+        return CapabilityDecision(allowed=True, feature_id=feature.id)
+    return CapabilityDecision(
+        allowed=False,
+        feature_id=feature.id,
+        reason_code=DenialReason.PRODUCT_NOT_ADMITTED.value,
+    )
+
+
 def check_or_raise(
     feature_id: str,
     *,
     org_id: str | None = None,
+    workspace_id: str | None = None,
     activity: bool = False,
 ) -> CapabilityDecision:
     """check() + raise on denial. Use in views, activities, and tools."""
-    decision = check(feature_id, org_id=org_id)
+    decision = check(feature_id, org_id=org_id, workspace_id=workspace_id)
     if not decision.allowed:
         _raise_denied(decision, activity=activity)
     return decision

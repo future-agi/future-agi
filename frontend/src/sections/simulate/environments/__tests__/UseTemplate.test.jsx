@@ -47,7 +47,10 @@ describe("UseTemplate", () => {
   beforeEach(() => {
     navigate.mockReset();
     params = { templateId: "env-voice-support" };
-    usePrebuiltEnvironments.mockReturnValue({ data: [TEMPLATE], isLoading: false });
+    usePrebuiltEnvironments.mockReturnValue({
+      data: [TEMPLATE],
+      isLoading: false,
+    });
   });
 
   afterEach(() => {
@@ -57,7 +60,9 @@ describe("UseTemplate", () => {
   it("renders the build panel for the routed template", () => {
     renderSection();
     expect(screen.getByText("Customer Support Line")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /Preview here/ }),
+    ).toBeInTheDocument();
   });
 
   it("goes back to the templates browse from the back button", async () => {
@@ -74,7 +79,9 @@ describe("UseTemplate", () => {
   it("shows a graceful not-found for an unknown template id", () => {
     params = { templateId: "does-not-exist" };
     renderSection();
-    expect(screen.queryByRole("tab", { name: /Build here/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /Preview here/ }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/isn't available/i)).toBeInTheDocument();
   });
 });

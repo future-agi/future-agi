@@ -684,7 +684,7 @@ class TestAddToNewDatasetAPI:
         mock_task.delay.assert_not_called()
 
     def test_dataset_creation_limit_reached(
-        self, auth_client, observe_project, observe_spans
+        self, auth_client, observe_project, observe_spans, ch_seed
     ):
         """A reached limit answers 400 with the plan-limit message.
 
@@ -693,6 +693,7 @@ class TestAddToNewDatasetAPI:
         for the user to see it. It is a quota refusal, not a failure, so
         nothing is logged as an error.
         """
+        ch_seed(observe_spans)
         with (
             patch(
                 "tracer.views.dataset.check_if_dataset_creation_is_allowed"

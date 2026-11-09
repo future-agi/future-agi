@@ -1,13 +1,12 @@
 import structlog
-from django.db import transaction
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.authentication import allows_no_organization, allows_no_workspace
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
-from accounts.models.user import OrgApiKey
-from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.models.user import User
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AdditionalOrganizationCreateResponseSerializer,
@@ -17,7 +16,9 @@ from accounts.serializers.contracts import (
     OrganizationUpdateRequestSerializer,
     OrganizationUpdateResponseSerializer,
 )
-from accounts.services.workspace_membership import create_workspace_membership
+from accounts.services.default_workspace import provision_default_workspace
+from accounts.services.hard_erase_lifecycle import identity_keys, lifecycle_lock
+from accounts.services.identity_issuance import _exists, issue_membership
 from accounts.utils import process_post_registration
 from tfc.constants.email import FREE_EMAIL_DOMAINS
 from tfc.constants.levels import Level
@@ -28,6 +29,7 @@ from tfc.utils.general_methods import GeneralMethods
 logger = structlog.get_logger(__name__)
 
 
+@allows_no_organization
 class OrganizationCreateAPIView(APIView):
     """
     POST /accounts/organizations/create/
@@ -67,9 +69,12 @@ class OrganizationCreateAPIView(APIView):
             else:
                 org_name = domain.split(".")[0]
 
-        with transaction.atomic():
-            # 1. Create Organization
-            organization = Organization.objects.create(name=org_name)
+        organization = Organization(name=org_name)
+        with lifecycle_lock(
+            keys=identity_keys(organizations=[organization.pk], people=[user.pk])
+        ):
+            _exists(User, user.pk, "default")
+            organization.save(force_insert=True)
 
             # Safety net: set legacy FK so request.user.organization works
             user.organization = organization
@@ -77,7 +82,9 @@ class OrganizationCreateAPIView(APIView):
             user.save(update_fields=["organization", "organization_role"])
 
             # 2. Create OrganizationMembership
-            org_membership, _ = OrganizationMembership.objects.get_or_create(
+            org_membership, _ = issue_membership(
+                OrganizationMembership.objects,
+                "get_or_create",
                 user=user,
                 organization=organization,
                 defaults={
@@ -87,30 +94,9 @@ class OrganizationCreateAPIView(APIView):
                 },
             )
 
-            # 4. Create default Workspace
-            workspace = Workspace.objects.create(
-                name="Default Workspace",
-                display_name="Default Workspace",
-                description="Default workspace for the organization",
-                organization=organization,
-                is_default=True,
-                created_by=user,
-            )
-
-            # 5. Create WorkspaceMembership
-            create_workspace_membership(
-                workspace=workspace,
-                user=user,
-                role=OrganizationRoles.WORKSPACE_ADMIN,
-                level=Level.WORKSPACE_ADMIN,
-                organization_membership=org_membership,
-                manager=WorkspaceMembership.objects,
-            )
-
-            # 6. Create system API key
-            OrgApiKey.no_workspace_objects.create(
-                organization=organization,
-                type="system",
+            # 4-5. Default Workspace, with the creator as its admin
+            workspace = provision_default_workspace(
+                organization, user, organization_membership=org_membership
             )
 
             # 7. Set user config
@@ -212,8 +198,11 @@ class CreateAdditionalOrganizationView(APIView):
     Does NOT change user.organization FK (primary org stays the same).
     """
 
+    # Creates a new organization, not data in the caller's current workspace.
+    # Keep the active-organization requirement; only a workspace may be absent.
     permission_classes = [IsAuthenticated]
 
+    @allows_no_workspace("POST")
     @validated_request(
         request_serializer=OrganizationCreateRequestSerializer,
         responses={
@@ -232,12 +221,14 @@ class CreateAdditionalOrganizationView(APIView):
         if not org_name:
             return gm.bad_request("Organization name is required.")
 
-        with transaction.atomic():
-            # 1. Create Organization
-            organization = Organization.objects.create(
-                name=org_name,
-                display_name=display_name or org_name,
-            )
+        organization = Organization(
+            name=org_name, display_name=display_name or org_name
+        )
+        with lifecycle_lock(
+            keys=identity_keys(organizations=[organization.pk], people=[user.pk])
+        ):
+            _exists(User, user.pk, "default")
+            organization.save(force_insert=True)
 
             # Safety net: set legacy FK only if user doesn't already belong to an org
             if not user.organization_id:
@@ -246,7 +237,9 @@ class CreateAdditionalOrganizationView(APIView):
                 user.save(update_fields=["organization", "organization_role"])
 
             # 2. Create OrganizationMembership (user is Owner)
-            org_membership = OrganizationMembership.no_workspace_objects.create(
+            org_membership = issue_membership(
+                OrganizationMembership.no_workspace_objects,
+                "create",
                 user=user,
                 organization=organization,
                 role=OrganizationRoles.OWNER,
@@ -254,29 +247,9 @@ class CreateAdditionalOrganizationView(APIView):
                 is_active=True,
             )
 
-            # 3. Create default Workspace
-            workspace = Workspace.objects.create(
-                name="Default Workspace",
-                display_name="Default Workspace",
-                description="Default workspace for the organization",
-                organization=organization,
-                is_default=True,
-                created_by=user,
-            )
-
-            # 4. Create WorkspaceMembership
-            create_workspace_membership(
-                workspace=workspace,
-                user=user,
-                role=OrganizationRoles.WORKSPACE_ADMIN,
-                level=Level.WORKSPACE_ADMIN,
-                organization_membership=org_membership,
-            )
-
-            # 5. Create system API key
-            OrgApiKey.no_workspace_objects.create(
-                organization=organization,
-                type="system",
+            # 3-4. Default Workspace, with the creator as its admin
+            workspace = provision_default_workspace(
+                organization, user, organization_membership=org_membership
             )
 
         logger.info(

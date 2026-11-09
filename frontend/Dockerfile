@@ -31,6 +31,10 @@ WORKDIR /app
 
 COPY . ./
 
+# The base image is a dependency cache, not the source of dependency truth.
+# Reconcile it with this checkout's lockfile before loading Vite plugins.
+RUN yarn install --frozen-lockfile --non-interactive
+
 # public/ directories nothing in the app references (checked with `git grep`
 # over src/, index.html, vite.config.js and public/*.js(on), by directory and
 # by file name). Vite copies public/ verbatim into dist/, so they would
@@ -39,13 +43,18 @@ COPY . ./
 #   assets/login_signup     7.0 MB
 #   assets/images/home      7.2 MB, about 0.5, contact 0.2, faqs 0.1
 #   assets/background       0.1 MB
+#   mock/multimodal, prototype-mock-sw.js: prototype-mode statics. They live
+#     in public-prototype/ and vite.config.js emits them only for prototype
+#     builds; listed here as a guard so an image never carries them.
 # The files stay in git (README.md links to assets/readme). The build fails if
 # the bundle ever references one of these paths; pass an empty value to keep
 # them all: --build-arg PRUNE_PUBLIC_ASSETS=
-ARG PRUNE_PUBLIC_ASSETS="assets/readme assets/login_signup assets/images/home assets/images/about assets/images/contact assets/images/faqs assets/background"
+ARG PRUNE_PUBLIC_ASSETS="assets/readme assets/login_signup assets/images/home assets/images/about assets/images/contact assets/images/faqs assets/background mock/multimodal prototype-mock-sw.js"
 
 # vite.config.js already sets build.sourcemap=false; deleting *.map is a guard
-# so a config change cannot ship source maps.
+# so a config change cannot ship source maps. The last step fails the build
+# when the bundle carries prototype code, fixture data or prototype statics
+# (scripts/prototype-leak-scan.mjs; this image is always prototype-off).
 RUN yarn build \
     && find dist -name '*.map' -delete \
     && for dir in $PRUNE_PUBLIC_ASSETS; do rm -rf "dist/$dir"; done \
@@ -55,7 +64,8 @@ RUN yarn build \
             echo "dist/ references a pruned public/ directory above; drop it from PRUNE_PUBLIC_ASSETS" >&2; \
             exit 1; \
         fi; \
-    fi
+    fi \
+    && node scripts/prototype-leak-scan.mjs dist
 
 # Stage 1b (dev only): live Vite dev server for hot reload. Selected via
 # `target: dev` in docker-compose.dev.yml. Source is bind-mounted at runtime;

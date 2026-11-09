@@ -5,7 +5,6 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.models import OrgApiKey
 from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.serializers.contracts import (
@@ -21,6 +20,8 @@ from accounts.serializers.user import (
     UserCreateSerializer,
     UserSerializer,
 )
+from accounts.services.hard_erase_issuance_entry import issuance_entry
+from accounts.services.identity_issuance import create_person
 from accounts.services.sos_service import start_sos_session
 from tfc.constants.roles import OrganizationRoles
 from tfc.permissions.permissions import APIKeyPermission
@@ -70,29 +71,26 @@ class UserApiView(APIView):
     def post(self, request):
         data = request.validated_data
 
-        organization = Organization.objects.create(
+        organization = Organization(
             name=data["organization_name"], region=settings.REGION
         )
 
-        # Create the user
-        user = User.objects.create(
-            email=data["email"],
-            name=data["email"],
-            organization=organization,
-            organization_role=OrganizationRoles.OWNER,
-            is_active=True,  # This is redundant as it's already True by default, but included for clarity
-        )
-
-        # Set the user's password (you should use a secure method to generate or obtain the password)
-        user.set_password(data["password"])
-        user.save()
-        apiKeys = OrgApiKey.no_workspace_objects.filter(
-            organization=organization, type="system", enabled=True
-        )
-        if len(apiKeys) == 0:
-            OrgApiKey.no_workspace_objects.create(
-                organization=organization, type="system"
+        with issuance_entry(
+            new_organizations=[organization.pk], emails=[data["email"]]
+        ):
+            organization.save(force_insert=True)
+            # Create the user
+            user = create_person(
+                email=data["email"],
+                name=data["email"],
+                organization=organization,
+                organization_role=OrganizationRoles.OWNER,
+                is_active=True,  # This is redundant as it's already True by default, but included for clarity
             )
+
+            # Set the user's password (you should use a secure method to generate or obtain the password)
+            user.set_password(data["password"])
+            user.save()
 
         if data["send_credential"]:
             email_helper(

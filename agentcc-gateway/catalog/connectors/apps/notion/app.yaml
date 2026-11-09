@@ -1,0 +1,24 @@
+schema: "connector-manifest/v1#app"
+id: notion
+version: 1.0.0
+name: Notion
+description: "Search, read and write pages and databases."
+vendor:
+  name: Notion
+  domains: [notion.com]
+  githubOrgs: [makenotion]
+eeCategory: productivity
+group: other
+categories: [productivity, knowledge-base]
+tags: [docs, wiki]
+docsUrl: https://developers.notion.com/guides/mcp/overview
+archetype: workspace-docs
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.notion.com/guides/mcp/get-started-with-mcp
+    fetchedAt: 2026-10-20
+  - fact: vendor.githubOrgs
+    url: https://developers.notion.com/guides/mcp/get-started-with-mcp
+    fetchedAt: 2026-10-20

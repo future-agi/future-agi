@@ -83,10 +83,30 @@ const transformFilterValue = (filterValue, filterType) => {
   return filterValue;
 };
 
-export const transformFilter = (filter) =>
-  buildApiFilterFromPanelRow({
-    field: filter.columnId,
-    registryId: filter.registryId || filter.propertyId || filter.property_id,
+// FA Path filters (R2 P6): a path field is `<columnId>::<path>`; the API
+// filter keeps the column id and carries the path in `filter_config.path`
+// (additive; contract rule 2).
+export const PATH_FIELD_SEPARATOR = "::";
+
+/** `{columnId, path}` of a filter field (`path` empty for plain columns). */
+export const splitPathField = (field) => {
+  const s = String(field ?? "");
+  const at = s.indexOf(PATH_FIELD_SEPARATOR);
+  return at < 0
+    ? { columnId: s, path: "" }
+    : {
+        columnId: s.slice(0, at),
+        path: s.slice(at + PATH_FIELD_SEPARATOR.length),
+      };
+};
+
+export const transformFilter = (filter) => {
+  const { columnId, path } = splitPathField(filter.columnId);
+  const built = buildApiFilterFromPanelRow({
+    field: columnId,
+    registryId: path
+      ? undefined
+      : filter.registryId || filter.propertyId || filter.property_id,
     fieldType: filter.filterConfig.filterType,
     operator: filter.filterConfig.filterOp,
     value: transformFilterValue(
@@ -94,6 +114,10 @@ export const transformFilter = (filter) =>
       filter.filterConfig.filterType,
     ),
   });
+  return path
+    ? { ...built, filter_config: { ...built.filter_config, path } }
+    : built;
+};
 
 export const compareFilterChange = (prevFilters, filters) => {
   if (!prevFilters || !filters) return false;

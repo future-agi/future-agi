@@ -10,6 +10,7 @@ from rest_framework.response import Response
 
 from mcp_server.api_executor import APIExecutionError, MCPRequestContext, executor
 from mcp_server.generated_registry import registry
+from mcp_server.tests.pagination_helpers import server_page_size_bound
 from mcp_server.tests.test_tool_generation import CATALOG_PATH, CONTRACT_PATH
 from mcp_server.tool_generation import ToolGenerationError, generate_tool_manifest
 
@@ -20,6 +21,15 @@ PAGINATED_TOOLS = [
     for field in tool.input_schema["properties"]
     if field in PAGE_SIZE_FIELDS
 ]
+# Tools whose catalog page-size bound must be the server's own bound (main's
+# HOW-ruling on CLI contract issues S34 and S41). Their views paginate with a
+# DRF paginator; the catalog must not claim a ceiling the server does not have.
+# test_catalog_page_size_bound_matches_the_server holds them to the server.
+SERVER_BOUND_TOOLS = [
+    "list_experiments",
+    "list_prompt_templates",
+    "list_prompt_versions",
+]
 
 
 @pytest.mark.parametrize(
@@ -28,11 +38,16 @@ PAGINATED_TOOLS = [
 def test_every_page_size_is_bounded(tool, field):
     schema = tool.input_schema["properties"][field]
     validator = Draft7Validator(schema)
-    maximum = (
-        50
-        if tool.name in {"get_dashboard_filter_values", "list_trace_properties"}
-        else 100
-    )
+    if tool.name in SERVER_BOUND_TOOLS:
+        server_field, maximum = server_page_size_bound(tool)
+        assert server_field == field
+        assert type(maximum) is int and maximum > 0
+    else:
+        maximum = (
+            50
+            if tool.name in {"get_dashboard_filter_values", "list_trace_properties"}
+            else 100
+        )
     assert schema["maximum"] == maximum
     assert validator.is_valid(maximum)
     assert not validator.is_valid(maximum + 1)
@@ -260,3 +275,25 @@ def test_executor_omits_the_page_size_the_caller_omitted(user, workspace, name, 
     else:
         payload = request.GET
     assert field not in payload
+
+
+@pytest.mark.parametrize("name", SERVER_BOUND_TOOLS)
+def test_catalog_page_size_bound_matches_the_server(name):
+    import yaml
+
+    tool = registry.get(name)
+    field, server_bound = server_page_size_bound(tool)
+    entry = next(
+        e
+        for e in yaml.safe_load(CATALOG_PATH.read_text())["tools"]
+        if e["name"] == name
+    )
+    catalog_bound = (entry.get("pagination") or {}).get(field, {}).get("maximum")
+    assert catalog_bound == server_bound, (
+        f"tools.yaml {name}.{field} maximum={catalog_bound}, server={server_bound}"
+    )
+    schema = tool.input_schema["properties"][field]
+    assert schema.get("maximum") == server_bound
+    if server_bound is None:
+        # No server ceiling: a page far past any former client cap is valid.
+        assert Draft7Validator(schema).is_valid(10_000)

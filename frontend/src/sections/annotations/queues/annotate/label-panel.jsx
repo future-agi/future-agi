@@ -26,18 +26,39 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
+import { isSafeForSingleKey } from "src/utils/keyboard-guards";
+import { KeyCap } from "src/sections/common/RowPanel/ShortcutSheet";
 import Iconify from "src/components/iconify";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import { isLabelValueEmpty } from "src/sections/annotations/queues/utils/label-value";
+import {
+  labelProblems,
+  problemsText,
+} from "src/sections/annotations/queues/utils/label-rules";
+import {
+  serverNotesOf,
+  useNoteDraft,
+} from "src/sections/annotations/queues/drafts/useNoteDraft";
+import NoteDraftStatus from "src/sections/annotations/queues/drafts/NoteDraftStatus";
+import { useEntryRefusals } from "src/sections/annotations/queues/drafts/useEntryRefusals";
 import { fDateTime, fToNowStrict } from "src/utils/format-time";
 import LabelInput from "./label-input";
+import PairwiseChoice from "./PairwiseChoice";
+import { reviewContextButtons } from "src/sections/develop-detail/Review/reviewModel";
+
+// Pairwise preference labels (settings.kind "pairwise") answer in one click;
+// the workspace's own submit then advances after this delay (§3.12).
+const isPairwiseLabel = (ql) => ql?.settings?.kind === "pairwise";
 import AnnotationHistory from "./annotation-history";
 
 const SHORTCUT_ROWS = [
   { keys: ["Tab"], desc: "Next label" },
   { keys: ["Shift", "Tab"], desc: "Previous label" },
   { keys: ["1-9"], desc: "Select option / set rating" },
-  { keys: ["\u2318/Ctrl", "Enter"], desc: "Submit & next" },
+  { keys: ["Enter"], desc: "Submit & next (once every label has a value)" },
+  { keys: ["\u2318/Ctrl", "Enter"], desc: "Submit & next (also from notes)" },
+  { keys: ["N"], desc: "Notes (Esc returns to the choices)" },
+  { keys: ["Z"], desc: "Undo the last submit (while the toast shows)" },
   { keys: ["s"], desc: "Skip item" },
   { keys: ["\u2190 / \u2192"], desc: "Previous / next item" },
   { keys: ["?"], desc: "Toggle this help" },
@@ -350,6 +371,7 @@ const LabelPanel = forwardRef(function LabelPanel(
     onViewingAnnotatorChange,
     isAnnotatorSwitchPending = false,
     submitLabel = "Submit & Next",
+    reviewContext = null,
   },
   ref,
 ) {
@@ -362,6 +384,21 @@ const LabelPanel = forwardRef(function LabelPanel(
   const [errorLabels, setErrorLabels] = useState(new Set());
   const detailBelongsToItem =
     !detailItemId || !itemId || String(detailItemId) === String(itemId);
+  // KH B2: notes save as you type and come back after a reload.
+  const noteDraft = useNoteDraft({
+    queueId,
+    itemId: detailItemId,
+    userId: currentUserId,
+    enabled: Boolean(detailItemId) && detailBelongsToItem && !readOnly,
+    itemNotes,
+    labelNotes,
+    server: serverNotesOf({ annotations, itemNotes: initialItemNotes }),
+    onRestore: (draft) => {
+      setItemNotes(draft.itemNotes);
+      setLabelNotes((prev) => ({ ...prev, ...draft.labelNotes }));
+      onDirtyChange?.(true);
+    },
+  });
   const visibleReviewComments = useMemo(
     () =>
       (reviewComments || []).filter((comment) =>
@@ -393,6 +430,8 @@ const LabelPanel = forwardRef(function LabelPanel(
 
   // Refs for flushing debounced text inputs before submit
   const textFlushRefs = useRef({});
+  // KH B1: a refused number still in its field blocks the submit.
+  const refusals = useEntryRefusals();
   const labelRefs = useRef(new Map());
   // Mirror of values state, always up-to-date (including after flush)
   const valuesRef = useRef(values);
@@ -511,19 +550,12 @@ const LabelPanel = forwardRef(function LabelPanel(
     // Read from ref to capture any values flushed above
     const currentValues = valuesRef.current;
 
-    // Every label must be annotated before submitting
-    const missingLabels = labels.filter((ql) =>
-      isLabelValueEmpty(ql.type, currentValues[ql.label_id]),
-    );
-
-    if (missingLabels.length > 0) {
-      const names = missingLabels.map((l) => l.name).join(", ");
-      enqueueSnackbar(`Please annotate all labels: ${names}`, {
-        variant: "warning",
-      });
-      // Highlight the labels still missing a value
-      const errorSet = new Set(missingLabels.map((l) => l.label_id));
-      setErrorLabels(errorSet);
+    // KH B1: the one review rule — every label scored, within its rule,
+    // and no refused entry left in a field.
+    const problems = labelProblems(labels, currentValues, refusals.pending());
+    if (problems.length > 0) {
+      enqueueSnackbar(problemsText(problems), { variant: "warning" });
+      setErrorLabels(new Set(problems.map((p) => p.label_id)));
       return;
     }
 
@@ -552,13 +584,32 @@ const LabelPanel = forwardRef(function LabelPanel(
     onDirtyChange,
     readOnly,
     detailBelongsToItem,
+    refusals,
   ]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
+  // One click on a pairwise label submits (and advances) once every label
+  // has a value.
+  const submitRef = useRef(handleSubmit);
+  submitRef.current = handleSubmit;
+  const rootRef = useRef(null);
+  const notesRef = useRef(null);
+  const [shake, setShake] = useState(0);
+  // RW#5: a choice ARMS the vote; Enter (or Submit & Next) saves it. No
+  // auto-advance, so a stray key never submits a half-considered vote.
+  const choosePairwise = useCallback(
+    (labelId, value) => {
+      handleChange(labelId, value);
+    },
+    [handleChange],
+  );
+
   const allAnswered =
     labels.length > 0 &&
     labels.every((l) => !isLabelValueEmpty(l.type, displayValues[l.label_id]));
+  const allAnsweredRef = useRef(allAnswered);
+  allAnsweredRef.current = allAnswered;
 
   // Keyboard navigation for labels (Tab/Shift+Tab + number keys + ? for help)
   useEffect(() => {
@@ -567,18 +618,82 @@ const LabelPanel = forwardRef(function LabelPanel(
       const isInput = tag === "INPUT" || tag === "TEXTAREA";
       const isTextInput = isInput && e.target.type !== "range";
 
-      // Don't intercept keys when in a text field (except Tab)
-      if (isTextInput && e.key !== "Tab") return;
-
-      // ? → toggle shortcuts overlay
-      if (e.key === "?") {
+      // RW#8: Esc inside the notes returns focus to the choices (1/2/3).
+      if (e.key === "Escape" && notesRef.current?.contains(e.target)) {
         e.preventDefault();
-        setShowShortcuts((p) => !p);
+        e.stopImmediatePropagation();
+        e.target.blur?.();
+        const radios = rootRef.current?.querySelectorAll(
+          "[data-pairwise-choices] [role=radio]",
+        );
+        const armed = [...(radios ?? [])].find(
+          (r) => r.getAttribute("aria-checked") === "true",
+        );
+        (armed ?? radios?.[0])?.focus?.();
         return;
       }
 
+      // Don't intercept keys when in a text field (except Tab)
+      if (isTextInput && e.key !== "Tab") return;
+
+      // Tab moves between labels only from inside this panel (the skip link
+      // and the page keep normal Tab order).
+      if (
+        e.key === "Tab" &&
+        !(rootRef.current?.contains(e.target) || e.target === document.body)
+      )
+        return;
+
+      // `?` opens the workspace's shortcut sheet (use-keyboard-shortcuts);
+      // the keyboard button below still toggles this label overlay.
+
       // In read-only mode, only the help overlay shortcut is allowed.
       if (readOnly) return;
+
+      // RW#8: N focuses the notes.
+      if (isTextInput) return;
+      if (
+        (e.key === "n" || e.key === "N") &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        isSafeForSingleKey(e.target)
+      ) {
+        const field = notesRef.current?.querySelector("textarea");
+        if (field) {
+          e.preventDefault();
+          field.focus();
+          return;
+        }
+      }
+      // RW#5: plain Enter submits once every label has a value (focus on the
+      // page or inside this panel, never on another control).
+      if (
+        e.key === "Enter" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.target === document.body ||
+          rootRef.current?.contains(e.target) ||
+          e.target?.closest?.("[data-annotate-content]"))
+      ) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (allAnsweredRef.current) submitRef.current?.();
+        else {
+          setShake((k) => k + 1);
+          enqueueSnackbar(
+            "Choose an answer first (1 / 2 / 3), then press Enter",
+            {
+              variant: "info",
+              key: "annotate-choose-first",
+              preventDuplicate: true,
+            },
+          );
+        }
+        return;
+      }
 
       // Tab / Shift+Tab → navigate labels
       if (e.key === "Tab") {
@@ -614,6 +729,19 @@ const LabelPanel = forwardRef(function LabelPanel(
       if (!ql) return;
       const labelId = ql.label_id;
       const currentVal = displayValues[labelId] ?? null;
+
+      // Pairwise: 1 = left better, 2 = tie, 3 = right (sides per item).
+      if (isPairwiseLabel(ql)) {
+        const button = reviewContextButtons(reviewContext).find(
+          (b) => b.key === e.key,
+        );
+        if (!button) return;
+        e.preventDefault();
+        choosePairwise(labelId, {
+          selected: [button.choice === "tie" ? "Tie" : button.choice],
+        });
+        return;
+      }
 
       if (ql.type === "star") {
         const max = ql.settings?.no_of_stars || 5;
@@ -679,10 +807,19 @@ const LabelPanel = forwardRef(function LabelPanel(
 
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [labels, focusedIndex, displayValues, handleChange, readOnly]);
+  }, [
+    labels,
+    focusedIndex,
+    displayValues,
+    handleChange,
+    readOnly,
+    reviewContext,
+    choosePairwise,
+  ]);
 
   return (
     <Box
+      ref={rootRef}
       sx={{
         p: 3,
         overflow: "auto",
@@ -1073,32 +1210,48 @@ const LabelPanel = forwardRef(function LabelPanel(
                 ...focusedScopeSx(labelFocused),
               }}
             >
-              <LabelInput
-                label={{
-                  name: ql.name,
-                  type: ql.type,
-                  settings: ql.settings || {},
-                  description: ql.description,
-                  required: ql.required,
-                  allow_notes: ql.allow_notes ?? false,
-                }}
-                value={displayValues[labelId] ?? null}
-                onChange={(val) => handleChange(labelId, val)}
-                index={i}
-                focused={focusedIndex === i}
-                hasError={errorLabels.has(labelId)}
-                labelNotes={displayLabelNotes[labelId] ?? ""}
-                onLabelNotesChange={(val) =>
-                  handleLabelNotesChange(labelId, val)
-                }
-                textFlushRef={
-                  ql.type === "text"
-                    ? (el) => {
-                        textFlushRefs.current[labelId] = el;
-                      }
-                    : undefined
-                }
-              />
+              {isPairwiseLabel(ql) ? (
+                <PairwiseChoice
+                  label={{
+                    name: ql.name,
+                    description: ql.description,
+                    settings: ql.settings || {},
+                  }}
+                  value={displayValues[labelId] ?? null}
+                  onChange={(val) => choosePairwise(labelId, val)}
+                  reviewContext={reviewContext}
+                  hasError={errorLabels.has(labelId)}
+                  disabled={readOnly}
+                />
+              ) : (
+                <LabelInput
+                  label={{
+                    name: ql.name,
+                    type: ql.type,
+                    settings: ql.settings || {},
+                    description: ql.description,
+                    required: ql.required,
+                    allow_notes: ql.allow_notes ?? false,
+                  }}
+                  value={displayValues[labelId] ?? null}
+                  onChange={(val) => handleChange(labelId, val)}
+                  index={i}
+                  focused={focusedIndex === i}
+                  hasError={errorLabels.has(labelId)}
+                  labelNotes={displayLabelNotes[labelId] ?? ""}
+                  onLabelNotesChange={(val) =>
+                    handleLabelNotesChange(labelId, val)
+                  }
+                  textFlushRef={
+                    ql.type === "text"
+                      ? (el) => {
+                          textFlushRefs.current[labelId] = el;
+                        }
+                      : undefined
+                  }
+                  entryRef={refusals.refFor(labelId)}
+                />
+              )}
               {labelReviewComments.length > 0 && (
                 <Box
                   sx={(theme) => {
@@ -1181,19 +1334,22 @@ const LabelPanel = forwardRef(function LabelPanel(
             color="text.secondary"
             sx={{ display: "block", mb: 0.75 }}
           >
-            Notes (optional)
+            Notes (optional) <KeyCap sx={{ ml: 0.5 }}>N</KeyCap>
           </Typography>
           <TextField
+            ref={notesRef}
             fullWidth
             size="small"
             multiline
             minRows={3}
             maxRows={6}
-            placeholder="Add notes for this item..."
+            placeholder="Why? (optional) · N to focus, Esc to leave, ⌘Enter to submit"
+            inputProps={{ "aria-label": "Notes for this item" }}
             value={displayItemNotes}
             onChange={(e) => handleItemNotesChange(e.target.value)}
             disabled={readOnly}
           />
+          <NoteDraftStatus draft={noteDraft} />
         </Box>
       </Stack>
 
@@ -1217,9 +1373,17 @@ const LabelPanel = forwardRef(function LabelPanel(
             borderColor: "divider",
           }}
         >
-          <Tooltip title="Ctrl+Enter" placement="top">
+          <Tooltip
+            title={
+              allAnswered
+                ? "Save and go to the next row (Enter)"
+                : `Choose ${labels.some(isPairwiseLabel) ? "Response 1, Tie or Response 2" : "a value for every label"} first (1 / 2 / 3)`
+            }
+            placement="top"
+          >
             <span>
               <Button
+                key={`submit-${shake}`}
                 variant="contained"
                 fullWidth
                 color="inherit"
@@ -1258,6 +1422,17 @@ const LabelPanel = forwardRef(function LabelPanel(
                 }
               >
                 {submitLabel}
+                <KeyCap
+                  sx={{
+                    ml: 1,
+                    bgcolor: "transparent",
+                    color: "inherit",
+                    borderColor: "currentColor",
+                    opacity: 0.8,
+                  }}
+                >
+                  Enter
+                </KeyCap>
               </Button>
             </span>
           </Tooltip>
@@ -1289,6 +1464,9 @@ LabelPanel.propTypes = {
   onViewingAnnotatorChange: PropTypes.func,
   isAnnotatorSwitchPending: PropTypes.bool,
   submitLabel: PropTypes.string,
+  // annotate-detail `review_context` (experiment review items): sides of the
+  // pairwise buttons
+  reviewContext: PropTypes.object,
 };
 
 export default LabelPanel;

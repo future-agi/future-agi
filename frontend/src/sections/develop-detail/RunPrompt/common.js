@@ -161,7 +161,11 @@ export const transformDefaultData = (editConfigData, allColumns) => {
       },
       modelType: resolvedModelType || MODEL_TYPES.LLM,
       voiceInputColumn,
-      outputFormat: editConfigData?.outputFormat || "string",
+      // retrieve_run_prompt_column_config returns output_format.
+      outputFormat:
+        editConfigData?.output_format ||
+        editConfigData?.outputFormat ||
+        "string",
       concurrency: editConfigData?.concurrency || "5",
       messages: (() => {
         const msgs = editConfigData?.messages
@@ -268,8 +272,9 @@ export const extractVariableFromAllCols = (
 
       // For images columns, add indexed access based on max_images_count from jsonSchemas
       const imagesSchema = jsonSchemas?.[col?.field];
-      if (col?.dataType === "images" && imagesSchema?.maxImagesCount) {
-        for (let idx = 0; idx < imagesSchema.maxImagesCount; idx++) {
+      // json-schema sends max_images_count / max_array_count (snake_case).
+      if (col?.dataType === "images" && imagesSchema?.max_images_count) {
+        for (let idx = 0; idx < imagesSchema.max_images_count; idx++) {
           const indexedPath = `${col.headerName}[${idx}]`;
           if (!res[indexedPath]) {
             res[indexedPath] = ["1"];
@@ -279,8 +284,8 @@ export const extractVariableFromAllCols = (
 
       // For json/text columns with top-level array data, add indexed access
       const colSchema = jsonSchemas?.[col?.field];
-      if (col?.dataType !== "images" && colSchema?.maxArrayCount) {
-        const count = Math.min(colSchema.maxArrayCount, 2);
+      if (col?.dataType !== "images" && colSchema?.max_array_count) {
+        const count = Math.min(colSchema.max_array_count, 2);
         for (let idx = 0; idx < count; idx++) {
           const indexedPath = `${col.headerName}[${idx}]`;
           if (!res[indexedPath]) {
@@ -350,8 +355,8 @@ export const getDropdownOptionsFromCols = (
 
     // If this is an images column with max_images_count, add indexed options
     const imagesSchema = jsonSchemas?.[col?.field];
-    if (col?.dataType === "images" && imagesSchema?.maxImagesCount) {
-      for (let idx = 0; idx < imagesSchema.maxImagesCount; idx++) {
+    if (col?.dataType === "images" && imagesSchema?.max_images_count) {
+      for (let idx = 0; idx < imagesSchema.max_images_count; idx++) {
         options.push({
           id: `${col?.field}[${idx}]`,
           value: `${col?.headerName}[${idx}]`,
@@ -364,8 +369,8 @@ export const getDropdownOptionsFromCols = (
 
     // If this is a json/text column with top-level array data, add indexed options
     const colSchema = jsonSchemas?.[col?.field];
-    if (col?.dataType !== "images" && colSchema?.maxArrayCount) {
-      const count = Math.min(colSchema.maxArrayCount, 2);
+    if (col?.dataType !== "images" && colSchema?.max_array_count) {
+      const count = Math.min(colSchema.max_array_count, 2);
       for (let idx = 0; idx < count; idx++) {
         options.push({
           id: `${col?.field}[${idx}]`,
@@ -496,20 +501,20 @@ export function findInvalidVariables(
       );
 
       if (column?.dataType === "images") {
-        // Images column found - check if index is within maxImagesCount
+        // Images column found - check if index is within max_images_count
         const imagesSchema = jsonSchemas?.[column?.field];
         if (
-          imagesSchema?.maxImagesCount &&
-          index < imagesSchema.maxImagesCount
+          imagesSchema?.max_images_count &&
+          index < imagesSchema.max_images_count
         ) {
           return;
         }
-        // Even if index exceeds maxImagesCount, allow it (will resolve to empty at runtime)
+        // Even if index exceeds max_images_count, allow it (will resolve to empty at runtime)
         return;
       }
 
       // Allow indexed access for json/text columns with top-level array data
-      if (column && jsonSchemas?.[column.field]?.maxArrayCount) {
+      if (column && jsonSchemas?.[column.field]?.max_array_count) {
         return;
       }
     }
@@ -722,7 +727,7 @@ export const replaceVariablesWithFields = (
       // Allow indexed access for images columns and json/text columns with top-level arrays
       if (
         matchedColumn?.dataType === "images" ||
-        (matchedColumn && jsonSchemas?.[matchedColumn.field]?.maxArrayCount)
+        (matchedColumn && jsonSchemas?.[matchedColumn.field]?.max_array_count)
       ) {
         const replacePattern = new RegExp(
           `{{\\s*${rawVar.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*}}`,

@@ -1,0 +1,31 @@
+{
+  "description": "Legacy invalid names and explicit redistribution-safe substitutions. Alias keys preserve stored names; targets supply bundled geometry and licence attribution.",
+  "redistributionReplacements": {
+    "gridicons:add-outline": "mdi:plus-circle-outline",
+    "dashicons:money-alt": "mdi:currency-usd",
+    "entypo:cross": "mdi:close",
+    "mdi-light:message": "mdi:message-outline",
+    "uil:calender": "mdi:calendar-outline",
+    "uil:exclamation-triangle": "mdi:alert-outline"
+  },
+  "aliases": {
+    "mdi:compare-arrows": "mdi:compare-horizontal",
+    "mdi:license-outline": "mdi:license",
+    "mdi:view-kanban-outline": "mdi:view-column-outline",
+    "mingcute:info-line": "mingcute:information-line",
+    "solar:circle-linear": "mdi:circle-outline",
+    "solar:close-linear": "mdi:close",
+    "solar:inbox-linear": "mdi:inbox-outline",
+    "solar:dice-linear": "mdi:dice-multiple-outline",
+    "solar:document-broken-linear": "solar:document-broken",
+    "solar:flow-outline": "mdi:transit-connection-variant"
+  },
+  "local": {
+    "mdi:blank": {
+      "width": 24,
+      "height": 24,
+      "body": "<path fill=\"none\" d=\"M0 0\"/>"
+    }
+  },
+  "localLicence": "The blank layout spacer is original project code; it intentionally paints nothing for unselected menu items."
+}

@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-upstream-token-v1.schema.json",
+  "title": "mcp-upstream-token-v1",
+  "description": "The gateway's just-in-time fetch of an upstream token from Django (plan section 6.28, MC.13): POST /agentcc/internal/mcp/upstream-token/ with header X-Agentcc-MCP-Internal (never the admin token). A request is a user's (Request: that user's own connected account on a per_user server) or the organization's (SharedRequest, CN24: the one account an Owner or Admin signed in on a shared server whose credential kind is oauth); Django answers each only from the vault rows of its own scope. Success and refusal are both HTTP 200 with Cache-Control: no-store; a bad secret is 401. The gateway caches a token sealed until expiry - 60 s, under a key of its scope.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request", "success", "refusal"],
+  "properties": {
+    "request": {
+      "$ref": "#/$defs/Request"
+    },
+    "success": {
+      "$ref": "#/$defs/Success"
+    },
+    "refusal": {
+      "$ref": "#/$defs/Refusal"
+    },
+    "shared_request": {
+      "$ref": "#/$defs/SharedRequest"
+    }
+  },
+  "$defs": {
+    "Request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["org_id", "user_id", "server_id"],
+      "properties": {
+        "org_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "user_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "server_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "refresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "False revalidates current vault state without another proactive refresh; expired or inactive grants are still refused."
+        }
+      }
+    },
+    "SharedRequest": {
+      "type": "object",
+      "description": "The organization's shared account on server_id (CN24): no user, scope shared.",
+      "additionalProperties": false,
+      "required": ["org_id", "server_id", "scope"],
+      "properties": {
+        "org_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "server_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "const": "shared"
+        },
+        "refresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "False revalidates current vault state without another proactive refresh; expired or inactive grants are still refused."
+        }
+      }
+    },
+    "Success": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "access_token",
+        "token_type",
+        "expires_at",
+        "credential_version"
+      ],
+      "properties": {
+        "access_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "token_type": {
+          "const": "Bearer"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "credential_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "Refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "string",
+          "enum": ["no_credential", "needs_reauth", "revoked", "expired"]
+        },
+        "connect_hint": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

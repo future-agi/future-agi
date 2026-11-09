@@ -54,6 +54,7 @@ COMPOSE_FILES = {
     "S-dev": "docker-compose.dev.yml",
     "D-dev": "docker-compose.distributed.dev.yml",
     "prod": "deploy/docker-compose.production.yml",
+    "hosted-prep": "deploy/docker-compose.hosted.yml",
     "ui-only": "docker-compose.frontend.yml",
 }
 NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")

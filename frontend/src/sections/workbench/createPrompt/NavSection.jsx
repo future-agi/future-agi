@@ -91,8 +91,12 @@ export default function NavSection() {
         </Button>
         <CustomTooltip show title="Add New Prompt" arrow size="small">
           <Box
+            component="button"
+            type="button"
+            aria-label="Add New Prompt"
             sx={{
               cursor: "pointer",
+              bgcolor: "transparent",
               border: "1px solid",
               borderColor: "divider",
               color: "text.disabled",

@@ -44,6 +44,10 @@ export const paths = {
         `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations`,
       workspaceIntegrationDetail: (workspaceId, id) =>
         `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/${id}`,
+      webhookEndpoint: (id) =>
+        `${ROOTS.DASHBOARD}/settings/integrations/webhooks/${id}`,
+      workspaceWebhookEndpoint: (workspaceId, id) =>
+        `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/webhooks/${id}`,
       mcpServer: `${ROOTS.DASHBOARD}/settings/mcp-server`,
       falconAIConnectors: `${ROOTS.DASHBOARD}/settings/falcon-ai-connectors`,
       orgSettings: `${ROOTS.DASHBOARD}/settings/org-settings`,
@@ -103,8 +107,6 @@ export const paths = {
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
         execution: (envId, testId, executionId) =>
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
-        improvement: (envId, fixId) =>
-          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/improvements/${fixId}`,
       },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,
@@ -123,6 +125,10 @@ export const paths = {
       overview: `${ROOTS.DASHBOARD}/gateway`,
       keys: `${ROOTS.DASHBOARD}/gateway/keys`,
       providers: `${ROOTS.DASHBOARD}/gateway/providers`,
+      integrations: `${ROOTS.DASHBOARD}/gateway/integrations`,
+      models: `${ROOTS.DASHBOARD}/gateway/models`,
+      playground: `${ROOTS.DASHBOARD}/gateway/playground`,
+      capabilities: `${ROOTS.DASHBOARD}/gateway/capabilities`,
       guardrails: {
         root: `${ROOTS.DASHBOARD}/gateway/guardrails`,
         overview: `${ROOTS.DASHBOARD}/gateway/guardrails`,
@@ -133,18 +139,63 @@ export const paths = {
         logs: `${ROOTS.DASHBOARD}/gateway/guardrails/logs`,
       },
       budgets: `${ROOTS.DASHBOARD}/gateway/budgets`,
+      billing: {
+        root: `${ROOTS.DASHBOARD}/gateway/billing`,
+        credits: `${ROOTS.DASHBOARD}/gateway/billing/credits`,
+        history: `${ROOTS.DASHBOARD}/gateway/billing/history`,
+        usage: `${ROOTS.DASHBOARD}/gateway/billing/usage`,
+      },
       monitoring: `${ROOTS.DASHBOARD}/gateway/monitoring`,
       logs: `${ROOTS.DASHBOARD}/gateway/logs`,
       analytics: `${ROOTS.DASHBOARD}/gateway/analytics`,
       webhooks: `${ROOTS.DASHBOARD}/gateway/webhooks`,
       sessions: `${ROOTS.DASHBOARD}/gateway/sessions`,
+      runs: `${ROOTS.DASHBOARD}/gateway/runs`,
+      // Run ids come from the caller's x-agentcc-run-id header, so encode them.
+      runDetail: (runId) =>
+        `${ROOTS.DASHBOARD}/gateway/runs/${encodeURIComponent(runId)}`,
       customProperties: `${ROOTS.DASHBOARD}/gateway/custom-properties`,
       fallbacks: `${ROOTS.DASHBOARD}/gateway/fallbacks`,
+      policies: {
+        root: `${ROOTS.DASHBOARD}/gateway/policies`,
+        access: `${ROOTS.DASHBOARD}/gateway/policies/access`,
+        data: `${ROOTS.DASHBOARD}/gateway/policies/data`,
+        presets: `${ROOTS.DASHBOARD}/gateway/policies/presets`,
+        versions: `${ROOTS.DASHBOARD}/gateway/policies/versions`,
+        rollout: `${ROOTS.DASHBOARD}/gateway/policies/rollout`,
+      },
       mcp: `${ROOTS.DASHBOARD}/gateway/mcp`,
       experiments: `${ROOTS.DASHBOARD}/gateway/experiments`,
       settings: `${ROOTS.DASHBOARD}/gateway/settings`,
     },
     agents: `${ROOTS.DASHBOARD}/agents`,
     falconAI: `${ROOTS.DASHBOARD}/falcon-ai`,
+    // Agent infrastructure (Omega). Registered only when VITE_OMEGA_CONSOLE=1.
+    studio: `${ROOTS.DASHBOARD}/studio`,
+    deployments: {
+      root: `${ROOTS.DASHBOARD}/deployments`,
+      new: `${ROOTS.DASHBOARD}/deployments/new`,
+      detail: (id, tab) =>
+        `${ROOTS.DASHBOARD}/deployments/${encodeURIComponent(id)}${
+          tab ? `/${encodeURIComponent(tab)}` : ""
+        }`,
+    },
+    sandboxes: {
+      root: `${ROOTS.DASHBOARD}/sandboxes`,
+      detail: (id, tab) =>
+        `${ROOTS.DASHBOARD}/sandboxes/${encodeURIComponent(id)}${
+          tab ? `/${encodeURIComponent(tab)}` : ""
+        }`,
+    },
+    console: {
+      root: `${ROOTS.DASHBOARD}/console`,
+    },
+    // Where sign-in lands when the Omega switch is on: Console Chat for a
+    // workspace admitted to the Console, else the usual page (DEMO-FIX-2).
+    omegaLanding: `${ROOTS.DASHBOARD}/home`,
+    // Omega Hub. The page links themselves come from sections/omega/hub/constants.js.
+    hub: {
+      root: `${ROOTS.DASHBOARD}/hub`,
+    },
   },
 };

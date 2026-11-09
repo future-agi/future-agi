@@ -44,7 +44,7 @@ class TestValidateAgentApiKey:
         from tracer.services.observability_providers import ObservabilityService
 
         mock_agent = Mock()
-        mock_agent.api_key = "valid-api-key-123"
+        mock_agent.get_api_key.return_value = "valid-api-key-123"
         mock_provider = Mock()
         mock_provider.id = "provider-123"
 
@@ -72,7 +72,7 @@ class TestValidateAgentApiKey:
         from tracer.services.observability_providers import ObservabilityService
 
         mock_agent = Mock()
-        mock_agent.api_key = None
+        mock_agent.get_api_key.return_value = None
         mock_provider = Mock()
         mock_provider.id = "provider-456"
 
@@ -87,7 +87,7 @@ class TestValidateAgentApiKey:
         from tracer.services.observability_providers import ObservabilityService
 
         mock_agent = Mock()
-        mock_agent.api_key = ""
+        mock_agent.get_api_key.return_value = ""
         mock_provider = Mock()
         mock_provider.id = "provider-789"
 
@@ -253,7 +253,7 @@ class TestFetchVapiLogs:
         from tracer.services.observability_providers import ObservabilityService
 
         mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
+        mock_agent.get_api_key.return_value = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -270,7 +270,8 @@ class TestFetchVapiLogs:
         assert result == []
         mock_requests_get.assert_called_once()
         call_kwargs = mock_requests_get.call_args
-        assert "Bearer valid-vapi-key" in str(call_kwargs)
+        assert call_kwargs.kwargs["headers"]["Authorization"] == "Bearer valid-vapi-key"
+        mock_agent.get_api_key.assert_called_once_with()
 
     @patch("tracer.services.observability_providers.requests.get")
     @patch.object(
@@ -287,7 +288,7 @@ class TestFetchVapiLogs:
         )
 
         mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
+        mock_agent.get_api_key.return_value = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -340,7 +341,7 @@ class TestFetchVapiLogs:
         )
 
         mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
+        mock_agent.get_api_key.return_value = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -380,7 +381,7 @@ class TestFetchVapiLogs:
         from tracer.services.observability_providers import ObservabilityService
 
         mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
+        mock_agent.get_api_key.return_value = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -410,14 +411,14 @@ def _end(hours: int = 0):
 
 def _provider_with_agent(assistant_id=None, api_key="legacy-retell-key"):
     """A Mock provider whose ``.agent_definition`` resolves like a real one,
-    with no ProviderCredentials rows so the legacy ``agent.api_key`` wins."""
+    with no ProviderCredentials rows so the definition-level ``agent.get_api_key()`` wins."""
     from tracer.tests.fixtures.retell_calls import FAKE_AGENT_ID
 
     provider = Mock()
     provider.id = "retell-provider-1"
     agent = Mock()
     agent.assistant_id = assistant_id or FAKE_AGENT_ID
-    agent.api_key = api_key
+    agent.get_api_key.return_value = api_key
     provider.agent_definition = agent
     return provider
 
@@ -2224,7 +2225,7 @@ class TestFetchElevenLabsLogs:
         from tracer.services.observability_providers import ObservabilityService
 
         mock_agent = Mock()
-        mock_agent.api_key = "valid-eleven-labs-key"
+        mock_agent.get_api_key.return_value = "valid-eleven-labs-key"
         mock_agent.assistant_id = "agent-123"
         mock_get_agent.return_value = mock_agent
 
@@ -2242,7 +2243,8 @@ class TestFetchElevenLabsLogs:
         mock_requests_get.assert_called_once()
         call_kwargs = mock_requests_get.call_args
         # ElevenLabs uses xi-api-key header
-        assert "valid-eleven-labs-key" in str(call_kwargs)
+        assert call_kwargs.kwargs["headers"]["xi-api-key"] == "valid-eleven-labs-key"
+        mock_agent.get_api_key.assert_called_once_with()
 
 
 # ============================================================================
@@ -2397,7 +2399,7 @@ class TestObservabilityServiceIntegration:
         agent = ObservabilityService._get_agent_definition(vapi_provider_with_agent)
 
         assert agent is not None
-        assert agent.api_key == "test-vapi-api-key-12345"
+        assert agent.get_api_key() == "test-vapi-api-key-12345"
         assert agent.assistant_id == "asst_vapi_123"
 
     def test_get_agent_definition_returns_none_when_no_agent(
@@ -2435,7 +2437,7 @@ class TestObservabilityServiceIntegration:
         )
 
         assert agent is not None  # Agent exists
-        assert agent.api_key is None  # But has no API key
+        assert agent.get_api_key() == ""  # No stored key decodes to empty input
 
         result = ObservabilityService._validate_agent_api_key(
             agent, vapi_provider_with_agent_no_api_key, "VAPI"

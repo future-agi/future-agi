@@ -2,15 +2,21 @@ import json
 
 import structlog
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
-
+from evaluations.engine.instance import choice_score_override
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.evaluation import Evaluation, StatusChoices
 from model_hub.tasks.user_evaluation import trigger_error_localization_for_standalone
+from model_hub.utils.scoring import (
+    ChoiceScoreOverrideError,
+    validate_choice_score_override,
+)
 from sdk.utils.helpers import _get_api_call_type
-from tracer.utils.inline_evals import trigger_inline_eval
 from tfc.constants.api_calls import APICallStatusChoices
+from tracer.utils.inline_evals import trigger_inline_eval
+
+logger = structlog.get_logger(__name__)
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -96,9 +102,7 @@ def _run_evaluation(run_params, eval_model, eval_instance, runner):
     # partial_input warning attached to the response.
     from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-    partial_input_warning, run_params = validate_eval_inputs(
-        eval_model, run_params
-    )
+    partial_input_warning, run_params = validate_eval_inputs(eval_model, run_params)
 
     result = eval_instance.run(**run_params)
     output_type = eval_model.config.get("output", "score")
@@ -120,6 +124,69 @@ def _run_evaluation(run_params, eval_model, eval_instance, runner):
     response["value"] = value
 
     return response
+
+
+def engine_runtime_config(eval_config):
+    """The runtime_config the engine runs an SDK evaluation with.
+
+    Downstream consumers (``create_eval_instance``) look at top-level keys
+    like ``run_config`` for AgentEvaluator overrides, but the SDK wraps user
+    input in ``params``. Every key in ``params`` (but a nested ``params``) is
+    lifted to the top level, over the outer keys, so multi-KB
+    (``knowledge_bases``), choice score and other runtime overrides work over
+    the SDK as well. ConfigureEvaluationsSerializer validates this same config.
+    """
+    params = (eval_config or {}).get("params") or {}
+    if isinstance(params, dict) and params:
+        return {
+            **(eval_config or {}),
+            **{k: v for k, v in params.items() if k not in ("params",)},
+        }
+    return eval_config
+
+
+def validate_sdk_choice_score_override(eval_template, eval_config) -> None:
+    """Refuse an invalid Choices score override in an SDK eval config.
+
+    The one save/request-time check of every SDK endpoint that takes an eval
+    config (configure-evaluations, evaluate, the CI/CD pipeline). The config
+    is checked as stored and as the engine runs it, ``engine_runtime_config``
+    with the keys in ``params`` lifted over it.
+
+    Raises:
+        ChoiceScoreOverrideError: a ValueError; an error found only in the
+            lifted config is prefixed "params: ".
+    """
+    validate_choice_score_override(eval_template, eval_config)
+    try:
+        validate_choice_score_override(
+            eval_template, engine_runtime_config(eval_config)
+        )
+    except ChoiceScoreOverrideError as e:
+        raise ChoiceScoreOverrideError(f"params: {e}") from e
+
+
+def external_platform_runtime_config(eval_config):
+    """The runtime_config an external-platform evaluation runs with.
+
+    The stored SDK config as is, except for its Choices score override: that
+    is the one of ``engine_runtime_config(eval_config)``, which SDK evaluate
+    applies and ``validate_sdk_choice_score_override`` checked, so an override
+    nested in ``params`` applies here too. No other key is lifted. When the
+    two overrides agree (every config without one included), the stored
+    config is returned unchanged (the same object).
+    """
+    override = choice_score_override(engine_runtime_config(eval_config))
+    if override == choice_score_override(eval_config):
+        return eval_config
+    run_config = eval_config.get("run_config")
+    return {
+        **{k: v for k, v in eval_config.items() if k != "choice_scores"},
+        "run_config": {
+            **(run_config if isinstance(run_config, dict) else {}),
+            "choice_scores": override,
+        },
+    }
 
 
 def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
@@ -146,19 +213,7 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         or _params.get("knowledge_base_id")
     )
 
-    # Build the runtime_config that is forwarded to the engine. Downstream
-    # consumers (``create_eval_instance``) look at top-level keys like
-    # ``run_config`` for AgentEvaluator overrides, but the SDK wraps user
-    # input in ``params``. Lift any non-schema keys from ``params`` to the
-    # top level so multi-KB (``knowledge_bases``) and other runtime overrides
-    # work over the SDK as well.
-    if isinstance(_params, dict) and _params:
-        _engine_runtime_config = {
-            **(eval_config or {}),
-            **{k: v for k, v in _params.items() if k not in ("params",)},
-        }
-    else:
-        _engine_runtime_config = eval_config
+    _engine_runtime_config = engine_runtime_config(eval_config)
 
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
 
@@ -276,7 +331,9 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         try:
             from ee.usage.utils.event_properties import token_usage_properties
         except ImportError:
-            token_usage_properties = lambda token_usage: {}
+
+            def token_usage_properties(token_usage):
+                return {}
 
         billing_config = None
         if BillingConfig is not None:
@@ -300,7 +357,9 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
                             "source": "standalone_v2",
                             "source_id": str(eval_template.id),
                             "raw_cost_usd": str(actual_cost),
-                            "log_id": str(api_call_log_row.log_id) if api_call_log_row else None,
+                            "log_id": str(api_call_log_row.log_id)
+                            if api_call_log_row
+                            else None,
                             **token_usage_properties(token_usage),
                         },
                     )
@@ -337,18 +396,34 @@ def _create_evaluation(
     trace_eval,
     custom_eval_name,
     span_id,
+    *,
+    workspace=None,
+    organization=None,
 ):
     """
     Create an evaluation object in the database to store the result of the evaluation.
     This result can be retrieved later for analysis.
+
+    Persist the access-checked caller organization and workspace explicitly,
+    without request-context fallback. Legacy callers retain their user organization.
+    Missing or inconsistent workspace bindings retain only the standalone result,
+    never replayable inline intent.
     """
+    if organization is None:
+        organization = user.organization
+    inline_scope_bound = (
+        organization is not None
+        and workspace is not None
+        and workspace.organization_id == organization.pk
+    )
     status = (
         StatusChoices.COMPLETED if not result.get("failure") else StatusChoices.FAILED
     )
 
     evaluation = Evaluation.objects.create(
         user=user,
-        organization=user.organization,
+        organization=organization,
+        workspace=workspace,
         eval_template=eval_template,
         input_data=inputs,
         eval_config=eval_config,
@@ -364,7 +439,7 @@ def _create_evaluation(
         error_localizer_enabled=error_localizer_enabled,
         trace_data=(
             {"span_id": span_id, "custom_eval_name": custom_eval_name}
-            if trace_eval
+            if trace_eval and inline_scope_bound
             else None
         ),
     )
@@ -388,6 +463,8 @@ def _run_standalone_eval(
     trace_eval,
     custom_eval_name,
     span_id,
+    *,
+    organization=None,
 ):
     result = _run_eval(eval_template, inputs, model, user, workspace, eval_config)
     evaluation = _create_evaluation(
@@ -400,6 +477,8 @@ def _run_standalone_eval(
         trace_eval,
         custom_eval_name,
         span_id,
+        workspace=workspace,
+        organization=organization,
     )
     formatted_result = _format_standalone_eval_result(
         eval_template, result, evaluation.id
@@ -420,6 +499,8 @@ def _run_batched_standalone_eval(
     trace_eval,
     custom_eval_name,
     span_id,
+    *,
+    organization=None,
 ):
     results = []
     if not inputs or not isinstance(list(inputs.values())[0], list):
@@ -441,6 +522,7 @@ def _run_batched_standalone_eval(
             trace_eval,
             custom_eval_name,
             span_id,
+            organization=organization,
         )
         results.append(result)
 
@@ -465,7 +547,10 @@ def _run_protect(
         protect_inputs["call_type"] = "protect_flash" if protect_flash else "protect"
 
         api_call_log_row = _log_and_deduct_cost_for_standalone_eval(
-            user, eval_template, True, protect_inputs,
+            user,
+            eval_template,
+            True,
+            protect_inputs,
             model="protect_flash" if protect_flash else "protect",
             workspace=workspace,
         )
@@ -538,7 +623,9 @@ def _run_protect(
             try:
                 from ee.usage.utils.event_properties import token_usage_properties
             except ImportError:
-                token_usage_properties = lambda token_usage: {}
+
+                def token_usage_properties(token_usage):
+                    return {}
 
             billing_config = None
             if BillingConfig is not None:

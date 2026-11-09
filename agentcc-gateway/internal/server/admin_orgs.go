@@ -4,12 +4,16 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 
 	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
+	"github.com/futureagi/agentcc-gateway/internal/mcp/credtemplate"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
+	"github.com/futureagi/agentcc-gateway/internal/toolcatalog"
 )
 
 // redactAPIKey masks an API key, showing only the first 8 and last 4 characters.
@@ -49,7 +53,112 @@ func redactOrgConfig(cfg *tenant.OrgConfig) *tenant.OrgConfig {
 		}
 		redacted.Providers = rp
 	}
+	redacted.ManagedModels = redactManagedModels(redacted.ManagedModels)
+	if r := redacted.Routing; r != nil && r.Rollout != nil && r.Rollout.ManagedModels != nil &&
+		len(r.Rollout.ManagedModels.UpstreamKeys) > 0 {
+		routing := *r
+		rollout := *r.Rollout
+		rollout.ManagedModels = redactManagedModels(rollout.ManagedModels)
+		routing.Rollout = &rollout
+		redacted.Routing = &routing
+	}
+	redacted.MCP = redactMCP(redacted.MCP)
 	return &redacted
+}
+
+// mcpSecretMask replaces an MCP secret in every admin GET.
+const mcpSecretMask = "****"
+
+// redactMCP masks every MCP secret an org config can carry: a server's
+// legacy auth.token and auth.key, and the push-only credential.secret and
+// managed_tools.credentials.*.secret values (MC.4: assembled at push, never
+// returned). It copies before masking, so the live config is never changed.
+func redactMCP(m *tenant.MCPOrgConfig) *tenant.MCPOrgConfig {
+	if m == nil {
+		return nil
+	}
+	cp := *m
+	if len(m.Servers) > 0 {
+		cp.Servers = make(map[string]*tenant.MCPServerOrgConfig, len(m.Servers))
+		for id, srv := range m.Servers {
+			if srv == nil {
+				cp.Servers[id] = nil
+				continue
+			}
+			s := *srv
+			if srv.Auth != nil {
+				a := *srv.Auth
+				a.Token, a.Key = maskSet(a.Token), maskSet(a.Key)
+				s.Auth = &a
+			}
+			if srv.Credential != nil {
+				c := *srv.Credential
+				c.Secret = maskSecret(c.Secret)
+				s.Credential = &c
+			}
+			cp.Servers[id] = &s
+		}
+	}
+	if mt := m.ManagedTools; mt != nil && len(mt.Credentials) > 0 {
+		tools := *mt
+		tools.Credentials = make(map[string]*tenant.MCPManagedToolCredential, len(mt.Credentials))
+		for id, cred := range mt.Credentials {
+			if cred == nil {
+				tools.Credentials[id] = nil
+				continue
+			}
+			c := *cred
+			c.Secret = maskSecret(c.Secret)
+			tools.Credentials[id] = &c
+		}
+		cp.ManagedTools = &tools
+	}
+	return &cp
+}
+
+func maskSecret(sec *tenant.MCPCredentialSecret) *tenant.MCPCredentialSecret {
+	if sec == nil {
+		return nil
+	}
+	c := *sec
+	c.Value = maskSet(c.Value)
+	if len(sec.Parts) > 0 {
+		// A copy: the live config's parts keep their values (AM-C20).
+		c.Parts = make([]tenant.MCPCredentialSecretPart, len(sec.Parts))
+		for i, part := range sec.Parts {
+			part.Value = maskSet(part.Value)
+			c.Parts[i] = part
+		}
+	}
+	return &c
+}
+
+// maskSet masks a set value and leaves an empty one empty.
+func maskSet(v string) string {
+	if v == "" {
+		return ""
+	}
+	return mcpSecretMask
+}
+
+// redactManagedModels masks every pushed per-org upstream key (contract 6.14:
+// redacted from every GET) and keeps key_hash. It copies before masking, so
+// the live config is never changed.
+func redactManagedModels(mm *tenant.ManagedModelsConfig) *tenant.ManagedModelsConfig {
+	if mm == nil || len(mm.UpstreamKeys) == 0 {
+		return mm
+	}
+	cp := *mm
+	cp.UpstreamKeys = make(map[string]*tenant.ManagedUpstreamKey, len(mm.UpstreamKeys))
+	for id, k := range mm.UpstreamKeys {
+		if k == nil {
+			continue
+		}
+		masked := *k
+		masked.APIKey = redactAPIKey(masked.APIKey)
+		cp.UpstreamKeys[id] = &masked
+	}
+	return &cp
 }
 
 func gatewayContractOrgConfigToTenant(cfg *gatewayadmin.OrgConfig) (*tenant.OrgConfig, error) {
@@ -82,6 +191,14 @@ type OrgConfigHandlers struct {
 	adminToken       string
 	orgProviderCache *providers.OrgProviderCache // nil-safe
 	onConfigChange   func(orgID string)          // called after org config changes (e.g. invalidate caches)
+	// toolCatalog is the tool catalog SR7 loads (tools on); nil skips the
+	// managed opt-in check.
+	toolCatalog *toolcatalog.Catalog
+	// connectorCatalog is the connector catalog the gateway embeds (CN6's
+	// dist/catalog.json): a catalog_ref server's shared secret is checked
+	// against the parts its provider declares, as the MCP pool checks it;
+	// nil refuses such a server.
+	connectorCatalog credtemplate.Catalog
 }
 
 // NewOrgConfigHandlers creates org config admin handlers.
@@ -91,6 +208,54 @@ func NewOrgConfigHandlers(store *tenant.Store, adminToken string, orgProviderCac
 		adminToken:       adminToken,
 		orgProviderCache: orgProviderCache,
 	}
+}
+
+// SetConnectorCatalog gives the handlers the connector catalog, so a config
+// pushed by any path is refused at the PUT or bulk load when the MCP pool
+// would refuse one of its catalog_ref servers (CW1, CN7 review P2). The
+// wiring calls it at startup, whether or not MCP is on.
+func (h *OrgConfigHandlers) SetConnectorCatalog(cat credtemplate.Catalog) {
+	h.connectorCatalog = cat
+}
+
+// SetToolCatalog gives the handlers the tool catalog, so a config pushed by
+// any path (not only Django's save) cannot give a byok_only vendor a managed
+// opt-in (decision 25). The wiring calls it when tools are enabled.
+func (h *OrgConfigHandlers) SetToolCatalog(cat *toolcatalog.Catalog) {
+	h.toolCatalog = cat
+}
+
+// refuseManagedByokOnly answers 400 capability_managed_not_allowed when the
+// config's mcp.managed_tools allows a byok_only vendor; with no catalog set
+// nothing is checked.
+func (h *OrgConfigHandlers) refuseManagedByokOnly(w http.ResponseWriter, orgID string, cfg *tenant.OrgConfig) bool {
+	if h.toolCatalog == nil {
+		return false
+	}
+	if err := h.toolCatalog.CheckOrgConfig(cfg); err != nil {
+		slog.Warn("org config refused: managed opt-in for a byok_only vendor", "org_id", orgID, "error", err)
+		models.WriteError(w, models.ErrBadRequest(toolcatalog.CodeManagedNotAllowed, "org "+orgID+": "+err.Error()))
+		return true
+	}
+	return false
+}
+
+// refuseUnappliedPlacement answers 400 mcp_credential_placement_unsupported,
+// with the field as param, when a pushed MCP credential secret of the config
+// cannot be placed as it states (AM-C20; CN7's credential templates, and the
+// header-only rule for a managed tool credential): the config is not stored,
+// so the credential is never sent elsewhere or in part.
+func (h *OrgConfigHandlers) refuseUnappliedPlacement(w http.ResponseWriter, orgID string, cfg *tenant.OrgConfig) bool {
+	perr := cfg.UnappliedMCPCredentialPlacement(h.connectorCatalog)
+	if perr == nil {
+		return false
+	}
+	slog.Warn("org config refused: an MCP credential placement this gateway does not apply", "org_id", orgID, "field", perr.Field)
+	apiErr := models.ErrBadRequest(tenant.CodeMCPCredentialPlacementUnsupported, "org "+orgID+": "+perr.Error())
+	field := perr.Field
+	apiErr.Param = &field
+	models.WriteError(w, apiErr)
+	return true
 }
 
 // SetOnConfigChange registers a callback invoked after any org config change.
@@ -131,12 +296,15 @@ func (h *OrgConfigHandlers) SetOrgConfig(w http.ResponseWriter, r *http.Request)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&contractCfg); err != nil {
-		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+models.DescribeJSONError(err)))
 		return
 	}
 	cfg, err := gatewayContractOrgConfigToTenant(&contractCfg)
 	if err != nil {
 		models.WriteError(w, models.ErrBadRequest("invalid_contract", "Invalid gateway org config: "+err.Error()))
+		return
+	}
+	if h.refuseManagedByokOnly(w, orgID, cfg) || h.refuseUnappliedPlacement(w, orgID, cfg) {
 		return
 	}
 
@@ -249,13 +417,18 @@ func (h *OrgConfigHandlers) BulkLoadOrgConfigs(w http.ResponseWriter, r *http.Re
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&contractConfigs); err != nil {
-		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+models.DescribeJSONError(err)))
 		return
 	}
 	configs, err := gatewayContractOrgConfigMapToTenant(contractConfigs)
 	if err != nil {
 		models.WriteError(w, models.ErrBadRequest("invalid_contract", "Invalid gateway org config map: "+err.Error()))
 		return
+	}
+	for _, orgID := range slices.Sorted(maps.Keys(configs)) {
+		if h.refuseManagedByokOnly(w, orgID, configs[orgID]) || h.refuseUnappliedPlacement(w, orgID, configs[orgID]) {
+			return
+		}
 	}
 
 	h.store.LoadBulk(configs)
@@ -277,4 +450,24 @@ func (h *OrgConfigHandlers) BulkLoadOrgConfigs(w http.ResponseWriter, r *http.Re
 		"status": "ok",
 		"loaded": len(configs),
 	})
+}
+
+// SetOrgSectionsEnforced records the org config sections this node enforces,
+// as cmd/agentcc reads them off the plugins it installed: GET /-/config
+// reports them as org_sections_enforced (contract K2). Call after New and
+// before Start. A server it is never called on leaves the field out, which the
+// console reads as "enforcement unknown".
+func (s *Server) SetOrgSectionsEnforced(sections []string) {
+	s.orgSectionsEnforced = append([]string{}, sections...)
+}
+
+// SetOrgSectionsNotEnforced records, for GET /-/config's
+// org_sections_not_enforced, each org config section this node does not
+// enforce with the reason (ip_acl: middleware.OrgIPACLClientIPUnknown). An
+// empty or nil map leaves the field out. Call after New and before Start.
+func (s *Server) SetOrgSectionsNotEnforced(reasons map[string]string) {
+	s.orgSectionsNotEnforced = make(map[string]string, len(reasons))
+	for section, reason := range reasons {
+		s.orgSectionsNotEnforced[section] = reason
+	}
 }

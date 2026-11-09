@@ -7,7 +7,6 @@ no session affinity, survives server restarts, horizontally scalable.
 """
 
 import json
-import os
 import time
 from contextvars import ContextVar
 
@@ -28,6 +27,7 @@ from mcp_server.api_executor import (
     executor,
 )
 from mcp_server.generated_registry import registry
+from mcp_server.public_url import mcp_public_base_url
 from mcp_server.response_limits import ResponseTooLargeError, bounded_response
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
@@ -45,8 +45,9 @@ _request_context: ContextVar[MCPRequestContext | None] = ContextVar(
     "mcp_request_context", default=None
 )
 
-# Build allowed hosts from MCP_SERVER_BASE_URL for DNS rebinding protection.
-_mcp_base_url = os.environ.get("MCP_SERVER_BASE_URL", "")
+# Build allowed hosts from the public MCP base URL (the one Settings > MCP
+# Server shows) for DNS rebinding protection.
+_mcp_base_url = mcp_public_base_url() or ""
 _allowed_hosts = ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"]
 if _mcp_base_url:
     from urllib.parse import urlparse
@@ -77,52 +78,24 @@ def _authenticate_and_set_context(
     api_key: str, secret_key: str
 ) -> MCPRequestContext | None:
     """Authenticate via API key and set per-request context."""
-    from accounts.models.user import OrgApiKey, User
-    from accounts.models.workspace import Workspace
+    from rest_framework.exceptions import AuthenticationFailed
+
+    from accounts.api_key_policy import APIKeyRetired, authenticate_api_key
 
     try:
-        # Use .all() to bypass BaseModelManager workspace filtering
-        org_api_key = (
-            OrgApiKey.objects.all()
-            .select_related("organization", "workspace")
-            .get(api_key=api_key, secret_key=secret_key, enabled=True)
-        )
-    except OrgApiKey.DoesNotExist:
-        logger.warning("mcp_auth_failed", api_key_prefix=api_key[:8] if api_key else "")
+        org_api_key = authenticate_api_key(api_key, secret_key)
+    except APIKeyRetired:
+        raise
+    except AuthenticationFailed:
+        logger.warning("mcp_auth_failed")
         return None
-
-    # An ingest key may only write spans to the collector, even if a user was
-    # attached to it.
-    if org_api_key.type == "ingest":
-        logger.warning("mcp_auth_ingest_key_refused", org=str(org_api_key.organization))
-        return None
-
-    if org_api_key.type == "system":
-        user = (
-            User.objects.all()
-            .select_related("organization")
-            .filter(organization=org_api_key.organization)
-            .order_by("created_at")
-            .first()
-        )
-    else:
-        user = org_api_key.user
-
-    if not user:
-        logger.warning(
-            "mcp_auth_no_user",
-            key_type=org_api_key.type,
-            org=str(org_api_key.organization),
-        )
-        return None
+    user = org_api_key.user
 
     organization = org_api_key.organization
-    workspace = (
-        org_api_key.workspace
-        or Workspace.objects.all()
-        .filter(organization=organization, is_default=True, is_active=True)
-        .first()
-    )
+    workspace = org_api_key.workspace
+    if workspace is None:
+        logger.warning("mcp_auth_failed")
+        return None
 
     return _bind_context(
         MCPRequestContext(
@@ -135,39 +108,51 @@ def _authenticate_and_set_context(
 
 
 def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
-    """Authenticate via OAuth Bearer token and set per-request context."""
+    """Bind only the bearer grant's exact owner, organization and workspace."""
+    from uuid import UUID
+
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
     from accounts.models.user import User
     from accounts.models.workspace import Workspace
     from mcp_server.oauth_utils import decrypt_oauth_token
 
     payload = decrypt_oauth_token(token)
-    if not payload or payload.get("type") != "mcp_oauth":
+    if not isinstance(payload, dict) or payload.get("type") != "mcp_oauth":
         return None
-
     try:
-        user = (
-            User.objects.all().select_related("organization").get(id=payload["user_id"])
-        )
-    except User.DoesNotExist:
+        user_id = UUID(str(payload.get("user_id")))
+        organization_id = UUID(str(payload.get("org_id")))
+        workspace_id = UUID(str(payload.get("workspace_id")))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    user = (
+        User.objects.all()
+        .select_related("organization")
+        .filter(pk=user_id, is_active=True)
+        .first()
+    )
+    if user is None:
         return None
 
-    organization = user.organization
+    # A live membership in the grant's organization is authoritative, not the
+    # user's home organization or another membership selected by preference.
+    organization = Organization.objects.filter(pk=organization_id).first()
+    if (
+        organization is None
+        or not OrganizationMembership.no_workspace_objects.filter(
+            user=user, organization=organization, is_active=True, deleted=False
+        ).exists()
+    ):
+        return None
 
-    workspace = None
-    if payload.get("workspace_id"):
-        workspace = (
-            Workspace.objects.all()
-            .filter(
-                id=payload["workspace_id"], organization=organization, is_active=True
-            )
-            .first()
-        )
-    if not workspace:
-        workspace = (
-            Workspace.objects.all()
-            .filter(organization=organization, is_default=True, is_active=True)
-            .first()
-        )
+    # Missing, inactive and foreign workspaces never fall back to a default.
+    # Keep IR's live workspace-access check in addition to exact grant binding.
+    workspace = Workspace.no_workspace_objects.filter(
+        pk=workspace_id, organization=organization, is_active=True
+    ).first()
+    if workspace is None or not user.can_access_workspace(workspace):
+        return None
 
     return _bind_context(
         MCPRequestContext(user=user, organization=organization, workspace=workspace)
@@ -179,6 +164,7 @@ def _bind_context(context: MCPRequestContext) -> MCPRequestContext:
         workspace=context.workspace,
         organization=context.organization,
         user=context.user,
+        require_workspace=True,
     )
     _request_context.set(context)
     return context
@@ -201,12 +187,29 @@ def _current_context() -> MCPRequestContext | None:
     return MCPRequestContext(user=user, organization=organization, workspace=workspace)
 
 
-def _enabled_tools_for_context(context: MCPRequestContext):
-    from mcp_server.usage_helpers import get_enabled_tools, get_or_create_connection
-
-    connection = get_or_create_connection(
-        context.user, context.organization, context.workspace
+def _enabled_tools_for_context(context: MCPRequestContext, *, create=False):
+    from mcp_server.usage_helpers import (
+        get_connection,
+        get_enabled_tools,
+        get_or_create_connection,
     )
+    from tfc.utils.tenant_scope import acts_in_organization
+
+    # Discovery is read-only; only tool calls may initialize a scoped connection.
+    if (
+        context.user is None
+        or not context.user.is_authenticated
+        or not context.user.is_active
+        or context.organization is None
+        or context.workspace is None
+        or context.workspace.organization_id != context.organization.pk
+    ):
+        return None, set()
+    # Preserve IR's live tenant recheck, including revocation after binding.
+    if not acts_in_organization(context.user, context.organization):
+        return None, set()
+    lookup = get_or_create_connection if create else get_connection
+    connection = lookup(context.user, context.organization, context.workspace)
     return connection, get_enabled_tools(connection)
 
 
@@ -252,6 +255,8 @@ async def call_generated_tool(name: str, arguments: dict):
     if tool is None:
         return _error_result(f"Tool not found: {name}", code="NOT_FOUND")
 
+    from rest_framework.exceptions import PermissionDenied
+
     from mcp_server.exceptions import RateLimitExceededError
     from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
     from mcp_server.usage_helpers import (
@@ -260,7 +265,15 @@ async def call_generated_tool(name: str, arguments: dict):
         update_session_counters,
     )
 
-    connection, enabled_names = await sync_to_async(_enabled_tools_for_context)(context)
+    try:
+        connection, enabled_names = await sync_to_async(_enabled_tools_for_context)(
+            context, create=True
+        )
+    except PermissionDenied:
+        return _error_result("Invalid MCP connection scope", code="HTTP_403")
+    if connection is None:
+        # The same refusal the executor gives a caller outside the tenant.
+        return _error_result("Access denied to this organization", code="HTTP_403")
     if name not in enabled_names:
         return _error_result(f"Tool is disabled: {name}", code="FORBIDDEN")
 
@@ -327,8 +340,6 @@ def get_mcp_oauth_app():
     """
     global _oauth_app
     if _oauth_app is None:
-        import os
-
         from mcp.server.auth.routes import (
             create_auth_routes,
             create_protected_resource_routes,
@@ -343,7 +354,9 @@ def get_mcp_oauth_app():
         from mcp_server.constants import TOOL_GROUPS
         from mcp_server.oauth_provider import FutureAGIOAuthProvider
 
-        base_url = os.environ.get("MCP_SERVER_BASE_URL", "http://localhost:8000")
+        # The same base the dashboard shows as "<base>/mcp", so the issuer and
+        # the protected resource match the URL an IDE was given.
+        base_url = mcp_public_base_url() or "http://localhost:8000"
 
         provider = FutureAGIOAuthProvider()
 
@@ -425,8 +438,6 @@ async def _mcp_streamable_with_auth(scope, receive, send):
 
     Supports: Bearer token (OAuth) or X-Api-Key + X-Secret-Key headers.
     """
-    import os
-
     from asgiref.sync import sync_to_async
     from starlette.responses import Response as StarletteResponse
 
@@ -435,8 +446,9 @@ async def _mcp_streamable_with_auth(scope, receive, send):
 
     method = scope.get("method", "GET")
 
-    # Build WWW-Authenticate header for 401 responses (RFC 9728)
-    base_url = os.environ.get("MCP_SERVER_BASE_URL", "http://localhost:8000")
+    # Build WWW-Authenticate header for 401 responses (RFC 9728), from the
+    # same public base the dashboard shows.
+    base_url = mcp_public_base_url() or "http://localhost:8000"
     www_auth = f'Bearer resource_metadata="{base_url}/.well-known/oauth-protected-resource/mcp"'
 
     # Authenticate every request (GET for session init, POST for tool calls, DELETE for cleanup)
@@ -476,9 +488,25 @@ async def _mcp_streamable_with_auth(scope, receive, send):
             await response(scope, receive, send)
             return
 
-        context = await sync_to_async(_authenticate_and_set_context)(
-            api_key, secret_key
-        )
+        from accounts.api_key_policy import APIKeyRetired
+
+        try:
+            context = await sync_to_async(_authenticate_and_set_context)(
+                api_key, secret_key
+            )
+        except APIKeyRetired as exc:
+            response = StarletteResponse(
+                content=json.dumps(
+                    {"code": exc.default_code, "create_url": exc.create_url}
+                ),
+                status_code=401,
+                headers={
+                    "Content-Type": "application/json",
+                    "WWW-Authenticate": www_auth,
+                },
+            )
+            await response(scope, receive, send)
+            return
         if not context:
             response = StarletteResponse(
                 content='{"error":"invalid_token","error_description":"Invalid credentials"}',
@@ -494,7 +522,7 @@ async def _mcp_streamable_with_auth(scope, receive, send):
     logger.debug(
         "mcp_request_authenticated",
         method=method,
-        org_id=str(context.organization.id),
+        org_id=str(context.organization.id) if context.organization else None,
         user=str(context.user.id),
     )
 

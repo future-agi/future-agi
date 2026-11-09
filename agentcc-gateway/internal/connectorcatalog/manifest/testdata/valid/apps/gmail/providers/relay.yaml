@@ -1,0 +1,36 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#provider"
+app: gmail
+id: relay
+version: 1.0.0
+kind: partner
+publisher: partner
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: "https://mcp.relay.example/servers/{serverId}"
+  urlVariables:
+    serverId:
+      description: The org's Relay server id.
+      pattern: "^[A-Za-z0-9-]{8,64}$"
+      scope: org
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: partner
+  partner:
+    platform: relay
+    toolkit: gmail
+    version: "2026-10-01"
+    binding: header
+    toolMode: fixed
+tools: { source: partner, defaultPosture: ask }
+pricing: { model: partner_metered }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://relay.example/docs/mcp
+    fetchedAt: 2026-10-19

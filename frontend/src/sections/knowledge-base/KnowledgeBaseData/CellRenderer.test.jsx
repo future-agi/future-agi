@@ -43,3 +43,13 @@ describe("knowledge base ProcessingStatusCell", () => {
     expect(screen.queryByTestId("kb-file-error-icon")).not.toBeInTheDocument();
   });
 });
+
+// v2.1 g8 (kb:page): a knowledge base with a failed file is not shown as
+// processing.
+describe("kbStatusLabel (g8)", () => {
+  it("PartialCompleted reads 'Some files failed'", async () => {
+    const { kbStatusLabel } = await import("./CellRenderer");
+    expect(kbStatusLabel("PartialCompleted")).toBe("Some files failed");
+    expect(kbStatusLabel("Failed")).toBe("Failed");
+  });
+});

@@ -25,9 +25,9 @@ export const DERIVING_LABEL = {
 };
 
 // The tab rail on the building pane: the workspace tabs, rendered pointer-dead.
-// Runs, Improvements and Versions are left out — an environment that is still
-// building (or failed to build) has no runs, no fixes and no versions yet.
-const NOT_WHILE_BUILDING = new Set(["runs", "improvements", "versions"]);
+// Runs and Versions are left out — an environment that is still building (or
+// failed to build) has no runs and no versions yet.
+const NOT_WHILE_BUILDING = new Set(["runs", "versions"]);
 export const BUILDING_TABS = WORKSPACE_TABS.filter((t) => !NOT_WHILE_BUILDING.has(t.id));
 
 export const CONSOLE_COPY = {
@@ -117,7 +117,7 @@ export const NUDGE_COPY = {
   errors: {
     nudge_closed: "This update was already answered or closed.",
     nudge_not_found: "This update no longer exists.",
-    nudges_disabled: "Rebuild isn't available yet.",
+    nudges_disabled: "Rebuild is turned off.",
     rebuild_running: "An update is running; try again when it finishes",
     environment_building: "The environment is still being built",
   },

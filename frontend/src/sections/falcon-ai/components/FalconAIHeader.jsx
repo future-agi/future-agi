@@ -15,7 +15,9 @@ import InputAdornment from "@mui/material/InputAdornment";
 import ListItemButton from "@mui/material/ListItemButton";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { importWithRecovery } from "src/utils/chunkRecovery";
 import useFalconStore from "../store/useFalconStore";
+import { captureFalconRequest } from "../store/falconRequestGuard";
 import { useFalconContext } from "../hooks/useFalconContext";
 import { fetchConversations, getConversation } from "../hooks/useFalconAPI";
 import SkillEditorDialog from "./SkillEditorDialog";
@@ -75,9 +77,27 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
   const skillsMenuOpen = Boolean(skillsAnchor);
   const historyOpen = Boolean(historyAnchor);
 
+  const historyRequestRef = useRef(null);
+
+  useEffect(
+    () =>
+      useFalconStore.subscribe((state, previous) => {
+        if (state.resetGeneration === previous.resetGeneration) return;
+        historyRequestRef.current = null;
+        setHistoryAnchor(null);
+        setHistoryItems([]);
+        setHistorySearch("");
+        setHistoryHasMore(true);
+        setHistoryLoading(false);
+      }),
+    [],
+  );
+
   const PAGE_SIZE = 20;
 
   const loadHistory = useCallback(async (offset = 0, search = "") => {
+    const isCurrent = captureFalconRequest();
+    historyRequestRef.current = isCurrent;
     setHistoryLoading(true);
     try {
       const data = await fetchConversations({
@@ -85,6 +105,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
         offset,
         search,
       });
+      if (!isCurrent() || historyRequestRef.current !== isCurrent) return;
       const results = data.results || [];
       if (offset === 0) {
         setHistoryItems(results);
@@ -95,7 +116,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
     } catch {
       // silent
     } finally {
-      setHistoryLoading(false);
+      if (historyRequestRef.current === isCurrent) setHistoryLoading(false);
     }
   }, []);
 
@@ -109,8 +130,10 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
   const handleHistorySelect = async (conv) => {
     setHistoryAnchor(null);
     setCurrentConversation(conv.id);
+    const isCurrent = captureFalconRequest({ conversation: true });
     try {
       const data = await getConversation(conv.id);
+      if (!isCurrent()) return;
       const c = data.result || data;
       const msgs = (c.messages || []).map((m) => ({
         ...m,
@@ -135,7 +158,10 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
   // Debounced search for history
   useEffect(() => {
     if (!historyOpen) return undefined;
-    const t = setTimeout(() => loadHistory(0, historySearch), 300);
+    const isCurrent = captureFalconRequest();
+    const t = setTimeout(() => {
+      if (isCurrent()) loadHistory(0, historySearch);
+    }, 300);
     return () => clearTimeout(t);
   }, [historySearch, historyOpen, loadHistory]);
 
@@ -485,9 +511,14 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
         skill={null}
         onClose={() => setEditorOpen(false)}
         onSaved={async () => {
+          const isCurrent = captureFalconRequest();
           try {
-            const { listSkills } = await import("../hooks/useFalconAPI");
+            const { listSkills } = await importWithRecovery(
+              () => import("../hooks/useFalconAPI"),
+            );
+            if (!isCurrent()) return;
             const data = await listSkills();
+            if (!isCurrent()) return;
             const results = data.results || data || [];
             const skillList = Array.isArray(results) ? results : [];
             useFalconStore.getState().setSkills(skillList);

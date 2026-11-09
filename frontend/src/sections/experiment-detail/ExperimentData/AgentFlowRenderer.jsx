@@ -42,13 +42,29 @@ const DashedConnector = () => (
   </Stack>
 );
 
+// Rows carry the backend shape (`cell_value`, snake_case; an array of diff
+// segments when a diff is on) while DatapointCard reads `cellValue` /
+// `cellDiffValue`. Map one onto the other, as the drawer's generic path does.
+export function toDatapointValue(cellData, showDiffSegments) {
+  const raw = cellData?.cell_value ?? cellData?.cellValue;
+  if (!Array.isArray(raw)) return { ...cellData, cellValue: raw ?? "" };
+  if (showDiffSegments) return { ...cellData, cellDiffValue: raw };
+  return {
+    ...cellData,
+    cellValue: raw
+      .filter((item) => item?.status === "default" || item?.status === "added")
+      .map((item) => item.text)
+      .join(" "),
+  };
+}
+
 const AgentFlowRenderer = ({
   outputs,
   showDiff,
   onDiffClick,
   activeTab,
   indColsDifTracker,
-  colId: _colId,
+  colId,
 }) => {
   const [viewAllPrompts, setViewAllPrompts] = useState(false);
 
@@ -122,11 +138,15 @@ const AgentFlowRenderer = ({
       {displayedOutputs.map((output, index) => {
         const { columnName, isFinal, ...cellData } = output;
         const isLast = index === displayedOutputs.length - 1;
+        const value = toDatapointValue(
+          cellData,
+          activeTab === "difference" || Boolean(indColsDifTracker?.[colId]),
+        );
 
         return (
           <React.Fragment key={columnName || index}>
             <DatapointCard
-              value={cellData}
+              value={value}
               isAgentsFinalNode={isFinal}
               showDiff={showDiff}
               column={{

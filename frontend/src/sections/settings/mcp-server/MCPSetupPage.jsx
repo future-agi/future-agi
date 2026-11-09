@@ -1,13 +1,5 @@
 import React from "react";
-import {
-  Alert,
-  Box,
-  Button,
-  Stack,
-  Typography,
-  useTheme,
-} from "@mui/material";
-import SvgColor from "src/components/svg-color";
+import { Alert, Box, Button, Stack, Typography, useTheme } from "@mui/material";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useMCPConfig } from "src/api/mcp";
 import ClientSetupGuide from "./ClientSetupGuide";
@@ -18,9 +10,7 @@ export default function MCPSetupPage() {
   const { data: config, isLoading, isError } = useMCPConfig();
 
   if (isLoading) {
-    return (
-      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   if (isError) {
@@ -66,29 +56,15 @@ export default function MCPSetupPage() {
           </Typography>
         </Box>
         <Button
+          component="a"
+          href={`${import.meta.env.BASE_URL}docs/mcp-server.html`}
+          target="_blank"
+          rel="noopener noreferrer"
           variant="outlined"
           size="small"
-          sx={{
-            borderRadius: "4px",
-            height: "30px",
-            px: "4px",
-            width: "105px",
-            flexShrink: 0,
-          }}
-          onClick={() => {
-            window.open(
-              "https://docs.futureagi.com/docs/tracing/auto/mcp/",
-              "_blank",
-            );
-          }}
+          sx={{ flexShrink: 0 }}
         >
-          <SvgColor
-            src="/assets/icons/agent/docs.svg"
-            sx={{ height: 16, width: 16, mr: 1 }}
-          />
-          <Typography typography="s2" fontWeight="fontWeightMedium">
-            View Docs
-          </Typography>
+          View Docs
         </Button>
       </Stack>
 

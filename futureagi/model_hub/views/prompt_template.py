@@ -1,3 +1,5 @@
+# Imports continue after the module logger below (pre-existing layout).
+# ruff: noqa: E402
 import base64
 import json  # Add this import at the top of the file
 import re
@@ -36,7 +38,7 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -83,7 +85,6 @@ from model_hub.models.choices import ModalityType, OwnerChoices, StatusType
 from model_hub.models.develop_dataset import (
     Cell,
     Column,
-    Dataset,
     KnowledgeBaseFile,
     Row,
 )
@@ -113,6 +114,7 @@ from model_hub.serializers.prompt_template import (
     PromptHistoryExecutionSerializer,
     PromptTemplateFilter,
     PromptTemplateSerializer,
+    PromptVersionHistoryPageSerializer,
     SingleEvaluationConfigSerializer,
     UploadFileSerializer,
     UserResponseSchemaSerializer,
@@ -133,6 +135,9 @@ from model_hub.utils.websocket_manager import (
     get_websocket_manager,
 )
 from model_hub.utils.workspace_scope import (
+    explicit_workspace_filter,
+    request_organization,
+    request_workspace,
     request_workspace_filter,
     scoped_column_queryset,
     scoped_dataset_queryset,
@@ -147,7 +152,11 @@ from tfc.utils.base_viewset import (
 )
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.pagination import (
+    MAX_PAGE_SIZE,
+    ExtendedPageNumberPagination,
+    PageSizeTooLarge,
+)
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
     convert_image_from_url_to_base64,
@@ -381,7 +390,9 @@ def replace_variables(
     return processed_messages
 
 
-def replace_ids_with_column_name(prompt: str) -> str:
+def replace_ids_with_column_name(
+    prompt: str, request=None, *, organization=None, workspace=None
+) -> str:
     """
     Replace column ID placeholders in the prompt with their corresponding column names.
 
@@ -405,10 +416,20 @@ def replace_ids_with_column_name(prompt: str) -> str:
         if not filtered_placeholders or len(filtered_placeholders) == 0:
             return prompt
 
-        # Fetch all columns in a single query
+        if request is not None:
+            organization = request_organization(request)
+            workspace = request_workspace(request)
+        if organization is None:
+            return prompt
         columns = {
             str(col.id): col.name
-            for col in Column.objects.filter(id__in=filtered_placeholders)
+            for col in Column.no_workspace_objects.filter(
+                explicit_workspace_filter(workspace, "dataset__workspace"),
+                id__in=filtered_placeholders,
+                dataset__organization=organization,
+                dataset__deleted=False,
+                deleted=False,
+            )
         }
         for placeholder in filtered_placeholders:
             try:
@@ -424,56 +445,17 @@ def replace_ids_with_column_name(prompt: str) -> str:
         return prompt
 
 
-async def replace_ids_with_column_name_async(prompt: str) -> str:
-    """
-    Async version of replace_ids_with_column_name for use in async contexts (e.g., WebSocket consumers).
-
-    Replace column ID placeholders in the prompt with their corresponding column names.
-
-    Args:
-        prompt: A string containing placeholders in the format {{column_id}}
-
-    Returns:
-        The prompt string with column IDs replaced by their names
-    """
+async def replace_ids_with_column_name_async(
+    prompt: str, *, organization=None, workspace=None
+) -> str:
+    """Expand names with explicit scope across the async database boundary."""
     from asgiref.sync import sync_to_async
 
-    try:
-        placeholders = re.findall(r"\{\{(.*?)\}\}", prompt)
-        if not placeholders:
-            return prompt
-
-        # remove non uuid placeholders
-        filtered_placeholders = []
-        for placeholder in placeholders:
-            if is_valid_uuid(placeholder):
-                filtered_placeholders.append(placeholder)
-
-        if not filtered_placeholders or len(filtered_placeholders) == 0:
-            return prompt
-
-        # Fetch all columns in a single query (wrapped with sync_to_async)
-        @sync_to_async
-        def fetch_columns():
-            return {
-                str(col.id): col.name
-                for col in Column.objects.filter(id__in=filtered_placeholders)
-            }
-
-        columns = await fetch_columns()
-
-        for placeholder in filtered_placeholders:
-            try:
-                if placeholder in columns:
-                    prompt = prompt.replace(
-                        f"{{{{{placeholder}}}}}", f"{{{{{columns[placeholder]}}}}}"
-                    )
-            except Exception as e:
-                logger.error(f"Error replacing column ID {placeholder}: {str(e)}")
-        return prompt
-    except Exception as e:
-        logger.exception(f"Error replacing IDs with column names (async): {str(e)}")
-        return prompt
+    return await sync_to_async(replace_ids_with_column_name)(
+        prompt,
+        organization=organization,
+        workspace=workspace,
+    )
 
 
 def _coerce_organization_id(organization_or_id):
@@ -654,8 +636,13 @@ class UploadFileView(APIView):
                             file_name = self._file_name_with_extension(file_name, url)
                             urls.append({"url": url, "file_name": file_name})
                         except Exception as e:
+                            logger.exception(f"Error uploading file: {str(e)}")
                             urls.append(
-                                {"url": None, "error": str(e), "file_name": None}
+                                {
+                                    "url": None,
+                                    "error": "Failed to upload file.",
+                                    "file_name": None,
+                                }
                             )
                     return self._gm.success_response(urls)
         except Exception as e:
@@ -841,7 +828,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error retrieving prompt template: {str(e)}")
-            return self._gm.bad_request(f"Failed to retrieve template: {str(e)}")
+            return self._gm.bad_request("Failed to retrieve template")
 
     @action(detail=False, methods=["get"], url_path="get-template-by-name")
     def get_template_by_name(self, request):
@@ -936,7 +923,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error retrieving prompt template: {str(e)}")
-            return self._gm.bad_request(f"Failed to retrieve template: {str(e)}")
+            return self._gm.bad_request("Failed to retrieve template")
 
     @action(detail=True, methods=["get"], url_path="stop-streaming")
     def stop_streaming(self, request, *args, **kwargs):
@@ -1226,9 +1213,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         deleted=False,
                     )
                 except Exception as e:
-                    return self._gm.bad_request(
-                        f"Prompt base template not found: {str(e)}"
+                    logger.exception(
+                        f"Error retrieving prompt base template for draft: {str(e)}"
                     )
+                    return self._gm.bad_request("Prompt base template not found")
 
             if prompt_folder:
                 try:
@@ -1239,7 +1227,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         deleted=False,
                     )
                 except Exception as e:
-                    return self._gm.bad_request(f"Prompt folder not found: {str(e)}")
+                    logger.exception(
+                        f"Error retrieving prompt folder for draft: {str(e)}"
+                    )
+                    return self._gm.bad_request("Prompt folder not found")
 
             if not prompt_name:
                 # Find the next available number for Untitled-N
@@ -1309,7 +1300,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error in creation of draft: {str(e)}")
-            return self._gm.bad_request(f"Failed to create draft: {str(e)}")
+            return self._gm.bad_request("Failed to create draft")
 
     @action(detail=True, methods=["get"], url_path="evaluations")
     def retrieve_evaluations(self, request, pk):
@@ -2032,10 +2023,12 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                                 except ImportError:
                                     emit = None
 
+                                # Pre-existing: BillingEventType is not bound in this
+                                # scope, so this NameError is swallowed below.
                                 if (
                                     emit is not None
                                     and UsageEvent is not None
-                                    and BillingEventType is not None
+                                    and BillingEventType is not None  # noqa: F405
                                 ):
                                     emit(
                                         UsageEvent(
@@ -2068,16 +2061,16 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         ws_manager.send_error_message(
                             template_id=str(template.id),
                             version=execution.template_version,
-                            error=str(e),
+                            error="Failed to run prompt",
                             result_index=i,
                             num_results=max_len,
                         )
                     if run_index is not None:
                         # Update specific index with error
-                        responses[i] = str(e)
+                        responses[i] = "Failed to run prompt"
                     else:
                         # Append error for all indices
-                        responses.append(str(e))
+                        responses.append("Failed to run prompt")
                     execution.output = responses
                     execution.is_draft = False
                     execution.updated_at = timezone.now()
@@ -2111,7 +2104,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error in run method: {e}")
-            responses = [str(e)]
+            responses = ["Failed to run prompt"]
             value_infos = [None]
             if not is_sdk:
                 result_index = run_index if run_index is not None else 0
@@ -2121,7 +2114,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     version=(
                         version_to_run if version_to_run else execution.template_version
                     ),
-                    error=str(e),
+                    error="Failed to run prompt",
                     result_index=result_index,
                     num_results=num_results,
                 )
@@ -2191,9 +2184,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error fetching evaluation configs: {str(e)}")
-            return self._gm.bad_request(
-                f"Failed to fetch evaluation configurations: {str(e)}"
-            )
+            return self._gm.bad_request("Failed to fetch evaluation configurations")
 
     @action(detail=True, methods=["post"], url_path="update-evaluation-configs")
     def update_evaluation_configs(self, request, pk=None):
@@ -2286,9 +2277,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 prompt_eval.mapping = new_config.get("mapping", {})
                 prompt_eval.config = normalized_config
                 prompt_eval.kb = kb
-                prompt_eval.error_localizer = new_config.get(
-                    "error_localizer", False
-                )
+                prompt_eval.error_localizer = new_config.get("error_localizer", False)
                 prompt_eval.save(
                     update_fields=[
                         "name",
@@ -2409,7 +2398,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         {
                             "message": "Evaluation configuration updated successfully but failed to start evaluation",
                             "prompt_eval_config_id": str(prompt_eval.id),
-                            "error": str(e),
+                            "error": "Failed to start evaluation",
                         }
                     )
 
@@ -2422,9 +2411,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error updating evaluation configs: {str(e)}")
-            return self._gm.bad_request(
-                f"Failed to update evaluation configurations: {str(e)}"
-            )
+            return self._gm.bad_request("Failed to update evaluation configurations")
 
     @action(detail=True, methods=["delete"], url_path="delete-evaluation-config")
     def delete_evaluation_config(self, request, pk=None):
@@ -2472,9 +2459,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error deleting evaluation config: {str(e)}")
-            return self._gm.bad_request(
-                f"Failed to delete evaluation configuration: {str(e)}"
-            )
+            return self._gm.bad_request("Failed to delete evaluation configuration")
 
     @action(detail=True, methods=["post"], url_path="run-evals-on-multiple-versions")
     def run_evals_on_multiple_versions(self, request, pk=None):
@@ -2499,7 +2484,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             except (TypeError, ValueError):
                 return self._gm.bad_request("Invalid evaluation configuration id.")
 
-            existing_eval_configs = set(
+            existing_eval_configs = set(  # noqa: C401
                 str(config_id)
                 for config_id in PromptEvalConfig.objects.filter(
                     id__in=prompt_eval_config_ids,
@@ -2607,7 +2592,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error starting evaluation job: {str(e)}")
-            return self._gm.bad_request(f"Failed to start evaluation job: {str(e)}")
+            return self._gm.bad_request("Failed to start evaluation job")
 
     def run_evaluation(
         self,
@@ -2852,7 +2837,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 try:
                     from ee.usage.utils.event_properties import token_usage_properties
                 except ImportError:
-                    token_usage_properties = lambda token_usage: {}
+                    token_usage_properties = lambda token_usage: {}  # noqa: E731
 
                 if (
                     emit is not None
@@ -2880,7 +2865,14 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 try:
                     api_call_log_row.status = APICallStatusChoices.ERROR.value
                     config_dict = json.loads(api_call_log_row.config)
-                    config_dict.update({"output": {"output": None, "reason": str(e)}})
+                    config_dict.update(
+                        {
+                            "output": {
+                                "output": None,
+                                "reason": "Failed to run evaluation",
+                            }
+                        }
+                    )
                     api_call_log_row.config = json.dumps(config_dict)
                     api_call_log_row.save()
                 except Exception:
@@ -3053,12 +3045,12 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             # Prepare error result data
             error_result_data = {
-                "output": str(e),
+                "output": "Failed to run evaluation",
                 "value": None,
                 "status": StatusType.ERROR.value,
                 "meta": {
                     "response_time_ms": 0,
-                    "reason": str(e),
+                    "reason": "Failed to run evaluation",
                     "failure": True,  # Explicitly set failure to True for errors
                     "token_count": 0,
                 },
@@ -3264,7 +3256,12 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.exception(f"Error in run method: {e}")
 
-    @validated_request(query_serializer=PromptVersionsQuerySerializer)
+    # The paginated branch always answers (ExtendedPageNumberPagination has a
+    # default page size), so the 200 is the bare page, not the envelope.
+    @validated_request(
+        query_serializer=PromptVersionsQuerySerializer,
+        responses={200: PromptVersionHistoryPageSerializer},
+    )
     @action(detail=True, methods=["get"])
     def versions(self, request, pk=None):
         try:
@@ -3293,9 +3290,17 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 return self.paginator.get_paginated_response(serializer.data)
 
             return self._gm.success_response(serializer.data)
+        except Http404:
+            # get_object: an id that names no template of the caller's, or is
+            # not a UUID, is a 404, never a 500.
+            return self._gm.not_found("Prompt template not found")
+        except NotFound:
+            return self._gm.not_found("Invalid page.")
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in versions method: {e}")
-            return self._gm.internal_server_error_response(str(e))
+            return self._gm.internal_server_error_response()
 
     @action(detail=True, methods=["post"])
     def set_default(self, request, pk=None):
@@ -3361,7 +3366,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             return self._gm.success_response("Templates deleted successfully")
         except Exception as e:
             logger.exception(f"Error in bulk_delete method: {e}")
-            return self._gm.internal_server_error_response(str(e))
+            return self._gm.internal_server_error_response()
 
     @action(detail=True, methods=["post"])
     def commit(self, request, pk=None):
@@ -3503,7 +3508,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 try:
                     from ee.usage.utils.event_properties import token_usage_properties
                 except ImportError:
-                    token_usage_properties = lambda token_usage: {}
+                    token_usage_properties = lambda token_usage: {}  # noqa: E731
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
@@ -3587,7 +3592,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 Response: A response with the improved prompt.
             """
             existing_prompt = request.data.get("existing_prompt")
-            existing_prompt = replace_ids_with_column_name(existing_prompt)
+            existing_prompt = replace_ids_with_column_name(existing_prompt, request)
             improvement_requirements = request.data.get("improvement_requirements", "")
 
             # Validate the input
@@ -3641,7 +3646,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 try:
                     from ee.usage.utils.event_properties import token_usage_properties
                 except ImportError:
-                    token_usage_properties = lambda token_usage: {}
+                    token_usage_properties = lambda token_usage: {}  # noqa: E731
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
@@ -3850,7 +3855,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 Response: A response with improvement suggestions.
             """
             prompt = request.data.get("prompt")
-            prompt = replace_ids_with_column_name(prompt)
+            prompt = replace_ids_with_column_name(prompt, request)
             explanation = request.data.get("explanation")
             example = request.data.get("example", {})
 
@@ -3932,8 +3937,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error in generating variable values: {str(e)}")
-            traceback.print_exc()
-            return self._gm.bad_request(f"Failed to generate variable values: {str(e)}")
+            return self._gm.bad_request("Failed to generate variable values")
 
     @action(detail=True, methods=["post"], url_path="save-name")
     def save_name(self, request, pk=None):
@@ -3975,7 +3979,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error in saving template name: {str(e)}")
-            return self._gm.bad_request(f"Failed to save template name: {str(e)}")
+            return self._gm.bad_request("Failed to save template name")
 
     @action(detail=True, methods=["post"], url_path="save-prompt-folder")
     def save_prompt_folder(self, request, pk=None):
@@ -4003,7 +4007,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"Error in saving prompt folder: {str(e)}")
-            return self._gm.bad_request(f"Failed to save prompt folder: {str(e)}")
+            return self._gm.bad_request("Failed to save prompt folder")
 
 
 class ColumnValuesAPIView(APIView):
@@ -4173,22 +4177,21 @@ class PromptExecutionViewSet(BaseModelViewSetMixin, viewsets.ReadOnlyModelViewSe
 
             if page_size:
                 try:
-                    self.paginator.page_size = int(page_size)
+                    requested_page_size = int(page_size)
                 except (ValueError, TypeError):
                     logger.warning(f"Invalid page_size parameter: {page_size}")
-                    pass
+                else:
+                    if requested_page_size > MAX_PAGE_SIZE:
+                        raise PageSizeTooLarge()
+                    self.paginator.page_size = requested_page_size
 
             if send_all:
-                # Get combined results of prompt templates and folders
-                combined_data, prompt_count = self._get_combined_templates_and_folders()
-
-                # Handle pagination for combined data
                 paginator = self.pagination_class()
-                if page_size:
-                    try:
-                        paginator.page_size = int(page_size)
-                    except (ValueError, TypeError):
-                        pass
+                paginator.page_size = self.paginator.page_size
+                # Reject an oversized limit before loading combined results;
+                # paginate_queryset would otherwise validate it only afterwards.
+                paginator.get_page_size(request)
+                combined_data, prompt_count = self._get_combined_templates_and_folders()
 
                 page = paginator.paginate_queryset(combined_data, request)
                 if page is not None:
@@ -4237,9 +4240,11 @@ class PromptExecutionViewSet(BaseModelViewSetMixin, viewsets.ReadOnlyModelViewSe
 
                 return self._gm.success_response(serialized_data)
 
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in list view: {str(e)}")
-            return self._gm.bad_request(f"Failed to retrieve templates: {str(e)}")
+            return self._gm.bad_request("Failed to retrieve templates")
 
     def _get_combined_templates_and_folders(self):
         """
@@ -4466,6 +4471,8 @@ class PromptHistoryExecutionViewSet(
                 return self.get_paginated_response(data)
 
             return self._gm.success_response(data)
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in list view: {str(e)}")
             return self._gm.bad_request(
@@ -4509,6 +4516,6 @@ def run_template_task(
         logger.exception(f"error {e}")
         template.status = StatusType.FAILED.value
 
-        template.error_message = str(e)
+        template.error_message = "Failed to run prompt"
         template.save()
         raise e

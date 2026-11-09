@@ -22,7 +22,9 @@ import { AgGridReact } from "ag-grid-react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import StatusBadge from "./components/status-badge";
-import { fToNow } from "src/utils/format-time";
+import RelativeTime from "src/sections/common/ux/RelativeTime";
+import CustomTooltip from "src/components/tooltip";
+import { reviewPageUrl } from "src/sections/develop-detail/Review/reviewModel";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { paths } from "src/routes/paths";
@@ -104,6 +106,73 @@ function StatusCellRenderer({ data }) {
   );
 }
 
+TypeCellRenderer.propTypes = { data: PropTypes.object };
+
+/** RW#38: Pairwise / Rubric / Labelling, and the run pair it reviews. */
+export function queueTypeOf(data) {
+  const m = data?.metadata ?? {};
+  if (m.kind !== "experiment_review") return { type: "Labelling", runs: null };
+  if (m.mode === "pairwise")
+    return {
+      type: m.focus === "regressions" ? "Pairwise · regressions" : "Pairwise",
+      runs:
+        m.run_b_label && m.run_a_label
+          ? `${m.run_b_label} vs ${m.run_a_label}`
+          : null,
+      blind: Boolean(m.blind),
+    };
+  return { type: "Rubric", runs: m.run_label ?? null };
+}
+
+function TypeCellRenderer({ data }) {
+  if (!data) return null;
+  const t = queueTypeOf(data);
+  return (
+    <Stack
+      justifyContent="center"
+      gap={0.25}
+      sx={{ height: "100%", minWidth: 0 }}
+    >
+      <Typography variant="body2" noWrap>
+        {t.type}
+      </Typography>
+      <Stack direction="row" alignItems="center" gap={0.5}>
+        {t.runs && (
+          <Box
+            component="span"
+            sx={{
+              typography: "caption",
+              px: 0.75,
+              borderRadius: 0.5,
+              border: "1px solid",
+              borderColor: "divider",
+              color: "text.secondary",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {t.runs}
+          </Box>
+        )}
+        {t.blind && (
+          <CustomTooltip
+            show
+            size="small"
+            placement="top"
+            title="Blind: run names hidden from reviewers until they finish"
+          >
+            <Box
+              component="span"
+              sx={{ display: "inline-flex", color: "text.disabled" }}
+            >
+              <Iconify icon="mdi:eye-off-outline" width={14} />
+            </Box>
+          </CustomTooltip>
+        )}
+      </Stack>
+    </Stack>
+  );
+}
+
 ProgressCellRenderer.propTypes = {
   data: PropTypes.object,
 };
@@ -124,6 +193,7 @@ function ProgressCellRenderer({ data }) {
     );
   }
 
+  const left = Math.max(0, total - done);
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
       <Stack spacing={0.5} sx={{ minWidth: 100 }}>
@@ -142,6 +212,16 @@ function ProgressCellRenderer({ data }) {
             },
           }}
         />
+        {data.metadata?.kind === "experiment_review" && left > 0 ? (
+          <Typography
+            variant="caption"
+            color="primary.main"
+            fontWeight={600}
+            noWrap
+          >
+            Continue ({left} left)
+          </Typography>
+        ) : null}
       </Stack>
     </Box>
   );
@@ -156,7 +236,9 @@ function LabelsCellRenderer({ data }) {
   const count = data.label_count ?? data.labels?.length ?? 0;
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Typography variant="body2">{count} labels</Typography>
+      <Typography variant="body2">
+        {count} {count === 1 ? "label" : "labels"}
+      </Typography>
     </Box>
   );
 }
@@ -452,7 +534,7 @@ function CreatedCellRenderer({ data }) {
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
       <Typography variant="body2" color="text.secondary">
-        {date ? fToNow(date) : "—"}
+        {date ? <RelativeTime iso={date} by={data.created_by_name} /> : "—"}
       </Typography>
     </Box>
   );
@@ -618,6 +700,14 @@ export default function AnnotationQueueTable({
         cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
       },
       {
+        field: "type",
+        headerName: "Type",
+        flex: 1.3,
+        minWidth: 170,
+        sortable: false,
+        cellRenderer: loading ? SkeletonCell : TypeCellRenderer,
+      },
+      {
         field: "progress",
         headerName: "Progress",
         flex: 1.2,
@@ -684,6 +774,19 @@ export default function AnnotationQueueTable({
       if (!event?.data) return;
       if (event.column?.getColId() === "actions") return;
       if (archivedView) return;
+      // RW#38: a review queue with work left opens the review page at the
+      // next pending row ("Continue (8 left)"); others open the queue.
+      const m = event.data.metadata ?? {};
+      const left =
+        (event.data.item_count ?? 0) - (event.data.completed_count ?? 0);
+      if (m.kind === "experiment_review" && m.dataset_id && left > 0) {
+        navigate(
+          reviewPageUrl(m.dataset_id, event.data.id, {
+            from: "/dashboard/annotations/queues",
+          }),
+        );
+        return;
+      }
       navigate(paths.dashboard.annotations.queueDetail(event.data.id));
     },
     [navigate, archivedView],

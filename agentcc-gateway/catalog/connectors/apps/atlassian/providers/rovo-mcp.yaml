@@ -1,0 +1,84 @@
+# The Atlassian Rovo MCP Server at /v2/mcp, the only endpoint Atlassian's
+# pages name (EE's built-in app still points at /v1/mcp). ?tools=all is the
+# flat tool list Atlassian offers to MCP gateways that need a complete list;
+# without it, most tools are reached through discover and executeRead,
+# executeWrite or executeDestructive, which per-tool policy cannot tell
+# apart. OAuth 2.1 from Atlassian's authorization server for this resource,
+# which registers clients dynamically or by a client ID metadata document.
+# The scopes are Jira's and Confluence's read, write and search groups; the
+# delete and manage groups are off until an admin enables them. EE reads a
+# pre-registered client id and secret from its environment and cannot
+# register a client, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: atlassian
+id: rovo-mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.atlassian.com/v2/mcp?tools=all
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://auth.atlassian.com/authorize
+    tokenUrl: https://auth.atlassian.com/oauth/token
+    scopes:
+      - "read:jira:agent-interface"
+      - "write:jira:agent-interface"
+      - "search:jira:agent-interface"
+      - "read:confluence:agent-interface"
+      - "write:confluence:agent-interface"
+      - "search:confluence:agent-interface"
+      - offline_access
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://auth.atlassian.com/oauth/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.atlassian.com/cloud/rovo-mcp/
+    fetchedAt: 2026-10-20
+  - fact: transport.url
+    url: https://developer.atlassian.com/cloud/rovo-mcp/guides/supported-tools/
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://developer.atlassian.com/cloud/rovo-mcp/guides/authentication-and-authorization/
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://developer.atlassian.com/cloud/rovo-mcp/guides/supported-tools/
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://mcp.atlassian.com/.well-known/oauth-protected-resource/v2/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.pkce
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.revocation.url
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+x-omega: { ee: exclude }

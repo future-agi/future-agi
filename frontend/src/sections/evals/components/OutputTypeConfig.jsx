@@ -34,6 +34,10 @@ const OutputTypeConfig = ({
   // scores, pass threshold) remains editable. Used to prevent users from
   // switching the fundamental output shape while still letting them tune it.
   categoryLocked = false,
+  // L7c g7 (evalcreate:output-type): Create offers no Choices output: a
+  // choice label never reaches a judged cell, so the option is absent there
+  // (an eval that already is Choices still shows it).
+  hideChoices = false,
 }) => {
   // Category radio is locked if either the whole component is disabled OR
   // categoryLocked is explicitly set.
@@ -141,6 +145,7 @@ const OutputTypeConfig = ({
                 onOutputTypeChange(val);
                 // Auto-add a default row if switching to scoring/deterministic with no choices
                 if (
+                  !hideChoices &&
                   (val === "percentage" || val === "deterministic") &&
                   Object.keys(choiceScores || {}).length === 0
                 ) {
@@ -162,11 +167,13 @@ const OutputTypeConfig = ({
                 control={<Radio size="small" disabled={radioDisabled} />}
                 label="Scoring"
               />
-              <FormControlLabel
-                value="deterministic"
-                control={<Radio size="small" disabled={radioDisabled} />}
-                label="Choices"
-              />
+              {hideChoices && outputType !== "deterministic" ? null : (
+                <FormControlLabel
+                  value="deterministic"
+                  control={<Radio size="small" disabled={radioDisabled} />}
+                  label="Choices"
+                />
+              )}
             </RadioGroup>
           </Box>
         </CustomTooltip>
@@ -175,103 +182,111 @@ const OutputTypeConfig = ({
       {/* ══════ Scoring mode ══════ */}
       {outputType === "percentage" && (
         <>
-          {/* Score mapping */}
-          <Box>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ mb: 1, display: "block" }}
-            >
-              Create a list of predefined categories. Each choice maps to a
-              score between 0 and 1.
-            </Typography>
-
-            {Object.entries(choiceScores || {}).map(([label, score]) => (
-              <Box
-                key={label}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 1.5,
-                  py: 0.75,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                <TextField
-                  size="small"
-                  defaultValue={label}
-                  onBlur={(e) => handleRenameChoice(label, e.target.value)}
-                  disabled={disabled}
-                  placeholder="Choice name"
-                  sx={{
-                    flex: 1,
-                    "& .MuiInputBase-root": { fontSize: "13px", height: 30 },
-                  }}
-                />
+          {/* Score mapping (L7c g7: absent with hideChoices: a category
+              label never reaches a scored cell; the score and the bar do) */}
+          {hideChoices ? null : (
+            <>
+              <Box>
                 <Typography
                   variant="caption"
                   color="text.secondary"
-                  sx={{ whiteSpace: "nowrap" }}
+                  sx={{ mb: 1, display: "block" }}
                 >
-                  Will be shown as
+                  Create a list of predefined categories. Each choice maps to a
+                  score between 0 and 1.
                 </Typography>
-                <Slider
-                  size="small"
-                  value={score}
-                  onChange={(_, val) => handleScoreChange(label, val)}
-                  min={0}
-                  max={1}
-                  step={0.1}
-                  disabled={disabled}
-                  valueLabelDisplay="auto"
-                  valueLabelFormat={(v) => v.toFixed(1)}
-                  sx={{ width: 80 }}
-                />
-                <Chip
-                  label={score.toFixed(1)}
-                  size="small"
-                  color={
-                    score >= 0.7
-                      ? "success"
-                      : score >= 0.3
-                        ? "warning"
-                        : "error"
-                  }
-                  sx={{
-                    minWidth: 40,
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    height: 24,
-                  }}
-                />
-                <IconButton
-                  size="small"
-                  onClick={() => handleRemoveChoice(label)}
-                  disabled={disabled}
-                >
-                  <Iconify icon="solar:trash-bin-trash-bold" width={16} />
-                </IconButton>
-              </Box>
-            ))}
 
-            {/* Add Choice button */}
-            <Button
-              size="small"
-              color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" width={14} />}
-              onClick={() => handleAddEmptyRow(0.5)}
-              disabled={disabled}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                mt: 1,
-                alignSelf: "flex-start",
-              }}
-            >
-              Add Choice
-            </Button>
-          </Box>
+                {Object.entries(choiceScores || {}).map(([label, score]) => (
+                  <Box
+                    key={label}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1.5,
+                      py: 0.75,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
+                    <TextField
+                      size="small"
+                      defaultValue={label}
+                      onBlur={(e) => handleRenameChoice(label, e.target.value)}
+                      disabled={disabled}
+                      placeholder="Choice name"
+                      sx={{
+                        flex: 1,
+                        "& .MuiInputBase-root": {
+                          fontSize: "13px",
+                          height: 30,
+                        },
+                      }}
+                    />
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ whiteSpace: "nowrap" }}
+                    >
+                      Will be shown as
+                    </Typography>
+                    <Slider
+                      size="small"
+                      value={score}
+                      onChange={(_, val) => handleScoreChange(label, val)}
+                      min={0}
+                      max={1}
+                      step={0.1}
+                      disabled={disabled}
+                      valueLabelDisplay="auto"
+                      valueLabelFormat={(v) => v.toFixed(1)}
+                      sx={{ width: 80 }}
+                    />
+                    <Chip
+                      label={score.toFixed(1)}
+                      size="small"
+                      color={
+                        score >= 0.7
+                          ? "success"
+                          : score >= 0.3
+                            ? "warning"
+                            : "error"
+                      }
+                      sx={{
+                        minWidth: 40,
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        height: 24,
+                      }}
+                    />
+                    <IconButton
+                      size="small"
+                      onClick={() => handleRemoveChoice(label)}
+                      disabled={disabled}
+                    >
+                      <Iconify icon="solar:trash-bin-trash-bold" width={16} />
+                    </IconButton>
+                  </Box>
+                ))}
+
+                {/* Add Choice button */}
+                <Button
+                  size="small"
+                  color="primary"
+                  startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+                  onClick={() => handleAddEmptyRow(0.5)}
+                  disabled={disabled}
+                  sx={{
+                    textTransform: "none",
+                    fontSize: "12px",
+                    mt: 1,
+                    alignSelf: "flex-start",
+                  }}
+                >
+                  Add Choice
+                </Button>
+              </Box>
+            </>
+          )}
 
           {/* Pass Threshold */}
           <Box>
@@ -483,6 +498,7 @@ const OutputTypeConfig = ({
 
 OutputTypeConfig.propTypes = {
   outputType: PropTypes.oneOf(["pass_fail", "percentage", "deterministic"]),
+  hideChoices: PropTypes.bool,
   onOutputTypeChange: PropTypes.func.isRequired,
   choiceScores: PropTypes.object,
   onChoiceScoresChange: PropTypes.func.isRequired,

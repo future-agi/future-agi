@@ -14,6 +14,7 @@ const EmptyLayout = ({
   onLinkClick,
   sx = {},
   hideIcon = false,
+  titleComponent = "div",
 }) => {
   const theme = useTheme();
   return (
@@ -69,7 +70,7 @@ const EmptyLayout = ({
             fontWeight={"fontWeightMedium"}
             typography="m3"
             color={"text.primary"}
-            component={"div"}
+            component={titleComponent}
           >
             {title}
           </Typography>
@@ -109,6 +110,9 @@ EmptyLayout.propTypes = {
   onLinkClick: PropTypes.func,
   sx: PropTypes.object,
   hideIcon: PropTypes.bool,
+  // The title's element: a div unless the page needs it as a heading (e.g.
+  // "h2" beside sibling h2 sections). Typography is the same either way.
+  titleComponent: PropTypes.elementType,
 };
 
 export default EmptyLayout;

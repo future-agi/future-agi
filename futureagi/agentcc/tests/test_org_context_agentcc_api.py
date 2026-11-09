@@ -76,8 +76,9 @@ class TestAgentccRequestOrganizationContext:
 
     @pytest.mark.requires_ee
     def test_webhook_create_uses_active_request_organization(
-        self, user, secondary_org_context, secondary_org_client
+        self, user, secondary_org_context, secondary_org_client, provider_dns
     ):
+        dns = provider_dns({"example.com": ["93.184.215.14"]})
         org_b, _ = secondary_org_context
 
         response = secondary_org_client.post(
@@ -94,6 +95,8 @@ class TestAgentccRequestOrganizationContext:
         webhook = AgentccWebhook.no_workspace_objects.get(name="secondary_webhook")
         assert webhook.organization_id == org_b.id
         assert webhook.organization_id != user.organization_id
+        # The URL check resolved it, answered by the stub.
+        assert "example.com" in [c.args[0] for c in dns.call_args_list]
 
     def test_custom_property_create_uses_active_request_organization(
         self, user, secondary_org_context, secondary_org_client
@@ -154,59 +157,64 @@ class TestAgentccRequestOrganizationContext:
         assert schema.deleted is True
         assert schema.deleted_at is not None
 
-    def test_blocklist_create_uses_active_request_organization(
-        self, user, secondary_org_context, secondary_org_client
+    # docs-agentcc-711, item 1: stored blocklists never reach the gateway, so
+    # every blocklist write answers 501 and changes nothing; reads stay and
+    # keep the active request organization.
+    def test_blocklist_create_answers_501_and_stores_nothing(
+        self, secondary_org_client
     ):
-        org_b, _ = secondary_org_context
-
         response = secondary_org_client.post(
             "/agentcc/blocklists/",
             {"name": "secondary_blocklist", "words": ["foo"]},
             format="json",
         )
 
-        assert response.status_code == 200, response.json()
-        blocklist = AgentccBlocklist.no_workspace_objects.get(
+        assert response.status_code == 501, response.json()
+        assert response.json()["code"] == "blocklists_not_supported"
+        assert not AgentccBlocklist.all_objects.filter(
             name="secondary_blocklist"
-        )
-        assert blocklist.organization_id == org_b.id
-        assert blocklist.organization_id != user.organization_id
+        ).exists()
 
-    def test_blocklist_add_words_rejects_non_string_values(self, secondary_org_client):
-        create_response = secondary_org_client.post(
-            "/agentcc/blocklists/",
-            {"name": "secondary_blocklist_word_validation", "words": ["foo"]},
-            format="json",
+    def test_blocklist_list_uses_active_request_organization(
+        self, user, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        AgentccBlocklist.no_workspace_objects.create(
+            organization=org_b, name="secondary_blocklist", words=["foo"]
         )
-        assert create_response.status_code == 200, create_response.json()
-        blocklist_id = create_response.json()["result"]["id"]
-
-        response = secondary_org_client.post(
-            f"/agentcc/blocklists/{blocklist_id}/add-words/",
-            {"words": ["bar", 123]},
-            format="json",
+        AgentccBlocklist.no_workspace_objects.create(
+            organization=user.organization, name="home_blocklist", words=["bar"]
         )
 
-        assert response.status_code == 400
-        assert "Word at index 1 must be a string" in str(response.json())
-        blocklist = AgentccBlocklist.no_workspace_objects.get(id=blocklist_id)
-        assert blocklist.words == ["foo"]
-
-    def test_blocklist_delete_stamps_deleted_at(self, secondary_org_client):
-        create_response = secondary_org_client.post(
-            "/agentcc/blocklists/",
-            {"name": "secondary_blocklist_delete_stamp", "words": ["foo"]},
-            format="json",
-        )
-        assert create_response.status_code == 200, create_response.json()
-        blocklist_id = create_response.json()["result"]["id"]
-
-        response = secondary_org_client.delete(f"/agentcc/blocklists/{blocklist_id}/")
+        response = secondary_org_client.get("/agentcc/blocklists/")
 
         assert response.status_code == 200, response.json()
-        blocklist = AgentccBlocklist.all_objects.get(id=blocklist_id)
-        assert blocklist.deleted is True
-        assert blocklist.deleted_at is not None
+        assert [row["name"] for row in response.json()["result"]] == [
+            "secondary_blocklist"
+        ]
+
+    def test_blocklist_add_words_and_delete_answer_501_and_change_nothing(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        blocklist = AgentccBlocklist.no_workspace_objects.create(
+            organization=org_b, name="secondary_blocklist_stored", words=["foo"]
+        )
+
+        added = secondary_org_client.post(
+            f"/agentcc/blocklists/{blocklist.id}/add-words/",
+            {"words": ["bar"]},
+            format="json",
+        )
+        deleted = secondary_org_client.delete(f"/agentcc/blocklists/{blocklist.id}/")
+
+        for response in (added, deleted):
+            assert response.status_code == 501, response.json()
+            assert response.json()["code"] == "blocklists_not_supported"
+        blocklist.refresh_from_db()
+        assert blocklist.words == ["foo"]
+        assert blocklist.deleted is False
+        assert blocklist.deleted_at is None
 
     def test_routing_policy_create_uses_active_request_organization(
         self, user, secondary_org_context, secondary_org_client

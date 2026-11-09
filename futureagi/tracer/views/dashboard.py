@@ -36,9 +36,11 @@ from tracer.models.dashboard import Dashboard, DashboardWidget
 from tracer.models.project import Project
 from tracer.serializers.dashboard import (
     DashboardCreateUpdateSerializer,
+    DashboardDetailApiResponseSerializer,
     DashboardDetailSerializer,
     DashboardFilterValuesQuerySerializer,
     DashboardFilterValuesResponseSerializer,
+    DashboardListApiResponseSerializer,
     DashboardMetricsCatalogQuerySerializer,
     DashboardMetricsCatalogResponseSerializer,
     DashboardPreviewQuerySerializer,
@@ -47,6 +49,7 @@ from tracer.serializers.dashboard import (
     DashboardRefreshQuerySerializer,
     DashboardSampleOptInSerializer,
     DashboardSerializer,
+    DashboardWidgetApiResponseSerializer,
     DashboardWidgetSerializer,
 )
 from tracer.services.annotation_label_source import (
@@ -2394,6 +2397,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         return normalized
 
     @uses_db(DATABASE_FOR_DASHBOARD_LIST, feature_key="feature:dashboard_list")
+    @validated_request(responses={200: DashboardListApiResponseSerializer})
     def list(self, request, *args, **kwargs):
         try:
             # Route the main list read to replica when "feature:dashboard_list"
@@ -2411,6 +2415,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to list dashboards: {e}", exc_info=True)
             return self._gm.bad_request("Failed to list dashboards.")
 
+    @validated_request(responses={200: DashboardDetailApiResponseSerializer})
     def retrieve(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -2424,6 +2429,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to retrieve dashboard: {e}", exc_info=True)
             return self._gm.bad_request("Failed to retrieve dashboard.")
 
+    # Writes validate DashboardCreateUpdateSerializer but answer the dashboard
+    # detail with HTTP 200, not drf-yasg's inferred 201 body.
+    @validated_request(responses={200: DashboardDetailApiResponseSerializer})
     def create(self, request, *args, **kwargs):
         try:
             serializer = DashboardCreateUpdateSerializer(data=request.data)
@@ -2443,6 +2451,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to create dashboard: {e}", exc_info=True)
             return self._gm.bad_request("Failed to create dashboard.")
 
+    @validated_request(responses={200: DashboardDetailApiResponseSerializer})
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -2461,6 +2470,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to update dashboard: {e}", exc_info=True)
             return self._gm.bad_request("Failed to update dashboard.")
 
+    @validated_request(responses={200: DashboardDetailApiResponseSerializer})
     def partial_update(self, request, *args, **kwargs):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
@@ -5984,6 +5994,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
     def _normalize_metric_sources(self, metrics):
         return DashboardViewSet._normalize_metric_sources(self, metrics)
 
+    # Widget writes answer success_response() with HTTP 200.
+    @validated_request(responses={200: DashboardWidgetApiResponseSerializer})
     def create(self, request, *args, **kwargs):
         try:
             dashboard_id = self.kwargs.get("dashboard_pk") or self.kwargs.get(
@@ -6013,6 +6025,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to create widget: {e}", exc_info=True)
             return self._gm.bad_request("Failed to create widget.")
 
+    @validated_request(responses={200: DashboardWidgetApiResponseSerializer})
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -6034,6 +6047,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to update widget: {e}", exc_info=True)
             return self._gm.bad_request("Failed to update widget.")
 
+    @validated_request(responses={200: DashboardWidgetApiResponseSerializer})
     def partial_update(self, request, *args, **kwargs):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)

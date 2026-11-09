@@ -13,10 +13,10 @@ import Typography from "@mui/material/Typography";
 import { useRouter } from "src/routes/hooks";
 
 import { useAuthContext } from "src/auth/hooks";
+import { signOutToSignIn } from "src/auth/sign-out";
 
 import { varHover } from "src/components/animate";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
-import logger from "src/utils/logger";
 
 // ----------------------------------------------------------------------
 
@@ -44,15 +44,9 @@ export default function AccountPopover() {
 
   const popover = usePopover();
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-      localStorage.removeItem("intial-render");
-      popover.onClose();
-      router.replace("/");
-    } catch (error) {
-      logger.error("Logout failed", error);
-    }
+  const handleLogout = () => {
+    popover.onClose();
+    signOutToSignIn(logout, router.replace);
   };
 
   const handleClickItem = (path) => {

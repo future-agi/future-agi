@@ -1,0 +1,128 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "microsoft-outlook",
+  "source": "CN15c K2 replay assertions (approved at 2c1163dacc)",
+  "test_account": "cn15-synthetic-unverified",
+  "tools": 22,
+  "vendor_404": "Microsoft graph.microsoft.com 404",
+  "drive_checks": [
+    {
+      "name": "folders_read_only",
+      "jq": ".tools[] | select(.name == \"list_mail_folders\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "schedule_post_read_only",
+      "jq": ".tools[] | select(.name == \"get_schedule\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "send_open_world",
+      "jq": ".tools[] | select(.name == \"send_mail\") | .annotations.openWorldHint",
+      "want": "true"
+    },
+    {
+      "name": "send_not_read_only",
+      "jq": ".tools[] | select(.name == \"send_mail\") | .annotations.readOnlyHint",
+      "want": "false"
+    },
+    {
+      "name": "move_destructive",
+      "jq": ".tools[] | select(.name == \"move_message\") | .annotations.destructiveHint",
+      "want": "true"
+    },
+    {
+      "name": "delete_destructive",
+      "jq": ".tools[] | select(.name == \"delete_event\") | .annotations.destructiveHint",
+      "want": "true"
+    },
+    {
+      "name": "update_idempotent",
+      "jq": ".tools[] | select(.name == \"update_message\") | .annotations.idempotentHint",
+      "want": "true"
+    },
+    {
+      "name": "accept_not_idempotent",
+      "jq": ".tools[] | select(.name == \"accept_event\") | .annotations.idempotentHint",
+      "want": "false"
+    },
+    {
+      "name": "event_location_projected",
+      "jq": ".tools[] | select(.name == \"create_event\") | .inputSchema.properties.body.properties.location.properties | keys | join(\",\")",
+      "want": "displayName"
+    },
+    {
+      "name": "folders",
+      "jq": ".calls[0].result.content[0].text | contains(\"Sent Items\")",
+      "want": "true"
+    },
+    {
+      "name": "search_next_link_kept",
+      "jq": ".calls[1].result.content[0].text | contains(\"@odata.nextLink\")",
+      "want": "true"
+    },
+    {
+      "name": "message_projected",
+      "jq": ".calls[3].result.content[0].text | (contains(\"cv-1\") and (contains(\"parentFolderId\") | not))",
+      "want": "true"
+    },
+    {
+      "name": "reply_draft",
+      "jq": ".calls[5].result.content[0].text | contains(\"m-3\")",
+      "want": "true"
+    },
+    {
+      "name": "send_draft_202",
+      "jq": ".calls[6].result.content[0].text",
+      "want": "Done: Microsoft answered HTTP 202 with no content."
+    },
+    {
+      "name": "flagged_projected",
+      "jq": ".calls[10].result.content[0].text | (contains(\"flagged\") and (contains(\"subject\") | not))",
+      "want": "true"
+    },
+    {
+      "name": "calendar_view",
+      "jq": ".calls[12].result.content[0].text | contains(\"Team sync\")",
+      "want": "true"
+    },
+    {
+      "name": "free_busy",
+      "jq": ".calls[14].result.content[0].text | (contains(\"busy\") and contains(\"not valid\"))",
+      "want": "true"
+    },
+    {
+      "name": "create_event_projected",
+      "jq": ".calls[15].result.content[0].text | (contains(\"ev-5\") and (contains(\"iCalUId\") | not))",
+      "want": "true"
+    },
+    {
+      "name": "decline_202",
+      "jq": ".calls[19].result.content[0].text",
+      "want": "Done: Microsoft answered HTTP 202 with no content."
+    },
+    {
+      "name": "vendor_404_code",
+      "jq": ".calls[20].result.content[0].text | contains(\"ErrorItemNotFound\")",
+      "want": "true"
+    }
+  ],
+  "vendor_request_checks": [
+    {
+      "name": "search_wire_name",
+      "index": 1,
+      "want": "GET /v1.0/me/messages?$search=%22quarterly%22&$select=subject%2Cfrom%2CreceivedDateTime%2CbodyPreview&$top=2"
+    },
+    {
+      "name": "well_known_folder",
+      "index": 2,
+      "want": "GET /v1.0/me/mailFolders/inbox/messages?$filter=isRead+eq+false&$top=5"
+    }
+  ],
+  "every_vendor_request": [
+    {
+      "name": "graph_v1_paths",
+      "jq": ".path | startswith(\"/v1.0/\")"
+    }
+  ]
+}

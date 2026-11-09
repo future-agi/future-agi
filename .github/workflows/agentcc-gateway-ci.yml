@@ -8,6 +8,7 @@ on:
       - "api_contracts/gateway/**"
       - "futureagi/agentcc/contracts/**"
       - "futureagi/agentcc/tests/fixtures/gateway_org_config.full.json"
+      - "futureagi/agentcc/connector_catalog/**"
       - "scripts/generate-agentcc-gateway-contracts.py"
       - ".github/workflows/agentcc-gateway-ci.yml"
   push:
@@ -17,6 +18,7 @@ on:
       - "api_contracts/gateway/**"
       - "futureagi/agentcc/contracts/**"
       - "futureagi/agentcc/tests/fixtures/gateway_org_config.full.json"
+      - "futureagi/agentcc/connector_catalog/**"
       - "scripts/generate-agentcc-gateway-contracts.py"
       - ".github/workflows/agentcc-gateway-ci.yml"
   workflow_dispatch:
@@ -57,6 +59,14 @@ jobs:
       - name: Download gateway deps
         working-directory: agentcc-gateway
         run: go mod download
+
+      # dist/** and the Django copy are generated from the connector catalog's
+      # records (CONNECTORS-PLAN 2.5). go test checks the records only
+      # (check --sources-only), on purpose, so a data lane never regenerates
+      # them; this full check fails when any of them is stale.
+      - name: Check the generated connector catalog
+        working-directory: agentcc-gateway
+        run: go run ./cmd/agentcc-catalog check
 
       - name: Check generated Go formatting
         working-directory: agentcc-gateway

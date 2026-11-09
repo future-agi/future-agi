@@ -374,3 +374,20 @@ class TestEvalTemplateSerializer(serializers.Serializer):
     output = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     config_params_desc = serializers.JSONField(required=False, default=dict)
     config_params_option = serializers.JSONField(required=False, default=dict)
+
+    def validate(self, attrs):
+        config = attrs.get("config", {})
+        # Distinguish an explicit empty mapping from the omitted field's default.
+        if (
+            "mapping" in self.initial_data
+            and isinstance(config, dict)
+            and "mapping" in config
+            and attrs["mapping"] != config["mapping"]
+        ):
+            raise serializers.ValidationError(
+                {
+                    "mapping": "mapping conflicts with config.mapping. "
+                    "Provide matching values or only one."
+                }
+            )
+        return attrs

@@ -1,43 +1,47 @@
 import random
-from typing import List, Dict, Any, Optional, Tuple, Callable
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any
 
 # Type for the per-trial callback: (trial_data, trial_number, stepper_state, is_baseline) -> None
-OnTrialCallback = Callable[[dict, int, Dict[str, Any], bool], None]
+OnTrialCallback = Callable[[dict, int, dict[str, Any], bool], None]
 
-from ee.agent_opt.base.evaluator import Evaluator
-from ee.agent_opt.datamappers import BasicDataMapper
-from ee.agent_opt.generators import LiteLLMGenerator
-from ee.agent_opt.optimizers import (
-    RandomSearchOptimizer,
-    GEPAOptimizer,
+# Keep imports on their original side of callback/logger initialization.
+import time  # noqa: E402
+
+import structlog  # noqa: E402
+
+from ee.agent_opt.base.evaluator import Evaluator  # noqa: E402
+from ee.agent_opt.datamappers import BasicDataMapper  # noqa: E402
+from ee.agent_opt.generators import LiteLLMGenerator  # noqa: E402
+from ee.agent_opt.optimizers import (  # noqa: E402
     BayesianSearchOptimizer,
+    GEPAOptimizer,
     MetaPromptOptimizer,
     PromptWizardOptimizer,
     ProTeGi,
+    RandomSearchOptimizer,
 )
-from ee.agent_opt.types import (
-    OptimizationResult,
+from ee.agent_opt.types import (  # noqa: E402
     EvaluationResult,
     IterationHistory,
+    OptimizationResult,
+)
+from model_hub.utils.evals import evals_template  # noqa: E402
+from simulate.utils.agent_prompt_optimiser import (  # noqa: E402
+    update_agent_optimiser_run_step,
 )
 
-from .transcript_simulator import TranscriptSimulator
-import time
-from model_hub.utils.evals import evals_template
-from simulate.utils.agent_prompt_optimiser import update_agent_optimiser_run_step
-
-import structlog
+from .transcript_simulator import TranscriptSimulator  # noqa: E402
 
 logger = structlog.get_logger(__name__)
-import numpy as np
-from model_hub.views.utils.evals import run_eval_func
+import numpy as np  # noqa: E402
 
-
-from agentic_eval.core.llm.llm import LLM
-from model_hub.models.evals_metric import EvalTemplate
-from model_hub.utils.scoring import score_eval_output
-from simulate.models import SimulateEvalConfig
+from agentic_eval.core.llm.llm import LLM  # noqa: E402
+from model_hub.models.evals_metric import EvalTemplate  # noqa: E402
+from model_hub.utils.scoring import score_eval_output  # noqa: E402
+from model_hub.views.utils.evals import run_eval_func  # noqa: E402
+from simulate.models import SimulateEvalConfig  # noqa: E402
 
 
 class SimulationEvaluator(Evaluator):
@@ -51,8 +55,8 @@ class SimulationEvaluator(Evaluator):
 
     def __init__(
         self,
-        user_eval_configs: Optional[List[Any]] = None,
-        issues: Optional[List[Dict[str, Any]]] = None,
+        user_eval_configs: list[Any] | None = None,
+        issues: list[dict[str, Any]] | None = None,
         use_synthetic: bool = True,
         simulator_model: str = "gemini-3.7-flash",
         customer_model: str = "gemini-3.7-flash",
@@ -61,9 +65,9 @@ class SimulationEvaluator(Evaluator):
         use_evals: bool = True,
         use_dual_llm_sim: bool = False,
         is_inbound: bool = True,
-        initial_agent_prompt: Optional[str] = None,
-        organization: Optional[Any] = None,
-        workspace: Optional[Any] = None,
+        initial_agent_prompt: str | None = None,
+        organization: Any | None = None,
+        workspace: Any | None = None,
         eval_source: str = "fix_your_agent",
         use_temporal_evaluation: bool = False,
     ):
@@ -78,7 +82,7 @@ class SimulationEvaluator(Evaluator):
         self.organization = organization
         self.workspace = workspace
         self.eval_source = eval_source
-        self._eval_template_cache: Dict[str, Any] = {}
+        self._eval_template_cache: dict[str, Any] = {}
         # Track initial prompt to decide when to use existing transcripts
         # Existing transcripts are only valid for the initial prompt, not mutated ones
         self.initial_agent_prompt = initial_agent_prompt
@@ -109,7 +113,7 @@ class SimulationEvaluator(Evaluator):
             f"temporal={use_temporal_evaluation}"
         )
 
-    def _resolve_eval_template_for_runner(self, eval_template: Any) -> Optional[Any]:
+    def _resolve_eval_template_for_runner(self, eval_template: Any) -> Any | None:
         if not eval_template:
             return None
 
@@ -151,7 +155,7 @@ class SimulationEvaluator(Evaluator):
 
     def _extract_score_from_eval_result(
         self, result: Any, eval_template: Any
-    ) -> Tuple[float, str]:
+    ) -> tuple[float, str]:
         """Return ``(score, reason)`` for a raw evaluator result."""
         reason = "No explanation provided"
 
@@ -178,7 +182,7 @@ class SimulationEvaluator(Evaluator):
 
         return score_eval_output(result, eval_template, default_score=0.5), reason
 
-    def evaluate(self, inputs: List[Dict[str, Any]]) -> List[EvaluationResult]:
+    def evaluate(self, inputs: list[dict[str, Any]]) -> list[EvaluationResult]:
         """
         Main evaluation method called by agent-opt.
 
@@ -199,9 +203,9 @@ class SimulationEvaluator(Evaluator):
 
         logger.info(f"[EVALUATE] Mode: issues={use_issues}, evals={use_evals}")
 
-        for i, input_data in enumerate(inputs):
+        for _i, input_data in enumerate(inputs):
             try:
-                logger.info(f"[EVALUATE] === Input {i + 1}/{len(inputs)} ===")
+                logger.info(f"[EVALUATE] === Input {_i + 1}/{len(inputs)} ===")
 
                 agent_prompt = input_data.get("agent_prompt", "")
                 persona = input_data.get("persona", "")
@@ -308,8 +312,13 @@ class SimulationEvaluator(Evaluator):
 
                     # Include individual eval details in reason
                     eval_details = []
-                    for i, (cfg, score, rsn) in enumerate(
-                        zip(self.user_eval_configs, eval_scores, eval_reasons)
+                    for _i, (cfg, score, _rsn) in enumerate(
+                        zip(
+                            self.user_eval_configs,
+                            eval_scores,
+                            eval_reasons,
+                            strict=False,
+                        )
                     ):
                         eval_details.append(f"{cfg.name}: {score:.2f}")
 
@@ -327,7 +336,10 @@ class SimulationEvaluator(Evaluator):
                     # Populate component_evals for metadata
                     if self.use_evals and self.user_eval_configs:
                         for cfg, score, reason_txt in zip(
-                            self.user_eval_configs, eval_scores, eval_reasons
+                            self.user_eval_configs,
+                            eval_scores,
+                            eval_reasons,
+                            strict=False,
                         ):
                             component_evals[cfg.id] = {
                                 "score": score,
@@ -336,7 +348,7 @@ class SimulationEvaluator(Evaluator):
 
                 else:
                     logger.info(
-                        f"[EVALUATE] No issues or eval configs enabled, using default scoring"
+                        "[EVALUATE] No issues or eval configs enabled, using default scoring"
                     )
                     final_score = 0
                     reason = "No issues or evals"
@@ -354,7 +366,9 @@ class SimulationEvaluator(Evaluator):
                 )
 
             except Exception as e:
-                logger.error(f"Evaluation failed for input {i + 1}: {e}", exc_info=True)
+                logger.error(
+                    f"Evaluation failed for input {_i + 1}: {e}", exc_info=True
+                )
                 results.append(
                     EvaluationResult(score=0.0, reason=f"Evaluation failed: {str(e)}")
                 )
@@ -362,8 +376,8 @@ class SimulationEvaluator(Evaluator):
         return results
 
     def _evaluate_via_temporal(
-        self, inputs: List[Dict[str, Any]]
-    ) -> List[EvaluationResult]:
+        self, inputs: list[dict[str, Any]]
+    ) -> list[EvaluationResult]:
         """
         Evaluate scenarios in parallel using Temporal activities.
 
@@ -373,9 +387,9 @@ class SimulationEvaluator(Evaluator):
         - Parallel execution across Temporal workers
         """
         from tfc.temporal.agent_prompt_optimiser.eval_activities import (
+            evaluate_scenarios_parallel,
             serialize_evaluator_config,
             serialize_scenario,
-            evaluate_scenarios_parallel,
         )
 
         logger.info(f"[EVALUATE_TEMPORAL] Running {len(inputs)} scenarios via Temporal")
@@ -433,8 +447,8 @@ class SimulationEvaluator(Evaluator):
         self,
         transcript: str,
         agent_prompt: str,
-        scenario: Dict[str, Any],
-    ) -> Tuple[List[float], List[str]]:
+        scenario: dict[str, Any],
+    ) -> tuple[list[float], list[str]]:
         """
         Run all evaluations in parallel using ThreadPoolExecutor.
 
@@ -477,8 +491,8 @@ class SimulationEvaluator(Evaluator):
         return eval_scores, eval_reasons
 
     def _run_eval_with_config(
-        self, eval_config, transcript: str, agent_prompt: str, scenario: Dict[str, Any]
-    ) -> Tuple[float, str]:
+        self, eval_config, transcript: str, agent_prompt: str, scenario: dict[str, Any]
+    ) -> tuple[float, str]:
         """
         Run a single evaluation using direct evaluation class instantiation.
 
@@ -611,6 +625,15 @@ class SimulationEvaluator(Evaluator):
                         if getattr(eval_config, "config", None)
                         else {}
                     )
+                    # Optimizers do not support Choices score overrides. Keep
+                    # template-only scoring without mutating the saved binding.
+                    config.pop("choice_scores", None)
+                    if isinstance(config.get("run_config"), dict):
+                        config["run_config"] = {
+                            key: value
+                            for key, value in config["run_config"].items()
+                            if key != "choice_scores"
+                        }
                     # `run_eval_func` expects `config` to be a dict and `config["config"]` to be a dict.
                     # Exported execution_data may contain `{"config": None, ...}`.
                     if config.get("config") is None or not isinstance(
@@ -705,7 +728,7 @@ class SimulationEvaluator(Evaluator):
                 eval_instance = eval_class()
 
             # Run the evaluation
-            logger.debug(f"[RUN_EVAL] Running evaluation...")
+            logger.debug("[RUN_EVAL] Running evaluation...")
             result = eval_instance.run(**updated_mapping)
             score, reason = self._extract_score_from_eval_result(result, eval_template)
 
@@ -747,13 +770,13 @@ class SimulationEvaluator(Evaluator):
             temperature=0.4,
         )
 
-        def evaluate_single_issue(issue: Dict[str, Any]) -> float:
+        def evaluate_single_issue(issue: dict[str, Any]) -> float:
             """Evaluate a single issue."""
             # Extract issue details
             heading = issue.get("heading", "")
             recommendation = issue.get("recommendation", "")
             breaking_points = issue.get("breaking_points", [])
-            priority = issue.get("priority", "medium")
+            issue.get("priority", "medium")
 
             # Build issue description
             if breaking_points:
@@ -804,7 +827,7 @@ Return ONLY a number between 0.0 and 1.0."""
         priority_weights = {"high": 1.5, "medium": 1.0, "low": 0.7}
 
         scores = []
-        weights: List[float] = []
+        weights: list[float] = []
 
         with ThreadPoolExecutor(max_workers=self.max_parallel_evals) as executor:
             future_to_issue = {
@@ -829,7 +852,7 @@ Return ONLY a number between 0.0 and 1.0."""
             return 0.5
 
         total_weight = sum(weights)
-        weighted_sum = sum(s * w for s, w in zip(scores, weights))
+        weighted_sum = sum(s * w for s, w in zip(scores, weights, strict=False))
         return weighted_sum / total_weight if total_weight > 0 else 0.5
 
     def _evaluate_against_issues(self, agent_prompt: str) -> float:
@@ -837,8 +860,8 @@ Return ONLY a number between 0.0 and 1.0."""
         return self._evaluate_against_issues_batch(agent_prompt, "")
 
     def _run_synthetic_simulation(
-        self, agent_prompt: str, scenario: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, agent_prompt: str, scenario: dict[str, Any]
+    ) -> dict[str, Any]:
         """Run 2-LLM text simulation using TranscriptSimulator.
 
         If issues are configured, they will be passed to the simulator to create
@@ -862,8 +885,8 @@ Return ONLY a number between 0.0 and 1.0."""
         }
 
     def _run_real_simulation(
-        self, agent_prompt: str, scenario: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, agent_prompt: str, scenario: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Run actual voice simulation - integrate with voice infrastructure
         """
@@ -882,8 +905,8 @@ class SimulationDataMapper(BasicDataMapper):
     def map(
         self,
         generated_output: str,  # The agent_prompt from generator
-        ground_truth_example: Dict[str, Any],  # The scenario dict
-    ) -> Dict[str, Any]:
+        ground_truth_example: dict[str, Any],  # The scenario dict
+    ) -> dict[str, Any]:
         """Transform data for the evaluator."""
         # Start with all data from the ground truth
         result = ground_truth_example.copy()
@@ -928,26 +951,26 @@ class FixYourAgent:
     def optimize(
         self,
         initial_agent_prompt: str,
-        scenarios: List[Dict[str, Any]],
-        eval_configs: Optional[List[Any]] = None,
-        issues: Optional[List[Dict[str, Any]]] = None,
+        scenarios: list[dict[str, Any]],
+        eval_configs: list[Any] | None = None,
+        issues: list[dict[str, Any]] | None = None,
         optimizer_type: str = "random_search",
-        optimizer_config: Optional[Dict[str, Any]] = None,
+        optimizer_config: dict[str, Any] | None = None,
         use_synthetic: bool = True,
         optimization_model: str = "vertex_ai/gemini-3.7-flash",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         use_issues: bool = True,
         use_evals: bool = True,
         is_inbound: bool = True,
         use_dual_llm_sim: bool = False,
-        agent_optimiser_run_steps: List[Dict] = None,
-        organization: Optional[Any] = None,
-        workspace: Optional[Any] = None,
+        agent_optimiser_run_steps: list[dict] = None,
+        organization: Any | None = None,
+        workspace: Any | None = None,
         eval_source: str = "fix_your_agent",
-        resume_state: Optional[Dict[str, Any]] = None,
-        max_new_trials: Optional[int] = None,
+        resume_state: dict[str, Any] | None = None,
+        max_new_trials: int | None = None,
         skip_baseline: bool = False,
-        on_trial_callback: Optional[OnTrialCallback] = None,
+        on_trial_callback: OnTrialCallback | None = None,
         use_temporal_evaluation: bool = False,
         use_direct_evaluation: bool = False,
         execution_model: str = "gpt-4o",
@@ -1015,7 +1038,7 @@ class FixYourAgent:
 
         # 1. Prepare dataset from sampled scenarios
         dataset = []
-        for i, scenario in enumerate(sampled_scenarios):
+        for _i, scenario in enumerate(sampled_scenarios):
             # Use _original_row_data as base to include all extra columns
             item = scenario.get("_original_row_data", {}).copy()
 
@@ -1039,11 +1062,11 @@ class FixYourAgent:
         # 2. Create the custom evaluator
         if use_direct_evaluation:
             # Use DirectEvaluator for single input/output evaluation (no conversation simulation)
-            from .direct_evaluator import DirectEvaluator
-
             from ee.agent_opt.utils.template_variables import (
                 extract_template_variables,
             )
+
+            from .direct_evaluator import DirectEvaluator
 
             template_vars = extract_template_variables(initial_agent_prompt)
 
@@ -1159,7 +1182,7 @@ class FixYourAgent:
 
                 # Convert list of results to dict keyed by call_execution_id
                 baseline_results_dict = {}
-                for res, example in zip(baseline_results_list, dataset):
+                for res, example in zip(baseline_results_list, dataset, strict=False):
                     call_id = example.get("call_execution_id", "unknown")
                     baseline_results_dict[call_id] = res
 
@@ -1290,7 +1313,7 @@ class FixYourAgent:
             )
             raise RuntimeError(
                 f"[FixYourAgent] Optimization failed for {optimizer_type}: {exc}"
-            )
+            ) from exc
 
         # logger.info(f"Best score: {result.final_score:.4f}")
         # logger.info(
@@ -1303,10 +1326,10 @@ class FixYourAgent:
 
         best_score = -1
         best_idx = 0
-        for i, hist in enumerate(result.history):
+        for _i, hist in enumerate(result.history):
             if hist.average_score > best_score:
                 best_score = hist.average_score
-                best_idx = i
+                best_idx = _i
 
         result.best_index = best_idx
 
@@ -1314,8 +1337,10 @@ class FixYourAgent:
         # This catches any case where the optimizer stored an un-repaired candidate
         from ee.agent_opt.utils.template_variables import (
             extract_template_variables as _extract_tv,
-            validate_template_variables,
+        )
+        from ee.agent_opt.utils.template_variables import (
             repair_template_variables,
+            validate_template_variables,
         )
 
         template_vars_final = (
@@ -1345,25 +1370,25 @@ class FixYourAgent:
 
     def optimize_from_execution(
         self,
-        execution_data: Dict[str, Any],
+        execution_data: dict[str, Any],
         optimizer_type: str = "random_search",
         optimization_model: str = "vertex_ai/gemini-3.7-flash",
         use_synthetic: bool = True,
         use_issues: bool = True,
         use_evals: bool = True,
-        api_key: Optional[str] = None,
-        issues: Optional[List[Dict[str, Any]]] = None,
-        optimizer_config: Optional[Dict[str, Any]] = None,
+        api_key: str | None = None,
+        issues: list[dict[str, Any]] | None = None,
+        optimizer_config: dict[str, Any] | None = None,
         use_dual_llm_sim: bool = True,
-        agent_optimiser_run_steps: List[Dict] = None,
-        organization: Optional[Any] = None,
-        workspace: Optional[Any] = None,
+        agent_optimiser_run_steps: list[dict] = None,
+        organization: Any | None = None,
+        workspace: Any | None = None,
         eval_source: str = "fix_your_agent",
-        resume_state: Optional[Dict[str, Any]] = None,
-        max_new_trials: Optional[int] = None,
-        scenario_manifest: Optional[list[str]] = None,
+        resume_state: dict[str, Any] | None = None,
+        max_new_trials: int | None = None,
+        scenario_manifest: list[str] | None = None,
         skip_baseline: bool = False,
-        on_trial_callback: Optional[OnTrialCallback] = None,
+        on_trial_callback: OnTrialCallback | None = None,
         use_temporal_evaluation: bool = False,
         use_direct_evaluation: bool = False,
         execution_model: str = "gpt-4o",
@@ -1406,7 +1431,7 @@ class FixYourAgent:
                 "Optimization will not work correctly without an initial prompt."
             )
         if scenario_manifest:
-            manifest_set = {str(cid) for cid in scenario_manifest}
+            {str(cid) for cid in scenario_manifest}
             call_map = {str(c.get("call_execution_id")): c for c in call_executions}
             call_executions = [
                 call_map[cid] for cid in scenario_manifest if cid in call_map

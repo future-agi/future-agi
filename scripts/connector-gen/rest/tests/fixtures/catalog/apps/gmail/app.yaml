@@ -1,0 +1,23 @@
+# Fixture for the REST generator's tests, not catalog data: the tests copy
+# this catalog, put each provider's pinned spec under fixtures/spec/, and
+# generate. The facts are checked against the cited pages, but the catalog
+# itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#app"
+id: gmail
+version: 1.0.0
+name: Gmail
+description: "Read, search and send email."
+vendor: { name: Google, domains: [google.com, googleapis.com] }
+eeCategory: communication
+group: google
+categories: [communication, email]
+tags: [email]
+docsUrl: https://developers.google.com/workspace/gmail/api
+archetype: mailbox
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.google.com/workspace/gmail/api
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

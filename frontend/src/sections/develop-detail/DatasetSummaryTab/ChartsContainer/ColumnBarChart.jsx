@@ -160,7 +160,7 @@ const ColumnBarChart = ({
             datasetIndex || datasetIndex === 0
               ? datasetIndex
               : item.datasetIndex;
-          if (visibleSeries.length === 1) return <></>;
+          if (visibleSeries.length === 1) return null;
           return (
             <Box
               key={index}
@@ -177,7 +177,7 @@ const ColumnBarChart = ({
                 {item.name}
               </Typography>
               <TotalRowCount
-                value={item.totalCells}
+                value={item.total_cells}
                 sx={{ marginTop: "4px" }}
               />
               <SvgColor

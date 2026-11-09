@@ -22,7 +22,6 @@ from uuid import UUID
 
 from django.conf import settings
 
-from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tracer.constants.dashboard import (
     DASHBOARD_NUMERIC_ONLY_AGGREGATIONS,
     annotation_breakdown_error,
@@ -292,7 +291,6 @@ def _eval_source_bucket_expr(exclude: str) -> str:
         ("voice_call", "(simulation)"),
         ("text_call", "(simulation)"),
         ("fix_your_agent", "(fix-your-agent)"),
-        (FIX_CHECK_RUN_EVAL_SOURCE, "(fix-your-agent)"),
         ("trace_error_analysis", "(error-analysis)"),
         ("error_localizer", "(error-analysis)"),
         ("run_prompt_improve", "(prompt-improve)"),

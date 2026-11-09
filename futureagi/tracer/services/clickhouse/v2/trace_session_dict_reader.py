@@ -397,6 +397,8 @@ def resolve_session_fields(
     project_id: str | None = None,
     project_ids: Iterable[object] | None = None,
     deadline: ReadDeadline | None = None,
+    using: str | None = None,
+    include_overlay: bool = True,
 ) -> dict[str, dict[str, object]]:
     """Batch-resolve ``{trace_session_id (str) -> {external_session_id,
     first_seen, project_id, bookmarked, display_name}}`` — the curated CH identity
@@ -434,6 +436,8 @@ def resolve_session_fields(
         the ``trace_sessions`` ORDER BY ``(project_id, trace_session_id)``
         sort-key prefix so an eval-path caller reads ~its own sessions instead
         of the whole table.
+      • ``include_overlay=False`` skips PG for project-only backfills. An explicit
+        ``using`` binds overlay queries without changing the migration SQL budget.
       • Returns ``{}`` for empty input (no CH round-trip).
     """
     ids = {str(s) for s in trace_session_ids if s}
@@ -526,7 +530,8 @@ def resolve_session_fields(
             "display_name": None,
         }
 
-    if not out:
+    # Project-only callers do not need mutable UI fields from PostgreSQL.
+    if not out or not include_overlay:
         return out
 
     # Overlay the PG user fields by the RESOLVED (old/survivor) id — one query.
@@ -535,9 +540,10 @@ def resolve_session_fields(
 
     survivor_ids = set(resolved_by_input.values())
     overlay_by_resolved: dict[str, dict[str, object]] = {}
-    overlay_queryset = TraceSessionOverlay.objects.filter(
-        trace_session_id__in=survivor_ids
-    )
+    overlay_manager = TraceSessionOverlay.objects
+    if using is not None:
+        overlay_manager = overlay_manager.using(using)
+    overlay_queryset = overlay_manager.filter(trace_session_id__in=survivor_ids)
     if normalized_project_ids:
         overlay_queryset = overlay_queryset.filter(
             project_id__in=normalized_project_ids
@@ -553,13 +559,21 @@ def resolve_session_fields(
     )
 
     try:
-        with application_postgres_reads(
-            connection=connection,
-            atomic=transaction.atomic,
-            check_request=deadline.remaining_ms if deadline is not None else None,
-            read_only=True,
-        ):
+        if using is not None:
+            # Migration callers already own their transaction and SQL budget.
+            # Do not replace the operator's statement_timeout with the ordinary
+            # application's uncapped read policy or open a default savepoint.
+            if deadline is not None:
+                deadline.remaining_ms()
             overlay_rows = list(overlay_queryset)
+        else:
+            with application_postgres_reads(
+                connection=connection,
+                atomic=transaction.atomic,
+                check_request=deadline.remaining_ms if deadline is not None else None,
+                read_only=True,
+            ):
+                overlay_rows = list(overlay_queryset)
     except DatabaseError as exc:
         raise ApplicationPostgresReadError(
             "Session-label PostgreSQL read unavailable"

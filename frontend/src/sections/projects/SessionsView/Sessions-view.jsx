@@ -42,11 +42,21 @@ const AddToQueueDialog = lazy(
     import("src/sections/annotations/queues/components/add-to-queue-dialog"),
 );
 
+import { openAddData } from "src/sections/common/AddData/addDataStore";
+
 const SESSION_BULK_ACTIONS = [
   {
     id: REPLAY_ACTION_ID,
     label: "Replay Sessions",
     icon: "mdi:play-outline",
+    tooltip: "Replay as simulation scenarios",
+  },
+  // R2 (P5): sessions into a dataset through the global Add-data sheet.
+  {
+    id: "add_to_dataset",
+    label: "Add to dataset",
+    icon: "mdi:folder-plus-outline",
+    tooltip: "Add to a dataset to run experiments on",
   },
   {
     id: "annotation-queue",
@@ -833,6 +843,15 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           },
           onError: () => {
             enqueueSnackbar("Failed to start replay", { variant: "error" });
+          },
+        });
+      } else if (action === "add_to_dataset") {
+        openAddData({
+          source: {
+            kind: "sessions",
+            project_id: observeId,
+            session_ids: toggledNodes,
+            ...(selectAll && { select_all: true }),
           },
         });
       } else if (action === "annotation-queue") {

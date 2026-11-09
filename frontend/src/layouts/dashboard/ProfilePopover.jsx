@@ -12,6 +12,7 @@ import {
 import React from "react";
 import { useNavigate } from "react-router";
 import { useAuthContext } from "src/auth/hooks";
+import { signOutToSignIn } from "src/auth/sign-out";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
 import { trackEvent, Events } from "src/utils/Mixpanel";
@@ -25,10 +26,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
 
   const navigate = useNavigate();
 
-  const onLogoutClick = () => {
-    logout();
-    navigate("/", { replace: true });
-  };
+  const onLogoutClick = () => signOutToSignIn(logout, navigate);
 
   // const ShieldIcon = ({ ...props }) => {
   //   return (
@@ -169,7 +167,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
                 sx={{ padding: 1 }}
                 onClick={() => {
                   onClose();
-                  navigate("/dashboard/settings/api_keys");
+                  navigate("/dashboard/keys");
                   trackEvent(Events.apiKeysButtonClicked);
                 }}
               >

@@ -1,0 +1,56 @@
+# Close's MCP server with an API key: two headers, the secret Close-API-Key
+# and the non-secret Close-Scope, which decides which tools the server
+# offers. Close-Scope is a constant of this provider (AM-C20): the gateway
+# reads it from the catalog entry and never receives it in a push. It is
+# mcp.read, the scope Close's Claude Code and VS Code examples set, so this
+# provider is read-only; read and write go through the OAuth provider (mcp),
+# whose consent screen lets the person pick the scope.
+schema: "connector-manifest/v1#provider"
+app: close
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.close.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Close-API-Key
+      secret: true
+      label: API key
+      help: "A Close API key. This connection is read-only: it sends Close-Scope mcp.read."
+      helpUrl: https://developer.close.com/mcp
+    - in: header
+      name: Close-Scope
+      secret: false
+      value: mcp.read
+      label: Scope
+      help: "Always mcp.read (read-only access). For read and write, connect with OAuth instead."
+      helpUrl: https://developer.close.com/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: transport.variant
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.credentialParts
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-20
+x-omega: { oss: exclude }

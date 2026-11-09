@@ -8,6 +8,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 )
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,9 @@ func (h *Handlers) resolveVectorStoresProvider(ctx context.Context, rc *models.R
 	provider, err := h.resolveOpenAIProvider(ctx, rc)
 	if err != nil {
 		return nil, err
+	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		return nil, apiErr
 	}
 
 	vsp, ok := provider.(providers.VectorStoresProvider)
@@ -37,10 +41,15 @@ func (h *Handlers) resolveVectorStoresProvider(ctx context.Context, rc *models.R
 // ---------------------------------------------------------------------------
 
 func (h *Handlers) proxyVectorStores(w http.ResponseWriter, r *http.Request, method, upstreamPath string, body []byte, queryParams url.Values, operation string) {
-	rc := h.setupAssistantsRC(r, operation)
-	rc.EndpointType = "vector_stores"
-	rc.Metadata["vector_stores_operation"] = operation
-	rc.Flags.NoSpend = method == http.MethodDelete
+	h.proxyVectorStoresChecked(w, r, method, upstreamPath, body, queryParams, operation, nil)
+}
+
+// proxyVectorStoresChecked is proxyVectorStores for a body whose text the
+// model reads (a search's query): view reads it, for the checks on the
+// request, before the provider is called. view is nil for a body the checks
+// do not read. The request runs the pipeline (runPassedThrough).
+func (h *Handlers) proxyVectorStoresChecked(w http.ResponseWriter, r *http.Request, method, upstreamPath string, body []byte, queryParams url.Values, operation string, view func([]byte) *requestview.View) {
+	rc := h.setupPassedThroughRC(r, "vector_stores", operation)
 	defer rc.Release()
 
 	timeout := h.resolveTimeout(rc, r)
@@ -49,36 +58,54 @@ func (h *Handlers) proxyVectorStores(w http.ResponseWriter, r *http.Request, met
 
 	vsp, err := h.resolveVectorStoresProvider(ctx, rc)
 	if err != nil {
-		models.WriteErrorFromError(w, err)
+		models.WriteErrorFromError(w, providerFailure(rc, err))
 		return
+	}
+	var checked *requestview.View
+	if view != nil {
+		checked = view(body)
 	}
 
 	var respBody []byte
-	var statusCode int
 	var respHeaders http.Header
-	call := func(callCtx context.Context, callRC *models.RequestContext) error {
-		var callErr error
-		respBody, statusCode, respHeaders, callErr = vsp.ProxyVectorStoresRequest(callCtx, method, upstreamPath, body, queryParams)
-		if callErr == nil && statusCode >= http.StatusBadRequest {
-			// Relayed as sent, and logged as the failure it is.
-			callRC.AddError(models.ErrUpstreamProvider(statusCode, fmt.Sprintf("vector stores error (HTTP %d)", statusCode)))
+	statusCode := 0
+	err = h.runPassedThrough(ctx, r, rc, body, checked, func(ctx context.Context, send []byte) (int, error) {
+		var proxyErr error
+		respBody, statusCode, respHeaders, proxyErr = vsp.ProxyVectorStoresRequest(ctx, method, upstreamPath, send, queryParams)
+		if proxyErr != nil {
+			return 0, proxyErr
 		}
-		return callErr
-	}
-
-	// Writes and searches go through the pipeline — rate limits, budgets,
-	// the request log; deletes too, but no budget refuses them. Reads stay
-	// outside it, as the other lifecycle reads do.
-	if method == http.MethodGet {
-		err = call(ctx, rc)
-	} else {
-		err = h.engine.Process(ctx, rc, call)
-	}
+		if statusCode == 0 {
+			statusCode = http.StatusOK
+		}
+		return statusCode, nil
+	})
 	if err != nil {
-		models.WriteErrorFromError(w, err)
+		models.WriteErrorFromError(w, providerFailure(rc, err))
 		return
 	}
-	h.writeAssistantsResponse(w, rc, respBody, statusCode, respHeaders)
+	if failure := nativeProviderFailure(rc, statusCode, respBody); failure != nil {
+		h.setAgentccHeaders(w, rc)
+		models.WriteError(w, failure)
+		return
+	}
+	if statusCode == 0 {
+		models.WriteError(w, errNoPassedThroughAnswer())
+		return
+	}
+
+	h.setAgentccHeaders(w, rc)
+	if respHeaders != nil {
+		for _, key := range []string{"openai-organization", "openai-processing-ms", "openai-version", "x-request-id"} {
+			if v := respHeaders.Get(key); v != "" {
+				w.Header().Set(key, v)
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	w.Write(respBody)
 }
 
 // ===========================================================================
@@ -150,7 +177,7 @@ func (h *Handlers) SearchVectorStore(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	h.proxyVectorStores(w, r, "POST", "/v1/vector_stores/"+vsID+"/search", body, nil, "vector_stores.search")
+	h.proxyVectorStoresChecked(w, r, "POST", "/v1/vector_stores/"+vsID+"/search", body, nil, "vector_stores.search", requestview.VectorStoreSearch)
 }
 
 // ===========================================================================

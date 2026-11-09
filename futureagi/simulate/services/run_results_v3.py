@@ -15,7 +15,6 @@ from django.core.cache import cache
 from django.db import connections, router
 from django.utils import timezone
 
-from model_hub.models.develop_dataset import Cell
 from simulate.models import (
     CallExecution,
     HostedHarnessExecution,
@@ -51,6 +50,7 @@ from simulate.services.scoring_status import (
     scoring_input_from_call,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
+from simulate.utils.scenario_rows import org_cells
 
 OUTCOME_LABELS = {
     "queued": "Queued",
@@ -346,7 +346,15 @@ def _row_dimensions(
     calls: list[CallExecution],
     extra_row_ids: set[str] | None = None,
     names: tuple[str, ...] = ROW_DIMENSION_COLUMNS,
+    *,
+    execution: TestExecution,
 ) -> dict[str, dict[str, Any]]:
+    """Each row's dimension cells, read from live rows of ``execution``'s org.
+
+    A call's row id can come from caller-written ``call_metadata`` (T6 #7d), so
+    a row of another organization, or a soft-deleted row or cell, reads as
+    absent. The run test is read only when there is a row to read.
+    """
     row_ids: set[str] = set()
     for call in calls:
         metadata = call_row_metadata(call)
@@ -358,7 +366,8 @@ def _row_dimensions(
     dimensions: dict[str, dict[str, Any]] = defaultdict(dict)
     # Cell's default order, newest first: the oldest cell for a column wins.
     cells = (
-        Cell.all_objects.filter(row_id__in=row_ids, column__name__in=names)
+        org_cells(execution.run_test.organization_id)
+        .filter(row_id__in=row_ids, column__name__in=names)
         .order_by("-created_at")
         .values_list("row_id", "column__name", "value")
     )
@@ -624,6 +633,7 @@ def build_call_rows(
             for scenario in harness_scenarios.values()
             if scenario.dataset_row_id
         },
+        execution=execution,
     )
     authored_branches = _authored_branches(execution, calls)
     rows = []

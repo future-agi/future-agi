@@ -70,14 +70,14 @@ const IndividualExperimentDataView = () => {
 
       // Use unique row ID instead of rowIndex
       prev.forEach((row) => {
-        const id = row.data?.rowId;
+        const id = row.data?.row_id ?? row.data?.rowId;
         if (id !== undefined) {
           mergedMap.set(id, row);
         }
       });
 
       newRows.forEach((row) => {
-        const id = row.data?.rowId;
+        const id = row.data?.row_id ?? row.data?.rowId;
         if (id !== undefined) {
           mergedMap.set(id, row);
         }
@@ -98,7 +98,7 @@ const IndividualExperimentDataView = () => {
   const allColumnOptions = useMemo(() => {
     return columnConfig.reduce((acc, curr) => {
       if (
-        curr?.originType !== "evaluation" &&
+        (curr?.origin_type ?? curr?.originType) !== "evaluation" &&
         !curr?.name?.startsWith("Experiment")
       ) {
         acc.push({
@@ -114,7 +114,9 @@ const IndividualExperimentDataView = () => {
     const column = params.column.colDef.col;
     const extraMenuItems = [];
     if (
-      ["run_prompt", "evaluation", "optimization"].includes(column?.originType)
+      ["run_prompt", "evaluation", "optimization"].includes(
+        column?.origin_type ?? column?.originType,
+      )
     ) {
       extraMenuItems.push({
         name: "Configure",
@@ -206,13 +208,15 @@ const IndividualExperimentDataView = () => {
               if (RefreshStatus.includes(eachCol?.status)) {
                 refresh.push(eachCol.id);
               }
+              const average = eachCol?.average_score ?? eachCol?.averageScore;
               bottomRow[eachCol.id] =
-                eachCol?.averageScore !== null &&
-                eachCol?.averageScore !== undefined
-                  ? `Average : ${eachCol?.averageScore.toFixed(2)}%`
+                average !== null && average !== undefined
+                  ? `Average : ${average.toFixed(2)}%`
                   : "";
             } else {
-              const eachCol = cols.find((v) => v?.originType === "evaluation");
+              const eachCol = cols.find(
+                (v) => (v?.origin_type ?? v?.originType) === "evaluation",
+              );
               const children = cols.map((v) =>
                 getIndividualExperimentColumnConfig({
                   eachCol: v,
@@ -231,9 +235,8 @@ const IndividualExperimentDataView = () => {
               if (RefreshStatus.includes(eachCol?.status)) {
                 refresh.push(eachCol.id);
               }
-              bottomRow[eachCol.id] = eachCol?.averageScore
-                ? `Average : ${eachCol?.averageScore}%`
-                : "";
+              const average = eachCol?.average_score ?? eachCol?.averageScore;
+              bottomRow[eachCol.id] = average ? `Average : ${average}%` : "";
             }
           }
 
@@ -261,8 +264,6 @@ const IndividualExperimentDataView = () => {
           params.fail();
         }
       },
-
-      getRowId: (data) => data.rowId, // Ensure rowId is unique for each row
     }),
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -385,6 +386,11 @@ const IndividualExperimentDataView = () => {
         paginationPageSizeSelector={true}
         rowModelType="serverSide"
         serverSideDatasource={dataSource}
+        getRowId={({ data, rowPinned }) =>
+          rowPinned
+            ? `pinned-${rowPinned}`
+            : String(data?.row_id ?? data?.rowId)
+        }
         pagination={true}
         cacheBlockSize={10}
         // rowSelection={{ mode: "multiRow" }}

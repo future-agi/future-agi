@@ -88,7 +88,8 @@ export default function FolderView() {
       >
         <FormSearchField
           placeholder={placeholder}
-          sx={{ minWidth: "360px", flexGrow: 1 }}
+          // IT-R5 G4 S5: the field gives way so the buttons never wrap.
+          sx={{ minWidth: "240px", flexGrow: 1, flexShrink: 1 }}
           searchQuery={searchQuery}
           onChange={(e) => onSearchQueryChange(e.target.value)}
         />
@@ -96,6 +97,8 @@ export default function FolderView() {
         <Stack
           sx={{
             ml: "auto",
+            flexShrink: 0,
+            "& .MuiButton-root": { whiteSpace: "nowrap", flexShrink: 0 },
           }}
           direction={"row"}
           alignItems={"center"}

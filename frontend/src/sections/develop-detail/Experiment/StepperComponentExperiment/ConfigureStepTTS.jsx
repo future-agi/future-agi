@@ -98,7 +98,9 @@ const ConfigureStepTTS = ({
               fontWeight={"fontWeightSemiBold"}
               component={"span"}
             >
-              Generate tts responses
+              {watchModelType === "image"
+                ? "Generate images"
+                : "Generate speech"}
             </Typography>{" "}
             for the experiment
           </Typography>
@@ -127,18 +129,24 @@ const ConfigureStepTTS = ({
             />
           ))}
         </Stack>
-        <Button
-          variant="outlined"
-          onClick={() => {
-            append(getDefaultPromptConfigByModelType(watchModelType));
-          }}
-          color={"primary"}
-          startIcon={<Iconify icon="mdi:plus" />}
-          size="medium"
-          sx={{ width: "300px", mt: 2 }}
-        >
-          Add Prompt
-        </Button>
+        {/* v2.1 (tts:prompts, HIDE of a second prompt): a run is one prompt
+            on one model and voice; the runs a second prompt made had no
+            prompt in their names, so a TTS / Image experiment has one
+            prompt (Add Prompt only when it has none). */}
+        {fields.length ? null : (
+          <Button
+            variant="outlined"
+            onClick={() => {
+              append(getDefaultPromptConfigByModelType(watchModelType));
+            }}
+            color={"primary"}
+            startIcon={<Iconify icon="mdi:plus" />}
+            size="medium"
+            sx={{ width: "300px", mt: 2 }}
+          >
+            Add Prompt
+          </Button>
+        )}
       </AccordionDetails>
     </Accordion>
   );

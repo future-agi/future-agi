@@ -1,0 +1,25 @@
+{
+  "base": "31f27e01aca7b8f3c7817c2de239e26de5051b5e",
+  "note": "Ruling 705 addendum 4: P0 preserves the Results consumers at base; main owns activation and every child gate. Remove/update these pins only with that reviewed Results work. experimentsBasic.js re-pinned for the reviewed NOHIDE-EXP classic selector (census section A; main owns Results activation). Re-pin authorised by main (owner of Results activation) on 2026-11-01 for NOHIDE-EXP 565b5a4b63 (Sol + Opus, wf_1d5de373-1ef).",
+  "files": {
+    "pages/dashboard/Develop/ExperimentWrapper.jsx": "sha256:7e0c4917e3da5fe28a1290d302fe814100f713e8eb7db962bad336781c25e49b",
+    "sections/common/Analysis/workbench/workbenchModel.js": "sha256:408167f3a362059bd90860e92d82c054e3101f844d328e853554696aa9f94c11",
+    "sections/common/Collab/RunCommentsSection.jsx": "sha256:ce3ba346e54fc5356e3032d192fea0f9d652d6e7a5a9e132946a53a1dafa64aa",
+    "sections/experiment-detail-classic/experimentsBasic.js": "sha256:51bba38156f7d882deba895a3b131c5c1f2a5616eaf57fdf37ebc529c9d881f3",
+    "sections/experiment-detail/ExperimentBar.jsx": "sha256:fc76a3a120cc672e0b16b3aaeab8db08bd327a3a2db405b006bf6934e8728bc9",
+    "sections/experiment-detail/ExperimentRow.jsx": "sha256:6e28d1a5c28adf97e1105d50d0dda384a23f0da572c389162d4a67a8ad3ca412",
+    "sections/experiment-detail/ExperimentWrapperView.jsx": "sha256:81f0912cd5da709b1477a23474b7961b1352877c779dee1ab3432738cb8dad79",
+    "sections/experiment-detail/iterate/IterateDock.jsx": "sha256:fc352c76b77b60fa030f8678baee8bd0660f2abe7ef8a5ef583ce017bbe379b3",
+    "sections/experiment-detail/iterate/IterateDockHost.jsx": "sha256:e6c4dc2d2031c816656cd444bec353ad8c560f444d215af5c4ea259f4c409c21",
+    "sections/experiment-detail/iterate/IterateFromHereButton.jsx": "sha256:5c8f066a448720c35742b6957f3c9ce0d54d5f40e4c27c4ec7c6c6ff8d6b2258",
+    "sections/experiment-detail/iterate/IterateResultBanner.jsx": "sha256:6a383f689a633b413c39747948b9ef5ccada7dfcd7041fce67ec0ac103459a5a",
+    "sections/experiment-detail/iterate/LineageRibbon.jsx": "sha256:f6ff0ec96bbe1bc2fdc9e3def7cec758836abb93f068aae250653f1c794404d7",
+    "sections/experiment-detail/results/ResultDrawer.jsx": "sha256:a7aeaebdc9a5621b84606fe509e111a38bd0d4ee41743450115e27ca93c3f773",
+    "sections/experiment-detail/results/SelectionBar.jsx": "sha256:5a9f1e38616360ac2a1c880bf3c018df841f672ce661b11c74ba547228cbf253",
+    "sections/experiment-detail/results/drawer/ResultDrawerTabs.js": "sha256:2277f439e0c3631b6e4ed65b1815f99f0481ac4b93cfc9fe945d5a0d69411d37",
+    "sections/experiment-detail/results/drawer/ReviewTab.jsx": "sha256:4ee125f6cb2d352648f6be1ef930438a09c85772d5a9c7d6cf7a692b1c9fab72",
+    "sections/experiment-detail/results/headers/ResultGroupHeader.jsx": "sha256:0442e5b7591af63f3c1c03af0b362447adadd66052d9bf027b0f100a1fdee86a",
+    "sections/experiment-detail/results/headers/useEvalVersionDoor.jsx": "sha256:da31ceba6217c08cbf0df92a149eebfbb3a7644eafe78aeaffbe42bfc022003d",
+    "sections/experiment-detail/results/resultsCollabActions.js": "sha256:b86b686eadffcc38a1874060b812010094414982ab93693cfac3ba91b0407df5"
+  }
+}

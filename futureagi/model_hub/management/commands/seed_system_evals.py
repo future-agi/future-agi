@@ -30,7 +30,10 @@ logger = structlog.get_logger(__name__)
 # 24: ndcg_at_k no longer counts duplicate retrievals, so it stays within 1.0.
 # 25: matthews_correlation computes multiclass MCC instead of rescaled accuracy.
 # 26: the 24 ndcg_at_k fix landed after 25, so it ships as 26.
-SYSTEM_EVALS_VERSION = 28
+# 29: embedding_similarity and semantic_list_contains run in the backend
+#     (EmbeddingSimilarity, SemanticListContains); as sandboxed code they
+#     could not reach model serving.
+SYSTEM_EVALS_VERSION = 29
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
@@ -60,6 +63,25 @@ def load_yaml_evals():
     return evals
 
 
+def _system_templates_present():
+    """Whether the database holds any system template.
+
+    The version cache lives in Redis and the templates in Postgres. After a
+    database reset with Redis kept (or with a cache another database seeded),
+    the counter is current while no system template exists, and trusting it
+    would leave the database with none at all (E2E-SMK-02's fresh-database
+    re-check, 2026-10-22: 0 templates after migrate + seed_system_evals).
+    """
+    from model_hub.models.choices import OwnerChoices
+    from model_hub.models.evals_metric import EvalTemplate
+
+    return EvalTemplate.no_workspace_objects.filter(
+        owner=OwnerChoices.SYSTEM.value,
+        organization__isnull=True,
+        workspace__isnull=True,
+    ).exists()
+
+
 def seed_evals(dry_run=False, force=False, verbose=False):
     """
     Core seeding logic. Called by the management command and by apps.py on startup.
@@ -67,11 +89,16 @@ def seed_evals(dry_run=False, force=False, verbose=False):
     Wrapped in a transaction-scoped advisory lock so concurrent pod startups
     can't race on bulk_create for newly-added eval_ids (TH-5501).
 
-    Returns (created, updated, skipped) counts.
+    Every call, including one the version cache skips, also syncs the system
+    template versions (``sync_system_template_versions``) inside the lock. A
+    dry run writes nothing and logs how many versions a real run would create.
+
+    Returns (created, updated, skipped) template counts.
     """
     from django.core.cache import cache
     from django.db import connection
 
+    from model_hub.models.choices import OwnerChoices
     from model_hub.models.evals_metric import EvalTemplate
 
     with transaction.atomic():
@@ -84,9 +111,21 @@ def seed_evals(dry_run=False, force=False, verbose=False):
         # finished seeding while we were waiting for the lock.
         if not force:
             cached_version = cache.get("system_evals_version", 0)
-            if cached_version >= SYSTEM_EVALS_VERSION:
-                if verbose:
-                    logger.info("system_evals_up_to_date", version=SYSTEM_EVALS_VERSION)
+            if cached_version >= SYSTEM_EVALS_VERSION and _system_templates_present():
+                # The template content is current, but the versions are synced
+                # anyway: they must not depend on the counter. A database
+                # seeded before system versions existed, at this counter or at
+                # a later one from another branch, still gains them here
+                # (E2E-SMK-02). Idempotent: when nothing changed this is two
+                # queries and an in-memory comparison.
+                versions = sync_system_template_versions(dry_run=dry_run)
+                if verbose or versions:
+                    logger.info(
+                        "system_evals_up_to_date",
+                        version=SYSTEM_EVALS_VERSION,
+                        template_versions_created=versions,
+                        dry_run=dry_run,
+                    )
                 return 0, 0, 0
 
         yaml_evals = load_yaml_evals()
@@ -94,11 +133,16 @@ def seed_evals(dry_run=False, force=False, verbose=False):
             logger.warning("no_yaml_evals_found", dir=str(SYSTEM_EVALS_DIR))
             return 0, 0, 0
 
-        # Build lookup of existing templates by eval_id
+        # Build lookup of existing templates by eval_id. Only the system's own
+        # rows: a user's copy duplicates every field, eval_id included, and
+        # seeding must never rewrite it.
         existing_by_eval_id = {
             t.eval_id: t
             for t in EvalTemplate.no_workspace_objects.filter(
-                eval_id__in=[e["eval_id"] for e in yaml_evals]
+                eval_id__in=[e["eval_id"] for e in yaml_evals],
+                owner=OwnerChoices.SYSTEM.value,
+                organization__isnull=True,
+                workspace__isnull=True,
             )
         }
 
@@ -142,11 +186,17 @@ def seed_evals(dry_run=False, force=False, verbose=False):
                     logger.info("eval_created", name=name, eval_id=eval_id)
 
         if dry_run:
+            # Each new template would get v1; changed ones are compared as
+            # they would be stored.
+            would_version = len(to_create) + sync_system_template_versions(
+                dry_run=True, pending_updates=to_update
+            )
             logger.info(
                 "dry_run_summary",
                 would_create=created_count,
                 would_update=updated_count,
                 unchanged=skipped_count,
+                would_create_template_versions=would_version,
             )
             return created_count, updated_count, skipped_count
 
@@ -175,6 +225,10 @@ def seed_evals(dry_run=False, force=False, verbose=False):
             ]
             EvalTemplate.no_workspace_objects.bulk_update(to_update, update_fields)
 
+        # Inside the same lock and transaction: a pod that sees the new
+        # template content also sees the version that pins it.
+        versions_created = sync_system_template_versions()
+
         # Update version cache
         try:
             cache.set("system_evals_version", SYSTEM_EVALS_VERSION, timeout=None)
@@ -188,9 +242,101 @@ def seed_evals(dry_run=False, force=False, verbose=False):
         unchanged=skipped_count,
         total=len(yaml_evals),
         version=SYSTEM_EVALS_VERSION,
+        template_versions_created=versions_created,
     )
 
     return created_count, updated_count, skipped_count
+
+
+def _system_version_fields(template):
+    """The version content that pins a system template as it is now.
+
+    It follows the v1 that migration 0115 and the create-version view write
+    for user templates: the live config, criteria and snapshot columns.
+    ``model`` stays empty on purpose. A system template names no judge model
+    (the binding or the caller chooses one), and the engine lets a version's
+    non-empty model override the caller's (``apply_version_overrides``), so an
+    empty model keeps execution exactly as it was before system versions
+    existed.
+    """
+    config = template.config if isinstance(template.config, dict) else {}
+    return {
+        "prompt_messages": config.get("messages") or [],
+        "config_snapshot": config,
+        "criteria": template.criteria or "",
+        "model": "",
+        "output_type_normalized": template.output_type_normalized,
+        "pass_threshold": template.pass_threshold,
+        "choice_scores": template.choice_scores,
+        "error_localizer_enabled": template.error_localizer_enabled,
+        "eval_tags": list(template.eval_tags or []),
+    }
+
+
+def sync_system_template_versions(dry_run=False, pending_updates=()):
+    """Give every system template a default version that matches it.
+
+    Run creation, pinning and score references need a resolved
+    ``EvalTemplateVersion``; without one a system template cannot be bound
+    into a run ("evaluator has no valid resolved version", E2E-SMK-02).
+
+    - No version yet: create v1, the default.
+    - The current version (the default, else the highest number) matches the
+      template: nothing is written; if it is not flagged default, it is
+      flagged.
+    - The seeded content changed: create the next version, which becomes the
+      default. Earlier versions stay, so a run pinned to one keeps it.
+
+    Every live system template is covered, including one no longer in the
+    YAML tree, since it can still be bound. Versions are global (no
+    organization or workspace), like the templates. Idempotent. Returns the
+    number of versions created.
+
+    ``dry_run`` writes nothing and returns the number a real call would
+    create. ``pending_updates`` are saved system templates changed in memory
+    but not yet written (the seeder's dry run); they are compared as they
+    would be stored.
+    """
+    from model_hub.models.choices import OwnerChoices
+    from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
+
+    pending = {t.pk: t for t in pending_updates if t.pk is not None}
+    templates = [
+        pending.get(template.pk, template)
+        for template in EvalTemplate.no_workspace_objects.filter(
+            owner=OwnerChoices.SYSTEM.value,
+            organization__isnull=True,
+            workspace__isnull=True,
+        ).order_by("eval_id")
+    ]
+    current = {}
+    for version in EvalTemplateVersion.objects.filter(
+        eval_template_id__in=[t.id for t in templates], deleted=False
+    ).order_by("eval_template_id", "-is_default", "-version_number"):
+        # Same choice as EvalTemplateVersionManager.get_default.
+        current.setdefault(version.eval_template_id, version)
+
+    created = 0
+    for template in templates:
+        wanted = _system_version_fields(template)
+        version = current.get(template.id)
+        if version is not None and all(
+            getattr(version, field) == value for field, value in wanted.items()
+        ):
+            if not version.is_default and not dry_run:
+                EvalTemplateVersion.objects.filter(pk=version.pk).update(
+                    is_default=True
+                )
+            continue
+        if not dry_run:
+            EvalTemplateVersion.objects.create_version(
+                eval_template=template,
+                organization=None,
+                workspace=None,
+                **wanted,
+            )
+        created += 1
+    return created
 
 
 def _eval_accepts_pdf(config):

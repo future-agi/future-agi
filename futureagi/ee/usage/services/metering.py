@@ -7,7 +7,9 @@ Usage:
     if not check.allowed:
         return Response({"error": check.reason}, status=403)
 
-Synchronous. Redis-only (no DB queries). < 2ms.
+Synchronous. The usage counters are Redis-only. The ledger's balance check
+reads its Redis cache and, on a cache miss (once per org per 5 minutes) or
+while Redis is down, the org's ManagedCreditAccount row in Postgres.
 """
 
 from __future__ import annotations
@@ -16,10 +18,11 @@ import os
 from datetime import datetime
 
 import structlog
+from redis.exceptions import RedisError
+
 from ee.usage.schemas.events import CheckResult, UpgradeCTA
 from ee.usage.services.config import BillingConfig
 from ee.usage.services.emitter import get_redis
-from redis.exceptions import RedisError
 
 logger = structlog.get_logger(__name__)
 
@@ -103,10 +106,33 @@ def _get_cached_billing_status(org_id: str) -> str:
     return status
 
 
+def _budget_pause_refusal(org_id: str, scope: str) -> CheckResult | None:
+    """Read the EE budget flag on every admission; an unreadable flag is not an allow."""
+    try:
+        paused = get_redis().get(f"pause:{org_id}:{scope}")
+    except Exception:
+        logger.exception("check_usage_budget_check_failed", org_id=org_id, scope=scope)
+        return CheckResult(
+            allowed=False,
+            error_code="BUDGET_CHECK_UNAVAILABLE",
+            reason="Budget status is unavailable. Retry when the check is restored.",
+            dimension=scope,
+        )
+    if paused:
+        return CheckResult(
+            allowed=False,
+            error_code="BUDGET_PAUSED",
+            reason=f"Usage paused — you set a budget limit for {scope}",
+            dimension=scope,
+        )
+    return None
+
+
 def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
     """Pre-check: can this org perform this billable action?
 
-    Synchronous. Redis-only. < 2ms.
+    Synchronous. The usage counters are Redis-only; the ledger's balance
+    check reads Postgres on a balance-cache miss or while Redis is down.
 
     Args:
         org_id: Organization ID.
@@ -116,7 +142,28 @@ def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
     Returns:
         CheckResult with allowed=True/False and details.
     """
+    # EE's total-spend enforcement writes pause:{org}:total_spend. Check it
+    # before every early return, including unknown event types and quota errors.
+    refusal = _budget_pause_refusal(org_id, "total_spend")
+    if refusal is not None:
+        return refusal
+
     config = BillingConfig.get()
+
+    # The ledger's zero-balance check (PLAN 1.4): a prepaid_only dimension
+    # (gateway_managed_spend), or a prepaid-only org on the ledger path, is
+    # refused at or below zero. It runs first because an unknown call type is
+    # allowed below. It never raises into the caller: a failure logs and falls
+    # through, and the gateway's own 402 still guards managed model calls.
+    try:
+        from ee.usage.services.balance_cache import admission_refusal
+
+        refusal = admission_refusal(org_id, event_type)
+    except Exception:
+        logger.exception("check_usage_balance_check_failed", org_id=org_id)
+        refusal = None
+    if refusal is not None:
+        return refusal
 
     # Resolve event_type → dimension + amount
     try:
@@ -130,6 +177,9 @@ def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
         )  # Unknown type — don't block, log for investigation
 
     dimension = call_type_config.dimension
+    refusal = _budget_pause_refusal(org_id, dimension)
+    if refusal is not None:
+        return refusal
 
     # Stripe exhausted its retry window (grace period) without payment.
     # past_due stays soft — the grace period itself never blocks.
@@ -196,16 +246,6 @@ def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
                         plan="payg",
                     ),
                 )
-
-    # Check budget pause flag (set by budget enforcement in Phase 4)
-    pause_key = f"pause:{org_id}:{dimension}"
-    if get_redis().get(pause_key):
-        return CheckResult(
-            allowed=False,
-            error_code="BUDGET_PAUSED",
-            reason=f"Usage paused — you set a budget limit for {dimension}",
-            dimension=dimension,
-        )
 
     return CheckResult(allowed=True, dimension=dimension)
 

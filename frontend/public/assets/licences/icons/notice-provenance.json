@@ -1,0 +1,208 @@
+[
+  {
+    "prefix": "bi",
+    "iconSource": "@iconify/json@2.2.548/json/bi.json",
+    "package": "@iconify-json/bi@1.2.7",
+    "packageIconsDigest": "sha256:556b40afedd827ec5d9889345ac10504c4c334c142fba5bbaaf7175a6d754478",
+    "pinnedIconsDigest": "sha256:c8500368e5848ec5958d15e38fd33f61a9d3c7a00dbc516b78a0703c629e35d7",
+    "geometryMatchesPinned": true,
+    "packageFiles": [
+      "README.md",
+      "chars.json",
+      "icons.json",
+      "index.d.ts",
+      "index.js",
+      "index.mjs",
+      "info.json",
+      "metadata.json",
+      "package.json"
+    ],
+    "upstreamRevision": "git:0c46b39a6d38d05dd2f5f5367b7dd29579c232bf",
+    "collectionModified": "2025-12-04T05:46:58.000Z",
+    "upstreamLicencePaths": ["LICENSE"],
+    "noticeSource": "https://raw.githubusercontent.com/twbs/icons/0c46b39a6d38d05dd2f5f5367b7dd29579c232bf/LICENSE",
+    "noticeDigest": "sha256:0fb3e11bd57e896c5a512afd64864d28a37de45d19835016c87ca1ad19ead969",
+    "copyright": [
+      "Copyright (c) 2019-2024 The Bootstrap Authors",
+      "The above copyright notice and this permission notice shall be included in",
+      "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER"
+    ],
+    "ok": true
+  },
+  {
+    "prefix": "circle-flags",
+    "iconSource": "@iconify/json@2.2.548/json/circle-flags.json",
+    "package": "@iconify-json/circle-flags@1.2.12",
+    "packageIconsDigest": "sha256:00642767199d84bed946b53cd19a478ec4deb52ab2509ec5983394c225511876",
+    "pinnedIconsDigest": "sha256:56ff60439b6b1ba2b6aafe2ae49c15b383944ceb66f42b4c70390e64b54679a0",
+    "geometryMatchesPinned": true,
+    "packageFiles": [
+      "README.md",
+      "chars.json",
+      "icons.json",
+      "index.d.ts",
+      "index.js",
+      "index.mjs",
+      "info.json",
+      "metadata.json",
+      "package.json"
+    ],
+    "upstreamRevision": "git:379588b5da95482d6bbf10bd45644a35b0609ea6",
+    "collectionModified": "2026-10-01T04:58:55.000Z",
+    "upstreamLicencePaths": ["LICENSE.md"],
+    "noticeSource": "https://raw.githubusercontent.com/HatScripts/circle-flags/379588b5da95482d6bbf10bd45644a35b0609ea6/LICENSE.md",
+    "noticeDigest": "sha256:9ef248a32ebbb1587b7c4caa3203a33065de29aa6098a6933bad67de2057e72f",
+    "copyright": [
+      "Copyright (c) 2026 HatScripts",
+      "The above copyright notice and this permission notice shall be included in all",
+      "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER"
+    ],
+    "ok": true
+  },
+  {
+    "prefix": "ep",
+    "iconSource": "@iconify/json@2.2.548/json/ep.json",
+    "package": "@iconify-json/ep@1.2.4",
+    "packageIconsDigest": "sha256:845bca245b54323c891bf37d921e518132554ad8777a5c66e406963bfa072d8d",
+    "pinnedIconsDigest": "sha256:e8687b610c5fc5cfffdbb7355cb288ab853bfa9bd87cdc37f421e816aeb082cc",
+    "geometryMatchesPinned": true,
+    "packageFiles": [
+      "README.md",
+      "chars.json",
+      "icons.json",
+      "index.d.ts",
+      "index.js",
+      "index.mjs",
+      "info.json",
+      "metadata.json",
+      "package.json"
+    ],
+    "upstreamRevision": "git:e9cb3c980a07eeb8c320bb39e9a2fe2217e0a258",
+    "collectionModified": "2026-01-26T06:24:07.000Z",
+    "upstreamLicencePaths": ["LICENSE"],
+    "noticeSource": "https://raw.githubusercontent.com/element-plus/element-plus-icons/e9cb3c980a07eeb8c320bb39e9a2fe2217e0a258/LICENSE",
+    "noticeDigest": "sha256:5db4ebb3abd8353774ae148723ccc14087d6dab99473f77a7b799b55defd8dfe",
+    "copyright": [
+      "Copyright (c) 2020-PRESENT Element Plus (https://github.com/element-plus)",
+      "The above copyright notice and this permission notice shall be included in all",
+      "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER"
+    ],
+    "ok": true
+  },
+  {
+    "prefix": "flat-color-icons",
+    "iconSource": "@iconify/json@2.2.548/json/flat-color-icons.json",
+    "package": "@iconify-json/flat-color-icons@1.2.3",
+    "packageIconsDigest": "sha256:12c081f1d8870c11b82db6be5e494bdc4b30b1bbf4f5010217a29f42147eddc3",
+    "pinnedIconsDigest": "sha256:80cfb386d2164eb598907155b284a45a53fbbd4f51d1ba44f950c120ed1ce16f",
+    "geometryMatchesPinned": true,
+    "packageFiles": [
+      "README.md",
+      "chars.json",
+      "icons.json",
+      "index.d.ts",
+      "index.js",
+      "index.mjs",
+      "info.json",
+      "metadata.json",
+      "package.json"
+    ],
+    "upstreamRevision": "git:8eccbbbd8b2af1d2c9593e7cfba5ecb0d68ee378",
+    "collectionModified": "2025-08-11T07:57:46.000Z",
+    "upstreamLicencePaths": ["LICENSE.md"],
+    "ok": true,
+    "noticeSource": "https://raw.githubusercontent.com/icons8/flat-Color-icons/8eccbbbd8b2af1d2c9593e7cfba5ecb0d68ee378/LICENSE.md",
+    "copyright": [],
+    "noticeDigest": "sha256:0c029819d69e43042904a3e9d12d25934d08398ba739e4364d61519aa1c2711c",
+    "upstreamPackage": "flat-color-icons@1.1.0",
+    "evidenceScope": "Complete actual upstream dual MIT/Good-Boy notice retained; MIT selected. Upstream provides no dated copyright line; author is Icons8 in exact package.json. No invented notice."
+  },
+  {
+    "prefix": "gg",
+    "iconSource": "@iconify/json@2.2.548/json/gg.json",
+    "package": "@iconify-json/gg@1.2.2",
+    "packageIconsDigest": "sha256:152e68c8c8230092a0b705ad9079d16c44ac99e8afaf5058662f6b56b051e803",
+    "pinnedIconsDigest": "sha256:467f27db1346170eec2ffe231e5b4fb90b3bca31dc0248eb449c0a9934883598",
+    "geometryMatchesPinned": true,
+    "packageFiles": [
+      "README.md",
+      "chars.json",
+      "icons.json",
+      "index.d.ts",
+      "index.js",
+      "index.mjs",
+      "info.json",
+      "metadata.json",
+      "package.json"
+    ],
+    "upstreamRevision": "git:deea4fa5f39a2980d7586aed18d65cdba6fd85e3",
+    "collectionModified": "2024-08-04T17:51:40.000Z",
+    "upstreamLicencePaths": ["LICENSE"],
+    "noticeSource": "https://raw.githubusercontent.com/astrit/css.gg/deea4fa5f39a2980d7586aed18d65cdba6fd85e3/LICENSE",
+    "noticeDigest": "sha256:f7586d81d2e0df56428bde77b9b5e01780833a5d89991178625ebc11bdb88f87",
+    "copyright": [
+      "Copyright (c) 2019 css.gg",
+      "The above copyright notice and this permission notice shall be included in all",
+      "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER"
+    ],
+    "ok": true
+  },
+  {
+    "prefix": "hugeicons",
+    "iconSource": "@iconify/json@2.2.548/json/hugeicons.json",
+    "package": "@iconify-json/hugeicons@1.2.35",
+    "packageIconsDigest": "sha256:8d76e777b9a32a3bc17badc6c8213cd4b8155ea3bb7578828e40cf9d6d40385f",
+    "pinnedIconsDigest": "sha256:eb8866dd121d86bf6b5275ac43867d6878df35e559a3ad5ae3b2bdcb0dbe0ff5",
+    "geometryMatchesPinned": true,
+    "packageFiles": [
+      "README.md",
+      "chars.json",
+      "icons.json",
+      "index.d.ts",
+      "index.js",
+      "index.mjs",
+      "info.json",
+      "metadata.json",
+      "package.json"
+    ],
+    "upstreamRevision": "git:e3bda0616556a7dd07d17286b4a8cb68e177c2c4",
+    "collectionModified": "2026-09-16T12:48:06.000Z",
+    "upstreamLicencePaths": ["LICENSE.md"],
+    "noticeSource": "https://raw.githubusercontent.com/hugeicons/hugeicons-react/e3bda0616556a7dd07d17286b4a8cb68e177c2c4/LICENSE.md",
+    "noticeDigest": "sha256:6e2dddec58190205b66a1ac9fa7555f3cfb3fcde332e9cfad81b153283a25c28",
+    "copyright": [
+      "## Copyright (c) 2024 Halal Labs",
+      "The above copyright notice and this permission notice shall be included in all",
+      "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER"
+    ],
+    "ok": true
+  },
+  {
+    "prefix": "weui",
+    "iconSource": "@iconify/json@2.2.548/json/weui.json",
+    "package": "@iconify-json/weui@1.2.4",
+    "packageIconsDigest": "sha256:f9e04662d469008f8b9c28fbb226e1ba7de989c7bde4e148f6c6027298c55903",
+    "pinnedIconsDigest": "sha256:70573323f59e2a18a13639a996e7ada272901c085fee1ed65e5cb9426eda6aea",
+    "geometryMatchesPinned": true,
+    "packageFiles": [
+      "README.md",
+      "chars.json",
+      "icons.json",
+      "index.d.ts",
+      "index.js",
+      "index.mjs",
+      "info.json",
+      "metadata.json",
+      "package.json"
+    ],
+    "upstreamRevision": "git:c9dc64ea1a9c4ba87c018bed214eb8731e6e2e04",
+    "collectionModified": "2025-08-11T08:39:31.000Z",
+    "upstreamLicencePaths": [],
+    "ok": true,
+    "noticeSource": "https://raw.githubusercontent.com/weui/weui-icon/c9dc64ea1a9c4ba87c018bed214eb8731e6e2e04/dist/filled/add.css",
+    "copyright": ["Copyright 2021 Tencent, Inc."],
+    "noticeDigest": "sha256:de4d06eb4716fff382e5bed7a52a501b1c875c9683dc15c472d50a9060c49e04",
+    "upstreamPackage": "weui-icon@1.0.2",
+    "evidenceScope": "Exact distributed CSS header declares MIT and copyright; standard MIT terms appended without altering attribution."
+  }
+]

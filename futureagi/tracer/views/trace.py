@@ -66,6 +66,7 @@ from tracer.selectors.trace_filter_reads import (
     numbered_page_depth_exceeded,
 )
 from tracer.serializers.filters import (
+    ObserveGraphDataErrorResponseSerializer,
     ObserveGraphDataQuerySerializer,
     ObserveGraphDataResponseSerializer,
     PageDepthExceededErrorSerializer,
@@ -162,7 +163,6 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
-from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import (
     build_eval_rollup,
     count_column_metadata,
@@ -195,6 +195,7 @@ from tracer.utils.helper import (
     get_annotation_labels_for_project,
     get_default_trace_config,
     get_project_eval_configs,
+    unvalidated_relation_keys,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
 )
@@ -1186,8 +1187,8 @@ def _soft_delete_trace_tree(traces):
     ObservationSpan.no_workspace_objects.filter(trace_id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
-    soft_delete_eval_results(
-        EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids)
+    EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids).update(
+        deleted=True, deleted_at=now
     )
     try:
         from tracer.models.trace_annotation import TraceAnnotation
@@ -2831,7 +2832,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             200: ObserveGraphDataResponseSerializer,
             400: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
-            503: ApiErrorResponseSerializer,
+            503: ObserveGraphDataErrorResponseSerializer,
         },
     )
     @action(detail=False, methods=["post"])
@@ -2992,10 +2993,24 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     graph,
                     allow_sampled=False,
                 ):
+                    logger.warning(
+                        "trace_graph_degraded",
+                        query_error_code=graph.get("query_error_code"),
+                        project_id=project_id,
+                        eval_config_id=metric_id if metric_type == "EVAL" else None,
+                    )
+                    graph = {
+                        **graph,
+                        "data": [],
+                        "query_complete": False,
+                        "query_status": "degraded",
+                        "query_sampled": False,
+                        "message": "Graph data is temporarily unavailable. Please retry.",
+                    }
                     return finish(
                         self._gm.custom_error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "Graph data is temporarily unavailable. Please retry.",
+                            graph,
                             code="service_unavailable",
                         )
                     )
@@ -3056,6 +3071,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         try:
             traces_data = self.request.data.get("traces", [])
             for trace in traces_data:
+                if unvalidated_relation_keys(
+                    Trace, trace, {"project", "project_version", "session"}
+                ):
+                    raise ValueError("Unsupported trace fields")
                 project = (
                     _project_queryset_for_request(request)
                     .filter(id=trace.get("project"))
@@ -7525,7 +7544,9 @@ class GetUserCodeExampleView(APIView):
         project_name = "New Project"
         project_id = request.GET.get("project_id")
         if project_id:
-            project = get_object_or_404(Project, id=project_id)
+            project = get_object_or_404(
+                _project_queryset_for_request(request), id=project_id
+            )
             project_name = project.name
             project_type = project.trace_type
             if project_type != "observe":

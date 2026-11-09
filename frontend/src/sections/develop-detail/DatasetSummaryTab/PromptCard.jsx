@@ -16,9 +16,9 @@ const headerData = [
   {
     id: "1",
     icon: "/assets/icons/summary/database.svg",
-    title: "Avg, token size",
+    title: "Avg. token size",
     value: 0,
-    valueKey: "avgTokens",
+    valueKey: "avg_tokens",
     unit: "",
     backgroundColor: "orange.o5",
     color: "orange.500",
@@ -26,10 +26,10 @@ const headerData = [
   {
     id: "2",
     icon: "/assets/icons/summary/timmer.svg",
-    title: "Avg. Response time",
+    title: "Avg. response time",
     value: 0,
-    valueKey: "avgTime",
-    unit: "ms",
+    valueKey: "avg_time",
+    unit: "s",
     backgroundColor: "blue.o5",
     color: "blue.500",
   },
@@ -38,7 +38,7 @@ const headerData = [
     icon: "/assets/icons/summary/dollar.svg",
     title: "Average cost",
     value: 0,
-    valueKey: "avgCost",
+    valueKey: "avg_cost",
     unit: "$",
     backgroundColor: "green.o5",
     color: "green.500",
@@ -133,8 +133,11 @@ const PromptCard = ({
                     typography={"l1"}
                     fontWeight={"fontWeightSemiBold"}
                   >
-                    {data?.[item?.valueKey]}
-                    {item.unit}
+                    {data?.[item?.valueKey] == null
+                      ? "—"
+                      : item.unit === "$"
+                        ? `$${data[item.valueKey]}`
+                        : `${data[item.valueKey]}${item.unit}`}
                   </Typography>
                 </Box>
               </Box>

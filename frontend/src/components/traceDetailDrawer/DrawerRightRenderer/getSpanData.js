@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import { groupFlattenedMessageAttrs } from "./flattenedMessageAttrs";
 
 /**
@@ -24,7 +25,7 @@ export function getObservationType(obj) {
  * Supports both camelCase and snake_case keys.
  */
 export function getProviderLogo(obj) {
-  return obj?.provider_logo || obj?.providerLogo;
+  return localProviderLogo(obj);
 }
 
 /**

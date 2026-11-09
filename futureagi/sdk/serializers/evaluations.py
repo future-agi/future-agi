@@ -2,7 +2,7 @@ from django.db.models import Q
 from rest_framework import serializers
 
 from model_hub.models.choices import OwnerChoices
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EXTERNAL_EVAL_TYPE, EvalTemplate
 from model_hub.utils.function_eval_params import normalize_eval_runtime_config
 
 
@@ -35,6 +35,12 @@ class ConfigureEvaluationsSerializer(serializers.Serializer):
         except EvalTemplate.DoesNotExist:
             raise serializers.ValidationError(  # noqa: B904
                 f"Evaluation template with name :{eval_templates} not found."
+            )
+
+        if eval_template.eval_type == EXTERNAL_EVAL_TYPE:
+            raise serializers.ValidationError(
+                f"Evaluation template {eval_templates} is an external metric: it is "
+                "scored by the caller and is never executed by the server."
             )
 
         if eval_template.owner == OwnerChoices.SYSTEM.value:
@@ -131,6 +137,9 @@ class ConfigureEvaluationsSerializer(serializers.Serializer):
             data["config"] = normalize_eval_runtime_config(
                 eval_template.config, data.get("config", {})
             )
+            from sdk.utils.evaluations import validate_sdk_choice_score_override
+
+            validate_sdk_choice_score_override(eval_template, data["config"])
         except ValueError as e:
             raise serializers.ValidationError({"config": str(e)})  # noqa: B904
 

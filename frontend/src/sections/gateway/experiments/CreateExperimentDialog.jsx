@@ -162,6 +162,7 @@ const CreateExperimentDialog = ({ open, onClose, onSubmit, isLoading }) => {
         <Button onClick={handleClose}>Cancel</Button>
         <Button
           variant="contained"
+          color="primary"
           onClick={handleSubmit}
           disabled={!valid || isLoading}
         >

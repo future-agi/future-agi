@@ -11,9 +11,10 @@ import EditImageZoom from "./EditImageZoom";
 import EditImages from "./EditImages";
 import AudioWaveformModal from "src/components/custom-audio/AudioPlayerModal";
 import { useEditCellStore } from "../../states";
-import { onCellValueChangedWrapper } from "../common";
+import { cellWriter } from "../common";
 import { useQueryClient } from "@tanstack/react-query";
 import EditFile from "./EditFile";
+import { documentMetaOf } from "./mediaEditorRoute";
 import EditPersona from "./EditPersona";
 import PropTypes from "prop-types";
 
@@ -27,7 +28,10 @@ const DoubleClickEditCell = ({ dataset }) => {
   const dataType = params?.colDef?.dataType;
   const queryClient = useQueryClient();
 
-  const onCellValueChanged = onCellValueChangedWrapper(queryClient, dataset);
+  // The column's own writer: on the versioned dataset grid a dialog edit is
+  // one pending change (Save version commits it); scenario grids write now.
+  const versioned = Boolean(params?.colDef?.cellRendererParams?.versioned);
+  const onCellValueChanged = cellWriter({ versioned, queryClient, dataset });
 
   const formattedValue = useMemo(() => {
     if (dataType !== "persona") return {};
@@ -132,7 +136,8 @@ const DoubleClickEditCell = ({ dataset }) => {
           />
         ) : open && dataType === "document" ? (
           <EditFile
-            params={params}
+            // Review 2 (S5): the name and type the cell shows (documentMetaOf).
+            params={{ ...documentMetaOf(params?.value), ...params }}
             onClose={onClose}
             onCellValueChanged={onCellValueChanged}
           />

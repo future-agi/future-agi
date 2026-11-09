@@ -48,7 +48,7 @@ export const OPTIONS = [
     icon: "solar:cloud-linear",
     blurb:
       "Connect an agent living on a managed voice or chat platform by its ID. We handle the auth and route every simulated turn through the platform's own API.",
-    preview: ["Vapi", "Retell", "Bland", "ElevenLabs", "LiveKit"],
+    preview: ["Vapi", "Retell", "LiveKit"],
     setupSubtitle: "Point at an agent living on a managed platform.",
     status: OPTION_STATUS.LIVE,
   },

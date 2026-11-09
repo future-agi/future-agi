@@ -7,7 +7,12 @@ import httpx
 import structlog
 from django.utils import timezone
 
-from agentcc.services.credential_manager import decrypt_token
+from ee.falcon_ai.credentials import (
+    AUTH_REQUIRED,
+    FalconCredentialError,
+    decrypt_falcon_token,
+)
+from ee.falcon_ai.oauth_registration import save_connector
 
 logger = structlog.get_logger(__name__)
 
@@ -27,6 +32,20 @@ class MCPConnectorProxy:
     # each worker maintains its own cache. This is intentional -- sessions
     # are lightweight and duplicate init is harmless.
     _session_cache: dict = {}
+
+    def _check_background(self):
+        guard = getattr(self, "background_analysis", None)
+        if guard is not None:
+            guard.check()
+
+    async def _check_background_async(self):
+        guard = getattr(self, "background_analysis", None)
+        if guard is not None:
+            await guard.checkpoint()
+
+    def _background_timeout(self, timeout):
+        guard = getattr(self, "background_analysis", None)
+        return min(timeout, max(0.001, guard.remaining)) if guard else timeout
 
     def _next_id(self):
         MCPConnectorProxy._request_id += 1
@@ -92,15 +111,29 @@ class MCPConnectorProxy:
         Raises on HTTP errors or non-JSON responses.
         """
         timeout = timeout or self.TIMEOUT
-        response = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+        self._check_background()
+        response = httpx.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=self._background_timeout(timeout),
+        )
         response.raise_for_status()
         return self._parse_response(response)
 
     async def _async_post_jsonrpc(self, url, payload, headers, timeout=None):
         """Async version of _post_jsonrpc."""
         timeout = timeout or self.TIMEOUT
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, json=payload, headers=headers)
+        async with httpx.AsyncClient(
+            timeout=self._background_timeout(timeout)
+        ) as client:
+            await self._check_background_async()
+            response = await client.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=self._background_timeout(timeout),
+            )
             response.raise_for_status()
             return self._parse_response(response)
 
@@ -121,7 +154,13 @@ class MCPConnectorProxy:
                 "clientInfo": {"name": "FutureAGI-FalconAI", "version": "1.0.0"},
             },
         }
-        response = httpx.post(url, json=init_payload, headers=headers, timeout=timeout)
+        self._check_background()
+        response = httpx.post(
+            url,
+            json=init_payload,
+            headers=headers,
+            timeout=self._background_timeout(timeout),
+        )
         response.raise_for_status()
         session_id = response.headers.get("mcp-session-id")
 
@@ -133,7 +172,13 @@ class MCPConnectorProxy:
         notif_headers = {**headers}
         if session_id:
             notif_headers["Mcp-Session-Id"] = session_id
-        httpx.post(url, json=notif_payload, headers=notif_headers, timeout=timeout)
+        self._check_background()
+        httpx.post(
+            url,
+            json=notif_payload,
+            headers=notif_headers,
+            timeout=self._background_timeout(timeout),
+        )
 
         return session_id
 
@@ -150,8 +195,16 @@ class MCPConnectorProxy:
                 "clientInfo": {"name": "FutureAGI-FalconAI", "version": "1.0.0"},
             },
         }
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, json=init_payload, headers=headers)
+        async with httpx.AsyncClient(
+            timeout=self._background_timeout(timeout)
+        ) as client:
+            await self._check_background_async()
+            response = await client.post(
+                url,
+                json=init_payload,
+                headers=headers,
+                timeout=self._background_timeout(timeout),
+            )
             response.raise_for_status()
             session_id = response.headers.get("mcp-session-id")
 
@@ -162,7 +215,13 @@ class MCPConnectorProxy:
             notif_headers = {**headers}
             if session_id:
                 notif_headers["Mcp-Session-Id"] = session_id
-            await client.post(url, json=notif_payload, headers=notif_headers)
+            await self._check_background_async()
+            await client.post(
+                url,
+                json=notif_payload,
+                headers=notif_headers,
+                timeout=self._background_timeout(timeout),
+            )
 
             return session_id
 
@@ -227,14 +286,22 @@ class MCPConnectorProxy:
                         return url, data
                     except Exception as init_err:
                         logger.debug(
-                            "mcp_init_then_request_failed", url=url, error=str(init_err)
+                            "mcp_init_then_request_failed",
+                            url=url,
+                            error="MCP initialization failed",
                         )
                         last_error = init_err
                 else:
-                    logger.debug("mcp_endpoint_attempt_failed", url=url, error=str(e))
+                    logger.debug(
+                        "mcp_endpoint_attempt_failed",
+                        url=url,
+                        error="MCP request failed",
+                    )
                     last_error = e
             except Exception as e:
-                logger.debug("mcp_endpoint_attempt_failed", url=url, error=str(e))
+                logger.debug(
+                    "mcp_endpoint_attempt_failed", url=url, error="MCP request failed"
+                )
                 last_error = e
         raise last_error
 
@@ -283,14 +350,22 @@ class MCPConnectorProxy:
                         return url, data
                     except Exception as init_err:
                         logger.debug(
-                            "mcp_init_then_request_failed", url=url, error=str(init_err)
+                            "mcp_init_then_request_failed",
+                            url=url,
+                            error="MCP initialization failed",
                         )
                         last_error = init_err
                 else:
-                    logger.debug("mcp_endpoint_attempt_failed", url=url, error=str(e))
+                    logger.debug(
+                        "mcp_endpoint_attempt_failed",
+                        url=url,
+                        error="MCP request failed",
+                    )
                     last_error = e
             except Exception as e:
-                logger.debug("mcp_endpoint_attempt_failed", url=url, error=str(e))
+                logger.debug(
+                    "mcp_endpoint_attempt_failed", url=url, error="MCP request failed"
+                )
                 last_error = e
         raise last_error
 
@@ -321,12 +396,23 @@ class MCPConnectorProxy:
             await database_sync_to_async(self._save_discovery)(connector, tools)
 
             return {"success": True, "tools": tools, "count": len(tools)}
-        except Exception as e:
-            logger.error("mcp_discovery_error", connector=connector.name, error=str(e))
+        except FalconCredentialError:
             from channels.db import database_sync_to_async
 
-            await database_sync_to_async(self._save_error)(connector, str(e))
-            return {"success": False, "error": str(e)}
+            await database_sync_to_async(self._save_error)(connector, AUTH_REQUIRED)
+            return {"success": False, "error": AUTH_REQUIRED, "code": AUTH_REQUIRED}
+        except Exception:
+            logger.error(
+                "mcp_discovery_error",
+                connector=connector.name,
+                error="MCP request failed",
+            )
+            from channels.db import database_sync_to_async
+
+            await database_sync_to_async(self._save_error)(
+                connector, "MCP request failed"
+            )
+            return {"success": False, "error": "MCP request failed"}
 
     def discover_tools_sync(self, connector):
         """Synchronous version for REST API views."""
@@ -344,10 +430,17 @@ class MCPConnectorProxy:
             tools = data.get("result", {}).get("tools", [])
             self._save_discovery(connector, tools)
             return {"success": True, "tools": tools, "count": len(tools)}
-        except Exception as e:
-            logger.error("mcp_discovery_error", connector=connector.name, error=str(e))
-            self._save_error(connector, str(e))
-            return {"success": False, "error": str(e)}
+        except FalconCredentialError:
+            self._save_error(connector, AUTH_REQUIRED)
+            return {"success": False, "error": AUTH_REQUIRED, "code": AUTH_REQUIRED}
+        except Exception:
+            logger.error(
+                "mcp_discovery_error",
+                connector=connector.name,
+                error="MCP request failed",
+            )
+            self._save_error(connector, "MCP request failed")
+            return {"success": False, "error": "MCP request failed"}
 
     async def execute_tool(self, connector, tool_name, params):
         """Execute a tool on an external MCP server.
@@ -356,7 +449,14 @@ class MCPConnectorProxy:
         Tries streamable HTTP first, falls back to SSE endpoint.
         """
         try:
-            headers = self._build_headers(connector)
+            if getattr(self, "background_analysis", None) is not None:
+                from channels.db import database_sync_to_async
+
+                # OAuth refresh is synchronous. Keep it off the loop so the
+                # background deadline can cancel the awaiting agent promptly.
+                headers = await database_sync_to_async(self._build_headers)(connector)
+            else:
+                headers = self._build_headers(connector)
             payload = {
                 "jsonrpc": "2.0",
                 "id": self._next_id(),
@@ -398,18 +498,27 @@ class MCPConnectorProxy:
                         connector=connector.name,
                         tool=tool_name,
                         attempt=attempt + 1,
-                        error=str(e),
+                        error="MCP request failed",
                     )
-                    await asyncio.sleep(1)
-        except Exception as e:
+                    await self._check_background_async()
+                    await asyncio.sleep(self._background_timeout(1))
+        except Exception as error:
+            # Access revocation takes precedence over a connector auth result.
+            await self._check_background_async()
+            if isinstance(error, FalconCredentialError):
+                return {
+                    "content": AUTH_REQUIRED,
+                    "is_error": True,
+                    "code": AUTH_REQUIRED,
+                }
             logger.error(
                 "mcp_tool_call_error",
                 connector=connector.name,
                 tool=tool_name,
-                error=str(e),
+                error="MCP request failed",
             )
             return {
-                "content": f"Error calling {connector.name}.{tool_name}: {str(e)}",
+                "content": "MCP tool call failed",
                 "is_error": True,
             }
 
@@ -455,18 +564,26 @@ class MCPConnectorProxy:
                         connector=connector.name,
                         tool=tool_name,
                         attempt=attempt + 1,
-                        error=str(e),
+                        error="MCP request failed",
                     )
-                    time.sleep(1)
-        except Exception as e:
+                    self._check_background()
+                    time.sleep(self._background_timeout(1))
+        except Exception as error:
+            self._check_background()
+            if isinstance(error, FalconCredentialError):
+                return {
+                    "content": AUTH_REQUIRED,
+                    "is_error": True,
+                    "code": AUTH_REQUIRED,
+                }
             logger.error(
                 "mcp_tool_call_error",
                 connector=connector.name,
                 tool=tool_name,
-                error=str(e),
+                error="MCP request failed",
             )
             return {
-                "content": f"Error calling {connector.name}.{tool_name}: {str(e)}",
+                "content": "MCP tool call failed",
                 "is_error": True,
             }
 
@@ -485,57 +602,51 @@ class MCPConnectorProxy:
                 connector, payload, headers, timeout=10.0
             )
             return {"success": True, "status_code": 200}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        except FalconCredentialError:
+            return {"success": False, "error": AUTH_REQUIRED, "code": AUTH_REQUIRED}
+        except Exception:
+            return {"success": False, "error": "MCP request failed"}
 
     def _build_headers(self, connector):
         """Build auth headers for the MCP server."""
+        self._check_background()
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
-        if connector.auth_type == "api_key":
-            headers[connector.auth_header_name] = decrypt_token(
-                connector.auth_header_value
-            )
-        elif connector.auth_type == "bearer":
-            headers["Authorization"] = (
-                f"Bearer {decrypt_token(connector.auth_header_value)}"
-            )
+        if connector.auth_type in ("api_key", "bearer"):
+            value = decrypt_falcon_token(connector.auth_header_value)
+            if not value:
+                raise FalconCredentialError("Connector credential is missing")
+            if connector.auth_type == "api_key":
+                headers[connector.auth_header_name] = value
+            else:
+                headers["Authorization"] = f"Bearer {value}"
         elif connector.auth_type == "oauth":
             from ee.falcon_ai.oauth_client import get_valid_access_token
 
-            try:
-                access_token = get_valid_access_token(connector)
-                headers["Authorization"] = f"Bearer {access_token}"
-            except RuntimeError as e:
-                logger.error(
-                    "oauth_header_error",
-                    connector=connector.name,
-                    error=str(e),
-                )
+            # Never downgrade a credential failure into an anonymous request.
+            access_token = get_valid_access_token(connector)
+            headers["Authorization"] = f"Bearer {access_token}"
         return headers
 
     def _save_discovery(self, connector, tools):
         """Save discovered tools to the connector model."""
-        connector.discovered_tools = tools
-        connector.enabled_tool_names = [t.get("name", "") for t in tools]
-        connector.is_verified = True
-        connector.last_discovery_at = timezone.now()
-        connector.last_error = ""
-        connector.save(
-            update_fields=[
-                "discovered_tools",
-                "enabled_tool_names",
-                "is_verified",
-                "last_discovery_at",
-                "last_error",
-                "updated_at",
-            ]
+        save_connector(
+            connector,
+            {
+                "discovered_tools": tools,
+                "enabled_tool_names": [t.get("name", "") for t in tools],
+                "is_verified": True,
+                "last_discovery_at": timezone.now(),
+                "last_error": "",
+            },
         )
 
     def _save_error(self, connector, error):
         """Save error to the connector model."""
-        connector.last_error = error[:500]
-        connector.is_verified = False
-        connector.save(update_fields=["last_error", "is_verified", "updated_at"])
+        save_connector(
+            connector,
+            {"last_error": error[:500], "is_verified": False},
+            discard_stale=True,
+        )

@@ -333,6 +333,12 @@ class ExactGraphReadError(RuntimeError):
     """A complete exact graph refresh could not be produced."""
 
 
+class EvalLifecycleUnavailable(ExactGraphReadError):
+    """The selected eval logger cannot establish a valid scored population."""
+
+    error_code = "eval_lifecycle_unavailable"
+
+
 def output_bucket_partitions(
     start_date: datetime,
     end_date: datetime,
@@ -2310,7 +2316,12 @@ def read_exact_eval_graph(
     )
     if not output_type:
         output_type = config.eval_template.config.get("output", "SCORE")
-    choices = list(req_data_config.get("choices") or config.eval_template.choices or [])
+    # Request/display choices must never narrow scalar-result validity. Prefer
+    # the configured vocabulary even when the request supplies only one series.
+    valid_choices = list(
+        config.eval_template.choices or req_data_config.get("choices") or []
+    )
+    choices = list(req_data_config.get("choices") or valid_choices)
     if not all_series and str(output_type).upper() in {"CHOICE", "CHOICES"}:
         selected = req_data_config.get("value")
         choices = [str(selected)] if selected not in (None, "") else choices[:1]
@@ -2352,6 +2363,7 @@ def read_exact_eval_graph(
         eval_output_type=output_type,
         eval_name=config.name,
         choices=choices,
+        valid_choices=valid_choices,
         # Session filters are compiled exactly once by the shared per-session
         # selector. Passing them to the generic trace builder as well would
         # reinterpret aggregate/message fields as raw span attributes.
@@ -2367,6 +2379,10 @@ def read_exact_eval_graph(
             else ()
         ),
     )
+    # Validate source capability even for an empty window: unsupported lifecycle
+    # must be unavailable, not a successful empty quality series. Building the
+    # statement does not execute a ClickHouse read.
+    query, params = builder.build()
     if empty:
         formatted = builder.format_result([], [])
         series = formatted if isinstance(formatted, list) else [formatted]
@@ -2376,7 +2392,6 @@ def read_exact_eval_graph(
             rows_returned=0,
         )
     else:
-        query, params = builder.build()
         result = _execute_direct_exact_graph_query(
             analytics=analytics,
             query=query,

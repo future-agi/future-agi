@@ -1,0 +1,78 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "microsoft-sharepoint",
+  "source": "V10 synthetic catalog fixtures; not live acceptance",
+  "test_account": "v10-synthetic-unverified-microsoft-sharepoint",
+  "tools": 8,
+  "vendor_404": "Microsoft graph.microsoft.com 404",
+  "drive_checks": [
+    {
+      "name": "first_tool_read_only",
+      "jq": ".tools[] | select(.name == \"get_site\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "fixture_resource_returned",
+      "jq": ".calls[0].result.content[0].text | contains(\"fixture\")",
+      "want": "true"
+    },
+    {
+      "name": "typed_first_projection",
+      "jq": ".calls[0].result.content[0].text | fromjson | .id",
+      "want": "site-fixture"
+    },
+    {
+      "name": "get_site_annotations",
+      "jq": ".tools[] | select(.name == \"get_site\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_drives_annotations",
+      "jq": ".tools[] | select(.name == \"list_drives\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_lists_annotations",
+      "jq": ".tools[] | select(.name == \"list_lists\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "get_list_annotations",
+      "jq": ".tools[] | select(.name == \"get_list\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_items_annotations",
+      "jq": ".tools[] | select(.name == \"list_items\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "get_item_annotations",
+      "jq": ".tools[] | select(.name == \"get_item\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_columns_annotations",
+      "jq": ".tools[] | select(.name == \"list_columns\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_content_types_annotations",
+      "jq": ".tools[] | select(.name == \"list_content_types\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    }
+  ],
+  "vendor_request_checks": [
+    {
+      "name": "documented_first_request",
+      "index": 0,
+      "want": "GET /v1.0/sites/site-fixture?"
+    }
+  ],
+  "every_vendor_request": [
+    {
+      "name": "documented_api_prefix",
+      "jq": ".path | startswith(\"/v1.0/\")"
+    }
+  ]
+}

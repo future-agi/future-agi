@@ -45,6 +45,11 @@ export type AccountsErrorResponseApiResult = {
 export type AccountsErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface AccountsErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: AccountsErrorResponseApiType;
   code?: string;
@@ -477,6 +482,7 @@ export interface CreateSecretKeyApi {
    * @maxLength 100
    */
   key_name: string;
+  workspace_id?: string;
 }
 
 export interface SecretKeyCreateResultApi {
@@ -530,18 +536,11 @@ export interface SecretKeyListResponseApi {
   result: SecretKeyListResultApi;
 }
 
-export interface SecretKeyDataResponseApi {
-  id: string;
+export interface SecretKeysRetiredResponseApi {
   /** @minLength 1 */
-  api_key: string;
+  code?: string;
   /** @minLength 1 */
-  secret_key: string;
-}
-
-export interface SecretKeysResponseApi {
-  /** @minLength 1 */
-  status: string;
-  data: SecretKeyDataResponseApi;
+  create_url: string;
 }
 
 export interface LogoutRequestApi {
@@ -569,6 +568,59 @@ export interface TimezoneRequestApi {
 export interface TimezoneResponseApi {
   /** @minLength 1 */
   timezone: string;
+}
+
+export interface OmegaObserveTargetResponseApi {
+  organizationId: string;
+  workspaceId: string;
+  projectId: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  projectName: string;
+}
+
+export type OmegaSessionExchangeRequestApiAudience =
+  (typeof OmegaSessionExchangeRequestApiAudience)[keyof typeof OmegaSessionExchangeRequestApiAudience];
+
+export const OmegaSessionExchangeRequestApiAudience = {
+  "omega-squad": "omega-squad",
+} as const;
+
+export interface OmegaSessionExchangeRequestApi {
+  audience: OmegaSessionExchangeRequestApiAudience;
+  /**
+   * @minimum 1
+   * @maximum 8
+   */
+  count?: number;
+}
+
+export type OmegaSessionExchangeResponseApiTokenType =
+  (typeof OmegaSessionExchangeResponseApiTokenType)[keyof typeof OmegaSessionExchangeResponseApiTokenType];
+
+export const OmegaSessionExchangeResponseApiTokenType = {
+  Bearer: "Bearer",
+} as const;
+
+export interface OmegaSessionExchangeResponseApi {
+  /**
+   * @minLength 1
+   * @maxLength 8192
+   */
+  accessToken: string;
+  tokenType: OmegaSessionExchangeResponseApiTokenType;
+  /**
+   * @minimum 1
+   * @maximum 45
+   */
+  expiresIn: number;
+  /**
+   * @minItems 1
+   * @maxItems 8
+   */
+  accessTokens?: string[];
 }
 
 export interface UserOnboardingResultApi {
@@ -1272,6 +1324,11 @@ export type TeamCreateErrorResponseApiResult = {
 export type TeamCreateErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface TeamCreateErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: TeamCreateErrorResponseApiType;
   code?: string;
@@ -2443,6 +2500,89 @@ export interface AgentccRequestLogApi {
   readonly organization?: string;
   readonly workspace?: string;
   readonly created_at?: string;
+  /** @minLength 1 */
+  readonly generation_id?: string;
+  readonly attempt_count?: number;
+  /** @minLength 1 */
+  readonly billing_mode?: string;
+  /** @minLength 1 */
+  readonly credential_type?: string;
+  readonly cost_upstream?: string;
+  readonly cost_markup?: string;
+  /** @minLength 1 */
+  readonly cost_source?: string;
+  readonly usage_estimated?: boolean;
+  /** @minLength 1 */
+  readonly agent_framework?: string;
+  /** @minLength 1 */
+  readonly agent_id?: string;
+  /** @minLength 1 */
+  readonly agent_run_id?: string;
+  /** @minLength 1 */
+  readonly agent_parent_run_id?: string;
+  /** @minLength 1 */
+  readonly agent_root_run_id?: string;
+  /** @minLength 1 */
+  readonly agent_workflow?: string;
+  /** @minLength 1 */
+  readonly agent_step?: string;
+  /** @minLength 1 */
+  readonly agent_env?: string;
+  /** @minLength 1 */
+  readonly policy_version?: string;
+  /** @minLength 1 */
+  readonly policy_variant?: string;
+  readonly auto_routed?: boolean;
+}
+
+export interface GatewayGuardrailRuleApi {
+  /** @minLength 1 */
+  rule: string;
+  trigger_count: number;
+  block_count: number;
+  warn_count: number;
+  avg_latency_ms: number;
+}
+
+export interface GatewayGuardrailRulesResultApi {
+  rules: GatewayGuardrailRuleApi[];
+}
+
+export interface GatewayOverviewIntegerKpiApi {
+  value: number;
+  /** Percent change from the previous period of the same length; null when the previous period was zero and this one is not. */
+  trend: number;
+}
+
+export interface GatewayOverviewCostKpiApi {
+  /**
+   * Total cost as a decimal string.
+   * @minLength 1
+   */
+  value: string;
+  /** Percent change from the previous period of the same length; null when the previous period was zero and this one is not. */
+  trend: number;
+  /** Requests in the period that have no price and add no cost. */
+  unpriced_requests: number;
+}
+
+export interface GatewayOverviewNumberKpiApi {
+  value: number;
+  /** Percent change from the previous period of the same length; null when the previous period was zero and this one is not. */
+  trend: number;
+}
+
+export interface GatewayOverviewResultApi {
+  total_requests: GatewayOverviewIntegerKpiApi;
+  total_tokens: GatewayOverviewIntegerKpiApi;
+  total_cost: GatewayOverviewCostKpiApi;
+  avg_latency_ms: GatewayOverviewNumberKpiApi;
+  error_rate: GatewayOverviewNumberKpiApi;
+  cache_hit_rate: GatewayOverviewNumberKpiApi;
+  p95_latency_ms: GatewayOverviewNumberKpiApi;
+  active_models: GatewayOverviewIntegerKpiApi;
+  period_start: string;
+  period_end: string;
 }
 
 export type AgentccAPIKeyApiStatus =
@@ -2463,7 +2603,7 @@ export type AgentccAPIKeyApiMetadata = { [key: string]: unknown };
 export interface AgentccAPIKeyApi {
   readonly id?: string;
   project?: string;
-  user?: string;
+  readonly user?: string;
   /** @minLength 1 */
   readonly gateway_key_id?: string;
   /** @minLength 1 */
@@ -2504,9 +2644,46 @@ export interface APIKeyBulkItemApi {
   expires_at: string | null;
 }
 
+export interface KeySnapshotApi {
+  complete: boolean;
+  /** @minimum 0 */
+  issued_ever: number;
+}
+
+export interface RetiredGatewayKeyApi {
+  /** @minLength 1 */
+  id: string;
+  /**
+   * @minLength 1
+   * @pattern ^[0-9a-fA-F]{64}$
+   */
+  key_hash: string;
+}
+
+export interface DelegatedGatewayMemberApi {
+  org_id: string;
+  user_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^(?:-|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$
+   */
+  workspace_id: string;
+}
+
+export interface DelegationSnapshotApi {
+  complete: boolean;
+  fetched_at: string;
+  members: DelegatedGatewayMemberApi[];
+  revoked_grants: string[];
+}
+
 export interface APIKeyBulkResponseApi {
   status: boolean;
   result: APIKeyBulkItemApi[];
+  snapshot: KeySnapshotApi;
+  retired: RetiredGatewayKeyApi[];
+  config_conflicts: string[];
+  delegation: DelegationSnapshotApi;
 }
 
 export type AgentccErrorResponseApiType =
@@ -2531,6 +2708,11 @@ export const AgentccErrorResponseApiType = {
 export type AgentccErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface AgentccErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: AgentccErrorResponseApiType;
   code?: string;
@@ -2559,6 +2741,512 @@ export interface AgentccBlocklistApi {
   readonly updated_at?: string;
 }
 
+export type ConnectorAddRequestApiMode =
+  (typeof ConnectorAddRequestApiMode)[keyof typeof ConnectorAddRequestApiMode];
+
+export const ConnectorAddRequestApiMode = {
+  agent: "agent",
+  user: "user",
+} as const;
+
+export type ConnectorAddRequestApiUrlVariables = { [key: string]: string };
+
+export interface _CredentialValueApi {
+  /**
+   * @minLength 1
+   * @maxLength 8192
+   */
+  value: string;
+}
+
+export interface ConnectorAddRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  provider?: string;
+  mode?: ConnectorAddRequestApiMode;
+  url_variables?: ConnectorAddRequestApiUrlVariables;
+  credential?: _CredentialValueApi;
+}
+
+export type _AddedCredentialApiMode =
+  (typeof _AddedCredentialApiMode)[keyof typeof _AddedCredentialApiMode];
+
+export const _AddedCredentialApiMode = {
+  none: "none",
+  shared: "shared",
+  per_user: "per_user",
+} as const;
+
+/**
+ * Where the key goes: header, query or url_variable; empty with no credential.
+ */
+export type _AddedCredentialApiIn =
+  (typeof _AddedCredentialApiIn)[keyof typeof _AddedCredentialApiIn];
+
+export const _AddedCredentialApiIn = {
+  "": "",
+  header: "header",
+  query: "query",
+  url_variable: "url_variable",
+} as const;
+
+export interface _AddedCredentialApi {
+  mode: _AddedCredentialApiMode;
+  /** @minLength 1 */
+  kind: string;
+  header_name: string;
+  /** The header (Authorization for a bearer), query parameter or URL variable the key goes in; empty with no credential. */
+  name: string;
+  label: string;
+  help: string;
+  help_url: string;
+  connected: boolean;
+  /** Where the key goes: header, query or url_variable; empty with no credential. */
+  in: _AddedCredentialApiIn;
+}
+
+export interface _VirtualServerRefApi {
+  /** @minLength 1 */
+  slug: string;
+  /** @minLength 1 */
+  id: string;
+}
+
+export type _ToolApiGatewayPosture =
+  (typeof _ToolApiGatewayPosture)[keyof typeof _ToolApiGatewayPosture];
+
+export const _ToolApiGatewayPosture = {
+  allow: "allow",
+  deny: "deny",
+} as const;
+
+/**
+ * The tools the provider listed at add, with posture.
+ */
+export interface _ToolApi {
+  /** @minLength 1 */
+  name: string;
+  title: string;
+  description: string;
+  read_only: boolean;
+  destructive: boolean;
+  idempotent: boolean;
+  open_world: boolean;
+  gateway_posture: _ToolApiGatewayPosture;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface _BaselineApi {
+  /** @minimum 0 */
+  tool_count: number;
+  /**
+   * The gateway's hash of the listing (mcp-probe-v1 tools_hash).
+   * @minLength 1
+   * @pattern ^[0-9a-f]{64}$
+   */
+  tools_hash: string;
+}
+
+export type ConnectorAddResultApiUrlVariables = { [key: string]: string };
+
+export interface ConnectorAddResultApi {
+  /** @minLength 1 */
+  app: string;
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  catalog_ref: string;
+  /** @minLength 1 */
+  server_id: string;
+  /** @minLength 1 */
+  mode: string;
+  /** @minLength 1 */
+  url: string;
+  url_variables: ConnectorAddResultApiUrlVariables;
+  credential: _AddedCredentialApi;
+  virtual_server: _VirtualServerRefApi;
+  /** The tools the provider listed at add, with posture. */
+  tools: _ToolApi[];
+  baseline?: _BaselineApi;
+  /** @minLength 1 */
+  start_url?: string;
+  mcp_enabled: boolean;
+  version: number;
+  gateway_synced: boolean;
+  /** @minLength 1 */
+  gateway_warning?: string;
+}
+
+export interface ConnectorAddResponseApi {
+  status: boolean;
+  result: ConnectorAddResultApi;
+}
+
+export interface ConnectorRemoveResultApi {
+  /** @minLength 1 */
+  app: string;
+  removed_servers: string[];
+  removed_virtual_servers: string[];
+  revoked_credentials: string[];
+  version: number;
+  gateway_synced: boolean;
+  /** @minLength 1 */
+  gateway_warning?: string;
+}
+
+export interface ConnectorRemoveResponseApi {
+  status: boolean;
+  result: ConnectorRemoveResultApi;
+}
+
+export type MCPOAuthConfigurationApiMode =
+  (typeof MCPOAuthConfigurationApiMode)[keyof typeof MCPOAuthConfigurationApiMode];
+
+export const MCPOAuthConfigurationApiMode = {
+  shared: "shared",
+  per_user: "per_user",
+} as const;
+
+export type MCPOAuthConfigurationApiRegistration =
+  (typeof MCPOAuthConfigurationApiRegistration)[keyof typeof MCPOAuthConfigurationApiRegistration];
+
+export const MCPOAuthConfigurationApiRegistration = {
+  dcr: "dcr",
+  manual: "manual",
+} as const;
+
+export interface MCPOAuthConfigurationApi {
+  configured: boolean;
+  mode: MCPOAuthConfigurationApiMode;
+  registration: MCPOAuthConfigurationApiRegistration;
+  has_secret: boolean;
+  /** @minLength 1 */
+  discovery_url: string;
+  /** @minLength 1 */
+  redirect_uri: string;
+  version?: number;
+  gateway_synced?: boolean;
+}
+
+export interface MCPOAuthConfigurationResponseApi {
+  status: boolean;
+  result: MCPOAuthConfigurationApi;
+}
+
+export type MCPOAuthAppRequestApiUrlVariables = { [key: string]: string };
+
+export type MCPOAuthAppRequestApiMode =
+  (typeof MCPOAuthAppRequestApiMode)[keyof typeof MCPOAuthAppRequestApiMode];
+
+export const MCPOAuthAppRequestApiMode = {
+  shared: "shared",
+  per_user: "per_user",
+} as const;
+
+export type MCPOAuthAppRequestApiRegistration =
+  (typeof MCPOAuthAppRequestApiRegistration)[keyof typeof MCPOAuthAppRequestApiRegistration];
+
+export const MCPOAuthAppRequestApiRegistration = {
+  dcr: "dcr",
+  manual: "manual",
+} as const;
+
+export interface MCPOAuthAppRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  provider?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  discovery_url: string;
+  url_variables?: MCPOAuthAppRequestApiUrlVariables;
+  mode: MCPOAuthAppRequestApiMode;
+  registration: MCPOAuthAppRequestApiRegistration;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  client_id?: string;
+  client_secret?: string;
+}
+
+export type MCPOAuthDiscoveryRequestApiUrlVariables = { [key: string]: string };
+
+export interface MCPOAuthDiscoveryRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  provider?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  discovery_url: string;
+  url_variables?: MCPOAuthDiscoveryRequestApiUrlVariables;
+}
+
+export interface MCPOAuthDiscoveryApi {
+  /** @minLength 1 */
+  issuer: string;
+  dcr_supported: boolean;
+  pkce_s256: boolean;
+  /** @minLength 1 */
+  redirect_uri: string;
+}
+
+export interface MCPOAuthDiscoveryResponseApi {
+  status: boolean;
+  result: MCPOAuthDiscoveryApi;
+}
+
+export interface _CatalogMetaApi {
+  /** @minLength 1 */
+  version: string;
+  /** @minLength 1 */
+  sha256: string;
+  /** @minLength 1 */
+  source_commit: string;
+}
+
+export interface _VendorApi {
+  name: string;
+  domains: string[];
+}
+
+export interface _IconApi {
+  /** @minLength 1 */
+  light: string;
+  /** @minLength 1 */
+  dark: string;
+}
+
+export interface _URLVariableApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  pattern: string;
+  /** @minLength 1 */
+  default: string;
+}
+
+export type _CredentialApiMode =
+  (typeof _CredentialApiMode)[keyof typeof _CredentialApiMode];
+
+export const _CredentialApiMode = {
+  none: "none",
+  shared: "shared",
+  per_user: "per_user",
+} as const;
+
+/**
+ * Where the key goes: header, query or url_variable; empty with no credential.
+ */
+export type _CredentialApiIn =
+  (typeof _CredentialApiIn)[keyof typeof _CredentialApiIn];
+
+export const _CredentialApiIn = {
+  "": "",
+  header: "header",
+  query: "query",
+  url_variable: "url_variable",
+} as const;
+
+export interface _CredentialApi {
+  mode: _CredentialApiMode;
+  /** @minLength 1 */
+  kind: string;
+  header_name: string;
+  /** The header (Authorization for a bearer), query parameter or URL variable the key goes in; empty with no credential. */
+  name: string;
+  label: string;
+  help: string;
+  help_url: string;
+  /** Where the key goes: header, query or url_variable; empty with no credential. */
+  in: _CredentialApiIn;
+}
+
+export type _ProviderConnectApiState =
+  (typeof _ProviderConnectApiState)[keyof typeof _ProviderConnectApiState];
+
+export const _ProviderConnectApiState = {
+  ready: "ready",
+  registration_required: "registration_required",
+} as const;
+
+export interface _OwnOAuthAppApi {
+  /** @minLength 1 */
+  client_group: string;
+  /** @minLength 1 */
+  redirect_uri: string;
+  required: boolean;
+}
+
+export interface _ProviderConnectApi {
+  served: boolean;
+  state?: _ProviderConnectApiState;
+  reason?: string;
+  own_app?: _OwnOAuthAppApi;
+  configure_oauth?: boolean;
+}
+
+export interface _ProviderApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  version: string;
+  /** @minLength 1 */
+  catalog_ref: string;
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  publisher: string;
+  /** @minLength 1 */
+  vendor_status: string;
+  /** @minLength 1 */
+  tier: string;
+  /** @minLength 1 */
+  lifecycle: string;
+  account_modes: string[];
+  /** @minLength 1 */
+  transport: string;
+  /** @minLength 1 */
+  era: string;
+  /** @minLength 1 */
+  url_template: string;
+  url_variables: _URLVariableApi[];
+  credential: _CredentialApi;
+  tools: _ToolApi[];
+  connect?: _ProviderConnectApi;
+}
+
+export interface _ServerApi {
+  /** @minLength 1 */
+  server_id: string;
+  /** @minLength 1 */
+  catalog_ref: string;
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  version: string;
+  /** @minLength 1 */
+  credential_mode: string;
+  enabled: boolean;
+  connected: boolean;
+  virtual_server: _VirtualServerRefApi;
+  /** @minLength 1 */
+  start_url?: string;
+}
+
+export interface ConnectorAppApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  vendor: _VendorApi;
+  /** @minLength 1 */
+  ee_category: string;
+  /** @minLength 1 */
+  group: string;
+  categories: string[];
+  tags: string[];
+  /** @minLength 1 */
+  docs_url: string;
+  icon: _IconApi;
+  /** @minLength 1 */
+  lifecycle: string;
+  /** @minLength 1 */
+  default_provider: string;
+  providers: _ProviderApi[];
+  connected: boolean;
+  servers: _ServerApi[];
+}
+
+export interface ConnectorCatalogListResponseApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  catalog: _CatalogMetaApi;
+  results: ConnectorAppApi[];
+}
+
+export interface ConnectorAppResponseApi {
+  status: boolean;
+  result: ConnectorAppApi;
+}
+
+export interface OAuthClientApi {
+  id: string;
+  /** @minLength 1 */
+  client_group: string;
+  /** @minLength 1 */
+  server_id: string;
+  /** @minLength 1 */
+  client_id: string;
+  label: string;
+  /** @minLength 1 */
+  status: string;
+  version: number;
+  created_at: string;
+  rotated_at: string;
+  has_secret: boolean;
+}
+
+export interface OAuthClientListResponseApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: OAuthClientApi[];
+}
+
+export interface OAuthClientCreateRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  client_group?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  server_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  client_id: string;
+  client_secret: string;
+  /** @maxLength 255 */
+  label?: string;
+}
+
+export interface OAuthClientResponseApi {
+  status: boolean;
+  result: OAuthClientApi;
+}
+
+export interface OAuthClientRotateRequestApi {
+  client_secret: string;
+}
+
 export type AgentccCustomPropertySchemaApiPropertyType =
   (typeof AgentccCustomPropertySchemaApiPropertyType)[keyof typeof AgentccCustomPropertySchemaApiPropertyType];
 
@@ -2569,10 +3257,16 @@ export const AgentccCustomPropertySchemaApiPropertyType = {
   enum: "enum",
 } as const;
 
+/**
+ * For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.
+ */
 export type AgentccCustomPropertySchemaApiAllowedValues = {
   [key: string]: unknown;
 };
 
+/**
+ * Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a value saved before stays readable and may be kept unchanged or cleared with null.
+ */
 export type AgentccCustomPropertySchemaApiDefaultValue = {
   [key: string]: unknown;
 };
@@ -2588,8 +3282,11 @@ export interface AgentccCustomPropertySchemaApi {
   name: string;
   description?: string;
   property_type?: AgentccCustomPropertySchemaApiPropertyType;
+  /** Checked by POST custom-properties/validate/; the gateway does not apply it to requests. */
   required?: boolean;
+  /** For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests. */
   allowed_values?: AgentccCustomPropertySchemaApiAllowedValues;
+  /** Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a value saved before stays readable and may be kept unchanged or cleared with null. */
   default_value?: AgentccCustomPropertySchemaApiDefaultValue;
   readonly created_at?: string;
   readonly updated_at?: string;
@@ -2630,6 +3327,9 @@ export interface AgentccEmailAlertApi {
    */
   cooldown_minutes?: number;
   readonly last_triggered_at?: string;
+  /** @minLength 1 */
+  readonly last_error?: string;
+  readonly last_error_at?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -2645,6 +3345,13 @@ export interface GatewaySummaryResultApi {
   status: string;
   provider_count?: number;
   model_count?: number;
+  /** When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded. */
+  last_health_check?: string;
+  /**
+   * What the org's last health check found: healthy or unreachable.
+   * @minLength 1
+   */
+  last_health_check_status?: string;
 }
 
 export interface GatewayListResponseApi {
@@ -2672,6 +3379,11 @@ export interface GatewayBatchRequestApi {
 export interface GatewayBatchCancelResultApi {
   /** @minLength 1 */
   batch_id: string;
+  /**
+   * The organization the batch runs as: every item is a request authenticated by a key minted for it.
+   * @minLength 1
+   */
+  org_id: string;
   /** @minLength 1 */
   status: string;
 }
@@ -2705,6 +3417,46 @@ export interface GatewayStatusApi {
   status: string;
 }
 
+export interface GatewayServerSettingsApi {
+  host?: string;
+  port?: number;
+  read_timeout_ms?: number;
+  write_timeout_ms?: number;
+  idle_timeout_ms?: number;
+  max_request_timeout_ms?: number;
+}
+
+export interface GatewayLoggingSettingsApi {
+  level?: string;
+  request_logging?: boolean;
+  include_bodies?: boolean;
+  content_mode?: string;
+}
+
+export interface GatewayBatchSettingsApi {
+  /**
+   * Where batches live: memory (the node's).
+   * @minLength 1
+   */
+  storage?: string;
+  /** The concurrency a submission that sets none runs at. */
+  default_max_concurrency?: number;
+  /** The largest submit body the gateway reads. */
+  max_body_bytes?: number;
+}
+
+export interface GatewayGuardrailPipelineApi {
+  /** guardrails.enabled on the node: without it no org check runs. */
+  enabled: boolean;
+  /** The node's guardrails.fail_open: an org check that errors or times out lets the request through when true. */
+  fail_open: boolean;
+  /**
+   * sequential: org checks run in turn and the first block stops the rest.
+   * @minLength 1
+   */
+  mode: string;
+}
+
 export type GatewayConfigResultApiGuardrails = { [key: string]: unknown };
 
 export type GatewayConfigResultApiRouting = { [key: string]: unknown };
@@ -2715,12 +3467,20 @@ export type GatewayConfigResultApiRateLimiting = { [key: string]: unknown };
 
 export type GatewayConfigResultApiBudgets = { [key: string]: unknown };
 
+/**
+ * Admission cap activation, UTC day boundary and model-spend coverage.
+ */
+export type GatewayConfigResultApiCapAccounting = { [key: string]: unknown };
+
 export type GatewayConfigResultApiCostTracking = { [key: string]: unknown };
 
 export type GatewayConfigResultApiIpAcl = { [key: string]: unknown };
 
 export type GatewayConfigResultApiAlerting = { [key: string]: unknown };
 
+/**
+ * privacy.trace_content is the tool-span capture opt-in. Full-content capture exports tool inputs and outputs to your organization's collector and masks known credential formats. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited.
+ */
 export type GatewayConfigResultApiPrivacy = { [key: string]: unknown };
 
 export type GatewayConfigResultApiToolPolicy = { [key: string]: unknown };
@@ -2735,8 +3495,21 @@ export type GatewayConfigResultApiModelDatabase = { [key: string]: unknown };
 
 export type GatewayConfigResultApiModelMap = { [key: string]: unknown };
 
+export type GatewayConfigResultApiManagedModels = { [key: string]: unknown };
+
+export type GatewayConfigResultApiTools = { [key: string]: unknown };
+
+export type GatewayConfigResultApiIdentity = { [key: string]: unknown };
+
 export type GatewayConfigResultApiProviders = {
   [key: string]: GatewayConfigProviderApi;
+};
+
+/**
+ * Org config section -> why this gateway node does not enforce it (ip_acl: 'client IP unknown (trusted_proxies not set)' when the gateway sets no trusted proxy). Absent: no such section, or the gateway did not say.
+ */
+export type GatewayConfigResultApiOrgSectionsNotEnforced = {
+  [key: string]: string;
 };
 
 export interface GatewayConfigResultApi {
@@ -2748,9 +3521,12 @@ export interface GatewayConfigResultApi {
   cache?: GatewayConfigResultApiCache;
   rate_limiting?: GatewayConfigResultApiRateLimiting;
   budgets?: GatewayConfigResultApiBudgets;
+  /** Admission cap activation, UTC day boundary and model-spend coverage. */
+  readonly cap_accounting?: GatewayConfigResultApiCapAccounting;
   cost_tracking?: GatewayConfigResultApiCostTracking;
   ip_acl?: GatewayConfigResultApiIpAcl;
   alerting?: GatewayConfigResultApiAlerting;
+  /** privacy.trace_content is the tool-span capture opt-in. Full-content capture exports tool inputs and outputs to your organization's collector and masks known credential formats. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited. */
   privacy?: GatewayConfigResultApiPrivacy;
   tool_policy?: GatewayConfigResultApiToolPolicy;
   mcp?: GatewayConfigResultApiMcp;
@@ -2758,13 +3534,33 @@ export interface GatewayConfigResultApi {
   audit?: GatewayConfigResultApiAudit;
   model_database?: GatewayConfigResultApiModelDatabase;
   model_map?: GatewayConfigResultApiModelMap;
+  managed_models?: GatewayConfigResultApiManagedModels;
+  tools?: GatewayConfigResultApiTools;
+  identity?: GatewayConfigResultApiIdentity;
   is_active?: boolean;
   created_by?: string;
   change_description?: string;
   created_at?: string;
   updated_at?: string;
+  /** JSON pointers of the infrastructure secrets stored in the active org config. Each one reads as a mask, never its value. */
+  secrets_set?: string[];
   providers: GatewayConfigResultApiProviders;
   gateway: GatewayStatusApi;
+  server?: GatewayServerSettingsApi;
+  logging?: GatewayLoggingSettingsApi;
+  batch?: GatewayBatchSettingsApi;
+  /** The org config sections this gateway node enforces, from alerting, budgets, cache, ip_acl, rate_limiting and tool_policy. Absent: the gateway did not say. */
+  org_sections_enforced?: string[];
+  guardrail_pipeline?: GatewayGuardrailPipelineApi;
+  /** Org config section -> why this gateway node does not enforce it (ip_acl: 'client IP unknown (trusted_proxies not set)' when the gateway sets no trusted proxy). Absent: no such section, or the gateway did not say. */
+  org_sections_not_enforced?: GatewayConfigResultApiOrgSectionsNotEnforced;
+  /** When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded. */
+  last_health_check?: string;
+  /**
+   * What the org's last health check found: healthy or unreachable.
+   * @minLength 1
+   */
+  last_health_check_status?: string;
 }
 
 export interface GatewayConfigResponseApi {
@@ -2786,14 +3582,35 @@ export type GatewayBatchDetailResultApiResultsItem = { [key: string]: unknown };
 export interface GatewayBatchDetailResultApi {
   /** @minLength 1 */
   batch_id: string;
+  /**
+   * The organization the batch runs as: every item is a request authenticated by a key minted for it.
+   * @minLength 1
+   */
+  org_id: string;
+  /**
+   * The gateway id of the key the batch's items run as.
+   * @minLength 1
+   */
+  key_id?: string;
   /** @minLength 1 */
   status: string;
   total: number;
-  max_concurrency: number;
+  /** Absent when the gateway no longer holds the batch (see error). */
+  max_concurrency?: number;
   created_at: string;
   completed_at?: string;
   results?: GatewayBatchDetailResultApiResultsItem[];
   summary?: GatewayBatchSummaryApi;
+  /**
+   * unknown: the gateway lost the batch before it was seen to end (status failed).
+   * @minLength 1
+   */
+  outcome?: string;
+  /**
+   * Set when the gateway no longer holds the batch: the answer is the status recorded when it finished, without results or summary.
+   * @minLength 1
+   */
+  error?: string;
 }
 
 export interface GatewayBatchDetailResponseApi {
@@ -2828,6 +3645,15 @@ export interface GatewayHealthResultApi {
   providers: GatewayConfiguredProvidersApi;
   provider_count: number;
   model_count: number;
+  /** Whether this check re-pushed every org's config to the gateway. Only an Owner or Admin's check does, at most once per 5 minutes. */
+  org_configs_pushed?: boolean;
+  /** When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded. */
+  last_health_check?: string;
+  /**
+   * What the org's last health check found: healthy or unreachable.
+   * @minLength 1
+   */
+  last_health_check_status?: string;
 }
 
 export interface GatewayHealthResponseApi {
@@ -2835,16 +3661,76 @@ export interface GatewayHealthResponseApi {
   result: GatewayHealthResultApi;
 }
 
+export type MCPServedIdentityApiPlatform =
+  (typeof MCPServedIdentityApiPlatform)[keyof typeof MCPServedIdentityApiPlatform];
+
+export const MCPServedIdentityApiPlatform = {
+  composio: "composio",
+  pipedream: "pipedream",
+  other: "other",
+} as const;
+
+export type MCPServedIdentityApiSource =
+  (typeof MCPServedIdentityApiSource)[keyof typeof MCPServedIdentityApiSource];
+
+export const MCPServedIdentityApiSource = {
+  from_server_configuration: "from server configuration",
+} as const;
+
+export interface MCPServedIdentityApi {
+  platform: MCPServedIdentityApiPlatform;
+  /** @maxLength 64 */
+  toolkit_slug: string;
+  /** @maxLength 96 */
+  toolkit_name: string;
+  source?: MCPServedIdentityApiSource;
+}
+
+export interface MCPServedToolApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  server_id: string;
+  /** @minLength 1 */
+  upstream_name: string;
+  revision?: string;
+  quarantined: boolean;
+  identity: MCPServedIdentityApi;
+}
+
+export interface MCPServedResponseApi {
+  status: boolean;
+  result: MCPServedToolApi[];
+}
+
+export interface MCPFeaturesApi {
+  upstream_oauth: boolean;
+  client_oauth: boolean;
+  k2_apps: boolean;
+  client_installs: boolean;
+}
+
+export type GatewayMCPStatusResultApiReason =
+  (typeof GatewayMCPStatusResultApiReason)[keyof typeof GatewayMCPStatusResultApiReason];
+
+export const GatewayMCPStatusResultApiReason = {
+  gateway_mcp_disabled: "gateway_mcp_disabled",
+  gateway_unreachable: "gateway_unreachable",
+  gateway_not_org_scoped: "gateway_not_org_scoped",
+} as const;
+
 export type GatewayMCPStatusResultApiServersItem = { [key: string]: unknown };
 
 export interface GatewayMCPStatusResultApi {
+  features: MCPFeaturesApi;
   enabled: boolean;
   sessions: number;
   tools: number;
   resources: number;
   prompts: number;
-  /** Gateway MCP server statuses are adapter-specific objects; the Django fallback normalizes configured servers to objects with id and status. */
+  /** The gateway's MCP server statuses (mcp-admin-status-v1, keyed by server_id), limited to the org's own servers. */
   servers: GatewayMCPStatusResultApiServersItem[];
+  reason?: GatewayMCPStatusResultApiReason;
 }
 
 export interface GatewayMCPStatusResponseApi {
@@ -2875,6 +3761,13 @@ export interface GatewayProviderStatusApi {
   request_count?: number;
   avg_latency?: number;
   error_rate?: number;
+  /**
+   * Why the status is what it is: the org's own error rate over the last 24 h (unhealthy at 50% or more, degraded at 10% or more, both from 5 requests), or why the provider is not pushed.
+   * @minLength 1
+   */
+  status_reason?: string;
+  /** Whether the config push sends this provider to the gateway. False for a stored credential the push cannot use. */
+  pushed?: boolean;
 }
 
 export interface GatewayProvidersResultApi {
@@ -2885,6 +3778,8 @@ export interface GatewayProvidersResponseApi {
   status: boolean;
   result: GatewayProvidersResultApi;
 }
+
+export type GatewayMutationResultApiWarningsItem = { [key: string]: string };
 
 export interface GatewayMutationResultApi {
   status?: boolean;
@@ -2897,6 +3792,7 @@ export interface GatewayMutationResultApi {
   budget?: string;
   server?: string;
   enabled?: boolean;
+  warnings?: GatewayMutationResultApiWarningsItem[];
 }
 
 export interface GatewayMutationResponseApi {
@@ -2905,7 +3801,10 @@ export interface GatewayMutationResponseApi {
 }
 
 export interface GatewayBudgetRemoveRequestApi {
-  /** @minLength 1 */
+  /**
+   * Legacy non-cap budget level. admission_caps_enabled, agents, key_ids and policy_revision (including camelCase aliases) are refused with 400; use update-config with budgets.policy_revision for cap edits.
+   * @minLength 1
+   */
   level: string;
 }
 
@@ -2924,7 +3823,10 @@ export type GatewayBudgetSetRequestApiConfig = {
 };
 
 export interface GatewayBudgetSetRequestApi {
-  /** @minLength 1 */
+  /**
+   * Legacy non-cap budget level. admission_caps_enabled, agents, key_ids and policy_revision (including camelCase aliases) are refused with 400; use update-config with budgets.policy_revision for cap edits.
+   * @minLength 1
+   */
   level: string;
   config: GatewayBudgetSetRequestApiConfig;
 }
@@ -2942,6 +3844,16 @@ export interface GatewayBatchSubmitRequestApi {
 export interface GatewayBatchSubmitResultApi {
   /** @minLength 1 */
   batch_id: string;
+  /**
+   * The organization the batch runs as: every item is a request authenticated by a key minted for it.
+   * @minLength 1
+   */
+  org_id: string;
+  /**
+   * The gateway id of the key the batch's items run as.
+   * @minLength 1
+   */
+  key_id?: string;
   /** @minLength 1 */
   status: string;
   total: number;
@@ -3010,7 +3922,33 @@ export interface GatewayPlaygroundTestRequestApi {
   prompt: string;
   model?: string;
   system_prompt?: string;
+  /**
+   * @minimum 0
+   * @maximum 2
+   */
+  temperature?: number;
+  /**
+   * @minimum 1
+   * @maximum 1000000
+   */
+  max_tokens?: number;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  top_p?: number;
 }
+
+/**
+ * x-agentcc-guardrail-action on a warned answer, when sent.
+ */
+export type GatewayPlaygroundTestResultApiGuardrailAction =
+  (typeof GatewayPlaygroundTestResultApiGuardrailAction)[keyof typeof GatewayPlaygroundTestResultApiGuardrailAction];
+
+export const GatewayPlaygroundTestResultApiGuardrailAction = {
+  warn: "warn",
+  log: "log",
+} as const;
 
 export type GatewayPlaygroundTestResultApiBody = { [key: string]: unknown };
 
@@ -3024,8 +3962,14 @@ export interface GatewayPlaygroundTestResultApi {
   guardrail_headers: GatewayPlaygroundTestResultApiGuardrailHeaders;
   /** @minLength 1 */
   model: string;
+  /** HTTP 403 with error.type guardrail_error: a check blocked. */
   blocked: boolean;
+  /** A 2xx with x-agentcc-guardrail-triggered: true: a check warned or logged and the request went through. */
   warned: boolean;
+  /** x-agentcc-guardrail-action on a warned answer, when sent. */
+  guardrail_action?: GatewayPlaygroundTestResultApiGuardrailAction;
+  /** The check names in x-agentcc-guardrails-triggered on a warned answer; empty when the gateway does not send the header. */
+  triggered_checks?: string[];
 }
 
 export interface GatewayPlaygroundTestResponseApi {
@@ -3055,6 +3999,9 @@ export type GatewayConfigPatchRequestApiRateLimiting = {
   [key: string]: { [key: string]: unknown };
 };
 
+/**
+ * Cap edits require policy_revision from the last read (a nonnegative integer). Omit or send 0 to expect no saved policy; disabled policies retain a positive revision. Stale edits return 409 cap_policy_revision_conflict with the current policy_revision. While a policy exists, routing.agents.key_bindings and routing.agents.max_run_usd edits/clears also require this revision. Every config write after the first policy advances it; the 200 result.policy_revision returns the new value. Other edits need no revision.
+ */
 export type GatewayConfigPatchRequestApiBudgets = {
   [key: string]: { [key: string]: unknown };
 };
@@ -3071,6 +4018,9 @@ export type GatewayConfigPatchRequestApiAlerting = {
   [key: string]: { [key: string]: unknown };
 };
 
+/**
+ * privacy.trace_content is the tool-span capture opt-in. Full-content capture exports tool inputs and outputs to your organization's collector and masks known credential formats. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited.
+ */
 export type GatewayConfigPatchRequestApiPrivacy = {
   [key: string]: { [key: string]: unknown };
 };
@@ -3099,15 +4049,29 @@ export type GatewayConfigPatchRequestApiModelMap = {
   [key: string]: { [key: string]: unknown };
 };
 
+export type GatewayConfigPatchRequestApiManagedModels = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type GatewayConfigPatchRequestApiTools = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type GatewayConfigPatchRequestApiIdentity = {
+  [key: string]: { [key: string]: unknown };
+};
+
 export interface GatewayConfigPatchRequestApi {
   guardrails?: GatewayConfigPatchRequestApiGuardrails;
   routing?: GatewayConfigPatchRequestApiRouting;
   cache?: GatewayConfigPatchRequestApiCache;
   rate_limiting?: GatewayConfigPatchRequestApiRateLimiting;
+  /** Cap edits require policy_revision from the last read (a nonnegative integer). Omit or send 0 to expect no saved policy; disabled policies retain a positive revision. Stale edits return 409 cap_policy_revision_conflict with the current policy_revision. While a policy exists, routing.agents.key_bindings and routing.agents.max_run_usd edits/clears also require this revision. Every config write after the first policy advances it; the 200 result.policy_revision returns the new value. Other edits need no revision. */
   budgets?: GatewayConfigPatchRequestApiBudgets;
   cost_tracking?: GatewayConfigPatchRequestApiCostTracking;
   ip_acl?: GatewayConfigPatchRequestApiIpAcl;
   alerting?: GatewayConfigPatchRequestApiAlerting;
+  /** privacy.trace_content is the tool-span capture opt-in. Full-content capture exports tool inputs and outputs to your organization's collector and masks known credential formats. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited. */
   privacy?: GatewayConfigPatchRequestApiPrivacy;
   tool_policy?: GatewayConfigPatchRequestApiToolPolicy;
   mcp?: GatewayConfigPatchRequestApiMcp;
@@ -3115,6 +4079,53 @@ export interface GatewayConfigPatchRequestApi {
   audit?: GatewayConfigPatchRequestApiAudit;
   model_database?: GatewayConfigPatchRequestApiModelDatabase;
   model_map?: GatewayConfigPatchRequestApiModelMap;
+  managed_models?: GatewayConfigPatchRequestApiManagedModels;
+  tools?: GatewayConfigPatchRequestApiTools;
+  identity?: GatewayConfigPatchRequestApiIdentity;
+}
+
+export type GatewayConfigMutationResultApiWarningsItem = {
+  [key: string]: unknown;
+};
+
+export interface GatewayConfigMutationResultApi {
+  status?: boolean;
+  version?: number;
+  gateway_synced?: boolean;
+  gateway_warning?: string;
+  action?: string;
+  provider?: string;
+  guardrail?: string;
+  budget?: string;
+  server?: string;
+  enabled?: boolean;
+  warnings?: GatewayConfigMutationResultApiWarningsItem[];
+  /**
+   * Saved cap revision for the next edit; 0 before any policy exists.
+   * @minimum 0
+   */
+  policy_revision: number;
+}
+
+export interface GatewayConfigMutationResponseApi {
+  status: boolean;
+  result: GatewayConfigMutationResultApi;
+}
+
+export type CapPolicyRevisionConflictApiCode =
+  (typeof CapPolicyRevisionConflictApiCode)[keyof typeof CapPolicyRevisionConflictApiCode];
+
+export const CapPolicyRevisionConflictApiCode = {
+  cap_policy_revision_conflict: "cap_policy_revision_conflict",
+} as const;
+
+export interface CapPolicyRevisionConflictApi {
+  code: CapPolicyRevisionConflictApiCode;
+  /**
+   * Current cap revision; 0 means no policy has been saved.
+   * @minimum 0
+   */
+  policy_revision: number;
 }
 
 export type GatewayNamedConfigRequestApiConfig = {
@@ -3225,13 +4236,77 @@ export interface AgentccGuardrailFeedbackApi {
   readonly updated_at?: string;
 }
 
+/**
+ * The stored scope. Global for every policy this release writes. A policy an earlier release left at key or project scope reads back as stored and is not pushed until it is set to global.
+ */
+export type AgentccGuardrailPolicyReadApiScope =
+  (typeof AgentccGuardrailPolicyReadApiScope)[keyof typeof AgentccGuardrailPolicyReadApiScope];
+
+export const AgentccGuardrailPolicyReadApiScope = {
+  global: "global",
+  project: "project",
+  key: "key",
+} as const;
+
+export type AgentccGuardrailPolicyReadApiChecks = { [key: string]: unknown };
+
+export type AgentccGuardrailPolicyReadApiMode =
+  (typeof AgentccGuardrailPolicyReadApiMode)[keyof typeof AgentccGuardrailPolicyReadApiMode];
+
+export const AgentccGuardrailPolicyReadApiMode = {
+  enforce: "enforce",
+  monitor: "monitor",
+} as const;
+
+/**
+ * Not used. Kept from earlier releases, which stored the keys or projects a policy was applied to; a policy runs for every key of the organization.
+ */
+export type AgentccGuardrailPolicyReadApiAppliedKeys = {
+  [key: string]: unknown;
+};
+
+/**
+ * Not used. Kept from earlier releases, which stored the keys or projects a policy was applied to; a policy runs for every key of the organization.
+ */
+export type AgentccGuardrailPolicyReadApiAppliedProjects = {
+  [key: string]: unknown;
+};
+
+export interface AgentccGuardrailPolicyReadApi {
+  readonly id?: string;
+  readonly organization?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  description?: string;
+  /** The stored scope. Global for every policy this release writes. A policy an earlier release left at key or project scope reads back as stored and is not pushed until it is set to global. */
+  readonly scope?: AgentccGuardrailPolicyReadApiScope;
+  checks?: AgentccGuardrailPolicyReadApiChecks;
+  mode?: AgentccGuardrailPolicyReadApiMode;
+  is_active?: boolean;
+  /**
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  priority?: number;
+  /** Not used. Kept from earlier releases, which stored the keys or projects a policy was applied to; a policy runs for every key of the organization. */
+  readonly applied_keys?: AgentccGuardrailPolicyReadApiAppliedKeys;
+  /** Not used. Kept from earlier releases, which stored the keys or projects a policy was applied to; a policy runs for every key of the organization. */
+  readonly applied_projects?: AgentccGuardrailPolicyReadApiAppliedProjects;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+/**
+ * Always global: the policy runs for every key of the organization. Key and project scope are not supported (400 scoped_policy_not_supported).
+ */
 export type AgentccGuardrailPolicyApiScope =
   (typeof AgentccGuardrailPolicyApiScope)[keyof typeof AgentccGuardrailPolicyApiScope];
 
 export const AgentccGuardrailPolicyApiScope = {
   global: "global",
-  project: "project",
-  key: "key",
 } as const;
 
 export type AgentccGuardrailPolicyApiChecks = { [key: string]: unknown };
@@ -3244,8 +4319,14 @@ export const AgentccGuardrailPolicyApiMode = {
   monitor: "monitor",
 } as const;
 
+/**
+ * Not used. Kept from earlier releases, which stored the keys or projects a policy was applied to; a policy runs for every key of the organization.
+ */
 export type AgentccGuardrailPolicyApiAppliedKeys = { [key: string]: unknown };
 
+/**
+ * Not used. Kept from earlier releases, which stored the keys or projects a policy was applied to; a policy runs for every key of the organization.
+ */
 export type AgentccGuardrailPolicyApiAppliedProjects = {
   [key: string]: unknown;
 };
@@ -3259,6 +4340,7 @@ export interface AgentccGuardrailPolicyApi {
    */
   name: string;
   description?: string;
+  /** Always global: the policy runs for every key of the organization. Key and project scope are not supported (400 scoped_policy_not_supported). */
   scope?: AgentccGuardrailPolicyApiScope;
   checks?: AgentccGuardrailPolicyApiChecks;
   mode?: AgentccGuardrailPolicyApiMode;
@@ -3268,10 +4350,1670 @@ export interface AgentccGuardrailPolicyApi {
    * @maximum 2147483647
    */
   priority?: number;
-  applied_keys?: AgentccGuardrailPolicyApiAppliedKeys;
-  applied_projects?: AgentccGuardrailPolicyApiAppliedProjects;
+  /** Not used. Kept from earlier releases, which stored the keys or projects a policy was applied to; a policy runs for every key of the organization. */
+  readonly applied_keys?: AgentccGuardrailPolicyApiAppliedKeys;
+  /** Not used. Kept from earlier releases, which stored the keys or projects a policy was applied to; a policy runs for every key of the organization. */
+  readonly applied_projects?: AgentccGuardrailPolicyApiAppliedProjects;
   readonly created_at?: string;
   readonly updated_at?: string;
+}
+
+/**
+ * The gateway's hot-path credit account in USD.
+ */
+export interface GatewayCreditStateApi {
+  spent_usd: number;
+  held_usd: number;
+  available_usd: number;
+}
+
+/**
+ * Why gateway is null: syncing (the gateway held no account for this opted-in org; it was just pushed), unreachable, or managed_models_disabled (the gateway has no managed providers).
+ */
+export type ManagedCreditSummaryApiGatewayWarning =
+  (typeof ManagedCreditSummaryApiGatewayWarning)[keyof typeof ManagedCreditSummaryApiGatewayWarning];
+
+export const ManagedCreditSummaryApiGatewayWarning = {
+  syncing: "syncing",
+  unreachable: "unreachable",
+  managed_models_disabled: "managed_models_disabled",
+} as const;
+
+export interface ManagedCreditAutoReloadApi {
+  enabled: boolean;
+  threshold_usd: number;
+  amount_usd: number;
+  disabled_reason: string;
+}
+
+export interface ManagedCreditSummaryApi {
+  /** Whether the gateway currently offers models on Future AGI credits. False when no provider offers credits or the gateway cannot be read. */
+  managed_models_available: boolean;
+  /** Whether this organization has opted in to Future AGI credits. */
+  enabled: boolean;
+  /** The total credit recorded in the ledger. */
+  granted_usd: number;
+  /** Gateway spend settled in the ledger. */
+  settled_spend_usd: number;
+  /** Ledger balance: credits minus settled gateway spend minus wallet-funded platform spend; a negative balance is debt. */
+  available_usd: number;
+  /** The ledger refuses new spend on Future AGI credits: the balance is at or below zero until credit is added. */
+  balance_exhausted: boolean;
+  /** The gateway's hot-path account; null when unreachable, syncing, or managed_models_disabled (the shipped default). */
+  gateway: GatewayCreditStateApi;
+  /** Why gateway is null: syncing (the gateway held no account for this opted-in org; it was just pushed), unreachable, or managed_models_disabled (the gateway has no managed providers). */
+  gateway_warning: ManagedCreditSummaryApiGatewayWarning;
+  /** Spent at the gateway and not yet settled into the ledger. */
+  pending_settlement_usd: number;
+  markup_percent: number;
+  min_topup_usd: number;
+  low_balance_threshold_usd: number;
+  auto_reload: ManagedCreditAutoReloadApi;
+  last_reconciled_at: string;
+  /** Credits can be bought here (cloud billing is installed); without it, checkout answers 503 billing_unavailable. */
+  billing_available: boolean;
+  /** @minLength 1 */
+  currency: string;
+}
+
+export interface ManagedCreditSummaryResponseApi {
+  status: boolean;
+  result: ManagedCreditSummaryApi;
+}
+
+export type ManagedCreditErrorResponseApiType =
+  (typeof ManagedCreditErrorResponseApiType)[keyof typeof ManagedCreditErrorResponseApiType];
+
+export const ManagedCreditErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+/**
+ * String or JSON object.
+ */
+export type ManagedCreditErrorResponseApiResult = {
+  message: string;
+  amount_usd?: number;
+  spent_usd?: number;
+  refunded_usd?: number;
+};
+
+export type ManagedCreditErrorResponseApiDetails = { [key: string]: string[] };
+
+export interface ManagedCreditErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
+  status?: boolean;
+  type?: ManagedCreditErrorResponseApiType;
+  code?: string;
+  detail?: string;
+  /** String or JSON object. */
+  result?: ManagedCreditErrorResponseApiResult;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ManagedCreditErrorResponseApiDetails;
+}
+
+export interface ManagedCreditAdjustRequestApi {
+  /** The org to credit. Required with the gateway admin token; a staff user defaults to the organization the request acts in. */
+  org_id?: string;
+  /**
+   * Positive adds credit, negative removes it.
+   * @minimum -1000000000
+   * @maximum 1000000000
+   */
+  amount_usd: number;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  reason: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key: string;
+}
+
+export type ManagedCreditEntryApiKind =
+  (typeof ManagedCreditEntryApiKind)[keyof typeof ManagedCreditEntryApiKind];
+
+export const ManagedCreditEntryApiKind = {
+  spend: "spend",
+  usage_debit: "usage_debit",
+  topup: "topup",
+  grant: "grant",
+  refund: "refund",
+  adjustment: "adjustment",
+  expiry: "expiry",
+  topup_reversal: "topup_reversal",
+  dispute_hold: "dispute_hold",
+  dispute_release: "dispute_release",
+} as const;
+
+export interface ManagedCreditEntryApi {
+  id: string;
+  occurred_at: string;
+  kind: ManagedCreditEntryApiKind;
+  /** Credits positive, spend negative. */
+  amount_usd: number;
+  request_id: string;
+  model: string;
+  provider: string;
+  markup_usd: number;
+  /** The spend's markup in basis points (5% is 500). */
+  markup_bps: number;
+  cost_source: string;
+  stripe_ref: string;
+}
+
+export interface ManagedCreditWriteApi {
+  entry: ManagedCreditEntryApi;
+  /** False when the request repeats an earlier one: nothing was written. */
+  created: boolean;
+  /**
+   * The key as sent (grant and adjust).
+   * @minLength 1
+   */
+  idempotency_key?: string;
+}
+
+export interface ManagedCreditWriteResponseApi {
+  status: boolean;
+  result: ManagedCreditWriteApi;
+}
+
+export type ManagedCreditContextErrorResponseApiType =
+  (typeof ManagedCreditContextErrorResponseApiType)[keyof typeof ManagedCreditContextErrorResponseApiType];
+
+export const ManagedCreditContextErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+/**
+ * String or JSON object.
+ */
+export type ManagedCreditContextErrorResponseApiResult = {
+  message: string;
+  amount_usd?: number;
+  spent_usd?: number;
+  refunded_usd?: number;
+};
+
+export type ManagedCreditContextErrorResponseApiDetails = {
+  [key: string]: string[];
+};
+
+export interface ManagedCreditContextErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
+  status?: boolean;
+  type?: ManagedCreditContextErrorResponseApiType;
+  code?: string;
+  detail?: string;
+  /** String or JSON object. */
+  result?: ManagedCreditContextErrorResponseApiResult;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ManagedCreditContextErrorResponseApiDetails;
+}
+
+export interface ManagedCreditCheckoutRequestApi {
+  /**
+   * @minimum 0.01
+   * @maximum 99999999.99
+   */
+  amount_usd: number;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  success_url: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  cancel_url: string;
+}
+
+export interface ManagedCreditCheckoutApi {
+  /** @minLength 1 */
+  checkout_url: string;
+  /** @minLength 1 */
+  session_id: string;
+}
+
+export interface ManagedCreditCheckoutResponseApi {
+  status: boolean;
+  result: ManagedCreditCheckoutApi;
+}
+
+export type ManagedCreditCheckoutStatusApiStatus =
+  (typeof ManagedCreditCheckoutStatusApiStatus)[keyof typeof ManagedCreditCheckoutStatusApiStatus];
+
+export const ManagedCreditCheckoutStatusApiStatus = {
+  pending: "pending",
+  complete: "complete",
+} as const;
+
+export interface ManagedCreditCheckoutStatusApi {
+  /**
+   * Ledger-confirmed session id; null while the session is pending.
+   * @minLength 1
+   */
+  session_id: string;
+  status: ManagedCreditCheckoutStatusApiStatus;
+  /** The ledger holds this org's top-up for the session. */
+  credited: boolean;
+}
+
+export interface ManagedCreditCheckoutStatusResponseApi {
+  status: boolean;
+  result: ManagedCreditCheckoutStatusApi;
+}
+
+export interface ManagedCreditEntriesPageApi {
+  entries: ManagedCreditEntryApi[];
+  /** @minLength 1 */
+  next_cursor: string;
+}
+
+export interface ManagedCreditEntriesResponseApi {
+  status: boolean;
+  result: ManagedCreditEntriesPageApi;
+}
+
+export interface ManagedCreditGrantRequestApi {
+  /** The org to credit. Required with the gateway admin token; a staff user defaults to the organization the request acts in. */
+  org_id?: string;
+  /**
+   * @minimum 0.000001
+   * @maximum 1000000000
+   */
+  amount_usd: number;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  note: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key: string;
+}
+
+export interface ManagedCreditRefundRequestApi {
+  /** The org to credit. Required with the gateway admin token; a staff user defaults to the organization the request acts in. */
+  org_id?: string;
+  /**
+   * The spend entry's own request_id, as entries/ shows it: a managed capability attempt is <request_id>.<n>.
+   * @minLength 1
+   * @maxLength 200
+   */
+  request_id: string;
+  /**
+   * Defaults to the entry's whole spend.
+   * @minimum 0.000001
+   * @maximum 1000000000
+   */
+  amount_usd?: number;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  reason: string;
+}
+
+export interface ManagedCreditSettingsApi {
+  low_balance_threshold_usd: number;
+  auto_reload: ManagedCreditAutoReloadApi;
+  min_topup_usd: number;
+}
+
+export interface ManagedCreditSettingsResponseApi {
+  status: boolean;
+  result: ManagedCreditSettingsApi;
+}
+
+export interface ManagedCreditAutoReloadRequestApi {
+  enabled: boolean;
+  /**
+   * Send exactly auto-reload-v1 after acknowledging: I authorize Future AGI to charge my saved payment method for the selected auto-reload amount whenever my credit balance is at or below the selected threshold, subject to configured limits. These charges may occur without me being present. I can stop future auto-reloads by disabling auto-reload in my credit settings; a payment already initiated may still complete. Required on EVERY enabled settings save, including changes to amount or threshold; omitted when disabling. Missing consent returns 400 auto_reload_consent_required; a stale version returns 400 auto_reload_consent_outdated. No default is assumed.
+   * @maxLength 64
+   */
+  consent_version?: string;
+  /**
+   * @minimum 0
+   * @maximum 1000000000
+   */
+  threshold_usd?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000000000
+   */
+  amount_usd?: number;
+}
+
+export interface ManagedCreditSettingsRequestApi {
+  /**
+   * @minimum 0
+   * @maximum 1000000000
+   */
+  low_balance_threshold_usd: number;
+  auto_reload: ManagedCreditAutoReloadRequestApi;
+}
+
+export interface CreditsByKindApi {
+  topup: number;
+  grant: number;
+  refund: number;
+  adjustment: number;
+  expiry: number;
+  /** Stripe refunds of top-ups (negative). */
+  topup_reversal: number;
+  /** Top-up money held by a dispute (negative). */
+  dispute_hold: number;
+  /** Holds given back by won disputes. */
+  dispute_release: number;
+}
+
+export interface SpendByModelApi {
+  model: string;
+  count: number;
+  /** Billed to the org, positive. */
+  spend_usd: number;
+  markup_usd: number;
+  /** Billed on an estimate: the upstream reported no usage, so the gateway billed its own estimated token count. */
+  estimated: boolean;
+}
+
+export interface ManagedCreditStatementApi {
+  /** @minLength 1 */
+  month: string;
+  /** @minLength 1 */
+  currency: string;
+  /** Sum of every entry before the month. */
+  opening_balance: number;
+  credits_by_kind: CreditsByKindApi;
+  spend_by_model: SpendByModelApi[];
+  /** opening_balance plus every entry of the month. */
+  closing_balance: number;
+}
+
+export interface ManagedCreditStatementResponseApi {
+  status: boolean;
+  result: ManagedCreditStatementApi;
+}
+
+export interface ManagedModelsStatusResultApi {
+  /** The gateway offers managed models (it has managed providers). */
+  available: boolean;
+  /** This organization has enabled models billed to Future AGI credits. */
+  enabled: boolean;
+  balance_usd: number;
+  markup_percent: number;
+}
+
+export interface ManagedModelsStatusResponseApi {
+  status: boolean;
+  result: ManagedModelsStatusResultApi;
+}
+
+export interface ManagedCatalogProviderApi {
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  source: string;
+  /** @minLength 1 */
+  fetched_at: string;
+  models: number;
+}
+
+export interface ManagedCatalogModelApi {
+  /** @minLength 1 */
+  id: string;
+  name?: string;
+  description?: string;
+  created?: number;
+  /** @minLength 1 */
+  provider: string;
+  vendor: string;
+  context_length?: number;
+  max_output_tokens?: number;
+  input_modalities?: string[];
+  output_modalities?: string[];
+  supported_parameters?: string[];
+  input_per_mtok?: number;
+  output_per_mtok?: number;
+  cache_read_per_mtok?: number;
+  billed_input_per_mtok?: number;
+  billed_output_per_mtok?: number;
+  dynamic_price?: boolean;
+}
+
+export interface ManagedCatalogResultApi {
+  /** False when the gateway offers no managed models, as GET /agentcc/managed-models/ reports: markup_percent is then null and providers and models are empty. Absent otherwise. */
+  available?: boolean;
+  markup_percent: number;
+  providers: ManagedCatalogProviderApi[];
+  models: ManagedCatalogModelApi[];
+}
+
+export interface ManagedCatalogResponseApi {
+  status: boolean;
+  result: ManagedCatalogResultApi;
+}
+
+export interface _ClientApi {
+  /** @minLength 1 */
+  client_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  kind: string;
+  verified: boolean;
+  first_party: boolean;
+}
+
+export interface _OrganizationApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface _ScopeApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+}
+
+export interface ConsentRequestApi {
+  client: _ClientApi;
+  /** @minLength 1 */
+  redirect_uri: string;
+  /** @minLength 1 */
+  redirect_host: string;
+  /** @minLength 1 */
+  resource: string;
+  /** @minLength 1 */
+  virtual_server: string;
+  organizations: _OrganizationApi[];
+  scopes: _ScopeApi[];
+  pre_approved: boolean;
+}
+
+export interface ConsentRequestResponseApi {
+  status: boolean;
+  result: ConsentRequestApi;
+}
+
+export type ConsentDecisionRequestApiDecision =
+  (typeof ConsentDecisionRequestApiDecision)[keyof typeof ConsentDecisionRequestApiDecision];
+
+export const ConsentDecisionRequestApiDecision = {
+  approve: "approve",
+  deny: "deny",
+} as const;
+
+export interface ConsentDecisionRequestApi {
+  decision: ConsentDecisionRequestApiDecision;
+  organization_id?: string;
+}
+
+export interface _RedirectApi {
+  /** @minLength 1 */
+  redirect_to: string;
+}
+
+export interface ConsentDecisionResponseApi {
+  status: boolean;
+  result: _RedirectApi;
+}
+
+export interface _ConsentOrgApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface _ConsentUserApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface ConsentApi {
+  id: number;
+  /** @minLength 1 */
+  client_id: string;
+  /** @minLength 1 */
+  client_name: string;
+  /** @minLength 1 */
+  client_kind: string;
+  organization: _ConsentOrgApi;
+  /** @minLength 1 */
+  resource: string;
+  scopes: string[];
+  granted_at: string;
+  user: _ConsentUserApi;
+  can_revoke: boolean;
+}
+
+export interface ConsentListResponseApi {
+  status: boolean;
+  result: ConsentApi[];
+}
+
+export interface _RevokedApi {
+  revoked: boolean;
+}
+
+export interface ConsentRevokeResponseApi {
+  status: boolean;
+  result: _RevokedApi;
+}
+
+/**
+ * Your connection's state; null when you never connected one.
+ */
+export type MCPOwnConnectionApiStatus =
+  (typeof MCPOwnConnectionApiStatus)[keyof typeof MCPOwnConnectionApiStatus];
+
+export const MCPOwnConnectionApiStatus = {
+  active: "active",
+  expired: "expired",
+  needs_reauth: "needs_reauth",
+  revoked: "revoked",
+} as const;
+
+/**
+ * Vendor revocation: pending can be retried; unconfirmed is terminal and the old tokens are erased; confirmed means the vendor acknowledged. Null for an account without a revocation attempt.
+ */
+export type MCPOwnConnectionApiUpstreamRevocation =
+  (typeof MCPOwnConnectionApiUpstreamRevocation)[keyof typeof MCPOwnConnectionApiUpstreamRevocation];
+
+export const MCPOwnConnectionApiUpstreamRevocation = {
+  pending: "pending",
+  confirmed: "confirmed",
+  unconfirmed: "unconfirmed",
+} as const;
+
+/**
+ * ready: you can start a sign-in now. needs_admin: an Owner or Admin must register the organization's own OAuth app for this server (org_oauth_app_required), or replace an unreadable one, first. unknown: the organization stored no OAuth app for this server, and whether the server accepts a sign-in without one is known only once a sign-in starts. unavailable: no sign-in can start here.
+ */
+export type MCPOwnConnectionStartApiState =
+  (typeof MCPOwnConnectionStartApiState)[keyof typeof MCPOwnConnectionStartApiState];
+
+export const MCPOwnConnectionStartApiState = {
+  ready: "ready",
+  needs_admin: "needs_admin",
+  unknown: "unknown",
+  unavailable: "unavailable",
+} as const;
+
+/**
+ * Why the state is what it is.
+ */
+export type MCPOwnConnectionStartApiReason =
+  (typeof MCPOwnConnectionStartApiReason)[keyof typeof MCPOwnConnectionStartApiReason];
+
+export const MCPOwnConnectionStartApiReason = {
+  org_oauth_app: "org_oauth_app",
+  org_oauth_app_required: "org_oauth_app_required",
+  oauth_client_unreadable: "oauth_client_unreadable",
+  client_not_confirmed: "client_not_confirmed",
+  mcp_off: "mcp_off",
+  per_user_channel_off: "per_user_channel_off",
+  server_changed: "server_changed",
+  sign_in_not_served: "sign_in_not_served",
+  server_disabled: "server_disabled",
+  cleanup_pending: "cleanup_pending",
+} as const;
+
+export interface MCPOwnConnectionStartApi {
+  /** ready: you can start a sign-in now. needs_admin: an Owner or Admin must register the organization's own OAuth app for this server (org_oauth_app_required), or replace an unreadable one, first. unknown: the organization stored no OAuth app for this server, and whether the server accepts a sign-in without one is known only once a sign-in starts. unavailable: no sign-in can start here. */
+  state: MCPOwnConnectionStartApiState;
+  /** Why the state is what it is. */
+  reason: MCPOwnConnectionStartApiReason;
+}
+
+export interface MCPOwnConnectionApi {
+  /** @minLength 1 */
+  server_id: string;
+  /** Whether the gateway uses your account on this server for your calls. */
+  connected: boolean;
+  /** Your connection's state; null when you never connected one. */
+  status: MCPOwnConnectionApiStatus;
+  /** Retry Disconnect to finish upstream revocation or gateway cache eviction. */
+  cleanup_pending: boolean;
+  /** Vendor revocation: pending can be retried; unconfirmed is terminal and the old tokens are erased; confirmed means the vendor acknowledged. Null for an account without a revocation attempt. */
+  upstream_revocation: MCPOwnConnectionApiUpstreamRevocation;
+  connected_at: string;
+  rotated_at: string;
+  start: MCPOwnConnectionStartApi;
+  /**
+   * Where the console POSTs to start your sign-in; only when start.state is ready.
+   * @minLength 1
+   */
+  start_url: string;
+  /**
+   * Where you DELETE to disconnect your own account; whenever you hold one that is not revoked or has pending cleanup.
+   * @minLength 1
+   */
+  disconnect_url: string;
+}
+
+export interface MCPOwnConnectionListResultApi {
+  connections: MCPOwnConnectionApi[];
+}
+
+export interface MCPOwnConnectionListResponseApi {
+  status: boolean;
+  result: MCPOwnConnectionListResultApi;
+}
+
+/**
+ * Vendor revocation: pending can be retried; unconfirmed is terminal and the old tokens are erased; confirmed means the vendor acknowledged. Null for an account without a revocation attempt.
+ */
+export type MCPDisconnectResultApiUpstreamRevocation =
+  (typeof MCPDisconnectResultApiUpstreamRevocation)[keyof typeof MCPDisconnectResultApiUpstreamRevocation];
+
+export const MCPDisconnectResultApiUpstreamRevocation = {
+  pending: "pending",
+  confirmed: "confirmed",
+  unconfirmed: "unconfirmed",
+} as const;
+
+export interface MCPDisconnectResultApi {
+  /** @minLength 1 */
+  server_id: string;
+  disconnected: boolean;
+  gateway_synced: boolean;
+  /** Vendor revocation: pending can be retried; unconfirmed is terminal and the old tokens are erased; confirmed means the vendor acknowledged. Null for an account without a revocation attempt. */
+  upstream_revocation: MCPDisconnectResultApiUpstreamRevocation;
+  /** Local revocation is recorded, but upstream or cache cleanup still needs retry. */
+  cleanup_pending: boolean;
+}
+
+export interface MCPDisconnectResponseApi {
+  status: boolean;
+  result: MCPDisconnectResultApi;
+}
+
+/**
+ * user: the caller's own account. shared: the organization's one account on a shared server whose credential kind is oauth, signed in by an Owner or Admin; it takes no binding.
+ */
+export type MCPConnectStartRequestApiMode =
+  (typeof MCPConnectStartRequestApiMode)[keyof typeof MCPConnectStartRequestApiMode];
+
+export const MCPConnectStartRequestApiMode = {
+  user: "user",
+  shared: "shared",
+} as const;
+
+export interface MCPConnectStartRequestApi {
+  /**
+   * The sealed binding of a gateway connect link, when the connect comes from one.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  binding?: string;
+  /** user: the caller's own account. shared: the organization's one account on a shared server whose credential kind is oauth, signed in by an Owner or Admin; it takes no binding. */
+  mode?: MCPConnectStartRequestApiMode;
+}
+
+export interface MCPConnectStartResultApi {
+  /**
+   * Open in this browser to sign in to the server's account.
+   * @minLength 1
+   */
+  authorize_url: string;
+  /** Seconds the sign-in may take before it must start again. */
+  expires_in: number;
+}
+
+export interface MCPConnectStartResponseApi {
+  status: boolean;
+  result: MCPConnectStartResultApi;
+}
+
+export interface MCPCredentialApi {
+  id: string;
+  /** @minLength 1 */
+  server_id: string;
+  /** @minLength 1 */
+  scope: string;
+  /** @minLength 1 */
+  kind: string;
+  header_name: string;
+  /** The header, query parameter or URL variable the key goes in. */
+  name: string;
+  /** @minLength 1 */
+  status: string;
+  version: number;
+  label: string;
+  created_at: string;
+  rotated_at: string;
+  last_used_at: string;
+  has_value: boolean;
+  /**
+   * Where the key goes: header, query or url_variable.
+   * @minLength 1
+   */
+  in: string;
+}
+
+export interface MCPCredentialListResponseApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: MCPCredentialApi[];
+}
+
+export type MCPCredentialCreateRequestApiKind =
+  (typeof MCPCredentialCreateRequestApiKind)[keyof typeof MCPCredentialCreateRequestApiKind];
+
+export const MCPCredentialCreateRequestApiKind = {
+  bearer: "bearer",
+  api_key: "api_key",
+} as const;
+
+export type MCPCredentialCreateRequestApiScope =
+  (typeof MCPCredentialCreateRequestApiScope)[keyof typeof MCPCredentialCreateRequestApiScope];
+
+export const MCPCredentialCreateRequestApiScope = {
+  shared: "shared",
+} as const;
+
+/**
+ * Where the key goes: header (the default), query or url_variable.
+ */
+export type MCPCredentialCreateRequestApiIn =
+  (typeof MCPCredentialCreateRequestApiIn)[keyof typeof MCPCredentialCreateRequestApiIn];
+
+export const MCPCredentialCreateRequestApiIn = {
+  header: "header",
+  query: "query",
+  url_variable: "url_variable",
+} as const;
+
+export interface MCPCredentialCreateRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  server_id: string;
+  kind: MCPCredentialCreateRequestApiKind;
+  /**
+   * @minLength 1
+   * @maxLength 8192
+   */
+  value: string;
+  /** @maxLength 128 */
+  header_name?: string;
+  /** @maxLength 255 */
+  label?: string;
+  scope?: MCPCredentialCreateRequestApiScope;
+  /** Where the key goes: header (the default), query or url_variable. */
+  in?: MCPCredentialCreateRequestApiIn;
+  /**
+   * The header, query parameter or URL variable the key goes in.
+   * @minLength 1
+   * @maxLength 128
+   */
+  name?: string;
+}
+
+export interface MCPCredentialWriteResultApi {
+  id: string;
+  /** @minLength 1 */
+  server_id: string;
+  /** @minLength 1 */
+  scope: string;
+  /** @minLength 1 */
+  kind: string;
+  header_name: string;
+  /** The header, query parameter or URL variable the key goes in. */
+  name: string;
+  /** @minLength 1 */
+  status: string;
+  version: number;
+  label: string;
+  created_at: string;
+  rotated_at: string;
+  last_used_at: string;
+  has_value: boolean;
+  gateway_synced: boolean;
+  /**
+   * Where the key goes: header, query or url_variable.
+   * @minLength 1
+   */
+  in: string;
+}
+
+export interface MCPCredentialResponseApi {
+  status: boolean;
+  result: MCPCredentialWriteResultApi;
+}
+
+/**
+ * Where the key goes: header (the default), query or url_variable.
+ */
+export type MCPCredentialRotateRequestApiIn =
+  (typeof MCPCredentialRotateRequestApiIn)[keyof typeof MCPCredentialRotateRequestApiIn];
+
+export const MCPCredentialRotateRequestApiIn = {
+  header: "header",
+  query: "query",
+  url_variable: "url_variable",
+} as const;
+
+export interface MCPCredentialRotateRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 8192
+   */
+  value: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  header_name?: string;
+  /** Where the key goes: header (the default), query or url_variable. */
+  in?: MCPCredentialRotateRequestApiIn;
+  /**
+   * The header, query parameter or URL variable the key goes in.
+   * @minLength 1
+   * @maxLength 128
+   */
+  name?: string;
+}
+
+export interface MCPUseManagedResultApi {
+  /** @minLength 1 */
+  server_id: string;
+  version: number;
+  revoked: string[];
+  gateway_synced: boolean;
+}
+
+export interface MCPUseManagedResponseApi {
+  status: boolean;
+  result: MCPUseManagedResultApi;
+}
+
+export interface MCPPersonalKeyRequestApi {
+  /** Whether the key acts as you on MCP servers that connect each member's own account. */
+  personal: boolean;
+}
+
+export interface MCPPersonalKeyResultApi {
+  /** @minLength 1 */
+  key_id: string;
+  personal: boolean;
+}
+
+export interface MCPPersonalKeyResponseApi {
+  status: boolean;
+  result: MCPPersonalKeyResultApi;
+}
+
+export type MCPProbeRequestApiTransport =
+  (typeof MCPProbeRequestApiTransport)[keyof typeof MCPProbeRequestApiTransport];
+
+export const MCPProbeRequestApiTransport = {
+  http: "http",
+  sse: "sse",
+} as const;
+
+export type MCPProbeAuthApiType =
+  (typeof MCPProbeAuthApiType)[keyof typeof MCPProbeAuthApiType];
+
+export const MCPProbeAuthApiType = {
+  bearer: "bearer",
+  api_key: "api_key",
+} as const;
+
+export interface MCPProbeAuthApi {
+  type: MCPProbeAuthApiType;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  header?: string;
+  /**
+   * @minLength 1
+   * @maxLength 8192
+   */
+  value: string;
+}
+
+export interface MCPProbeRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  url: string;
+  transport?: MCPProbeRequestApiTransport;
+  credential_id?: string;
+  auth?: MCPProbeAuthApi;
+}
+
+export interface MCPProbeServerInfoApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  title?: string;
+  /** @minLength 1 */
+  version?: string;
+}
+
+export interface MCPProbeResultApi {
+  ok: boolean;
+  /** @minLength 1 */
+  era?: string;
+  server_info?: MCPProbeServerInfoApi;
+  /** @minimum 0 */
+  tool_count?: number;
+  /** @minLength 1 */
+  tools_hash?: string;
+  /** @minimum 0 */
+  latency_ms: number;
+  /** @minLength 1 */
+  error: string;
+}
+
+export interface MCPProbeResponseApi {
+  status: boolean;
+  result: MCPProbeResultApi;
+}
+
+/**
+ * changed: the definition differs from the accepted one; new: the server added the tool after its tools were accepted.
+ */
+export type MCPRevisionApiReason =
+  (typeof MCPRevisionApiReason)[keyof typeof MCPRevisionApiReason];
+
+export const MCPRevisionApiReason = {
+  changed: "changed",
+  new: "new",
+} as const;
+
+export type MCPRevisionApiStatus =
+  (typeof MCPRevisionApiStatus)[keyof typeof MCPRevisionApiStatus];
+
+export const MCPRevisionApiStatus = {
+  pending: "pending",
+  approved: "approved",
+  rejected: "rejected",
+  superseded: "superseded",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type MCPRevisionDiffApiBefore = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type MCPRevisionDiffApiAfter = { [key: string]: unknown };
+
+export interface MCPRevisionDiffApi {
+  /** @minLength 1 */
+  field: string;
+  /** Any valid JSON value. */
+  before?: MCPRevisionDiffApiBefore;
+  /** Any valid JSON value. */
+  after?: MCPRevisionDiffApiAfter;
+}
+
+export type MCPRevisionApiDefinition = { [key: string]: string };
+
+export type MCPRevisionApiPreviousDefinition = { [key: string]: string };
+
+export interface MCPRevisionApi {
+  id: number;
+  /** @minLength 1 */
+  server_id: string;
+  /** @minLength 1 */
+  tool: string;
+  /**
+   * The sha256 of the tool's canonical definition.
+   * @minLength 1
+   */
+  revision: string;
+  /**
+   * The accepted revision this one would replace.
+   * @minLength 1
+   */
+  previous_revision: string;
+  /** changed: the definition differs from the accepted one; new: the server added the tool after its tools were accepted. */
+  reason: MCPRevisionApiReason;
+  status: MCPRevisionApiStatus;
+  definition: MCPRevisionApiDefinition;
+  previous_definition: MCPRevisionApiPreviousDefinition;
+  diff: MCPRevisionDiffApi[];
+  first_seen_at: string;
+  /** @minLength 1 */
+  decided_by: string;
+  decided_at: string;
+}
+
+export interface MCPRevisionListResultApi {
+  revisions: MCPRevisionApi[];
+  /** Whether the list was brought up to date with the gateway just now; false shows the revisions last pulled. */
+  gateway_synced: boolean;
+}
+
+export interface MCPRevisionListResponseApi {
+  status: boolean;
+  result: MCPRevisionListResultApi;
+}
+
+export interface MCPRevisionApproveBaselineRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  server_id: string;
+}
+
+export interface MCPRevisionBaselineResultApi {
+  /** @minLength 1 */
+  server_id: string;
+  approved: MCPRevisionApi[];
+  version: number;
+  gateway_synced: boolean;
+}
+
+export interface MCPRevisionBaselineResponseApi {
+  status: boolean;
+  result: MCPRevisionBaselineResultApi;
+}
+
+/**
+ * changed: the definition differs from the accepted one; new: the server added the tool after its tools were accepted.
+ */
+export type MCPRevisionDecisionResultApiReason =
+  (typeof MCPRevisionDecisionResultApiReason)[keyof typeof MCPRevisionDecisionResultApiReason];
+
+export const MCPRevisionDecisionResultApiReason = {
+  changed: "changed",
+  new: "new",
+} as const;
+
+export type MCPRevisionDecisionResultApiStatus =
+  (typeof MCPRevisionDecisionResultApiStatus)[keyof typeof MCPRevisionDecisionResultApiStatus];
+
+export const MCPRevisionDecisionResultApiStatus = {
+  pending: "pending",
+  approved: "approved",
+  rejected: "rejected",
+  superseded: "superseded",
+} as const;
+
+export type MCPRevisionDecisionResultApiDefinition = { [key: string]: string };
+
+export type MCPRevisionDecisionResultApiPreviousDefinition = {
+  [key: string]: string;
+};
+
+export interface MCPRevisionDecisionResultApi {
+  id: number;
+  /** @minLength 1 */
+  server_id: string;
+  /** @minLength 1 */
+  tool: string;
+  /**
+   * The sha256 of the tool's canonical definition.
+   * @minLength 1
+   */
+  revision: string;
+  /**
+   * The accepted revision this one would replace.
+   * @minLength 1
+   */
+  previous_revision: string;
+  /** changed: the definition differs from the accepted one; new: the server added the tool after its tools were accepted. */
+  reason: MCPRevisionDecisionResultApiReason;
+  status: MCPRevisionDecisionResultApiStatus;
+  definition: MCPRevisionDecisionResultApiDefinition;
+  previous_definition: MCPRevisionDecisionResultApiPreviousDefinition;
+  diff: MCPRevisionDiffApi[];
+  first_seen_at: string;
+  /** @minLength 1 */
+  decided_by: string;
+  decided_at: string;
+  version?: number;
+  gateway_synced?: boolean;
+}
+
+export interface MCPRevisionDecisionResponseApi {
+  status: boolean;
+  result: MCPRevisionDecisionResultApi;
+}
+
+export type RefusalEventApiCode =
+  (typeof RefusalEventApiCode)[keyof typeof RefusalEventApiCode];
+
+export const RefusalEventApiCode = {
+  agent_key_budget_exhausted: "agent_key_budget_exhausted",
+  key_scope_denied: "key_scope_denied",
+} as const;
+
+export interface RefusalEventApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  agent_key_id: string;
+  code: RefusalEventApiCode;
+  /**
+   * An HTTP method, PIPELINE, or OTHER for any other method.
+   * @minLength 1
+   * @maxLength 16
+   */
+  method: string;
+  /**
+   * Without control characters, at most 300 characters.
+   * @minLength 1
+   * @maxLength 300
+   */
+  path: string;
+  /** @minimum 1 */
+  count: number;
+  first_at: string;
+  last_at: string;
+}
+
+export interface RefusalsRequestApi {
+  events: RefusalEventApi[];
+}
+
+export interface RefusalsResultApi {
+  audited: number;
+  /** Events for a key that is not an agent key. */
+  skipped: number;
+  /** Events that could not be read (an unknown code, a missing field); the batch's other events are audited. */
+  invalid: number;
+}
+
+export interface RefusalsResponseApi {
+  status: boolean;
+  result: RefusalsResultApi;
+}
+
+export interface EEMintAgentKeyRequestApi {
+  /**
+   * Workspace id.
+   * @minLength 1
+   */
+  workspace: string;
+}
+
+export interface EEMintAgentKeyResultApi {
+  /**
+   * @minLength 1
+   * @pattern ^key_[0-9a-f]{24}$
+   */
+  agent_key_id: string;
+  /**
+   * The raw key, returned this once.
+   * @minLength 1
+   */
+  key: string;
+  /**
+   * @minLength 1
+   * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  workspace: string;
+  /** The key expires 90 days after it was minted (CN22c). */
+  expires_at: string;
+}
+
+export interface EEMintAgentKeyResponseApi {
+  status: boolean;
+  result: EEMintAgentKeyResultApi;
+}
+
+export type EEMintConflictResponseApiType =
+  (typeof EEMintConflictResponseApiType)[keyof typeof EEMintConflictResponseApiType];
+
+export const EEMintConflictResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type EEMintConflictResponseApiDetails = { [key: string]: string[] };
+
+export interface EEMintConflictResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
+  status?: boolean;
+  type?: EEMintConflictResponseApiType;
+  code?: string;
+  detail?: string;
+  result?: string;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: EEMintConflictResponseApiDetails;
+  /**
+   * agent_key_mint_replayed: the key the first mint made.
+   * @minLength 1
+   * @pattern ^key_[0-9a-f]{24}$
+   */
+  agent_key_id?: string;
+  created_at?: string;
+  expires_at?: string;
+  /** True once the key is revoked: EE then mints with a new Idempotency-Key. */
+  revoked?: boolean;
+}
+
+export interface EERevokeAgentKeyResultApi {
+  /** @minLength 1 */
+  agent_key_id: string;
+  revoked: boolean;
+}
+
+export interface EERevokeAgentKeyResponseApi {
+  status: boolean;
+  result: EERevokeAgentKeyResultApi;
+}
+
+export type EEServiceCredentialApiStatus =
+  (typeof EEServiceCredentialApiStatus)[keyof typeof EEServiceCredentialApiStatus];
+
+export const EEServiceCredentialApiStatus = {
+  active: "active",
+  rotated: "rotated",
+  revoked: "revoked",
+} as const;
+
+export interface EEServiceCredentialApi {
+  id: string;
+  /**
+   * Sent as X-Api-Key.
+   * @minLength 1
+   */
+  api_key: string;
+  status: EEServiceCredentialApiStatus;
+  created_at: string;
+  last_used_at: string;
+}
+
+export interface EEServiceCredentialResponseApi {
+  status: boolean;
+  result: EEServiceCredentialApi;
+}
+
+export type EEIssuedServiceCredentialApiStatus =
+  (typeof EEIssuedServiceCredentialApiStatus)[keyof typeof EEIssuedServiceCredentialApiStatus];
+
+export const EEIssuedServiceCredentialApiStatus = {
+  active: "active",
+  rotated: "rotated",
+  revoked: "revoked",
+} as const;
+
+export interface EEIssuedServiceCredentialApi {
+  id: string;
+  /**
+   * Sent as X-Api-Key.
+   * @minLength 1
+   */
+  api_key: string;
+  status: EEIssuedServiceCredentialApiStatus;
+  created_at: string;
+  last_used_at: string;
+  /**
+   * Sent as X-Secret-Key. Shown this once; only its hash is kept.
+   * @minLength 1
+   */
+  secret_key: string;
+}
+
+export interface EEIssuedServiceCredentialResponseApi {
+  status: boolean;
+  result: EEIssuedServiceCredentialApi;
+}
+
+export type EERevokedServiceCredentialApiStatus =
+  (typeof EERevokedServiceCredentialApiStatus)[keyof typeof EERevokedServiceCredentialApiStatus];
+
+export const EERevokedServiceCredentialApiStatus = {
+  active: "active",
+  rotated: "rotated",
+  revoked: "revoked",
+} as const;
+
+export interface EERevokedServiceCredentialApi {
+  id: string;
+  /**
+   * Sent as X-Api-Key.
+   * @minLength 1
+   */
+  api_key: string;
+  status: EERevokedServiceCredentialApiStatus;
+  created_at: string;
+  last_used_at: string;
+  /** Every live agent key EE held in this organization, revoked with the credential. */
+  agent_keys_revoked: string[];
+  /** False when the gateway could not be told yet; it drops those keys at its next key sync. */
+  gateway_synced: boolean;
+}
+
+export interface EERevokedServiceCredentialResponseApi {
+  status: boolean;
+  result: EERevokedServiceCredentialApi;
+}
+
+export type EEEnsureRequestApiMode =
+  (typeof EEEnsureRequestApiMode)[keyof typeof EEEnsureRequestApiMode];
+
+export const EEEnsureRequestApiMode = {
+  agent: "agent",
+} as const;
+
+export interface EEEnsureRequestApi {
+  /**
+   * Workspace id.
+   * @minLength 1
+   */
+  workspace: string;
+  /**
+   * EE's IntegrationConnection.id; with the workspace, the idempotency key.
+   * @minLength 1
+   */
+  connection_id: string;
+  /**
+   * 1 to 8 MCP server ids of the org.
+   * @minItems 1
+   * @maxItems 8
+   */
+  servers: string[];
+  mode: EEEnsureRequestApiMode;
+  /**
+   * key_ and 24 hex digits.
+   * @minLength 1
+   */
+  agent_key_id?: string;
+}
+
+export type EEEnsureResultApiMode =
+  (typeof EEEnsureResultApiMode)[keyof typeof EEEnsureResultApiMode];
+
+export const EEEnsureResultApiMode = {
+  agent: "agent",
+} as const;
+
+export interface EEEnsureResultApi {
+  /**
+   * @minLength 1
+   * @pattern ^vs_[0-9A-HJKMNP-TV-Z]{26}$
+   */
+  vs_id: string;
+  /** @minLength 1 */
+  url: string;
+  mode: EEEnsureResultApiMode;
+  /**
+   * @minLength 1
+   * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  workspace: string;
+  /** @minLength 1 */
+  connection_id: string;
+  created: boolean;
+  /** When the bound agent key expires (90 days after it was minted). EE mints a new key and ensures with it before then (CN22c). */
+  agent_key_expires_at: string;
+}
+
+export interface EEEnsureResponseApi {
+  status: boolean;
+  result: EEEnsureResultApi;
+}
+
+export interface EEDetachResultApi {
+  /**
+   * @minLength 1
+   * @pattern ^vs_[0-9A-HJKMNP-TV-Z]{26}$
+   */
+  vs_id: string;
+  /** @minLength 1 */
+  connection_id: string;
+  removed: boolean;
+}
+
+export interface EEDetachResponseApi {
+  status: boolean;
+  result: EEDetachResultApi;
+}
+
+export type AgentKeyPolicyApiBudgetPeriod =
+  (typeof AgentKeyPolicyApiBudgetPeriod)[keyof typeof AgentKeyPolicyApiBudgetPeriod];
+
+export const AgentKeyPolicyApiBudgetPeriod = {
+  daily: "daily",
+  weekly: "weekly",
+  monthly: "monthly",
+} as const;
+
+export interface AgentKeyPolicyApi {
+  workspace: string;
+  /** @minLength 1 */
+  budget_usd: string;
+  budget_period: AgentKeyPolicyApiBudgetPeriod;
+  /** True when no Owner or Admin set one. */
+  default: boolean;
+  /**
+   * What every agent key may call.
+   * @minLength 1
+   */
+  scopes: string;
+  lifetime_days: number;
+  /** Live agent keys the org may hold. */
+  org_cap: number;
+  live_agent_keys: number;
+}
+
+export interface AgentKeyPolicyResponseApi {
+  status: boolean;
+  result: AgentKeyPolicyApi;
+}
+
+export type AgentKeyPolicyRequestApiBudgetPeriod =
+  (typeof AgentKeyPolicyRequestApiBudgetPeriod)[keyof typeof AgentKeyPolicyRequestApiBudgetPeriod];
+
+export const AgentKeyPolicyRequestApiBudgetPeriod = {
+  daily: "daily",
+  weekly: "weekly",
+  monthly: "monthly",
+} as const;
+
+export interface AgentKeyPolicyRequestApi {
+  /** What each agent key of the workspace may spend per period, in USD. */
+  budget_usd: string;
+  budget_period: AgentKeyPolicyRequestApiBudgetPeriod;
+}
+
+export interface AgentKeyUsageApi {
+  /** @minLength 1 */
+  agent_key_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  status: string;
+  created_at: string;
+  expires_at: string;
+  last_used_at: string;
+  /** @minLength 1 */
+  budget_usd: string;
+  /** @minLength 1 */
+  budget_period: string;
+  period_start: string;
+  /** @minLength 1 */
+  period_spend_usd: string;
+  requests: number;
+  /**
+   * CN22d: the Idempotency-Key (UUIDv7) EE minted the key with; null for a key minted before CN22d.
+   * @minLength 1
+   */
+  mint_idempotency_key: string;
+}
+
+export interface AgentKeyUsageListApi {
+  workspace: string;
+  keys: AgentKeyUsageApi[];
+}
+
+export interface AgentKeyUsageResponseApi {
+  status: boolean;
+  result: AgentKeyUsageListApi;
+}
+
+export type VendorBindingRequestApiVendor =
+  (typeof VendorBindingRequestApiVendor)[keyof typeof VendorBindingRequestApiVendor];
+
+export const VendorBindingRequestApiVendor = {
+  pipedream: "pipedream",
+  composio: "composio",
+} as const;
+
+export type VendorBindingRequestApiIdentityPolicy =
+  (typeof VendorBindingRequestApiIdentityPolicy)[keyof typeof VendorBindingRequestApiIdentityPolicy];
+
+export const VendorBindingRequestApiIdentityPolicy = {
+  member: "member",
+  member_or_asserted: "member_or_asserted",
+} as const;
+
+export type VendorBindingRequestApiEnvironment =
+  (typeof VendorBindingRequestApiEnvironment)[keyof typeof VendorBindingRequestApiEnvironment];
+
+export const VendorBindingRequestApiEnvironment = {
+  development: "development",
+  production: "production",
+} as const;
+
+export type VendorBindingRequestApiTools = { [key: string]: string[] };
+
+export interface VendorBindingRequestApi {
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$
+   */
+  server_id: string;
+  vendor: VendorBindingRequestApiVendor;
+  credential_id: string;
+  identity_policy?: VendorBindingRequestApiIdentityPolicy;
+  /** @pattern ^[A-Za-z0-9_-]{1,128}$ */
+  project_id?: string;
+  environment?: VendorBindingRequestApiEnvironment;
+  /** @pattern ^[a-z0-9_-]{1,100}$ */
+  app_slug?: string;
+  /** @maxItems 1 */
+  toolkits?: string[];
+  tools?: VendorBindingRequestApiTools;
+  enabled?: boolean;
+}
+
+export type VendorBindingResponseApiVendor =
+  (typeof VendorBindingResponseApiVendor)[keyof typeof VendorBindingResponseApiVendor];
+
+export const VendorBindingResponseApiVendor = {
+  pipedream: "pipedream",
+  composio: "composio",
+} as const;
+
+export interface VendorBindingResponseApi {
+  id: string;
+  /** @minLength 1 */
+  server_id: string;
+  vendor: VendorBindingResponseApiVendor;
+  enabled: boolean;
+}
+
+export interface VendorBindingDisableRequestApi {
+  enabled: false;
+}
+
+export interface VendorBindingDisabledResponseApi {
+  id: string;
+  enabled: false;
+}
+
+export interface VendorConnectRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 4096
+   */
+  binding?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  asserted_id?: string;
+}
+
+export interface VendorConnectResponseApi {
+  /** @minLength 1 */
+  connect_url: string;
 }
 
 export type AgentccOrgConfigApiGuardrails = { [key: string]: unknown };
@@ -3290,6 +6032,9 @@ export type AgentccOrgConfigApiIpAcl = { [key: string]: unknown };
 
 export type AgentccOrgConfigApiAlerting = { [key: string]: unknown };
 
+/**
+ * privacy.trace_content is the tool-span capture opt-in. Full-content capture exports tool inputs and outputs to your organization's collector and masks known credential formats. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited.
+ */
 export type AgentccOrgConfigApiPrivacy = { [key: string]: unknown };
 
 export type AgentccOrgConfigApiToolPolicy = { [key: string]: unknown };
@@ -3304,6 +6049,17 @@ export type AgentccOrgConfigApiModelDatabase = { [key: string]: unknown };
 
 export type AgentccOrgConfigApiModelMap = { [key: string]: unknown };
 
+export type AgentccOrgConfigApiManagedModels = { [key: string]: unknown };
+
+export type AgentccOrgConfigApiTools = { [key: string]: unknown };
+
+export type AgentccOrgConfigApiIdentity = { [key: string]: unknown };
+
+/**
+ * Admission cap activation, UTC day boundary and model-spend coverage.
+ */
+export type AgentccOrgConfigApiCapAccounting = { [key: string]: unknown };
+
 export interface AgentccOrgConfigApi {
   readonly id?: string;
   readonly organization?: string;
@@ -3316,6 +6072,7 @@ export interface AgentccOrgConfigApi {
   cost_tracking?: AgentccOrgConfigApiCostTracking;
   ip_acl?: AgentccOrgConfigApiIpAcl;
   alerting?: AgentccOrgConfigApiAlerting;
+  /** privacy.trace_content is the tool-span capture opt-in. Full-content capture exports tool inputs and outputs to your organization's collector and masks known credential formats. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited. */
   privacy?: AgentccOrgConfigApiPrivacy;
   tool_policy?: AgentccOrgConfigApiToolPolicy;
   mcp?: AgentccOrgConfigApiMcp;
@@ -3323,11 +6080,140 @@ export interface AgentccOrgConfigApi {
   audit?: AgentccOrgConfigApiAudit;
   model_database?: AgentccOrgConfigApiModelDatabase;
   model_map?: AgentccOrgConfigApiModelMap;
+  managed_models?: AgentccOrgConfigApiManagedModels;
+  tools?: AgentccOrgConfigApiTools;
+  identity?: AgentccOrgConfigApiIdentity;
   readonly is_active?: boolean;
   readonly created_by?: string;
   change_description?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
+  /** JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value. */
+  readonly secrets_set?: readonly string[];
+  /** Admission cap activation, UTC day boundary and model-spend coverage. */
+  readonly cap_accounting?: AgentccOrgConfigApiCapAccounting;
+}
+
+export type AgentccOrgConfigMutationResultApiGuardrails = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiRouting = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiCache = { [key: string]: unknown };
+
+export type AgentccOrgConfigMutationResultApiRateLimiting = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiBudgets = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiCostTracking = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiIpAcl = { [key: string]: unknown };
+
+export type AgentccOrgConfigMutationResultApiAlerting = {
+  [key: string]: unknown;
+};
+
+/**
+ * privacy.trace_content is the tool-span capture opt-in. Full-content capture exports tool inputs and outputs to your organization's collector and masks known credential formats. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited.
+ */
+export type AgentccOrgConfigMutationResultApiPrivacy = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiToolPolicy = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiMcp = { [key: string]: unknown };
+
+export type AgentccOrgConfigMutationResultApiA2a = { [key: string]: unknown };
+
+export type AgentccOrgConfigMutationResultApiAudit = { [key: string]: unknown };
+
+export type AgentccOrgConfigMutationResultApiModelDatabase = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiModelMap = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiManagedModels = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiTools = { [key: string]: unknown };
+
+export type AgentccOrgConfigMutationResultApiIdentity = {
+  [key: string]: unknown;
+};
+
+/**
+ * Admission cap activation, UTC day boundary and model-spend coverage.
+ */
+export type AgentccOrgConfigMutationResultApiCapAccounting = {
+  [key: string]: unknown;
+};
+
+export type AgentccOrgConfigMutationResultApiWarningsItem = {
+  [key: string]: unknown;
+};
+
+export interface AgentccOrgConfigMutationResultApi {
+  readonly id?: string;
+  readonly organization?: string;
+  readonly version?: number;
+  guardrails?: AgentccOrgConfigMutationResultApiGuardrails;
+  routing?: AgentccOrgConfigMutationResultApiRouting;
+  cache?: AgentccOrgConfigMutationResultApiCache;
+  rate_limiting?: AgentccOrgConfigMutationResultApiRateLimiting;
+  budgets?: AgentccOrgConfigMutationResultApiBudgets;
+  cost_tracking?: AgentccOrgConfigMutationResultApiCostTracking;
+  ip_acl?: AgentccOrgConfigMutationResultApiIpAcl;
+  alerting?: AgentccOrgConfigMutationResultApiAlerting;
+  /** privacy.trace_content is the tool-span capture opt-in. Full-content capture exports tool inputs and outputs to your organization's collector and masks known credential formats. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited. */
+  privacy?: AgentccOrgConfigMutationResultApiPrivacy;
+  tool_policy?: AgentccOrgConfigMutationResultApiToolPolicy;
+  mcp?: AgentccOrgConfigMutationResultApiMcp;
+  a2a?: AgentccOrgConfigMutationResultApiA2a;
+  audit?: AgentccOrgConfigMutationResultApiAudit;
+  model_database?: AgentccOrgConfigMutationResultApiModelDatabase;
+  model_map?: AgentccOrgConfigMutationResultApiModelMap;
+  managed_models?: AgentccOrgConfigMutationResultApiManagedModels;
+  tools?: AgentccOrgConfigMutationResultApiTools;
+  identity?: AgentccOrgConfigMutationResultApiIdentity;
+  readonly is_active?: boolean;
+  readonly created_by?: string;
+  change_description?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  /** JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value. */
+  readonly secrets_set?: readonly string[];
+  /** Admission cap activation, UTC day boundary and model-spend coverage. */
+  readonly cap_accounting?: AgentccOrgConfigMutationResultApiCapAccounting;
+  /**
+   * Saved cap revision for the next edit; 0 before any policy exists.
+   * @minimum 0
+   */
+  policy_revision: number;
+  gateway_synced: boolean;
+  /** @minLength 1 */
+  gateway_warning?: string;
+  warnings: AgentccOrgConfigMutationResultApiWarningsItem[];
+}
+
+export interface AgentccOrgConfigMutationResponseApi {
+  status: boolean;
+  result: AgentccOrgConfigMutationResultApi;
 }
 
 export type OrgConfigBulkItemApiProviders = {
@@ -3350,6 +6236,9 @@ export type OrgConfigBulkItemApiIpAcl = { [key: string]: unknown };
 
 export type OrgConfigBulkItemApiAlerting = { [key: string]: unknown };
 
+/**
+ * privacy.trace_content is the tool-span capture opt-in. Full-content capture exports tool inputs and outputs to your organization's collector and masks known credential formats. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited.
+ */
 export type OrgConfigBulkItemApiPrivacy = { [key: string]: unknown };
 
 export type OrgConfigBulkItemApiToolPolicy = { [key: string]: unknown };
@@ -3364,6 +6253,12 @@ export type OrgConfigBulkItemApiModelDatabase = { [key: string]: unknown };
 
 export type OrgConfigBulkItemApiModelMap = { [key: string]: unknown };
 
+export type OrgConfigBulkItemApiManagedModels = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiTools = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiIdentity = { [key: string]: unknown };
+
 export interface OrgConfigBulkItemApi {
   providers: OrgConfigBulkItemApiProviders;
   guardrails: OrgConfigBulkItemApiGuardrails;
@@ -3374,6 +6269,7 @@ export interface OrgConfigBulkItemApi {
   cost_tracking: OrgConfigBulkItemApiCostTracking;
   ip_acl: OrgConfigBulkItemApiIpAcl;
   alerting: OrgConfigBulkItemApiAlerting;
+  /** privacy.trace_content is the tool-span capture opt-in. Full-content capture exports tool inputs and outputs to your organization's collector and masks known credential formats. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited. */
   privacy: OrgConfigBulkItemApiPrivacy;
   tool_policy: OrgConfigBulkItemApiToolPolicy;
   mcp: OrgConfigBulkItemApiMcp;
@@ -3381,6 +6277,9 @@ export interface OrgConfigBulkItemApi {
   audit: OrgConfigBulkItemApiAudit;
   model_database: OrgConfigBulkItemApiModelDatabase;
   model_map: OrgConfigBulkItemApiModelMap;
+  managed_models?: OrgConfigBulkItemApiManagedModels;
+  tools?: OrgConfigBulkItemApiTools;
+  identity?: OrgConfigBulkItemApiIdentity;
 }
 
 export type OrgConfigBulkResponseApiResult = {
@@ -3442,6 +6341,90 @@ export interface AgentccProviderCredentialApi {
   readonly updated_at?: string;
 }
 
+export type AgentccProviderCredentialCreateApiCredentials = {
+  [key: string]: string;
+};
+
+export type AgentccProviderCredentialCreateApiApiFormat =
+  (typeof AgentccProviderCredentialCreateApiApiFormat)[keyof typeof AgentccProviderCredentialCreateApiApiFormat];
+
+export const AgentccProviderCredentialCreateApiApiFormat = {
+  openai: "openai",
+  anthropic: "anthropic",
+  gemini: "gemini",
+  google: "google",
+  bedrock: "bedrock",
+  cohere: "cohere",
+  azure: "azure",
+  deepgram: "deepgram",
+  cartesia: "cartesia",
+} as const;
+
+export type AgentccProviderCredentialCreateApiExtraConfig = {
+  [key: string]: JsonValueApi;
+};
+
+export interface AgentccProviderCredentialCreateApi {
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  provider_name: string;
+  /** @maxLength 255 */
+  display_name?: string;
+  credentials: AgentccProviderCredentialCreateApiCredentials;
+  /**
+   * HTTP(S) URL with a host, or empty to use a configured provider endpoint.
+   * @maxLength 500
+   */
+  base_url?: string;
+  api_format?: AgentccProviderCredentialCreateApiApiFormat;
+  models_list?: string[];
+  default_timeout_seconds?: number;
+  max_concurrent?: number;
+  conn_pool_size?: number;
+  extra_config?: AgentccProviderCredentialCreateApiExtraConfig;
+}
+
+export type AgentccProviderCredentialUpdateApiApiFormat =
+  (typeof AgentccProviderCredentialUpdateApiApiFormat)[keyof typeof AgentccProviderCredentialUpdateApiApiFormat];
+
+export const AgentccProviderCredentialUpdateApiApiFormat = {
+  openai: "openai",
+  anthropic: "anthropic",
+  gemini: "gemini",
+  google: "google",
+  bedrock: "bedrock",
+  cohere: "cohere",
+  azure: "azure",
+  deepgram: "deepgram",
+  cartesia: "cartesia",
+} as const;
+
+export type AgentccProviderCredentialUpdateApiExtraConfig = {
+  [key: string]: JsonValueApi;
+};
+
+export interface AgentccProviderCredentialUpdateApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  display_name?: string;
+  /**
+   * HTTP(S) URL with a host, or empty to use a configured provider endpoint.
+   * @maxLength 500
+   */
+  base_url?: string;
+  api_format?: AgentccProviderCredentialUpdateApiApiFormat;
+  models_list?: string[];
+  default_timeout_seconds?: number;
+  max_concurrent?: number;
+  conn_pool_size?: number;
+  extra_config?: AgentccProviderCredentialUpdateApiExtraConfig;
+  is_active?: boolean;
+}
+
 export interface AgentccRequestLogMetadataValuesApi {
   application: string[];
   service: string[];
@@ -3452,6 +6435,28 @@ export interface AgentccRequestLogMetadataValuesApi {
 export interface AgentccRequestLogMetadataValuesResponseApi {
   status: boolean;
   result: AgentccRequestLogMetadataValuesApi;
+}
+
+export interface AgentccRequestVolumePointApi {
+  bucket: string;
+  request_count: number;
+  error_count: number;
+}
+
+export interface AgentccRequestVolumeApi {
+  /** @minLength 1 */
+  granularity: string;
+  /**
+   * The zone day buckets start in: the tz asked for, or UTC.
+   * @minLength 1
+   */
+  time_zone: string;
+  series: AgentccRequestVolumePointApi[];
+}
+
+export interface AgentccRequestVolumeResponseApi {
+  status: boolean;
+  result: AgentccRequestVolumeApi;
 }
 
 export type AgentccRequestLogDetailApiMetadata = { [key: string]: unknown };
@@ -3471,6 +6476,152 @@ export type AgentccRequestLogDetailApiResponseHeaders = {
 export type AgentccRequestLogDetailApiGuardrailResults = {
   [key: string]: unknown;
 };
+
+export type AgentccRequestLogDetailApiTags = { [key: string]: unknown };
+
+export type AgentccRequestAttemptApiKind =
+  (typeof AgentccRequestAttemptApiKind)[keyof typeof AgentccRequestAttemptApiKind];
+
+export const AgentccRequestAttemptApiKind = {
+  primary: "primary",
+  retry: "retry",
+  failover: "failover",
+  model_fallback: "model_fallback",
+  auto_fallback: "auto_fallback",
+  request_fallback: "request_fallback",
+  hedge: "hedge",
+  selector: "selector",
+} as const;
+
+export type AgentccRequestAttemptApiOutcome =
+  (typeof AgentccRequestAttemptApiOutcome)[keyof typeof AgentccRequestAttemptApiOutcome];
+
+export const AgentccRequestAttemptApiOutcome = {
+  success: "success",
+  error: "error",
+  timeout: "timeout",
+  cancelled: "cancelled",
+  discarded: "discarded",
+  skipped: "skipped",
+  circuit_open: "circuit_open",
+  hollow: "hollow",
+} as const;
+
+export interface AgentccRequestAttemptApi {
+  /** @minLength 1 */
+  readonly attempt_id?: string;
+  readonly index?: number;
+  readonly kind?: AgentccRequestAttemptApiKind;
+  /** @minLength 1 */
+  readonly reason?: string;
+  /** @minLength 1 */
+  readonly provider?: string;
+  /** @minLength 1 */
+  readonly model?: string;
+  /** @minLength 1 */
+  readonly endpoint_id?: string;
+  /** @minLength 1 */
+  readonly upstream_provider?: string;
+  /** @minLength 1 */
+  readonly served_upstream_provider?: string;
+  /** @minLength 1 */
+  readonly upstream_key_id?: string;
+  /** @minLength 1 */
+  readonly credential_type?: string;
+  readonly status_code?: number;
+  readonly outcome?: AgentccRequestAttemptApiOutcome;
+  /** @minLength 1 */
+  readonly error_class?: string;
+  /** @minLength 1 */
+  readonly error_origin?: string;
+  /** @minLength 1 */
+  readonly error_message?: string;
+  readonly started_at?: string;
+  readonly latency_ms?: number;
+  readonly ttfb_ms?: number;
+  readonly prompt_tokens?: number;
+  readonly completion_tokens?: number;
+  readonly cached_tokens?: number;
+  readonly cache_write_tokens?: number;
+  readonly reasoning_tokens?: number;
+  readonly upstream_cost_micros?: number;
+  readonly billed_cost_micros?: number;
+  readonly landed_cost_micros?: number;
+  readonly upstream_fee_bps?: number;
+  readonly processing_fee_bps?: number;
+  /** @minLength 1 */
+  readonly cost_source?: string;
+  readonly usage_estimated?: boolean;
+  readonly billable?: boolean;
+}
+
+export interface AgentccRequestBillingApi {
+  /** @minLength 1 */
+  mode: string;
+  /** @minLength 1 */
+  credential_type: string;
+  cost_upstream: string;
+  cost_markup: string;
+  billed: string;
+  /** @minLength 1 */
+  cost_source: string;
+  usage_estimated: boolean;
+  /** Staff only. */
+  cost_landed: string;
+}
+
+export interface AgentccRequestAgentApi {
+  /** @minLength 1 */
+  framework: string;
+  /** @minLength 1 */
+  agent_id: string;
+  /** @minLength 1 */
+  agent_version: string;
+  /** @minLength 1 */
+  run_id: string;
+  /** @minLength 1 */
+  parent_run_id: string;
+  /** @minLength 1 */
+  root_run_id: string;
+  /** @minLength 1 */
+  task_id: string;
+  /** @minLength 1 */
+  workflow: string;
+  /** @minLength 1 */
+  step: string;
+  /** @minLength 1 */
+  step_source: string;
+  turn: number;
+  /** @minLength 1 */
+  env: string;
+  /** @minLength 1 */
+  budget_scope: string;
+  /** @minLength 1 */
+  identity_source: string;
+}
+
+export interface AgentccRequestRoutingApi {
+  /** @minLength 1 */
+  policy_version: string;
+  /** @minLength 1 */
+  policy_variant: string;
+  /** @minLength 1 */
+  catalog_snapshot_id: string;
+  auto_routed: boolean;
+}
+
+export interface AgentccToolCallsVerdictApi {
+  checked: number;
+  blocked: string[];
+  stripped: string[];
+}
+
+/**
+ * The tool-call guardrail verdict, as the gateway reported it; null when it reported none.
+ */
+export interface AgentccRequestGuardrailApi {
+  tool_calls: AgentccToolCallsVerdictApi;
+}
 
 export interface AgentccRequestLogDetailApi {
   readonly id?: string;
@@ -3513,6 +6664,28 @@ export interface AgentccRequestLogDetailApi {
   readonly organization?: string;
   readonly workspace?: string;
   readonly created_at?: string;
+  /** @minLength 1 */
+  readonly generation_id?: string;
+  readonly attempt_count?: number;
+  readonly cached_tokens?: number;
+  readonly cache_write_tokens?: number;
+  readonly reasoning_tokens?: number;
+  /** @minLength 1 */
+  readonly served_upstream_provider?: string;
+  /** @minLength 1 */
+  readonly content_mode?: string;
+  /** @minLength 1 */
+  readonly app_title?: string;
+  /** @minLength 1 */
+  readonly app_referer?: string;
+  /** @minLength 1 */
+  readonly end_user?: string;
+  readonly tags?: AgentccRequestLogDetailApiTags;
+  readonly attempts?: readonly AgentccRequestAttemptApi[];
+  billing?: AgentccRequestBillingApi;
+  agent?: AgentccRequestAgentApi;
+  routing?: AgentccRequestRoutingApi;
+  guardrail?: AgentccRequestGuardrailApi;
 }
 
 export type AgentccRoutingPolicyApiConfig = { [key: string]: unknown };
@@ -3558,6 +6731,10 @@ export interface AgentccSessionApi {
   metadata?: AgentccSessionApiMetadata;
   readonly created_at?: string;
   readonly updated_at?: string;
+  readonly first_request_at?: string;
+  readonly last_request_at?: string;
+  readonly closed_reason?: string;
+  readonly idle_timeout_seconds?: number;
 }
 
 export type AgentccShadowExperimentApiStatus =
@@ -3635,6 +6812,299 @@ export interface AgentccShadowResultApi {
   /** @minLength 1 */
   readonly prompt_hash?: string;
   readonly created_at?: string;
+}
+
+export type SIEMDeliveryApiStream =
+  (typeof SIEMDeliveryApiStream)[keyof typeof SIEMDeliveryApiStream];
+
+export const SIEMDeliveryApiStream = {
+  audit_events: "audit_events",
+  spans: "spans",
+} as const;
+
+export type SIEMDeliveryApiStatus =
+  (typeof SIEMDeliveryApiStatus)[keyof typeof SIEMDeliveryApiStatus];
+
+export const SIEMDeliveryApiStatus = {
+  pending: "pending",
+  delivered: "delivered",
+  dead_letter: "dead_letter",
+  discarded: "discarded",
+} as const;
+
+export interface SIEMDeliveryApi {
+  id: string;
+  destination_id: string;
+  /** @minLength 1 */
+  destination_name: string;
+  stream: SIEMDeliveryApiStream;
+  event_count: number;
+  status: SIEMDeliveryApiStatus;
+  attempts: number;
+  max_attempts: number;
+  last_response_code: number;
+  /** A status line or an error class only, never a response body. */
+  last_error: string;
+  last_attempt_at: string;
+  next_retry_at: string;
+  created_at: string;
+  delivered_at: string;
+}
+
+export interface SIEMDeliveryListResultApi {
+  deliveries: SIEMDeliveryApi[];
+}
+
+export interface SIEMDeliveryListResponseApi {
+  status: boolean;
+  result: SIEMDeliveryListResultApi;
+}
+
+export interface SIEMDeliveryResponseApi {
+  status: boolean;
+  result: SIEMDeliveryApi;
+}
+
+export type SIEMDestinationApiKind =
+  (typeof SIEMDestinationApiKind)[keyof typeof SIEMDestinationApiKind];
+
+export const SIEMDestinationApiKind = {
+  webhook: "webhook",
+  otlp_http: "otlp_http",
+  hec: "hec",
+} as const;
+
+export type SIEMDestinationApiStreamsItem =
+  (typeof SIEMDestinationApiStreamsItem)[keyof typeof SIEMDestinationApiStreamsItem];
+
+export const SIEMDestinationApiStreamsItem = {
+  audit_events: "audit_events",
+  spans: "spans",
+} as const;
+
+export interface SIEMDestinationApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  kind: SIEMDestinationApiKind;
+  /** @minLength 1 */
+  url: string;
+  streams: SIEMDestinationApiStreamsItem[];
+  enabled: boolean;
+  auth_header: string;
+  has_secret: boolean;
+  secret_hint: string;
+  created_at: string;
+  updated_at: string;
+  last_delivered_at: string;
+  last_failed_at: string;
+  pending_count: number;
+  dead_letter_count: number;
+}
+
+export interface SIEMDestinationListResultApi {
+  can_manage: boolean;
+  /** Whether this deployment's SIEM export switch is on. */
+  export_available: boolean;
+  destinations: SIEMDestinationApi[];
+}
+
+export interface SIEMDestinationListResponseApi {
+  status: boolean;
+  result: SIEMDestinationListResultApi;
+}
+
+/**
+ * webhook: a Standard Webhooks-signed HTTPS endpoint; otlp_http: an OTLP/HTTP collector's base URL (JSON encoding); hec: an HTTP Event Collector endpoint.
+ */
+export type SIEMDestinationCreateRequestApiKind =
+  (typeof SIEMDestinationCreateRequestApiKind)[keyof typeof SIEMDestinationCreateRequestApiKind];
+
+export const SIEMDestinationCreateRequestApiKind = {
+  webhook: "webhook",
+  otlp_http: "otlp_http",
+  hec: "hec",
+} as const;
+
+export type SIEMDestinationCreateRequestApiStreamsItem =
+  (typeof SIEMDestinationCreateRequestApiStreamsItem)[keyof typeof SIEMDestinationCreateRequestApiStreamsItem];
+
+export const SIEMDestinationCreateRequestApiStreamsItem = {
+  audit_events: "audit_events",
+  spans: "spans",
+} as const;
+
+export interface SIEMDestinationCreateRequestApi {
+  /**
+   * HEC write-only token; never returned.
+   * @minLength 1
+   * @maxLength 1024
+   */
+  token?: string;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  name: string;
+  /** webhook: a Standard Webhooks-signed HTTPS endpoint; otlp_http: an OTLP/HTTP collector's base URL (JSON encoding); hec: an HTTP Event Collector endpoint. */
+  kind: SIEMDestinationCreateRequestApiKind;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  url: string;
+  /**
+   * @minItems 1
+   * @maxItems 2
+   */
+  streams: SIEMDestinationCreateRequestApiStreamsItem[];
+  /**
+   * otlp_http only: the header that carries auth_value.
+   * @maxLength 64
+   */
+  auth_header?: string;
+  /**
+   * otlp_http only: the auth header's value. Write-only.
+   * @maxLength 1024
+   */
+  auth_value?: string;
+}
+
+export type SIEMDestinationWithSecretApiKind =
+  (typeof SIEMDestinationWithSecretApiKind)[keyof typeof SIEMDestinationWithSecretApiKind];
+
+export const SIEMDestinationWithSecretApiKind = {
+  webhook: "webhook",
+  otlp_http: "otlp_http",
+  hec: "hec",
+} as const;
+
+export type SIEMDestinationWithSecretApiStreamsItem =
+  (typeof SIEMDestinationWithSecretApiStreamsItem)[keyof typeof SIEMDestinationWithSecretApiStreamsItem];
+
+export const SIEMDestinationWithSecretApiStreamsItem = {
+  audit_events: "audit_events",
+  spans: "spans",
+} as const;
+
+export interface SIEMDestinationWithSecretApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  kind: SIEMDestinationWithSecretApiKind;
+  /** @minLength 1 */
+  url: string;
+  streams: SIEMDestinationWithSecretApiStreamsItem[];
+  enabled: boolean;
+  auth_header: string;
+  has_secret: boolean;
+  secret_hint: string;
+  created_at: string;
+  updated_at: string;
+  last_delivered_at: string;
+  last_failed_at: string;
+  pending_count: number;
+  dead_letter_count: number;
+  /**
+   * A webhook's new signing secret (whsec_ + base64), in this answer only.
+   * @minLength 1
+   */
+  signing_secret?: string;
+}
+
+export interface SIEMDestinationSecretResponseApi {
+  status: boolean;
+  result: SIEMDestinationWithSecretApi;
+}
+
+export interface SIEMConnectionTestRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  url: string;
+  /**
+   * @minLength 1
+   * @maxLength 1024
+   */
+  token: string;
+}
+
+export interface SIEMConnectionTestResultApi {
+  connected: boolean;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface SIEMConnectionTestResponseApi {
+  status: boolean;
+  result: SIEMConnectionTestResultApi;
+}
+
+export interface SIEMDestinationResponseApi {
+  status: boolean;
+  result: SIEMDestinationApi;
+}
+
+export type SIEMDestinationUpdateRequestApiStreamsItem =
+  (typeof SIEMDestinationUpdateRequestApiStreamsItem)[keyof typeof SIEMDestinationUpdateRequestApiStreamsItem];
+
+export const SIEMDestinationUpdateRequestApiStreamsItem = {
+  audit_events: "audit_events",
+  spans: "spans",
+} as const;
+
+export interface SIEMDestinationUpdateRequestApi {
+  /**
+   * HEC write-only token; never returned.
+   * @minLength 1
+   * @maxLength 1024
+   */
+  token?: string;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  name?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  url?: string;
+  /**
+   * @minItems 1
+   * @maxItems 2
+   */
+  streams?: SIEMDestinationUpdateRequestApiStreamsItem[];
+  /** Turning a destination on needs the deployment's SIEM export switch; both directions are audited. */
+  enabled?: boolean;
+  /** @maxLength 64 */
+  auth_header?: string;
+  /** @maxLength 1024 */
+  auth_value?: string;
+}
+
+export interface SIEMDestinationDeletedResultApi {
+  deleted: boolean;
+}
+
+export interface SIEMDestinationDeletedResponseApi {
+  status: boolean;
+  result: SIEMDestinationDeletedResultApi;
+}
+
+export interface SIEMRotateSecretRequestApi {
+  /**
+   * HEC write-only token; never returned.
+   * @minLength 1
+   * @maxLength 1024
+   */
+  token?: string;
+  /**
+   * otlp_http only: the new auth header value. A webhook gets a new signing secret instead.
+   * @maxLength 1024
+   */
+  auth_value?: string;
 }
 
 export type SpendSummaryResultApiPeriod =
@@ -3813,6 +7283,11 @@ export const ApiDetailErrorResponseApiType = {
 export type ApiDetailErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface ApiDetailErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: ApiDetailErrorResponseApiType;
   code?: string;
@@ -3848,6 +7323,11 @@ export const ApiTextErrorResponseApiType = {
 export type ApiTextErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface ApiTextErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: ApiTextErrorResponseApiType;
   code?: string;
@@ -3913,6 +7393,8 @@ export const CapabilityFeatureApiReasonCode = {
   USAGE_LIMIT_REACHED: "USAGE_LIMIT_REACHED",
   PLAN_FEATURE_MISSING: "PLAN_FEATURE_MISSING",
   LICENSE_VERSION_UNSUPPORTED: "LICENSE_VERSION_UNSUPPORTED",
+  PRODUCT_NOT_ADMITTED: "PRODUCT_NOT_ADMITTED",
+  PRODUCT_PAUSED: "PRODUCT_PAUSED",
 } as const;
 
 export interface CapabilityFeatureApi {
@@ -4053,6 +7535,11 @@ export type ClickHouseHealthErrorResponseApiRouting = {
 };
 
 export interface ClickHouseHealthErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: ClickHouseHealthErrorResponseApiType;
   code?: string;
@@ -4475,9 +7962,11 @@ export interface SpanAttributeValuesResponseApi {
   query_window_end: string;
 }
 
+export type CallWebsocketRequestApiMessage = { [key: string]: string };
+
 export interface CallWebsocketRequestApi {
-  /** @minLength 1 */
-  message: string;
+  organization_id: string;
+  message: CallWebsocketRequestApiMessage;
   send_to_uuid?: boolean;
   uuid?: string;
 }
@@ -4510,6 +7999,11 @@ export const CallWebsocketErrorResponseApiType = {
 export type CallWebsocketErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface CallWebsocketErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: CallWebsocketErrorResponseApiType;
   code?: string;
@@ -4569,6 +8063,11 @@ export const FalconErrorResponseApiType = {
 export type FalconErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface FalconErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: FalconErrorResponseApiType;
   code?: string;
@@ -5203,6 +8702,11 @@ export const IntegrationErrorResponseApiType = {
 export type IntegrationErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface IntegrationErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: IntegrationErrorResponseApiType;
   code?: string;
@@ -5459,6 +8963,10 @@ export interface SlackChannelsResponseApi {
   result: SlackChannelsResultApi;
 }
 
+export type IntegrationConnectionUpdateApiCredentials = {
+  [key: string]: string;
+};
+
 export interface IntegrationConnectionUpdateApi {
   /**
    * @minLength 1
@@ -5486,6 +8994,7 @@ export interface IntegrationConnectionUpdateApi {
    * @maximum 3600
    */
   sync_interval_seconds?: number;
+  credentials?: IntegrationConnectionUpdateApiCredentials;
 }
 
 export interface IntegrationEmptyRequestApi {
@@ -5500,6 +9009,82 @@ export interface IntegrationMessageResultApi {
 export interface IntegrationMessageResponseApi {
   status?: boolean;
   result: IntegrationMessageResultApi;
+}
+
+export type DestinationHealthOutApiState =
+  (typeof DestinationHealthOutApiState)[keyof typeof DestinationHealthOutApiState];
+
+export const DestinationHealthOutApiState = {
+  healthy: "healthy",
+  failing: "failing",
+  slow: "slow",
+  off: "off",
+  blocked: "blocked",
+  unknown: "unknown",
+} as const;
+
+export interface DestinationHealthOutApi {
+  state: DestinationHealthOutApiState;
+  /** @minLength 1 */
+  reason: string;
+  since: string;
+}
+
+export interface DestinationUseOutApi {
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+/**
+ * Webhook endpoints: deliveries made in the last 24 hours
+ */
+export interface DestinationStatsOutApi {
+  total: number;
+  succeeded: number;
+  failed: number;
+}
+
+export interface DestinationOutApi {
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  health: DestinationHealthOutApi;
+  used_by: DestinationUseOutApi[];
+  last_used_at: string;
+  org_wide?: boolean;
+  stats_24h?: DestinationStatsOutApi;
+}
+
+export interface WebhooksAccessOutApi {
+  /** False: the Webhooks section is absent on this install */
+  available: boolean;
+  reasons: string[];
+  can_view: boolean;
+  /** Create, edit, test and redeliver in the current workspace */
+  can_manage: boolean;
+  /** Workspace admin: run targeting, bulk redeliver, resume, the workspace policy */
+  can_admin: boolean;
+  /** Org-wide endpoints and the org policy */
+  org_admin: boolean;
+  /** @minLength 1 */
+  workspace_id: string;
+}
+
+export interface DestinationsOutApi {
+  destinations: DestinationOutApi[];
+  webhooks: WebhooksAccessOutApi;
+}
+
+export interface DestinationsResponseApi {
+  status?: boolean;
+  result: DestinationsOutApi;
 }
 
 export interface SlackInstallApi {
@@ -5592,6 +9177,11 @@ export const MCPErrorResponseApiType = {
 export type MCPErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface MCPErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: MCPErrorResponseApiType;
   code?: string;
@@ -5649,6 +9239,7 @@ export interface MCPConnectionResultApi {
   readonly id?: string;
   connection_mode?: MCPConnectionResultApiConnectionMode;
   is_active?: boolean;
+  readonly reconnect_required?: boolean;
   /** @maxLength 100 */
   client_name?: string;
   /** @maxLength 50 */
@@ -6892,6 +10483,11 @@ export const ApiTooLargeErrorApiCode = {
 export type ApiTooLargeErrorApiDetails = { [key: string]: string[] };
 
 export interface ApiTooLargeErrorApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: ApiTooLargeErrorApiType;
   code?: ApiTooLargeErrorApiCode;
@@ -8079,6 +11675,73 @@ export interface CustomAIModelDefaultMetricRequestApi {
   metric_id: string;
 }
 
+export interface FolderItemApi {
+  id: string;
+  /** @minLength 1 */
+  path: string;
+  count: number;
+  total: number;
+}
+
+export interface FolderListResultApi {
+  folders: FolderItemApi[];
+  all_count: number;
+  no_folder_count: number;
+  starred_count: number;
+}
+
+export interface FolderListResponseApi {
+  status: boolean;
+  result: FolderListResultApi;
+}
+
+export interface FolderPathApi {
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  path: string;
+}
+
+export interface FolderResponseApi {
+  status: boolean;
+  result: FolderItemApi;
+}
+
+export interface FolderMoveDatasetsApi {
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  dataset_ids: string[];
+  folder_id: string;
+}
+
+export interface FolderMoveResultApi {
+  dataset_ids: string[];
+  folder_id: string;
+}
+
+export interface FolderMoveResponseApi {
+  status: boolean;
+  result: FolderMoveResultApi;
+}
+
+export interface DatasetStarRequestApi {
+  [key: string]: unknown;
+}
+
+export interface DevelopDatasetMessageResponseApi {
+  status: boolean;
+  /** @minLength 1 */
+  result: string;
+}
+
+export interface DatasetOptimizationListMetadataApi {
+  /** Runs matching the filters, before pagination. */
+  total_rows: number;
+}
+
 export type DatasetOptimizationListApiOptimizerAlgorithm =
   (typeof DatasetOptimizationListApiOptimizerAlgorithm)[keyof typeof DatasetOptimizationListApiOptimizerAlgorithm];
 
@@ -8115,7 +11778,7 @@ export interface DatasetOptimizationListApi {
   /** @minLength 1 */
   optimization_name: string;
   started_at: string;
-  readonly trial_count?: string;
+  readonly trial_count?: number;
   optimizer_algorithm?: DatasetOptimizationListApiOptimizerAlgorithm;
   readonly optimizer_model_id?: string;
   readonly model_deprecated?: boolean;
@@ -8126,6 +11789,20 @@ export interface DatasetOptimizationListApi {
   optimizer_config?: DatasetOptimizationListApiOptimizerConfig;
   best_score?: number;
   baseline_score?: number;
+}
+
+export interface DatasetOptimizationColumnConfigItemApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_visible: boolean;
+}
+
+export interface DatasetOptimizationListResultApi {
+  metadata: DatasetOptimizationListMetadataApi;
+  readonly table?: readonly DatasetOptimizationListApi[];
+  column_config: DatasetOptimizationColumnConfigItemApi[];
 }
 
 export type DatasetOptimizationCreateApiOptimizerAlgorithm =
@@ -8206,14 +11883,6 @@ export interface DatasetOptimizationTrialTableRowApi {
   is_best: boolean;
   score_percentage_change?: number;
   eval_scores: DatasetOptimizationTrialTableRowApiEvalScores;
-}
-
-export interface DatasetOptimizationColumnConfigItemApi {
-  /** @minLength 1 */
-  id: string;
-  /** @minLength 1 */
-  name: string;
-  is_visible: boolean;
 }
 
 export interface DatasetOptimizationEvalTemplateItemApi {
@@ -8636,6 +12305,27 @@ export interface VectorDBColumnRequestApi {
   vector_length?: number;
 }
 
+export interface DatasetBaselineApi {
+  baseline_run_id: string;
+  /** @minLength 1 */
+  label: string;
+  /**
+   * Name, else email, of who pinned it.
+   * @minLength 1
+   */
+  pinned_by: string;
+  pinned_at: string;
+}
+
+export interface DatasetBaselineResponseApi {
+  status: boolean;
+  result: DatasetBaselineApi;
+}
+
+export interface DatasetBaselinePinRequestApi {
+  run_id: string;
+}
+
 export interface ClassifyColumnRequestApi {
   column_id: string;
   labels: string[];
@@ -8709,12 +12399,6 @@ export interface CompareExperimentEvalRequestApi {
   experiment_id?: string;
   composite_weight_overrides?: CompareExperimentEvalRequestApiCompositeWeightOverrides;
   dataset_ids?: string[];
-}
-
-export interface DevelopDatasetMessageResponseApi {
-  status: boolean;
-  /** @minLength 1 */
-  result: string;
 }
 
 export interface CompareStartEvalsRequestApi {
@@ -8858,6 +12542,11 @@ export type DatasetLimitCheckFailedErrorApiDetails = {
 };
 
 export interface DatasetLimitCheckFailedErrorApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: DatasetLimitCheckFailedErrorApiType;
   code?: DatasetLimitCheckFailedErrorApiCode;
@@ -8869,6 +12558,180 @@ export interface DatasetLimitCheckFailedErrorApi {
   error?: string;
   attr?: string;
   details?: DatasetLimitCheckFailedErrorApiDetails;
+}
+
+export type DatasetRunApiStatus =
+  (typeof DatasetRunApiStatus)[keyof typeof DatasetRunApiStatus];
+
+export const DatasetRunApiStatus = {
+  draft: "draft",
+  queued: "queued",
+  running: "running",
+  partial: "partial",
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+export type DatasetRunApiTaskKind =
+  (typeof DatasetRunApiTaskKind)[keyof typeof DatasetRunApiTaskKind];
+
+export const DatasetRunApiTaskKind = {
+  prompt: "prompt",
+  graph: "graph",
+  external: "external",
+} as const;
+
+export interface ExperimentRunItemCountsApi {
+  pending: number;
+  running: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+  /** Planned identities with no recorded item yet. */
+  not_started: number;
+}
+
+export interface DatasetRunApi {
+  id: string;
+  /** 1, 2, 3 ... per dataset in creation order; never reused. */
+  ordinal: number;
+  /**
+   * "#" + ordinal.
+   * @minLength 1
+   */
+  label: string;
+  /** metadata.name as the caller sent it (the SDK sends one). */
+  name: string;
+  status: DatasetRunApiStatus;
+  task_kind: DatasetRunApiTaskKind;
+  dataset_version_id: string;
+  experiment_id: string;
+  /** False when the caller marked the run non_final (a sample). */
+  final: boolean;
+  is_baseline: boolean;
+  plan_size: number;
+  item_counts: ExperimentRunItemCountsApi;
+  started_at: string;
+  completed_at: string;
+  created_at: string;
+  updated_at: string;
+  /**
+   * Link to this run in the app: the dataset's Experiments tab, whose run= parameter opens the run's panel with its traces, joined by run id. Null when the deployment sets no frontend URL.
+   * @minLength 1
+   */
+  app_url: string;
+}
+
+export interface DatasetRunsResultApi {
+  dataset_id: string;
+  baseline: DatasetBaselineApi;
+  runs: DatasetRunApi[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface DatasetRunsResponseApi {
+  status: boolean;
+  result: DatasetRunsResultApi;
+}
+
+export type ExternalMetricApiOutputType =
+  (typeof ExternalMetricApiOutputType)[keyof typeof ExternalMetricApiOutputType];
+
+export const ExternalMetricApiOutputType = {
+  pass_fail: "pass_fail",
+  percentage: "percentage",
+  numeric: "numeric",
+} as const;
+
+export interface ExternalMetricApi {
+  metric_id: string;
+  evaluator_version_id: string;
+  template_id: string;
+  version_number: number;
+  dataset_id: string;
+  /** @minLength 1 */
+  name: string;
+  output_type: ExternalMetricApiOutputType;
+  higher_is_better: boolean;
+  pass_threshold: number;
+  /** @minLength 1 */
+  source_hash: string;
+  created_at: string;
+}
+
+export interface ExternalMetricListResultApi {
+  dataset_id: string;
+  metrics: ExternalMetricApi[];
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface ExternalMetricListResponseApi {
+  status: boolean;
+  result: ExternalMetricListResultApi;
+}
+
+export type ExternalMetricCreateRequestApiOutputType =
+  (typeof ExternalMetricCreateRequestApiOutputType)[keyof typeof ExternalMetricCreateRequestApiOutputType];
+
+export const ExternalMetricCreateRequestApiOutputType = {
+  pass_fail: "pass_fail",
+  percentage: "percentage",
+  numeric: "numeric",
+} as const;
+
+export interface ExternalMetricCreateRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  output_type: ExternalMetricCreateRequestApiOutputType;
+  higher_is_better?: boolean;
+  pass_threshold?: number;
+  /**
+   * Lowercase sha256 hex digest of the evaluator source. The source itself is never sent or stored.
+   * @minLength 1
+   * @pattern ^[0-9a-f]{64}$
+   */
+  source_hash: string;
+}
+
+export type ExternalMetricCreateResultApiOutputType =
+  (typeof ExternalMetricCreateResultApiOutputType)[keyof typeof ExternalMetricCreateResultApiOutputType];
+
+export const ExternalMetricCreateResultApiOutputType = {
+  pass_fail: "pass_fail",
+  percentage: "percentage",
+  numeric: "numeric",
+} as const;
+
+export interface ExternalMetricCreateResultApi {
+  metric_id: string;
+  evaluator_version_id: string;
+  template_id: string;
+  version_number: number;
+  dataset_id: string;
+  /** @minLength 1 */
+  name: string;
+  output_type: ExternalMetricCreateResultApiOutputType;
+  higher_is_better: boolean;
+  pass_threshold: number;
+  /** @minLength 1 */
+  source_hash: string;
+  created_at: string;
+  /** True when this request created the metric; false when it reused one. */
+  created: boolean;
+}
+
+export interface ExternalMetricCreateResponseApi {
+  status: boolean;
+  result: ExternalMetricCreateResultApi;
 }
 
 export interface ExtractEntitiesRequestApi {
@@ -8953,6 +12816,372 @@ export interface PreviewDatasetOperationResultApi {
 export interface PreviewDatasetOperationResponseApi {
   status: boolean;
   result: PreviewDatasetOperationResultApi;
+}
+
+export type DatasetSchemaResultApiEnforce =
+  (typeof DatasetSchemaResultApiEnforce)[keyof typeof DatasetSchemaResultApiEnforce];
+
+export const DatasetSchemaResultApiEnforce = {
+  off: "off",
+  check: "check",
+  reject: "reject",
+} as const;
+
+/**
+ * Empty until a row schema is declared.
+ */
+export type DatasetSchemaResultApiDeclared = { [key: string]: unknown };
+
+export interface DatasetSchemaResultApi {
+  /** Empty until a row schema is declared. */
+  declared: DatasetSchemaResultApiDeclared;
+  enforce: DatasetSchemaResultApiEnforce;
+  preset: string;
+}
+
+export interface DatasetSchemaResponseApi {
+  status: boolean;
+  result: DatasetSchemaResultApi;
+}
+
+export type DatasetSchemaWriteApiDeclared = { [key: string]: unknown };
+
+export type DatasetSchemaWriteApiEnforce =
+  (typeof DatasetSchemaWriteApiEnforce)[keyof typeof DatasetSchemaWriteApiEnforce];
+
+export const DatasetSchemaWriteApiEnforce = {
+  off: "off",
+  check: "check",
+  reject: "reject",
+} as const;
+
+export interface DatasetSchemaWriteApi {
+  declared: DatasetSchemaWriteApiDeclared;
+  enforce: DatasetSchemaWriteApiEnforce;
+  /** @maxLength 100 */
+  preset?: string;
+}
+
+export interface DatasetSplitApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  color: string;
+  description: string;
+  row_count: number;
+}
+
+export interface DatasetSplitListResultApi {
+  splits: DatasetSplitApi[];
+  no_split_count: number;
+}
+
+export interface DatasetSplitListResponseApi {
+  status: boolean;
+  result: DatasetSplitListResultApi;
+}
+
+export type DatasetSplitWriteApiColor =
+  (typeof DatasetSplitWriteApiColor)[keyof typeof DatasetSplitWriteApiColor];
+
+export const DatasetSplitWriteApiColor = {
+  info: "info",
+  secondary: "secondary",
+  error: "error",
+  warning: "warning",
+  success: "success",
+  primary: "primary",
+  grey: "grey",
+  dark: "dark",
+} as const;
+
+export interface DatasetSplitWriteApi {
+  /**
+   * @minLength 1
+   * @maxLength 30
+   * @pattern ^(?!none$)[a-z0-9][a-z0-9._-]{0,29}$
+   */
+  name: string;
+  color?: DatasetSplitWriteApiColor;
+  /** @maxLength 500 */
+  description?: string;
+}
+
+export interface DatasetSplitResponseApi {
+  status: boolean;
+  result: DatasetSplitApi;
+}
+
+export type DatasetSplitExportRowApiFields = { [key: string]: string };
+
+export interface DatasetSplitExportRowApi {
+  row_id: string;
+  fields: DatasetSplitExportRowApiFields;
+}
+
+export interface DatasetSplitExportResultApi {
+  dataset_id: string;
+  split: DatasetSplitApi;
+  rows: DatasetSplitExportRowApi[];
+}
+
+export interface DatasetSplitExportResponseApi {
+  status: boolean;
+  result: DatasetSplitExportResultApi;
+}
+
+export interface DatasetSplitRowResultApi {
+  row_id: string;
+  split_ids: string[];
+}
+
+export interface DatasetSplitRowResponseApi {
+  status: boolean;
+  result: DatasetSplitRowResultApi;
+}
+
+export interface DatasetSplitMembershipApi {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  row_ids: string[];
+  /** @maxItems 100 */
+  add?: string[];
+  /** @maxItems 100 */
+  remove?: string[];
+}
+
+export interface DatasetSplitUpdateResultApi {
+  updated: number;
+}
+
+export interface DatasetSplitUpdateResponseApi {
+  status: boolean;
+  result: DatasetSplitUpdateResultApi;
+}
+
+export type DatasetSplitPatchApiColor =
+  (typeof DatasetSplitPatchApiColor)[keyof typeof DatasetSplitPatchApiColor];
+
+export const DatasetSplitPatchApiColor = {
+  info: "info",
+  secondary: "secondary",
+  error: "error",
+  warning: "warning",
+  success: "success",
+  primary: "primary",
+  grey: "grey",
+  dark: "dark",
+} as const;
+
+export interface DatasetSplitPatchApi {
+  /**
+   * @minLength 1
+   * @maxLength 30
+   * @pattern ^(?!none$)[a-z0-9][a-z0-9._-]{0,29}$
+   */
+  name?: string;
+  color?: DatasetSplitPatchApiColor;
+  /** @maxLength 500 */
+  description?: string;
+}
+
+export interface DatasetSplitDeleteResultApi {
+  deleted: string;
+}
+
+export interface DatasetSplitDeleteResponseApi {
+  status: boolean;
+  result: DatasetSplitDeleteResultApi;
+}
+
+export interface DatasetStarResultApi {
+  dataset_id: string;
+  starred: boolean;
+}
+
+export interface DatasetStarResponseApi {
+  status: boolean;
+  result: DatasetStarResultApi;
+}
+
+export type DatasetTransferRequestApiMode =
+  (typeof DatasetTransferRequestApiMode)[keyof typeof DatasetTransferRequestApiMode];
+
+export const DatasetTransferRequestApiMode = {
+  copy: "copy",
+  move: "move",
+} as const;
+
+export interface DatasetTransferRequestApi {
+  to_workspace_id: string;
+  mode: DatasetTransferRequestApiMode;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  new_dataset_name?: string;
+  dry_run?: boolean;
+}
+
+export type DatasetTransferResultApiMode =
+  (typeof DatasetTransferResultApiMode)[keyof typeof DatasetTransferResultApiMode];
+
+export const DatasetTransferResultApiMode = {
+  copy: "copy",
+  move: "move",
+} as const;
+
+export interface DatasetTransferWorkspaceApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface DatasetTransferPlanApi {
+  rows: number;
+  columns: number;
+  columns_left_out: number;
+  leaves_folder: boolean;
+}
+
+export interface DatasetTransferResultApi {
+  mode: DatasetTransferResultApiMode;
+  dry_run: boolean;
+  source_dataset_id: string;
+  dataset_id: string | null;
+  /** @minLength 1 */
+  dataset_name: string;
+  from_workspace: DatasetTransferWorkspaceApi;
+  to_workspace: DatasetTransferWorkspaceApi;
+  plan: DatasetTransferPlanApi;
+}
+
+export interface DatasetTransferResponseApi {
+  status: boolean;
+  result: DatasetTransferResultApi;
+}
+
+export type DatasetVersionReadApiMetadata = { [key: string]: unknown };
+
+export interface DatasetVersionReadApi {
+  readonly id?: string;
+  readonly dataset?: string;
+  readonly parent_version?: string | null;
+  readonly created_by?: string | null;
+  readonly organization?: string | null;
+  readonly workspace?: string | null;
+  readonly content_hash?: string;
+  readonly description?: string;
+  readonly metadata?: DatasetVersionReadApiMetadata;
+  readonly source_revision?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  readonly item_count?: number;
+}
+
+export interface DatasetVersionListResultApi {
+  dataset_id: string;
+  versions: DatasetVersionReadApi[];
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface DatasetVersionListResponseApi {
+  status: boolean;
+  result: DatasetVersionListResultApi;
+}
+
+export type DatasetVersionCreateApiMetadata = { [key: string]: JsonValueApi };
+
+/**
+ * Any non-null JSON value; nested nulls are allowed.
+ */
+export type DatasetVersionItemCreateApiInput = Exclude<JsonValueApi, null>;
+
+/**
+ * Any valid JSON value.
+ */
+export type DatasetVersionItemCreateApiExpected = JsonValueApi;
+
+export type DatasetVersionItemCreateApiMetadata = {
+  [key: string]: JsonValueApi;
+};
+
+export interface DatasetVersionItemCreateApi {
+  /** Any non-null JSON value; nested nulls are allowed. */
+  input: DatasetVersionItemCreateApiInput;
+  /** Any valid JSON value. */
+  expected?: DatasetVersionItemCreateApiExpected;
+  metadata?: DatasetVersionItemCreateApiMetadata;
+  example_id?: string | null;
+  /** @maxLength 500 */
+  external_id?: string | null;
+  /** @maxLength 255 */
+  source_trace_id?: string | null;
+  /** @maxLength 255 */
+  source_span_id?: string | null;
+  legacy_row_id?: string | null;
+}
+
+export interface DatasetVersionCreateApi {
+  /** @maxItems 10000 */
+  items: DatasetVersionItemCreateApi[];
+  parent_version_id?: string | null;
+  description?: string;
+  metadata?: DatasetVersionCreateApiMetadata;
+  /** @maxLength 255 */
+  source_revision?: string;
+}
+
+export interface DatasetVersionCreateResponseApi {
+  status: boolean;
+  result: DatasetVersionReadApi;
+}
+
+/**
+ * Any non-null JSON value; nested nulls are allowed.
+ */
+export type DatasetVersionItemReadApiInput = Exclude<JsonValueApi, null>;
+
+/**
+ * Any valid JSON value.
+ */
+export type DatasetVersionItemReadApiExpected = JsonValueApi;
+
+export type DatasetVersionItemReadApiMetadata = { [key: string]: JsonValueApi };
+
+export interface DatasetVersionItemReadApi {
+  readonly id?: string;
+  readonly example_id?: string;
+  readonly external_id?: string | null;
+  /** Any non-null JSON value; nested nulls are allowed. */
+  readonly input?: DatasetVersionItemReadApiInput;
+  /** Any valid JSON value. */
+  readonly expected?: DatasetVersionItemReadApiExpected;
+  readonly metadata?: DatasetVersionItemReadApiMetadata;
+  readonly source_trace_id?: string;
+  readonly source_span_id?: string;
+  readonly content_hash?: string;
+  readonly legacy_row?: string | null;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface DatasetVersionDetailResultApi {
+  version: DatasetVersionReadApi;
+  items: DatasetVersionItemReadApi[];
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface DatasetVersionDetailResponseApi {
+  status: boolean;
+  result: DatasetVersionDetailResultApi;
 }
 
 export interface DeleteEvalTemplateApi {
@@ -9181,6 +13410,8 @@ export interface HuggingFaceDatasetCreateRequestApi {
   huggingface_dataset_config?: string;
   /** @minLength 1 */
   huggingface_dataset_split: string;
+  /** @maxLength 200 */
+  revision?: string;
 }
 
 export interface DatasetCreateStartedResultApi {
@@ -9222,13 +13453,55 @@ export interface LocalFileDatasetCreateStartedResponseApi {
   result: LocalFileDatasetCreateStartedResultApi;
 }
 
+export type ManualDatasetColumnApiType =
+  (typeof ManualDatasetColumnApiType)[keyof typeof ManualDatasetColumnApiType];
+
+export const ManualDatasetColumnApiType = {
+  text: "text",
+  integer: "integer",
+  float: "float",
+  boolean: "boolean",
+  json: "json",
+  array: "array",
+  datetime: "datetime",
+} as const;
+
+export type ManualDatasetColumnApiRole =
+  (typeof ManualDatasetColumnApiRole)[keyof typeof ManualDatasetColumnApiRole];
+
+export const ManualDatasetColumnApiRole = {
+  input: "input",
+  expected: "expected",
+  metadata: "metadata",
+} as const;
+
+export interface ManualDatasetColumnApi {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  name: string;
+  type?: ManualDatasetColumnApiType;
+  role?: ManualDatasetColumnApiRole;
+}
+
 export interface ManualDatasetCreateRequestApi {
-  /** @minLength 1 */
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
   dataset_name: string;
-  /** @minimum 1 */
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
   number_of_rows?: number;
-  /** @minimum 1 */
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
   number_of_columns?: number;
+  columns?: ManualDatasetColumnApi[];
 }
 
 export interface ManualDatasetCreateResultApi {
@@ -9294,6 +13567,15 @@ export interface SyntheticDatasetCreateStartedResponseApi {
   result: SyntheticDatasetCreateStartedResultApi;
 }
 
+export type DatasetCreationProgressResultApiMediaDispatchStatus =
+  (typeof DatasetCreationProgressResultApiMediaDispatchStatus)[keyof typeof DatasetCreationProgressResultApiMediaDispatchStatus];
+
+export const DatasetCreationProgressResultApiMediaDispatchStatus = {
+  pending: "pending",
+  dispatched: "dispatched",
+  failed: "failed",
+} as const;
+
 export interface DatasetCreationProgressResultApi {
   dataset_id: string;
   /** @minLength 1 */
@@ -9303,6 +13585,13 @@ export interface DatasetCreationProgressResultApi {
   is_processing: boolean;
   is_completed: boolean;
   is_failed: boolean;
+  media_dispatch_status?: DatasetCreationProgressResultApiMediaDispatchStatus;
+  /** @minimum 0 */
+  media_dispatch_attempts?: number;
+  /** @minLength 1 */
+  media_dispatch_last_error_class?: string;
+  /** @minLength 1 */
+  media_processing_message?: string;
   original_filename?: string;
   estimated_rows?: number;
   estimated_columns?: number;
@@ -9402,10 +13691,20 @@ export interface DatasetListItemApi {
   id: string;
   /** @minLength 1 */
   name: string;
+  description: string;
+  tags: string[];
+  folder: string;
+  folder_id: string | null;
+  starred: boolean;
   number_of_datapoints: number;
   number_of_experiments: number;
   number_of_optimisations: number;
   derived_datasets: number;
+  created_by?: string | null;
+  created_by_name?: string | null;
+  /** @minLength 1 */
+  source?: string;
+  updated_at?: string;
   /** @minLength 1 */
   created_at: string;
   /** @minLength 1 */
@@ -9426,6 +13725,8 @@ export interface DatasetListResponseApi {
 export interface HuggingFaceDatasetConfigRequestApi {
   /** @minLength 1 */
   dataset_path: string;
+  /** @maxLength 200 */
+  revision?: string;
 }
 
 export type HuggingFaceDatasetConfigResultApiDatasetInfo = {
@@ -9717,8 +14018,6 @@ export interface DatasetRowCellRequestApi {
 
 export interface DatasetRowRequestApi {
   id?: string;
-  /** Legacy input accepted for compatibility; rows are appended in request order. */
-  order?: number;
   cells?: DatasetRowCellRequestApi[];
 }
 
@@ -9755,6 +14054,8 @@ export interface HuggingFaceAddRowsRequestApi {
   huggingface_dataset_config: string;
   /** @minLength 1 */
   huggingface_dataset_split: string;
+  /** @maxLength 200 */
+  revision?: string;
 }
 
 export interface DatasetRowsImportMessageResultApi {
@@ -9767,19 +14068,45 @@ export interface DatasetRowsImportMessageResponseApi {
   result: DatasetRowsImportMessageResultApi;
 }
 
+export type DatasetStaticColumnRequestApiRole =
+  (typeof DatasetStaticColumnRequestApiRole)[keyof typeof DatasetStaticColumnRequestApiRole];
+
+export const DatasetStaticColumnRequestApiRole = {
+  input: "input",
+  expected: "expected",
+  metadata: "metadata",
+  none: "none",
+} as const;
+
 export interface DatasetStaticColumnRequestApi {
   /** @minLength 1 */
   new_column_name: string;
   /** @minLength 1 */
   column_type: string;
   source?: string;
+  role?: DatasetStaticColumnRequestApiRole;
 }
+
+export type SyntheticDataApiGenerationMode =
+  (typeof SyntheticDataApiGenerationMode)[keyof typeof SyntheticDataApiGenerationMode];
+
+export const SyntheticDataApiGenerationMode = {
+  append: "append",
+} as const;
 
 export interface SyntheticDataApi {
   num_rows: number;
   columns: SyntheticDatasetColumnApi[];
   dataset: SyntheticDatasetPayloadApi;
   kb_id?: string;
+  generation_mode?: SyntheticDataApiGenerationMode;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model?: string;
+  /** @maxItems 50 */
+  reference_row_ids?: string[];
   fill_existing_rows?: boolean;
 }
 
@@ -9810,6 +14137,11 @@ export interface UserEvalMutationRequestApi {
   save_as_template?: boolean;
   experiment_id?: string;
   composite_weight_overrides?: UserEvalMutationRequestApiCompositeWeightOverrides;
+  /**
+   * @minLength 1
+   * @maxLength 36
+   */
+  pinned_version_id?: string;
 }
 
 export type UserEvalUpdateRequestApiConfig = { [key: string]: unknown };
@@ -9833,18 +14165,41 @@ export interface UserEvalUpdateRequestApi {
   save_as_template?: boolean;
   experiment_id?: string;
   composite_weight_overrides?: UserEvalUpdateRequestApiCompositeWeightOverrides;
+  /**
+   * @minLength 1
+   * @maxLength 36
+   */
   pinned_version_id?: string;
 }
 
-export type DatasetBehaviorRequestApiColumnConfig = { [key: string]: unknown };
+export interface DatasetDetailsApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  tags: string[];
+}
 
-export type DatasetBehaviorRequestApiDatasetConfig = { [key: string]: unknown };
+export interface DatasetDetailsResponseApi {
+  status: boolean;
+  result: DatasetDetailsApi;
+}
 
-export interface DatasetBehaviorRequestApi {
+export type DatasetSettingsRequestApiColumnConfig = { [key: string]: unknown };
+
+export type DatasetSettingsRequestApiDatasetConfig = { [key: string]: unknown };
+
+export interface DatasetSettingsRequestApi {
   dataset_name?: string;
   column_order?: string[];
-  column_config?: DatasetBehaviorRequestApiColumnConfig;
-  dataset_config?: DatasetBehaviorRequestApiDatasetConfig;
+  column_config?: DatasetSettingsRequestApiColumnConfig;
+  dataset_config?: DatasetSettingsRequestApiDatasetConfig;
+  /** The dataset evals new experiments preselect: the whole set, [] clears it. Omit to leave the defaults unchanged. */
+  experiment_default_eval_ids?: string[];
+  /** @maxLength 500 */
+  description?: string;
+  /** @maxItems 20 */
+  tags?: string[];
 }
 
 export interface ExtractJsonColumnRequestApi {
@@ -9856,6 +14211,8 @@ export interface ExtractJsonColumnRequestApi {
 }
 
 export type DatasetTableMetadataApiStatus = { [key: string]: unknown };
+
+export type DatasetTableMetadataApiCounts = { [key: string]: unknown };
 
 export interface DatasetTableMetadataApi {
   /** @minLength 1 */
@@ -9884,7 +14241,17 @@ export interface DatasetTableMetadataApi {
   snapshot_bound?: boolean;
   error_messages?: string[];
   status?: DatasetTableMetadataApiStatus;
+  counts?: DatasetTableMetadataApiCounts;
 }
+
+export type DatasetTableColumnApiRole =
+  (typeof DatasetTableColumnApiRole)[keyof typeof DatasetTableColumnApiRole];
+
+export const DatasetTableColumnApiRole = {
+  input: "input",
+  expected: "expected",
+  metadata: "metadata",
+} as const;
 
 export type DatasetTableColumnApiMetadata = { [key: string]: unknown };
 
@@ -9914,6 +14281,7 @@ export interface DatasetTableColumnApi {
   eval_tag?: string[];
   metadata: DatasetTableColumnApiMetadata;
   choices_map: DatasetTableColumnApiChoicesMap;
+  role?: DatasetTableColumnApiRole;
 }
 
 export interface DatasetTableRowApi {
@@ -10105,6 +14473,13 @@ export interface StopUserEvalRequestApi {
   experiment_id?: string;
 }
 
+export type SyntheticDatasetConfigPayloadApiGenerationMode =
+  (typeof SyntheticDatasetConfigPayloadApiGenerationMode)[keyof typeof SyntheticDatasetConfigPayloadApiGenerationMode];
+
+export const SyntheticDatasetConfigPayloadApiGenerationMode = {
+  append: "append",
+} as const;
+
 export type SyntheticDatasetConfigPayloadApiColumnsItem = {
   [key: string]: unknown;
 };
@@ -10114,6 +14489,10 @@ export type SyntheticDatasetConfigPayloadApiDataset = {
 };
 
 export interface SyntheticDatasetConfigPayloadApi {
+  reference_row_ids?: string[];
+  generation_mode?: SyntheticDatasetConfigPayloadApiGenerationMode;
+  /** @minLength 1 */
+  model?: string;
   num_rows?: number;
   columns?: SyntheticDatasetConfigPayloadApiColumnsItem[];
   dataset?: SyntheticDatasetConfigPayloadApiDataset;
@@ -10131,7 +14510,22 @@ export interface SyntheticDatasetConfigResponseApi {
   result: SyntheticDatasetConfigResultApi;
 }
 
+export type SyntheticDatasetConfigApiGenerationMode =
+  (typeof SyntheticDatasetConfigApiGenerationMode)[keyof typeof SyntheticDatasetConfigApiGenerationMode];
+
+export const SyntheticDatasetConfigApiGenerationMode = {
+  append: "append",
+} as const;
+
 export interface SyntheticDatasetConfigApi {
+  generation_mode?: SyntheticDatasetConfigApiGenerationMode;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model?: string;
+  /** @maxItems 50 */
+  reference_row_ids?: string[];
   num_rows: number;
   columns: SyntheticDatasetColumnApi[];
   dataset: SyntheticDatasetPayloadApi;
@@ -10264,6 +14658,24 @@ export interface EmbeddingsResponseApi {
   result: EmbeddingsResponseResultApi;
 }
 
+export interface EvalGroupListItemApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  created_at: string;
+  /** Union of the member templates' required mapping keys. */
+  required_keys: string[];
+  evals_count: number;
+  is_sample: boolean;
+}
+
+export interface EvalGroupListResultApi {
+  data: EvalGroupListItemApi[];
+  total_count: number;
+  total_pages: number;
+}
+
 export interface EvalGroupApi {
   readonly id?: string;
   /**
@@ -10278,6 +14690,90 @@ export interface EvalGroupApi {
   description?: string;
   readonly created_by?: string;
   is_sample?: boolean;
+}
+
+export interface EvalGroupFunctionParamTemplateApi {
+  eval_template_id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalGroupFunctionParamRequirementApiSchema = {
+  [key: string]: unknown;
+};
+
+export interface EvalGroupFunctionParamRequirementApi {
+  /** Any valid JSON value. */
+  schema: EvalGroupFunctionParamRequirementApiSchema;
+  supported_by: EvalGroupFunctionParamTemplateApi[];
+  required_for: EvalGroupFunctionParamTemplateApi[];
+}
+
+/**
+ * Function parameters keyed by name.
+ */
+export type EvalGroupDetailResultApiFunctionParamsRequirements = {
+  [key: string]: EvalGroupFunctionParamRequirementApi;
+};
+
+export interface EvalGroupMemberApi {
+  eval_template_id: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  added_on: string;
+  /** @minLength 1 */
+  added_by: string;
+  tags: string[];
+  required_keys: string[];
+  optional_keys: string[];
+  models: string[];
+}
+
+export interface EvalGroupDetailResultApi {
+  eval_group?: EvalGroupApi;
+  members: EvalGroupMemberApi[];
+  required_keys: string[];
+  /** Models every member template supports. */
+  models: string[];
+  /** Function parameters keyed by name. */
+  function_params_requirements: EvalGroupDetailResultApiFunctionParamsRequirements;
+}
+
+export type EvalMappingPreviewRequestApiConfig = { [key: string]: unknown };
+
+export interface EvalMappingPreviewRequestApi {
+  dataset_id: string;
+  template_id: string;
+  /**
+   * @minItems 1
+   * @maxItems 10
+   */
+  row_ids: string[];
+  config?: EvalMappingPreviewRequestApiConfig;
+  pinned_version_id?: string;
+}
+
+export type EvalMappingPreviewRowApiInputsUsed = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface EvalMappingPreviewRowApi {
+  row_id: string;
+  inputs_used: EvalMappingPreviewRowApiInputsUsed;
+}
+
+export interface EvalMappingPreviewResultApi {
+  version_number: number;
+  rows: EvalMappingPreviewRowApi[];
+}
+
+export interface EvalMappingPreviewResponseApi {
+  status: boolean;
+  result: EvalMappingPreviewResultApi;
 }
 
 export type EvalPlayGroundApiConfig = { [key: string]: unknown };
@@ -10678,6 +15174,58 @@ export interface CompositeEvalCreateResponseApi {
   result: CompositeEvalCreateResponseResultApi;
 }
 
+export type DagCreateRequestApiOutputType =
+  (typeof DagCreateRequestApiOutputType)[keyof typeof DagCreateRequestApiOutputType];
+
+export const DagCreateRequestApiOutputType = {
+  score: "score",
+  pass_fail: "pass_fail",
+} as const;
+
+export type DagCreateRequestApiDag = { [key: string]: unknown };
+
+export type DagCreateRequestApiMapping = { [key: string]: string };
+
+export interface DagCreateRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /** @maxLength 1000 */
+  description?: string;
+  output_type?: DagCreateRequestApiOutputType;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  pass_threshold?: number;
+  dag: DagCreateRequestApiDag;
+  mapping?: DagCreateRequestApiMapping;
+  /** @maxLength 255 */
+  model?: string;
+}
+
+export interface DagCreatedApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  eval_type: string;
+  /** @minLength 1 */
+  version: string;
+}
+
+export interface DagCreateResponseApi {
+  result: DagCreatedApi;
+}
+
+export interface DagErrorResponseApi {
+  errors: string[];
+  /** @minLength 1 */
+  error?: string;
+}
+
 export type EvalTemplateCreateV2RequestApiEvalType =
   (typeof EvalTemplateCreateV2RequestApiEvalType)[keyof typeof EvalTemplateCreateV2RequestApiEvalType];
 
@@ -10787,6 +15335,68 @@ export interface EvalTemplateCreateResponseApi {
   result: EvalTemplateCreateResponseResultApi;
 }
 
+export type DagExecuteRequestApiDag = { [key: string]: unknown };
+
+export type DagExecuteRequestApiMapping = { [key: string]: string };
+
+export type DagExecuteRequestApiValues = { [key: string]: string };
+
+export interface DagExecuteRequestApi {
+  dag: DagExecuteRequestApiDag;
+  /** @maxLength 20000 */
+  output: string;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  pass_threshold?: number;
+  template_id?: string;
+  dataset_id?: string;
+  row_id?: string;
+  mapping?: DagExecuteRequestApiMapping;
+  values?: DagExecuteRequestApiValues;
+}
+
+export type DagExecutionApiPath = { [key: string]: unknown };
+
+export type DagExecutionApiLeaf = { [key: string]: unknown };
+
+export interface DagExecutionApi {
+  value: number;
+  passed: boolean;
+  score: number;
+  /** @minLength 1 */
+  skipped: string;
+  /** @minLength 1 */
+  reason: string;
+  path: DagExecutionApiPath;
+  /** @minLength 1 */
+  path_key: string;
+  path_label: string;
+  leaf: DagExecutionApiLeaf;
+  judge_calls: number;
+  judge_cost_usd: number;
+  latency_ms: number;
+}
+
+export interface DagExecuteResponseApi {
+  result: DagExecutionApi;
+}
+
+export type DagInputsRequestApiDag = { [key: string]: unknown };
+
+export interface DagInputsRequestApi {
+  dag: DagInputsRequestApiDag;
+}
+
+export interface DagInputsApi {
+  required_keys: string[];
+}
+
+export interface DagInputsResponseApi {
+  result: DagInputsApi;
+}
+
 export interface EvalTemplateListChartsRequestApi {
   template_ids: string[];
 }
@@ -10872,6 +15482,7 @@ export const EvalListFiltersApiEvalTypeItem = {
   llm: "llm",
   code: "code",
   agent: "agent",
+  dag: "dag",
 } as const;
 
 export type EvalListFiltersApiEvalTypeNotItem =
@@ -10881,6 +15492,7 @@ export const EvalListFiltersApiEvalTypeNotItem = {
   llm: "llm",
   code: "code",
   agent: "agent",
+  dag: "dag",
 } as const;
 
 export type EvalListFiltersApiOutputTypeItem =
@@ -10982,6 +15594,73 @@ export interface EvalTemplateListResponseResultApi {
 export interface EvalTemplateListResponseApi {
   status: boolean;
   result: EvalTemplateListResponseResultApi;
+}
+
+export interface EvalAgreementSourceApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  dataset_name: string;
+  /** @minLength 1 */
+  binding_name: string;
+  /** @minLength 1 */
+  label_name: string;
+}
+
+export interface EvalAgreementLabelStatisticsApi {
+  /** @minLength 1 */
+  label: string;
+  precision: number;
+  recall: number;
+  f1: number;
+  support: number;
+}
+
+export type EvalAgreementPairApiHuman = { [key: string]: unknown };
+
+export type EvalAgreementPairApiJudge = { [key: string]: unknown };
+
+export interface EvalAgreementPairApi {
+  row_id: string;
+  human: EvalAgreementPairApiHuman;
+  judge: EvalAgreementPairApiJudge;
+}
+
+export interface EvalAgreementReportApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  dataset_name: string;
+  /** @minLength 1 */
+  binding_name: string;
+  /** @minLength 1 */
+  label_name: string;
+  n: number;
+  binding_id: string;
+  dataset_id: string;
+  label_id: string;
+  /** @minLength 1 */
+  label_type: string;
+  numeric: boolean;
+  accuracy: number;
+  kappa: number;
+  mad: number;
+  spearman: number;
+  labels: string[];
+  matrix: number[][];
+  per_label: EvalAgreementLabelStatisticsApi[];
+  excluded: number;
+  disagreements: EvalAgreementPairApi[];
+}
+
+export interface EvalAgreementResultApi {
+  sources: EvalAgreementSourceApi[];
+  report: EvalAgreementReportApi;
+}
+
+export interface EvalAgreementResponseApi {
+  status: boolean;
+  result: EvalAgreementResultApi;
 }
 
 export interface CompositeEvalDetailResponseResultApi {
@@ -11097,6 +15776,333 @@ export interface CompositeEvalExecuteRequestApi {
   session_context?: CompositeEvalExecuteRequestApiSessionContext;
   call_context?: CompositeEvalExecuteRequestApiCallContext;
   row_context?: CompositeEvalExecuteRequestApiRowContext;
+}
+
+export interface JuryReportRunApi {
+  run_id: string;
+  /** @minLength 1 */
+  run_label: string;
+}
+
+export type JuryReportSeatApiKind =
+  (typeof JuryReportSeatApiKind)[keyof typeof JuryReportSeatApiKind];
+
+export const JuryReportSeatApiKind = {
+  eval: "eval",
+  check: "check",
+} as const;
+
+export type JuryReportSeatApiLevel =
+  (typeof JuryReportSeatApiLevel)[keyof typeof JuryReportSeatApiLevel];
+
+export const JuryReportSeatApiLevel = {
+  row: "row",
+  step: "step",
+} as const;
+
+export type JuryReportSeatApiStepKind =
+  (typeof JuryReportSeatApiStepKind)[keyof typeof JuryReportSeatApiStepKind];
+
+export const JuryReportSeatApiStepKind = {
+  llm: "llm",
+  tool: "tool",
+} as const;
+
+export type JuryReportSeatApiReduce =
+  (typeof JuryReportSeatApiReduce)[keyof typeof JuryReportSeatApiReduce];
+
+export const JuryReportSeatApiReduce = {
+  all_pass: "all_pass",
+  mean: "mean",
+  min: "min",
+} as const;
+
+export interface JuryReportSeatApi {
+  /** @minLength 1 */
+  id: string;
+  kind: JuryReportSeatApiKind;
+  child_id?: string;
+  model?: string;
+  level?: JuryReportSeatApiLevel;
+  step_kind?: JuryReportSeatApiStepKind;
+  reduce?: JuryReportSeatApiReduce;
+  /** @minLength 1 */
+  check_key?: string;
+  weight: number;
+  /** @minLength 1 */
+  child_name: string;
+  score: number;
+  passed: boolean;
+  threshold: number;
+  /** @minLength 1 */
+  status: string;
+  reason: string;
+  error: string;
+  steps: CompositeChildResultApi[];
+}
+
+export type JuryReportApiKind =
+  (typeof JuryReportApiKind)[keyof typeof JuryReportApiKind];
+
+export const JuryReportApiKind = {
+  dataset: "dataset",
+} as const;
+
+export interface JuryDatasetRowApi {
+  row_id: string;
+  row_number: number;
+  evaluation_id: string;
+  seats: JuryReportSeatApi[];
+  complete: boolean;
+  disagreement: boolean;
+  aggregate_score: number;
+}
+
+export interface JurySeatSummaryApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  judge_model: string;
+  n: number;
+  pass_rate: number;
+}
+
+export interface JuryPairApi {
+  /** @minLength 1 */
+  a: string;
+  /** @minLength 1 */
+  b: string;
+  n: number;
+  agreement: number;
+  ci: number[];
+  kappa: number;
+  low_sample: boolean;
+}
+
+export interface JuryReportApi {
+  runs: JuryReportRunApi[];
+  run_id?: string;
+  seats?: JuryReportSeatApi[];
+  aggregate_score?: number;
+  aggregate_pass?: boolean;
+  disagreement?: boolean;
+  complete?: boolean;
+  kind?: JuryReportApiKind;
+  dataset_id?: string;
+  experiment_id?: string;
+  version_id?: string;
+  n?: number;
+  rows?: JuryDatasetRowApi[];
+  children?: JurySeatSummaryApi[];
+  pairs?: JuryPairApi[];
+  split_rows?: string[];
+}
+
+export interface JuryReportResponseApi {
+  result: JuryReportApi;
+}
+
+export type JurySeatApiKind =
+  (typeof JurySeatApiKind)[keyof typeof JurySeatApiKind];
+
+export const JurySeatApiKind = {
+  eval: "eval",
+  check: "check",
+} as const;
+
+export type JurySeatApiLevel =
+  (typeof JurySeatApiLevel)[keyof typeof JurySeatApiLevel];
+
+export const JurySeatApiLevel = {
+  row: "row",
+  step: "step",
+} as const;
+
+export type JurySeatApiStepKind =
+  (typeof JurySeatApiStepKind)[keyof typeof JurySeatApiStepKind];
+
+export const JurySeatApiStepKind = {
+  llm: "llm",
+  tool: "tool",
+} as const;
+
+export type JurySeatApiReduce =
+  (typeof JurySeatApiReduce)[keyof typeof JurySeatApiReduce];
+
+export const JurySeatApiReduce = {
+  all_pass: "all_pass",
+  mean: "mean",
+  min: "min",
+} as const;
+
+export interface JurySeatApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-zA-Z0-9_-]{1,64}$
+   */
+  id: string;
+  kind: JurySeatApiKind;
+  child_id?: string;
+  /** @maxLength 200 */
+  model?: string;
+  level?: JurySeatApiLevel;
+  step_kind?: JurySeatApiStepKind;
+  reduce?: JurySeatApiReduce;
+  /**
+   * @minLength 1
+   * @pattern ^[a-zA-Z0-9_.-]{1,128}$
+   */
+  check_key?: string;
+  /**
+   * @minimum 0.001
+   * @maximum 10
+   */
+  weight?: number;
+}
+
+export interface JuryDefinitionApi {
+  seats: JurySeatApi[];
+}
+
+export interface JuryDefinitionResponseApi {
+  result: JuryDefinitionApi;
+}
+
+export type DagDetailApiDag = { [key: string]: unknown };
+
+export type DagDetailApiMapping = { [key: string]: unknown };
+
+export interface DagDetailApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  /** @minLength 1 */
+  output_type: string;
+  pass_threshold: number;
+  dag: DagDetailApiDag;
+  mapping: DagDetailApiMapping;
+  instructions: string;
+  /** @minLength 1 */
+  model: string;
+  /** @minLength 1 */
+  version: string;
+}
+
+export interface DagDetailResponseApi {
+  result: DagDetailApi;
+}
+
+export type DagUpdateRequestApiOutputType =
+  (typeof DagUpdateRequestApiOutputType)[keyof typeof DagUpdateRequestApiOutputType];
+
+export const DagUpdateRequestApiOutputType = {
+  score: "score",
+  pass_fail: "pass_fail",
+} as const;
+
+export type DagUpdateRequestApiDag = { [key: string]: unknown };
+
+export type DagUpdateRequestApiMapping = { [key: string]: string };
+
+export interface DagUpdateRequestApi {
+  /** @maxLength 1000 */
+  description?: string;
+  output_type?: DagUpdateRequestApiOutputType;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  pass_threshold?: number;
+  dag?: DagUpdateRequestApiDag;
+  mapping?: DagUpdateRequestApiMapping;
+}
+
+export interface DagUpdatedApi {
+  /** @minLength 1 */
+  version: string;
+  /** @minLength 1 */
+  instructions: string;
+}
+
+export interface DagUpdateResponseApi {
+  result: DagUpdatedApi;
+}
+
+export interface DagPathRunApi {
+  run_id: string;
+  /** @minLength 1 */
+  run_label: string;
+}
+
+export interface DagPathGroupApi {
+  /** @minLength 1 */
+  path_key: string;
+  label: string;
+  rows: string[];
+  /** @minimum 0 */
+  n: number;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  share: number;
+  mean: number;
+}
+
+export interface DagPathsApi {
+  template_id: string;
+  /** @minLength 1 */
+  name: string;
+  runs: DagPathRunApi[];
+  experiment_id: string;
+  run_id: string;
+  /** @minLength 1 */
+  run_label: string;
+  dataset_id: string;
+  /** @minimum 0 */
+  n: number;
+  paths: DagPathGroupApi[];
+}
+
+export interface DagPathsResponseApi {
+  result: DagPathsApi;
+}
+
+export type DagRunRequestApiMapping = { [key: string]: string };
+
+export interface DagRunRequestApi {
+  dataset_id: string;
+  mapping: DagRunRequestApiMapping;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  limit?: number;
+}
+
+export interface DagRunRowApi {
+  row_id: string;
+  value: number;
+  passed: boolean;
+  /** @minLength 1 */
+  skipped: string;
+  /** @minLength 1 */
+  path_key: string;
+  path_label: string;
+}
+
+export interface DagRunApi {
+  run_id: string;
+  /** @minLength 1 */
+  run_label: string;
+  n: number;
+  rows: DagRunRowApi[];
+}
+
+export interface DagRunResponseApi {
+  result: DagRunApi;
 }
 
 export type EvalTemplateDetailResponseResultApiChoiceScores = {
@@ -11649,6 +16655,809 @@ export interface ExperimentsTableGetApi {
   name: string;
 }
 
+export type ExternalRunCreateRequestApiModelConfig = {
+  [key: string]: JsonValueApi;
+};
+
+export type ExternalRunCreateRequestApiMetadata = {
+  [key: string]: JsonValueApi;
+};
+
+export interface ExternalRunIdentityApi {
+  example_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2147483647
+   */
+  trial_number?: number;
+}
+
+export interface ExternalRunCreateRequestApi {
+  run_id: string;
+  dataset_version_id: string;
+  /**
+   * @minItems 1
+   * @maxItems 10000
+   */
+  expected_items: ExternalRunIdentityApi[];
+  /** @maxItems 100 */
+  evaluator_metric_ids?: string[];
+  experiment_id?: string | null;
+  model_config?: ExternalRunCreateRequestApiModelConfig;
+  metadata?: ExternalRunCreateRequestApiMetadata;
+}
+
+export type ExternalRunHeaderApiTaskKind =
+  (typeof ExternalRunHeaderApiTaskKind)[keyof typeof ExternalRunHeaderApiTaskKind];
+
+export const ExternalRunHeaderApiTaskKind = {
+  external: "external",
+} as const;
+
+export type ExternalRunHeaderApiStatus =
+  (typeof ExternalRunHeaderApiStatus)[keyof typeof ExternalRunHeaderApiStatus];
+
+export const ExternalRunHeaderApiStatus = {
+  draft: "draft",
+  queued: "queued",
+  running: "running",
+  partial: "partial",
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunBindingApiBindingConfig = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunBindingApiPromptMessages = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunBindingApiConfigSnapshot = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunBindingApiChoiceScores = JsonValueApi;
+
+export interface ExternalRunBindingApi {
+  metric_id: string;
+  evaluator_version_id: string;
+  template_id: string;
+  version_number: number;
+  /** Any valid JSON value. */
+  binding_config: ExternalRunBindingApiBindingConfig;
+  binding_model: string | null;
+  /** Any valid JSON value. */
+  prompt_messages: ExternalRunBindingApiPromptMessages;
+  /** Any valid JSON value. */
+  config_snapshot: ExternalRunBindingApiConfigSnapshot;
+  criteria: string | null;
+  model: string | null;
+  output_type_normalized: string | null;
+  pass_threshold: number | null;
+  /** Any valid JSON value. */
+  choice_scores: ExternalRunBindingApiChoiceScores;
+}
+
+export type ExternalRunHeaderApiModelConfig = { [key: string]: JsonValueApi };
+
+export type ExternalRunHeaderApiMetadata = { [key: string]: JsonValueApi };
+
+export interface ExternalRunHeaderApi {
+  id: string;
+  /** 1, 2, 3 ... per dataset in creation order; never reused. */
+  ordinal: number | null;
+  /**
+   * "#" + ordinal.
+   * @minLength 1
+   */
+  label: string | null;
+  /**
+   * Link to this run in the app: the dataset's Experiments tab, whose run= parameter opens the run's panel with its traces, joined by run id. Null when the deployment sets no frontend URL.
+   * @minLength 1
+   */
+  app_url: string | null;
+  dataset_version_id: string;
+  experiment_id: string | null;
+  task_kind: ExternalRunHeaderApiTaskKind;
+  status: ExternalRunHeaderApiStatus;
+  expected_items: ExternalRunIdentityApi[];
+  evaluator_bindings: ExternalRunBindingApi[];
+  model_config: ExternalRunHeaderApiModelConfig;
+  metadata: ExternalRunHeaderApiMetadata;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExternalRunCreateResponseApi {
+  status: boolean;
+  result: ExternalRunHeaderApi;
+}
+
+export type RunComparisonRequestApiMetadataEquals = {
+  [key: string]: JsonValueApi;
+};
+
+export interface ReleaseGateCaseApi {
+  example_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2147483647
+   */
+  trial_number: number;
+}
+
+export interface ReleaseGatePolicyApi {
+  /** @minimum 0 */
+  max_regressions?: number;
+  /** @maxItems 10000 */
+  critical_cases?: ReleaseGateCaseApi[];
+}
+
+export interface DiffCaseRequestApi {
+  example_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2147483647
+   */
+  trial_number: number;
+}
+
+export interface RunComparisonRequestApi {
+  baseline_run_id: string;
+  candidate_run_id: string;
+  metric_id: string;
+  passing_score?: number | null;
+  higher_is_better?: boolean;
+  include_trial_stability?: boolean;
+  release_gate?: ReleaseGatePolicyApi;
+  diff_case?: DiffCaseRequestApi;
+  metadata_equals?: RunComparisonRequestApiMetadataEquals;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  split_name?: string;
+}
+
+export type RunAggregateApiStatusCounts = { [key: string]: number };
+
+export type RunAggregateApiScoreStatusCounts = { [key: string]: number };
+
+export interface RunAggregateApi {
+  /** @minimum 0 */
+  item_count: number;
+  /** @minimum 0 */
+  completed_count: number;
+  /** @minimum 0 */
+  failed_count: number;
+  /** @minimum 0 */
+  score_count: number;
+  score_average: number | null;
+  score_min: number | null;
+  score_max: number | null;
+  /** @minimum 0 */
+  pass_count: number | null;
+  pass_rate: number | null;
+  status_counts: RunAggregateApiStatusCounts;
+  score_status_counts: RunAggregateApiScoreStatusCounts;
+}
+
+export type RunCaseComparisonApiStatus =
+  (typeof RunCaseComparisonApiStatus)[keyof typeof RunCaseComparisonApiStatus];
+
+export const RunCaseComparisonApiStatus = {
+  improved: "improved",
+  regressed: "regressed",
+  tie: "tie",
+  missing: "missing",
+  duplicate: "duplicate",
+  invalid: "invalid",
+  error: "error",
+  unknown: "unknown",
+  unsupported: "unsupported",
+  not_assessed: "not_assessed",
+} as const;
+
+export type RunCaseComparisonApiMissingSide =
+  (typeof RunCaseComparisonApiMissingSide)[keyof typeof RunCaseComparisonApiMissingSide];
+
+export const RunCaseComparisonApiMissingSide = {
+  baseline: "baseline",
+  candidate: "candidate",
+} as const;
+
+export interface RunCaseComparisonApi {
+  example_id: string;
+  /** @minimum 1 */
+  trial_number: number;
+  status: RunCaseComparisonApiStatus;
+  /** @minLength 1 */
+  baseline_status: string | null;
+  /** @minLength 1 */
+  candidate_status: string | null;
+  baseline_score: number | null;
+  candidate_score: number | null;
+  score_delta: number | null;
+  missing_side: RunCaseComparisonApiMissingSide | null;
+}
+
+export type RunComparisonSummaryApiStatusCounts = { [key: string]: number };
+
+export interface RunComparisonSummaryApi {
+  baseline: RunAggregateApi;
+  candidate: RunAggregateApi;
+  cases: RunCaseComparisonApi[];
+  status_counts: RunComparisonSummaryApiStatusCounts;
+  /** @minimum 0 */
+  comparable_count: number;
+}
+
+export interface RunCountsApi {
+  /** @minimum 0 */
+  expected: number;
+  /** @minimum 0 */
+  recorded: number;
+  /** @minimum 0 */
+  missing: number;
+  /** @minimum 0 */
+  completed: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  assessed: number;
+}
+
+export interface RunItemIdentityApi {
+  example_id: string;
+  /** @minimum 1 */
+  trial_number: number;
+}
+
+export interface MissingRunItemsApi {
+  baseline: RunItemIdentityApi[];
+  candidate: RunItemIdentityApi[];
+}
+
+export interface RunTraceReferenceApi {
+  run_item_id: string;
+  trace_id: string | null;
+  root_span_id: string | null;
+}
+
+export interface RunCaseTraceReferencesApi {
+  example_id: string;
+  /** @minimum 1 */
+  trial_number: number;
+  baseline: RunTraceReferenceApi | null;
+  candidate: RunTraceReferenceApi | null;
+}
+
+export type ReleaseGateReportApiVerdict =
+  (typeof ReleaseGateReportApiVerdict)[keyof typeof ReleaseGateReportApiVerdict];
+
+export const ReleaseGateReportApiVerdict = {
+  pass: "pass",
+  fail: "fail",
+} as const;
+
+export type ReleaseGateBlockerApiReason =
+  (typeof ReleaseGateBlockerApiReason)[keyof typeof ReleaseGateBlockerApiReason];
+
+export const ReleaseGateBlockerApiReason = {
+  missing: "missing",
+  duplicate: "duplicate",
+  invalid: "invalid",
+  error: "error",
+  unknown: "unknown",
+  unsupported: "unsupported",
+  not_assessed: "not_assessed",
+  critical_regression: "critical_regression",
+  critical_threshold: "critical_threshold",
+  regression_limit_exceeded: "regression_limit_exceeded",
+  empty_plan: "empty_plan",
+} as const;
+
+export interface ReleaseGateBlockerApi {
+  example_id: string | null;
+  /** @minimum 1 */
+  trial_number: number | null;
+  reason: ReleaseGateBlockerApiReason;
+}
+
+export interface ReleaseGateReportApi {
+  verdict: ReleaseGateReportApiVerdict;
+  /** @minimum 0 */
+  expected_count: number;
+  /** @minimum 0 */
+  comparable_count: number;
+  /** @minimum 0 */
+  regression_count: number;
+  policy: ReleaseGatePolicyApi;
+  passing_score: number | null;
+  higher_is_better: boolean;
+  blockers: ReleaseGateBlockerApi[];
+}
+
+export interface TrialAggregateApi {
+  /** @minimum 0 */
+  recorded_trial_count: number;
+  /** @minimum 0 */
+  missing_trial_count: number;
+  /** @minimum 0 */
+  assessed_trial_count: number;
+  score_average: number | null;
+  score_min: number | null;
+  score_max: number | null;
+  score_stddev: number | null;
+}
+
+export interface TrialDeltaAggregateApi {
+  /** @minimum 0 */
+  paired_trial_count: number;
+  delta_average: number | null;
+  delta_stddev: number | null;
+}
+
+export interface TrialStabilityApi {
+  example_id: string;
+  /** @minimum 1 */
+  expected_trial_count: number;
+  baseline: TrialAggregateApi;
+  candidate: TrialAggregateApi;
+  paired: TrialDeltaAggregateApi;
+}
+
+export type OutputDiffSideApiOutputState =
+  (typeof OutputDiffSideApiOutputState)[keyof typeof OutputDiffSideApiOutputState];
+
+export const OutputDiffSideApiOutputState = {
+  missing: "missing",
+  unavailable: "unavailable",
+  over_limit: "over_limit",
+  invalid: "invalid",
+  available: "available",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type OutputDiffSideApiOutputPreview = JsonValueApi;
+
+export interface OutputDiffSideApi {
+  item_id: string | null;
+  /** @minLength 1 */
+  status: string | null;
+  output_state: OutputDiffSideApiOutputState;
+  output_digest: string | null;
+  /** @minimum 0 */
+  output_bytes: number | null;
+  /** Any valid JSON value. */
+  output_preview: OutputDiffSideApiOutputPreview | null;
+  preview_omitted: boolean;
+}
+
+export type OutputDiffComparisonApiStatus =
+  (typeof OutputDiffComparisonApiStatus)[keyof typeof OutputDiffComparisonApiStatus];
+
+export const OutputDiffComparisonApiStatus = {
+  unchanged: "unchanged",
+  changed: "changed",
+  not_comparable: "not_comparable",
+} as const;
+
+export type OutputDiffComparisonApiMissingSide =
+  (typeof OutputDiffComparisonApiMissingSide)[keyof typeof OutputDiffComparisonApiMissingSide];
+
+export const OutputDiffComparisonApiMissingSide = {
+  baseline: "baseline",
+  candidate: "candidate",
+  both: "both",
+} as const;
+
+export interface OutputDiffComparisonApi {
+  status: OutputDiffComparisonApiStatus;
+  missing_side: OutputDiffComparisonApiMissingSide | null;
+  /** @maxItems 100 */
+  changed_paths: string[];
+  /** @minimum 0 */
+  changed_path_count: number | null;
+  truncated: boolean;
+}
+
+export interface CaseOutputDiffApi {
+  example_id: string;
+  /** @minimum 1 */
+  trial_number: number;
+  baseline: OutputDiffSideApi;
+  candidate: OutputDiffSideApi;
+  output_comparison: OutputDiffComparisonApi;
+}
+
+export type ComparisonSelectionApiMetadataEquals = {
+  [key: string]: JsonValueApi;
+};
+
+export interface ComparisonSelectionApi {
+  /** @minimum 0 */
+  total_plan_count: number;
+  /** @minimum 0 */
+  selected_count: number;
+  metadata_equals: ComparisonSelectionApiMetadataEquals;
+  /** @minLength 1 */
+  split_name: string | null;
+}
+
+export interface RunComparisonResultApi {
+  baseline_run_id: string;
+  candidate_run_id: string;
+  dataset_version_id: string;
+  metric_id: string;
+  evaluator_version_id: string;
+  comparison: RunComparisonSummaryApi;
+  baseline_counts: RunCountsApi;
+  candidate_counts: RunCountsApi;
+  missing_by_side: MissingRunItemsApi;
+  trace_refs: RunCaseTraceReferencesApi[];
+  release_gate?: ReleaseGateReportApi;
+  trial_stability?: TrialStabilityApi[];
+  case_diff?: CaseOutputDiffApi;
+  selection?: ComparisonSelectionApi;
+}
+
+export interface RunComparisonResponseApi {
+  status: boolean;
+  result: RunComparisonResultApi;
+}
+
+export type ExperimentRunReadApiTaskKind =
+  (typeof ExperimentRunReadApiTaskKind)[keyof typeof ExperimentRunReadApiTaskKind];
+
+export const ExperimentRunReadApiTaskKind = {
+  prompt: "prompt",
+  graph: "graph",
+  external: "external",
+} as const;
+
+export type ExperimentRunReadApiStatus =
+  (typeof ExperimentRunReadApiStatus)[keyof typeof ExperimentRunReadApiStatus];
+
+export const ExperimentRunReadApiStatus = {
+  draft: "draft",
+  queued: "queued",
+  running: "running",
+  partial: "partial",
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+export type ExperimentRunReadApiModelConfig = { [key: string]: unknown };
+
+export type ExperimentRunReadApiMetadata = { [key: string]: unknown };
+
+export interface ExperimentRunReadApi {
+  id: string;
+  /** 1, 2, 3 ... per dataset in creation order; never reused. */
+  ordinal: number;
+  /**
+   * "#" + ordinal.
+   * @minLength 1
+   */
+  label: string;
+  /**
+   * Link to this run in the app: the dataset's Experiments tab, whose run= parameter opens the run's panel with its traces, joined by run id. Null when the deployment sets no frontend URL.
+   * @minLength 1
+   */
+  app_url: string;
+  dataset_version_id: string;
+  experiment_id: string;
+  task_kind: ExperimentRunReadApiTaskKind;
+  status: ExperimentRunReadApiStatus;
+  expected_items: ExternalRunIdentityApi[];
+  evaluator_bindings: ExternalRunBindingApi[];
+  model_config: ExperimentRunReadApiModelConfig;
+  metadata: ExperimentRunReadApiMetadata;
+  started_at: string;
+  completed_at: string;
+  created_at: string;
+  updated_at: string;
+  plan_size: number;
+  item_counts: ExperimentRunItemCountsApi;
+}
+
+export interface ExperimentRunReadResponseApi {
+  status: boolean;
+  result: ExperimentRunReadApi;
+}
+
+export type ExperimentRunItemReadApiStatus =
+  (typeof ExperimentRunItemReadApiStatus)[keyof typeof ExperimentRunItemReadApiStatus];
+
+export const ExperimentRunItemReadApiStatus = {
+  pending: "pending",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface ExperimentRunScoreReadApi {
+  metric_id: string;
+  evaluator_version_id: string;
+  /** @minLength 1 */
+  status: string;
+  value: number;
+  explanation: string;
+  trace_id: string;
+  span_id: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ExperimentRunItemReadApiTokenUsage = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ExperimentRunItemReadApiOutput = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ExperimentRunItemReadApiError = { [key: string]: unknown };
+
+export interface ExperimentRunItemReadApi {
+  id: string;
+  example_id: string;
+  trial_number: number;
+  status: ExperimentRunItemReadApiStatus;
+  /** @minLength 1 */
+  receipt_key: string;
+  trace_id: string;
+  root_span_id: string;
+  latency_ms: number;
+  cost: number;
+  /** Any valid JSON value. */
+  token_usage: ExperimentRunItemReadApiTokenUsage;
+  score_refs: ExperimentRunScoreReadApi[];
+  /** Any valid JSON value. */
+  output: ExperimentRunItemReadApiOutput;
+  output_truncated: boolean;
+  output_bytes: number;
+  /** Any valid JSON value. */
+  error: ExperimentRunItemReadApiError;
+  error_truncated: boolean;
+  error_bytes: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExperimentRunItemsResultApi {
+  run_id: string;
+  /** @minLength 1 */
+  run_status: string;
+  items: ExperimentRunItemReadApi[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface ExperimentRunItemsResponseApi {
+  status: boolean;
+  result: ExperimentRunItemsResultApi;
+}
+
+export type ExternalRunResultApiStatus =
+  (typeof ExternalRunResultApiStatus)[keyof typeof ExternalRunResultApiStatus];
+
+export const ExternalRunResultApiStatus = {
+  completed: "completed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export type ExternalRunScoreApiStatus =
+  (typeof ExternalRunScoreApiStatus)[keyof typeof ExternalRunScoreApiStatus];
+
+export const ExternalRunScoreApiStatus = {
+  assessed: "assessed",
+  error: "error",
+  unknown: "unknown",
+  not_assessed: "not_assessed",
+  unsupported: "unsupported",
+} as const;
+
+export interface ExternalRunScoreApi {
+  metric_id: string;
+  evaluator_version_id: string;
+  status: ExternalRunScoreApiStatus;
+  value?: number | null;
+  /** @maxLength 16384 */
+  explanation?: string | null;
+  /** @maxLength 255 */
+  trace_id?: string | null;
+  /** @maxLength 255 */
+  span_id?: string | null;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunResultApiOutput = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunResultApiError = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunResultApiTokenUsage = JsonValueApi;
+
+export interface ExternalRunResultApi {
+  example_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2147483647
+   */
+  trial_number?: number;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  receipt_key: string;
+  status: ExternalRunResultApiStatus;
+  /** Any valid JSON value. */
+  output?: ExternalRunResultApiOutput;
+  /** Any valid JSON value. */
+  error?: ExternalRunResultApiError;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  trace_id?: string | null;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  root_span_id?: string | null;
+  /** @minimum 0 */
+  latency_ms?: number | null;
+  /** Any valid JSON value. */
+  token_usage?: ExternalRunResultApiTokenUsage;
+  /** @minimum 0 */
+  cost?: number | null;
+  /** @maxItems 100 */
+  score_refs?: ExternalRunScoreApi[];
+}
+
+export interface ExternalRunResultsRequestApi {
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  items: ExternalRunResultApi[];
+}
+
+export type ExternalRunItemReceiptApiStatus =
+  (typeof ExternalRunItemReceiptApiStatus)[keyof typeof ExternalRunItemReceiptApiStatus];
+
+export const ExternalRunItemReceiptApiStatus = {
+  completed: "completed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface ExternalRunItemReceiptApi {
+  example_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2147483647
+   */
+  trial_number?: number;
+  id: string;
+  /** @minLength 1 */
+  receipt_key: string;
+  status: ExternalRunItemReceiptApiStatus;
+  trace_id: string | null;
+  root_span_id: string | null;
+  score_refs: ExternalRunScoreApi[];
+}
+
+export interface ExternalRunResultsResultApi {
+  run: ExternalRunHeaderApi;
+  items: ExternalRunItemReceiptApi[];
+}
+
+export interface ExternalRunResultsResponseApi {
+  status: boolean;
+  result: ExternalRunResultsResultApi;
+}
+
+export interface ExperimentRunTraceApi {
+  /** @minLength 1 */
+  trace_id: string;
+  /** @minLength 1 */
+  root_span_id: string;
+  example_id: string;
+  trial_number: number;
+  /** @minLength 1 */
+  item_status: string;
+  /**
+   * The run id the trace's root span carries (fi.experiment.run_id).
+   * @minLength 1
+   */
+  trace_run_id: string;
+  project_id: string;
+  /** @minLength 1 */
+  root_span_name: string;
+  /** @minLength 1 */
+  start_time: string;
+  span_count: number;
+  /** @minLength 1 */
+  trace_example_id: string;
+  trace_trial: number;
+}
+
+/**
+ * not_found: the span store has no such trace in the caller's projects (yet); other_run: its root span names another run; no_run_id: its root span names no run.
+ */
+export type ExperimentRunTraceNotJoinedApiReason =
+  (typeof ExperimentRunTraceNotJoinedApiReason)[keyof typeof ExperimentRunTraceNotJoinedApiReason];
+
+export const ExperimentRunTraceNotJoinedApiReason = {
+  not_found: "not_found",
+  other_run: "other_run",
+  no_run_id: "no_run_id",
+} as const;
+
+export interface ExperimentRunTraceNotJoinedApi {
+  /** @minLength 1 */
+  trace_id: string;
+  /** @minLength 1 */
+  root_span_id: string;
+  example_id: string;
+  trial_number: number;
+  /** @minLength 1 */
+  item_status: string;
+  /**
+   * The run id the trace's root span carries (fi.experiment.run_id).
+   * @minLength 1
+   */
+  trace_run_id: string;
+  /** not_found: the span store has no such trace in the caller's projects (yet); other_run: its root span names another run; no_run_id: its root span names no run. */
+  reason: ExperimentRunTraceNotJoinedApiReason;
+}
+
+export interface ExperimentRunTracesResultApi {
+  run_id: string;
+  traces: ExperimentRunTraceApi[];
+  not_joined: ExperimentRunTraceNotJoinedApi[];
+  items_with_trace: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface ExperimentRunTracesResponseApi {
+  status: boolean;
+  result: ExperimentRunTracesResultApi;
+}
+
 export type ExperimentsTableApiPromptConfig = { [key: string]: unknown };
 
 export interface ExperimentsTableApi {
@@ -11742,6 +17551,22 @@ export const ExperimentCreateV2ApiExperimentType = {
   tts: "tts",
   stt: "stt",
   image: "image",
+} as const;
+
+/**
+ * Experiment scoping is disabled by default. When disabled on the server, only {} is accepted for this field as a no-op; any other value is rejected as an unknown field (HTTP 400) in create requests.
+ */
+export type ExperimentCreateV2ApiMetadata = { [key: string]: string };
+
+/**
+ * Experiment scoping is disabled by default. When disabled on the server, this field is rejected as an unknown field (HTTP 400) in create requests.
+ */
+export type ExperimentCreateV2ApiErrorPolicy =
+  (typeof ExperimentCreateV2ApiErrorPolicy)[keyof typeof ExperimentCreateV2ApiErrorPolicy];
+
+export const ExperimentCreateV2ApiErrorPolicy = {
+  zero: "zero",
+  exclude: "exclude",
 } as const;
 
 /**
@@ -11852,6 +17677,49 @@ export interface EvalMetricEntryApi {
   error_localizer?: boolean;
   kb_id?: string;
   composite_weight_overrides?: EvalMetricEntryApiCompositeWeightOverrides;
+  pinned_version_id?: string;
+}
+
+/**
+ * Experiment scoping is disabled by default. When disabled on the server, this field is rejected as an unknown field (HTTP 400) in create requests and omitted from experiment detail responses.
+ */
+export interface ExperimentSampleApi {
+  /**
+   * @minimum 1
+   * @maximum 100000
+   */
+  size: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  seed: number;
+}
+
+/**
+ * Experiment scoping is disabled by default. When disabled on the server, this field is rejected as an unknown field (HTTP 400) in create requests and omitted from experiment detail responses.
+ */
+export interface ExperimentLimitsApi {
+  /**
+   * @minimum 1
+   * @maximum 10000000
+   */
+  tokens?: number;
+  /**
+   * @minimum 1
+   * @maximum 100000
+   */
+  messages?: number;
+  /**
+   * @minimum 0.000001
+   * @maximum 100000
+   */
+  cost_usd?: number;
+  /**
+   * @minimum 1
+   * @maximum 43200
+   */
+  timeout_s?: number;
 }
 
 export interface ExperimentCreateV2Api {
@@ -11865,6 +17733,22 @@ export interface ExperimentCreateV2Api {
   experiment_type?: ExperimentCreateV2ApiExperimentType;
   prompt_config: PromptConfigEntryApi[];
   user_eval_metrics: EvalMetricEntryApi[];
+  /**
+   * Experiment scoping is disabled by default. When disabled on the server, this field is rejected as an unknown field (HTTP 400) in create requests.
+   * @maxItems 100000
+   */
+  row_ids?: string[];
+  /**
+   * Union of live dataset splits, intersected with row_ids before sampling.
+   * @maxItems 100
+   */
+  split_ids?: string[];
+  sample?: ExperimentSampleApi;
+  /** Experiment scoping is disabled by default. When disabled on the server, only {} is accepted for this field as a no-op; any other value is rejected as an unknown field (HTTP 400) in create requests. */
+  metadata?: ExperimentCreateV2ApiMetadata;
+  /** Experiment scoping is disabled by default. When disabled on the server, this field is rejected as an unknown field (HTTP 400) in create requests. */
+  error_policy?: ExperimentCreateV2ApiErrorPolicy;
+  limits?: ExperimentLimitsApi;
 }
 
 export type ExperimentListV2ApiStatus =
@@ -11976,6 +17860,18 @@ export const ExperimentDetailV2ApiStatus = {
   Cancelled: "Cancelled",
 } as const;
 
+export type ExperimentDetailV2ApiErrorPolicy =
+  (typeof ExperimentDetailV2ApiErrorPolicy)[keyof typeof ExperimentDetailV2ApiErrorPolicy];
+
+export const ExperimentDetailV2ApiErrorPolicy = {
+  zero: "zero",
+  exclude: "exclude",
+} as const;
+
+export type ExperimentDetailV2ApiRunScope = { [key: string]: unknown };
+
+export type ExperimentDetailV2ApiMetadata = { [key: string]: string };
+
 export interface ExperimentDetailV2Api {
   readonly id?: string;
   /**
@@ -11989,6 +17885,12 @@ export interface ExperimentDetailV2Api {
   experiment_type?: ExperimentDetailV2ApiExperimentType;
   status?: ExperimentDetailV2ApiStatus;
   readonly snapshot_dataset_id?: string;
+  readonly run_scope?: ExperimentDetailV2ApiRunScope;
+  readonly row_ids?: readonly string[];
+  sample?: ExperimentSampleApi;
+  readonly metadata?: ExperimentDetailV2ApiMetadata;
+  readonly error_policy?: ExperimentDetailV2ApiErrorPolicy;
+  limits?: ExperimentLimitsApi;
   readonly prompt_configs?: string;
   readonly agent_configs?: string;
   readonly user_eval_metrics?: string;
@@ -12004,6 +17906,7 @@ export interface ExperimentUpdateV2Api {
   column_id?: string;
   prompt_config?: PromptConfigEntryApi[];
   user_eval_metrics?: EvalMetricEntryApi[];
+  append_only?: boolean;
 }
 
 export type ExperimentComparisonWeightsRequestApiWeights = {
@@ -12321,6 +18224,32 @@ export interface ExperimentWorkflowResultApi {
 export interface ExperimentWorkflowResponseApi {
   status: boolean;
   result: ExperimentWorkflowResultApi;
+}
+
+export interface ExperimentRunSelectionApi {
+  /**
+   * Variant (experiment dataset) IDs. Omit to select all variants.
+   * @maxItems 1000
+   */
+  run_ids?: string[];
+}
+
+export interface ExperimentRunControlItemApi {
+  run_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  status: string;
+}
+
+export interface ExperimentRunControlResultApi {
+  experiment_id: string;
+  runs: ExperimentRunControlItemApi[];
+}
+
+export interface ExperimentRunControlResponseApi {
+  status: boolean;
+  result: ExperimentRunControlResultApi;
 }
 
 export type ExperimentTableRowsColumnConfigApiGroup = {
@@ -13981,6 +19910,9 @@ export interface PromptFolderApi {
   readonly created_by?: string;
 }
 
+/**
+ * Any valid JSON value.
+ */
 export type PromptHistoryExecutionApiOutput = { [key: string]: unknown };
 
 /**
@@ -14005,9 +19937,15 @@ export type PromptHistoryExecutionApiEvaluationConfigs = {
   [key: string]: unknown;
 };
 
-export type PromptHistoryExecutionApiLabels = { [key: string]: unknown };
-
 export type PromptHistoryExecutionApiPlaceholders = { [key: string]: unknown };
+
+export interface PromptVersionLabelApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+}
 
 export interface PromptHistoryExecutionApi {
   readonly id?: string;
@@ -14016,6 +19954,7 @@ export interface PromptHistoryExecutionApi {
    * @maxLength 50
    */
   template_version: string;
+  /** Any valid JSON value. */
   readonly output?: PromptHistoryExecutionApiOutput;
   /**
   Get prompt_config_snapshot with backward compatibility for modelDetail.
@@ -14034,7 +19973,7 @@ export interface PromptHistoryExecutionApi {
   commit_message?: string;
   readonly updated_at?: string;
   is_draft?: boolean;
-  readonly labels?: PromptHistoryExecutionApiLabels;
+  readonly labels?: readonly PromptVersionLabelApi[];
   placeholders?: PromptHistoryExecutionApiPlaceholders;
   prompt_base_template?: string;
 }
@@ -14096,6 +20035,9 @@ export interface ModelHubTextErrorResponseApi {
   details?: ModelHubTextErrorResponseApiDetails;
 }
 
+/**
+ * Any valid JSON value.
+ */
 export type PromptTemplateApiVariableNames = { [key: string]: unknown };
 
 export type PromptTemplateApiPlaceholders = { [key: string]: unknown };
@@ -14108,6 +20050,7 @@ export interface PromptTemplateApi {
    */
   name: string;
   description?: string;
+  /** Any valid JSON value. */
   variable_names?: PromptTemplateApiVariableNames;
   readonly organization?: string;
   prompt_folder?: string;
@@ -14130,6 +20073,9 @@ export interface DerivedVariableDetailResponseApi {
   result: DerivedVariableDetailApi;
 }
 
+/**
+ * Any valid JSON value.
+ */
 export type PromptTemplatePatchApiVariableNames = { [key: string]: unknown };
 
 export type PromptTemplatePatchApiPlaceholders = { [key: string]: unknown };
@@ -14142,6 +20088,7 @@ export interface PromptTemplatePatchApi {
    */
   name?: string;
   description?: string;
+  /** Any valid JSON value. */
   variable_names?: PromptTemplatePatchApiVariableNames;
   readonly organization?: string;
   prompt_folder?: string;
@@ -14253,6 +20200,17 @@ export interface PromptRunRequestApi {
   is_sdk?: boolean;
   /** @minimum 0 */
   run_index?: number;
+}
+
+export interface PromptVersionHistoryPageApi {
+  readonly count?: number;
+  /** @minLength 1 */
+  readonly next?: string;
+  /** @minLength 1 */
+  readonly previous?: string;
+  readonly results?: readonly PromptHistoryExecutionApi[];
+  readonly total_pages?: number;
+  readonly current_page?: number;
 }
 
 export type PromptDerivedVariablesResultApiDerivedVariables = {
@@ -14367,6 +20325,71 @@ export interface PromptMetricsEmptyScreenResultApi {
 export interface PromptMetricsEmptyScreenResponseApi {
   status: boolean;
   result: PromptMetricsEmptyScreenResultApi;
+}
+
+export type DatasetViewApiState = { [key: string]: unknown };
+
+export interface DatasetViewApi {
+  id: string;
+  /** @minLength 1 */
+  surface: string;
+  scope: string;
+  /** @minLength 1 */
+  name: string;
+  state: DatasetViewApiState;
+  shared: boolean;
+  mine: boolean;
+  can_delete: boolean;
+  /** @minLength 1 */
+  created_by: string;
+  created_at: string;
+}
+
+export interface DatasetViewListResultApi {
+  results: DatasetViewApi[];
+  /** Continuation view ID, or null on the final page. */
+  next: string | null;
+}
+
+export interface DatasetViewListResponseApi {
+  status: boolean;
+  result: DatasetViewListResultApi;
+}
+
+export type DatasetViewWriteApiSurface =
+  (typeof DatasetViewWriteApiSurface)[keyof typeof DatasetViewWriteApiSurface];
+
+export const DatasetViewWriteApiSurface = {
+  grid: "grid",
+} as const;
+
+export type DatasetViewWriteApiState = { [key: string]: unknown };
+
+export interface DatasetViewWriteApi {
+  surface: DatasetViewWriteApiSurface;
+  scope: string;
+  restore_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  name?: string;
+  state?: DatasetViewWriteApiState;
+  shared?: boolean;
+}
+
+export interface DatasetViewResponseApi {
+  status: boolean;
+  result: DatasetViewApi;
+}
+
+export interface DatasetViewDeletedResultApi {
+  id: string;
+}
+
+export interface DatasetViewDeletedResponseApi {
+  status: boolean;
+  result: DatasetViewDeletedResultApi;
 }
 
 export type UserResponseSchemaApiSchema = { [key: string]: unknown };
@@ -14845,6 +20868,264 @@ export interface UploadedFileResultApi {
 export interface UploadFileResponseApi {
   status: boolean;
   result: UploadedFileResultApi[];
+}
+
+export type AuditEventApiBefore = { [key: string]: string };
+
+export type AuditEventApiAfter = { [key: string]: string };
+
+export type AuditEventApiCounts = { [key: string]: string };
+
+export interface AuditEventApi {
+  id: string;
+  /** @minLength 1 */
+  action: string;
+  /** @minLength 1 */
+  product: string;
+  actor: string;
+  organization_id: string;
+  workspace_id: string;
+  before: AuditEventApiBefore;
+  after: AuditEventApiAfter;
+  reason: string;
+  counts: AuditEventApiCounts;
+  epoch: number;
+  created_at: string;
+}
+
+export interface AuditListApi {
+  events: AuditEventApi[];
+}
+
+export type ProductStateApiProduct =
+  (typeof ProductStateApiProduct)[keyof typeof ProductStateApiProduct];
+
+export const ProductStateApiProduct = {
+  console: "console",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  studio_tab: "studio_tab",
+  hub: "hub",
+} as const;
+
+export type ProductStateApiStage =
+  (typeof ProductStateApiStage)[keyof typeof ProductStateApiStage];
+
+export const ProductStateApiStage = {
+  S0: "S0",
+  S1: "S1",
+  S2: "S2",
+  S3: "S3",
+} as const;
+
+export interface ProductStateApi {
+  product: ProductStateApiProduct;
+  /** @minLength 1 */
+  label: string;
+  stage: ProductStateApiStage;
+  percentage: number;
+  paused: boolean;
+  installs_paused: boolean;
+  epoch: number;
+  allowed_orgs: number;
+  denied_entries: number;
+  open_requests: number;
+}
+
+export interface ProductListApi {
+  epoch: number;
+  products: ProductStateApi[];
+}
+
+export type ProductChangeApiStage =
+  (typeof ProductChangeApiStage)[keyof typeof ProductChangeApiStage];
+
+export const ProductChangeApiStage = {
+  S0: "S0",
+  S1: "S1",
+  S2: "S2",
+  S3: "S3",
+} as const;
+
+export interface ProductChangeApi {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  reason: string;
+  stage?: ProductChangeApiStage;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  percentage?: number;
+}
+
+export type AccessListApiProduct =
+  (typeof AccessListApiProduct)[keyof typeof AccessListApiProduct];
+
+export const AccessListApiProduct = {
+  console: "console",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  studio_tab: "studio_tab",
+  hub: "hub",
+} as const;
+
+export interface AccessEntryApi {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  workspace_id: string;
+  /** @minLength 1 */
+  effect: string;
+  /** @minLength 1 */
+  cohort: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface AccessListApi {
+  product: AccessListApiProduct;
+  entries: AccessEntryApi[];
+}
+
+export type AccessChangeApiEffect =
+  (typeof AccessChangeApiEffect)[keyof typeof AccessChangeApiEffect];
+
+export const AccessChangeApiEffect = {
+  allow: "allow",
+  deny: "deny",
+} as const;
+
+export type AccessChangeApiCohort =
+  (typeof AccessChangeApiCohort)[keyof typeof AccessChangeApiCohort];
+
+export const AccessChangeApiCohort = {
+  staff: "staff",
+  partner: "partner",
+  waitlist: "waitlist",
+} as const;
+
+export interface AccessChangeApi {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  reason: string;
+  organization_id: string;
+  workspace_id?: string;
+  effect: AccessChangeApiEffect;
+  cohort?: AccessChangeApiCohort;
+}
+
+export interface AccessRemoveApi {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  reason: string;
+  organization_id: string;
+  workspace_id?: string;
+}
+
+export interface KillApi {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  reason: string;
+  pause_installs?: boolean;
+}
+
+export interface ReasonApi {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  reason: string;
+}
+
+export type WaitlistEntryApiProduct =
+  (typeof WaitlistEntryApiProduct)[keyof typeof WaitlistEntryApiProduct];
+
+export const WaitlistEntryApiProduct = {
+  console: "console",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  studio_tab: "studio_tab",
+  hub: "hub",
+} as const;
+
+export interface WaitlistEntryApi {
+  id: string;
+  product: WaitlistEntryApiProduct;
+  organization_id: string;
+  organization_name: string;
+  requested_by: string;
+  note: string;
+  /** @minLength 1 */
+  status: string;
+  created_at: string;
+  decided_at: string;
+}
+
+export interface WaitlistListApi {
+  requests: WaitlistEntryApi[];
+}
+
+export interface WaitlistDecisionApi {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  reason: string;
+  invite: boolean;
+}
+
+export type EarlyAccessProductApiProduct =
+  (typeof EarlyAccessProductApiProduct)[keyof typeof EarlyAccessProductApiProduct];
+
+export const EarlyAccessProductApiProduct = {
+  console: "console",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  studio_tab: "studio_tab",
+  hub: "hub",
+} as const;
+
+export interface EarlyAccessProductApi {
+  product: EarlyAccessProductApiProduct;
+  /** @minLength 1 */
+  label: string;
+  admitted: boolean;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  request_status: string;
+  requested_at: string;
+}
+
+export interface EarlyAccessApi {
+  can_request: boolean;
+  products: EarlyAccessProductApi[];
+}
+
+export type EarlyAccessRequestApiProduct =
+  (typeof EarlyAccessRequestApiProduct)[keyof typeof EarlyAccessRequestApiProduct];
+
+export const EarlyAccessRequestApiProduct = {
+  console: "console",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  studio_tab: "studio_tab",
+  hub: "hub",
+} as const;
+
+export interface EarlyAccessRequestApi {
+  product: EarlyAccessRequestApiProduct;
+  /** @maxLength 1000 */
+  note?: string;
 }
 
 export interface SAMLErrorResponseApi {
@@ -15398,6 +21679,12 @@ export const AgentDefinitionListResponseApiLanguagesItem = {
   vi: "vi",
 } as const;
 
+export interface RunEnvironmentRefApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
 /**
  * Headers to be sent to the websocket server
  */
@@ -15411,12 +21698,6 @@ export type AgentDefinitionListResponseApiWebsocketHeaders = {
 export type AgentDefinitionListResponseApiModelDetails = {
   [key: string]: unknown;
 };
-
-export interface RunEnvironmentRefApi {
-  id: string;
-  /** @minLength 1 */
-  name: string;
-}
 
 export interface AgentDefinitionListResponseApi {
   readonly id?: string;
@@ -15484,6 +21765,17 @@ export interface AgentDefinitionListResponseApi {
   readonly environments?: readonly RunEnvironmentRefApi[];
 }
 
+export interface AgentDefinitionListPageApi {
+  readonly count?: number;
+  /** @minLength 1 */
+  readonly next?: string;
+  /** @minLength 1 */
+  readonly previous?: string;
+  readonly results?: readonly AgentDefinitionListResponseApi[];
+  readonly total_pages?: number;
+  readonly current_page?: number;
+}
+
 export type ApiErrorWithDetailsResponseApiType =
   (typeof ApiErrorWithDetailsResponseApiType)[keyof typeof ApiErrorWithDetailsResponseApiType];
 
@@ -15506,6 +21798,11 @@ export const ApiErrorWithDetailsResponseApiType = {
 export type ApiErrorWithDetailsResponseApiDetails = { [key: string]: string[] };
 
 export interface ApiErrorWithDetailsResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: ApiErrorWithDetailsResponseApiType;
   code?: string;
@@ -16625,6 +22922,11 @@ export const EvalErrorResponseApiType = {
 export type EvalErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface EvalErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: EvalErrorResponseApiType;
   code?: string;
@@ -16853,534 +23155,6 @@ export interface FetchAssistantResponseApi {
   readonly provider?: string;
   /** @minLength 1 */
   readonly commit_message?: string;
-}
-
-export interface AgentFixCandidateCreatedApi {
-  candidate_id: string;
-  agent_version_id: string;
-  /** @minLength 1 */
-  preflight_status: string;
-}
-
-export interface AgentFixCheckRunRequestApi {
-  /**
-   * @minLength 1
-   * @maxLength 64
-   */
-  label: string;
-  agent_version_id: string;
-  /** @minItems 1 */
-  scenario_keys: string[];
-  /**
-   * @minimum 1
-   * @maximum 20
-   */
-  trials: number;
-  /**
-   * @minimum 1
-   * @maximum 20
-   */
-  repeat?: number;
-}
-
-export interface AgentFixCheckRunCreatedApi {
-  run_id: string;
-}
-
-export type AgentFixEngineReportApiStep =
-  (typeof AgentFixEngineReportApiStep)[keyof typeof AgentFixEngineReportApiStep];
-
-export const AgentFixEngineReportApiStep = {
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
-export type AgentFixEngineReportApiEnding =
-  (typeof AgentFixEngineReportApiEnding)[keyof typeof AgentFixEngineReportApiEnding];
-
-export const AgentFixEngineReportApiEnding = {
-  ready: "ready",
-  no_improvement: "no_improvement",
-  not_reproduced: "not_reproduced",
-  out_of_budget: "out_of_budget",
-  failed: "failed",
-} as const;
-
-export interface AgentFixPlanApi {
-  /** @minimum 0 */
-  target: number;
-  /** @minimum 0 */
-  held_back: number;
-  /** @minimum 0 */
-  must_pass: number;
-  /** @minimum 0 */
-  protected?: number;
-  /** @minimum 0 */
-  max_candidates: number;
-  /** @minimum 0 */
-  repeats: number;
-  /** @minimum 0 */
-  baseline_spread_pts: number;
-}
-
-export interface AgentFixDiagnosisApi {
-  causes?: string[];
-}
-
-export type AgentFixCandidateUpdateApiOutcome =
-  (typeof AgentFixCandidateUpdateApiOutcome)[keyof typeof AgentFixCandidateUpdateApiOutcome];
-
-export const AgentFixCandidateUpdateApiOutcome = {
-  pending: "pending",
-  rejected: "rejected",
-  finalist: "finalist",
-  winner: "winner",
-} as const;
-
-export type AgentFixVerdictTierApiStatus =
-  (typeof AgentFixVerdictTierApiStatus)[keyof typeof AgentFixVerdictTierApiStatus];
-
-export const AgentFixVerdictTierApiStatus = {
-  passed: "passed",
-  failed: "failed",
-  pending: "pending",
-  skipped: "skipped",
-} as const;
-
-export interface AgentFixVerdictTierApi {
-  /** @minLength 1 */
-  name: string;
-  status: AgentFixVerdictTierApiStatus;
-  detail?: string;
-}
-
-export interface AgentFixVerdictApi {
-  accepted: boolean;
-  /** @minLength 1 */
-  reason: string;
-  target_pass_rate?: number[];
-  held_back_pass_rate?: number[];
-  must_pass_regressions: string[];
-  must_pass_within_noise?: string[];
-  tiers?: AgentFixVerdictTierApi[];
-}
-
-export interface AgentFixCandidateUpdateApi {
-  candidate_id: string;
-  outcome: AgentFixCandidateUpdateApiOutcome;
-  verdict?: AgentFixVerdictApi;
-}
-
-export type AgentFixEngineFailureApiOwner =
-  (typeof AgentFixEngineFailureApiOwner)[keyof typeof AgentFixEngineFailureApiOwner];
-
-export const AgentFixEngineFailureApiOwner = {
-  ours: "ours",
-  user: "user",
-} as const;
-
-export interface AgentFixEngineFailureApi {
-  owner: AgentFixEngineFailureApiOwner;
-  /**
-   * @minLength 1
-   * @maxLength 64
-   */
-  code: string;
-  /** @maxLength 500 */
-  message: string;
-}
-
-export interface AgentFixEngineReportApi {
-  /**
-   * @minLength 1
-   * @maxLength 32
-   */
-  stage: string;
-  step?: AgentFixEngineReportApiStep;
-  plan?: AgentFixPlanApi;
-  diagnosis?: AgentFixDiagnosisApi;
-  candidates?: AgentFixCandidateUpdateApi[];
-  ending?: AgentFixEngineReportApiEnding;
-  summary?: string;
-  failure?: AgentFixEngineFailureApi;
-  winner_candidate_id?: string;
-}
-
-export interface AgentFixEngineStateApi {
-  /** @minLength 1 */
-  state: string;
-}
-
-export interface AgentFixEnvironmentApi {
-  /** @minLength 1 */
-  name: string;
-  version: number;
-  default_agent_version_id: string;
-}
-
-export interface AgentFixAgentApi {
-  /** @minLength 1 */
-  name: string;
-  /** @minLength 1 */
-  kind: string;
-  version_id: string;
-  version_number: number;
-  /** @minLength 1 */
-  ref: string;
-}
-
-export type AgentFixRunApiState =
-  (typeof AgentFixRunApiState)[keyof typeof AgentFixRunApiState];
-
-export const AgentFixRunApiState = {
-  queued: "queued",
-  running: "running",
-  stopping: "stopping",
-  ready: "ready",
-  no_improvement: "no_improvement",
-  not_reproduced: "not_reproduced",
-  out_of_budget: "out_of_budget",
-  stopped: "stopped",
-  failed: "failed",
-} as const;
-
-/**
- * A finished fix is done, whatever the engine last said.
- */
-export type AgentFixRunApiStep =
-  (typeof AgentFixRunApiStep)[keyof typeof AgentFixRunApiStep];
-
-export const AgentFixRunApiStep = {
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
-export interface AgentFixRequestApi {
-  target_scenario_keys: string[];
-  protected_scenario_keys?: string[];
-  held_back_scenario_keys?: string[];
-  failing_sub_goals: string[];
-  surfaces: string[];
-  locked_paths: string[];
-  budget_credits: number;
-  max_minutes: number;
-}
-
-export interface AgentFixReportApi {
-  /** @minLength 1 */
-  ending: string;
-  summary: string;
-  /** @minLength 1 */
-  winner_candidate_id: string;
-}
-
-export interface AgentFixFailureApi {
-  /** @minLength 1 */
-  code: string;
-  /** @minLength 1 */
-  message: string;
-}
-
-export interface AgentFixCheckRunApi {
-  run_id: string;
-  test_execution_id: string;
-  /** @minLength 1 */
-  label: string;
-  /** @minLength 1 */
-  state: string;
-}
-
-export type AgentFixCandidateApiOutcome =
-  (typeof AgentFixCandidateApiOutcome)[keyof typeof AgentFixCandidateApiOutcome];
-
-export const AgentFixCandidateApiOutcome = {
-  pending: "pending",
-  rejected: "rejected",
-  finalist: "finalist",
-  winner: "winner",
-} as const;
-
-export interface HarnessVersionPersonApi {
-  /** @minLength 1 */
-  id: string;
-  name: string;
-}
-
-export interface AgentFixOverrideApi {
-  allowed: boolean;
-  regressions: string[];
-  reason: string;
-  by: HarnessVersionPersonApi;
-  at: string;
-}
-
-export interface AgentFixCandidateApi {
-  readonly id?: string;
-  /**
-   * @minimum 0
-   * @maximum 32767
-   */
-  attempt: number;
-  agent_version_id: string;
-  version_number: number;
-  summary?: string;
-  outcome?: AgentFixCandidateApiOutcome;
-  verdict: AgentFixVerdictApi;
-  readonly check_runs?: readonly AgentFixCheckRunApi[];
-  override?: AgentFixOverrideApi;
-  /** @maxLength 512 */
-  pull_request_url?: string;
-  readonly created_at?: string;
-}
-
-export interface AgentFixRunApi {
-  readonly id?: string;
-  number: number;
-  environment_id: string;
-  environment?: AgentFixEnvironmentApi;
-  source_run_id: string;
-  source_run_number: number;
-  base_agent_version_id: string;
-  agent?: AgentFixAgentApi;
-  state?: AgentFixRunApiState;
-  /** @maxLength 32 */
-  stage?: string;
-  /** A finished fix is done, whatever the engine last said. */
-  readonly step?: AgentFixRunApiStep;
-  plan: AgentFixPlanApi;
-  diagnosis: AgentFixDiagnosisApi;
-  request: AgentFixRequestApi;
-  spent_credits: number;
-  committed_credits: number;
-  report: AgentFixReportApi;
-  failure: AgentFixFailureApi;
-  retried_from_id: string;
-  readonly retryable?: boolean;
-  readonly limited_validation?: boolean;
-  /** The base version's runs; each candidate lists its own. */
-  readonly check_runs?: readonly AgentFixCheckRunApi[];
-  candidates: AgentFixCandidateApi[];
-  started_at?: string;
-  finished_at?: string;
-  readonly created_at?: string;
-}
-
-export interface AgentFixRunListApi {
-  count: number;
-  /** @minLength 1 */
-  next: string;
-  /** @minLength 1 */
-  previous: string;
-  total_pages: number;
-  current_page: number;
-  results: AgentFixRunApi[];
-}
-
-export type AgentFixLaunchApiSurfacesItem =
-  (typeof AgentFixLaunchApiSurfacesItem)[keyof typeof AgentFixLaunchApiSurfacesItem];
-
-export const AgentFixLaunchApiSurfacesItem = {
-  prompt: "prompt",
-  tools: "tools",
-  settings: "settings",
-  code: "code",
-} as const;
-
-export interface AgentFixLaunchApi {
-  source_run_id: string;
-  /**
-   * @minItems 1
-   * @maxItems 200
-   */
-  target_scenario_keys: string[];
-  /** @maxItems 200 */
-  protected_scenario_keys?: string[];
-  /** @minItems 1 */
-  surfaces: AgentFixLaunchApiSurfacesItem[];
-  locked_paths?: string[];
-  /**
-   * @minimum 1
-   * @maximum 50000
-   */
-  budget_credits: number;
-  /**
-   * @minimum 1
-   * @maximum 1440
-   */
-  max_minutes: number;
-}
-
-export interface AgentFixLaunchSourceRunApi {
-  id: string;
-  number: number;
-  /** @minLength 1 */
-  state: string;
-  /** @minLength 1 */
-  finished_at: string;
-}
-
-export interface AgentFixLaunchEnvironmentApi {
-  id: string;
-  /** @minLength 1 */
-  name: string;
-  version: number;
-}
-
-export interface AgentFixLaunchScenarioApi {
-  /** @minLength 1 */
-  key: string;
-  /** @minLength 1 */
-  name: string;
-  passed: boolean;
-  failing_sub_goals: string[];
-}
-
-export interface AgentFixLaunchSuggestedApi {
-  target_scenario_keys: string[];
-  protected_scenario_keys: string[];
-}
-
-export type AgentFixLaunchSurfaceApiId =
-  (typeof AgentFixLaunchSurfaceApiId)[keyof typeof AgentFixLaunchSurfaceApiId];
-
-export const AgentFixLaunchSurfaceApiId = {
-  prompt: "prompt",
-  tools: "tools",
-  settings: "settings",
-  code: "code",
-} as const;
-
-export interface AgentFixLaunchSurfaceApi {
-  id: AgentFixLaunchSurfaceApiId;
-  /** @minLength 1 */
-  label: string;
-  allowed: boolean;
-  /** @minLength 1 */
-  reason: string;
-}
-
-export type AgentFixLaunchDefaultsApiSurfacesItem =
-  (typeof AgentFixLaunchDefaultsApiSurfacesItem)[keyof typeof AgentFixLaunchDefaultsApiSurfacesItem];
-
-export const AgentFixLaunchDefaultsApiSurfacesItem = {
-  prompt: "prompt",
-  tools: "tools",
-  settings: "settings",
-  code: "code",
-} as const;
-
-export interface AgentFixLaunchDefaultsApi {
-  surfaces: AgentFixLaunchDefaultsApiSurfacesItem[];
-  budget_credits: number;
-  max_minutes: number;
-}
-
-export interface AgentFixLaunchLimitsApi {
-  budget_credits_max: number;
-  max_minutes_max: number;
-  scenarios_min: number;
-  scenarios_max: number;
-}
-
-export interface AgentFixLaunchOptionsApi {
-  source_run: AgentFixLaunchSourceRunApi;
-  environment: AgentFixLaunchEnvironmentApi;
-  agent: AgentFixAgentApi;
-  scenarios: AgentFixLaunchScenarioApi[];
-  suggested: AgentFixLaunchSuggestedApi;
-  surfaces: AgentFixLaunchSurfaceApi[];
-  defaults: AgentFixLaunchDefaultsApi;
-  limits: AgentFixLaunchLimitsApi;
-  blocked: AgentFixFailureApi;
-}
-
-export type AgentFixRunDetailApiState =
-  (typeof AgentFixRunDetailApiState)[keyof typeof AgentFixRunDetailApiState];
-
-export const AgentFixRunDetailApiState = {
-  queued: "queued",
-  running: "running",
-  stopping: "stopping",
-  ready: "ready",
-  no_improvement: "no_improvement",
-  not_reproduced: "not_reproduced",
-  out_of_budget: "out_of_budget",
-  stopped: "stopped",
-  failed: "failed",
-} as const;
-
-/**
- * A finished fix is done, whatever the engine last said.
- */
-export type AgentFixRunDetailApiStep =
-  (typeof AgentFixRunDetailApiStep)[keyof typeof AgentFixRunDetailApiStep];
-
-export const AgentFixRunDetailApiStep = {
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
-export interface AgentFixEvalWarningApi {
-  /** @minLength 1 */
-  name: string;
-  pass_rate: number;
-  base_pass_rate: number;
-  trials: number;
-  base_trials: number;
-}
-
-export interface AgentFixRunDetailApi {
-  readonly id?: string;
-  number: number;
-  environment_id: string;
-  environment?: AgentFixEnvironmentApi;
-  source_run_id: string;
-  source_run_number: number;
-  base_agent_version_id: string;
-  agent?: AgentFixAgentApi;
-  state?: AgentFixRunDetailApiState;
-  /** @maxLength 32 */
-  stage?: string;
-  /** A finished fix is done, whatever the engine last said. */
-  readonly step?: AgentFixRunDetailApiStep;
-  plan: AgentFixPlanApi;
-  diagnosis: AgentFixDiagnosisApi;
-  request: AgentFixRequestApi;
-  spent_credits: number;
-  committed_credits: number;
-  report: AgentFixReportApi;
-  failure: AgentFixFailureApi;
-  retried_from_id: string;
-  readonly retryable?: boolean;
-  readonly limited_validation?: boolean;
-  /** The base version's runs; each candidate lists its own. */
-  readonly check_runs?: readonly AgentFixCheckRunApi[];
-  candidates: AgentFixCandidateApi[];
-  started_at?: string;
-  finished_at?: string;
-  readonly created_at?: string;
-  readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
-}
-
-export interface AgentFixShipApi {
-  /** @maxLength 2000 */
-  override_reason?: string;
-}
-
-export interface AgentFixMakeDefaultApi {
-  /** @minLength 1 */
-  outcome: string;
-}
-
-export interface AgentFixPullRequestApi {
-  /** @minLength 1 */
-  pull_request_url: string;
 }
 
 export type AgentPromptOptimiserRunListApiOptimiserType =
@@ -18055,6 +23829,11 @@ export const CallExecutionErrorResponseApiType = {
 export type CallExecutionErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface CallExecutionErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: CallExecutionErrorResponseApiType;
   code?: string;
@@ -18599,6 +24378,12 @@ export const HarnessDraftItemApiStatus = {
   active: "active",
   discarded: "discarded",
 } as const;
+
+export interface HarnessVersionPersonApi {
+  /** @minLength 1 */
+  id: string;
+  name: string;
+}
 
 /**
  * An agent version's non-secret source facts.
@@ -20878,6 +26663,11 @@ export const LiveKitErrorResponseApiType = {
 export type LiveKitErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface LiveKitErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: LiveKitErrorResponseApiType;
   code?: string;
@@ -20988,6 +26778,9 @@ export interface ValidateLiveKitCredentialsRequestApi {
 export interface ValidateLiveKitCredentialsResultApi {
   valid: boolean;
   error?: string;
+  verified?: boolean;
+  skipped?: boolean;
+  message?: string;
 }
 
 export interface ValidateLiveKitCredentialsResponseApi {
@@ -21642,6 +27435,11 @@ export const RunTestErrorResponseApiType = {
 export type RunTestErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface RunTestErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: RunTestErrorResponseApiType;
   code?: string;
@@ -21736,6 +27534,17 @@ export interface TestExecutionApi {
   readonly agent_definition_used_id?: string;
   readonly calls_attempted?: string;
   readonly calls_connected_percentage?: string;
+}
+
+export interface TestExecutionListPageApi {
+  readonly count?: number;
+  /** @minLength 1 */
+  readonly next?: string;
+  /** @minLength 1 */
+  readonly previous?: string;
+  readonly results?: readonly TestExecutionApi[];
+  readonly total_pages?: number;
+  readonly current_page?: number;
 }
 
 /**
@@ -22025,6 +27834,11 @@ export const ErrorResponseApiType = {
 export type ErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface ErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: ErrorResponseApiType;
   code?: string;
@@ -23159,6 +28973,11 @@ export const ScenarioErrorResponseApiType = {
 export type ScenarioErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface ScenarioErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: ScenarioErrorResponseApiType;
   code?: string;
@@ -25040,6 +30859,11 @@ export const ApiErrorResponseApiType = {
 export type ApiErrorResponseApiDetails = { [key: string]: string[] };
 
 export interface ApiErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: ApiErrorResponseApiType;
   code?: string;
@@ -25520,7 +31344,7 @@ export interface DashboardApi {
   updated_by?: UserApi;
   readonly created_at?: string;
   readonly updated_at?: string;
-  readonly widget_count?: string;
+  readonly widget_count?: number;
 }
 
 export interface DashboardCreateUpdateApi {
@@ -25530,6 +31354,64 @@ export interface DashboardCreateUpdateApi {
    */
   name: string;
   description?: string;
+}
+
+/**
+ * Saved query in the same shape as the dashboard query request: time_range and metrics are required once any metric is set, with optional workflow, project_ids, granularity, filters, and breakdowns.
+ */
+export type DashboardWidgetApiQueryConfig = { [key: string]: unknown };
+
+/**
+ * Chart presentation. chart_type must be one of line, stacked_line, column, stacked_column, bar, stacked_bar, pie, table, or metric.
+ */
+export type DashboardWidgetApiChartConfig = { [key: string]: unknown };
+
+export interface DashboardWidgetApi {
+  readonly id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name?: string;
+  description?: string;
+  /**
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  position?: number;
+  /**
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  width?: number;
+  /**
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  height?: number;
+  /** Saved query in the same shape as the dashboard query request: time_range and metrics are required once any metric is set, with optional workflow, project_ids, granularity, filters, and breakdowns. */
+  query_config?: DashboardWidgetApiQueryConfig;
+  /** Chart presentation. chart_type must be one of line, stacked_line, column, stacked_column, bar, stacked_bar, pie, table, or metric. */
+  chart_config?: DashboardWidgetApiChartConfig;
+  readonly created_by?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface DashboardDetailApi {
+  readonly id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  description?: string;
+  readonly workspace?: string;
+  created_by?: UserApi;
+  updated_by?: UserApi;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  readonly widgets?: readonly DashboardWidgetApi[];
 }
 
 export type DashboardFilterValueOptionApiType =
@@ -26407,48 +32289,6 @@ export interface DashboardQueryApiResponseApi {
   result: DashboardQueryResultApi;
 }
 
-/**
- * Saved query in the same shape as the dashboard query request: time_range and metrics are required once any metric is set, with optional workflow, project_ids, granularity, filters, and breakdowns.
- */
-export type DashboardWidgetApiQueryConfig = { [key: string]: unknown };
-
-/**
- * Chart presentation. chart_type must be one of line, stacked_line, column, stacked_column, bar, stacked_bar, pie, table, or metric.
- */
-export type DashboardWidgetApiChartConfig = { [key: string]: unknown };
-
-export interface DashboardWidgetApi {
-  readonly id?: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name?: string;
-  description?: string;
-  /**
-   * @minimum -2147483648
-   * @maximum 2147483647
-   */
-  position?: number;
-  /**
-   * @minimum -2147483648
-   * @maximum 2147483647
-   */
-  width?: number;
-  /**
-   * @minimum -2147483648
-   * @maximum 2147483647
-   */
-  height?: number;
-  /** Saved query in the same shape as the dashboard query request: time_range and metrics are required once any metric is set, with optional workflow, project_ids, granularity, filters, and breakdowns. */
-  query_config?: DashboardWidgetApiQueryConfig;
-  /** Chart presentation. chart_type must be one of line, stacked_line, column, stacked_column, bar, stacked_bar, pie, table, or metric. */
-  chart_config?: DashboardWidgetApiChartConfig;
-  readonly created_by?: string;
-  readonly created_at?: string;
-  readonly updated_at?: string;
-}
-
 export interface DashboardPreviewQueryApi {
   query_config: DashboardQueryApi;
   /** Deprecated compatibility parameter; accepted but ignored. The response explicitly labels exact, rollup, or unavailable provenance. */
@@ -26458,22 +32298,6 @@ export interface DashboardPreviewQueryApi {
 export interface DashboardSampleOptInApi {
   /** Deprecated compatibility parameter; accepted but ignored. The response explicitly labels exact, rollup, or unavailable provenance. */
   allow_sampled?: boolean;
-}
-
-export interface DashboardDetailApi {
-  readonly id?: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-  description?: string;
-  readonly workspace?: string;
-  created_by?: UserApi;
-  updated_by?: UserApi;
-  readonly created_at?: string;
-  readonly updated_at?: string;
-  readonly widgets?: string;
 }
 
 export type ObserveDatasetApiModelType =
@@ -26520,6 +32344,95 @@ export interface ObserveDatasetApi {
   model_type?: ObserveDatasetApiModelType;
   source?: ObserveDatasetApiSource;
   readonly user?: string;
+}
+
+export type AddToExistingDatasetObserveApiMappingConfigItem = {
+  [key: string]: string;
+};
+
+export type AddToExistingDatasetObserveApiNewMappingConfigItem = {
+  [key: string]: string;
+};
+
+export interface AddToExistingDatasetObserveApi {
+  span_ids?: string[];
+  trace_ids?: string[];
+  select_all?: boolean;
+  project?: string;
+  mapping_config?: AddToExistingDatasetObserveApiMappingConfigItem[];
+  new_mapping_config?: AddToExistingDatasetObserveApiNewMappingConfigItem[];
+  dataset_id: string;
+}
+
+export interface DatasetImportResultApi {
+  dataset_id: string;
+  /** @minLength 1 */
+  dataset_name?: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface DatasetImportResponseApi {
+  result: DatasetImportResultApi;
+}
+
+export type AddToNewDatasetObserveApiMappingConfigItem = {
+  [key: string]: string;
+};
+
+export interface AddToNewDatasetObserveApi {
+  span_ids?: string[];
+  trace_ids?: string[];
+  mapping_config: AddToNewDatasetObserveApiMappingConfigItem[];
+  /** @minLength 1 */
+  new_dataset_name: string;
+  select_all?: boolean;
+  project?: string;
+}
+
+export type DatasetSourcePreviewApiSourceKind =
+  (typeof DatasetSourcePreviewApiSourceKind)[keyof typeof DatasetSourcePreviewApiSourceKind];
+
+export const DatasetSourcePreviewApiSourceKind = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+} as const;
+
+export interface DatasetSourcePreviewApi {
+  project: string;
+  source_kind: DatasetSourcePreviewApiSourceKind;
+  failures_only?: boolean;
+  /** @maxItems 200 */
+  trace_ids?: string[];
+  /** @maxItems 200 */
+  span_ids?: string[];
+  /** @maxItems 200 */
+  session_ids?: string[];
+}
+
+export interface DatasetSourceItemApi {
+  /** @minLength 1 */
+  span_id: string;
+  /** @minLength 1 */
+  trace_id: string;
+  /** @minLength 1 */
+  session_id: string;
+  /** @minLength 1 */
+  name: string;
+  start_time: string;
+}
+
+export interface DatasetSourceResultApi {
+  items: DatasetSourceItemApi[];
+  limited: boolean;
+  limit: number;
+}
+
+export interface DatasetSourceResponseApi {
+  result: DatasetSourceResultApi;
 }
 
 /**
@@ -27641,10 +33554,10 @@ export interface TracesAggregatesApi {
   total_traces: number;
   failing_traces: number;
   passing_traces: number;
-  avg_score: number | null;
+  avg_score: number;
   p50_latency: number;
   p95_latency: number;
-  avg_turns: number | null;
+  avg_turns: number;
 }
 
 export interface TracesListRowApi {
@@ -29532,6 +35445,11 @@ export const PageDepthExceededErrorApiCode = {
 export type PageDepthExceededErrorApiDetails = { [key: string]: string[] };
 
 export interface PageDepthExceededErrorApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: PageDepthExceededErrorApiType;
   code: PageDepthExceededErrorApiCode;
@@ -29636,6 +35554,321 @@ export interface ObservationSpanDetailResponseApi {
   result: ObservationSpanDetailResultApi;
 }
 
+export type OmegaAgentCurveWindowApiTimezone =
+  (typeof OmegaAgentCurveWindowApiTimezone)[keyof typeof OmegaAgentCurveWindowApiTimezone];
+
+export const OmegaAgentCurveWindowApiTimezone = {
+  UTC: "UTC",
+} as const;
+
+export interface OmegaAgentCurveWindowApi {
+  startDate: string;
+  endDate: string;
+  timezone: OmegaAgentCurveWindowApiTimezone;
+}
+
+export type OmegaAgentCurveMetricApiReason =
+  (typeof OmegaAgentCurveMetricApiReason)[keyof typeof OmegaAgentCurveMetricApiReason];
+
+export const OmegaAgentCurveMetricApiReason = {
+  no_runs: "no_runs",
+  no_priced_runs: "no_priced_runs",
+  no_model_calls: "no_model_calls",
+  charged_nothing: "charged_nothing",
+  no_completed_runs: "no_completed_runs",
+  under_one_millisecond: "under_one_millisecond",
+  too_few_runs: "too_few_runs",
+  no_previous_version: "no_previous_version",
+} as const;
+
+export interface OmegaAgentCurveMetricApi {
+  value: number;
+  /** @minimum 0 */
+  n: number;
+  reason: OmegaAgentCurveMetricApiReason;
+}
+
+export interface OmegaAgentCurveSummaryApi {
+  /** @minimum 0 */
+  n: number;
+  /** @minimum 0 */
+  completed: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  unfinished: number;
+  /** @minimum 0 */
+  pricedRuns: number;
+  /** @minimum 0 */
+  unpricedRuns: number;
+  /** @minimum 0 */
+  approvalWaitExcludedMs: number;
+  outcomeSuccessRate: OmegaAgentCurveMetricApi;
+  totalCostUsd: OmegaAgentCurveMetricApi;
+  costPerRunUsd: OmegaAgentCurveMetricApi;
+  costPer1kRunsUsd: OmegaAgentCurveMetricApi;
+  p50LatencyMs: OmegaAgentCurveMetricApi;
+  p95LatencyMs: OmegaAgentCurveMetricApi;
+}
+
+export interface OmegaAgentCurveVersionApi {
+  /** @minimum 0 */
+  n: number;
+  /** @minimum 0 */
+  completed: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  unfinished: number;
+  /** @minimum 0 */
+  pricedRuns: number;
+  /** @minimum 0 */
+  unpricedRuns: number;
+  /** @minimum 0 */
+  approvalWaitExcludedMs: number;
+  outcomeSuccessRate: OmegaAgentCurveMetricApi;
+  totalCostUsd: OmegaAgentCurveMetricApi;
+  costPerRunUsd: OmegaAgentCurveMetricApi;
+  costPer1kRunsUsd: OmegaAgentCurveMetricApi;
+  p50LatencyMs: OmegaAgentCurveMetricApi;
+  p95LatencyMs: OmegaAgentCurveMetricApi;
+  version: number;
+  firstDay: string;
+  lastDay: string;
+}
+
+export interface OmegaAgentCurvePointApi {
+  /** @minimum 0 */
+  n: number;
+  /** @minimum 0 */
+  completed: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  unfinished: number;
+  /** @minimum 0 */
+  pricedRuns: number;
+  /** @minimum 0 */
+  unpricedRuns: number;
+  /** @minimum 0 */
+  approvalWaitExcludedMs: number;
+  outcomeSuccessRate: OmegaAgentCurveMetricApi;
+  totalCostUsd: OmegaAgentCurveMetricApi;
+  costPerRunUsd: OmegaAgentCurveMetricApi;
+  costPer1kRunsUsd: OmegaAgentCurveMetricApi;
+  p50LatencyMs: OmegaAgentCurveMetricApi;
+  p95LatencyMs: OmegaAgentCurveMetricApi;
+  day: string;
+  version: number;
+}
+
+export type OmegaAgentCurveTileApiReason =
+  (typeof OmegaAgentCurveTileApiReason)[keyof typeof OmegaAgentCurveTileApiReason];
+
+export const OmegaAgentCurveTileApiReason = {
+  no_runs: "no_runs",
+  no_priced_runs: "no_priced_runs",
+  no_model_calls: "no_model_calls",
+  charged_nothing: "charged_nothing",
+  no_completed_runs: "no_completed_runs",
+  under_one_millisecond: "under_one_millisecond",
+  too_few_runs: "too_few_runs",
+  no_previous_version: "no_previous_version",
+} as const;
+
+export type OmegaAgentCurveTileApiDeltaReason =
+  (typeof OmegaAgentCurveTileApiDeltaReason)[keyof typeof OmegaAgentCurveTileApiDeltaReason];
+
+export const OmegaAgentCurveTileApiDeltaReason = {
+  no_runs: "no_runs",
+  no_priced_runs: "no_priced_runs",
+  no_model_calls: "no_model_calls",
+  charged_nothing: "charged_nothing",
+  no_completed_runs: "no_completed_runs",
+  under_one_millisecond: "under_one_millisecond",
+  too_few_runs: "too_few_runs",
+  no_previous_version: "no_previous_version",
+} as const;
+
+export interface OmegaAgentCurveTileApi {
+  value: number;
+  /** @minimum 0 */
+  n: number;
+  reason: OmegaAgentCurveTileApiReason;
+  previousValue: number;
+  /** @minimum 0 */
+  previousN: number;
+  delta: number;
+  deltaReason: OmegaAgentCurveTileApiDeltaReason;
+}
+
+export interface OmegaAgentCurveTilesApi {
+  costPer1kRunsUsd: OmegaAgentCurveTileApi;
+  p50LatencyMs: OmegaAgentCurveTileApi;
+  outcomeSuccessRate: OmegaAgentCurveTileApi;
+}
+
+export interface OmegaAgentCurveOverviewApi {
+  version: number;
+  previousVersion: number;
+  tiles: OmegaAgentCurveTilesApi;
+}
+
+export interface OmegaAgentCurvesResultApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  agentId: string;
+  projectId: string;
+  window: OmegaAgentCurveWindowApi;
+  /** @minimum 1 */
+  minimumN: number;
+  totals: OmegaAgentCurveSummaryApi;
+  versions: OmegaAgentCurveVersionApi[];
+  points: OmegaAgentCurvePointApi[];
+  overview: OmegaAgentCurveOverviewApi;
+}
+
+export interface OmegaAgentCurvesResponseApi {
+  status?: boolean;
+  result: OmegaAgentCurvesResultApi;
+}
+
+export interface OmegaAgentObserveRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  name: string;
+}
+
+export type OmegaDeploymentObserveAlertApiKind =
+  (typeof OmegaDeploymentObserveAlertApiKind)[keyof typeof OmegaDeploymentObserveAlertApiKind];
+
+export const OmegaDeploymentObserveAlertApiKind = {
+  errors_spike: "errors_spike",
+  daily_tokens: "daily_tokens",
+} as const;
+
+export interface OmegaDeploymentObserveAlertApi {
+  id: string;
+  kind: OmegaDeploymentObserveAlertApiKind;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  metricType: string;
+  /** @minLength 1 */
+  thresholdType: string;
+  criticalThreshold: number;
+  warningThreshold: number;
+  /** @minimum 1 */
+  alertFrequencyMinutes: number;
+  isMuted: boolean;
+}
+
+export interface OmegaDeploymentObserveUpgradeCtaApi {
+  /** @minLength 1 */
+  text: string;
+  /** @minLength 1 */
+  plan: string;
+}
+
+export interface OmegaDeploymentObserveAlertsDeferredApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+  /** @minimum 1 */
+  needed: number;
+  limit: number;
+  /** @minimum 0 */
+  currentUsage: number;
+  upgradeCta: OmegaDeploymentObserveUpgradeCtaApi;
+}
+
+export type OmegaAgentObserveMistakesApiStatus =
+  (typeof OmegaAgentObserveMistakesApiStatus)[keyof typeof OmegaAgentObserveMistakesApiStatus];
+
+export const OmegaAgentObserveMistakesApiStatus = {
+  on: "on",
+  off: "off",
+} as const;
+
+export type OmegaAgentObserveMistakesApiReason =
+  (typeof OmegaAgentObserveMistakesApiReason)[keyof typeof OmegaAgentObserveMistakesApiReason];
+
+export const OmegaAgentObserveMistakesApiReason = {
+  not_on_plan: "not_on_plan",
+  turned_off: "turned_off",
+} as const;
+
+export interface OmegaAgentObserveMistakesApi {
+  status: OmegaAgentObserveMistakesApiStatus;
+  samplingRate: number;
+  reason: OmegaAgentObserveMistakesApiReason;
+  /** @minLength 1 */
+  reasonCode: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface OmegaAgentObserveResultApi {
+  projectId: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  projectName: string;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  agentName: string;
+  alerts: OmegaDeploymentObserveAlertApi[];
+  alertsDeferred: OmegaDeploymentObserveAlertsDeferredApi;
+  mistakes: OmegaAgentObserveMistakesApi;
+}
+
+export interface OmegaAgentObserveResponseApi {
+  status?: boolean;
+  result: OmegaAgentObserveResultApi;
+}
+
+export interface OmegaAgentObserveUnlinkResultApi {
+  unlinked: boolean;
+}
+
+export interface OmegaAgentObserveUnlinkResponseApi {
+  status?: boolean;
+  result: OmegaAgentObserveUnlinkResultApi;
+}
+
+export interface OmegaDeploymentObserveRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 40
+   * @pattern ^[a-z][a-z0-9-]{0,39}$
+   */
+  name: string;
+}
+
+export interface OmegaDeploymentObserveResultApi {
+  projectId: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  projectName: string;
+  alerts: OmegaDeploymentObserveAlertApi[];
+  alertsDeferred: OmegaDeploymentObserveAlertsDeferredApi;
+}
+
+export interface OmegaDeploymentObserveResponseApi {
+  status?: boolean;
+  result: OmegaDeploymentObserveResultApi;
+}
+
 export type ProjectVersionApiMetadata = { [key: string]: unknown };
 
 export type ProjectVersionApiError = { [key: string]: unknown };
@@ -29659,6 +35892,89 @@ export interface ProjectVersionApi {
   /** @minLength 1 */
   readonly version?: string;
   annotations?: string;
+}
+
+export type ProjectTableRowApiModelType =
+  (typeof ProjectTableRowApiModelType)[keyof typeof ProjectTableRowApiModelType];
+
+export const ProjectTableRowApiModelType = {
+  Numeric: "Numeric",
+  ScoreCategorical: "ScoreCategorical",
+  Ranking: "Ranking",
+  BinaryClassification: "BinaryClassification",
+  Regression: "Regression",
+  ObjectDetection: "ObjectDetection",
+  Segmentation: "Segmentation",
+  GenerativeLLM: "GenerativeLLM",
+  GenerativeImage: "GenerativeImage",
+  GenerativeVideo: "GenerativeVideo",
+  TTS: "TTS",
+  STT: "STT",
+  MultiModal: "MultiModal",
+} as const;
+
+export type ProjectTableRowApiTraceType =
+  (typeof ProjectTableRowApiTraceType)[keyof typeof ProjectTableRowApiTraceType];
+
+export const ProjectTableRowApiTraceType = {
+  experiment: "experiment",
+  observe: "observe",
+} as const;
+
+export type ProjectTableRowApiSource =
+  (typeof ProjectTableRowApiSource)[keyof typeof ProjectTableRowApiSource];
+
+export const ProjectTableRowApiSource = {
+  demo: "demo",
+  prototype: "prototype",
+  simulator: "simulator",
+} as const;
+
+export type ProjectTableRowApiMetadata = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ProjectTableRowApiConfig = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ProjectTableRowApiSessionConfig = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ProjectTableRowApiTags = { [key: string]: unknown };
+
+export interface ProjectTableRowApi {
+  readonly id?: string;
+  model_type: ProjectTableRowApiModelType;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  trace_type: ProjectTableRowApiTraceType;
+  metadata?: ProjectTableRowApiMetadata;
+  readonly organization?: string;
+  readonly workspace?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  /** Any valid JSON value. */
+  config?: ProjectTableRowApiConfig;
+  source?: ProjectTableRowApiSource;
+  /** Any valid JSON value. */
+  session_config?: ProjectTableRowApiSessionConfig;
+  /** Any valid JSON value. */
+  tags?: ProjectTableRowApiTags;
+  trace_count: number;
+  run_count: number;
+}
+
+export interface ProjectTableResultApi {
+  readonly projects?: readonly ProjectTableRowApi[];
+  total_count: number;
 }
 
 export type ProjectApiModelType =
@@ -30703,6 +37019,11 @@ export const SharedLinkResolveErrorApiType = {
 export type SharedLinkResolveErrorApiDetails = { [key: string]: string[] };
 
 export interface SharedLinkResolveErrorApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: SharedLinkResolveErrorApiType;
   code?: string;
@@ -31205,6 +37526,11 @@ export interface ObserveGraphDataErrorResultApi {
 }
 
 export interface ObserveGraphDataErrorResponseApi {
+  /**
+   * Personal-key issuer URL, only for a verified retired credential.
+   * @minLength 1
+   */
+  create_url?: string;
   status?: boolean;
   type?: ObserveGraphDataErrorResponseApiType;
   code?: string;
@@ -34201,6 +40527,664 @@ export interface ActivationResponseApi {
   scope: ActivationResponseApiScope;
 }
 
+export type DeliveryOutApiLastAttempt = { [key: string]: string };
+
+export interface DeliveryOutApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  event_id: string;
+  /** @minLength 1 */
+  event_type: string;
+  /** @minLength 1 */
+  subject: string;
+  /** @minLength 1 */
+  endpoint_id: string;
+  seq: number;
+  /** @minLength 1 */
+  status: string;
+  attempts_count: number;
+  is_test: boolean;
+  last_attempt: DeliveryOutApiLastAttempt;
+  /** @minLength 1 */
+  body?: string;
+}
+
+export interface DeliveryPageOutApi {
+  results: DeliveryOutApi[];
+  /** @minLength 1 */
+  next_cursor: string;
+}
+
+export interface WebhookDeliveryPageResponseApi {
+  result: DeliveryPageOutApi;
+  status?: boolean;
+}
+
+export type BulkRedeliverRequestApiStatus =
+  (typeof BulkRedeliverRequestApiStatus)[keyof typeof BulkRedeliverRequestApiStatus];
+
+export const BulkRedeliverRequestApiStatus = {
+  failed: "failed",
+  succeeded: "succeeded",
+  skipped: "skipped",
+} as const;
+
+export type BulkRedeliverRequestApiEventType =
+  (typeof BulkRedeliverRequestApiEventType)[keyof typeof BulkRedeliverRequestApiEventType];
+
+export const BulkRedeliverRequestApiEventType = {
+  promptversioncreated: "prompt.version.created",
+  promptlabelchanged: "prompt.label.changed",
+  deploymentruncompleted: "deployment.run.completed",
+  deploymentrunfailed: "deployment.run.failed",
+} as const;
+
+export interface BulkRedeliverRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  endpoint: string;
+  status: BulkRedeliverRequestApiStatus;
+  event_type?: BulkRedeliverRequestApiEventType;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  subject?: string;
+  since?: string;
+  until?: string;
+  /** @minimum 1 */
+  seq_from?: number;
+  /** @minimum 1 */
+  seq_to?: number;
+  dry_run?: boolean;
+}
+
+export interface BulkRedeliverOutApi {
+  count: number;
+  queued: number;
+  expired: number;
+  dry_run: boolean;
+}
+
+export interface WebhookBulkRedeliverResponseApi {
+  result: BulkRedeliverOutApi;
+  status?: boolean;
+}
+
+export type DeliveryDetailOutApiLastAttempt = { [key: string]: string };
+
+export type DeliveryDetailOutApiRequestHeaders = { [key: string]: string };
+
+export type DeliveryDetailOutApiAttemptsItem = { [key: string]: string };
+
+export interface DeliveryDetailOutApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  event_id: string;
+  /** @minLength 1 */
+  event_type: string;
+  /** @minLength 1 */
+  subject: string;
+  /** @minLength 1 */
+  endpoint_id: string;
+  seq: number;
+  /** @minLength 1 */
+  status: string;
+  attempts_count: number;
+  is_test: boolean;
+  last_attempt: DeliveryDetailOutApiLastAttempt;
+  /** @minLength 1 */
+  body?: string;
+  request_headers: DeliveryDetailOutApiRequestHeaders;
+  attempts: DeliveryDetailOutApiAttemptsItem[];
+}
+
+export interface WebhookDeliveryDetailResponseApi {
+  result: DeliveryDetailOutApi;
+  status?: boolean;
+}
+
+export interface RedeliverOutApi {
+  /** @minLength 1 */
+  delivery_id: string;
+  queued: boolean;
+  attempt: number;
+}
+
+export interface WebhookRedeliverResponseApi {
+  result: RedeliverOutApi;
+  status?: boolean;
+}
+
+export type EgressOutApiRegionsItem = { [key: string]: string };
+
+export interface EgressOutApi {
+  hosted: boolean;
+  regions: EgressOutApiRegionsItem[];
+}
+
+export interface WebhookEgressResponseApi {
+  result: EgressOutApi;
+  status?: boolean;
+}
+
+export type SubscriptionOutApiFilters = { [key: string]: string };
+
+export interface SubscriptionOutApi {
+  /** @minLength 1 */
+  event_type: string;
+  filters: SubscriptionOutApiFilters;
+}
+
+export type EndpointOutApiHealth = { [key: string]: string };
+
+export type EndpointOutApiSecretsItem = { [key: string]: string };
+
+export type EndpointOutApiBacklog = { [key: string]: string };
+
+export interface EndpointOutApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  /** @minLength 1 */
+  workspace_id: string;
+  org_wide: boolean;
+  url_host: string;
+  /**
+   * Query values masked; admins only
+   * @minLength 1
+   */
+  url: string;
+  header_names: string[];
+  subscriptions: SubscriptionOutApi[];
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  disabled_reason: string;
+  disabled_at: string;
+  /** @minLength 1 */
+  payload_mode: string;
+  include_people_names: boolean;
+  accepts_run_targeting: boolean;
+  /** @minLength 1 */
+  api_version: string;
+  timeout_ms: number;
+  rate_limit_per_s: number;
+  max_in_flight: number;
+  max_age_s: number;
+  /** @minLength 1 */
+  owner_id: string;
+  created_at: string;
+  updated_at: string;
+  can_manage: boolean;
+  health: EndpointOutApiHealth;
+  secrets?: EndpointOutApiSecretsItem[];
+  backlog?: EndpointOutApiBacklog;
+}
+
+export interface EndpointListOutApi {
+  results: EndpointOutApi[];
+}
+
+export interface WebhookEndpointListResponseApi {
+  result: EndpointListOutApi;
+  status?: boolean;
+}
+
+export type EndpointCreateRequestApiKind =
+  (typeof EndpointCreateRequestApiKind)[keyof typeof EndpointCreateRequestApiKind];
+
+export const EndpointCreateRequestApiKind = {
+  http: "http",
+} as const;
+
+export type EndpointCreateRequestApiHeaders = { [key: string]: string };
+
+export type EndpointCreateRequestApiPayloadMode =
+  (typeof EndpointCreateRequestApiPayloadMode)[keyof typeof EndpointCreateRequestApiPayloadMode];
+
+export const EndpointCreateRequestApiPayloadMode = {
+  thin: "thin",
+  full: "full",
+} as const;
+
+export type SubscriptionInputApiFilters = { [key: string]: string };
+
+export interface SubscriptionInputApi {
+  /**
+   * A catalog type or prompt.* / deployment.run.*
+   * @minLength 1
+   * @maxLength 100
+   */
+  event_type: string;
+  filters?: SubscriptionInputApiFilters;
+}
+
+export interface EndpointCreateRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  name: string;
+  /** @maxLength 2000 */
+  description?: string;
+  /**
+   * @minLength 1
+   * @maxLength 4096
+   */
+  url: string;
+  kind?: EndpointCreateRequestApiKind;
+  /** Absent: the current workspace. Null: org-wide (org admins). */
+  workspace_id?: string;
+  subscriptions: SubscriptionInputApi[];
+  headers?: EndpointCreateRequestApiHeaders;
+  payload_mode?: EndpointCreateRequestApiPayloadMode;
+  include_people_names?: boolean;
+  accepts_run_targeting?: boolean;
+  /**
+   * @minimum 5000
+   * @maximum 30000
+   */
+  timeout_ms?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  rate_limit_per_s?: number;
+  /**
+   * @minimum 1
+   * @maximum 16
+   */
+  max_in_flight?: number;
+  /**
+   * @minimum 3600
+   * @maximum 259200
+   */
+  max_age_s?: number;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  secret?: string;
+}
+
+export type EndpointCreatedOutApiWarningsItem = { [key: string]: string };
+
+export interface EndpointCreatedOutApi {
+  endpoint: EndpointOutApi;
+  /**
+   * whsec_…, shown once
+   * @minLength 1
+   */
+  secret: string;
+  warnings: EndpointCreatedOutApiWarningsItem[];
+}
+
+export interface WebhookEndpointCreatedResponseApi {
+  result: EndpointCreatedOutApi;
+  status?: boolean;
+}
+
+export interface WebhookEndpointResponseApi {
+  result: EndpointOutApi;
+  status?: boolean;
+}
+
+export type EndpointUpdateRequestApiHeaders = { [key: string]: string };
+
+export type EndpointUpdateRequestApiPayloadMode =
+  (typeof EndpointUpdateRequestApiPayloadMode)[keyof typeof EndpointUpdateRequestApiPayloadMode];
+
+export const EndpointUpdateRequestApiPayloadMode = {
+  thin: "thin",
+  full: "full",
+} as const;
+
+export interface EndpointUpdateRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  name?: string;
+  /** @maxLength 2000 */
+  description?: string;
+  /**
+   * @minLength 1
+   * @maxLength 4096
+   */
+  url?: string;
+  subscriptions?: SubscriptionInputApi[];
+  headers?: EndpointUpdateRequestApiHeaders;
+  payload_mode?: EndpointUpdateRequestApiPayloadMode;
+  include_people_names?: boolean;
+  accepts_run_targeting?: boolean;
+  /**
+   * @minimum 5000
+   * @maximum 30000
+   */
+  timeout_ms?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  rate_limit_per_s?: number;
+  /**
+   * @minimum 1
+   * @maximum 16
+   */
+  max_in_flight?: number;
+  /**
+   * @minimum 3600
+   * @maximum 259200
+   */
+  max_age_s?: number;
+}
+
+/**
+ * {deleted: true, cancelled_deliveries}
+ */
+export type WebhookEndpointDeletedResponseApiResult = { [key: string]: string };
+
+export interface WebhookEndpointDeletedResponseApi {
+  /** {deleted: true, cancelled_deliveries} */
+  result: WebhookEndpointDeletedResponseApiResult;
+  status?: boolean;
+}
+
+export interface ActivityActorOutApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+/**
+ * Before and after per field; only for those who see the endpoint's URL, else null.
+ */
+export type ActivityOutApiChanges = { [key: string]: string };
+
+export type ActivityOutApiMetadata = { [key: string]: string };
+
+export interface ActivityOutApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  action: string;
+  at: string;
+  actor: ActivityActorOutApi;
+  /** No person did it (the dispatcher, a health rule, offboarding). */
+  system: boolean;
+  /** The names of the fields that changed. */
+  changed: string[];
+  /** Before and after per field; only for those who see the endpoint's URL, else null. */
+  changes: ActivityOutApiChanges;
+  metadata: ActivityOutApiMetadata;
+}
+
+export interface ActivityPageOutApi {
+  results: ActivityOutApi[];
+  /** @minLength 1 */
+  next_cursor: string;
+}
+
+export interface WebhookActivityPageResponseApi {
+  result: ActivityPageOutApi;
+  status?: boolean;
+}
+
+export interface ToggleRequestApi {
+  /** @maxLength 500 */
+  reason?: string;
+}
+
+export type ResumeRequestApiMode =
+  (typeof ResumeRequestApiMode)[keyof typeof ResumeRequestApiMode];
+
+export const ResumeRequestApiMode = {
+  send: "send",
+  skip: "skip",
+} as const;
+
+export interface ResumeRequestApi {
+  mode: ResumeRequestApiMode;
+}
+
+export interface ResumeOutApi {
+  /** @minLength 1 */
+  mode: string;
+  sent: number;
+  skipped: number;
+  past_max_age: number;
+  backlog_capped: number;
+}
+
+export interface WebhookResumeResponseApi {
+  result: ResumeOutApi;
+  status?: boolean;
+}
+
+export interface RevokeOutApi {
+  revoked_tails: string[];
+}
+
+export interface WebhookRevokePreviousResponseApi {
+  result: RevokeOutApi;
+  status?: boolean;
+}
+
+export interface RotateRequestApi {
+  /**
+   * @minimum 0
+   * @maximum 604800
+   */
+  overlap_seconds?: number;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  secret?: string;
+}
+
+export type RotateOutApiPrevious = { [key: string]: string };
+
+export interface RotateOutApi {
+  /** @minLength 1 */
+  secret: string;
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  tail: string;
+  previous: RotateOutApiPrevious;
+  revoked_tails: string[];
+}
+
+export interface WebhookRotateSecretResponseApi {
+  result: RotateOutApi;
+  status?: boolean;
+}
+
+export interface TestRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  event_type: string;
+}
+
+export interface TestOutApi {
+  /** @minLength 1 */
+  event_id: string;
+  /** @minLength 1 */
+  delivery_id: string;
+  status_code?: number;
+  /** @minLength 1 */
+  outcome?: string;
+  latency_ms?: number;
+  /** @minLength 1 */
+  response_excerpt?: string;
+}
+
+export interface WebhookTestResponseApi {
+  result: TestOutApi;
+  status?: boolean;
+}
+
+export type EventTypeOutApiSchema = { [key: string]: string };
+
+export interface EventTypeOutApi {
+  /** @minLength 1 */
+  type: string;
+  /** @minLength 1 */
+  group: string;
+  /** @minLength 1 */
+  description: string;
+  filters: string[];
+  schema: EventTypeOutApiSchema;
+}
+
+/**
+ * The schemas the per-type schemas refer to by $id (the envelope, deployment.run)
+ */
+export type EventTypesOutApiSharedSchemas = { [key: string]: string };
+
+export interface EventTypesOutApi {
+  results: EventTypeOutApi[];
+  groups: string[];
+  /** The schemas the per-type schemas refer to by $id (the envelope, deployment.run) */
+  shared_schemas: EventTypesOutApiSharedSchemas;
+}
+
+export interface WebhookEventTypesResponseApi {
+  result: EventTypesOutApi;
+  status?: boolean;
+}
+
+export type EventOutApiData = { [key: string]: string };
+
+export interface EventOutApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  type: string;
+  /** @minLength 1 */
+  api_version: string;
+  timestamp: string;
+  /** @minLength 1 */
+  workspace_id: string;
+  /** @minLength 1 */
+  subject: string;
+  data: EventOutApiData;
+  delivery_count: number;
+}
+
+export interface EventPageOutApi {
+  results: EventOutApi[];
+  /** @minLength 1 */
+  next_cursor: string;
+}
+
+export interface WebhookEventPageResponseApi {
+  result: EventPageOutApi;
+  status?: boolean;
+}
+
+export type PolicyOutApiEffective = { [key: string]: string };
+
+export interface PolicyOutApi {
+  /** @minLength 1 */
+  scope: string;
+  /** @minLength 1 */
+  workspace_id: string;
+  allowed_hosts: string[];
+  members_can_manage: boolean;
+  effective: PolicyOutApiEffective;
+  blocked_endpoint_ids?: string[];
+  /** Full-mode endpoints moved to thin because full_payload_allowed is off. */
+  downgraded_endpoint_ids?: string[];
+}
+
+export interface WebhookPolicyResponseApi {
+  result: PolicyOutApi;
+  status?: boolean;
+}
+
+export interface PolicyRequestApi {
+  allowed_hosts?: string[];
+  members_can_manage?: boolean;
+  full_payload_allowed?: boolean;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  max_endpoints_per_workspace?: number;
+  /**
+   * @minimum 7
+   * @maximum 365
+   */
+  log_retention_days?: number;
+}
+
+export interface WorkspacePolicyRequestApi {
+  allowed_hosts?: string[];
+  members_can_manage?: boolean;
+}
+
+export type PreviewRequestApiPayloadMode =
+  (typeof PreviewRequestApiPayloadMode)[keyof typeof PreviewRequestApiPayloadMode];
+
+export const PreviewRequestApiPayloadMode = {
+  thin: "thin",
+  full: "full",
+} as const;
+
+export type PreviewRequestApiHeaders = { [key: string]: string };
+
+export interface PreviewRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  event_type: string;
+  payload_mode?: PreviewRequestApiPayloadMode;
+  include_people_names?: boolean;
+  headers?: PreviewRequestApiHeaders;
+}
+
+export interface PreviewOutApi {
+  /** @minLength 1 */
+  method: string;
+  headers: string[][];
+  /** @minLength 1 */
+  body: string;
+  body_bytes: number;
+}
+
+export interface WebhookPreviewResponseApi {
+  result: PreviewOutApi;
+  status?: boolean;
+}
+
+export type DatasetBehaviorRequestApiColumnConfig = { [key: string]: unknown };
+
+export type DatasetBehaviorRequestApiDatasetConfig = { [key: string]: unknown };
+
+export interface DatasetBehaviorRequestApi {
+  dataset_name?: string;
+  column_order?: string[];
+  column_config?: DatasetBehaviorRequestApiColumnConfig;
+  dataset_config?: DatasetBehaviorRequestApiDatasetConfig;
+  /** The dataset evals new experiments preselect: the whole set, [] clears it. Omit to leave the defaults unchanged. */
+  experiment_default_eval_ids?: string[];
+}
+
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;
@@ -34215,6 +41199,10 @@ export type AccountsAwsMarketplaceVerifyTokenCreateBody = {
 
 export type AccountsGcpMarketplaceVerifyTokenCreateBody = {
   "x-gcp-marketplace-token": string;
+};
+
+export type AccountsOmegaObserveTargetListParams = {
+  project_id: string;
 };
 
 export type AccountsOrganizationMembersListParams = {
@@ -34376,11 +41364,46 @@ export type AgentPlaygroundGraphsListParams = {
   limit?: number;
 };
 
-export type AgentPlaygroundGraphsList200 = {
+export type AgentPlaygroundGraphsList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: GraphListApi[];
+};
+
+export type AgentPlaygroundGraphsList200 = {
+  status?: boolean;
+  result: AgentPlaygroundGraphsList200Result;
+};
+
+export type AgentPlaygroundGraphsCreate201 = {
+  status?: boolean;
+  result: GraphCreateApi;
+};
+
+export type AgentPlaygroundGraphsBulkDelete200 = {
+  status?: boolean;
+  result: GraphListApi;
+};
+
+export type AgentPlaygroundGraphsDatasetRead200 = {
+  status?: boolean;
+  result: CellUpdateApi;
+};
+
+export type AgentPlaygroundGraphsDatasetUpdateCell200 = {
+  status?: boolean;
+  result: CellUpdateApi;
+};
+
+export type AgentPlaygroundGraphsDatasetExecute201 = {
+  status?: boolean;
+  result: ExecuteRequestApi;
+};
+
+export type AgentPlaygroundGraphsDatasetCreateRow201 = {
+  status?: boolean;
+  result: CellUpdateApi;
 };
 
 export type AgentPlaygroundGraphsExecutionsListParams = {
@@ -34394,6 +41417,26 @@ export type AgentPlaygroundGraphsExecutionsListParams = {
   limit?: number;
 };
 
+export type AgentPlaygroundGraphsRead200 = {
+  status?: boolean;
+  result: GraphDetailApi;
+};
+
+export type AgentPlaygroundGraphsUpdate200 = {
+  status?: boolean;
+  result: GraphUpdateApi;
+};
+
+export type AgentPlaygroundGraphsPartialUpdate200 = {
+  status?: boolean;
+  result: GraphUpdateApi;
+};
+
+export type AgentPlaygroundGraphsReferenceableGraphs200 = {
+  status?: boolean;
+  result: GraphListApi;
+};
+
 export type AgentPlaygroundGraphsVersionsReadParams = {
   /**
    * A page number within the paginated result set.
@@ -34405,11 +41448,21 @@ export type AgentPlaygroundGraphsVersionsReadParams = {
   limit?: number;
 };
 
-export type AgentPlaygroundGraphsVersionsRead200 = {
+export type AgentPlaygroundGraphsVersionsRead200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: GraphListApi[];
+};
+
+export type AgentPlaygroundGraphsVersionsRead200 = {
+  status?: boolean;
+  result: AgentPlaygroundGraphsVersionsRead200Result;
+};
+
+export type AgentPlaygroundGraphsVersionsCreate201 = {
+  status?: boolean;
+  result: GraphListApi;
 };
 
 export type AgentPlaygroundGraphsVersionsReadParams = {
@@ -34423,11 +41476,51 @@ export type AgentPlaygroundGraphsVersionsReadParams = {
   limit?: number;
 };
 
-export type AgentPlaygroundGraphsVersionsRead200 = {
+export type AgentPlaygroundGraphsVersionsRead200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: GraphListApi[];
+};
+
+export type AgentPlaygroundGraphsVersionsRead200 = {
+  status?: boolean;
+  result: AgentPlaygroundGraphsVersionsRead200Result;
+};
+
+export type AgentPlaygroundGraphsVersionsUpdate200 = {
+  status?: boolean;
+  result: GraphListApi;
+};
+
+export type AgentPlaygroundGraphsVersionsPartialUpdate200 = {
+  status?: boolean;
+  result: GraphListApi;
+};
+
+export type AgentPlaygroundGraphsVersionsActivateVersion200 = {
+  status?: boolean;
+  result: GraphListApi;
+};
+
+export type AgentPlaygroundGraphsVersionsNodeConnectionsCreate201 = {
+  status?: boolean;
+  result: CreateNodeConnectionApi;
+};
+
+export type AgentPlaygroundGraphsVersionsNodesCreate201 = {
+  status?: boolean;
+  result: CreateNodeApi;
+};
+
+export type AgentPlaygroundGraphsVersionsNodesRead200 = {
+  status?: boolean;
+  result: NodeReadApi;
+};
+
+export type AgentPlaygroundGraphsVersionsNodesPartialUpdate200 = {
+  status?: boolean;
+  result: UpdateNodeApi;
 };
 
 export type AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams = {
@@ -34441,11 +41534,21 @@ export type AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams = {
   limit?: number;
 };
 
-export type AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappings200 = {
+export type AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappings200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: NodeReadApi[];
+};
+
+export type AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappings200 = {
+  status?: boolean;
+  result: AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappings200Result;
+};
+
+export type AgentPlaygroundGraphsVersionsPortsPartialUpdate200 = {
+  status?: boolean;
+  result: UpdatePortApi;
 };
 
 export type AgentPlaygroundNodeTemplatesListParams = {
@@ -34459,11 +41562,21 @@ export type AgentPlaygroundNodeTemplatesListParams = {
   limit?: number;
 };
 
-export type AgentPlaygroundNodeTemplatesList200 = {
+export type AgentPlaygroundNodeTemplatesList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: NodeTemplateListApi[];
+};
+
+export type AgentPlaygroundNodeTemplatesList200 = {
+  status?: boolean;
+  result: AgentPlaygroundNodeTemplatesList200Result;
+};
+
+export type AgentPlaygroundNodeTemplatesRead200 = {
+  status?: boolean;
+  result: NodeTemplateDetailApi;
 };
 
 export type AgentccAnalyticsCostBreakdownParams = {
@@ -34477,11 +41590,16 @@ export type AgentccAnalyticsCostBreakdownParams = {
   limit?: number;
 };
 
-export type AgentccAnalyticsCostBreakdown200 = {
+export type AgentccAnalyticsCostBreakdown200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccRequestLogApi[];
+};
+
+export type AgentccAnalyticsCostBreakdown200 = {
+  status?: boolean;
+  result: AgentccAnalyticsCostBreakdown200Result;
 };
 
 export type AgentccAnalyticsErrorBreakdownParams = {
@@ -34495,11 +41613,16 @@ export type AgentccAnalyticsErrorBreakdownParams = {
   limit?: number;
 };
 
-export type AgentccAnalyticsErrorBreakdown200 = {
+export type AgentccAnalyticsErrorBreakdown200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccRequestLogApi[];
+};
+
+export type AgentccAnalyticsErrorBreakdown200 = {
+  status?: boolean;
+  result: AgentccAnalyticsErrorBreakdown200Result;
 };
 
 export type AgentccAnalyticsGuardrailOverviewParams = {
@@ -34513,11 +41636,16 @@ export type AgentccAnalyticsGuardrailOverviewParams = {
   limit?: number;
 };
 
-export type AgentccAnalyticsGuardrailOverview200 = {
+export type AgentccAnalyticsGuardrailOverview200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccRequestLogApi[];
+};
+
+export type AgentccAnalyticsGuardrailOverview200 = {
+  status?: boolean;
+  result: AgentccAnalyticsGuardrailOverview200Result;
 };
 
 export type AgentccAnalyticsGuardrailRulesParams = {
@@ -34532,10 +41660,8 @@ export type AgentccAnalyticsGuardrailRulesParams = {
 };
 
 export type AgentccAnalyticsGuardrailRules200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: AgentccRequestLogApi[];
+  status?: boolean;
+  result: GatewayGuardrailRulesResultApi;
 };
 
 export type AgentccAnalyticsGuardrailTrendsParams = {
@@ -34549,11 +41675,16 @@ export type AgentccAnalyticsGuardrailTrendsParams = {
   limit?: number;
 };
 
-export type AgentccAnalyticsGuardrailTrends200 = {
+export type AgentccAnalyticsGuardrailTrends200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccRequestLogApi[];
+};
+
+export type AgentccAnalyticsGuardrailTrends200 = {
+  status?: boolean;
+  result: AgentccAnalyticsGuardrailTrends200Result;
 };
 
 export type AgentccAnalyticsLatencyStatsParams = {
@@ -34567,11 +41698,16 @@ export type AgentccAnalyticsLatencyStatsParams = {
   limit?: number;
 };
 
-export type AgentccAnalyticsLatencyStats200 = {
+export type AgentccAnalyticsLatencyStats200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccRequestLogApi[];
+};
+
+export type AgentccAnalyticsLatencyStats200 = {
+  status?: boolean;
+  result: AgentccAnalyticsLatencyStats200Result;
 };
 
 export type AgentccAnalyticsModelComparisonParams = {
@@ -34585,11 +41721,16 @@ export type AgentccAnalyticsModelComparisonParams = {
   limit?: number;
 };
 
-export type AgentccAnalyticsModelComparison200 = {
+export type AgentccAnalyticsModelComparison200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccRequestLogApi[];
+};
+
+export type AgentccAnalyticsModelComparison200 = {
+  status?: boolean;
+  result: AgentccAnalyticsModelComparison200Result;
 };
 
 export type AgentccAnalyticsOverviewParams = {
@@ -34606,6 +41747,11 @@ export type AgentccAnalyticsOverviewParams = {
   api_key_id?: string;
 };
 
+export type AgentccAnalyticsOverview200 = {
+  status?: boolean;
+  result: GatewayOverviewResultApi;
+};
+
 export type AgentccAnalyticsUsageTimeseriesParams = {
   /**
    * A page number within the paginated result set.
@@ -34617,11 +41763,16 @@ export type AgentccAnalyticsUsageTimeseriesParams = {
   limit?: number;
 };
 
-export type AgentccAnalyticsUsageTimeseries200 = {
+export type AgentccAnalyticsUsageTimeseries200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccRequestLogApi[];
+};
+
+export type AgentccAnalyticsUsageTimeseries200 = {
+  status?: boolean;
+  result: AgentccAnalyticsUsageTimeseries200Result;
 };
 
 export type AgentccApiKeysListParams = {
@@ -34635,11 +41786,46 @@ export type AgentccApiKeysListParams = {
   limit?: number;
 };
 
-export type AgentccApiKeysList200 = {
+export type AgentccApiKeysList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccAPIKeyApi[];
+};
+
+export type AgentccApiKeysList200 = {
+  status?: boolean;
+  result: AgentccApiKeysList200Result;
+};
+
+export type AgentccApiKeysCreate201 = {
+  status?: boolean;
+  result: AgentccAPIKeyApi;
+};
+
+export type AgentccApiKeysSync200 = {
+  status?: boolean;
+  result: AgentccAPIKeyApi;
+};
+
+export type AgentccApiKeysRead200 = {
+  status?: boolean;
+  result: AgentccAPIKeyApi;
+};
+
+export type AgentccApiKeysUpdate200 = {
+  status?: boolean;
+  result: AgentccAPIKeyApi;
+};
+
+export type AgentccApiKeysPartialUpdate200 = {
+  status?: boolean;
+  result: AgentccAPIKeyApi;
+};
+
+export type AgentccApiKeysRevoke200 = {
+  status?: boolean;
+  result: AgentccAPIKeyApi;
 };
 
 export type AgentccBlocklistsListParams = {
@@ -34653,11 +41839,85 @@ export type AgentccBlocklistsListParams = {
   limit?: number;
 };
 
-export type AgentccBlocklistsList200 = {
+export type AgentccBlocklistsList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccBlocklistApi[];
+};
+
+export type AgentccBlocklistsList200 = {
+  status?: boolean;
+  result: AgentccBlocklistsList200Result;
+};
+
+export type AgentccBlocklistsRead200 = {
+  status?: boolean;
+  result: AgentccBlocklistApi;
+};
+
+export type AgentccConnectorsCatalogListParams = {
+  /**
+   * @minLength 1
+   * @pattern ^[a-z][a-z0-9-]{0,31}$
+   */
+  category?: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  q?: string;
+  kind?: AgentccConnectorsCatalogListKind;
+  tier?: AgentccConnectorsCatalogListTier;
+  connected?: AgentccConnectorsCatalogListConnected;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+};
+
+export type AgentccConnectorsCatalogListKind =
+  (typeof AgentccConnectorsCatalogListKind)[keyof typeof AgentccConnectorsCatalogListKind];
+
+export const AgentccConnectorsCatalogListKind = {
+  vendor_mcp: "vendor_mcp",
+  rest: "rest",
+  partner: "partner",
+  vendor_local: "vendor_local",
+} as const;
+
+export type AgentccConnectorsCatalogListTier =
+  (typeof AgentccConnectorsCatalogListTier)[keyof typeof AgentccConnectorsCatalogListTier];
+
+export const AgentccConnectorsCatalogListTier = {
+  listed: "listed",
+  verified: "verified",
+  optimized: "optimized",
+} as const;
+
+export type AgentccConnectorsCatalogListConnected =
+  (typeof AgentccConnectorsCatalogListConnected)[keyof typeof AgentccConnectorsCatalogListConnected];
+
+export const AgentccConnectorsCatalogListConnected = {
+  true: "true",
+  false: "false",
+} as const;
+
+export type AgentccConnectorsOauthClientsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
 };
 
 export type AgentccCustomPropertiesListParams = {
@@ -34671,11 +41931,41 @@ export type AgentccCustomPropertiesListParams = {
   limit?: number;
 };
 
-export type AgentccCustomPropertiesList200 = {
+export type AgentccCustomPropertiesList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccCustomPropertySchemaApi[];
+};
+
+export type AgentccCustomPropertiesList200 = {
+  status?: boolean;
+  result: AgentccCustomPropertiesList200Result;
+};
+
+export type AgentccCustomPropertiesCreate200 = {
+  status?: boolean;
+  result: AgentccCustomPropertySchemaApi;
+};
+
+export type AgentccCustomPropertiesValidate200 = {
+  status?: boolean;
+  result: AgentccCustomPropertySchemaApi;
+};
+
+export type AgentccCustomPropertiesRead200 = {
+  status?: boolean;
+  result: AgentccCustomPropertySchemaApi;
+};
+
+export type AgentccCustomPropertiesUpdate200 = {
+  status?: boolean;
+  result: AgentccCustomPropertySchemaApi;
+};
+
+export type AgentccCustomPropertiesPartialUpdate200 = {
+  status?: boolean;
+  result: AgentccCustomPropertySchemaApi;
 };
 
 export type AgentccEmailAlertsListParams = {
@@ -34689,11 +41979,56 @@ export type AgentccEmailAlertsListParams = {
   limit?: number;
 };
 
-export type AgentccEmailAlertsList200 = {
+export type AgentccEmailAlertsList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccEmailAlertApi[];
+};
+
+export type AgentccEmailAlertsList200 = {
+  status?: boolean;
+  result: AgentccEmailAlertsList200Result;
+};
+
+export type AgentccEmailAlertsCreate200 = {
+  status?: boolean;
+  result: AgentccEmailAlertApi;
+};
+
+export type AgentccEmailAlertsRead200 = {
+  status?: boolean;
+  result: AgentccEmailAlertApi;
+};
+
+export type AgentccEmailAlertsUpdate200 = {
+  status?: boolean;
+  result: AgentccEmailAlertApi;
+};
+
+export type AgentccEmailAlertsPartialUpdate200 = {
+  status?: boolean;
+  result: AgentccEmailAlertApi;
+};
+
+export type AgentccEmailAlertsTest200 = {
+  status?: boolean;
+  result: AgentccEmailAlertApi;
+};
+
+export type AgentccGatewaysMcpServedToolsParams = {
+  /**
+   * @maxLength 256
+   */
+  vs?: string;
+  /**
+   * @maxLength 256
+   */
+  key_id?: string;
+  /**
+   * @maxLength 256
+   */
+  server_id?: string;
 };
 
 export type AgentccGuardrailConfigsPiiEntitiesParams = {
@@ -34729,11 +42064,21 @@ export type AgentccGuardrailFeedbackListParams = {
   limit?: number;
 };
 
-export type AgentccGuardrailFeedbackList200 = {
+export type AgentccGuardrailFeedbackList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccGuardrailFeedbackApi[];
+};
+
+export type AgentccGuardrailFeedbackList200 = {
+  status?: boolean;
+  result: AgentccGuardrailFeedbackList200Result;
+};
+
+export type AgentccGuardrailFeedbackCreate200 = {
+  status?: boolean;
+  result: AgentccGuardrailFeedbackApi;
 };
 
 export type AgentccGuardrailFeedbackSummaryParams = {
@@ -34747,11 +42092,31 @@ export type AgentccGuardrailFeedbackSummaryParams = {
   limit?: number;
 };
 
-export type AgentccGuardrailFeedbackSummary200 = {
+export type AgentccGuardrailFeedbackSummary200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccGuardrailFeedbackApi[];
+};
+
+export type AgentccGuardrailFeedbackSummary200 = {
+  status?: boolean;
+  result: AgentccGuardrailFeedbackSummary200Result;
+};
+
+export type AgentccGuardrailFeedbackRead200 = {
+  status?: boolean;
+  result: AgentccGuardrailFeedbackApi;
+};
+
+export type AgentccGuardrailFeedbackUpdate200 = {
+  status?: boolean;
+  result: AgentccGuardrailFeedbackApi;
+};
+
+export type AgentccGuardrailFeedbackPartialUpdate200 = {
+  status?: boolean;
+  result: AgentccGuardrailFeedbackApi;
 };
 
 export type AgentccGuardrailPoliciesListParams = {
@@ -34765,11 +42130,207 @@ export type AgentccGuardrailPoliciesListParams = {
   limit?: number;
 };
 
-export type AgentccGuardrailPoliciesList200 = {
+export type AgentccGuardrailPoliciesList200Result = {
   count: number;
   next?: string;
   previous?: string;
-  results: AgentccGuardrailPolicyApi[];
+  results: AgentccGuardrailPolicyReadApi[];
+};
+
+export type AgentccGuardrailPoliciesList200 = {
+  status?: boolean;
+  result: AgentccGuardrailPoliciesList200Result;
+};
+
+export type AgentccGuardrailPoliciesSync200 = {
+  status?: boolean;
+  result: AgentccGuardrailPolicyApi;
+};
+
+export type AgentccGuardrailPoliciesRead200 = {
+  status?: boolean;
+  result: AgentccGuardrailPolicyReadApi;
+};
+
+export type AgentccManagedCreditsListParams = {
+  /**
+   * Omit or use json for JSON.
+   */
+  format?: AgentccManagedCreditsListFormat;
+};
+
+export type AgentccManagedCreditsListFormat =
+  (typeof AgentccManagedCreditsListFormat)[keyof typeof AgentccManagedCreditsListFormat];
+
+export const AgentccManagedCreditsListFormat = {
+  json: "json",
+} as const;
+
+export type AgentccManagedCreditsCheckoutReadParams = {
+  /**
+   * Omit or use json for JSON.
+   */
+  format?: AgentccManagedCreditsCheckoutReadFormat;
+};
+
+export type AgentccManagedCreditsCheckoutReadFormat =
+  (typeof AgentccManagedCreditsCheckoutReadFormat)[keyof typeof AgentccManagedCreditsCheckoutReadFormat];
+
+export const AgentccManagedCreditsCheckoutReadFormat = {
+  json: "json",
+} as const;
+
+export type AgentccManagedCreditsEntriesListParams = {
+  /**
+   * With format=csv the response is a spreadsheet view: a text cell that starts with =, +, -, @, a tab or a carriage return gets a leading ' so a spreadsheet cannot run it as a formula (a model id such as @cf/... reads '@cf/...), and amounts stay numbers. Use the JSONL ledger export when an unmodified record is required.
+   */
+  format?: AgentccManagedCreditsEntriesListFormat;
+  /**
+   * One kind or a comma-separated list of spend, usage_debit, topup, grant, refund, adjustment, expiry, topup_reversal, dispute_hold, dispute_release.
+   * @minLength 1
+   */
+  kind?: string;
+  /**
+   * Entries before this time (exclusive).
+   */
+  to?: string;
+  /**
+   * next_cursor from the previous page.
+   * @minLength 1
+   */
+  cursor?: string;
+  /**
+   * Page size (JSON only; the CSV holds every matching entry).
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  /**
+   * Entries at or after this time.
+   */
+  from?: string;
+};
+
+export type AgentccManagedCreditsEntriesListFormat =
+  (typeof AgentccManagedCreditsEntriesListFormat)[keyof typeof AgentccManagedCreditsEntriesListFormat];
+
+export const AgentccManagedCreditsEntriesListFormat = {
+  json: "json",
+  csv: "csv",
+} as const;
+
+export type AgentccManagedCreditsSettingsListParams = {
+  /**
+   * Omit or use json for JSON.
+   */
+  format?: AgentccManagedCreditsSettingsListFormat;
+};
+
+export type AgentccManagedCreditsSettingsListFormat =
+  (typeof AgentccManagedCreditsSettingsListFormat)[keyof typeof AgentccManagedCreditsSettingsListFormat];
+
+export const AgentccManagedCreditsSettingsListFormat = {
+  json: "json",
+} as const;
+
+export type AgentccManagedCreditsStatementListParams = {
+  /**
+   * With format=csv the response is a spreadsheet view: a text cell that starts with =, +, -, @, a tab or a carriage return gets a leading ' so a spreadsheet cannot run it as a formula (a model id such as @cf/... reads '@cf/...), and amounts stay numbers. Use the JSONL ledger export when an unmodified record is required.
+   */
+  format?: AgentccManagedCreditsStatementListFormat;
+  /**
+   * The calendar month (UTC), YYYY-MM.
+   * @minLength 1
+   * @pattern ^(\d{4})-(0[1-9]|1[0-2])$
+   */
+  month: string;
+};
+
+export type AgentccManagedCreditsStatementListFormat =
+  (typeof AgentccManagedCreditsStatementListFormat)[keyof typeof AgentccManagedCreditsStatementListFormat];
+
+export const AgentccManagedCreditsStatementListFormat = {
+  json: "json",
+  csv: "csv",
+} as const;
+
+export type AgentccMcpOauthConsentsListParams = {
+  scope?: AgentccMcpOauthConsentsListScope;
+};
+
+export type AgentccMcpOauthConsentsListScope =
+  (typeof AgentccMcpOauthConsentsListScope)[keyof typeof AgentccMcpOauthConsentsListScope];
+
+export const AgentccMcpOauthConsentsListScope = {
+  self: "self",
+  organization: "organization",
+} as const;
+
+export type AgentccMcpConnectListParams = {
+  /**
+   * Only this MCP server's row.
+   * @minLength 1
+   * @maxLength 64
+   */
+  server_id?: string;
+};
+
+export type AgentccMcpConnectDeleteParams = {
+  /**
+   * user: your own account; shared: the organization's account (Owner/Admin only).
+   */
+  mode?: AgentccMcpConnectDeleteMode;
+};
+
+export type AgentccMcpConnectDeleteMode =
+  (typeof AgentccMcpConnectDeleteMode)[keyof typeof AgentccMcpConnectDeleteMode];
+
+export const AgentccMcpConnectDeleteMode = {
+  user: "user",
+  shared: "shared",
+} as const;
+
+export type AgentccMcpCredentialsListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  server_id?: string;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+};
+
+export type AgentccMcpRevisionsListParams = {
+  /**
+   * Which revisions to list: pending (the default), approved, rejected, superseded or all.
+   */
+  status?: AgentccMcpRevisionsListStatus;
+};
+
+export type AgentccMcpRevisionsListStatus =
+  (typeof AgentccMcpRevisionsListStatus)[keyof typeof AgentccMcpRevisionsListStatus];
+
+export const AgentccMcpRevisionsListStatus = {
+  pending: "pending",
+  approved: "approved",
+  rejected: "rejected",
+  superseded: "superseded",
+  all: "all",
+} as const;
+
+export type AgentccMcpServiceWorkspacesAgentKeysListParams = {
+  /**
+   * CN22d: only the keys minted with this Idempotency-Key (UUIDv7): the key EE minted when it lost the answer.
+   * @minLength 1
+   */
+  mint_idempotency_key?: string;
 };
 
 export type AgentccOrgConfigsListParams = {
@@ -34783,11 +42344,16 @@ export type AgentccOrgConfigsListParams = {
   limit?: number;
 };
 
-export type AgentccOrgConfigsList200 = {
+export type AgentccOrgConfigsList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccOrgConfigApi[];
+};
+
+export type AgentccOrgConfigsList200 = {
+  status?: boolean;
+  result: AgentccOrgConfigsList200Result;
 };
 
 export type AgentccOrgConfigsActiveParams = {
@@ -34801,11 +42367,31 @@ export type AgentccOrgConfigsActiveParams = {
   limit?: number;
 };
 
-export type AgentccOrgConfigsActive200 = {
+export type AgentccOrgConfigsActive200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccOrgConfigApi[];
+};
+
+export type AgentccOrgConfigsActive200 = {
+  status?: boolean;
+  result: AgentccOrgConfigsActive200Result;
+};
+
+export type AgentccOrgConfigsRead200 = {
+  status?: boolean;
+  result: AgentccOrgConfigApi;
+};
+
+export type AgentccOrgConfigsActivate200 = {
+  status?: boolean;
+  result: AgentccOrgConfigApi;
+};
+
+export type AgentccOrgConfigsDiff200 = {
+  status?: boolean;
+  result: AgentccOrgConfigApi;
 };
 
 export type AgentccProviderCredentialsListParams = {
@@ -34819,11 +42405,31 @@ export type AgentccProviderCredentialsListParams = {
   limit?: number;
 };
 
-export type AgentccProviderCredentialsList200 = {
+export type AgentccProviderCredentialsList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccProviderCredentialApi[];
+};
+
+export type AgentccProviderCredentialsList200 = {
+  status?: boolean;
+  result: AgentccProviderCredentialsList200Result;
+};
+
+export type AgentccProviderCredentialsFetchModels200 = {
+  status?: boolean;
+  result: AgentccProviderCredentialApi;
+};
+
+export type AgentccProviderCredentialsRead200 = {
+  status?: boolean;
+  result: AgentccProviderCredentialApi;
+};
+
+export type AgentccProviderCredentialsRotate200 = {
+  status?: boolean;
+  result: AgentccProviderCredentialApi;
 };
 
 export type AgentccRequestLogsListParams = {
@@ -34865,7 +42471,13 @@ export type AgentccRequestLogsListParams = {
   fallback_used?: boolean;
   guardrail_triggered?: boolean;
   is_stream?: boolean;
+  /**
+   * Requests that started at or after this time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.
+   */
   started_after?: string;
+  /**
+   * Requests that started at or before this time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.
+   */
   started_before?: string;
   min_latency?: number;
   max_latency?: number;
@@ -34879,6 +42491,61 @@ export type AgentccRequestLogsListParams = {
    * @minLength 1
    */
   ordering?: string;
+  /**
+   * Comma-separated billing modes (managed, byok).
+   * @minLength 1
+   */
+  billing_mode?: string;
+  /**
+   * Comma-separated credential types (managed, byok).
+   * @minLength 1
+   */
+  credential_type?: string;
+  /**
+   * Comma-separated agent ids.
+   * @minLength 1
+   */
+  agent_id?: string;
+  /**
+   * Comma-separated agent run ids.
+   * @minLength 1
+   */
+  run_id?: string;
+  /**
+   * Comma-separated agent steps.
+   * @minLength 1
+   */
+  step?: string;
+  /**
+   * Comma-separated routing policy variants (stable, candidate).
+   * @minLength 1
+   */
+  policy_variant?: string;
+  /**
+   * Comma-separated agent environments.
+   * @minLength 1
+   */
+  env?: string;
+  /**
+   * Comma-separated attempt error classes: requests with at least one attempt in one of them.
+   * @minLength 1
+   */
+  error_class?: string;
+  /**
+   * Comma-separated values of the request's application tag.
+   * @minLength 1
+   */
+  application?: string;
+  /**
+   * Comma-separated values of the request's service tag.
+   * @minLength 1
+   */
+  service?: string;
+  /**
+   * Comma-separated key:value custom tags; any listed value of a key matches, and every key must match.
+   * @minLength 1
+   */
+  tags?: string;
 };
 
 export type AgentccRequestLogsList200 = {
@@ -34890,13 +42557,129 @@ export type AgentccRequestLogsList200 = {
 
 export type AgentccRequestLogsExportParams = {
   /**
-   * A page number within the paginated result set.
+   * @minimum 1
    */
   page?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
    */
   limit?: number;
+  user_id?: string;
+  session_id?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
+  api_key_id?: string;
+  request_id?: string;
+  /**
+   * Comma-separated model names.
+   * @minLength 1
+   */
+  model?: string;
+  /**
+   * Comma-separated provider names.
+   * @minLength 1
+   */
+  provider?: string;
+  /**
+   * Comma-separated HTTP status codes.
+   * @minLength 1
+   */
+  status_code?: string;
+  min_status_code?: number;
+  max_status_code?: number;
+  is_error?: boolean;
+  cache_hit?: boolean;
+  fallback_used?: boolean;
+  guardrail_triggered?: boolean;
+  is_stream?: boolean;
+  /**
+   * Requests that started at or after this time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.
+   */
+  started_after?: string;
+  /**
+   * Requests that started at or before this time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.
+   */
+  started_before?: string;
+  min_latency?: number;
+  max_latency?: number;
+  min_cost?: number;
+  max_cost?: number;
+  min_tokens?: number;
+  max_tokens?: number;
+  q?: string;
+  search?: string;
+  /**
+   * @minLength 1
+   */
+  ordering?: string;
+  /**
+   * Comma-separated billing modes (managed, byok).
+   * @minLength 1
+   */
+  billing_mode?: string;
+  /**
+   * Comma-separated credential types (managed, byok).
+   * @minLength 1
+   */
+  credential_type?: string;
+  /**
+   * Comma-separated agent ids.
+   * @minLength 1
+   */
+  agent_id?: string;
+  /**
+   * Comma-separated agent run ids.
+   * @minLength 1
+   */
+  run_id?: string;
+  /**
+   * Comma-separated agent steps.
+   * @minLength 1
+   */
+  step?: string;
+  /**
+   * Comma-separated routing policy variants (stable, candidate).
+   * @minLength 1
+   */
+  policy_variant?: string;
+  /**
+   * Comma-separated agent environments.
+   * @minLength 1
+   */
+  env?: string;
+  /**
+   * Comma-separated attempt error classes: requests with at least one attempt in one of them.
+   * @minLength 1
+   */
+  error_class?: string;
+  /**
+   * Comma-separated values of the request's application tag.
+   * @minLength 1
+   */
+  application?: string;
+  /**
+   * Comma-separated values of the request's service tag.
+   * @minLength 1
+   */
+  service?: string;
+  /**
+   * Comma-separated key:value custom tags; any listed value of a key matches, and every key must match.
+   * @minLength 1
+   */
+  tags?: string;
+  /**
+   * csv (the default) or json (one JSON object per line). An export holds at most 10,000 rows: 0 matching rows answers 400 export_empty and more than 10,000 answers 400 export_too_large with the count, unless max_rows is sent. The list endpoint's count, with the same filters, is the count export uses.
+   * @minLength 1
+   */
+  export_format?: string;
+  /**
+   * Export at most this many rows, the first in `ordering` (newest started_at first when no ordering is sent), instead of refusing a filter that matches more than 10,000. Times in the file are UTC.
+   * @minimum 1
+   * @maximum 10000
+   */
+  max_rows?: number;
 };
 
 export type AgentccRequestLogsExport200 = {
@@ -34960,6 +42743,154 @@ export type AgentccRequestLogsSessionDetail200 = {
   results: AgentccRequestLogApi[];
 };
 
+export type AgentccRequestLogsVolumeParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   */
+  limit?: number;
+  user_id?: string;
+  session_id?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
+  api_key_id?: string;
+  request_id?: string;
+  /**
+   * Comma-separated model names.
+   * @minLength 1
+   */
+  model?: string;
+  /**
+   * Comma-separated provider names.
+   * @minLength 1
+   */
+  provider?: string;
+  /**
+   * Comma-separated HTTP status codes.
+   * @minLength 1
+   */
+  status_code?: string;
+  min_status_code?: number;
+  max_status_code?: number;
+  is_error?: boolean;
+  cache_hit?: boolean;
+  fallback_used?: boolean;
+  guardrail_triggered?: boolean;
+  is_stream?: boolean;
+  /**
+   * Requests that started at or after this time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.
+   */
+  started_after?: string;
+  /**
+   * Requests that started at or before this time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.
+   */
+  started_before?: string;
+  min_latency?: number;
+  max_latency?: number;
+  min_cost?: number;
+  max_cost?: number;
+  min_tokens?: number;
+  max_tokens?: number;
+  q?: string;
+  search?: string;
+  /**
+   * @minLength 1
+   */
+  ordering?: string;
+  /**
+   * Comma-separated billing modes (managed, byok).
+   * @minLength 1
+   */
+  billing_mode?: string;
+  /**
+   * Comma-separated credential types (managed, byok).
+   * @minLength 1
+   */
+  credential_type?: string;
+  /**
+   * Comma-separated agent ids.
+   * @minLength 1
+   */
+  agent_id?: string;
+  /**
+   * Comma-separated agent run ids.
+   * @minLength 1
+   */
+  run_id?: string;
+  /**
+   * Comma-separated agent steps.
+   * @minLength 1
+   */
+  step?: string;
+  /**
+   * Comma-separated routing policy variants (stable, candidate).
+   * @minLength 1
+   */
+  policy_variant?: string;
+  /**
+   * Comma-separated agent environments.
+   * @minLength 1
+   */
+  env?: string;
+  /**
+   * Comma-separated attempt error classes: requests with at least one attempt in one of them.
+   * @minLength 1
+   */
+  error_class?: string;
+  /**
+   * Comma-separated values of the request's application tag.
+   * @minLength 1
+   */
+  application?: string;
+  /**
+   * Comma-separated values of the request's service tag.
+   * @minLength 1
+   */
+  service?: string;
+  /**
+   * Comma-separated key:value custom tags; any listed value of a key matches, and every key must match.
+   * @minLength 1
+   */
+  tags?: string;
+  /**
+   * Window start; 24 hours before end by default.
+   */
+  start?: string;
+  /**
+   * Window end; now by default.
+   */
+  end?: string;
+  /**
+   * Bucket size; hour by default.
+   */
+  granularity?: AgentccRequestLogsVolumeGranularity;
+  /**
+   * IANA zone day buckets start in (the viewer's); UTC by default.
+   * @minLength 1
+   * @maxLength 64
+   */
+  tz?: string;
+};
+
+export type AgentccRequestLogsVolumeGranularity =
+  (typeof AgentccRequestLogsVolumeGranularity)[keyof typeof AgentccRequestLogsVolumeGranularity];
+
+export const AgentccRequestLogsVolumeGranularity = {
+  minute: "minute",
+  hour: "hour",
+  day: "day",
+} as const;
+
+export type AgentccRequestLogsRead200 = {
+  status?: boolean;
+  result: AgentccRequestLogDetailApi;
+};
+
 export type AgentccRoutingPoliciesListParams = {
   /**
    * A page number within the paginated result set.
@@ -34971,11 +42902,26 @@ export type AgentccRoutingPoliciesListParams = {
   limit?: number;
 };
 
-export type AgentccRoutingPoliciesList200 = {
+export type AgentccRoutingPoliciesList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccRoutingPolicyApi[];
+};
+
+export type AgentccRoutingPoliciesList200 = {
+  status?: boolean;
+  result: AgentccRoutingPoliciesList200Result;
+};
+
+export type AgentccRoutingPoliciesCreate200 = {
+  status?: boolean;
+  result: AgentccRoutingPolicyApi;
+};
+
+export type AgentccRoutingPoliciesRead200 = {
+  status?: boolean;
+  result: AgentccRoutingPolicyApi;
 };
 
 export type AgentccSessionsListParams = {
@@ -34996,6 +42942,36 @@ export type AgentccSessionsList200 = {
   results: AgentccSessionApi[];
 };
 
+export type AgentccSessionsCreate200 = {
+  status?: boolean;
+  result: AgentccSessionApi;
+};
+
+export type AgentccSessionsRead200 = {
+  status?: boolean;
+  result: AgentccSessionApi;
+};
+
+export type AgentccSessionsUpdate200 = {
+  status?: boolean;
+  result: AgentccSessionApi;
+};
+
+export type AgentccSessionsPartialUpdate200 = {
+  status?: boolean;
+  result: AgentccSessionApi;
+};
+
+export type AgentccSessionsClose200 = {
+  status?: boolean;
+  result: AgentccSessionApi;
+};
+
+export type AgentccSessionsRequests200 = {
+  status?: boolean;
+  result: AgentccRequestLogApi[];
+};
+
 export type AgentccShadowExperimentsListParams = {
   /**
    * A page number within the paginated result set.
@@ -35007,11 +42983,36 @@ export type AgentccShadowExperimentsListParams = {
   limit?: number;
 };
 
-export type AgentccShadowExperimentsList200 = {
+export type AgentccShadowExperimentsList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccShadowExperimentApi[];
+};
+
+export type AgentccShadowExperimentsList200 = {
+  status?: boolean;
+  result: AgentccShadowExperimentsList200Result;
+};
+
+export type AgentccShadowExperimentsRead200 = {
+  status?: boolean;
+  result: AgentccShadowExperimentApi;
+};
+
+export type AgentccShadowExperimentsUpdate200 = {
+  status?: boolean;
+  result: AgentccShadowExperimentApi;
+};
+
+export type AgentccShadowExperimentsPartialUpdate200 = {
+  status?: boolean;
+  result: AgentccShadowExperimentApi;
+};
+
+export type AgentccShadowExperimentsStats200 = {
+  status?: boolean;
+  result: AgentccShadowExperimentApi;
 };
 
 export type AgentccShadowResultsListParams = {
@@ -35031,6 +43032,26 @@ export type AgentccShadowResultsList200 = {
   previous?: string;
   results: AgentccShadowResultApi[];
 };
+
+export type AgentccShadowResultsRead200 = {
+  status?: boolean;
+  result: AgentccShadowResultApi;
+};
+
+export type AgentccSiemDeliveriesListParams = {
+  status?: AgentccSiemDeliveriesListStatus;
+  destination_id?: string;
+};
+
+export type AgentccSiemDeliveriesListStatus =
+  (typeof AgentccSiemDeliveriesListStatus)[keyof typeof AgentccSiemDeliveriesListStatus];
+
+export const AgentccSiemDeliveriesListStatus = {
+  pending: "pending",
+  delivered: "delivered",
+  dead_letter: "dead_letter",
+  discarded: "discarded",
+} as const;
 
 export type AgentccSpendSummaryListParams = {
   period?: AgentccSpendSummaryListPeriod;
@@ -35057,11 +43078,26 @@ export type AgentccWebhookEventsListParams = {
   limit?: number;
 };
 
-export type AgentccWebhookEventsList200 = {
+export type AgentccWebhookEventsList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccWebhookEventApi[];
+};
+
+export type AgentccWebhookEventsList200 = {
+  status?: boolean;
+  result: AgentccWebhookEventsList200Result;
+};
+
+export type AgentccWebhookEventsRead200 = {
+  status?: boolean;
+  result: AgentccWebhookEventApi;
+};
+
+export type AgentccWebhookEventsRetry200 = {
+  status?: boolean;
+  result: AgentccWebhookEventApi;
 };
 
 export type AgentccWebhooksListParams = {
@@ -35075,11 +43111,41 @@ export type AgentccWebhooksListParams = {
   limit?: number;
 };
 
-export type AgentccWebhooksList200 = {
+export type AgentccWebhooksList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentccWebhookApi[];
+};
+
+export type AgentccWebhooksList200 = {
+  status?: boolean;
+  result: AgentccWebhooksList200Result;
+};
+
+export type AgentccWebhooksCreate200 = {
+  status?: boolean;
+  result: AgentccWebhookApi;
+};
+
+export type AgentccWebhooksRead200 = {
+  status?: boolean;
+  result: AgentccWebhookApi;
+};
+
+export type AgentccWebhooksUpdate200 = {
+  status?: boolean;
+  result: AgentccWebhookApi;
+};
+
+export type AgentccWebhooksPartialUpdate200 = {
+  status?: boolean;
+  result: AgentccWebhookApi;
+};
+
+export type AgentccWebhooksTest200 = {
+  status?: boolean;
+  result: AgentccWebhookApi;
 };
 
 export type ApiTracesSpanAttributeDetailListParams = {
@@ -35176,6 +43242,15 @@ export type IntegrationsConnectionsSlackChannelsListParams = {
    * @maxLength 512
    */
   cursor?: string;
+};
+
+export type IntegrationsDestinationsListParams = {
+  /**
+   * Only this kind, e.g. webhook or slack
+   * @minLength 1
+   * @maxLength 50
+   */
+  kind?: string;
 };
 
 export type IntegrationsSyncLogsListParams = {
@@ -35414,11 +43489,31 @@ export type ModelHubAnnotationsList200 = {
   results: AnnotationsApi[];
 };
 
+export type ModelHubAnnotationsCreate200 = {
+  status?: boolean;
+  result: AnnotationsApi;
+};
+
+export type ModelHubAnnotationsUpdate200 = {
+  status?: boolean;
+  result: AnnotationsApi;
+};
+
+export type ModelHubAnnotationsPartialUpdate200 = {
+  status?: boolean;
+  result: AnnotationsApi;
+};
+
 export type ModelHubAnnotationsAnnotateRowParams = {
   /**
    * @minimum 0
    */
   row_order: number;
+};
+
+export type ModelHubAnnotationsAnnotateRow200 = {
+  status?: boolean;
+  result: AnnotationsApi;
 };
 
 export type ModelHubApiKeysListParams = {
@@ -35447,13 +43542,125 @@ export type ModelHubDatasetOptimizationListParams = {
 };
 
 export type ModelHubDatasetOptimizationList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: DatasetOptimizationListApi[];
+  status?: boolean;
+  result: DatasetOptimizationListResultApi;
+};
+
+export type ModelHubDatasetOptimizationGraph200 = {
+  status?: boolean;
+  result: DatasetOptimizationApi;
+};
+
+export type ModelHubDatasetOptimizationSteps200 = {
+  status?: boolean;
+  result: DatasetOptimizationApi;
+};
+
+export type ModelHubDatasetOptimizationStop200 = {
+  status?: boolean;
+  result: DatasetOptimizationApi;
+};
+
+export type ModelHubDatasetOptimizationTrialDetail200 = {
+  status?: boolean;
+  result: DatasetOptimizationApi;
+};
+
+export type ModelHubDatasetOptimizationTrialTrialEvaluations200 = {
+  status?: boolean;
+  result: DatasetOptimizationApi;
+};
+
+export type ModelHubDatasetOptimizationTrialTrialPrompt200 = {
+  status?: boolean;
+  result: DatasetOptimizationApi;
+};
+
+export type ModelHubDatasetOptimizationTrialTrialScenarios200 = {
+  status?: boolean;
+  result: DatasetOptimizationApi;
+};
+
+export type DatasetExperimentRunsListParams = {
+  /**
+   * Comma-separated run statuses: draft, queued, running, partial, completed, failed, cancelled.
+   * @maxLength 128
+   */
+  status?: string;
+  /**
+   * Only runs on this version of the dataset.
+   */
+  dataset_version_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  offset?: number;
+};
+
+export type DatasetExternalMetricsListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name?: string;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  offset?: number;
+};
+
+export type ModelHubDatasetsSplitsExportListParams = {
+  split_id: string;
+};
+
+export type ModelHubDatasetsSplitsMembershipListParams = {
+  row_id: string;
+};
+
+export type ModelHubDatasetsVersionsListParams = {
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  offset?: number;
+};
+
+export type ModelHubDatasetsVersionsReadParams = {
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  offset?: number;
 };
 
 export type ModelHubDevelopsGetDatasetsListParams = {
+  /**
+   * @maxLength 500
+   */
+  folder_path?: string;
+  starred?: boolean;
   search_text?: string;
   /**
    * @minimum 0
@@ -35524,6 +43731,17 @@ export type ModelHubDevelopsGetEvalsListListParams = {
   order?: string;
 };
 
+export type ModelHubDevelopsSyntheticConfigListParams = {
+  generation_mode?: ModelHubDevelopsSyntheticConfigListGenerationMode;
+};
+
+export type ModelHubDevelopsSyntheticConfigListGenerationMode =
+  (typeof ModelHubDevelopsSyntheticConfigListGenerationMode)[keyof typeof ModelHubDevelopsSyntheticConfigListGenerationMode];
+
+export const ModelHubDevelopsSyntheticConfigListGenerationMode = {
+  append: "append",
+} as const;
+
 export type ModelHubDevelopsGetExperimentDatasetTableListParams = {
   /**
    * @minimum 1
@@ -35549,14 +43767,77 @@ export type ModelHubEvalGroupsListParams = {
 };
 
 export type ModelHubEvalGroupsList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: EvalGroupApi[];
+  status?: boolean;
+  result: EvalGroupListResultApi;
+};
+
+export type ModelHubEvalGroupsCreate200 = {
+  status?: boolean;
+  result: EvalGroupApi;
+};
+
+export type ModelHubEvalGroupsApplyEvalGroup200 = {
+  status?: boolean;
+  result: EvalGroupApi;
+};
+
+export type ModelHubEvalGroupsEditEvalList200 = {
+  status?: boolean;
+  result: EvalGroupApi;
 };
 
 export type ModelHubEvalGroupsReadParams = {
   name?: string;
+};
+
+export type ModelHubEvalGroupsRead200 = {
+  status?: boolean;
+  result: EvalGroupDetailResultApi;
+};
+
+export type ModelHubEvalGroupsUpdate200 = {
+  status?: boolean;
+  result: EvalGroupApi;
+};
+
+export type ModelHubEvalGroupsPartialUpdate200 = {
+  status?: boolean;
+  result: EvalGroupApi;
+};
+
+export type ModelHubEvalTemplatesAgreementListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  source?: string;
+  dataset_id?: string;
+  label_id?: string;
+  include?: ModelHubEvalTemplatesAgreementListInclude;
+};
+
+export type ModelHubEvalTemplatesAgreementListInclude =
+  (typeof ModelHubEvalTemplatesAgreementListInclude)[keyof typeof ModelHubEvalTemplatesAgreementListInclude];
+
+export const ModelHubEvalTemplatesAgreementListInclude = {
+  pairs: "pairs",
+} as const;
+
+export type ModelHubEvalTemplatesCompositeJuryListParams = {
+  run_id?: string;
+  dataset_id?: string;
+};
+
+export type ModelHubEvalTemplatesCompositeJuryConfigListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 36
+   */
+  version_id?: string;
+};
+
+export type ModelHubEvalTemplatesDagPathsListParams = {
+  run_id?: string;
 };
 
 export type ModelHubEvalTemplatesUsageListParams = {
@@ -35610,6 +43891,43 @@ export type ModelHubExperimentDetailList200 = {
   next?: string;
   previous?: string;
   results: ExperimentsTableGetApi[];
+};
+
+export type ExperimentRunItemsListParams = {
+  /**
+   * Comma-separated item statuses: pending, running, completed, failed, skipped.
+   * @maxLength 64
+   */
+  status?: string;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  offset?: number;
+  /**
+   * Per-item bound for output and error; larger values return a flagged prefix.
+   * @minimum 0
+   * @maximum 262144
+   */
+  max_value_bytes?: number;
+};
+
+export type ExperimentRunTracesListParams = {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  offset?: number;
 };
 
 export type ModelHubExperimentsDataListParams = {
@@ -35760,6 +44078,11 @@ export type ModelHubFeedbackList200 = {
   results: FeedbackApi[];
 };
 
+export type ModelHubFeedbackCreate200 = {
+  status?: boolean;
+  result: FeedbackApi;
+};
+
 export type ModelHubFeedbackGetFeedbackDetailsParams = {
   /**
    * A page number within the paginated result set.
@@ -35782,11 +44105,16 @@ export type ModelHubFeedbackGetFeedbackSummaryParams = {
   limit?: number;
 };
 
-export type ModelHubFeedbackGetFeedbackSummary200 = {
+export type ModelHubFeedbackGetFeedbackSummary200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: FeedbackApi[];
+};
+
+export type ModelHubFeedbackGetFeedbackSummary200 = {
+  status?: boolean;
+  result: ModelHubFeedbackGetFeedbackSummary200Result;
 };
 
 export type ModelHubFeedbackGetTemplateParams = {
@@ -35798,6 +44126,11 @@ export type ModelHubFeedbackGetTemplateParams = {
    * Number of results to return per page.
    */
   limit?: number;
+};
+
+export type ModelHubFeedbackSubmitFeedbackAction200 = {
+  status?: boolean;
+  result: FeedbackApi;
 };
 
 export type ModelHubGetEvalConfigListParams = {
@@ -35929,11 +44262,16 @@ export type ModelHubOptimizeDatasetListParams = {
   limit?: number;
 };
 
-export type ModelHubOptimizeDatasetList200 = {
+export type ModelHubOptimizeDatasetList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: OptimizeDatasetKbApi[];
+};
+
+export type ModelHubOptimizeDatasetList200 = {
+  status?: boolean;
+  result: ModelHubOptimizeDatasetList200Result;
 };
 
 export type ModelHubOptimizeDatasetReadParams = {
@@ -36044,11 +44382,21 @@ export type ModelHubPromptBaseTemplatesListParams = {
   limit?: number;
 };
 
-export type ModelHubPromptBaseTemplatesList200 = {
+export type ModelHubPromptBaseTemplatesList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: PromptBaseTemplateApi[];
+};
+
+export type ModelHubPromptBaseTemplatesList200 = {
+  status?: boolean;
+  result: ModelHubPromptBaseTemplatesList200Result;
+};
+
+export type ModelHubPromptBaseTemplatesCreate201 = {
+  status?: boolean;
+  result: PromptBaseTemplateApi;
 };
 
 export type ModelHubPromptBaseTemplatesGetAllCategoriesParams = {
@@ -36062,11 +44410,31 @@ export type ModelHubPromptBaseTemplatesGetAllCategoriesParams = {
   limit?: number;
 };
 
-export type ModelHubPromptBaseTemplatesGetAllCategories200 = {
+export type ModelHubPromptBaseTemplatesGetAllCategories200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: PromptBaseTemplateApi[];
+};
+
+export type ModelHubPromptBaseTemplatesGetAllCategories200 = {
+  status?: boolean;
+  result: ModelHubPromptBaseTemplatesGetAllCategories200Result;
+};
+
+export type ModelHubPromptBaseTemplatesRead200 = {
+  status?: boolean;
+  result: PromptBaseTemplateApi;
+};
+
+export type ModelHubPromptBaseTemplatesUpdate200 = {
+  status?: boolean;
+  result: PromptBaseTemplateApi;
+};
+
+export type ModelHubPromptBaseTemplatesPartialUpdate200 = {
+  status?: boolean;
+  result: PromptBaseTemplateApi;
 };
 
 export type ModelHubPromptExecutionsListParams = {
@@ -36107,11 +44475,36 @@ export type ModelHubPromptFoldersListParams = {
   limit?: number;
 };
 
-export type ModelHubPromptFoldersList200 = {
+export type ModelHubPromptFoldersList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: PromptFolderApi[];
+};
+
+export type ModelHubPromptFoldersList200 = {
+  status?: boolean;
+  result: ModelHubPromptFoldersList200Result;
+};
+
+export type ModelHubPromptFoldersCreate201 = {
+  status?: boolean;
+  result: PromptFolderApi;
+};
+
+export type ModelHubPromptFoldersRead200 = {
+  status?: boolean;
+  result: PromptFolderApi;
+};
+
+export type ModelHubPromptFoldersUpdate200 = {
+  status?: boolean;
+  result: PromptFolderApi;
+};
+
+export type ModelHubPromptFoldersPartialUpdate200 = {
+  status?: boolean;
+  result: PromptFolderApi;
 };
 
 export type ModelHubPromptHistoryExecutionsListParams = {
@@ -36165,11 +44558,16 @@ export type ModelHubPromptHistoryExecutionsGetExecutionDetailsParams = {
   limit?: number;
 };
 
-export type ModelHubPromptHistoryExecutionsGetExecutionDetails200 = {
+export type ModelHubPromptHistoryExecutionsGetExecutionDetails200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: PromptHistoryExecutionApi[];
+};
+
+export type ModelHubPromptHistoryExecutionsGetExecutionDetails200 = {
+  status?: boolean;
+  result: ModelHubPromptHistoryExecutionsGetExecutionDetails200Result;
 };
 
 export type ModelHubPromptLabelsListParams = {
@@ -36190,6 +44588,16 @@ export type ModelHubPromptLabelsList200 = {
   results: PromptLabelApi[];
 };
 
+export type ModelHubPromptLabelsAssignMultipleLabels200 = {
+  status?: boolean;
+  result: PromptLabelApi;
+};
+
+export type ModelHubPromptLabelsCreateSystemLabels200 = {
+  status?: boolean;
+  result: PromptLabelApi;
+};
+
 export type ModelHubPromptLabelsGetByNameParams = {
   /**
    * A page number within the paginated result set.
@@ -36201,11 +44609,26 @@ export type ModelHubPromptLabelsGetByNameParams = {
   limit?: number;
 };
 
-export type ModelHubPromptLabelsGetByName200 = {
+export type ModelHubPromptLabelsGetByName200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: PromptLabelApi[];
+};
+
+export type ModelHubPromptLabelsGetByName200 = {
+  status?: boolean;
+  result: ModelHubPromptLabelsGetByName200Result;
+};
+
+export type ModelHubPromptLabelsRemoveLabelFromVersion200 = {
+  status?: boolean;
+  result: PromptLabelApi;
+};
+
+export type ModelHubPromptLabelsSetDefault200 = {
+  status?: boolean;
+  result: PromptLabelApi;
 };
 
 export type ModelHubPromptLabelsTemplateLabelsParams = {
@@ -36219,11 +44642,21 @@ export type ModelHubPromptLabelsTemplateLabelsParams = {
   limit?: number;
 };
 
-export type ModelHubPromptLabelsTemplateLabels200 = {
+export type ModelHubPromptLabelsTemplateLabels200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: PromptLabelApi[];
+};
+
+export type ModelHubPromptLabelsTemplateLabels200 = {
+  status?: boolean;
+  result: ModelHubPromptLabelsTemplateLabels200Result;
+};
+
+export type ModelHubPromptLabelsAssignLabelById200 = {
+  status?: boolean;
+  result: PromptLabelApi;
 };
 
 export type ModelHubPromptTemplatesListParams = {
@@ -36256,6 +44689,31 @@ export type ModelHubPromptTemplatesList200 = {
   results: PromptTemplateApi[];
 };
 
+export type ModelHubPromptTemplatesAnalyzePrompt200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesBulkDelete200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesCreateDraft200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesGeneratePrompt200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesGenerateVariables200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
 export type ModelHubPromptTemplatesGetTemplateByNameParams = {
   name?: string;
   version?: string;
@@ -36285,8 +44743,88 @@ export type ModelHubPromptTemplatesGetTemplateByName200 = {
   results: PromptTemplateApi[];
 };
 
+export type ModelHubPromptTemplatesImprovePrompt200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesAddNewDraft200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesGetAllVariables200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesCommit200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesCompareVersions200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesGetEvaluationConfigs200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesRetrieveEvaluations200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesGetNextVersion200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
 export type ModelHubPromptTemplatesGetRunStatusParams = {
   template_version?: string;
+};
+
+export type ModelHubPromptTemplatesGetSdkCode200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesRunEvalsOnMultipleVersions200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesRunTemplate200 = {
+  status?: boolean;
+  result: PromptRunRequestApi;
+};
+
+export type ModelHubPromptTemplatesSaveName200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesSavePromptFolder200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesSetDefault200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesStopStreaming200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
+};
+
+export type ModelHubPromptTemplatesUpdateEvaluationConfigs200 = {
+  status?: boolean;
+  result: PromptTemplateApi;
 };
 
 export type ModelHubPromptTemplatesVersionsParams = {
@@ -36334,6 +44872,24 @@ export type ModelHubPromptSpanMetricsListParams = {
   page_size?: number;
   search_term?: string;
 };
+
+export type ModelHubR3SavedViewsListParams = {
+  surface: ModelHubR3SavedViewsListSurface;
+  scope: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+  after?: string;
+};
+
+export type ModelHubR3SavedViewsListSurface =
+  (typeof ModelHubR3SavedViewsListSurface)[keyof typeof ModelHubR3SavedViewsListSurface];
+
+export const ModelHubR3SavedViewsListSurface = {
+  grid: "grid",
+} as const;
 
 export type ModelHubResponseSchemaListParams = {
   /**
@@ -36455,6 +45011,21 @@ export type ModelHubToolsList200 = {
   results: ToolsApi[];
 };
 
+export type ModelHubToolsCreate201 = {
+  status?: boolean;
+  result: ToolsApi;
+};
+
+export type ModelHubToolsUpdate200 = {
+  status?: boolean;
+  result: ToolsApi;
+};
+
+export type ModelHubToolsPartialUpdate200 = {
+  status?: boolean;
+  result: ToolsApi;
+};
+
 export type ModelHubTtsVoicesListParams = {
   /**
    * A page number within the paginated result set.
@@ -36472,6 +45043,420 @@ export type ModelHubTtsVoicesList200 = {
   previous?: string;
   results: TTSVoiceApi[];
 };
+
+export type ModelHubTtsVoicesCreate200 = {
+  status?: boolean;
+  result: TTSVoiceApi;
+};
+
+/**
+ * No body: send nothing, or {}.
+ */
+export type OmegaHubInternalCheckerClaimCreateBody = { [key: string]: unknown };
+
+export type OmegaHubInternalCheckerJobsContextCreateBody = {
+  name?: string;
+  version?: string;
+  remixOf?: string;
+};
+
+/**
+ * No body: send nothing, or {}.
+ */
+export type OmegaHubInternalCheckerJobsHeartbeatCreateBody = {
+  [key: string]: unknown;
+};
+
+export type OmegaHubInternalCheckerJobsResultCreateBody = {
+  report: Blob;
+  bundle?: Blob;
+  log?: Blob;
+  cast?: Blob;
+};
+
+/**
+ * No body: send nothing, or {}.
+ */
+export type OmegaHubV1EntriesLikeCreateBody = { [key: string]: unknown };
+
+export type OmegaHubV1EntriesUnlistCreateBody = {
+  note?: string;
+};
+
+export type OmegaHubV1EntriesVersionsYankCreateBody = {
+  reason: string;
+};
+
+/**
+ * No body: send nothing, or {}.
+ */
+export type OmegaHubV1MeEmailVerificationCreateBody = {
+  [key: string]: unknown;
+};
+
+export type OmegaHubV1MeEmailVerificationConfirmCreateBody = {
+  token: string;
+};
+
+export type OmegaHubV1MeTokensCreateBody = {
+  publisher: string;
+  name: string;
+  /**
+   * @minimum 1
+   * @maximum 365
+   */
+  days?: number;
+};
+
+export type OmegaHubV1PublishersCreateBodyKind =
+  (typeof OmegaHubV1PublishersCreateBodyKind)[keyof typeof OmegaHubV1PublishersCreateBodyKind];
+
+export const OmegaHubV1PublishersCreateBodyKind = {
+  user: "user",
+  organization: "organization",
+} as const;
+
+export type OmegaHubV1PublishersCreateBody = {
+  handle: string;
+  kind: OmegaHubV1PublishersCreateBodyKind;
+  organizationId?: string;
+  displayName: string;
+};
+
+export type OmegaHubV1PublishersPartialUpdateBody = {
+  displayName?: string;
+  bio?: string;
+  website?: string;
+  githubLogin?: string;
+};
+
+export type OmegaHubV1PublishersAvatarCreateBody = {
+  avatar: Blob;
+};
+
+export type OmegaHubV1PublishersVerificationRequestCreateBody = {
+  /** @maxLength 1000 */
+  evidence: string;
+};
+
+export type OmegaHubV1ReportsCreateBodyReason =
+  (typeof OmegaHubV1ReportsCreateBodyReason)[keyof typeof OmegaHubV1ReportsCreateBodyReason];
+
+export const OmegaHubV1ReportsCreateBodyReason = {
+  security: "security",
+  licence: "licence",
+  impersonation: "impersonation",
+  broken: "broken",
+  spam: "spam",
+  other: "other",
+} as const;
+
+export type OmegaHubV1ReportsCreateBody = {
+  entry: string;
+  version?: string;
+  reason: OmegaHubV1ReportsCreateBodyReason;
+  /**
+   * @minLength 20
+   * @maxLength 2000
+   */
+  details: string;
+};
+
+export type OmegaHubV1ReviewAppealsCreateBodyTargetType =
+  (typeof OmegaHubV1ReviewAppealsCreateBodyTargetType)[keyof typeof OmegaHubV1ReviewAppealsCreateBodyTargetType];
+
+export const OmegaHubV1ReviewAppealsCreateBodyTargetType = {
+  submission: "submission",
+  entry: "entry",
+  version: "version",
+  publisher: "publisher",
+} as const;
+
+export type OmegaHubV1ReviewAppealsCreateBodyOutcome =
+  (typeof OmegaHubV1ReviewAppealsCreateBodyOutcome)[keyof typeof OmegaHubV1ReviewAppealsCreateBodyOutcome];
+
+export const OmegaHubV1ReviewAppealsCreateBodyOutcome = {
+  upheld: "upheld",
+  granted: "granted",
+} as const;
+
+export type OmegaHubV1ReviewAppealsCreateBody = {
+  targetType: OmegaHubV1ReviewAppealsCreateBodyTargetType;
+  targetId: string;
+  outcome: OmegaHubV1ReviewAppealsCreateBodyOutcome;
+  note: string;
+};
+
+export type OmegaHubV1ReviewBlocklistCreateBody = {
+  digest?: string;
+  bundleSha256?: string;
+  category: string;
+  note: string;
+};
+
+/**
+ * No body: send nothing, or {}.
+ */
+export type OmegaHubV1ReviewBlocklistLiftCreateBody = {
+  [key: string]: unknown;
+};
+
+export type OmegaHubV1ReviewEntriesMoveCreateBody = {
+  toPublisher?: string;
+  toName?: string;
+  note: string;
+};
+
+export type OmegaHubV1ReviewEntriesRemoveCreateBodyCategory =
+  (typeof OmegaHubV1ReviewEntriesRemoveCreateBodyCategory)[keyof typeof OmegaHubV1ReviewEntriesRemoveCreateBodyCategory];
+
+export const OmegaHubV1ReviewEntriesRemoveCreateBodyCategory = {
+  security_issue: "security issue",
+  licence_issue: "licence issue",
+  breaks_Hub_rules: "breaks Hub rules",
+  "publisher's_request": "publisher's request",
+} as const;
+
+export type OmegaHubV1ReviewEntriesRemoveCreateBody = {
+  category: OmegaHubV1ReviewEntriesRemoveCreateBodyCategory;
+  note: string;
+};
+
+export type OmegaHubV1ReviewEntriesRerankCreateBody = {
+  note: string;
+};
+
+export type OmegaHubV1ReviewEntriesRestoreCreateBody = {
+  note: string;
+};
+
+export type OmegaHubV1ReviewEntriesUnrankCreateBodyReason =
+  (typeof OmegaHubV1ReviewEntriesUnrankCreateBodyReason)[keyof typeof OmegaHubV1ReviewEntriesUnrankCreateBodyReason];
+
+export const OmegaHubV1ReviewEntriesUnrankCreateBodyReason = {
+  rules_change_not_yet_met: "rules change not yet met",
+  quality: "quality",
+  misleading_listing: "misleading listing",
+  under_investigation: "under investigation",
+  other: "other",
+} as const;
+
+export type OmegaHubV1ReviewEntriesUnrankCreateBody = {
+  reason: OmegaHubV1ReviewEntriesUnrankCreateBodyReason;
+  note: string;
+};
+
+export type OmegaHubV1ReviewPicksCreateBody = {
+  entry: string;
+  week?: string;
+  /**
+   * @minLength 20
+   * @maxLength 140
+   */
+  why: string;
+};
+
+export type OmegaHubV1ReviewPublishersRenameCreateBody = {
+  toHandle: string;
+  note: string;
+};
+
+export type OmegaHubV1ReviewPublishersSuspendCreateBody = {
+  note: string;
+};
+
+export type OmegaHubV1ReviewPublishersUnsuspendCreateBody = {
+  note: string;
+};
+
+export type OmegaHubV1ReviewPublishersUnverifyCreateBody = {
+  note: string;
+};
+
+export type OmegaHubV1ReviewPublishersVerifyCreateBody = {
+  note: string;
+};
+
+export type OmegaHubV1ReviewReportsResolveCreateBodyAction =
+  (typeof OmegaHubV1ReviewReportsResolveCreateBodyAction)[keyof typeof OmegaHubV1ReviewReportsResolveCreateBodyAction];
+
+export const OmegaHubV1ReviewReportsResolveCreateBodyAction = {
+  dismiss: "dismiss",
+  ask_publisher: "ask_publisher",
+  unrank_entry: "unrank_entry",
+  yank_version: "yank_version",
+  remove_entry: "remove_entry",
+  suspend_publisher: "suspend_publisher",
+  restore: "restore",
+} as const;
+
+export type OmegaHubV1ReviewReportsResolveCreateBody = {
+  action: OmegaHubV1ReviewReportsResolveCreateBodyAction;
+  category?: string;
+  reason?: string;
+  version?: string;
+  note: string;
+};
+
+export type OmegaHubV1ReviewSubmissionsDecisionCreateBodyDecision =
+  (typeof OmegaHubV1ReviewSubmissionsDecisionCreateBodyDecision)[keyof typeof OmegaHubV1ReviewSubmissionsDecisionCreateBodyDecision];
+
+export const OmegaHubV1ReviewSubmissionsDecisionCreateBodyDecision = {
+  approve: "approve",
+  reject: "reject",
+  request_changes: "request_changes",
+} as const;
+
+export type OmegaHubV1ReviewSubmissionsDecisionCreateBodyChecklist = {
+  [key: string]: true;
+};
+
+export type OmegaHubV1ReviewSubmissionsDecisionCreateBodyDisclosure = {
+  /**
+   * @minLength 20
+   * @maxLength 200
+   */
+  summary: string;
+  /**
+   * @minLength 4
+   * @maxLength 1200
+   */
+  network: string;
+  /**
+   * @minLength 4
+   * @maxLength 1200
+   */
+  files: string;
+  /**
+   * @minLength 4
+   * @maxLength 300
+   */
+  shell: string;
+  /**
+   * @minLength 4
+   * @maxLength 300
+   */
+  background: string;
+  /**
+   * @minLength 4
+   * @maxLength 1200
+   */
+  credentials: string;
+};
+
+export type OmegaHubV1ReviewSubmissionsDecisionCreateBodyNotesItem = {
+  file: string;
+  line?: number;
+  /** @maxLength 500 */
+  note: string;
+};
+
+export type OmegaHubV1ReviewSubmissionsDecisionCreateBody = {
+  decision: OmegaHubV1ReviewSubmissionsDecisionCreateBodyDecision;
+  rulesVersion: number;
+  /**
+   * @minLength 20
+   * @maxLength 2000
+   */
+  reason?: string;
+  checklist?: OmegaHubV1ReviewSubmissionsDecisionCreateBodyChecklist;
+  acknowledgedFlags?: string[];
+  disclosure?: OmegaHubV1ReviewSubmissionsDecisionCreateBodyDisclosure;
+  /** @maxItems 30 */
+  notes?: OmegaHubV1ReviewSubmissionsDecisionCreateBodyNotesItem[];
+};
+
+/**
+ * No body: send nothing, or {}.
+ */
+export type OmegaHubV1ReviewSubmissionsRecheckCreateBody = {
+  [key: string]: unknown;
+};
+
+/**
+ * No body: send nothing, or {}.
+ */
+export type OmegaHubV1ReviewSubmissionsStartCreateBody = {
+  [key: string]: unknown;
+};
+
+/**
+ * No body: send nothing, or {}.
+ */
+export type OmegaHubV1ReviewSubmissionsTakeOverCreateBody = {
+  [key: string]: unknown;
+};
+
+export type OmegaHubV1ReviewVersionsYankCreateBody = {
+  reason: string;
+};
+
+export type OmegaHubV1SubmissionsCreateBody = {
+  bundle: Blob;
+  publisher?: string;
+  channel?: string;
+  name?: string;
+  version?: string;
+  notes?: string;
+  githubCommit?: string;
+};
+
+/**
+ * No body: send nothing, or {}.
+ */
+export type OmegaHubV1SubmissionsWithdrawCreateBody = {
+  [key: string]: unknown;
+};
+
+export type OmegaRolloutAdminAuditListParams = {
+  product?: OmegaRolloutAdminAuditListProduct;
+  status?: OmegaRolloutAdminAuditListStatus;
+};
+
+export type OmegaRolloutAdminAuditListProduct =
+  (typeof OmegaRolloutAdminAuditListProduct)[keyof typeof OmegaRolloutAdminAuditListProduct];
+
+export const OmegaRolloutAdminAuditListProduct = {
+  console: "console",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  studio_tab: "studio_tab",
+  hub: "hub",
+} as const;
+
+export type OmegaRolloutAdminAuditListStatus =
+  (typeof OmegaRolloutAdminAuditListStatus)[keyof typeof OmegaRolloutAdminAuditListStatus];
+
+export const OmegaRolloutAdminAuditListStatus = {
+  requested: "requested",
+  invited: "invited",
+  declined: "declined",
+} as const;
+
+export type OmegaRolloutAdminWaitlistListParams = {
+  product?: OmegaRolloutAdminWaitlistListProduct;
+  status?: OmegaRolloutAdminWaitlistListStatus;
+};
+
+export type OmegaRolloutAdminWaitlistListProduct =
+  (typeof OmegaRolloutAdminWaitlistListProduct)[keyof typeof OmegaRolloutAdminWaitlistListProduct];
+
+export const OmegaRolloutAdminWaitlistListProduct = {
+  console: "console",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  studio_tab: "studio_tab",
+  hub: "hub",
+} as const;
+
+export type OmegaRolloutAdminWaitlistListStatus =
+  (typeof OmegaRolloutAdminWaitlistListStatus)[keyof typeof OmegaRolloutAdminWaitlistListStatus];
+
+export const OmegaRolloutAdminWaitlistListStatus = {
+  requested: "requested",
+  invited: "invited",
+  declined: "declined",
+} as const;
 
 export type Saml2AuthAcsCreateBodyOne = {
   /** Base64-encoded SAML response from the identity provider. */
@@ -36714,39 +45699,6 @@ export type SimulateApiAgentDefinitionOperationsList200 = {
   results: AgentDefinitionResponseApi[];
 };
 
-export type SimulateApiAgentFixEngineCandidatesBodyOne = {
-  attempt: number;
-  summary?: string;
-  tree: Blob;
-};
-
-export type SimulateApiAgentFixEngineCandidatesBodyTwo = {
-  attempt: number;
-  summary?: string;
-  tree: Blob;
-};
-
-export type SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = {
-  [key: string]: unknown;
-};
-
-export type SimulateApiAgentFixRunsListParams = {
-  environment_id: string;
-  /**
-   * @minimum 1
-   */
-  page?: number;
-  /**
-   * @minimum 1
-   * @maximum 100
-   */
-  limit?: number;
-};
-
-export type SimulateApiAgentFixRunsLaunchOptionsParams = {
-  source_run_id: string;
-};
-
 export type SimulateApiAgentPromptOptimiserListParams = {
   /**
    * A page number within the paginated result set.
@@ -36758,11 +45710,16 @@ export type SimulateApiAgentPromptOptimiserListParams = {
   limit?: number;
 };
 
-export type SimulateApiAgentPromptOptimiserList200 = {
+export type SimulateApiAgentPromptOptimiserList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: AgentPromptOptimiserRunListApi[];
+};
+
+export type SimulateApiAgentPromptOptimiserList200 = {
+  status?: boolean;
+  result: SimulateApiAgentPromptOptimiserList200Result;
 };
 
 export type SimulateApiAlkSimulateCallExecutionsRecordingUploadBody = {
@@ -36880,11 +45837,21 @@ export type SimulateApiPersonasListParams = {
   limit?: number;
 };
 
-export type SimulateApiPersonasList200 = {
+export type SimulateApiPersonasList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: PersonaListApi[];
+};
+
+export type SimulateApiPersonasList200 = {
+  status?: boolean;
+  result: SimulateApiPersonasList200Result;
+};
+
+export type SimulateApiPersonasCreate201 = {
+  status?: boolean;
+  result: PersonaCreateApi;
 };
 
 export type SimulateApiPersonasFieldOptionsParams = {
@@ -36898,11 +45865,16 @@ export type SimulateApiPersonasFieldOptionsParams = {
   limit?: number;
 };
 
-export type SimulateApiPersonasFieldOptions200 = {
+export type SimulateApiPersonasFieldOptions200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: PersonaFieldOptionsApi[];
+};
+
+export type SimulateApiPersonasFieldOptions200 = {
+  status?: boolean;
+  result: SimulateApiPersonasFieldOptions200Result;
 };
 
 export type SimulateApiPersonasSystemPersonasParams = {
@@ -36916,11 +45888,16 @@ export type SimulateApiPersonasSystemPersonasParams = {
   limit?: number;
 };
 
-export type SimulateApiPersonasSystemPersonas200 = {
+export type SimulateApiPersonasSystemPersonas200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: PersonaApi[];
+};
+
+export type SimulateApiPersonasSystemPersonas200 = {
+  status?: boolean;
+  result: SimulateApiPersonasSystemPersonas200Result;
 };
 
 export type SimulateApiPersonasWorkspacePersonasParams = {
@@ -36934,11 +45911,31 @@ export type SimulateApiPersonasWorkspacePersonasParams = {
   limit?: number;
 };
 
-export type SimulateApiPersonasWorkspacePersonas200 = {
+export type SimulateApiPersonasWorkspacePersonas200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: PersonaApi[];
+};
+
+export type SimulateApiPersonasWorkspacePersonas200 = {
+  status?: boolean;
+  result: SimulateApiPersonasWorkspacePersonas200Result;
+};
+
+export type SimulateApiPersonasRead200 = {
+  status?: boolean;
+  result: PersonaApi;
+};
+
+export type SimulateApiPersonasUpdate200 = {
+  status?: boolean;
+  result: PersonaApi;
+};
+
+export type SimulateApiPersonasPartialUpdate200 = {
+  status?: boolean;
+  result: PersonaApi;
 };
 
 export type SimulateApiRunTestsListParams = {
@@ -37272,6 +46269,21 @@ export type TracerCustomEvalConfigList200 = {
   results: CustomEvalConfigApi[];
 };
 
+export type TracerCustomEvalConfigCreate200 = {
+  status?: boolean;
+  result: CustomEvalConfigApi;
+};
+
+export type TracerCustomEvalConfigCheckExists200 = {
+  status?: boolean;
+  result: CustomEvalConfigApi;
+};
+
+export type TracerCustomEvalConfigGetCustomEvalByName200 = {
+  status?: boolean;
+  result: CustomEvalConfigApi;
+};
+
 export type TracerCustomEvalConfigListCustomEvalConfigsParams = {
   /**
    * A page number within the paginated result set.
@@ -37283,11 +46295,36 @@ export type TracerCustomEvalConfigListCustomEvalConfigsParams = {
   limit?: number;
 };
 
-export type TracerCustomEvalConfigListCustomEvalConfigs200 = {
+export type TracerCustomEvalConfigListCustomEvalConfigs200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: CustomEvalConfigApi[];
+};
+
+export type TracerCustomEvalConfigListCustomEvalConfigs200 = {
+  status?: boolean;
+  result: TracerCustomEvalConfigListCustomEvalConfigs200Result;
+};
+
+export type TracerCustomEvalConfigRunEvaluation200 = {
+  status?: boolean;
+  result: CustomEvalConfigApi;
+};
+
+export type TracerCustomEvalConfigPartialUpdate200 = {
+  status?: boolean;
+  result: CustomEvalConfigApi;
+};
+
+export type TracerDashboardList200 = {
+  status?: boolean;
+  result: DashboardApi[];
+};
+
+export type TracerDashboardCreate200 = {
+  status?: boolean;
+  result: DashboardDetailApi;
 };
 
 export type TracerDashboardFilterValuesParams = {
@@ -37440,6 +46477,11 @@ export type TracerDashboardQueryParams = {
   refresh?: boolean;
 };
 
+export type TracerDashboardSimulationAgents200 = {
+  status?: boolean;
+  result: DashboardApi[];
+};
+
 export type TracerDashboardWidgetsListParams = {
   /**
    * A page number within the paginated result set.
@@ -37458,12 +46500,52 @@ export type TracerDashboardWidgetsList200 = {
   results: DashboardWidgetApi[];
 };
 
+export type TracerDashboardWidgetsCreate200 = {
+  status?: boolean;
+  result: DashboardWidgetApi;
+};
+
 export type TracerDashboardWidgetsPreviewQueryParams = {
   refresh?: boolean;
 };
 
+export type TracerDashboardWidgetsReorder200 = {
+  status?: boolean;
+  result: DashboardWidgetApi;
+};
+
+export type TracerDashboardWidgetsUpdate200 = {
+  status?: boolean;
+  result: DashboardWidgetApi;
+};
+
+export type TracerDashboardWidgetsPartialUpdate200 = {
+  status?: boolean;
+  result: DashboardWidgetApi;
+};
+
+export type TracerDashboardWidgetsDuplicateWidget200 = {
+  status?: boolean;
+  result: DashboardWidgetApi;
+};
+
 export type TracerDashboardWidgetsExecuteQueryParams = {
   refresh?: boolean;
+};
+
+export type TracerDashboardRead200 = {
+  status?: boolean;
+  result: DashboardDetailApi;
+};
+
+export type TracerDashboardUpdate200 = {
+  status?: boolean;
+  result: DashboardDetailApi;
+};
+
+export type TracerDashboardPartialUpdate200 = {
+  status?: boolean;
+  result: DashboardDetailApi;
 };
 
 export type TracerDatasetListParams = {
@@ -37519,11 +46601,16 @@ export type TracerEvalTaskGetEvalDetailsParams = {
   limit?: number;
 };
 
-export type TracerEvalTaskGetEvalDetails200 = {
+export type TracerEvalTaskGetEvalDetails200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: EvalTaskApi[];
+};
+
+export type TracerEvalTaskGetEvalDetails200 = {
+  status?: boolean;
+  result: TracerEvalTaskGetEvalDetails200Result;
 };
 
 export type TracerEvalTaskGetEvalTaskLogsParams = {
@@ -37540,11 +46627,16 @@ export type TracerEvalTaskGetEvalTaskLogsParams = {
   limit?: number;
 };
 
-export type TracerEvalTaskGetEvalTaskLogs200 = {
+export type TracerEvalTaskGetEvalTaskLogs200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: EvalTaskApi[];
+};
+
+export type TracerEvalTaskGetEvalTaskLogs200 = {
+  status?: boolean;
+  result: TracerEvalTaskGetEvalTaskLogs200Result;
 };
 
 export type TracerEvalTaskGetUsageParams = {
@@ -37664,6 +46756,10 @@ export type TracerFeedIssuesListParams = {
    * @minimum 0
    */
   offset?: number;
+  /**
+   * Workspace selector used by authentication for unpinned API keys. X-Workspace-Id takes precedence. Ignored for an active workspace-pinned key with current access; use a key scoped to the intended workspace.
+   */
+  workspace_id?: string;
 };
 
 export type TracerFeedIssuesListStatus =
@@ -37723,6 +46819,10 @@ export type TracerFeedIssuesStatsListParams = {
 
 export type TracerFeedIssuesReadParams = {
   project_id?: string;
+  /**
+   * Workspace selector used by authentication for unpinned API keys. X-Workspace-Id takes precedence. Ignored for an active workspace-pinned key with current access; use a key scoped to the intended workspace.
+   */
+  workspace_id?: string;
 };
 
 export type TracerFeedIssuesOverviewListParams = {
@@ -37731,6 +46831,10 @@ export type TracerFeedIssuesOverviewListParams = {
    * @maximum 200
    */
   rep_limit?: number;
+  /**
+   * Workspace selector used by authentication for unpinned API keys. X-Workspace-Id takes precedence. Ignored for an active workspace-pinned key with current access; use a key scoped to the intended workspace.
+   */
+  workspace_id?: string;
 };
 
 export type TracerFeedIssuesRedirectListParams = {
@@ -37761,6 +46865,10 @@ export type TracerFeedIssuesTracesListParams = {
    * @minimum 0
    */
   offset?: number;
+  /**
+   * Workspace selector used by authentication for unpinned API keys. X-Workspace-Id takes precedence. Ignored for an active workspace-pinned key with current access; use a key scoped to the intended workspace.
+   */
+  workspace_id?: string;
 };
 
 export type TracerFeedIssuesTrendsListParams = {
@@ -37795,11 +46903,31 @@ export type TracerObservabilityProviderListParams = {
   limit?: number;
 };
 
-export type TracerObservabilityProviderList200 = {
+export type TracerObservabilityProviderList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: ObservabilityProviderApi[];
+};
+
+export type TracerObservabilityProviderList200 = {
+  status?: boolean;
+  result: TracerObservabilityProviderList200Result;
+};
+
+export type TracerObservabilityProviderCreate200 = {
+  status?: boolean;
+  result: ObservabilityProviderApi;
+};
+
+export type TracerObservabilityProviderUpdate200 = {
+  status?: boolean;
+  result: ObservabilityProviderApi;
+};
+
+export type TracerObservabilityProviderPartialUpdate200 = {
+  status?: boolean;
+  result: ObservabilityProviderApi;
 };
 
 export type TracerObservationSpanListParams = {
@@ -37818,6 +46946,26 @@ export type TracerObservationSpanList200 = {
   next?: string;
   previous?: string;
   results: ObservationSpanApi[];
+};
+
+export type TracerObservationSpanCreate201 = {
+  status?: boolean;
+  result: ObservationSpanApi;
+};
+
+export type TracerObservationSpanAddAnnotations200 = {
+  status?: boolean;
+  result: AddObservationSpanAnnotationsApi;
+};
+
+export type TracerObservationSpanBulkCreate200 = {
+  status?: boolean;
+  result: ObservationSpanApi;
+};
+
+export type TracerObservationSpanCreateOtelSpan201 = {
+  status?: boolean;
+  result: ObservationSpanApi;
 };
 
 export type TracerObservationSpanGetEvalAttributesListParams = {
@@ -37861,11 +47009,16 @@ export type TracerObservationSpanGetEvaluationDetailsParams = {
   limit?: number;
 };
 
-export type TracerObservationSpanGetEvaluationDetails200 = {
+export type TracerObservationSpanGetEvaluationDetails200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: ObservationSpanApi[];
+};
+
+export type TracerObservationSpanGetEvaluationDetails200 = {
+  status?: boolean;
+  result: TracerObservationSpanGetEvaluationDetails200Result;
 };
 
 export type TracerObservationSpanGetGraphMethodsParams = {
@@ -37890,11 +47043,16 @@ export type TracerObservationSpanGetObservationSpanFieldsParams = {
   limit?: number;
 };
 
-export type TracerObservationSpanGetObservationSpanFields200 = {
+export type TracerObservationSpanGetObservationSpanFields200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: ObservationSpanApi[];
+};
+
+export type TracerObservationSpanGetObservationSpanFields200 = {
+  status?: boolean;
+  result: TracerObservationSpanGetObservationSpanFields200Result;
 };
 
 export type TracerObservationSpanGetSpanAttributesListParams = {
@@ -38055,11 +47213,16 @@ export type TracerObservationSpanRetrieveLoadingParams = {
   limit?: number;
 };
 
-export type TracerObservationSpanRetrieveLoading200 = {
+export type TracerObservationSpanRetrieveLoading200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: ObservationSpanApi[];
+};
+
+export type TracerObservationSpanRetrieveLoading200 = {
+  status?: boolean;
+  result: TracerObservationSpanRetrieveLoading200Result;
 };
 
 export type TracerObservationSpanRootSpansParams = {
@@ -38073,6 +47236,21 @@ export type TracerObservationSpanRootSpansParams = {
   limit?: number;
   trace_ids: string[];
   project_ids?: string[];
+};
+
+export type TracerObservationSpanSubmitFeedback200 = {
+  status?: boolean;
+  result: ObservationSpanApi;
+};
+
+export type TracerObservationSpanSubmitFeedbackActionType200 = {
+  status?: boolean;
+  result: ObservationSpanApi;
+};
+
+export type TracerObservationSpanUpdateTags200 = {
+  status?: boolean;
+  result: ObservationSpanApi;
 };
 
 export type TracerObservationSpanReadParams = {
@@ -38099,6 +47277,21 @@ export type TracerObservationSpanReadParams = {
   expected_version?: string;
 };
 
+export type TracerOmegaAgentsCurvesReadParams = {
+  /**
+   * The Observe project the agent's runs are traced to.
+   */
+  project_id: string;
+  /**
+   * First UTC day of the window (inclusive).
+   */
+  start_date?: string;
+  /**
+   * Last UTC day of the window (inclusive); today at most.
+   */
+  end_date?: string;
+};
+
 export type TracerProjectVersionListParams = {
   /**
    * A page number within the paginated result set.
@@ -38117,6 +47310,21 @@ export type TracerProjectVersionList200 = {
   results: ProjectVersionApi[];
 };
 
+export type TracerProjectVersionCreate200 = {
+  status?: boolean;
+  result: ProjectVersionApi;
+};
+
+export type TracerProjectVersionAddAnnotations200 = {
+  status?: boolean;
+  result: ProjectVersionApi;
+};
+
+export type TracerProjectVersionDeleteRuns200 = {
+  status?: boolean;
+  result: ProjectVersionApi;
+};
+
 export type TracerProjectVersionGetProjectVersionIdsParams = {
   /**
    * A page number within the paginated result set.
@@ -38128,11 +47336,16 @@ export type TracerProjectVersionGetProjectVersionIdsParams = {
   limit?: number;
 };
 
-export type TracerProjectVersionGetProjectVersionIds200 = {
+export type TracerProjectVersionGetProjectVersionIds200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: ProjectVersionApi[];
+};
+
+export type TracerProjectVersionGetProjectVersionIds200 = {
+  status?: boolean;
+  result: TracerProjectVersionGetProjectVersionIds200Result;
 };
 
 export type TracerProjectVersionGetRunInsightsParams = {
@@ -38146,11 +47359,16 @@ export type TracerProjectVersionGetRunInsightsParams = {
   limit?: number;
 };
 
-export type TracerProjectVersionGetRunInsights200 = {
+export type TracerProjectVersionGetRunInsights200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: ProjectVersionApi[];
+};
+
+export type TracerProjectVersionGetRunInsights200 = {
+  status?: boolean;
+  result: TracerProjectVersionGetRunInsights200Result;
 };
 
 export type TracerProjectVersionListRunsParams = {
@@ -38164,11 +47382,26 @@ export type TracerProjectVersionListRunsParams = {
   limit?: number;
 };
 
-export type TracerProjectVersionListRuns200 = {
+export type TracerProjectVersionListRuns200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: ProjectVersionApi[];
+};
+
+export type TracerProjectVersionListRuns200 = {
+  status?: boolean;
+  result: TracerProjectVersionListRuns200Result;
+};
+
+export type TracerProjectVersionProjectVersionWinner200 = {
+  status?: boolean;
+  result: ProjectVersionApi;
+};
+
+export type TracerProjectVersionUpdateProjectVersionConfig200 = {
+  status?: boolean;
+  result: ProjectVersionApi;
 };
 
 export type TracerProjectListParams = {
@@ -38197,10 +47430,13 @@ export const TracerProjectListSortDirection = {
 } as const;
 
 export type TracerProjectList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: ProjectApi[];
+  status?: boolean;
+  result: ProjectTableResultApi;
+};
+
+export type TracerProjectCreate200 = {
+  status?: boolean;
+  result: ProjectApi;
 };
 
 export type TracerProjectFetchSystemMetricsParams = {
@@ -38214,11 +47450,16 @@ export type TracerProjectFetchSystemMetricsParams = {
   limit?: number;
 };
 
-export type TracerProjectFetchSystemMetrics200 = {
+export type TracerProjectFetchSystemMetrics200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: ProjectApi[];
+};
+
+export type TracerProjectFetchSystemMetrics200 = {
+  status?: boolean;
+  result: TracerProjectFetchSystemMetrics200Result;
 };
 
 export type TracerProjectGetGraphDataParams = {
@@ -38252,6 +47493,11 @@ export type TracerProjectGetGraphDataParams = {
 export type TracerProjectGetUserGraphDataParams = {
   project_id: string;
   end_user_id: string;
+};
+
+export type TracerProjectGetUserMetrics200 = {
+  status?: boolean;
+  result: ProjectUserMetricsRequestApi;
 };
 
 export type TracerProjectGetUsersAggregateGraphDataParams = {
@@ -38313,11 +47559,56 @@ export type TracerProjectProjectSdkCodeParams = {
   limit?: number;
 };
 
-export type TracerProjectProjectSdkCode200 = {
+export type TracerProjectProjectSdkCode200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: ProjectApi[];
+};
+
+export type TracerProjectProjectSdkCode200 = {
+  status?: boolean;
+  result: TracerProjectProjectSdkCode200Result;
+};
+
+export type TracerProjectUpdateProjectConfig200 = {
+  status?: boolean;
+  result: ProjectApi;
+};
+
+export type TracerProjectUpdateProjectName200 = {
+  status?: boolean;
+  result: ProjectApi;
+};
+
+export type TracerProjectUpdateProjectSessionConfig200 = {
+  status?: boolean;
+  result: ProjectApi;
+};
+
+export type TracerProjectUpdateTags200 = {
+  status?: boolean;
+  result: ProjectApi;
+};
+
+export type TracerReplaySessionCreate201 = {
+  status?: boolean;
+  result: CreateReplaySessionApi;
+};
+
+export type TracerReplaySessionGetEvalConfigs200 = {
+  status?: boolean;
+  result: ReplaySessionApi[];
+};
+
+export type TracerReplaySessionRead200 = {
+  status?: boolean;
+  result: ReplaySessionApi;
+};
+
+export type TracerReplaySessionGenerateScenario200 = {
+  status?: boolean;
+  result: GenerateScenarioApi;
 };
 
 export type TracerSavedViewsListParams = {
@@ -38342,11 +47633,41 @@ export type TracerSharedLinksListParams = {
   limit?: number;
 };
 
-export type TracerSharedLinksList200 = {
+export type TracerSharedLinksList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: SharedLinkListApi[];
+};
+
+export type TracerSharedLinksList200 = {
+  status?: boolean;
+  result: TracerSharedLinksList200Result;
+};
+
+export type TracerSharedLinksCreate201 = {
+  status?: boolean;
+  result: SharedLinkCreateApi;
+};
+
+export type TracerSharedLinksRead200 = {
+  status?: boolean;
+  result: SharedLinkDetailApi;
+};
+
+export type TracerSharedLinksUpdate200 = {
+  status?: boolean;
+  result: SharedLinkUpdateApi;
+};
+
+export type TracerSharedLinksPartialUpdate200 = {
+  status?: boolean;
+  result: SharedLinkUpdateApi;
+};
+
+export type TracerSharedLinksAddAccess201 = {
+  status?: boolean;
+  result: AddAccessApi;
 };
 
 export type TracerSharedSidebarListParams = {
@@ -38420,6 +47741,11 @@ export const TracerTraceSessionGetSessionFilterValuesColumn = {
   first_message: "first_message",
   last_message: "last_message",
 } as const;
+
+export type TracerTraceSessionGetSessionFilterValues200 = {
+  status?: boolean;
+  result: TraceSessionApi[];
+};
 
 export type TracerTraceSessionGetSessionGraphDataParams = {
   /**
@@ -38512,6 +47838,16 @@ export type TracerTraceSessionListSessionsParams = {
   allow_sampled?: boolean;
 };
 
+export type TracerTraceSessionRead200 = {
+  status?: boolean;
+  result: TraceSessionApi;
+};
+
+export type TracerTraceSessionEvalLogs200 = {
+  status?: boolean;
+  result: TraceSessionApi;
+};
+
 export type TracerTraceSessionQueryParams = {
   navigation_context?: string;
   user_id?: string;
@@ -38572,6 +47908,16 @@ export type TracerTraceAgentGraphParams = {
   refresh?: boolean;
 };
 
+export type TracerTraceBulkCreate200 = {
+  status?: boolean;
+  result: TraceApi;
+};
+
+export type TracerTraceCompareTraces200 = {
+  status?: boolean;
+  result: TraceApi;
+};
+
 export type TracerTraceGetEvalNamesParams = {
   /**
    * A page number within the paginated result set.
@@ -38583,11 +47929,16 @@ export type TracerTraceGetEvalNamesParams = {
   limit?: number;
 };
 
-export type TracerTraceGetEvalNames200 = {
+export type TracerTraceGetEvalNames200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: TraceApi[];
+};
+
+export type TracerTraceGetEvalNames200 = {
+  status?: boolean;
+  result: TracerTraceGetEvalNames200Result;
 };
 
 export type TracerTraceGetGraphMethodsParams = {
@@ -38802,6 +48153,11 @@ export type TracerTraceReadParams = {
   project_id?: string;
 };
 
+export type TracerTraceUpdateTags200 = {
+  status?: boolean;
+  result: TraceTagsUpdateApi;
+};
+
 export type TracerUserAlertLogsListParams = {
   /**
    * A page number within the paginated result set.
@@ -38831,11 +48187,21 @@ export type TracerUserAlertLogsListAllParams = {
   limit?: number;
 };
 
-export type TracerUserAlertLogsListAll200 = {
+export type TracerUserAlertLogsListAll200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: UserAlertMonitorLogApi[];
+};
+
+export type TracerUserAlertLogsListAll200 = {
+  status?: boolean;
+  result: TracerUserAlertLogsListAll200Result;
+};
+
+export type TracerUserAlertLogsListForAlert200 = {
+  status?: boolean;
+  result: UserAlertMonitorLogApi;
 };
 
 export type TracerUserAlertsListParams = {
@@ -38849,11 +48215,26 @@ export type TracerUserAlertsListParams = {
   limit?: number;
 };
 
-export type TracerUserAlertsList200 = {
+export type TracerUserAlertsList200Result = {
   count: number;
   next?: string;
   previous?: string;
   results: UserAlertMonitorApi[];
+};
+
+export type TracerUserAlertsList200 = {
+  status?: boolean;
+  result: TracerUserAlertsList200Result;
+};
+
+export type TracerUserAlertsCreate200 = {
+  status?: boolean;
+  result: UserAlertMonitorApi;
+};
+
+export type TracerUserAlertsBulkMute200 = {
+  status?: boolean;
+  result: UserAlertMonitorBulkMuteRequestApi;
 };
 
 export type TracerUserAlertsListMonitorsParams = {
@@ -38903,6 +48284,21 @@ export type TracerUserAlertsMetricOptionsParams = {
    * Number of results to return per page.
    */
   limit?: number;
+};
+
+export type TracerUserAlertsUpdate200 = {
+  status?: boolean;
+  result: UserAlertMonitorApi;
+};
+
+export type TracerUserAlertsPartialUpdate200 = {
+  status?: boolean;
+  result: UserAlertMonitorApi;
+};
+
+export type TracerUserAlertsMonitorDetails200 = {
+  status?: boolean;
+  result: UserAlertMonitorApi;
 };
 
 export type TracerUsersListParams = {
@@ -38996,6 +48392,2407 @@ export type UsageApiCallCountListParams = {
   api_call_type?: string;
 };
 
+export type UsageLedgerV1BalanceListParams = {
+  /**
+   * Omit or use json for JSON.
+   */
+  format?: UsageLedgerV1BalanceListFormat;
+};
+
+export type UsageLedgerV1BalanceListFormat =
+  (typeof UsageLedgerV1BalanceListFormat)[keyof typeof UsageLedgerV1BalanceListFormat];
+
+export const UsageLedgerV1BalanceListFormat = {
+  json: "json",
+} as const;
+
+export type UsageLedgerV1BalanceList200Currency =
+  (typeof UsageLedgerV1BalanceList200Currency)[keyof typeof UsageLedgerV1BalanceList200Currency];
+
+export const UsageLedgerV1BalanceList200Currency = {
+  usd: "usd",
+} as const;
+
+export type UsageLedgerV1BalanceList200BillingChannel =
+  (typeof UsageLedgerV1BalanceList200BillingChannel)[keyof typeof UsageLedgerV1BalanceList200BillingChannel];
+
+export const UsageLedgerV1BalanceList200BillingChannel = {
+  stripe_selfserve: "stripe_selfserve",
+  stripe_invoiced: "stripe_invoiced",
+  gcp_marketplace: "gcp_marketplace",
+  aws_marketplace: "aws_marketplace",
+  none: "none",
+} as const;
+
+export type UsageLedgerV1BalanceList200Funding =
+  (typeof UsageLedgerV1BalanceList200Funding)[keyof typeof UsageLedgerV1BalanceList200Funding];
+
+export const UsageLedgerV1BalanceList200Funding = {
+  prepaid_only: "prepaid_only",
+  prepaid_then_postpaid: "prepaid_then_postpaid",
+} as const;
+
+export type UsageLedgerV1BalanceList200BillingPath =
+  (typeof UsageLedgerV1BalanceList200BillingPath)[keyof typeof UsageLedgerV1BalanceList200BillingPath];
+
+export const UsageLedgerV1BalanceList200BillingPath = {
+  legacy: "legacy",
+  ledger: "ledger",
+} as const;
+
+export type UsageLedgerV1BalanceList200Remaining = {
+  /** @minimum 0 */
+  promotional_micros: number;
+  /** @minimum 0 */
+  commit_micros: number;
+  /** @minimum 0 */
+  purchased_micros: number;
+};
+
+export type UsageLedgerV1BalanceList200PromotionalExpiringItem = {
+  /** @minimum 0 */
+  amount_micros: number;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  expires_at: string;
+};
+
+export type UsageLedgerV1BalanceList200GatewayState =
+  (typeof UsageLedgerV1BalanceList200GatewayState)[keyof typeof UsageLedgerV1BalanceList200GatewayState];
+
+export const UsageLedgerV1BalanceList200GatewayState = {
+  ok: "ok",
+  na_managed_off: "na_managed_off",
+  unreachable: "unreachable",
+} as const;
+
+/**
+ * The gateway's current credit totals and request holds. Numeric values are null unless state is ok.
+ */
+export type UsageLedgerV1BalanceList200Gateway = {
+  state: UsageLedgerV1BalanceList200GatewayState;
+  /** @minimum 0 */
+  granted_total_micros: number;
+  /** @minimum 0 */
+  granted_version: number;
+  /** @minimum 0 */
+  spent_micros: number;
+  /** @minimum 0 */
+  held_micros: number;
+  available_micros: number;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  markup_percent: number;
+};
+
+export type UsageLedgerV1BalanceList200AutoTopup = {
+  enabled: boolean;
+  /** @minimum 0 */
+  threshold_micros: number;
+  /** @minimum 0 */
+  amount_micros: number;
+  /** @minimum 1 */
+  daily_count_cap: number;
+  /** @minimum 0 */
+  daily_amount_cap_micros: number;
+  /** @maxLength 255 */
+  disabled_reason: string;
+};
+
+export type UsageLedgerV1BalanceList200 = {
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ */
+  org_id: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  as_of: string;
+  currency: UsageLedgerV1BalanceList200Currency;
+  billing_channel: UsageLedgerV1BalanceList200BillingChannel;
+  funding: UsageLedgerV1BalanceList200Funding;
+  billing_path: UsageLedgerV1BalanceList200BillingPath;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  cutover_at: string;
+  /** credit_total - settled_spend_micros - platform_spend_micros, from Postgres. Negative is debt. */
+  balance_micros: number;
+  /**
+   * max(-balance_micros, 0).
+   * @minimum 0
+   */
+  debt_micros: number;
+  remaining: UsageLedgerV1BalanceList200Remaining;
+  /**
+   * Unspent promotional grants with an expiry, soonest first.
+   * @maxItems 10
+   */
+  promotional_expiring: UsageLedgerV1BalanceList200PromotionalExpiringItem[];
+  /** True when funding is prepaid_only and balance_micros <= 0; prepaid usage cannot start until credits are available. */
+  refusing: boolean;
+  /** The gateway's current credit totals and request holds. Numeric values are null unless state is ok. */
+  gateway: UsageLedgerV1BalanceList200Gateway;
+  /** @minimum 0 */
+  low_balance_threshold_micros: number;
+  auto_topup: UsageLedgerV1BalanceList200AutoTopup;
+};
+
+export type UsageLedgerV1BalanceList400ErrorCode =
+  (typeof UsageLedgerV1BalanceList400ErrorCode)[keyof typeof UsageLedgerV1BalanceList400ErrorCode];
+
+export const UsageLedgerV1BalanceList400ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1BalanceList400Error = {
+  code: UsageLedgerV1BalanceList400ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1BalanceList400 = {
+  error: UsageLedgerV1BalanceList400Error;
+};
+
+export type UsageLedgerV1BalanceList401ErrorCode =
+  (typeof UsageLedgerV1BalanceList401ErrorCode)[keyof typeof UsageLedgerV1BalanceList401ErrorCode];
+
+export const UsageLedgerV1BalanceList401ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1BalanceList401Error = {
+  code: UsageLedgerV1BalanceList401ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1BalanceList401 = {
+  error: UsageLedgerV1BalanceList401Error;
+};
+
+export type UsageLedgerV1BalanceList403ErrorCode =
+  (typeof UsageLedgerV1BalanceList403ErrorCode)[keyof typeof UsageLedgerV1BalanceList403ErrorCode];
+
+export const UsageLedgerV1BalanceList403ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1BalanceList403Error = {
+  code: UsageLedgerV1BalanceList403ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1BalanceList403 = {
+  error: UsageLedgerV1BalanceList403Error;
+};
+
+export type UsageLedgerV1BalanceList404ErrorCode =
+  (typeof UsageLedgerV1BalanceList404ErrorCode)[keyof typeof UsageLedgerV1BalanceList404ErrorCode];
+
+export const UsageLedgerV1BalanceList404ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1BalanceList404Error = {
+  code: UsageLedgerV1BalanceList404ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1BalanceList404 = {
+  error: UsageLedgerV1BalanceList404Error;
+};
+
+export type UsageLedgerV1BalanceList503ErrorCode =
+  (typeof UsageLedgerV1BalanceList503ErrorCode)[keyof typeof UsageLedgerV1BalanceList503ErrorCode];
+
+export const UsageLedgerV1BalanceList503ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1BalanceList503Error = {
+  code: UsageLedgerV1BalanceList503ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1BalanceList503 = {
+  error: UsageLedgerV1BalanceList503Error;
+};
+
+export type UsageLedgerV1BalanceListDefaultErrorCode =
+  (typeof UsageLedgerV1BalanceListDefaultErrorCode)[keyof typeof UsageLedgerV1BalanceListDefaultErrorCode];
+
+export const UsageLedgerV1BalanceListDefaultErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1BalanceListDefaultError = {
+  code: UsageLedgerV1BalanceListDefaultErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1BalanceListDefault = {
+  error: UsageLedgerV1BalanceListDefaultError;
+};
+
+export type UsageLedgerV1EntriesListParams = {
+  /**
+   * Inclusive timestamp, with a timezone offset.
+   */
+  from?: string;
+  /**
+   * Exclusive timestamp, with a timezone offset.
+   */
+  to?: string;
+  /**
+   * UTC billing month; defaults to the current month.
+   * @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$
+   */
+  period?: string;
+  /**
+   * Entry kinds, comma-separated.
+   */
+  kind?: UsageLedgerV1EntriesListKindItem[];
+  /**
+   * Filter by product.
+   */
+  product?: string;
+  /**
+   * Exact-match filter.
+   */
+  dimension?: string;
+  /**
+   * Exact-match filter.
+   */
+  funding?: string;
+  /**
+   * Exact-match filter.
+   */
+  agent_id?: string;
+  /**
+   * Exact-match filter.
+   */
+  api_key_id?: string;
+  /**
+   * Exact-match filter.
+   */
+  purpose?: string;
+  /**
+   * Opaque cursor from the prior response; bound to the same filters.
+   */
+  cursor?: string;
+  /**
+   * JSON page size.
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  /**
+   * Omit or use json for JSON; csv returns all matching rows as a CSV document.
+   */
+  format?: UsageLedgerV1EntriesListFormat;
+};
+
+export type UsageLedgerV1EntriesListKindItem =
+  (typeof UsageLedgerV1EntriesListKindItem)[keyof typeof UsageLedgerV1EntriesListKindItem];
+
+export const UsageLedgerV1EntriesListKindItem = {
+  topup: "topup",
+  grant: "grant",
+  spend: "spend",
+  refund: "refund",
+  adjustment: "adjustment",
+  expiry: "expiry",
+  usage_debit: "usage_debit",
+  topup_reversal: "topup_reversal",
+  dispute_hold: "dispute_hold",
+  dispute_release: "dispute_release",
+} as const;
+
+export type UsageLedgerV1EntriesListFormat =
+  (typeof UsageLedgerV1EntriesListFormat)[keyof typeof UsageLedgerV1EntriesListFormat];
+
+export const UsageLedgerV1EntriesListFormat = {
+  json: "json",
+  csv: "csv",
+} as const;
+
+export type UsageLedgerV1EntriesList200Order =
+  (typeof UsageLedgerV1EntriesList200Order)[keyof typeof UsageLedgerV1EntriesList200Order];
+
+export const UsageLedgerV1EntriesList200Order = {
+  occurred_at_desc: "occurred_at_desc",
+} as const;
+
+export type UsageLedgerV1EntriesList200EntriesItemKind =
+  (typeof UsageLedgerV1EntriesList200EntriesItemKind)[keyof typeof UsageLedgerV1EntriesList200EntriesItemKind];
+
+export const UsageLedgerV1EntriesList200EntriesItemKind = {
+  topup: "topup",
+  grant: "grant",
+  spend: "spend",
+  refund: "refund",
+  adjustment: "adjustment",
+  expiry: "expiry",
+  usage_debit: "usage_debit",
+  topup_reversal: "topup_reversal",
+  dispute_hold: "dispute_hold",
+  dispute_release: "dispute_release",
+} as const;
+
+export type UsageLedgerV1EntriesList200EntriesItemProduct =
+  (typeof UsageLedgerV1EntriesList200EntriesItemProduct)[keyof typeof UsageLedgerV1EntriesList200EntriesItemProduct];
+
+export const UsageLedgerV1EntriesList200EntriesItemProduct = {
+  gateway: "gateway",
+  agents: "agents",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  evals: "evals",
+  platform: "platform",
+} as const;
+
+export type UsageLedgerV1EntriesList200EntriesItemFunding =
+  (typeof UsageLedgerV1EntriesList200EntriesItemFunding)[keyof typeof UsageLedgerV1EntriesList200EntriesItemFunding];
+
+export const UsageLedgerV1EntriesList200EntriesItemFunding = {
+  promo: "promo",
+  commit: "commit",
+  purchased: "purchased",
+  invoice: "invoice",
+  debt: "debt",
+  marketplace: "marketplace",
+  free: "free",
+} as const;
+
+export type UsageLedgerV1EntriesList200EntriesItemPurpose =
+  (typeof UsageLedgerV1EntriesList200EntriesItemPurpose)[keyof typeof UsageLedgerV1EntriesList200EntriesItemPurpose];
+
+export const UsageLedgerV1EntriesList200EntriesItemPurpose = {
+  learning: "learning",
+} as const;
+
+/**
+ * One ManagedCreditEntry. Internal columns (landed_cost_micros, upstream_cost_micros, upstream_fee_bps, processing_fee_bps, upstream_key_id, served_upstream_provider, payment_fee_micros, note, created_by) are never returned.
+ */
+export type UsageLedgerV1EntriesList200EntriesItem = {
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ */
+  id: string;
+  kind: UsageLedgerV1EntriesList200EntriesItemKind;
+  amount_micros: number;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  occurred_at: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  created_at: string;
+  product: UsageLedgerV1EntriesList200EntriesItemProduct;
+  /** @pattern ^[a-z][a-z0-9_]{1,29}$ */
+  dimension: string;
+  /** @pattern ^(0|[1-9][0-9]{0,13})([.][0-9]{1,6})?$ */
+  quantity: string;
+  /** @pattern ^[a-z][a-z0-9_]{0,31}$ */
+  unit: string;
+  funding: UsageLedgerV1EntriesList200EntriesItemFunding;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$ */
+  period: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$ */
+  late_of_period: string;
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ */
+  workspace_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  agent_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  agent_run_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  api_key_id: string;
+  purpose: UsageLedgerV1EntriesList200EntriesItemPurpose;
+  /** @maxLength 32 */
+  source_kind: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  source_ref: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  request_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model: string;
+  /** @minimum 0 */
+  markup_bps: number;
+  /**
+   * @maxLength 32
+   * @pattern ^price-catalog\.v(0|[1-9][0-9]{0,5})$
+   */
+  price_catalog_version: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  gateway_catalog_snapshot_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  stripe_ref: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  expires_at: string;
+  /** @maxLength 32 */
+  category: string;
+};
+
+export type UsageLedgerV1EntriesList200 = {
+  order: UsageLedgerV1EntriesList200Order;
+  /** @maxItems 200 */
+  entries: UsageLedgerV1EntriesList200EntriesItem[];
+  /**
+   * Opaque base64url (no padding). null on the last page. A cursor is bound to the filters that produced it; reusing it with other filters is 400 invalid_cursor.
+   * @pattern ^[A-Za-z0-9_-]{1,1024}$
+   */
+  next_cursor: string;
+};
+
+export type UsageLedgerV1EntriesList400ErrorCode =
+  (typeof UsageLedgerV1EntriesList400ErrorCode)[keyof typeof UsageLedgerV1EntriesList400ErrorCode];
+
+export const UsageLedgerV1EntriesList400ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EntriesList400Error = {
+  code: UsageLedgerV1EntriesList400ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EntriesList400 = {
+  error: UsageLedgerV1EntriesList400Error;
+};
+
+export type UsageLedgerV1EntriesList401ErrorCode =
+  (typeof UsageLedgerV1EntriesList401ErrorCode)[keyof typeof UsageLedgerV1EntriesList401ErrorCode];
+
+export const UsageLedgerV1EntriesList401ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EntriesList401Error = {
+  code: UsageLedgerV1EntriesList401ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EntriesList401 = {
+  error: UsageLedgerV1EntriesList401Error;
+};
+
+export type UsageLedgerV1EntriesList403ErrorCode =
+  (typeof UsageLedgerV1EntriesList403ErrorCode)[keyof typeof UsageLedgerV1EntriesList403ErrorCode];
+
+export const UsageLedgerV1EntriesList403ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EntriesList403Error = {
+  code: UsageLedgerV1EntriesList403ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EntriesList403 = {
+  error: UsageLedgerV1EntriesList403Error;
+};
+
+export type UsageLedgerV1EntriesList404ErrorCode =
+  (typeof UsageLedgerV1EntriesList404ErrorCode)[keyof typeof UsageLedgerV1EntriesList404ErrorCode];
+
+export const UsageLedgerV1EntriesList404ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EntriesList404Error = {
+  code: UsageLedgerV1EntriesList404ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EntriesList404 = {
+  error: UsageLedgerV1EntriesList404Error;
+};
+
+export type UsageLedgerV1EntriesList503ErrorCode =
+  (typeof UsageLedgerV1EntriesList503ErrorCode)[keyof typeof UsageLedgerV1EntriesList503ErrorCode];
+
+export const UsageLedgerV1EntriesList503ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EntriesList503Error = {
+  code: UsageLedgerV1EntriesList503ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EntriesList503 = {
+  error: UsageLedgerV1EntriesList503Error;
+};
+
+export type UsageLedgerV1EntriesListDefaultErrorCode =
+  (typeof UsageLedgerV1EntriesListDefaultErrorCode)[keyof typeof UsageLedgerV1EntriesListDefaultErrorCode];
+
+export const UsageLedgerV1EntriesListDefaultErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EntriesListDefaultError = {
+  code: UsageLedgerV1EntriesListDefaultErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EntriesListDefault = {
+  error: UsageLedgerV1EntriesListDefaultError;
+};
+
+export type UsageLedgerV1EventsCreateBodyEventsItemV =
+  (typeof UsageLedgerV1EventsCreateBodyEventsItemV)[keyof typeof UsageLedgerV1EventsCreateBodyEventsItemV];
+
+export const UsageLedgerV1EventsCreateBodyEventsItemV = {
+  NUMBER_1: "1",
+} as const;
+
+export type UsageLedgerV1EventsCreateBodyEventsItemProduct =
+  (typeof UsageLedgerV1EventsCreateBodyEventsItemProduct)[keyof typeof UsageLedgerV1EventsCreateBodyEventsItemProduct];
+
+export const UsageLedgerV1EventsCreateBodyEventsItemProduct = {
+  gateway: "gateway",
+  agents: "agents",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  evals: "evals",
+  platform: "platform",
+} as const;
+
+/**
+ * The producer. The ingest credential names the systems and products it may emit; anything else is refused with source_not_permitted. An out-of-process credential is also bound to orgs and workspaces; any other org_id is refused with org_not_permitted before the org is looked up.
+ */
+export type UsageLedgerV1EventsCreateBodyEventsItemSourceSystem =
+  (typeof UsageLedgerV1EventsCreateBodyEventsItemSourceSystem)[keyof typeof UsageLedgerV1EventsCreateBodyEventsItemSourceSystem];
+
+export const UsageLedgerV1EventsCreateBodyEventsItemSourceSystem = {
+  fa_platform: "fa_platform",
+  fa_gateway_ingest: "fa_gateway_ingest",
+  fa_gateway_settlement: "fa_gateway_settlement",
+  ee_daemon: "ee_daemon",
+} as const;
+
+export type UsageLedgerV1EventsCreateBodyEventsItemSource = {
+  /** The producer. The ingest credential names the systems and products it may emit; anything else is refused with source_not_permitted. An out-of-process credential is also bound to orgs and workspaces; any other org_id is refused with org_not_permitted before the org is looked up. */
+  system: UsageLedgerV1EventsCreateBodyEventsItemSourceSystem;
+  /**
+   * The source object the event_id is derived from: a task id, a request id, a delivery-group hash. Stored as the ledger's source_ref.
+   * @minLength 1
+   * @maxLength 255
+   */
+  ref: string;
+};
+
+/**
+ * learning marks work the managed learning service did for this agent. It has no meter of its own. null is ordinary use.
+ */
+export type UsageLedgerV1EventsCreateBodyEventsItemAttributionPurpose =
+  (typeof UsageLedgerV1EventsCreateBodyEventsItemAttributionPurpose)[keyof typeof UsageLedgerV1EventsCreateBodyEventsItemAttributionPurpose];
+
+export const UsageLedgerV1EventsCreateBodyEventsItemAttributionPurpose = {
+  learning: "learning",
+} as const;
+
+export type UsageLedgerV1EventsCreateBodyEventsItemAttribution = {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  agent_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  agent_run_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  api_key_id: string;
+  /** learning marks work the managed learning service did for this agent. It has no meter of its own. null is ordinary use. */
+  purpose: UsageLedgerV1EventsCreateBodyEventsItemAttributionPurpose;
+};
+
+export type UsageLedgerV1EventsCreateBodyEventsItemAttributesCredentialType =
+  (typeof UsageLedgerV1EventsCreateBodyEventsItemAttributesCredentialType)[keyof typeof UsageLedgerV1EventsCreateBodyEventsItemAttributesCredentialType];
+
+export const UsageLedgerV1EventsCreateBodyEventsItemAttributesCredentialType = {
+  managed: "managed",
+  byok: "byok",
+} as const;
+
+export type UsageLedgerV1EventsCreateBodyEventsItemAttributesOccurredAtSource =
+  (typeof UsageLedgerV1EventsCreateBodyEventsItemAttributesOccurredAtSource)[keyof typeof UsageLedgerV1EventsCreateBodyEventsItemAttributesOccurredAtSource];
+
+export const UsageLedgerV1EventsCreateBodyEventsItemAttributesOccurredAtSource =
+  {
+    source_time: "source_time",
+    entry_timestamp: "entry_timestamp",
+  } as const;
+
+/**
+ * Context the rater may read. Unknown keys are stored and ignored. The reserved keys are typed here.
+ */
+export type UsageLedgerV1EventsCreateBodyEventsItemAttributes = {
+  credential_type?: UsageLedgerV1EventsCreateBodyEventsItemAttributesCredentialType;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  request_id?: string;
+  /** @maxLength 255 */
+  model?: string;
+  /** @maxLength 64 */
+  task_disposition?: string;
+  occurred_at_source?: UsageLedgerV1EventsCreateBodyEventsItemAttributesOccurredAtSource;
+  [key: string]: string;
+};
+
+export type UsageLedgerV1EventsCreateBodyEventsItem = {
+  v: UsageLedgerV1EventsCreateBodyEventsItemV;
+  /**
+   * A lowercase version-5 UUID derived from the source object (usage-event-v1.md section 3). A random (version-4) id is refused with event_id_not_derived.
+   * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+   */
+  event_id: string;
+  /**
+   * The Future AGI Organization id. Never an EE native org id: EE takes host_org from its host binding.
+   * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  org_id: string;
+  /**
+   * The Future AGI workspace id (EE: the binding's host_workspace). null only when the source has no workspace.
+   * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  workspace_id: string;
+  product: UsageLedgerV1EventsCreateBodyEventsItemProduct;
+  /**
+   * The id of a price-catalog-v1 dimensions[] row, validated against the catalog chosen by price-catalog-v1.md section 1. The catalog fixes the dimension's product and native unit.
+   * @pattern ^[a-z][a-z0-9_]{1,29}$
+   */
+  dimension: string;
+  /**
+   * The catalog call type (today a BillingEventType value, a billing.yaml api_call_types key). It must map to dimension.
+   * @pattern ^[a-z][a-z0-9_]{1,49}$
+   */
+  event_type: string;
+  /**
+   * A positive decimal in the dimension's native unit: at most 14 integer and 6 fraction digits (UsageEventLog.amount_raw is Decimal(20,6)). No exponent, sign or leading zero. Zero and negative quantities are refused; corrections are ledger adjustments, never negative usage.
+   * @pattern ^(?!0+([.]0+)?$)(0|[1-9][0-9]{0,13})([.][0-9]{1,6})?$
+   */
+  quantity: string;
+  /**
+   * Must equal the catalog native unit of dimension. The ingest never multiplies by per_call.
+   * @pattern ^[a-z][a-z0-9_]{0,31}$
+   */
+  unit: string;
+  /**
+   * When the usage happened, a stable property of the source object. Never the emit or retry time.
+   * @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$
+   */
+  occurred_at: string;
+  source: UsageLedgerV1EventsCreateBodyEventsItemSource;
+  attribution: UsageLedgerV1EventsCreateBodyEventsItemAttribution;
+  /** Context the rater may read. Unknown keys are stored and ignored. The reserved keys are typed here. */
+  attributes: UsageLedgerV1EventsCreateBodyEventsItemAttributes;
+};
+
+export type UsageLedgerV1EventsCreateBody = {
+  /**
+   * Usage events in request order. Each item is validated independently; a malformed item is refused without discarding valid peers.
+   * @minItems 1
+   * @maxItems 500
+   */
+  events: UsageLedgerV1EventsCreateBodyEventsItem[];
+};
+
+export type UsageLedgerV1EventsCreate200ResultsItemStatus =
+  (typeof UsageLedgerV1EventsCreate200ResultsItemStatus)[keyof typeof UsageLedgerV1EventsCreate200ResultsItemStatus];
+
+export const UsageLedgerV1EventsCreate200ResultsItemStatus = {
+  accepted: "accepted",
+  duplicate: "duplicate",
+  refused: "refused",
+} as const;
+
+export type UsageLedgerV1EventsCreate200ResultsItemReason =
+  (typeof UsageLedgerV1EventsCreate200ResultsItemReason)[keyof typeof UsageLedgerV1EventsCreate200ResultsItemReason];
+
+export const UsageLedgerV1EventsCreate200ResultsItemReason = {
+  malformed_event: "malformed_event",
+  event_id_not_derived: "event_id_not_derived",
+  unknown_org: "unknown_org",
+  workspace_not_in_org: "workspace_not_in_org",
+  source_not_permitted: "source_not_permitted",
+  org_not_permitted: "org_not_permitted",
+  unknown_dimension: "unknown_dimension",
+  unknown_event_type: "unknown_event_type",
+  event_type_dimension_mismatch: "event_type_dimension_mismatch",
+  product_mismatch: "product_mismatch",
+  unit_mismatch: "unit_mismatch",
+  occurred_at_in_future: "occurred_at_in_future",
+  beyond_lateness_window: "beyond_lateness_window",
+  idempotency_conflict: "idempotency_conflict",
+} as const;
+
+export type UsageLedgerV1EventsCreate200ResultsItem = {
+  /**
+   * @minimum 0
+   * @maximum 499
+   */
+  index: number;
+  /**
+   * null only when the item had no readable event_id.
+   * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  event_id: string;
+  status: UsageLedgerV1EventsCreate200ResultsItemStatus;
+  reason?: UsageLedgerV1EventsCreate200ResultsItemReason;
+  /** @maxLength 500 */
+  detail?: string;
+};
+
+export type UsageLedgerV1EventsCreate200 = {
+  /**
+   * One result per request item, in request order. accepted and duplicate both mean the event is durably stored.
+   * @minItems 1
+   * @maxItems 500
+   */
+  results: UsageLedgerV1EventsCreate200ResultsItem[];
+};
+
+export type UsageLedgerV1EventsCreate400ErrorCode =
+  (typeof UsageLedgerV1EventsCreate400ErrorCode)[keyof typeof UsageLedgerV1EventsCreate400ErrorCode];
+
+export const UsageLedgerV1EventsCreate400ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EventsCreate400Error = {
+  code: UsageLedgerV1EventsCreate400ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EventsCreate400 = {
+  error: UsageLedgerV1EventsCreate400Error;
+};
+
+export type UsageLedgerV1EventsCreate401ErrorCode =
+  (typeof UsageLedgerV1EventsCreate401ErrorCode)[keyof typeof UsageLedgerV1EventsCreate401ErrorCode];
+
+export const UsageLedgerV1EventsCreate401ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EventsCreate401Error = {
+  code: UsageLedgerV1EventsCreate401ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EventsCreate401 = {
+  error: UsageLedgerV1EventsCreate401Error;
+};
+
+export type UsageLedgerV1EventsCreate403ErrorCode =
+  (typeof UsageLedgerV1EventsCreate403ErrorCode)[keyof typeof UsageLedgerV1EventsCreate403ErrorCode];
+
+export const UsageLedgerV1EventsCreate403ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EventsCreate403Error = {
+  code: UsageLedgerV1EventsCreate403ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EventsCreate403 = {
+  error: UsageLedgerV1EventsCreate403Error;
+};
+
+export type UsageLedgerV1EventsCreate413ErrorCode =
+  (typeof UsageLedgerV1EventsCreate413ErrorCode)[keyof typeof UsageLedgerV1EventsCreate413ErrorCode];
+
+export const UsageLedgerV1EventsCreate413ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EventsCreate413Error = {
+  code: UsageLedgerV1EventsCreate413ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EventsCreate413 = {
+  error: UsageLedgerV1EventsCreate413Error;
+};
+
+export type UsageLedgerV1EventsCreate503ErrorCode =
+  (typeof UsageLedgerV1EventsCreate503ErrorCode)[keyof typeof UsageLedgerV1EventsCreate503ErrorCode];
+
+export const UsageLedgerV1EventsCreate503ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EventsCreate503Error = {
+  code: UsageLedgerV1EventsCreate503ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EventsCreate503 = {
+  error: UsageLedgerV1EventsCreate503Error;
+};
+
+export type UsageLedgerV1EventsCreateDefaultErrorCode =
+  (typeof UsageLedgerV1EventsCreateDefaultErrorCode)[keyof typeof UsageLedgerV1EventsCreateDefaultErrorCode];
+
+export const UsageLedgerV1EventsCreateDefaultErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1EventsCreateDefaultError = {
+  code: UsageLedgerV1EventsCreateDefaultErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1EventsCreateDefault = {
+  error: UsageLedgerV1EventsCreateDefaultError;
+};
+
+export type UsageLedgerV1InvoicesListParams = {
+  /**
+   * Opaque cursor from the prior response; bound to the same filters.
+   */
+  cursor?: string;
+  /**
+   * JSON page size.
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  /**
+   * Invoice kinds, comma-separated.
+   */
+  kind?: UsageLedgerV1InvoicesListKindItem[];
+  /**
+   * Omit or use json for JSON.
+   */
+  format?: UsageLedgerV1InvoicesListFormat;
+};
+
+export type UsageLedgerV1InvoicesListKindItem =
+  (typeof UsageLedgerV1InvoicesListKindItem)[keyof typeof UsageLedgerV1InvoicesListKindItem];
+
+export const UsageLedgerV1InvoicesListKindItem = {
+  usage: "usage",
+  plan: "plan",
+  topup: "topup",
+  one_off: "one_off",
+  legacy: "legacy",
+} as const;
+
+export type UsageLedgerV1InvoicesListFormat =
+  (typeof UsageLedgerV1InvoicesListFormat)[keyof typeof UsageLedgerV1InvoicesListFormat];
+
+export const UsageLedgerV1InvoicesListFormat = {
+  json: "json",
+} as const;
+
+export type UsageLedgerV1InvoicesList200InvoicesItemMode =
+  (typeof UsageLedgerV1InvoicesList200InvoicesItemMode)[keyof typeof UsageLedgerV1InvoicesList200InvoicesItemMode];
+
+export const UsageLedgerV1InvoicesList200InvoicesItemMode = {
+  test: "test",
+  live: "live",
+} as const;
+
+export type UsageLedgerV1InvoicesList200InvoicesItemKind =
+  (typeof UsageLedgerV1InvoicesList200InvoicesItemKind)[keyof typeof UsageLedgerV1InvoicesList200InvoicesItemKind];
+
+export const UsageLedgerV1InvoicesList200InvoicesItemKind = {
+  usage: "usage",
+  plan: "plan",
+  topup: "topup",
+  one_off: "one_off",
+  legacy: "legacy",
+} as const;
+
+export type UsageLedgerV1InvoicesList200InvoicesItemStatus =
+  (typeof UsageLedgerV1InvoicesList200InvoicesItemStatus)[keyof typeof UsageLedgerV1InvoicesList200InvoicesItemStatus];
+
+export const UsageLedgerV1InvoicesList200InvoicesItemStatus = {
+  draft: "draft",
+  open: "open",
+  paid: "paid",
+  uncollectible: "uncollectible",
+  void: "void",
+} as const;
+
+export type UsageLedgerV1InvoicesList200InvoicesItemCurrency =
+  (typeof UsageLedgerV1InvoicesList200InvoicesItemCurrency)[keyof typeof UsageLedgerV1InvoicesList200InvoicesItemCurrency];
+
+export const UsageLedgerV1InvoicesList200InvoicesItemCurrency = {
+  usd: "usd",
+} as const;
+
+export type UsageLedgerV1InvoicesList200InvoicesItem = {
+  /** @pattern ^in_[A-Za-z0-9]{1,250}$ */
+  stripe_invoice_id: string;
+  mode: UsageLedgerV1InvoicesList200InvoicesItemMode;
+  kind: UsageLedgerV1InvoicesList200InvoicesItemKind;
+  status: UsageLedgerV1InvoicesList200InvoicesItemStatus;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$ */
+  period_start: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$ */
+  period_end: string;
+  currency: UsageLedgerV1InvoicesList200InvoicesItemCurrency;
+  subtotal_cents: number;
+  /** @minimum 0 */
+  tax_cents: number;
+  total_cents: number;
+  /** @minimum 0 */
+  amount_due_cents: number;
+  /** @pattern ^https:// */
+  hosted_invoice_url: string;
+  /** @pattern ^https:// */
+  invoice_pdf_url: string;
+  /** @pattern ^/usage/ledger/v1/statements/[0-9]{4}-(0[1-9]|1[0-2])/$ */
+  statement_url: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  created_at: string;
+};
+
+export type UsageLedgerV1InvoicesList200 = {
+  /** @maxItems 100 */
+  invoices: UsageLedgerV1InvoicesList200InvoicesItem[];
+  /**
+   * Opaque base64url (no padding). null on the last page. A cursor is bound to the filters that produced it; reusing it with other filters is 400 invalid_cursor.
+   * @pattern ^[A-Za-z0-9_-]{1,1024}$
+   */
+  next_cursor: string;
+};
+
+export type UsageLedgerV1InvoicesList400ErrorCode =
+  (typeof UsageLedgerV1InvoicesList400ErrorCode)[keyof typeof UsageLedgerV1InvoicesList400ErrorCode];
+
+export const UsageLedgerV1InvoicesList400ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1InvoicesList400Error = {
+  code: UsageLedgerV1InvoicesList400ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1InvoicesList400 = {
+  error: UsageLedgerV1InvoicesList400Error;
+};
+
+export type UsageLedgerV1InvoicesList401ErrorCode =
+  (typeof UsageLedgerV1InvoicesList401ErrorCode)[keyof typeof UsageLedgerV1InvoicesList401ErrorCode];
+
+export const UsageLedgerV1InvoicesList401ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1InvoicesList401Error = {
+  code: UsageLedgerV1InvoicesList401ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1InvoicesList401 = {
+  error: UsageLedgerV1InvoicesList401Error;
+};
+
+export type UsageLedgerV1InvoicesList403ErrorCode =
+  (typeof UsageLedgerV1InvoicesList403ErrorCode)[keyof typeof UsageLedgerV1InvoicesList403ErrorCode];
+
+export const UsageLedgerV1InvoicesList403ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1InvoicesList403Error = {
+  code: UsageLedgerV1InvoicesList403ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1InvoicesList403 = {
+  error: UsageLedgerV1InvoicesList403Error;
+};
+
+export type UsageLedgerV1InvoicesList404ErrorCode =
+  (typeof UsageLedgerV1InvoicesList404ErrorCode)[keyof typeof UsageLedgerV1InvoicesList404ErrorCode];
+
+export const UsageLedgerV1InvoicesList404ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1InvoicesList404Error = {
+  code: UsageLedgerV1InvoicesList404ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1InvoicesList404 = {
+  error: UsageLedgerV1InvoicesList404Error;
+};
+
+export type UsageLedgerV1InvoicesList503ErrorCode =
+  (typeof UsageLedgerV1InvoicesList503ErrorCode)[keyof typeof UsageLedgerV1InvoicesList503ErrorCode];
+
+export const UsageLedgerV1InvoicesList503ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1InvoicesList503Error = {
+  code: UsageLedgerV1InvoicesList503ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1InvoicesList503 = {
+  error: UsageLedgerV1InvoicesList503Error;
+};
+
+export type UsageLedgerV1InvoicesListDefaultErrorCode =
+  (typeof UsageLedgerV1InvoicesListDefaultErrorCode)[keyof typeof UsageLedgerV1InvoicesListDefaultErrorCode];
+
+export const UsageLedgerV1InvoicesListDefaultErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1InvoicesListDefaultError = {
+  code: UsageLedgerV1InvoicesListDefaultErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1InvoicesListDefault = {
+  error: UsageLedgerV1InvoicesListDefaultError;
+};
+
+export type UsageLedgerV1UsageListParams = {
+  /**
+   * UTC billing month; defaults to the current month.
+   * @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$
+   */
+  period?: string;
+  /**
+   * Grouping keys, comma-separated; product is always included.
+   */
+  group_by?: UsageLedgerV1UsageListGroupByItem[];
+  /**
+   * Filter by product.
+   */
+  product?: string;
+  /**
+   * Omit or use json for JSON; csv returns all matching rows as a CSV document.
+   */
+  format?: UsageLedgerV1UsageListFormat;
+};
+
+export type UsageLedgerV1UsageListGroupByItem =
+  (typeof UsageLedgerV1UsageListGroupByItem)[keyof typeof UsageLedgerV1UsageListGroupByItem];
+
+export const UsageLedgerV1UsageListGroupByItem = {
+  product: "product",
+  dimension: "dimension",
+  workspace: "workspace",
+  agent: "agent",
+  api_key: "api_key",
+  purpose: "purpose",
+  late: "late",
+} as const;
+
+export type UsageLedgerV1UsageListFormat =
+  (typeof UsageLedgerV1UsageListFormat)[keyof typeof UsageLedgerV1UsageListFormat];
+
+export const UsageLedgerV1UsageListFormat = {
+  json: "json",
+  csv: "csv",
+} as const;
+
+export type UsageLedgerV1UsageList200GroupByItem =
+  (typeof UsageLedgerV1UsageList200GroupByItem)[keyof typeof UsageLedgerV1UsageList200GroupByItem];
+
+export const UsageLedgerV1UsageList200GroupByItem = {
+  product: "product",
+  dimension: "dimension",
+  workspace: "workspace",
+  agent: "agent",
+  api_key: "api_key",
+  purpose: "purpose",
+  late: "late",
+} as const;
+
+export type UsageLedgerV1UsageList200RowsItemProduct =
+  (typeof UsageLedgerV1UsageList200RowsItemProduct)[keyof typeof UsageLedgerV1UsageList200RowsItemProduct];
+
+export const UsageLedgerV1UsageList200RowsItemProduct = {
+  gateway: "gateway",
+  agents: "agents",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  evals: "evals",
+  platform: "platform",
+} as const;
+
+export type UsageLedgerV1UsageList200RowsItemPurpose =
+  (typeof UsageLedgerV1UsageList200RowsItemPurpose)[keyof typeof UsageLedgerV1UsageList200RowsItemPurpose];
+
+export const UsageLedgerV1UsageList200RowsItemPurpose = {
+  learning: "learning",
+} as const;
+
+export type UsageLedgerV1UsageList200RowsItemFundedFree =
+  (typeof UsageLedgerV1UsageList200RowsItemFundedFree)[keyof typeof UsageLedgerV1UsageList200RowsItemFundedFree];
+
+export const UsageLedgerV1UsageList200RowsItemFundedFree = {
+  NUMBER_0: 0,
+} as const;
+
+/**
+ * Micros by funding bucket. promo, commit, purchased and debt are paid from the balance; invoice is to be invoiced; marketplace is billed by the marketplace; free is always 0 and is kept so every bucket is named.
+ */
+export type UsageLedgerV1UsageList200RowsItemFunded = {
+  promo: number;
+  commit: number;
+  purchased: number;
+  debt: number;
+  invoice: number;
+  marketplace: number;
+  free: UsageLedgerV1UsageList200RowsItemFundedFree;
+};
+
+export type UsageLedgerV1UsageList200RowsItemAmountSource =
+  (typeof UsageLedgerV1UsageList200RowsItemAmountSource)[keyof typeof UsageLedgerV1UsageList200RowsItemAmountSource];
+
+export const UsageLedgerV1UsageList200RowsItemAmountSource = {
+  ledger: "ledger",
+  legacy_estimate: "legacy_estimate",
+  shadow: "shadow",
+} as const;
+
+/**
+ * One group. A key that is not in group_by is null. quantity and unit are null unless dimension is in group_by.
+ */
+export type UsageLedgerV1UsageList200RowsItem = {
+  product: UsageLedgerV1UsageList200RowsItemProduct;
+  /** @pattern ^[a-z][a-z0-9_]{1,29}$ */
+  dimension: string;
+  /** @pattern ^[a-z][a-z0-9_]{0,31}$ */
+  unit: string;
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ */
+  workspace_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  agent_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  api_key_id: string;
+  purpose: UsageLedgerV1UsageList200RowsItemPurpose;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$ */
+  late_of_period: string;
+  /** @pattern ^(0|[1-9][0-9]{0,13})([.][0-9]{1,6})?$ */
+  quantity: string;
+  /** Minus the sum of amount_micros over the group's spend, usage_debit and refund entries booked in the period. */
+  amount_micros: number;
+  /** Micros by funding bucket. promo, commit, purchased and debt are paid from the balance; invoice is to be invoiced; marketplace is billed by the marketplace; free is always 0 and is kept so every bucket is named. */
+  funded: UsageLedgerV1UsageList200RowsItemFunded;
+  amount_source: UsageLedgerV1UsageList200RowsItemAmountSource;
+};
+
+export type UsageLedgerV1UsageList200TotalsFundedFree =
+  (typeof UsageLedgerV1UsageList200TotalsFundedFree)[keyof typeof UsageLedgerV1UsageList200TotalsFundedFree];
+
+export const UsageLedgerV1UsageList200TotalsFundedFree = {
+  NUMBER_0: 0,
+} as const;
+
+/**
+ * Micros by funding bucket. promo, commit, purchased and debt are paid from the balance; invoice is to be invoiced; marketplace is billed by the marketplace; free is always 0 and is kept so every bucket is named.
+ */
+export type UsageLedgerV1UsageList200TotalsFunded = {
+  promo: number;
+  commit: number;
+  purchased: number;
+  debt: number;
+  invoice: number;
+  marketplace: number;
+  free: UsageLedgerV1UsageList200TotalsFundedFree;
+};
+
+export type UsageLedgerV1UsageList200Totals = {
+  amount_micros: number;
+  /** Micros by funding bucket. promo, commit, purchased and debt are paid from the balance; invoice is to be invoiced; marketplace is billed by the marketplace; free is always 0 and is kept so every bucket is named. */
+  funded: UsageLedgerV1UsageList200TotalsFunded;
+};
+
+export type UsageLedgerV1UsageList200 = {
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ */
+  org_id: string;
+  /**
+   * The workspace the read was scoped to; null for an org-wide read.
+   * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  workspace_id: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$ */
+  period: string;
+  /** @minItems 1 */
+  group_by: UsageLedgerV1UsageList200GroupByItem[];
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  as_of: string;
+  /**
+   * Every event received at or before this instant is rated or has a not_billable reason.
+   * @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$
+   */
+  rated_through: string;
+  /** True while the total is an estimate, until the period's usage invoice is finalized. */
+  estimate: boolean;
+  /** @maxItems 5000 */
+  rows: UsageLedgerV1UsageList200RowsItem[];
+  totals: UsageLedgerV1UsageList200Totals;
+};
+
+export type UsageLedgerV1UsageList400ErrorCode =
+  (typeof UsageLedgerV1UsageList400ErrorCode)[keyof typeof UsageLedgerV1UsageList400ErrorCode];
+
+export const UsageLedgerV1UsageList400ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1UsageList400Error = {
+  code: UsageLedgerV1UsageList400ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1UsageList400 = {
+  error: UsageLedgerV1UsageList400Error;
+};
+
+export type UsageLedgerV1UsageList401ErrorCode =
+  (typeof UsageLedgerV1UsageList401ErrorCode)[keyof typeof UsageLedgerV1UsageList401ErrorCode];
+
+export const UsageLedgerV1UsageList401ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1UsageList401Error = {
+  code: UsageLedgerV1UsageList401ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1UsageList401 = {
+  error: UsageLedgerV1UsageList401Error;
+};
+
+export type UsageLedgerV1UsageList403ErrorCode =
+  (typeof UsageLedgerV1UsageList403ErrorCode)[keyof typeof UsageLedgerV1UsageList403ErrorCode];
+
+export const UsageLedgerV1UsageList403ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1UsageList403Error = {
+  code: UsageLedgerV1UsageList403ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1UsageList403 = {
+  error: UsageLedgerV1UsageList403Error;
+};
+
+export type UsageLedgerV1UsageList404ErrorCode =
+  (typeof UsageLedgerV1UsageList404ErrorCode)[keyof typeof UsageLedgerV1UsageList404ErrorCode];
+
+export const UsageLedgerV1UsageList404ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1UsageList404Error = {
+  code: UsageLedgerV1UsageList404ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1UsageList404 = {
+  error: UsageLedgerV1UsageList404Error;
+};
+
+export type UsageLedgerV1UsageList503ErrorCode =
+  (typeof UsageLedgerV1UsageList503ErrorCode)[keyof typeof UsageLedgerV1UsageList503ErrorCode];
+
+export const UsageLedgerV1UsageList503ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1UsageList503Error = {
+  code: UsageLedgerV1UsageList503ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1UsageList503 = {
+  error: UsageLedgerV1UsageList503Error;
+};
+
+export type UsageLedgerV1UsageListDefaultErrorCode =
+  (typeof UsageLedgerV1UsageListDefaultErrorCode)[keyof typeof UsageLedgerV1UsageListDefaultErrorCode];
+
+export const UsageLedgerV1UsageListDefaultErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1UsageListDefaultError = {
+  code: UsageLedgerV1UsageListDefaultErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1UsageListDefault = {
+  error: UsageLedgerV1UsageListDefaultError;
+};
+
+export type UsageLedgerV1WorkspacesEntriesListParams = {
+  /**
+   * Inclusive timestamp, with a timezone offset.
+   */
+  from?: string;
+  /**
+   * Exclusive timestamp, with a timezone offset.
+   */
+  to?: string;
+  /**
+   * UTC billing month; defaults to the current month.
+   * @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$
+   */
+  period?: string;
+  /**
+   * Entry kinds, comma-separated.
+   */
+  kind?: UsageLedgerV1WorkspacesEntriesListKindItem[];
+  /**
+   * Filter by product.
+   */
+  product?: string;
+  /**
+   * Exact-match filter.
+   */
+  dimension?: string;
+  /**
+   * Exact-match filter.
+   */
+  funding?: string;
+  /**
+   * Exact-match filter.
+   */
+  agent_id?: string;
+  /**
+   * Exact-match filter.
+   */
+  api_key_id?: string;
+  /**
+   * Exact-match filter.
+   */
+  purpose?: string;
+  /**
+   * Opaque cursor from the prior response; bound to the same filters.
+   */
+  cursor?: string;
+  /**
+   * JSON page size.
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  /**
+   * Omit or use json for JSON; csv returns all matching rows as a CSV document.
+   */
+  format?: UsageLedgerV1WorkspacesEntriesListFormat;
+};
+
+export type UsageLedgerV1WorkspacesEntriesListKindItem =
+  (typeof UsageLedgerV1WorkspacesEntriesListKindItem)[keyof typeof UsageLedgerV1WorkspacesEntriesListKindItem];
+
+export const UsageLedgerV1WorkspacesEntriesListKindItem = {
+  topup: "topup",
+  grant: "grant",
+  spend: "spend",
+  refund: "refund",
+  adjustment: "adjustment",
+  expiry: "expiry",
+  usage_debit: "usage_debit",
+  topup_reversal: "topup_reversal",
+  dispute_hold: "dispute_hold",
+  dispute_release: "dispute_release",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesListFormat =
+  (typeof UsageLedgerV1WorkspacesEntriesListFormat)[keyof typeof UsageLedgerV1WorkspacesEntriesListFormat];
+
+export const UsageLedgerV1WorkspacesEntriesListFormat = {
+  json: "json",
+  csv: "csv",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesList200Order =
+  (typeof UsageLedgerV1WorkspacesEntriesList200Order)[keyof typeof UsageLedgerV1WorkspacesEntriesList200Order];
+
+export const UsageLedgerV1WorkspacesEntriesList200Order = {
+  occurred_at_desc: "occurred_at_desc",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesList200EntriesItemKind =
+  (typeof UsageLedgerV1WorkspacesEntriesList200EntriesItemKind)[keyof typeof UsageLedgerV1WorkspacesEntriesList200EntriesItemKind];
+
+export const UsageLedgerV1WorkspacesEntriesList200EntriesItemKind = {
+  topup: "topup",
+  grant: "grant",
+  spend: "spend",
+  refund: "refund",
+  adjustment: "adjustment",
+  expiry: "expiry",
+  usage_debit: "usage_debit",
+  topup_reversal: "topup_reversal",
+  dispute_hold: "dispute_hold",
+  dispute_release: "dispute_release",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesList200EntriesItemProduct =
+  (typeof UsageLedgerV1WorkspacesEntriesList200EntriesItemProduct)[keyof typeof UsageLedgerV1WorkspacesEntriesList200EntriesItemProduct];
+
+export const UsageLedgerV1WorkspacesEntriesList200EntriesItemProduct = {
+  gateway: "gateway",
+  agents: "agents",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  evals: "evals",
+  platform: "platform",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesList200EntriesItemFunding =
+  (typeof UsageLedgerV1WorkspacesEntriesList200EntriesItemFunding)[keyof typeof UsageLedgerV1WorkspacesEntriesList200EntriesItemFunding];
+
+export const UsageLedgerV1WorkspacesEntriesList200EntriesItemFunding = {
+  promo: "promo",
+  commit: "commit",
+  purchased: "purchased",
+  invoice: "invoice",
+  debt: "debt",
+  marketplace: "marketplace",
+  free: "free",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesList200EntriesItemPurpose =
+  (typeof UsageLedgerV1WorkspacesEntriesList200EntriesItemPurpose)[keyof typeof UsageLedgerV1WorkspacesEntriesList200EntriesItemPurpose];
+
+export const UsageLedgerV1WorkspacesEntriesList200EntriesItemPurpose = {
+  learning: "learning",
+} as const;
+
+/**
+ * One ManagedCreditEntry. Internal columns (landed_cost_micros, upstream_cost_micros, upstream_fee_bps, processing_fee_bps, upstream_key_id, served_upstream_provider, payment_fee_micros, note, created_by) are never returned.
+ */
+export type UsageLedgerV1WorkspacesEntriesList200EntriesItem = {
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ */
+  id: string;
+  kind: UsageLedgerV1WorkspacesEntriesList200EntriesItemKind;
+  amount_micros: number;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  occurred_at: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  created_at: string;
+  product: UsageLedgerV1WorkspacesEntriesList200EntriesItemProduct;
+  /** @pattern ^[a-z][a-z0-9_]{1,29}$ */
+  dimension: string;
+  /** @pattern ^(0|[1-9][0-9]{0,13})([.][0-9]{1,6})?$ */
+  quantity: string;
+  /** @pattern ^[a-z][a-z0-9_]{0,31}$ */
+  unit: string;
+  funding: UsageLedgerV1WorkspacesEntriesList200EntriesItemFunding;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$ */
+  period: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$ */
+  late_of_period: string;
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ */
+  workspace_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  agent_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  agent_run_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  api_key_id: string;
+  purpose: UsageLedgerV1WorkspacesEntriesList200EntriesItemPurpose;
+  /** @maxLength 32 */
+  source_kind: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  source_ref: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  request_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model: string;
+  /** @minimum 0 */
+  markup_bps: number;
+  /**
+   * @maxLength 32
+   * @pattern ^price-catalog\.v(0|[1-9][0-9]{0,5})$
+   */
+  price_catalog_version: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  gateway_catalog_snapshot_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  stripe_ref: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  expires_at: string;
+  /** @maxLength 32 */
+  category: string;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList200 = {
+  order: UsageLedgerV1WorkspacesEntriesList200Order;
+  /** @maxItems 200 */
+  entries: UsageLedgerV1WorkspacesEntriesList200EntriesItem[];
+  /**
+   * Opaque base64url (no padding). null on the last page. A cursor is bound to the filters that produced it; reusing it with other filters is 400 invalid_cursor.
+   * @pattern ^[A-Za-z0-9_-]{1,1024}$
+   */
+  next_cursor: string;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList400ErrorCode =
+  (typeof UsageLedgerV1WorkspacesEntriesList400ErrorCode)[keyof typeof UsageLedgerV1WorkspacesEntriesList400ErrorCode];
+
+export const UsageLedgerV1WorkspacesEntriesList400ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesList400Error = {
+  code: UsageLedgerV1WorkspacesEntriesList400ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList400 = {
+  error: UsageLedgerV1WorkspacesEntriesList400Error;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList401ErrorCode =
+  (typeof UsageLedgerV1WorkspacesEntriesList401ErrorCode)[keyof typeof UsageLedgerV1WorkspacesEntriesList401ErrorCode];
+
+export const UsageLedgerV1WorkspacesEntriesList401ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesList401Error = {
+  code: UsageLedgerV1WorkspacesEntriesList401ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList401 = {
+  error: UsageLedgerV1WorkspacesEntriesList401Error;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList403ErrorCode =
+  (typeof UsageLedgerV1WorkspacesEntriesList403ErrorCode)[keyof typeof UsageLedgerV1WorkspacesEntriesList403ErrorCode];
+
+export const UsageLedgerV1WorkspacesEntriesList403ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesList403Error = {
+  code: UsageLedgerV1WorkspacesEntriesList403ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList403 = {
+  error: UsageLedgerV1WorkspacesEntriesList403Error;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList404ErrorCode =
+  (typeof UsageLedgerV1WorkspacesEntriesList404ErrorCode)[keyof typeof UsageLedgerV1WorkspacesEntriesList404ErrorCode];
+
+export const UsageLedgerV1WorkspacesEntriesList404ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesList404Error = {
+  code: UsageLedgerV1WorkspacesEntriesList404ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList404 = {
+  error: UsageLedgerV1WorkspacesEntriesList404Error;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList503ErrorCode =
+  (typeof UsageLedgerV1WorkspacesEntriesList503ErrorCode)[keyof typeof UsageLedgerV1WorkspacesEntriesList503ErrorCode];
+
+export const UsageLedgerV1WorkspacesEntriesList503ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesList503Error = {
+  code: UsageLedgerV1WorkspacesEntriesList503ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesEntriesList503 = {
+  error: UsageLedgerV1WorkspacesEntriesList503Error;
+};
+
+export type UsageLedgerV1WorkspacesEntriesListDefaultErrorCode =
+  (typeof UsageLedgerV1WorkspacesEntriesListDefaultErrorCode)[keyof typeof UsageLedgerV1WorkspacesEntriesListDefaultErrorCode];
+
+export const UsageLedgerV1WorkspacesEntriesListDefaultErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesEntriesListDefaultError = {
+  code: UsageLedgerV1WorkspacesEntriesListDefaultErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesEntriesListDefault = {
+  error: UsageLedgerV1WorkspacesEntriesListDefaultError;
+};
+
+export type UsageLedgerV1WorkspacesUsageListParams = {
+  /**
+   * UTC billing month; defaults to the current month.
+   * @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$
+   */
+  period?: string;
+  /**
+   * Grouping keys, comma-separated; product is always included.
+   */
+  group_by?: UsageLedgerV1WorkspacesUsageListGroupByItem[];
+  /**
+   * Filter by product.
+   */
+  product?: string;
+  /**
+   * Omit or use json for JSON; csv returns all matching rows as a CSV document.
+   */
+  format?: UsageLedgerV1WorkspacesUsageListFormat;
+};
+
+export type UsageLedgerV1WorkspacesUsageListGroupByItem =
+  (typeof UsageLedgerV1WorkspacesUsageListGroupByItem)[keyof typeof UsageLedgerV1WorkspacesUsageListGroupByItem];
+
+export const UsageLedgerV1WorkspacesUsageListGroupByItem = {
+  product: "product",
+  dimension: "dimension",
+  workspace: "workspace",
+  agent: "agent",
+  api_key: "api_key",
+  purpose: "purpose",
+  late: "late",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageListFormat =
+  (typeof UsageLedgerV1WorkspacesUsageListFormat)[keyof typeof UsageLedgerV1WorkspacesUsageListFormat];
+
+export const UsageLedgerV1WorkspacesUsageListFormat = {
+  json: "json",
+  csv: "csv",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageList200GroupByItem =
+  (typeof UsageLedgerV1WorkspacesUsageList200GroupByItem)[keyof typeof UsageLedgerV1WorkspacesUsageList200GroupByItem];
+
+export const UsageLedgerV1WorkspacesUsageList200GroupByItem = {
+  product: "product",
+  dimension: "dimension",
+  workspace: "workspace",
+  agent: "agent",
+  api_key: "api_key",
+  purpose: "purpose",
+  late: "late",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageList200RowsItemProduct =
+  (typeof UsageLedgerV1WorkspacesUsageList200RowsItemProduct)[keyof typeof UsageLedgerV1WorkspacesUsageList200RowsItemProduct];
+
+export const UsageLedgerV1WorkspacesUsageList200RowsItemProduct = {
+  gateway: "gateway",
+  agents: "agents",
+  sandboxes: "sandboxes",
+  deployments: "deployments",
+  evals: "evals",
+  platform: "platform",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageList200RowsItemPurpose =
+  (typeof UsageLedgerV1WorkspacesUsageList200RowsItemPurpose)[keyof typeof UsageLedgerV1WorkspacesUsageList200RowsItemPurpose];
+
+export const UsageLedgerV1WorkspacesUsageList200RowsItemPurpose = {
+  learning: "learning",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageList200RowsItemFundedFree =
+  (typeof UsageLedgerV1WorkspacesUsageList200RowsItemFundedFree)[keyof typeof UsageLedgerV1WorkspacesUsageList200RowsItemFundedFree];
+
+export const UsageLedgerV1WorkspacesUsageList200RowsItemFundedFree = {
+  NUMBER_0: 0,
+} as const;
+
+/**
+ * Micros by funding bucket. promo, commit, purchased and debt are paid from the balance; invoice is to be invoiced; marketplace is billed by the marketplace; free is always 0 and is kept so every bucket is named.
+ */
+export type UsageLedgerV1WorkspacesUsageList200RowsItemFunded = {
+  promo: number;
+  commit: number;
+  purchased: number;
+  debt: number;
+  invoice: number;
+  marketplace: number;
+  free: UsageLedgerV1WorkspacesUsageList200RowsItemFundedFree;
+};
+
+export type UsageLedgerV1WorkspacesUsageList200RowsItemAmountSource =
+  (typeof UsageLedgerV1WorkspacesUsageList200RowsItemAmountSource)[keyof typeof UsageLedgerV1WorkspacesUsageList200RowsItemAmountSource];
+
+export const UsageLedgerV1WorkspacesUsageList200RowsItemAmountSource = {
+  ledger: "ledger",
+  legacy_estimate: "legacy_estimate",
+  shadow: "shadow",
+} as const;
+
+/**
+ * One group. A key that is not in group_by is null. quantity and unit are null unless dimension is in group_by.
+ */
+export type UsageLedgerV1WorkspacesUsageList200RowsItem = {
+  product: UsageLedgerV1WorkspacesUsageList200RowsItemProduct;
+  /** @pattern ^[a-z][a-z0-9_]{1,29}$ */
+  dimension: string;
+  /** @pattern ^[a-z][a-z0-9_]{0,31}$ */
+  unit: string;
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ */
+  workspace_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  agent_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  api_key_id: string;
+  purpose: UsageLedgerV1WorkspacesUsageList200RowsItemPurpose;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$ */
+  late_of_period: string;
+  /** @pattern ^(0|[1-9][0-9]{0,13})([.][0-9]{1,6})?$ */
+  quantity: string;
+  /** Minus the sum of amount_micros over the group's spend, usage_debit and refund entries booked in the period. */
+  amount_micros: number;
+  /** Micros by funding bucket. promo, commit, purchased and debt are paid from the balance; invoice is to be invoiced; marketplace is billed by the marketplace; free is always 0 and is kept so every bucket is named. */
+  funded: UsageLedgerV1WorkspacesUsageList200RowsItemFunded;
+  amount_source: UsageLedgerV1WorkspacesUsageList200RowsItemAmountSource;
+};
+
+export type UsageLedgerV1WorkspacesUsageList200TotalsFundedFree =
+  (typeof UsageLedgerV1WorkspacesUsageList200TotalsFundedFree)[keyof typeof UsageLedgerV1WorkspacesUsageList200TotalsFundedFree];
+
+export const UsageLedgerV1WorkspacesUsageList200TotalsFundedFree = {
+  NUMBER_0: 0,
+} as const;
+
+/**
+ * Micros by funding bucket. promo, commit, purchased and debt are paid from the balance; invoice is to be invoiced; marketplace is billed by the marketplace; free is always 0 and is kept so every bucket is named.
+ */
+export type UsageLedgerV1WorkspacesUsageList200TotalsFunded = {
+  promo: number;
+  commit: number;
+  purchased: number;
+  debt: number;
+  invoice: number;
+  marketplace: number;
+  free: UsageLedgerV1WorkspacesUsageList200TotalsFundedFree;
+};
+
+export type UsageLedgerV1WorkspacesUsageList200Totals = {
+  amount_micros: number;
+  /** Micros by funding bucket. promo, commit, purchased and debt are paid from the balance; invoice is to be invoiced; marketplace is billed by the marketplace; free is always 0 and is kept so every bucket is named. */
+  funded: UsageLedgerV1WorkspacesUsageList200TotalsFunded;
+};
+
+export type UsageLedgerV1WorkspacesUsageList200 = {
+  /** @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ */
+  org_id: string;
+  /**
+   * The workspace the read was scoped to; null for an org-wide read.
+   * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  workspace_id: string;
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])$ */
+  period: string;
+  /** @minItems 1 */
+  group_by: UsageLedgerV1WorkspacesUsageList200GroupByItem[];
+  /** @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$ */
+  as_of: string;
+  /**
+   * Every event received at or before this instant is rated or has a not_billable reason.
+   * @pattern ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$
+   */
+  rated_through: string;
+  /** True while the total is an estimate, until the period's usage invoice is finalized. */
+  estimate: boolean;
+  /** @maxItems 5000 */
+  rows: UsageLedgerV1WorkspacesUsageList200RowsItem[];
+  totals: UsageLedgerV1WorkspacesUsageList200Totals;
+};
+
+export type UsageLedgerV1WorkspacesUsageList400ErrorCode =
+  (typeof UsageLedgerV1WorkspacesUsageList400ErrorCode)[keyof typeof UsageLedgerV1WorkspacesUsageList400ErrorCode];
+
+export const UsageLedgerV1WorkspacesUsageList400ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageList400Error = {
+  code: UsageLedgerV1WorkspacesUsageList400ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesUsageList400 = {
+  error: UsageLedgerV1WorkspacesUsageList400Error;
+};
+
+export type UsageLedgerV1WorkspacesUsageList401ErrorCode =
+  (typeof UsageLedgerV1WorkspacesUsageList401ErrorCode)[keyof typeof UsageLedgerV1WorkspacesUsageList401ErrorCode];
+
+export const UsageLedgerV1WorkspacesUsageList401ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageList401Error = {
+  code: UsageLedgerV1WorkspacesUsageList401ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesUsageList401 = {
+  error: UsageLedgerV1WorkspacesUsageList401Error;
+};
+
+export type UsageLedgerV1WorkspacesUsageList403ErrorCode =
+  (typeof UsageLedgerV1WorkspacesUsageList403ErrorCode)[keyof typeof UsageLedgerV1WorkspacesUsageList403ErrorCode];
+
+export const UsageLedgerV1WorkspacesUsageList403ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageList403Error = {
+  code: UsageLedgerV1WorkspacesUsageList403ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesUsageList403 = {
+  error: UsageLedgerV1WorkspacesUsageList403Error;
+};
+
+export type UsageLedgerV1WorkspacesUsageList404ErrorCode =
+  (typeof UsageLedgerV1WorkspacesUsageList404ErrorCode)[keyof typeof UsageLedgerV1WorkspacesUsageList404ErrorCode];
+
+export const UsageLedgerV1WorkspacesUsageList404ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageList404Error = {
+  code: UsageLedgerV1WorkspacesUsageList404ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesUsageList404 = {
+  error: UsageLedgerV1WorkspacesUsageList404Error;
+};
+
+export type UsageLedgerV1WorkspacesUsageList503ErrorCode =
+  (typeof UsageLedgerV1WorkspacesUsageList503ErrorCode)[keyof typeof UsageLedgerV1WorkspacesUsageList503ErrorCode];
+
+export const UsageLedgerV1WorkspacesUsageList503ErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageList503Error = {
+  code: UsageLedgerV1WorkspacesUsageList503ErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesUsageList503 = {
+  error: UsageLedgerV1WorkspacesUsageList503Error;
+};
+
+export type UsageLedgerV1WorkspacesUsageListDefaultErrorCode =
+  (typeof UsageLedgerV1WorkspacesUsageListDefaultErrorCode)[keyof typeof UsageLedgerV1WorkspacesUsageListDefaultErrorCode];
+
+export const UsageLedgerV1WorkspacesUsageListDefaultErrorCode = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  not_found: "not_found",
+  invalid_query: "invalid_query",
+  invalid_period: "invalid_period",
+  invalid_cursor: "invalid_cursor",
+  unavailable: "unavailable",
+} as const;
+
+export type UsageLedgerV1WorkspacesUsageListDefaultError = {
+  code: UsageLedgerV1WorkspacesUsageListDefaultErrorCode;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  message: string;
+};
+
+export type UsageLedgerV1WorkspacesUsageListDefault = {
+  error: UsageLedgerV1WorkspacesUsageListDefaultError;
+};
+
 export type UsageUsageSummaryListParams = {
   /**
    * @minimum 1
@@ -39016,7 +50813,6 @@ export type UsageV2UsageOverviewListParams = {
    * @pattern ^\d{4}-\d{2}$
    */
   period_end?: string;
-  workspace_id?: string;
 };
 
 export type UsageV2UsageTimeSeriesListParams = {
@@ -39071,3 +50867,210 @@ export type UsageWorkspaceUsageSummaryListParams = {
   month?: number;
   year?: number;
 };
+
+export type WebhooksDeliveriesListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  endpoint?: string;
+  status?: WebhooksDeliveriesListStatus;
+  event_type?: WebhooksDeliveriesListEventType;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  event?: string;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  subject?: string;
+  since?: string;
+  until?: string;
+  /**
+   * @minimum 1
+   */
+  seq_from?: number;
+  /**
+   * @minimum 1
+   */
+  seq_to?: number;
+  include_body?: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type WebhooksDeliveriesListStatus =
+  (typeof WebhooksDeliveriesListStatus)[keyof typeof WebhooksDeliveriesListStatus];
+
+export const WebhooksDeliveriesListStatus = {
+  pending: "pending",
+  sending: "sending",
+  retrying: "retrying",
+  succeeded: "succeeded",
+  failed: "failed",
+  paused: "paused",
+  skipped: "skipped",
+  cancelled: "cancelled",
+} as const;
+
+export type WebhooksDeliveriesListEventType =
+  (typeof WebhooksDeliveriesListEventType)[keyof typeof WebhooksDeliveriesListEventType];
+
+export const WebhooksDeliveriesListEventType = {
+  promptversioncreated: "prompt.version.created",
+  promptlabelchanged: "prompt.label.changed",
+  deploymentruncompleted: "deployment.run.completed",
+  deploymentrunfailed: "deployment.run.failed",
+} as const;
+
+export type WebhooksEndpointsListParams = {
+  workspace?: string;
+  event_type?: WebhooksEndpointsListEventType;
+  status?: WebhooksEndpointsListStatus;
+  kind?: WebhooksEndpointsListKind;
+};
+
+export type WebhooksEndpointsListEventType =
+  (typeof WebhooksEndpointsListEventType)[keyof typeof WebhooksEndpointsListEventType];
+
+export const WebhooksEndpointsListEventType = {
+  promptversioncreated: "prompt.version.created",
+  promptlabelchanged: "prompt.label.changed",
+  "prompt*": "prompt.*",
+  deploymentruncompleted: "deployment.run.completed",
+  deploymentrunfailed: "deployment.run.failed",
+  "deploymentrun*": "deployment.run.*",
+} as const;
+
+export type WebhooksEndpointsListStatus =
+  (typeof WebhooksEndpointsListStatus)[keyof typeof WebhooksEndpointsListStatus];
+
+export const WebhooksEndpointsListStatus = {
+  enabled: "enabled",
+  disabled_manual: "disabled_manual",
+  disabled_auto: "disabled_auto",
+  blocked_by_policy: "blocked_by_policy",
+} as const;
+
+export type WebhooksEndpointsListKind =
+  (typeof WebhooksEndpointsListKind)[keyof typeof WebhooksEndpointsListKind];
+
+export const WebhooksEndpointsListKind = {
+  http: "http",
+  github_dispatch: "github_dispatch",
+} as const;
+
+export type WebhooksEndpointsActivityListParams = {
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type WebhooksEndpointsDeliveriesListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  endpoint?: string;
+  status?: WebhooksEndpointsDeliveriesListStatus;
+  event_type?: WebhooksEndpointsDeliveriesListEventType;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  event?: string;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  subject?: string;
+  since?: string;
+  until?: string;
+  /**
+   * @minimum 1
+   */
+  seq_from?: number;
+  /**
+   * @minimum 1
+   */
+  seq_to?: number;
+  include_body?: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type WebhooksEndpointsDeliveriesListStatus =
+  (typeof WebhooksEndpointsDeliveriesListStatus)[keyof typeof WebhooksEndpointsDeliveriesListStatus];
+
+export const WebhooksEndpointsDeliveriesListStatus = {
+  pending: "pending",
+  sending: "sending",
+  retrying: "retrying",
+  succeeded: "succeeded",
+  failed: "failed",
+  paused: "paused",
+  skipped: "skipped",
+  cancelled: "cancelled",
+} as const;
+
+export type WebhooksEndpointsDeliveriesListEventType =
+  (typeof WebhooksEndpointsDeliveriesListEventType)[keyof typeof WebhooksEndpointsDeliveriesListEventType];
+
+export const WebhooksEndpointsDeliveriesListEventType = {
+  promptversioncreated: "prompt.version.created",
+  promptlabelchanged: "prompt.label.changed",
+  deploymentruncompleted: "deployment.run.completed",
+  deploymentrunfailed: "deployment.run.failed",
+} as const;
+
+export type WebhooksEventsListParams = {
+  type?: WebhooksEventsListType;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  subject?: string;
+  since?: string;
+  until?: string;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type WebhooksEventsListType =
+  (typeof WebhooksEventsListType)[keyof typeof WebhooksEventsListType];
+
+export const WebhooksEventsListType = {
+  promptversioncreated: "prompt.version.created",
+  promptlabelchanged: "prompt.label.changed",
+  deploymentruncompleted: "deployment.run.completed",
+  deploymentrunfailed: "deployment.run.failed",
+} as const;

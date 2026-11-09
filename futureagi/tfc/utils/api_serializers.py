@@ -71,6 +71,10 @@ class ApiErrorObjectSerializer(serializers.Serializer):
 class ApiErrorResponseSerializer(serializers.Serializer):
     """Common GeneralMethods error response envelope."""
 
+    create_url = serializers.CharField(
+        required=False,
+        help_text="Personal-key issuer URL, only for a verified retired credential.",
+    )
     status = serializers.BooleanField(default=False)
     type = serializers.ChoiceField(
         choices=API_ERROR_TYPE_CHOICES,
@@ -94,6 +98,10 @@ class ApiErrorResponseSerializer(serializers.Serializer):
 class ApiTextErrorResponseSerializer(serializers.Serializer):
     """GeneralMethods error envelope for string-only failures."""
 
+    create_url = serializers.CharField(
+        required=False,
+        help_text="Personal-key issuer URL, only for a verified retired credential.",
+    )
     status = serializers.BooleanField(default=False)
     type = serializers.ChoiceField(
         choices=API_ERROR_TYPE_CHOICES,
@@ -269,9 +277,15 @@ class LangfuseTracesResponseSerializer(serializers.Serializer):
 
 
 class CallWebsocketRequestSerializer(serializers.Serializer):
-    message = serializers.CharField()
+    organization_id = serializers.UUIDField()
+    message = serializers.DictField()
     send_to_uuid = serializers.BooleanField(required=False, default=False)
-    uuid = serializers.CharField(required=False, allow_blank=True)
+    uuid = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate(self, attrs):
+        if attrs.get("send_to_uuid") and not attrs.get("uuid"):
+            raise serializers.ValidationError({"uuid": "A stream UUID is required."})
+        return attrs
 
 
 class CallWebsocketResponseSerializer(serializers.Serializer):

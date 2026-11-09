@@ -85,7 +85,8 @@ const SankeyChart = ({ layout, width, height, zoom, onNodeClick, theme }) => {
           {node.name}
         </div>
         <div style={{ fontSize: 10, color: "var(--text-disabled)" }}>
-          {(node.span_count || 0).toLocaleString()} spans
+          {(node.span_count || 0).toLocaleString()}{" "}
+          {(node.span_count || 0) === 1 ? "span" : "spans"}
         </div>
       </div>
     );
@@ -158,7 +159,8 @@ const SankeyChart = ({ layout, width, height, zoom, onNodeClick, theme }) => {
                     textOverflow: "ellipsis",
                   }}
                 >
-                  {(node.span_count || 0).toLocaleString()} spans
+                  {(node.span_count || 0).toLocaleString()}{" "}
+                  {(node.span_count || 0) === 1 ? "span" : "spans"}
                 </div>
               </div>
             </div>

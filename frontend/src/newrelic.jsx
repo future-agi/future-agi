@@ -2,6 +2,10 @@
 // NewRelic browser license keys (NRJS-*) are safe to ship client-side — they
 // are embedded in the browser agent and designed to be public. Still, they
 // are sourced from env vars so OSS users can point at their own NR account.
+import {
+  NEW_RELIC_LOCAL_DENY_LIST,
+  NEW_RELIC_OBFUSCATE_RULES,
+} from "src/sections/omega/embed/telemetry/sdk-guards";
 
 const licenseKey = import.meta.env.VITE_NEWRELIC_LICENSE_KEY || "";
 const accountID = import.meta.env.VITE_NEWRELIC_ACCOUNT_ID || "";
@@ -15,7 +19,15 @@ export const devTracing = {
   init: {
     distributed_tracing: { enabled: true },
     privacy: { cookies_enabled: true },
-    ajax: { deny_list: ["bam.nr-data.net"] },
+    // Installed 1.264.0 raw schedulers call Harvest._send directly and bypass
+    // obfuscation. Disable those producers locally regardless of remote flags.
+    session_trace: { enabled: false },
+    session_replay: { enabled: false },
+    logging: { enabled: false },
+    // Remaining non-raw harvests use the rules below. Local servers are not
+    // instrumented.
+    ajax: { deny_list: ["bam.nr-data.net", ...NEW_RELIC_LOCAL_DENY_LIST] },
+    obfuscate: NEW_RELIC_OBFUSCATE_RULES.map((rule) => ({ ...rule })),
   },
   info: {
     beacon: "bam.nr-data.net",
@@ -37,7 +49,15 @@ export const prodTracing = {
   init: {
     distributed_tracing: { enabled: true },
     privacy: { cookies_enabled: true },
-    ajax: { deny_list: ["bam.nr-data.net"] },
+    // Installed 1.264.0 raw schedulers call Harvest._send directly and bypass
+    // obfuscation. Disable those producers locally regardless of remote flags.
+    session_trace: { enabled: false },
+    session_replay: { enabled: false },
+    logging: { enabled: false },
+    // Remaining non-raw harvests use the rules below. Local servers are not
+    // instrumented.
+    ajax: { deny_list: ["bam.nr-data.net", ...NEW_RELIC_LOCAL_DENY_LIST] },
+    obfuscate: NEW_RELIC_OBFUSCATE_RULES.map((rule) => ({ ...rule })),
   },
   info: {
     beacon: "bam.nr-data.net",

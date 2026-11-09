@@ -1,11 +1,20 @@
 import structlog
+from django.http import Http404
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.status import HTTP_400_BAD_REQUEST
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
-from agentcc.serializers.guardrail_policy import AgentccGuardrailPolicySerializer
+from agentcc.permissions import GatewayAdminActionsMixin
+from agentcc.serializers.guardrail_policy import (
+    SCOPED_POLICY_NOT_SUPPORTED,
+    SCOPED_POLICY_NOT_SUPPORTED_MESSAGE,
+    AgentccGuardrailPolicyReadSerializer,
+    AgentccGuardrailPolicySerializer,
+)
 from agentcc.services.guardrail_sync import sync_guardrail_policies
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
@@ -15,20 +24,46 @@ logger = structlog.get_logger(__name__)
 _GATEWAY_SYNC_WARNING = (
     "Config saved but gateway sync failed. Changes will apply on next gateway restart."
 )
+# Another organization's policy, a deleted one and an unknown id answer the
+# same 404 on every action, as retrieve always did. update, destroy and apply
+# used to catch get_object's Http404 in their broad except and answer 400
+# with the model's name (release round 6B, fix (d)).
+_NOT_FOUND = "Guardrail policy not found"
 
 
-class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
-    """CRUD for reusable guardrail policies. Org-scoped."""
+class AgentccGuardrailPolicyViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
+    """CRUD for reusable guardrail policies. Org-scoped.
+
+    A policy's checks are merged into the org config and pushed to the
+    gateway (``sync_guardrail_policies``), so every write is an org Owner's
+    or Admin's, as every other gateway config write is; every member keeps
+    read access. Every policy is global: it runs for every key of the
+    organization. Key and project scope are not supported.
+    """
 
     permission_classes = [IsAuthenticated]
+    gateway_admin_actions = frozenset(
+        {"create", "update", "partial_update", "destroy", "apply", "sync"}
+    )
     serializer_class = AgentccGuardrailPolicySerializer
     queryset = AgentccGuardrailPolicy.no_workspace_objects.all()
     _gm = GeneralMethods()
 
+    def get_serializer_class(self):
+        # DRF and schema generation use the same serializer per action. Reads
+        # declare every stored scope (a policy an earlier release left at key
+        # or project scope reads back as stored); writes accept global only,
+        # and their responses declare the read representation (below).
+        if self.action in ("list", "retrieve"):
+            return AgentccGuardrailPolicyReadSerializer
+        return AgentccGuardrailPolicySerializer
+
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
-            serializer = AgentccGuardrailPolicySerializer(queryset, many=True)
+            serializer = AgentccGuardrailPolicyReadSerializer(queryset, many=True)
             return self._gm.success_response(serializer.data)
         except Exception as e:
             logger.exception("guardrail_policy_list_error", error=str(e))
@@ -38,12 +73,13 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
         try:
             instance = self.get_object()
             return self._gm.success_response(
-                AgentccGuardrailPolicySerializer(instance).data
+                AgentccGuardrailPolicyReadSerializer(instance).data
             )
         except Exception as e:
             logger.exception("guardrail_policy_retrieve_error", error=str(e))
-            return self._gm.not_found("Guardrail policy not found")
+            return self._gm.not_found(_NOT_FOUND)
 
+    @swagger_auto_schema(responses={201: AgentccGuardrailPolicyReadSerializer})
     def create(self, request, *args, **kwargs):
         try:
             serializer = AgentccGuardrailPolicySerializer(data=request.data)
@@ -59,7 +95,7 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             # Sync to gateway
             synced = self._sync(org)
 
-            data = AgentccGuardrailPolicySerializer(policy).data
+            data = AgentccGuardrailPolicyReadSerializer(policy).data
             data["gateway_synced"] = synced
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
@@ -68,6 +104,7 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             logger.exception("guardrail_policy_create_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(responses={200: AgentccGuardrailPolicyReadSerializer})
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -82,15 +119,18 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             # Sync to gateway
             synced = self._sync(instance.organization)
 
-            data = AgentccGuardrailPolicySerializer(policy).data
+            data = AgentccGuardrailPolicyReadSerializer(policy).data
             data["gateway_synced"] = synced
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except Http404:
+            return self._gm.not_found(_NOT_FOUND)
         except Exception as e:
             logger.exception("guardrail_policy_update_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(responses={200: AgentccGuardrailPolicyReadSerializer})
     def partial_update(self, request, *args, **kwargs):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
@@ -109,89 +149,31 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except Http404:
+            return self._gm.not_found(_NOT_FOUND)
         except Exception as e:
             logger.exception("guardrail_policy_delete_error", error=str(e))
             return self._gm.bad_request(str(e))
 
     @action(detail=True, methods=["post"])
     def apply(self, request, pk=None):
-        """Apply this policy to specific keys or projects."""
+        """Not supported: answers 400 ``scoped_policy_not_supported``.
+
+        A policy runs for every key of its organization. The gateway receives
+        only the org's global policies (``guardrail_sync``), so this action
+        used to remove the policy from every key, the targeted ones included,
+        when it set the policy's scope to its keys or projects. It now leaves
+        the policy unchanged and pushes nothing.
+        """
         try:
-            instance = self.get_object()
-            org = getattr(request, "organization", None)
-            if org is None:
-                return self._gm.bad_request("Organization context is required")
-            key_ids = request.data.get("key_ids")
-            project_ids = request.data.get("project_ids")
-
-            if key_ids is not None and project_ids is not None:
-                return self._gm.bad_request(
-                    "Cannot apply to both keys and projects simultaneously. "
-                    "Provide either key_ids or project_ids, not both."
-                )
-
-            if key_ids is None and project_ids is None:
-                return self._gm.bad_request("Provide either key_ids or project_ids")
-
-            if key_ids is not None:
-                if not isinstance(key_ids, list):
-                    return self._gm.bad_request("key_ids must be a list")
-                # Validate key IDs belong to the same org
-                from agentcc.models import AgentccAPIKey
-
-                valid_keys = set(
-                    AgentccAPIKey.no_workspace_objects.filter(
-                        id__in=key_ids,
-                        organization=org,
-                        deleted=False,
-                    ).values_list("id", flat=True)
-                )
-                invalid_keys = set(str(k) for k in key_ids) - set(
-                    str(k) for k in valid_keys
-                )
-                if invalid_keys:
-                    return self._gm.bad_request(
-                        f"Invalid or unauthorized key IDs: {list(invalid_keys)}"
-                    )
-                instance.applied_keys = key_ids
-                instance.scope = AgentccGuardrailPolicy.SCOPE_KEY
-
-            if project_ids is not None:
-                if not isinstance(project_ids, list):
-                    return self._gm.bad_request("project_ids must be a list")
-                # Validate project IDs belong to the same org
-                from agentcc.models.project import AgentccProject
-
-                valid_projects = set(
-                    AgentccProject.no_workspace_objects.filter(
-                        id__in=project_ids,
-                        organization=org,
-                        deleted=False,
-                    ).values_list("id", flat=True)
-                )
-                invalid_projects = set(str(p) for p in project_ids) - set(
-                    str(p) for p in valid_projects
-                )
-                if invalid_projects:
-                    return self._gm.bad_request(
-                        f"Invalid or unauthorized project IDs: {list(invalid_projects)}"
-                    )
-                instance.applied_projects = project_ids
-                instance.scope = AgentccGuardrailPolicy.SCOPE_PROJECT
-
-            instance.save()
-
-            # Sync to gateway
-            synced = self._sync(org)
-
-            data = AgentccGuardrailPolicySerializer(instance).data
-            data["gateway_synced"] = synced
-            if not synced:
-                data["gateway_warning"] = _GATEWAY_SYNC_WARNING
-            return self._gm.success_response(data)
-        except Exception as e:
-            logger.exception("guardrail_policy_apply_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            self.get_object()
+            return self._gm.custom_error_response(
+                HTTP_400_BAD_REQUEST,
+                SCOPED_POLICY_NOT_SUPPORTED_MESSAGE,
+                code=SCOPED_POLICY_NOT_SUPPORTED,
+            )
+        except Http404:
+            return self._gm.not_found(_NOT_FOUND)
 
     @action(detail=False, methods=["post"])
     def sync(self, request):

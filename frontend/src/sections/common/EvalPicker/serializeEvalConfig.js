@@ -7,6 +7,7 @@
 // runner. Edit-reopen flows should read from that canonical location instead
 // of depending on duplicate top-level payload keys.
 import { isClearedMappingValue } from "src/sections/evals/utils/evalMappingPath";
+import { stripLaunchAllowNa } from "./allowNaModel";
 
 const RUN_CONFIG_KEYS = [
   "model",
@@ -48,7 +49,7 @@ export function serializeEvalConfig(evalConfig) {
     model: evalConfig.model,
     mapping: sanitizeEvalMapping(evalConfig.mapping),
     config: {
-      ...(evalConfig.config || {}),
+      ...stripLaunchAllowNa(evalConfig.config),
       // BE looks up function-param values at `config.params` (normalize_eval_runtime_config).
       ...(evalConfig.params !== undefined && { params: evalConfig.params }),
       run_config: {

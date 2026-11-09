@@ -42,6 +42,8 @@ import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import { useEvalPickerData } from "./hooks/useEvalPickerData";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
+import { typedEvalLabel } from "src/sections/common/EvalTypes/typedEvalTypes";
+import TypedEvalPickerSummary from "src/sections/common/EvalTypes/TypedEvalPickerSummary";
 
 const AVATAR_COLORS = [
   "#7C4DFF",
@@ -399,9 +401,19 @@ const EvalDetailPanel = ({ evalData }) => {
         {model && <LabeledValue label="Model" value={model} />}
         <LabeledValue
           label="Kind"
-          value={evalType === "agent" ? "Agent" : "LLM-as-a-judge"}
+          value={
+            typedEvalLabel(evalType) ??
+            (evalType === "agent" ? "Agent" : "LLM-as-a-judge")
+          }
         />
       </Box>
+      {/* integration S9: a typed eval's definition, read-only. It gets the
+          description shown below, so a tree described by its own summary
+          line says it once (M10, W7 review SF6). */}
+      <TypedEvalPickerSummary
+        evalType={evalType}
+        evalData={configData && { ...configData, description }}
+      />
 
       {description && (
         <Typography
@@ -712,6 +724,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     onToggleSelect,
     addedEvals,
     addedEvalAction,
+    formatEvalName,
   } = useEvalPickerContext();
   const useScopedEvals = source === "dataset" || source === "experiment";
   const {
@@ -1105,7 +1118,9 @@ const EvalPickerList = ({ onSelectEval }) => {
                           noWrap
                           sx={{ fontWeight: 500, fontSize: "13px" }}
                         >
-                          {evalItem.name}
+                          {formatEvalName
+                            ? formatEvalName(evalItem.name)
+                            : evalItem.name}
                         </Typography>
                         {evalItem.current_version &&
                           !evalItem.is_draft &&

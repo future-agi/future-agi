@@ -1,0 +1,216 @@
+# Google's Calendar MCP server.
+# A Developer Preview: membership in the Google Workspace Developer Preview
+# Program is a prerequisite, and its terms say a member "may not grant end
+# users access, outside my domain or company, to developer applications that
+# have been built using APIs prior to their GA announcement" (term iv). Until
+# GA it serves only an organization that is itself a member, through that
+# organization's own OAuth client: hence the client group
+# google-workspace-mcp, which has no FutureAGI platform client, and
+# clientApproval. clientApproval.approvedAt stays unset until Google
+# announces GA: FutureAGI's own membership in the program never sets it
+# (terms ii and iv). The client must have "Use this client for an
+# AI-powered agent" selected, or the server rejects its requests.
+#
+# The scopes are the ones Google's setup lists, all read-only; Google
+# publishes no sensitivity class for them. The tools are the ones Google's
+# tool reference publishes that work under them, with its annotations and
+# the narrowest scope it names for each. create_event, update_event,
+# delete_event and respond_to_event need calendar or calendar.events, so
+# they are left out: defaultPosture deny refuses them, and any tool not
+# listed here.
+#
+# include_granted_scopes is left out of the authorize request, so each
+# connection's token carries only these scopes, not the ones the same
+# client was granted for another Google app.
+#
+# Not emitted to Omega until GA: EE may give a google-group app its shared
+# Google client, and OSS's registry entry cannot say "members only".
+#
+# Revoking a token "removes all OAuth 2.0 scopes previously granted to a
+# project": it ends the user's other connections made with clients of the
+# same Cloud project.
+schema: "connector-manifest/v1#provider"
+app: google-calendar
+id: google-mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: preview
+  source: https://developers.google.com/workspace/guides/configure-mcp-servers
+transport:
+  kind: http
+  url: https://calendarmcp.googleapis.com/mcp/v1
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://accounts.google.com/o/oauth2/v2/auth
+    tokenUrl: https://oauth2.googleapis.com/token
+    scopes:
+      - https://www.googleapis.com/auth/calendar.calendarlist.readonly
+      - https://www.googleapis.com/auth/calendar.events.freebusy
+      - https://www.googleapis.com/auth/calendar.events.readonly
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    extraAuthorizeParams:
+      access_type: offline
+      prompt: consent
+    refresh: { supported: true, rotates: false }
+    revocation:
+      url: https://oauth2.googleapis.com/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered]
+    clientGroup: google-workspace-mcp
+  clientApproval:
+    required: true
+    program: "Google Workspace Developer Preview Program membership; until GA, the member's own domain only"
+    url: https://developers.google.com/workspace/preview
+    source: https://developers.google.com/workspace/guides/configure-mcp-servers
+tools:
+  source: upstream_mcp
+  defaultPosture: deny
+  items:
+    - name: list_calendars
+      title: List calendars
+      description: "List the calendars the user has access to."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/calendar.calendarlist.readonly
+    - name: list_events
+      title: List events
+      description: "List the events on a calendar that match the given constraints."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/calendar.events.readonly
+    - name: get_event
+      title: Get event
+      description: "Read one event on a calendar."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/calendar.events.readonly
+    - name: search_events
+      title: Search events
+      description: "Search the events on the user's primary calendar."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/calendar.events.readonly
+    - name: suggest_time
+      title: Suggest time
+      description: "Suggest free time periods across one or more calendars."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/calendar.events.freebusy
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://calendarmcp.googleapis.com/.well-known/oauth-protected-resource/mcp/v1
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developers.google.com/workspace/calendar/api/auth
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.extraAuthorizeParams
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.extraAuthorizeParams
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.refresh
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/calendar/api/v3/reference/mcp
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/calendar/api/v3/reference/mcp/tools_list/list_calendars
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/calendar/api/v3/reference/mcp/tools_list/list_events
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/calendar/api/v3/reference/mcp/tools_list/get_event
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/calendar/api/v3/reference/mcp/tools_list/search_events
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/calendar/api/v3/reference/mcp/tools_list/suggest_time
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

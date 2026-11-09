@@ -6,6 +6,8 @@ on:
     paths:
       - "fi-collector/**"
       - "docker-compose*.yml"
+      - "futureagi/docker-compose.yml"
+      - "futureagi/docker-compose.harness.yml"
       - "bin/install*"
       - "bin/lib/**"
       - "bin/uninstall"
@@ -23,6 +25,8 @@ on:
     paths:
       - "fi-collector/**"
       - "docker-compose*.yml"
+      - "futureagi/docker-compose.yml"
+      - "futureagi/docker-compose.harness.yml"
       - "bin/install*"
       - "bin/lib/**"
       - "bin/uninstall"
@@ -208,6 +212,8 @@ jobs:
           python-version: "3.11"
       - name: Compose and bootstrap contracts without running services
         run: python -m unittest discover -s deploy/tests -p 'test_observed_catalog_*.py' -v
+      - name: Collector and backend resolve one API-secret pepper in every stack
+        run: python -m unittest discover -s deploy/tests -p 'test_api_secret_pepper_compose.py' -v
       - name: Shell syntax
         run: |
           for script in bin/install bin/uninstall bin/dev bin/e2e bin/lib/*.sh deploy/standalone/bin/start deploy/standalone/bin/after-bootstrap; do

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  AREA_OF_E2E_DIR,
   buildPinnedIndex,
   classifyChange,
   classifyPath,
@@ -975,3 +976,8 @@ for (const n of [2265, 2182, 1976, 2321, 2358, 2300]) {
     assert.deepEqual(r.areas, fx.expected.areas);
   });
 }
+
+test("integration flows own the INT prefix without renumbering gateway flows", () => {
+  assert.equal(AREA_OF_E2E_DIR.integrations, "INT");
+  assert.equal(AREA_OF_E2E_DIR.gateway, "GW");
+});

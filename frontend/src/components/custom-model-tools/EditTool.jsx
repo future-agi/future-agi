@@ -18,11 +18,7 @@ import { z } from "zod";
 import { ShowComponent } from "src/components/show";
 import YAML from "yaml";
 import FormTextFieldV2 from "../FormTextField/FormTextFieldV2";
-import {
-  editorOptions,
-  getDefaultValues,
-  tabOptions,
-} from "./EditTool.utils";
+import { editorOptions, getDefaultValues, tabOptions } from "./EditTool.utils";
 
 const toolSchema = z
   .object({
@@ -266,7 +262,19 @@ const EditTool = ({ onCancel, editTool }) => {
           </ShowComponent>
         </Box>
       </Box>
-      <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.4 }}>
+      {/* IT-R1 G4: Cancel / Add tool stay on screen at 720 px. */}
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "flex-end",
+          gap: 1.4,
+          position: "sticky",
+          bottom: 0,
+          zIndex: 1,
+          py: 1,
+          bgcolor: "background.paper",
+        }}
+      >
         <Button
           onClick={onCancel}
           variant="outlined"

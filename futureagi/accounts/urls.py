@@ -13,6 +13,9 @@ from accounts.views.gcp_marketplace import (
     gcp_marketplace_verify_token,
 )
 from accounts.views.keys import GetKeysView, SecretKeyAPIViewSet
+from accounts.views.omega_observe_target import OmegaObserveTargetView
+from accounts.views.omega_session import OmegaSessionExchangeView
+from accounts.views.omega_trigger_admission import OmegaTriggerAdmissionView
 from accounts.views.organization_selection import (
     OrganizationSelectionView,
     SwitchOrganizationView,
@@ -95,6 +98,21 @@ router = DefaultRouter()
 router.register("key", SecretKeyAPIViewSet, basename="user-secret-keys")
 
 auth_urls = [
+    path(
+        "omega/trigger-admission/",
+        OmegaTriggerAdmissionView.as_view(),
+        name="omega-trigger-admission",
+    ),
+    path(
+        "omega/observe-target/",
+        OmegaObserveTargetView.as_view(),
+        name="omega-observe-target",
+    ),
+    path(
+        "omega/session-exchange/",
+        OmegaSessionExchangeView.as_view(),
+        name="omega-session-exchange",
+    ),
     path("token/", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("token/refresh/", CustomTokenRefreshView.as_view(), name="token_refresh"),
     path("redis-key/", manage_redis_key, name="manage-redis-key"),

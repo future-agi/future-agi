@@ -91,7 +91,7 @@ def forwards(apps, schema_editor):
     stats = {"scanned": 0, "updated": 0, "failed": 0}
     # _base_manager: plain manager in both the historical and live registries —
     # covers soft-deleted rows and skips workspace-context filtering.
-    for task in EvalTask._base_manager.exclude(filters__isnull=True).iterator(
+    for task in EvalTask._base_manager.using(schema_editor.connection.alias).exclude(filters__isnull=True).iterator(
         chunk_size=500
     ):
         stats["scanned"] += 1
@@ -101,7 +101,7 @@ def forwards(apps, schema_editor):
             new_filters, changed = normalize_task_filters(task.filters)
             if not changed:
                 continue
-            EvalTask._base_manager.filter(pk=task.pk).update(filters=new_filters)
+            EvalTask._base_manager.using(schema_editor.connection.alias).filter(pk=task.pk).update(filters=new_filters)
             stats["updated"] += 1
         except Exception as e:
             stats["failed"] += 1

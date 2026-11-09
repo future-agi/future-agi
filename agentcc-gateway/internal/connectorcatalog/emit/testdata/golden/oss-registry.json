@@ -1,0 +1,49 @@
+{
+  "schema": "connector-oss-registry/v1",
+  "bundle": {
+    "version": "2026.10.20.0",
+    "sha256": "df9961425af464b41490fceb4b4ddc51f987d1fc2f7cdec8e6921dd42613e7d0"
+  },
+  "servers": [
+    {
+      "id": "close",
+      "name": "Close",
+      "description": "Sales CRM: leads, contacts and opportunities.",
+      "transport": "http",
+      "url": "https://mcp.close.com/mcp",
+      "trusted": false,
+      "auth": "api_key",
+      "hosted": true,
+      "tags": ["crm"]
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "Issues, pull requests and code in your repositories.",
+      "transport": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "trusted": false,
+      "hosted": false,
+      "tags": ["developer"]
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "description": "Payments, customers and invoices.",
+      "transport": "http",
+      "url": "https://mcp.stripe.com",
+      "trusted": false,
+      "auth": "api_key",
+      "hosted": true,
+      "tags": ["payments"]
+    }
+  ]
+}

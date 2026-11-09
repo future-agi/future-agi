@@ -8,14 +8,27 @@ import {
   Button,
   Chip,
   Alert,
+  Link,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 import { useProviderHealth } from "../providers/hooks/useGatewayConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
+import { PROVIDER_STATUS, providerStatusKey } from "../providers/provider-rows";
 
-const ProviderConfigTab = ({ providers: _providers, onChange: _onChange }) => {
+// A status tone as an MUI Chip colour.
+const CHIP_COLOR = {
+  healthy: "success",
+  warning: "warning",
+  error: "error",
+  neutral: "default",
+};
+
+const ProviderConfigTab = ({
+  providers: _providers = undefined,
+  onChange: _onChange = undefined,
+}) => {
   const { gatewayId } = useGatewayContext();
   const { data: healthData } = useProviderHealth(gatewayId);
 
@@ -45,8 +58,12 @@ const ProviderConfigTab = ({ providers: _providers, onChange: _onChange }) => {
       </Stack>
 
       <Alert severity="info" variant="outlined" sx={{ py: 0.5 }}>
-        Providers are managed in the <strong>Providers</strong> tab. Changes
-        here are per-org overrides (e.g., custom API keys, model restrictions).
+        This list is read-only. To change a provider&apos;s key, base URL or
+        models, open{" "}
+        <Link component={RouterLink} href={paths.dashboard.gateway.providers}>
+          Providers
+        </Link>{" "}
+        and use the provider&apos;s Edit button.
       </Alert>
 
       {configuredProviders.length === 0 ? (
@@ -75,13 +92,14 @@ const ProviderConfigTab = ({ providers: _providers, onChange: _onChange }) => {
         configuredProviders.map((p) => {
           const name = p.name || p.provider_id || p.providerId || "unknown";
           const models = Array.isArray(p.models) ? p.models : [];
-          const status = (p.status || "unknown").toLowerCase();
-          const statusColor =
-            status === "healthy"
-              ? "success"
-              : status === "degraded"
-                ? "warning"
-                : "error";
+          // The org's own health, read as the Providers page reads it
+          // (provider-rows.js): a provider the config push leaves out reads
+          // Not pushed, and one with fewer than 5 requests in 24 h reads Too
+          // few requests, never Healthy.
+          const statusInfo =
+            PROVIDER_STATUS[providerStatusKey(p)] || PROVIDER_STATUS.unknown;
+          const status = statusInfo.label;
+          const statusColor = CHIP_COLOR[statusInfo.tone] || "default";
 
           return (
             <Card key={name} variant="outlined">
@@ -107,6 +125,16 @@ const ProviderConfigTab = ({ providers: _providers, onChange: _onChange }) => {
                     />
                   </Stack>
                 </Stack>
+                {p.status_reason && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    component="div"
+                    sx={{ mt: 0.5, pl: 3.5 }}
+                  >
+                    {p.status_reason}
+                  </Typography>
+                )}
                 {models.length > 0 && (
                   <Stack
                     direction="row"

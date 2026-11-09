@@ -8,33 +8,41 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import anthropic
 import boto3
 import litellm
 import requests
 import structlog
-from agentic_eval.core.utils.functions import download_image_to_base64
-from agentic_eval.core.utils.model_config import ModelConfigs
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from anthropic import AnthropicBedrock, AsyncAnthropic, AsyncAnthropicBedrock
-from botocore.exceptions import ClientError
 from clickhouse_driver import Client
 from google import genai
-from google.genai.types import GenerateContentConfig, HttpOptions, Part, ThinkingConfig
-from litellm import completion
+from google.genai.types import HttpOptions
 from openai import AsyncOpenAI, OpenAI
 
 from agentic_eval.core.database.ch_vector import get_clickhouse_client_kwargs
-
-logger = structlog.get_logger(__name__)
 from agentic_eval.core.llm.audio_utils import (
-    is_audio_url,
-    messages_contain_audio,
     preprocess_messages_for_provider,
 )
+from agentic_eval.core.utils.functions import download_image_to_base64
+from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core_evals.fi_utils.evals_result import BatchRunResult
+from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from model_hub.utils import call_websocket
+from model_hub.utils.model_endpoints import (
+    calls_endpoint_url,
+    endpoint_call_error_message,
+    guarded_completion,
+)
 from tfc.ee_stub import _ee_stub
+from tfc.telemetry import wrap_for_thread
+from tfc.utils.storage import (
+    download_audio_from_url,
+    upload_image_to_s3,
+)
+
+logger = structlog.get_logger(__name__)
 
 try:
     from ee.prompts.protect_prompts import (
@@ -49,14 +57,6 @@ try:
     from ee.prompts.eval_prompts import AUDIO_AGENT_LLM_SYSTEM_INSTRUCTION
 except ImportError:
     AUDIO_AGENT_LLM_SYSTEM_INSTRUCTION = ""
-from agentic_eval.core_evals.fi_utils.evals_result import BatchRunResult
-from model_hub.utils import call_websocket
-from tfc.telemetry import wrap_for_thread
-from tfc.utils.storage import (
-    download_audio_from_url,
-    upload_audio_to_s3,
-    upload_image_to_s3,
-)
 
 # executor = ThreadPoolExecutor(max_workers=10)
 
@@ -72,11 +72,11 @@ DEFAULT_MAX_TOKENS = 8100
 DEFAULT_TEMPERATURE = 0.7
 
 # Type aliases
-AudioInput = Union[str, bytes]
-LogData = Dict[str, Any]
-Message = Dict[str, Any]
-Messages = List[Message]
-Payload = Dict[str, Any]
+AudioInput = str | bytes
+LogData = dict[str, Any]
+Message = dict[str, Any]
+Messages = list[Message]
+Payload = dict[str, Any]
 
 
 def log_to_clickhouse(log_data: LogData) -> None:
@@ -190,10 +190,10 @@ class LLM:
         model_name: str = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.model_name,
         temperature: float = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.temperature,
         max_tokens: int = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.max_tokens,
-        config: Optional[Dict[str, Any]] = None,
-        api_key: Optional[Union[str, Dict[str, Any]]] = None,
+        config: dict[str, Any] | None = None,
+        api_key: str | dict[str, Any] | None = None,
         optimizer: bool = False,
-        org_id: Optional[str] = None,
+        org_id: str | None = None,
     ):
         """
         Initialize the LLM instance.
@@ -212,12 +212,12 @@ class LLM:
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.history: List[Message] = []
+        self.history: list[Message] = []
         self.config = config or {}
         self.optimizer = optimizer
         self.api_key = api_key
         self.org_id = org_id
-        self.last_finish_reason: Optional[str] = None
+        self.last_finish_reason: str | None = None
 
         # Initialize usage tracking
         self.cost = {
@@ -233,7 +233,7 @@ class LLM:
         # Initialize the appropriate client
         self._init_client(api_key)
 
-    def _init_client(self, api_key: Optional[Union[str, Dict[str, Any]]]) -> None:
+    def _init_client(self, api_key: str | dict[str, Any] | None) -> None:
         """
         Initialize the appropriate LLM client based on the provider.
 
@@ -424,12 +424,39 @@ class LLM:
             return False
         return DeploymentMode.is_ee() and is_managed_model(model or self.model_name)
 
+    @staticmethod
+    def _require_retained_gateway_access() -> None:
+        """Deny before a retained gateway client sends a request.
+
+        The gateway clients are acquired once in ``_init_client`` and kept on
+        the instance, so the guarded factory is not re-entered per request.
+        Re-check on every attempt so that removing the self-hosted license key
+        stops managed-gateway egress from existing instances. Raises
+        ``ManagedServiceError("NO_ENTERPRISE_LICENSE", ...)``; cloud (internal
+        key) clients are unaffected.
+        """
+        from ee.usage.services.gateway_llm_client import require_gateway_access
+
+        require_gateway_access()
+
+    @staticmethod
+    def _is_license_denial(exc: BaseException) -> bool:
+        """Whether ``exc`` is the keyless denial, which must not be retried or
+        turned into a provider fallback."""
+        try:
+            from ee.licensing.activation_client import ManagedServiceError
+        except ImportError:
+            return False
+        return (
+            isinstance(exc, ManagedServiceError) and exc.code == "NO_ENTERPRISE_LICENSE"
+        )
+
     def _try_gateway_completion(
         self,
         payload: dict,
-        tools: Optional[list] = None,
-        deadline_monotonic: Optional[float] = None,
-    ) -> Optional[Any]:
+        tools: list | None = None,
+        deadline_monotonic: float | None = None,
+    ) -> Any | None:
         """Attempt completion via the Agentcc gateway. Returns response or None on failure."""
         if deadline_monotonic is not None and self._requires_managed_transport(
             payload.get("model")
@@ -460,6 +487,9 @@ class LLM:
             kwargs["tools"] = tools
 
         for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
+            # Before every send and outside the retry handler, so the denial
+            # propagates instead of being logged as a failed attempt.
+            self._require_retained_gateway_access()
             try:
                 gateway_client = self._gateway_client
                 if deadline_monotonic is not None:
@@ -478,6 +508,10 @@ class LLM:
                         kwargs["timeout"] = remaining
                 return gateway_client.chat.completions.create(**kwargs)
             except Exception as gw_err:
+                # The SDK re-checks the license key before each of its own
+                # retries; a denial from inside the call is final too.
+                if self._is_license_denial(gw_err):
+                    raise
                 logger.warning(
                     "gateway_attempt_failed",
                     error=str(gw_err),
@@ -498,8 +532,8 @@ class LLM:
         return None
 
     def _try_managed_ai_completion(
-        self, payload: dict, tools: Optional[list] = None
-    ) -> Optional[Any]:
+        self, payload: dict, tools: list | None = None
+    ) -> Any | None:
         model = payload.get("model", self.model_name)
         if not self._requires_managed_transport(model):
             return None
@@ -515,7 +549,10 @@ class LLM:
     def _to_openai_like_response(self, value: Any) -> Any:
         if isinstance(value, dict):
             return SimpleNamespace(
-                **{key: self._to_openai_like_response(val) for key, val in value.items()}
+                **{
+                    key: self._to_openai_like_response(val)
+                    for key, val in value.items()
+                }
             )
         if isinstance(value, list):
             return [self._to_openai_like_response(item) for item in value]
@@ -524,15 +561,15 @@ class LLM:
     def _build_gateway_request_kwargs(
         self,
         payload: dict,
-        extra_headers: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        kwargs = dict(
-            model=payload.get("model", self.model_name),
-            messages=payload["messages"],
-            temperature=payload.get("temperature", self.temperature),
-            max_tokens=payload.get("max_tokens", self.max_tokens),
-            extra_headers=extra_headers,
-        )
+        extra_headers: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        kwargs = {
+            "model": payload.get("model", self.model_name),
+            "messages": payload["messages"],
+            "temperature": payload.get("temperature", self.temperature),
+            "max_tokens": payload.get("max_tokens", self.max_tokens),
+            "extra_headers": extra_headers,
+        }
 
         for field in ("response_format", "stream", "stream_options", "tool_choice"):
             if field in payload:
@@ -541,10 +578,12 @@ class LLM:
         return kwargs
 
     async def _try_gateway_completion_async(
-        self, payload: dict, tools: Optional[list] = None
-    ) -> Optional[Any]:
+        self, payload: dict, tools: list | None = None
+    ) -> Any | None:
         """Async version: attempt completion via Agentcc gateway."""
-        managed_response = await self._try_managed_ai_completion_async(payload, tools=tools)
+        managed_response = await self._try_managed_ai_completion_async(
+            payload, tools=tools
+        )
         if managed_response is not None:
             return managed_response
 
@@ -564,9 +603,15 @@ class LLM:
             kwargs["tools"] = tools
 
         for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
+            # Before every send and outside the retry handler (see sync path).
+            self._require_retained_gateway_access()
             try:
-                return await self._async_gateway_client.chat.completions.create(**kwargs)
+                return await self._async_gateway_client.chat.completions.create(
+                    **kwargs
+                )
             except Exception as gw_err:
+                if self._is_license_denial(gw_err):
+                    raise
                 logger.warning(
                     "async_gateway_attempt_failed",
                     error=str(gw_err),
@@ -579,8 +624,8 @@ class LLM:
         return None
 
     async def _try_managed_ai_completion_async(
-        self, payload: dict, tools: Optional[list] = None
-    ) -> Optional[Any]:
+        self, payload: dict, tools: list | None = None
+    ) -> Any | None:
         model = payload.get("model", self.model_name)
         if not self._requires_managed_transport(model):
             return None
@@ -657,17 +702,17 @@ class LLM:
     def _get_completion_content(
         self,
         messages: Messages,
-        model: Optional[str] = None,
-        response_format: Optional[Dict[str, Any]] = None,
-        drop_params: Optional[bool] = None,
+        model: str | None = None,
+        response_format: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
         streaming=False,
-        type: Optional[str] = None,
-        uuid: Optional[str] = None,
-        organization_id: Optional[str] = None,
-        current_activity: Optional[str] = None,
-        reasoning_effort: Optional[str] = None,
-        thinking_budget: Optional[int] = None,
-        disable_thinking: Optional[bool] = None,
+        type: str | None = None,
+        uuid: str | None = None,
+        organization_id: str | None = None,
+        current_activity: str | None = None,
+        reasoning_effort: str | None = None,
+        thinking_budget: int | None = None,
+        disable_thinking: bool | None = None,
     ) -> str:
         """
         Get completion content with retries and fallbacks.
@@ -826,7 +871,9 @@ class LLM:
                     return content if content is not None else ""
 
             except Exception as e:
-                if self._requires_managed_transport(payload.get("model")):
+                if self._requires_managed_transport(
+                    payload.get("model")
+                ) or self._is_license_denial(e):
                     raise
                 logger.exception(
                     f"{self.provider} API error: {str(e)}",
@@ -853,10 +900,10 @@ class LLM:
         self,
         messages: Messages,
         tools: list,
-        model: Optional[str] = None,
-        tool_choice: Optional[Any] = None,
-        drop_params: Optional[bool] = None,
-        timeout_ms: Optional[int] = None,
+        model: str | None = None,
+        tool_choice: Any | None = None,
+        drop_params: bool | None = None,
+        timeout_ms: int | None = None,
     ) -> Any:
         """
         Get completion with tool calling support. Returns the full response.
@@ -891,12 +938,10 @@ class LLM:
         if timeout_ms is not None and timeout_ms <= 0:
             raise ValueError("timeout_ms must be positive")
         deadline_monotonic = (
-            time.monotonic() + (timeout_ms / 1000)
-            if timeout_ms is not None
-            else None
+            time.monotonic() + (timeout_ms / 1000) if timeout_ms is not None else None
         )
 
-        def remaining_timeout() -> Optional[float]:
+        def remaining_timeout() -> float | None:
             if deadline_monotonic is None:
                 return None
             remaining = deadline_monotonic - time.monotonic()
@@ -957,6 +1002,8 @@ class LLM:
             except Exception as e:
                 if deadline_monotonic is not None and isinstance(e, TimeoutError):
                     raise
+                if self._is_license_denial(e):
+                    raise
                 logger.exception(
                     f"{self.provider} API error (tool completion): {str(e)}",
                     attempt=attempt,
@@ -977,17 +1024,17 @@ class LLM:
     async def _get_completion_content_async(
         self,
         messages: Messages,
-        model: Optional[str] = None,
-        response_format: Optional[Dict[str, Any]] = None,
+        model: str | None = None,
+        response_format: dict[str, Any] | None = None,
         streaming: bool = False,
-        type: Optional[str] = None,
-        uuid: Optional[str] = None,
-        organization_id: Optional[str] = None,
-        current_activity: Optional[str] = None,
-        reasoning_effort: Optional[str] = None,
-        thinking_budget: Optional[int] = None,
-        disable_thinking: Optional[bool] = None,
-        ws_manager: Optional[Any] = None,
+        type: str | None = None,
+        uuid: str | None = None,
+        organization_id: str | None = None,
+        current_activity: str | None = None,
+        reasoning_effort: str | None = None,
+        thinking_budget: int | None = None,
+        disable_thinking: bool | None = None,
+        ws_manager: Any | None = None,
     ) -> str:
         """
         Async version of _get_completion_content that properly handles WebSocket streaming.
@@ -1240,7 +1287,9 @@ class LLM:
                     return content if content is not None else ""
 
             except Exception as e:
-                if self._requires_managed_transport(payload.get("model")):
+                if self._requires_managed_transport(
+                    payload.get("model")
+                ) or self._is_license_denial(e):
                     raise
                 logger.exception(
                     "API error",
@@ -1340,17 +1389,17 @@ class LLM:
         except Exception as openai_error:
             logger.exception(f"OpenAI fallback error: {str(openai_error)}")
             logger.error("Max retries reached for all APIs")
-            raise ValueError("FAILED_TO_PROCESS_EVALUATION")
+            raise ValueError("FAILED_TO_PROCESS_EVALUATION") from openai_error
 
     def _prepare_completion_payload(
         self,
         messages: Messages,
-        response_format: Optional[Dict[str, Any]],
-        model: Optional[str] = None,
-        reasoning_effort: Optional[str] = None,
-        thinking_budget: Optional[int] = None,
-        disable_thinking: Optional[bool] = None,
-        drop_params: Optional[bool] = None,
+        response_format: dict[str, Any] | None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+        thinking_budget: int | None = None,
+        disable_thinking: bool | None = None,
+        drop_params: bool | None = None,
     ) -> Payload:
         """Prepare the completion payload based on provider and configuration."""
         _max_tokens = self.max_tokens
@@ -1498,7 +1547,7 @@ class LLM:
             response=response or "[No response provided]",
         )
 
-    def _parse_protect_flash_output(self, output: str) -> Dict[str, str]:
+    def _parse_protect_flash_output(self, output: str) -> dict[str, str]:
         match = re.match(r".*:(.*)\n.*:(.*)\n.*:(.*)", output)
         if match is None:
             return {
@@ -1530,12 +1579,12 @@ class LLM:
         """Determine if alternate format should be tried based on error and attempt."""
         return (
             not tried_alternate
-            and not "timeout" in str(error).lower()
+            and "timeout" not in str(error).lower()
             and "image" in str(error).lower()
             and attempt == 5
         )
 
-    def _handle_protect_completion(self, payload: Payload) -> Dict[str, Any]:
+    def _handle_protect_completion(self, payload: Payload) -> dict[str, Any]:
         metric = (payload.get("model") or self.model_name or "toxicity").strip().lower()
         if metric not in ("toxicity", "bias", "privacy", "prompt_injection"):
             metric = "toxicity"
@@ -1598,7 +1647,7 @@ class LLM:
             logger.exception(
                 "protect_completion_request_failed", metric=metric, error=str(e)
             )
-            raise Exception(f"Protect call failed: {str(e)}")
+            raise Exception(f"Protect call failed: {str(e)}") from e
 
         usage = data.get("usage") or {}
 
@@ -1696,7 +1745,7 @@ class LLM:
                 f"VLLM server error: {response.status_code} - {response.text}"
             )
 
-    def _handle_protect_flash_completion(self, payload: Payload) -> Dict[str, Any]:
+    def _handle_protect_flash_completion(self, payload: Payload) -> dict[str, Any]:
         raw_output = self._handle_vllm_completion(payload)
         parsed = self._parse_protect_flash_output(raw_output)
         is_harmful = parsed.get("prompt_harmfulness") == "yes"
@@ -1790,7 +1839,7 @@ class LLM:
         except Exception as openai_error:
             logger.exception(f"OpenAI fallback error: {str(openai_error)}")
             logger.error("Max retries reached for all APIs")
-            raise ValueError("FAILED_TO_PROCESS_EVALUATION")
+            raise ValueError("FAILED_TO_PROCESS_EVALUATION") from openai_error
 
     def _try_alternate_image_format(self, messages):
         new_messages = []
@@ -1922,7 +1971,7 @@ class LLM:
 
     def run_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: list[dict[str, Any]],
         max_parallel_evals: int = 5,
         upload_to_fi: bool = False,
     ) -> BatchRunResult:
@@ -1945,8 +1994,8 @@ class LLM:
         return BatchRunResult(eval_results=eval_results)
 
     def _run_batch_generator_async(
-        self, data: List[Dict[str, Any]], max_parallel_evals: int
-    ) -> List[Optional[Any]]:
+        self, data: list[dict[str, Any]], max_parallel_evals: int
+    ) -> list[Any | None]:
         """
         Run batch evaluations asynchronously.
 
@@ -1981,7 +2030,7 @@ class LLM:
 
             return results
 
-    def _run_batch_generator(self, data: List[Dict[str, Any]]):
+    def _run_batch_generator(self, data: list[dict[str, Any]]):
         """
         Generator function for running batch evaluations sequentially.
 
@@ -2052,7 +2101,7 @@ class LLM:
                 except Exception as e2:
                     error_msg = f"All transcription methods failed: Groq: {str(e)}, OpenAI: {str(e2)}"
                     logger.error(error_msg)
-                    raise ValueError(error_msg)
+                    raise ValueError(error_msg) from e2
 
         except Exception as e:
             logger.error(f"Transcription failed: {str(e)}")
@@ -2081,7 +2130,7 @@ class LLM:
                 except Exception as ex:
                     raise ValueError(
                         f"Failed to decode base64 data from URI: {str(ex)}"
-                    )
+                    ) from ex
 
             abs_path = os.path.abspath(audio_input)
             if os.path.exists(abs_path):
@@ -2110,7 +2159,7 @@ class LLM:
                 except Exception as ex:
                     raise ValueError(
                         "Audio input is not a valid file path, URL, or Base64 encoded audio string"
-                    )
+                    ) from ex
 
         elif isinstance(audio_input, bytes):
             logger.info("Processing raw audio bytes")
@@ -2156,7 +2205,9 @@ class LLM:
         )
         return response.text
 
-    def call_llm(self, prompt: Messages, provider: str, response_format: dict | None = None) -> str:
+    def call_llm(
+        self, prompt: Messages, provider: str, response_format: dict | None = None
+    ) -> str:
         """
         Call the LLM with the given prompt.
 
@@ -2194,7 +2245,11 @@ class LLM:
                 if gateway is None and managed_transport:
                     raise RuntimeError("Managed gateway client is unavailable")
                 if gateway is not None:
-                    logger.info("llm_call_routing", route="agentcc_gateway", model=self.model_name)
+                    logger.info(
+                        "llm_call_routing",
+                        route="agentcc_gateway",
+                        model=self.model_name,
+                    )
                     gateway_kwargs = {
                         "model": self.model_name,
                         "messages": prompt,
@@ -2221,11 +2276,17 @@ class LLM:
                 if managed_transport:
                     raise
             except Exception as e:
-                if managed_transport:
+                # A license key removed during the call ends it with
+                # NO_ENTERPRISE_LICENSE; it is not a reason to fall back.
+                if managed_transport or self._is_license_denial(e):
                     raise
                 logger.debug(f"Gateway call failed, falling back to litellm: {str(e)}")
 
         # Fallback: existing litellm path
+        # Set when the payload carries a tenant base URL (an openai/azure
+        # custom model): its errors then reach the tenant, and the log, as
+        # generic categorised text.
+        endpoint_call = False
         try:
             payload = {
                 "model": self.model_name,
@@ -2268,7 +2329,11 @@ class LLM:
                             if isinstance(key_value, str):
                                 payload["api_key"] = key_value
 
-                response = litellm.completion(
+                # A tenant base URL is called through a guarded client
+                # (checked, pinned connection; no redirects; metadata headers
+                # dropped).
+                endpoint_call = calls_endpoint_url(payload)
+                response = guarded_completion(
                     **payload,
                     num_retries=LITELLM_NUM_RETRIES,
                     retry_strategy=LITELLM_RETRY_STRATEGY,
@@ -2309,14 +2374,23 @@ class LLM:
                     break
             # Strip any litellm references from user-facing message
             import re as _re
+
             root_msg = _re.sub(r"litellm\.\w+:\s*", "", root_msg)
             root_msg = _re.sub(r"litellm\.\w+", "", root_msg)
+            if endpoint_call:
+                # The provider's text can carry the endpoint's body (a
+                # redirect target's answer included) or its URL.
+                root_msg = endpoint_call_error_message(e)
             logger.error(
                 "llm_call_failed",
                 model=self.model_name,
                 provider=provider,
                 error=root_msg,
                 error_type=type(current).__name__,
-                exc_info=True,
+                exc_info=not endpoint_call,
             )
-            raise ValueError(f"LLM call failed ({self.model_name}): {root_msg}") from e
+            # An endpoint call drops the chain too: callers log the error
+            # with its traceback, which would carry the provider's text.
+            raise ValueError(f"LLM call failed ({self.model_name}): {root_msg}") from (
+                None if endpoint_call else e
+            )

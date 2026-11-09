@@ -1,0 +1,53 @@
+# Notion MCP with an MCP token as the bearer: Business and Enterprise plans
+# only, and only a workspace owner can create one.
+schema: "connector-manifest/v1#provider"
+app: notion
+id: mcp-token
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://mcp.notion.com/.well-known/oauth-protected-resource/mcp
+transport:
+  kind: http
+  url: https://mcp.notion.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: MCP token
+      help: "A Notion MCP token, made by a workspace owner with New MCP token in Notion's developer portal."
+      helpUrl: https://developers.notion.com/guides/mcp/get-started-with-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  notes: "MCP tokens need a Notion Business or Enterprise plan."
+  source: https://developers.notion.com/guides/mcp/get-started-with-mcp
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.notion.com/guides/mcp/get-started-with-mcp
+    fetchedAt: 2026-10-20
+  - fact: transport.variant
+    url: https://developers.notion.com/guides/mcp/get-started-with-mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://developers.notion.com/guides/mcp/get-started-with-mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.credentialParts
+    url: https://developers.notion.com/guides/mcp/get-started-with-mcp
+    fetchedAt: 2026-10-20
+  - fact: accountModes
+    url: https://developers.notion.com/guides/mcp/get-started-with-mcp
+    fetchedAt: 2026-10-20
+x-omega: { oss: exclude }

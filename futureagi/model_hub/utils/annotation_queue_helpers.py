@@ -1043,7 +1043,7 @@ def _batch_ch_trace_roots(
 
 
 def _batch_ch_session_fields(
-    session_ids, *, project_id=None, caller="render", raise_on_error=False
+    session_ids, *, project_id=None, caller="render", raise_on_error=False, using=None
 ):
     """Batch CH read of session identity fields: ``{str(id): fields}`` in one query.
     CH error → ``{}`` (FAIL OPEN), or re-raised with ``raise_on_error``. Companion
@@ -1056,11 +1056,18 @@ def _batch_ch_session_fields(
     )
 
     try:
+        routing = {"using": using} if using is not None else {}
         return (
-            resolve_session_fields([str(s) for s in session_ids], project_id=project_id)
+            resolve_session_fields(
+                [str(s) for s in session_ids], project_id=project_id, **routing
+            )
             or {}
         )
     except Exception as exc:
+        from django.db import DatabaseError
+
+        if using is not None and isinstance(exc, (DatabaseError, AssertionError)):
+            raise
         _ch_batch_read_failed(
             exc,
             raise_on_error=raise_on_error,
@@ -1137,7 +1144,7 @@ class CollectorSourceCache:
         self._trace_roots = trace_roots or {}
 
     @classmethod
-    def for_items(cls, items, *, caller="render", raise_on_error=False):
+    def for_items(cls, items, *, caller="render", raise_on_error=False, using=None):
         """Collect the tracer source ids across *items* and batch-resolve each kind
         from CH. Traces resolve to their root span (LEAN), spans and sessions by soft id.
 
@@ -1211,7 +1218,10 @@ class CollectorSourceCache:
         for pid, buckets in by_project.items():
             spans.update(_batch_ch_spans(buckets["spans"], project_id=pid, **strict))
             sessions.update(
-                _batch_ch_session_fields(buckets["sessions"], project_id=pid, **strict)
+                _batch_ch_session_fields(
+                    buckets["sessions"], project_id=pid, **strict,
+                    **({"using": using} if using is not None else {}),
+                )
             )
             trace_roots.update(
                 _batch_ch_trace_roots(buckets["traces"], project_id=pid, **strict)

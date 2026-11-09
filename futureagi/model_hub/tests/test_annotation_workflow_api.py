@@ -1069,13 +1069,20 @@ class TestSubmitAnnotations:
         queue_id, item_ids, label = queue_with_items
         url = submit_annotations_url(queue_id, item_ids[0])
 
-        for value in ("positive", "negative", "positive"):
+        timestamps = []
+        for value in ("positive", "negative", "positive", "positive"):
             resp = auth_client.post(
                 url,
                 {"annotations": [{"label_id": str(label.id), "value": value}]},
                 format="json",
             )
             assert resp.status_code == status.HTTP_200_OK, resp.data
+            saved = Score.objects.get(
+                queue_item_id=item_ids[0], label=label, deleted=False
+            )
+            timestamps.append(saved.value_updated_at)
+        assert timestamps[0] < timestamps[1] < timestamps[2]
+        assert timestamps[2] == timestamps[3]
 
         ann = Score.objects.get(queue_item_id=item_ids[0], label=label, deleted=False)
         assert ann.value == "positive"

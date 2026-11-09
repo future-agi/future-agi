@@ -1,5 +1,8 @@
+import React from "react";
+import PropTypes from "prop-types";
 import { renderHook } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useNavData } from "../config-navigation";
@@ -14,8 +17,22 @@ vi.mock("src/contexts/WorkspaceContext", () => ({
   useWorkspace: () => ({ currentWorkspaceRole: null }),
 }));
 
+// The fork's nav also lists the Omega products the server admits (a capabilities
+// query), so the hook needs a query client as well as a router (round 7 merge).
+function Providers({ children }) {
+  const [client] = React.useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  );
+  return (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>{children}</MemoryRouter>
+    </QueryClientProvider>
+  );
+}
+Providers.propTypes = { children: PropTypes.node };
+
 function simulateTitles() {
-  const { result } = renderHook(() => useNavData(), { wrapper: MemoryRouter });
+  const { result } = renderHook(() => useNavData(), { wrapper: Providers });
   const section = result.current.find((s) => s.subheader === "Simulate");
   return section.items.map((item) => item.title);
 }

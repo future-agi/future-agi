@@ -1,0 +1,49 @@
+# The CN30a docs app's provider, a template: the script fills in @@CN30A_TLS_PORT@@,
+# the port of its TLS pipe, and copies it to providers/key.yaml. The host is a
+# URL variable (mockHost), which the catalog checks where its value is set: at
+# add, by Django's render_url, and at every dial, by the gateway's egress guard
+# (M17). The key goes in Authorization as a bearer, as Airtable's pat does.
+schema: "connector-manifest/v1#provider"
+app: cn30a-docs
+id: key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: "https://{mockHost}:@@CN30A_TLS_PORT@@/mcp"
+  era: auto
+  urlVariables:
+    mockHost:
+      description: "The DNS name of the proof's TLS upstream on the machine that runs it."
+      pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+      scope: org
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "The org's key for the stand-in docs app."
+      helpUrl: https://cn30a-docs.example.com/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://cn30a-docs.example.com/mcp
+    fetchedAt: 2026-10-24
+  - fact: auth.kind
+    url: https://cn30a-docs.example.com/mcp
+    fetchedAt: 2026-10-24
+  - fact: auth.credentialParts
+    url: https://cn30a-docs.example.com/mcp
+    fetchedAt: 2026-10-24
+x-omega: { oss: exclude }

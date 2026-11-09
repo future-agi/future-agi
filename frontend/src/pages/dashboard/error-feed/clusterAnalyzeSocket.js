@@ -16,6 +16,8 @@
 
 import { HOST_API } from "src/config-global";
 import { createConversation } from "src/sections/falcon-ai/hooks/useFalconAPI";
+import { captureFalconRequest } from "src/sections/falcon-ai/store/falconRequestGuard";
+import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 import { useErrorFeedStore } from "./store";
 import {
   CHAT_FRAME,
@@ -31,10 +33,16 @@ import {
 // ── Connection (single shared socket) ──────────────────────────────────────
 
 let socket = null;
+let socketIsCurrent = null;
 let socketReady = null; // Promise<WebSocket> while connecting/open
 let pingTimer = null; // keepalive interval; cleared on close
 // conversationId → handler(parsed) — routes inbound frames to the right run.
 const handlers = new Map();
+const watchdogTimers = new Set();
+const clearWatchdogs = () => {
+  watchdogTimers.forEach(clearTimeout);
+  watchdogTimers.clear();
+};
 
 // Close + drop the current socket so the next ensureSocket() builds a fresh
 // one. This only tears the connection down — it does NOT reconnect — so the
@@ -69,7 +77,21 @@ function closeConnection() {
   clearInterval(pingTimer);
   socket = null;
   socketReady = null;
+  socketIsCurrent = null;
 }
+
+// This module outlives the tab. Retire its connection and ephemeral threads at
+// the same scope boundary as the shared Falcon chat, not only on unmount.
+const unsubscribeRecovery = useFalconStore.subscribe((state, previous) => {
+  if (state.resetGeneration === previous.resetGeneration) return;
+  closeConnection();
+  clearWatchdogs();
+  handlers.clear();
+  useErrorFeedStore.setState({
+    analyzeThreadsByCluster: {},
+    analyzePendingStartByCluster: {},
+  });
+});
 
 // Vite HMR hot-swaps this module on edit, resetting `socket`/`socketReady` to
 // null while the *old* socket stays open and orphaned — the engine then holds a
@@ -77,7 +99,9 @@ function closeConnection() {
 // Close it cleanly on dispose so dev gets one live socket, not a split-brain.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
+    unsubscribeRecovery();
     closeConnection();
+    clearWatchdogs();
     handlers.clear();
   });
 }
@@ -96,23 +120,31 @@ function ensureSocket(token, workspaceId) {
     socket &&
     (socket.readyState === WebSocket.OPEN ||
       socket.readyState === WebSocket.CONNECTING) &&
-    socketReady
+    socketReady &&
+    socketIsCurrent?.()
   ) {
     return socketReady;
   }
 
+  if (socket) closeConnection();
+  const isCurrent = captureFalconRequest();
+  socketIsCurrent = isCurrent;
   socketReady = new Promise((resolve, reject) => {
     const ws = new WebSocket(buildWsUrl(token, workspaceId));
     socket = ws;
 
     ws.onopen = () => {
+      if (socket !== ws || !isCurrent()) {
+        reject(new Error("Falcon socket error"));
+        return;
+      }
       // Keep connection alive — proxies/granian drop idle WebSockets after
       // ~100s, leaving the FE with a half-open socket whose send() succeeds
       // silently into the void (run hangs forever in "streaming"). Mirrors
       // the heartbeat in useFalconSocket.js.
       clearInterval(pingTimer);
       pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (socket === ws && isCurrent() && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "ping" }));
         }
       }, 30000);
@@ -120,19 +152,21 @@ function ensureSocket(token, workspaceId) {
     };
     ws.onerror = () => reject(new Error("Falcon socket error"));
     ws.onclose = () => {
+      reject(new Error("Falcon socket error"));
+      if (socket !== ws) return;
       clearInterval(pingTimer);
-      if (socket === ws) {
-        socket = null;
-        socketReady = null;
-      }
+      socket = null;
+      socketReady = null;
+      socketIsCurrent = null;
       // Nothing else links socket death to in-flight runs, and the delivery
       // watchdog retires once the first frame has arrived — so a socket that
       // dies mid-run left the thread STREAMING forever with Re-run disabled,
       // the only escape being a reload. The backend survives the disconnect
       // and finishes the run, but its frames go to a closed connection.
-      if (!ws._deliberateClose) failAllRuns();
+      if (!ws._deliberateClose && isCurrent()) failAllRuns();
     };
     ws.onmessage = (event) => {
+      if (socket !== ws || !isCurrent()) return;
       let parsed;
       try {
         parsed = JSON.parse(event.data);
@@ -154,8 +188,10 @@ function ensureSocket(token, workspaceId) {
   return socketReady;
 }
 
-async function send(payload, token, workspaceId) {
+async function send(payload, token, workspaceId, isCurrent) {
+  if (!isCurrent()) return;
   let ws = await ensureSocket(token, workspaceId);
+  if (!isCurrent()) return;
   // The awaited socket can be stale (closed/closing, or a half-open OPEN after a
   // server drop). Rebuild once if it isn't cleanly OPEN so the frame doesn't go
   // into the void.
@@ -163,6 +199,7 @@ async function send(payload, token, workspaceId) {
     closeConnection();
     ws = await ensureSocket(token, workspaceId);
   }
+  if (!isCurrent()) return;
   ws.send(JSON.stringify(payload));
 }
 
@@ -382,6 +419,7 @@ export function hydrateFromCache({ clusterId, rca }) {
 
 export async function startRun({ clusterId, projectId, token, workspaceId }) {
   if (!clusterId) return;
+  const isCurrent = captureFalconRequest();
 
   // Guard against duplicate kicks (rapid clicks / StrictMode double-invoke) —
   // a run already in flight for this cluster owns the conversation.
@@ -431,6 +469,7 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
       { hidden: true },
     );
   } catch {
+    if (!isCurrent()) return;
     // Reverting to IDLE with no message renders the pre-run empty state, so a
     // failed kick-off is indistinguishable from never having clicked Analyze.
     patchThread(clusterId, (t) => ({
@@ -450,6 +489,7 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
     }));
     return;
   }
+  if (!isCurrent()) return;
   // Create endpoint wraps the row: { status, result: { id, ... } }.
   const conversationId = conversation?.result?.id ?? conversation?.id;
   if (!conversationId) {
@@ -480,6 +520,7 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
   let firstFrameSeen = false; // delivery watchdog: did the run actually start?
 
   const handler = (parsed) => {
+    if (!isCurrent()) return;
     const { type, data } = parsed;
     if (!data) return;
     firstFrameSeen = true; // any frame proves the run actually started
@@ -666,6 +707,7 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
       },
       token,
       workspaceId,
+      isCurrent,
     );
 
   // Only act while THIS run still owns the thread — a quick Re-run swaps in a
@@ -673,12 +715,14 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
   const isActiveRun = () => {
     const t = useErrorFeedStore.getState().analyzeThreadsByCluster[clusterId];
     return (
+      isCurrent() &&
       t?.runState === RUN_STATE.STREAMING &&
       t?.conversationId === conversationId
     );
   };
 
   const failVisibly = () => {
+    if (!isCurrent()) return;
     handlers.delete(conversationId);
     patchThread(clusterId, (t) => ({
       ...t,
@@ -708,7 +752,8 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
   // double-run the agent.
   let retried = false;
   const armWatchdog = () => {
-    setTimeout(async () => {
+    const timer = setTimeout(async () => {
+      watchdogTimers.delete(timer);
       if (firstFrameSeen || !isActiveRun()) return;
       // Only retry if the socket is actually dead.
       const ws = socket;
@@ -730,16 +775,17 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
       closeConnection();
       try {
         await sendChat();
-        armWatchdog();
+        if (isCurrent()) armWatchdog();
       } catch {
         failVisibly();
       }
     }, 8000);
+    watchdogTimers.add(timer);
   };
 
   try {
     await sendChat();
-    armWatchdog();
+    if (isCurrent()) armWatchdog();
   } catch {
     // failVisibly already says this correctly — a bare DONE here left the
     // thread empty and the run looked like it had never happened.
@@ -758,6 +804,7 @@ export async function runFollowUp({
 }) {
   const text = String(question ?? "").trim();
   if (!clusterId || !text) return;
+  const isCurrent = captureFalconRequest();
 
   const thread =
     useErrorFeedStore.getState().analyzeThreadsByCluster[clusterId];
@@ -793,6 +840,7 @@ export async function runFollowUp({
   const openCalls = new Map(); // call_id → step id
 
   const handler = (parsed) => {
+    if (!isCurrent()) return;
     const { type, data } = parsed;
     if (!data) return;
 
@@ -890,6 +938,7 @@ export async function runFollowUp({
   // Same contract as a run: if the socket dies, close the answer out instead of
   // leaving the sub-agent card streaming forever.
   const failFollowUp = () => {
+    if (!isCurrent()) return;
     handlers.delete(conversationId);
     patchThread(clusterId, (t) => ({
       ...t,
@@ -925,8 +974,10 @@ export async function runFollowUp({
       },
       token,
       workspaceId,
+      isCurrent,
     );
   } catch {
+    if (!isCurrent()) return;
     handlers.delete(conversationId);
     patchThread(clusterId, (t) => ({ ...t, followUpRunState: RUN_STATE.DONE }));
   }

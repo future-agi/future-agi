@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Button, Grid, Skeleton, Typography, Link } from "@mui/material";
 import React, { useState } from "react";
 import Iconify from "src/components/iconify";
@@ -8,7 +9,7 @@ import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import { useNavigate } from "react-router-dom";
 
 const SimulationScenarioEmptyScreen = () => {
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const { role } = useAuthContext();
   const navigate = useNavigate();
 
@@ -65,7 +66,8 @@ const SimulationScenarioEmptyScreen = () => {
                   }}
                 />
               )}
-              <iframe
+              <ExternalContentFrame
+                onRequestLoad={() => setIsLoading(true)}
                 src="https://www.loom.com/embed/f13e7911fb5c4ec583c72dc20acbc83a"
                 title="Knowledge Base"
                 frameBorder="0"

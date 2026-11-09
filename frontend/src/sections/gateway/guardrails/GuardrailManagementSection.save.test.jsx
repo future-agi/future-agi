@@ -1,94 +1,101 @@
 import React from "react";
+import PropTypes from "prop-types";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import userEvent from "@testing-library/user-event";
-import { render, screen } from "src/utils/test-utils";
-import GuardrailManagementSection from "./GuardrailManagementSection";
+import { act, renderHook } from "@testing-library/react";
+import {
+  MutationCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 
-const mockMutate = vi.fn();
+import { catalogEntry } from "./catalog";
+import { useRuleActions } from "./hooks/useRuleActions";
 
-const ACTIVE_CONFIG = {
-  id: "config-1",
-  version: 7,
-  guardrails: { checks: {} },
-  routing: { strategy: "weighted" },
-  cache: { enabled: true, backend: "memory" },
-  rate_limiting: { enabled: true, rpm: 120 },
-  budgets: { enabled: true, org_limit: { limit: 100, period: "monthly" } },
-  cost_tracking: { enabled: true },
-  ip_acl: { enabled: true, allow: ["10.0.0.0/8"] },
-  alerting: { enabled: true, rules: [{ name: "spend" }] },
-  privacy: { redact: true },
-  tool_policy: { default: "deny" },
-  mcp: { servers: [{ name: "docs" }] },
-  a2a: { agents: [{ name: "planner" }] },
-  audit: { enabled: true },
-  model_database: { "custom-model": { input: 1 } },
-  model_map: { fast: "gpt-4o-mini" },
+// Saving creates a whole new active org-config version only through POST
+// org-configs/, and a section left out of that payload is reset to its
+// default. The Guardrails page never saves that way: it switches and edits a
+// check with toggle-guardrail and update-guardrail, and removes a check or
+// sets the timeout with update-config, which deep-merges only the sections a
+// patch sends. So no guardrails save can reset budgets, rate limits, the IP
+// ACL, alerting, privacy, tool policy, MCP, A2A, audit or the model sections.
+
+const { post } = vi.hoisted(() => ({ post: vi.fn() }));
+
+vi.mock("src/utils/axios", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, default: { ...actual.default, post } };
+});
+vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+
+const SAVED_GUARDRAILS = {
+  checks: {
+    "pii-detection": {
+      enabled: true,
+      action: "block",
+      confidence_threshold: 0.5,
+    },
+  },
 };
 
-vi.mock("react-router-dom", async () => {
-  const actual = await vi.importActual("react-router-dom");
-  return {
-    ...actual,
-    useParams: () => ({ tab: "configuration" }),
-    useNavigate: () => vi.fn(),
-  };
-});
-
-vi.mock("../providers/hooks/useOrgConfig", () => ({
-  useOrgConfig: () => ({ data: ACTIVE_CONFIG, isLoading: false }),
-  useCreateOrgConfig: () => ({ mutate: mockMutate, isPending: false }),
-}));
-
-vi.mock("../providers/hooks/useGatewayConfig", () => ({
-  useToggleGuardrail: () => ({ mutate: vi.fn(), isPending: false }),
-}));
-
-vi.mock("../context/useGatewayContext", () => ({
-  useGatewayContext: () => ({ gatewayId: "gateway-1", isLoading: false }),
-}));
-
-vi.mock("./GuardrailAnalyticsTab", () => ({ default: () => null }));
-vi.mock("./FeedbackSummaryCard", () => ({ default: () => null }));
-vi.mock("./EditGuardrailDialog", () => ({ default: () => null }));
-
-vi.mock("../settings/GuardrailConfigTab", () => ({
-  default: ({ onChange }) => (
-    <button
-      type="button"
-      onClick={() =>
-        onChange({
-          checks: {
-            "pii-detection": { enabled: true, action: "block", threshold: 0.5 },
-          },
-        })
-      }
-    >
-      Edit guardrails
-    </button>
-  ),
-}));
+function wrapper({ children }) {
+  const client = new QueryClient({
+    mutationCache: new MutationCache({ onError: () => {} }),
+    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+  });
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}
+wrapper.propTypes = { children: PropTypes.node };
 
 describe("GuardrailManagementSection Save & Activate", () => {
   beforeEach(() => {
-    mockMutate.mockClear();
+    post.mockReset();
+    post.mockResolvedValue({
+      data: { result: { version: 8, gateway_synced: true } },
+    });
   });
 
   it("keeps every other org-config section when saving guardrails", async () => {
-    const user = userEvent.setup();
-    render(<GuardrailManagementSection />);
+    const { result } = renderHook(
+      () =>
+        useRuleActions({ gatewayId: "gateway-1", saved: SAVED_GUARDRAILS }),
+      { wrapper },
+    );
+    const row = {
+      id: "pii-detection",
+      ruleName: "pii-detection",
+      label: "PII Detection",
+    };
 
-    await user.click(screen.getByRole("button", { name: "Edit guardrails" }));
-    await user.click(screen.getByRole("button", { name: "Save & Activate" }));
+    await act(() =>
+      result.current.saveRule({
+        catalogName: "pii-detection",
+        meta: catalogEntry("pii-detection"),
+        check: SAVED_GUARDRAILS.checks["pii-detection"],
+        form: { enabled: true, action: "block", threshold: 0.8, fields: {} },
+      }),
+    );
+    await act(() => result.current.toggleRule(row, false));
+    await act(() => result.current.saveTimeout(3000));
+    await act(() => result.current.removeRule(row));
 
-    expect(mockMutate).toHaveBeenCalledTimes(1);
-    const [payload] = mockMutate.mock.calls[0];
-    const expected = { ...ACTIVE_CONFIG, guardrails: payload.guardrails };
-    delete expected.id;
-    delete expected.version;
-    expect(payload).toEqual(expected);
-    expect(payload.guardrails.rules).toEqual([
-      expect.objectContaining({ name: "pii-detector", action: "block" }),
+    const calls = post.mock.calls.map(([url, body]) => [url, body]);
+    expect(calls.map(([url]) => url)).toEqual([
+      "/agentcc/gateways/gateway-1/update-guardrail/",
+      "/agentcc/gateways/gateway-1/toggle-guardrail/",
+      "/agentcc/gateways/gateway-1/update-config/",
+      "/agentcc/gateways/gateway-1/update-config/",
     ]);
+    // update-guardrail and toggle-guardrail name one check and change it.
+    expect(calls[0][1]).toEqual({
+      name: "pii-detection",
+      config: { confidence_threshold: 0.8 },
+    });
+    expect(calls[1][1]).toEqual({ name: "pii-detection", enabled: false });
+    // update-config gets a guardrails-only patch; every other section stays
+    // as stored.
+    for (const [, body] of calls.slice(2)) {
+      expect(Object.keys(body)).toEqual(["guardrails"]);
+    }
+    expect(calls[2][1]).toEqual({ guardrails: { timeout_ms: 3000 } });
   });
 });

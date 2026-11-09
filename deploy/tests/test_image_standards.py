@@ -90,7 +90,8 @@ IMAGES = {
     },
     "futureagi/code-executor/Dockerfile": {
         "licenses": APACHE,
-        "user": "root",
+        # Not root since 80ef18581a: executor_init.c refuses any uid but 65534.
+        "user": "65534:65534",
         "stopsignal": "SIGTERM",
         "healthcheck": True,
         # An immutable version tag, published before the release builds this.
@@ -1372,6 +1373,196 @@ def nginx_blocks(text: str, keyword: str) -> list[str]:
     return bodies
 
 
+def nginx_location(text: str, uri: str) -> tuple[str, str]:
+    """Select a flat server location: exact, longest prefix, then ordered regex.
+
+    A ^~ longest prefix suppresses regex matching. Named locations are internal
+    redirects, not candidates for a client request.
+    """
+    (server,) = nginx_blocks(text, "server")
+    matchers = re.findall(r"(?m)^\s*location\b([^{;]*)\{", server)
+    locations = [
+        (" ".join(matcher.split()), body)
+        for matcher, body in zip(matchers, nginx_blocks(server, "location"), strict=True)
+    ]
+    prefixes, regexes = [], []
+    for matcher, body in locations:
+        if matcher.startswith("= "):
+            if uri == matcher[2:]:
+                return matcher, body
+        elif matcher.startswith(("~ ", "~* ")):
+            regexes.append((matcher, body))
+        elif not matcher.startswith("@"):
+            prefix = matcher.removeprefix("^~ ")
+            if uri.startswith(prefix):
+                prefixes.append((matcher, body))
+    longest = max(prefixes, key=lambda pair: len(pair[0].removeprefix("^~ ")))
+    if longest[0].startswith("^~ "):
+        return longest
+    for matcher, body in regexes:
+        modifier, pattern = matcher.split(" ", 1)
+        if re.search(pattern, uri, re.IGNORECASE if modifier == "~*" else 0):
+            return matcher, body
+    return longest
+
+
+def omega_absence_paths() -> list[str]:
+    """Exercise the current route wall, including EE-only and hidden families."""
+    manifest = json.loads(
+        (ROOT / "services/omega-gateway/manifest/console-route-manifest.v1.json")
+        .read_text(encoding="utf-8")
+    )
+    samples = {
+        "revision": "1", "deployment": "dep-" + "a" * 16,
+        "computerId": "cmp_" + "a" * 24,
+        "terminal": "11111111-1111-1111-1111-111111111111",
+        "filePath": "folder/probe.js", "rest": "folder/probe.html",
+    }
+
+    def concrete(match: re.Match) -> str:
+        name = match.group(1)
+        value = samples.get(name, "probe")
+        if not re.fullmatch(manifest["params"][name], value):
+            raise AssertionError(f"invalid route parameter sample: {name}")
+        return value
+
+    templates = [route["path"] for key in ("routes", "eeOnly") for route in manifest[key]]
+    templates.extend(path for feature in manifest["hidden"].values() for path in feature["paths"])
+    paths = {"/omega/api" + re.sub(r"\{(\w+)\}", concrete, path) for path in templates}
+    paths.update({
+        "/omega", "/omega/", "/omega/api", "/omega/api/", "/omega/api/anything",
+        "/omega/console/", "/omega/console/index.html", "/omega/console/assets/x.js",
+    })
+    return sorted(paths)
+
+
+class NginxOmegaAbsence(unittest.TestCase):
+    """The public UI origin must not turn an absent Omega surface into a SPA 200."""
+
+    def test_manifest_routes_and_console_return_uncached_json_404(self):
+        for name, include in UI_NGINX_CONFIGS.items():
+            text = nginx_config(name)
+            for path in omega_absence_paths():
+                with self.subTest(config=name, path=path):
+                    _, body = nginx_location(text, path)
+                    self.assertIn('return 404 \'{"error":"not_found"}\';', body)
+                    # default_type alone still inherits mime.types for .html/.js.
+                    self.assertRegex(body, r"\btypes\s*\{\s*\}")
+                    self.assertIn("default_type application/json;", body)
+                    self.assertIn('add_header Cache-Control "no-store" always;', body)
+                    self.assertIn(f"include {include};", body)
+                    self.assertNotIn("try_files", body)
+                    self.assertNotIn("return 503", body)
+
+    def test_ordinary_spa_assets_and_runtime_config_keep_their_locations(self):
+        for name in UI_NGINX_CONFIGS:
+            text = nginx_config(name)
+            with self.subTest(config=name):
+                matcher, body = nginx_location(text, "/dashboard/home")
+                self.assertEqual(matcher, "/")
+                self.assertIn("try_files $uri $uri/ /index.html;", body)
+                # A .js asset selects the existing extension regex, not the SPA.
+                matcher, body = nginx_location(text, "/assets/a.js")
+                self.assertTrue(matcher.startswith("~* "))
+                self.assertIn('add_header Cache-Control "public, immutable";', body)
+                self.assertNotIn("try_files", body)
+                matcher, body = nginx_location(text, "/config.js")
+                self.assertEqual(matcher, "= /config.js")
+                self.assertIn('add_header Pragma "no-cache";', body)
+                self.assertEqual(nginx_location(text, "/omegaverse/home")[0], "/")
+
+
+class ServiceWorkerCaching(unittest.TestCase):
+    """The unversioned worker must not inherit immutable asset caching."""
+
+    def test_nginx_service_worker_revalidates_without_spa_fallback(self):
+        for name, include in UI_NGINX_CONFIGS.items():
+            with self.subTest(config=name):
+                text = nginx_config(name)
+                matcher, body = nginx_location(text, "/service-worker.js")
+                self.assertEqual(matcher, "= /service-worker.js")
+                self.assertRegex(
+                    body, r'add_header Cache-Control "no-cache"(?: always)?;'
+                )
+                self.assertNotRegex(body, r"(?i)\b(?:immutable|max-age|s-maxage)\b")
+                self.assertNotRegex(
+                    body, r"\b(?:expires|try_files|rewrite|return|alias|error_page)\b"
+                )
+                self.assertIn("default_type application/javascript;", body)
+                self.assertIn(f"include {include};", body)
+                _, runtime_config = nginx_location(text, "/config.js")
+                self.assertEqual(
+                    re.findall(r"\binclude\s+([^;]+);", body),
+                    re.findall(r"\binclude\s+([^;]+);", runtime_config),
+                )
+                # Share the static asset root, not config.js's /tmp alias in Helm.
+                (server,) = nginx_blocks(text, "server")
+                root_pattern = r"(?m)^\s*root\s+([^;]+);"
+                inherited_root = re.findall(root_pattern, server.split("location", 1)[0])
+                _, static_asset = nginx_location(text, "/main.js")
+                worker_root = re.findall(root_pattern, body) or inherited_root
+                self.assertTrue(worker_root)
+                self.assertEqual(
+                    worker_root,
+                    re.findall(root_pattern, static_asset) or inherited_root,
+                )
+
+    def vercel_cache_controls(self, uri: str) -> list[str]:
+        config = json.loads((ROOT / "frontend/vercel.json").read_text(encoding="utf-8"))
+        values = []
+        for rule in config["headers"]:
+            # These sources are literals or regex groups, optionally named
+            # (:path(...)). Match the whole pathname, not a query string; fail
+            # closed if a future source uses other path-to-regexp syntax.
+            source = re.sub(r":\w+(?=\()", "", rule["source"])
+            self.assertNotRegex(
+                source, r"(?<!\?):\w", "extend the source matcher for new syntax"
+            )
+            if re.fullmatch(source, uri):
+                values.extend(
+                    header["value"].lower()
+                    for header in rule["headers"]
+                    if header["key"].lower() == "cache-control"
+                )
+        return values
+
+    def test_vercel_service_worker_revalidates_regardless_of_header_order(self):
+        config = json.loads((ROOT / "frontend/vercel.json").read_text(encoding="utf-8"))
+        rules = [r for r in config["headers"] if r["source"] == "/service-worker.js"]
+        self.assertEqual(len(rules), 1)
+        self.assertIn(
+            {"key": "Cache-Control", "value": "no-cache"}, rules[0]["headers"]
+        )
+        # Check ALL matching rules: first-wins, last-wins and combined headers
+        # must all require validation. A later exact rule alone is insufficient.
+        controls = self.vercel_cache_controls("/service-worker.js")
+        self.assertTrue(controls)
+        for value in controls:
+            self.assertIn("no-cache", [part.strip() for part in value.split(",")])
+            self.assertNotRegex(value, r"\b(?:immutable|max-age|s-maxage)\b")
+
+    def test_vercel_other_static_assets_remain_immutable(self):
+        paths = [
+            "/assets/chunk-abc123.js",
+            "/assets/service-worker.js",
+            "/nested/service-worker.js",
+            "/other-service-worker.js",
+            "/service-worker.js.css",
+            *(
+                f"/file.{ext}"
+                for ext in (
+                    "js", "css", "png", "jpg", "jpeg", "gif", "ico", "svg",
+                    "woff", "woff2", "ttf", "eot",
+                )
+            ),
+        ]
+        for path in paths:
+            with self.subTest(path=path):
+                controls = self.vercel_cache_controls(path)
+                self.assertTrue(controls)
+                self.assertTrue(all("immutable" in value for value in controls))
+
+
 class NginxSecurityHeaders(unittest.TestCase):
     """nginx drops the server-level add_header directives in a location that
     sets a header of its own, so each such location includes them again."""
@@ -1461,7 +1652,7 @@ class NginxCaching(unittest.TestCase):
 
     def test_standalone_and_the_chart_cache_as_the_frontend_image_does(self):
         frontend = self.caching("frontend/nginx.conf")
-        self.assertEqual(len(frontend), 5)
+        self.assertEqual(len(frontend), 8)
         self.assertTrue(all(frontend.values()))
         for name in ("deploy/standalone/nginx.conf", CHART_UI_CONFIGMAP):
             with self.subTest(config=name):
@@ -1542,6 +1733,7 @@ class Workflows(unittest.TestCase):
         for path in (
             "frontend/Dockerfile",
             "frontend/security-headers.conf",
+            "frontend/vercel.json",
             "deploy/standalone/bin/verify-binaries",
             "scripts/code-executor-base-pin.sh",
             "futureagi/requirements.txt",

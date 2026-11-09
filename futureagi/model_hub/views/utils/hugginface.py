@@ -13,7 +13,6 @@ import requests
 import structlog
 from django.db import close_old_connections
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import CellStatus, DataTypeChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset
@@ -27,6 +26,8 @@ from tfc.utils.storage import (
     upload_document_to_s3,
     upload_image_to_s3,
 )
+
+logger = structlog.get_logger(__name__)
 
 _HUGGINGFACE_DATASET_INFO_TIMEOUT_SECONDS = 30
 
@@ -120,11 +121,11 @@ def get_huggingface_dataset_info(dataset_path, organization_id):
     auth_token = ApiKey.objects.filter(
         organization_id=organization_id, provider="huggingface"
     ).first()
+    # The org's own token when it has one: one this deployment cannot decrypt
+    # raises (KeyUnreadable) rather than being swapped for the platform token.
     auth_token = (
-        auth_token._actual_key
-        if auth_token and auth_token._actual_key
-        else HUGGINGFACE_API_TOKEN
-    )
+        auth_token.actual_key if auth_token and auth_token.key else None
+    ) or HUGGINGFACE_API_TOKEN
     headers = {"Authorization": f"Bearer {auth_token}"}
     API_URL = f"https://datasets-server.huggingface.co/info?dataset={dataset_path}"
     response = requests.get(
@@ -148,6 +149,47 @@ def get_huggingface_dataset_info(dataset_path, organization_id):
     }
 
     return dataset_info
+
+
+def _row_id_at(rows, index):
+    """The row id for item `index`. `rows` crosses Temporal as JSON, so its
+    keys arrive as strings; a direct call keeps the view's integer keys."""
+    return rows.get(index) or rows.get(str(index))
+
+
+def _write_error_cells(dataset_id, column_order, rows, num_rows, reason):
+    """An ERROR cell with `reason` for every (row, column) that has no cell
+    yet. Cells written before a mid-stream failure stay as they are: Cell
+    has no unique (row, column) constraint, so a second write would
+    duplicate them."""
+    row_ids = [
+        row_id for row_id in (_row_id_at(rows, i) for i in range(num_rows)) if row_id
+    ]
+    if not row_ids:
+        return
+    columns = list(Column.objects.filter(id__in=column_order))
+    written = {
+        (str(row_id), str(column_id))
+        for row_id, column_id in Cell.no_workspace_objects.filter(
+            dataset_id=dataset_id,
+            row_id__in=row_ids,
+            column_id__in=[column.id for column in columns],
+        ).values_list("row_id", "column_id")
+    }
+    value_infos = json.dumps({"reason": reason})
+    for row_id in row_ids:
+        for column in columns:
+            if (str(row_id), str(column.id)) in written:
+                continue
+            Cell.objects.create(
+                dataset_id=dataset_id,
+                column=column,
+                row_id=row_id,
+                value="",
+                value_infos=value_infos,
+                column_metadata={},
+                status=CellStatus.ERROR.value,
+            )
 
 
 # Function to create cells for dataset imported from huggingface
@@ -236,7 +278,7 @@ def process_huggingface_columns(data_dict, dataset_id, column_id, rows, index):
 
         # Create cell
         # Note: rows dict keys may be strings after JSON serialization (via Temporal)
-        row_id = rows.get(index) or rows.get(str(index))
+        row_id = _row_id_at(rows, index)
         Cell.objects.create(
             id=uuid.uuid4(),
             dataset=dataset,
@@ -264,6 +306,7 @@ def process_huggingface_dataset(
     num_rows,
     column_order,
     rows,
+    revision=None,
 ):
     try:
         hug_dataset = load_hf_dataset_with_retries(
@@ -271,6 +314,7 @@ def process_huggingface_dataset(
             huggingface_dataset_config,
             huggingface_dataset_split,
             organization_id,
+            **({"revision": revision} if revision else {}),
         )
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = []
@@ -302,29 +346,34 @@ def process_huggingface_dataset(
             for future in futures:
                 future.result()
 
+            _write_error_cells(
+                dataset_id,
+                column_order,
+                rows,
+                num_rows,
+                "The source did not supply a value for this imported cell",
+            )
             gc.collect()
 
     except Exception as e:
-        for i in range(num_rows):
-            cell_value_infos = {}
-            cell_value_infos["reason"] = get_error_message(
-                "FAILED_TO_GET_DATA_FROM_HUGGINGFACE"
-            )
-            cell_status = CellStatus.ERROR.value
-            columns = Column.objects.filter(id__in=column_order)
-            for column in columns:
-                Cell.objects.create(
-                    dataset_id=dataset_id,
-                    column=column,
-                    row_id=rows[i],
-                    value="",
-                    value_infos=json.dumps(cell_value_infos),
-                    column_metadata={},
-                    status=cell_status,
-                )
+        # A build without the `ml` extra (no `datasets`) can never load:
+        # say so in every cell, and do not let Temporal retry it.
+        unavailable = isinstance(e, ImportError)
+        reason = get_error_message(
+            "HUGGINGFACE_IMPORT_UNAVAILABLE"
+            if unavailable
+            else "FAILED_TO_GET_DATA_FROM_HUGGINGFACE"
+        )
         logger.exception(
             f"huggingface: Error in processing huggingface dataset: {str(e)}"
         )
+        _write_error_cells(dataset_id, column_order, rows, num_rows, reason)
+        if unavailable:
+            from temporalio.exceptions import ApplicationError
+
+            raise ApplicationError(
+                reason, type="HuggingFaceImportUnavailable", non_retryable=True
+            ) from e
 
     finally:
         Column.objects.filter(id__in=column_order).update(

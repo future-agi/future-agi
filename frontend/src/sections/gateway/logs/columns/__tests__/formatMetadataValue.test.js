@@ -8,9 +8,9 @@ import {
 
 describe("formatMetadataValue", () => {
   it.each([
-    [undefined, "-"],
-    [null, "-"],
-    ["", "-"],
+    [undefined, "—"],
+    [null, "—"],
+    ["", "—"],
     [false, "false"],
     [true, "true"],
     [0, "0"],

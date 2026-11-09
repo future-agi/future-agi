@@ -14,6 +14,7 @@ import Alert from "@mui/material/Alert";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { createSkill, updateSkill, deleteSkill } from "../hooks/useFalconAPI";
+import { captureFalconRequest } from "../store/falconRequestGuard";
 
 const INITIAL_STATE = {
   name: "",
@@ -104,6 +105,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
       return;
     }
 
+    const isCurrent = captureFalconRequest();
     const payload = { ...form, trigger_phrases: phrases };
     setSaving(true);
     setError(null);
@@ -113,6 +115,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
       } else {
         await createSkill(payload);
       }
+      if (!isCurrent()) return;
       setPhraseInput("");
       onSaved?.();
       onClose();
@@ -130,9 +133,11 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
 
   const handleDelete = async () => {
     if (!skill?.id) return;
+    const isCurrent = captureFalconRequest();
     setDeleting(true);
     try {
       await deleteSkill(skill.id);
+      if (!isCurrent()) return;
       onSaved?.();
       onClose();
     } catch {

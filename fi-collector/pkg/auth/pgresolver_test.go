@@ -182,103 +182,62 @@ func (f routingFixture) count(sql string, args ...any) int {
 	return n
 }
 
-func TestValidateKeyReadsTheAgentOfAnIngestKey(t *testing.T) {
+func TestValidateKeyKeepsLegacyAgentAssociationsIneligible(t *testing.T) {
 	pool := routingDatabase(t)
 	f := routingFixture{t, pool}
-	ctx := context.Background()
-	org := uuid.NewString()
-	ws := f.workspace(org, true, true, false)
-	live := f.agent(org, &ws, false)
-	softDeleted := f.agent(org, &ws, true)
-	hardDeleted := uuid.NewString() // the key names it; no row exists
-
-	read := func(r *PGResolver, apiKey, secretKey string) *ResolveResult {
-		t.Helper()
-		res, err := r.ValidateKey(ctx, apiKey, secretKey)
+	person := newEligibilityFixture()
+	seedEligibility(t, pool, person)
+	live := f.agent(person.org, &person.ws, false)
+	softDeleted := f.agent(person.org, &person.ws, true)
+	hardDeleted := uuid.NewString()
+	for _, state := range []columnState{columnsPresent, columnsUnknown, columnsMissing} {
+		r := routingResolver(pool, state)
+		r.peppers = mustPeppers(t, goldenPepper)
+		for _, kind := range []string{"ingest", "system", "mcp"} {
+			for _, agent := range []*string{&live, &softDeleted, &hardDeleted, nil} {
+				for _, workspace := range []*string{&person.ws, nil} {
+					api, secret := f.key(kind, person.org, workspace, agent)
+					if res, err := r.ValidateKey(context.Background(), api, secret); err != nil || res != nil {
+						t.Fatalf("state=%v kind=%s legacy association accepted: %v", state, kind, err)
+					}
+				}
+			}
+		}
+		if res, err := r.ValidateKey(context.Background(), "nope", "nope"); err != nil || res != nil {
+			t.Fatalf("unknown key: %v", err)
+		}
+		res, err := r.ValidateKey(context.Background(), person.api, person.secret)
 		if err != nil || res == nil {
-			t.Fatalf("ValidateKey = %v, %v", res, err)
+			t.Fatalf("personal key: %v", err)
 		}
-		return res
-	}
-
-	with := routingResolver(pool, columnsPresent)
-	api, secret := f.key("ingest", org, &ws, &live)
-	res := read(with, api, secret)
-	if res.KeyType != "ingest" || res.OrgID != org || res.WorkspaceID != ws || res.columnsMissing {
-		t.Fatalf("result = %+v", res)
-	}
-	if res.SimulationAgent != (SimulationAgent{ID: live, OrgID: org}) {
-		t.Fatalf("live agent = %+v", res.SimulationAgent)
-	}
-
-	api, secret = f.key("ingest", org, &ws, &softDeleted)
-	if got := read(with, api, secret).SimulationAgent; got != (SimulationAgent{ID: softDeleted, OrgID: org, Deleted: true}) {
-		t.Fatalf("soft-deleted agent = %+v", got)
-	}
-
-	// A hard-deleted agent leaves the key naming an id with no row: the key
-	// still validates and the agent reads as deleted.
-	api, secret = f.key("ingest", org, &ws, &hardDeleted)
-	if got := read(with, api, secret).SimulationAgent; got != (SimulationAgent{ID: hardDeleted, Deleted: true}) {
-		t.Fatalf("hard-deleted agent = %+v", got)
-	}
-
-	// A key that names no agent; and a key of another type, whose agent column
-	// is ignored.
-	api, secret = f.key("ingest", org, &ws, nil)
-	if got := read(with, api, secret).SimulationAgent; got != (SimulationAgent{}) {
-		t.Fatalf("key without agent = %+v", got)
-	}
-	api, secret = f.key("system", org, &ws, &live)
-	if got := read(with, api, secret); got.SimulationAgent != (SimulationAgent{}) || got.KeyType != "system" {
-		t.Fatalf("system key = %+v", got)
-	}
-
-	// A key with no workspace of its own takes the organization's default.
-	api, secret = f.key("ingest", org, nil, &live)
-	if got := read(with, api, secret); got.WorkspaceID != ws || got.SimulationAgent.ID != live {
-		t.Fatalf("workspace-less key = %+v", got)
-	}
-
-	// Invalid and disabled keys are not found.
-	if res, err := with.ValidateKey(ctx, "nope", "nope"); err != nil || res != nil {
-		t.Fatalf("unknown key = %v, %v", res, err)
-	}
-
-	// Before the columns are known, or while one is missing, the statement of
-	// the old schema is used and an ingest key says so.
-	for _, state := range []columnState{columnsUnknown, columnsMissing} {
-		without := routingResolver(pool, state)
-		api, secret = f.key("ingest", org, &ws, &live)
-		if got := read(without, api, secret); !got.columnsMissing || got.SimulationAgent != (SimulationAgent{}) {
-			t.Fatalf("state %v: result = %+v", state, got)
-		}
-		api, secret = f.key("user", org, &ws, nil)
-		if got := read(without, api, secret); got.columnsMissing {
-			t.Fatalf("state %v: another key marked", state)
+		if res.Principal != PrincipalPersonal || res.KeyType != "user" || res.UserID != person.user || res.OrgID != person.org || res.WorkspaceID != person.ws || res.SimulationAgent != (SimulationAgent{}) || res.columnsMissing {
+			t.Fatal("personal principal acquired a legacy agent association")
 		}
 	}
 }
 
-func TestValidateKeyFallsBackWhenTheColumnDisappears(t *testing.T) {
+func TestValidateKeyDoesNotRequireLegacyAgentColumn(t *testing.T) {
 	pool := routingDatabase(t)
 	f := routingFixture{t, pool}
-	org := uuid.NewString()
-	ws := f.workspace(org, true, true, false)
-	agent := f.agent(org, &ws, false)
-	api, secret := f.key("ingest", org, &ws, &agent)
-
+	person := newEligibilityFixture()
+	seedEligibility(t, pool, person)
+	agent := f.agent(person.org, &person.ws, false)
+	api, secret := f.key("ingest", person.org, &person.ws, &agent)
 	r := routingResolver(pool, columnsPresent)
+	r.peppers = mustPeppers(t, goldenPepper)
 	f.exec(`ALTER TABLE accounts_orgapikey DROP COLUMN simulation_agent_id`)
-	res, err := r.ValidateKey(context.Background(), api, secret)
+	if res, err := r.ValidateKey(context.Background(), api, secret); err != nil || res != nil {
+		t.Fatalf("legacy key: %v", err)
+	}
+	res, err := r.ValidateKey(context.Background(), person.api, person.secret)
 	if err != nil || res == nil {
-		t.Fatalf("ValidateKey = %v, %v", res, err)
+		t.Fatalf("personal key: %v", err)
 	}
-	if !res.columnsMissing {
-		t.Fatal("the key was not marked as read without the agent")
+	if res.Principal != PrincipalPersonal || res.columnsMissing || res.SimulationAgent != (SimulationAgent{}) {
+		t.Fatal("personal key depends on agent column")
 	}
-	if r.columns.state() != columnsMissing {
-		t.Fatalf("state = %v, want missing", r.columns.state())
+	if r.columns.state() != columnsPresent {
+		t.Fatal("key lookup changed routing column state")
 	}
 }
 
@@ -314,47 +273,49 @@ func TestRoutingColumnCheckSeesBothColumns(t *testing.T) {
 	}
 }
 
-// A resolver and an authenticator built through New must read and write one
-// column state: a check run through the authenticator changes the statement the
-// resolver uses, and a column that the resolver finds gone is seen by the
-// authenticator's health report.
+// The resolver and router share the schema state used by health reporting.
+// Personal authentication no longer depends on the legacy key-agent column.
 func TestRoutingColumnStateIsSharedThroughNew(t *testing.T) {
 	pool := routingDatabase(t)
 	f := routingFixture{t, pool}
 	ctx := context.Background()
-	org := uuid.NewString()
-	ws := f.workspace(org, true, true, false)
-	agent := f.agent(org, &ws, false)
-	api, secret := f.key("ingest", org, &ws, &agent)
-
+	person := newEligibilityFixture()
+	seedEligibility(t, pool, person)
+	agent := f.agent(person.org, &person.ws, false)
+	api, secret := f.key("ingest", person.org, &person.ws, &agent)
 	dsn := pool.Config().ConnString()
-	a, err := New(ctx, Config{PGWrite: dsn, PGRead: dsn}, nil, slog.Default())
+	a, err := New(ctx, Config{PGWrite: dsn, PGRead: dsn, Peppers: mustPeppers(t, goldenPepper)}, nil, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
-
-	// Nothing has been checked: the key is read with the old statement.
-	res, err := a.pg.ValidateKey(ctx, api, secret)
-	if err != nil || res == nil || !res.columnsMissing {
-		t.Fatalf("before any check: %+v, %v", res, err)
-	}
-
-	a.CheckRoutingColumns(ctx)
-	if !a.RoutingSnapshot().ColumnsPresent {
-		t.Fatal("the authenticator did not see both columns")
-	}
-	res, err = a.pg.ValidateKey(ctx, api, secret)
-	if err != nil || res == nil || res.columnsMissing || res.SimulationAgent.ID != agent {
-		t.Fatalf("the resolver did not use the state the authenticator set: %+v, %v", res, err)
-	}
-
-	f.exec(`ALTER TABLE accounts_orgapikey DROP COLUMN simulation_agent_id`)
-	if res, err = a.pg.ValidateKey(ctx, api, secret); err != nil || res == nil || !res.columnsMissing {
-		t.Fatalf("after the column went: %+v, %v", res, err)
-	}
-	if a.RoutingSnapshot().ColumnsPresent {
-		t.Fatal("the authenticator was not told that the resolver found the column gone")
+	for stage := 0; stage < 3; stage++ {
+		if stage == 1 {
+			a.CheckRoutingColumns(ctx)
+			if !a.RoutingSnapshot().ColumnsPresent {
+				t.Fatal("columns not detected")
+			}
+		}
+		if stage == 2 {
+			f.exec(`ALTER TABLE accounts_orgapikey DROP COLUMN simulation_agent_id`)
+			a.CheckRoutingColumns(ctx)
+			if a.RoutingSnapshot().ColumnsPresent {
+				t.Fatal("missing column not detected")
+			}
+		}
+		if res, err := a.pg.ValidateKey(ctx, api, secret); err != nil || res != nil {
+			t.Fatalf("legacy key at stage %d: %v", stage, err)
+		}
+		res, err := a.pg.ValidateKey(ctx, person.api, person.secret)
+		if err != nil || res == nil {
+			t.Fatalf("personal key at stage %d: %v", stage, err)
+		}
+		if res.Principal != PrincipalPersonal || res.columnsMissing || res.SimulationAgent != (SimulationAgent{}) {
+			t.Fatal("key inherited a legacy agent")
+		}
+		if a.columns != a.pg.columns {
+			t.Fatal("resolver and authenticator do not share column state")
+		}
 	}
 }
 

@@ -92,6 +92,7 @@ def resolve_feedback_template_data(
     eval_template: EvalTemplate,
 ) -> dict[str, Any]:
     """Build the feedback-template payload the FE renders the widget from."""
+    from evaluations.engine.instance import resolve_choice_scores
 
     template_config = eval_template.config or {}
     data: dict[str, Any] = {
@@ -99,7 +100,8 @@ def resolve_feedback_template_data(
         "eval_description": eval_template.description,
         "eval_name": eval_template.name,
         "user_eval_name": user_eval_metric.name,
-        "choice_scores": eval_template.choice_scores or None,
+        "choice_scores": resolve_choice_scores(eval_template, user_eval_metric.config)
+        or None,
     }
 
     output_type = data["output_type"]

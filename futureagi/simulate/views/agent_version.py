@@ -2,11 +2,12 @@ from django.conf import settings
 from django.db import transaction
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from common.utils.page_limits import enforce_page_size
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion, CallExecution
 from simulate.serializers.requests.agent_version import (
@@ -85,6 +86,7 @@ class AgentVersionListView(APIView):
         Get all versions of a specific agent definition.
         """
         try:
+            enforce_page_size(request.query_params.get("limit"))
             agent = AgentDefinition.objects.get(
                 id=agent_id,
                 organization=getattr(request, "organization", None)
@@ -105,6 +107,8 @@ class AgentVersionListView(APIView):
                 "Agent definition not found", status.HTTP_404_NOT_FOUND
             )
         except NotFound:
+            raise
+        except APIException:
             raise
         except Exception as e:
             return _error_response(
@@ -182,8 +186,12 @@ class CreateAgentVersionView(APIView):
                 if field == "api_key" and preserve_existing_api_key:
                     continue
                 if field in validated:
-                    setattr(agent, field, validated[field])
-                    changed_fields.append(field)
+                    if field == "api_key":
+                        agent.set_api_key(validated[field])
+                        changed_fields.append("encrypted_api_key")
+                    else:
+                        setattr(agent, field, validated[field])
+                        changed_fields.append(field)
 
             if "knowledge_base" in validated:
                 kb_id = validated["knowledge_base"]
@@ -211,6 +219,7 @@ class CreateAgentVersionView(APIView):
                 agent.knowledge_base_id = kb_id
                 changed_fields.append("knowledge_base")
             with transaction.atomic():
+                AgentDefinition.objects.select_for_update(of=("self",)).get(pk=agent.pk)
                 if changed_fields:
                     # Only these columns: a full save would write back this
                     # request's stale copy of the observability link.
@@ -640,6 +649,9 @@ class AgentVersionCallExecutionView(APIView):
         Get the call executions of an agent version.
         """
         try:
+            enforce_page_size(
+                request.query_params.get("page_size", request.query_params.get("limit"))
+            )
             version = AgentVersion.objects.get(
                 id=version_id,
                 agent_definition__id=agent_id,
@@ -665,6 +677,8 @@ class AgentVersionCallExecutionView(APIView):
         except AgentVersion.DoesNotExist:
             return self._gm.not_found("Agent version not found.")
         except NotFound:
+            raise
+        except APIException:
             raise
         except Exception:
             return self._gm.internal_server_error_response(

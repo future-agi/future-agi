@@ -21,7 +21,7 @@ anthropic==0.76.0
     # via
     #   core-backend
     #   traceai-anthropic
-anyio==4.12.1
+anyio==4.15.1
     # via
     #   anthropic
     #   google-genai
@@ -80,7 +80,7 @@ celery==5.6.2
     #   core-backend
     #   django-celery-beat
     #   django-celery-results
-certifi==2026.1.4
+certifi==2026.10.19
     # via
     #   clickhouse-connect
     #   httpcore
@@ -218,7 +218,9 @@ fi-instrumentation-otel==0.1.16
     #   traceai-litellm
     #   traceai-openai
 filelock==3.20.3
-    # via huggingface-hub
+    # via
+    #   huggingface-hub
+    #   tldextract
 filetype==1.2.0
     # via core-backend
 frozenlist==1.8.0
@@ -328,6 +330,7 @@ idna==3.11
     #   django-anymail
     #   httpx
     #   requests
+    #   tldextract
     #   yarl
 importlib-metadata==8.7.1
     # via
@@ -416,7 +419,7 @@ multidict==6.7.0
     #   yarl
 nexus-rpc==1.3.0
     # via temporalio
-nltk==3.10.3
+nltk==3.10.4
     # via
     #   core-backend
     #   rouge-score
@@ -769,9 +772,13 @@ requests==2.32.5
     #   opentelemetry-exporter-otlp-proto-http
     #   posthog
     #   pysaml2
+    #   requests-file
     #   requests-toolbelt
     #   stripe
     #   tiktoken
+    #   tldextract
+requests-file==3.0.1
+    # via tldextract
 requests-toolbelt==1.0.0
     # via langsmith
 restrictedpython==8.5
@@ -845,6 +852,8 @@ threadpoolctl==3.6.0
     # via scikit-learn
 tiktoken==0.12.0
     # via litellm
+tldextract==5.3.1
+    # via core-backend
 tokenizers==0.22.2
     # via litellm
 tqdm==4.67.1
@@ -926,7 +935,7 @@ uritemplate==4.2.0
     # via
     #   drf-yasg
     #   google-api-python-client
-urllib3==2.7.0
+urllib3==2.8.0
     # via
     #   botocore
     #   clickhouse-connect

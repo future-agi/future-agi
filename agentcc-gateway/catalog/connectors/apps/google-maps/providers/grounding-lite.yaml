@@ -1,0 +1,62 @@
+# Maps Grounding Lite, Google's MCP server for Maps data: search places,
+# look up weather, compute routes, and resolve names and Maps URLs to Place
+# IDs. The block asked the lane to pick between it and Maps Code Assist;
+# Code Assist answers from Google's Maps documentation and is experimental,
+# so the data server is the connector. The key goes in X-Goog-Api-Key.
+#
+# Quotas are per Cloud project and per tool (300 queries a minute for search,
+# weather and routes; 600 for the two resolve tools). The schema's rate
+# limits apply to the whole provider, so none is declared: one 300/minute
+# cap would wrongly throttle the resolve tools.
+#
+# Google's terms for this service bind whoever uses it: only with a model
+# that does not train on or cache Google Maps content, and each answer shows
+# the Google Maps sources the tool returned, right after the grounded text.
+schema: "connector-manifest/v1#provider"
+app: google-maps
+id: grounding-lite
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mapstools.googleapis.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: X-Goog-Api-Key
+      secret: true
+      label: API key
+      help: "A Google Maps Platform API key from a Cloud project with the Maps Grounding Lite API enabled. Restrict the key to that API."
+      helpUrl: https://developers.google.com/maps/ai/grounding-lite
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  notes: "Pay as you go: Google bills each request as one billing event, per SKU."
+  source: https://developers.google.com/maps/ai/grounding-lite
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.google.com/maps/ai/grounding-lite
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://docs.cloud.google.com/mcp/supported-products
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://developers.google.com/maps/ai/grounding-lite
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developers.google.com/maps/ai/grounding-lite
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://developers.google.com/maps/ai/grounding-lite
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

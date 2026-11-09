@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:omega-deploy-run-event:v1:accepted",
+  "type": "object",
+  "required": ["event_id", "duplicate", "webhook"],
+  "properties": {
+    "event_id": {"type": "string", "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$"},
+    "duplicate": {"type": "boolean"},
+    "webhook": {"enum": ["none", "targeted", "unmatched"]}
+  },
+  "additionalProperties": true
+}

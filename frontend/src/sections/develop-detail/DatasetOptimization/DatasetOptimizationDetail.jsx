@@ -17,6 +17,7 @@ import DatasetOptimizationResultProvider from "./context/DatasetOptimizationResu
 import DatasetOptimizationCancelled from "./DatasetOptimizationCancelled";
 import { useDatasetOptimizationStore } from "./states";
 import { normalizeDatasetOptimizationDetail } from "./common";
+import OptimizationTrialRuns from "./OptimizationTrialRuns";
 
 // Re-export context for use in child components
 export { useDatasetOptimizationResultContext } from "./context/DatasetOptimizationResultContext";
@@ -143,6 +144,16 @@ const DatasetOptimizationDetail = ({
             status={optimizationData?.status}
             optimizationId={optimizationId}
           />
+
+          {/* Failed runs may retain successful trials, never a final result. */}
+          {optimizationData?.status === AgentPromptOptimizerStatus.FAILED &&
+            optimizationData?.w6 && (
+              <Typography role="status" typography="s1" color="warning.main">
+                Incomplete — best-so-far trials are not a final result.
+              </Typography>
+            )}
+          {/* W6 C6: the trials as runs, best so far and Promote best. */}
+          <OptimizationTrialRuns optimization={optimizationData} />
 
           {/* Loading/Error state - reuse from simulation */}
           <ShowComponent

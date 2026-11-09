@@ -15,10 +15,28 @@ DEFAULT_EVENT_FLUSH_SECONDS = 60
 BUFFER_FLUSH_BATCH_SIZE = 10
 BUFFER_RETENTION_DAYS = 30
 REGISTRATION_CLAIM_TIMEOUT_SECONDS = 10 * 60
+# After a failed registration attempt (last_registration_error set), no new
+# attempt starts until this long after it: neither the scheduled cycle nor a
+# burst of sign-ups can turn a rejecting receiver into a retry storm.
+REGISTRATION_RETRY_SECONDS = 60 * 60
 
 
 def telemetry_is_disabled() -> bool:
     return os.getenv("FUTURE_AGI_TELEMETRY_DISABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def telemetry_shares_admin_emails() -> bool:
+    """Opt-in: the registration carries the emails and email domains of the
+    install's owner, admin and staff/superuser accounts. Off unless set to
+    1/true/yes/on; off, the registration carries no email or domain."""
+    return os.getenv(
+        "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", "false"
+    ).strip().lower() in {
         "1",
         "true",
         "yes",
@@ -85,7 +103,6 @@ def get_event_flush_seconds() -> int:
     return value
 
 
-
 def get_telemetry_url() -> str:
     return os.getenv(
         "FUTURE_AGI_TELEMETRY_URL",
@@ -131,9 +148,7 @@ def is_cloud_deployment() -> bool:
     try:
         from tfc.ee_loader import has_ee
     except (ImportError, AttributeError):
-        logger.warning(
-            "deployment_telemetry_ee_detection_failed", exc_info=True
-        )
+        logger.warning("deployment_telemetry_ee_detection_failed", exc_info=True)
         return False
 
     if not has_ee("ee.usage"):
@@ -144,9 +159,7 @@ def is_cloud_deployment() -> bool:
 
         return DeploymentMode.is_cloud()
     except (ImportError, AttributeError):
-        logger.warning(
-            "deployment_telemetry_mode_detection_failed", exc_info=True
-        )
+        logger.warning("deployment_telemetry_mode_detection_failed", exc_info=True)
         return False
 
 

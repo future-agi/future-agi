@@ -138,6 +138,7 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
@@ -156,7 +157,6 @@ from tracer.services.clickhouse.query_builders.base import (
     BoundedDateTimeRange,
 )
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
-from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.exact_aggregation_cache import (
     mark_refresh_failed,
     publish_exact_snapshot,
@@ -1770,7 +1770,6 @@ class CellErrorLocalizerView(APIView):
     )
     def post(self, request, cell_id=None, *args, **kwargs):
         try:
-            from model_hub.models.develop_dataset import Cell
             from model_hub.models.error_localizer_model import (
                 ErrorLocalizerSource,
                 ErrorLocalizerTask,
@@ -1783,14 +1782,15 @@ class CellErrorLocalizerView(APIView):
 
             org = getattr(request, "organization", None) or request.user.organization
 
-            try:
-                cell = Cell.objects.select_related("column", "row", "dataset").get(
-                    id=cell_id, deleted=False
-                )
-            except Cell.DoesNotExist:
-                return self._gm.not_found("Cell not found.")
+            from model_hub.utils.workspace_scope import scoped_cell_queryset
 
-            if cell.dataset and cell.dataset.organization_id != org.id:
+            cell = (
+                scoped_cell_queryset(request)
+                .select_related("column", "row", "dataset")
+                .filter(id=cell_id)
+                .first()
+            )
+            if cell is None:
                 return self._gm.not_found("Cell not found.")
 
             column = cell.column
@@ -1830,8 +1830,9 @@ class CellErrorLocalizerView(APIView):
                 # Bulk fetch the source cells in one query
                 source_cells = {
                     str(c.column_id): c
-                    for c in Cell.objects.filter(
-                        row_id=row_id, column_id__in=col_ids, deleted=False
+                    for c in scoped_cell_queryset(request).filter(
+                        row_id=row_id,
+                        column_id__in=col_ids,
                     )
                 }
                 for var_name, col_uuid in mapping.items():
@@ -1944,17 +1945,16 @@ class CellErrorLocalizerView(APIView):
         for a given cell, including the analysis once completed.
         """
         try:
-            from model_hub.models.develop_dataset import Cell
             from model_hub.models.error_localizer_model import ErrorLocalizerTask
+            from model_hub.utils.workspace_scope import scoped_cell_queryset
 
-            org = getattr(request, "organization", None) or request.user.organization
-            try:
-                cell = Cell.objects.select_related("dataset").get(
-                    id=cell_id, deleted=False
-                )
-            except Cell.DoesNotExist:
-                return self._gm.not_found("Cell not found.")
-            if cell.dataset and cell.dataset.organization_id != org.id:
+            cell = (
+                scoped_cell_queryset(request)
+                .select_related("dataset")
+                .filter(id=cell_id)
+                .first()
+            )
+            if cell is None:
                 return self._gm.not_found("Cell not found.")
 
             # Prefer task row when present, but fall back to stored cell metadata
@@ -4084,6 +4084,8 @@ class RestoreVersionView(APIView):
                     eval_template=template,
                     prompt_messages=source_version.prompt_messages or [],
                     config_snapshot=source_version.config_snapshot or {},
+                    # hook(F68): the mirror keeps the saved snapshot as given.
+                    restore=True,
                     criteria=source_version.criteria or "",
                     model=source_version.model or "",
                     user=request.user,
@@ -4219,7 +4221,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None) or get_current_workspace()
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -4413,11 +4417,16 @@ class CompositeEvalCreateView(APIView):
                     f"{', '.join(COMPOSITE_CHILD_AXES)}"
                 )
 
-            # Block nested composites
+            # Block children that ordinary composite execution cannot dispatch.
             for child in children:
                 if child.template_type == "composite":
                     return self._gm.bad_request(
                         "Composite evals cannot contain other composite evals."
+                    )
+                if child.eval_type == "dag":
+                    return self._gm.bad_request(
+                        "DAG evaluations cannot be used as composite children. "
+                        "Run them separately."
                     )
 
             # Enforce homogeneity — every child must match the axis.
@@ -4438,6 +4447,18 @@ class CompositeEvalCreateView(APIView):
                 )
             except ValueError as ve:
                 return self._gm.bad_request(str(ve))
+
+            from model_hub.utils.scoring import (
+                ChoiceScoreOverrideError,
+                validate_child_choice_score_overrides,
+            )
+
+            try:
+                validate_child_choice_score_overrides(
+                    {str(c.id): c for c in children}, req.child_configs
+                )
+            except ChoiceScoreOverrideError as e:
+                return self._gm.bad_request(str(e))
 
             # Create the composite parent template
             parent = EvalTemplate.objects.create(
@@ -4654,7 +4675,13 @@ class CompositeEvalDetailView(APIView):
           name, description, tags,
           aggregation_enabled, aggregation_function,
           child_template_ids (replaces the child list),
-          child_weights (map of child_id -> weight).
+          child_weights (map of child_id -> weight),
+          child_pinned_versions (map of child_id -> version_id or null).
+
+        When replacing the child list, omitted child_pinned_versions preserves
+        retained children's pins; new children start unpinned. An explicit map
+        replaces all pins (missing or null entries clear); null or {} clears all.
+        Without a child list, a map updates only its keys; null is a no-op.
         """
         import re
 
@@ -4669,6 +4696,10 @@ class CompositeEvalDetailView(APIView):
         from model_hub.utils.eval_list import (
             derive_eval_type,
             infer_composite_eval_type,
+        )
+        from model_hub.utils.scoring import (
+            ChoiceScoreOverrideError,
+            validate_child_choice_score_overrides,
         )
 
         try:
@@ -4804,11 +4835,16 @@ class CompositeEvalDetailView(APIView):
                     return self._gm.bad_request(
                         "One or more child template IDs are invalid or not accessible."
                     )
-                # Prevent nested composites
+                # Block children that ordinary composite execution cannot dispatch.
                 for c in child_qs:
                     if c.template_type == "composite":
                         return self._gm.bad_request(
                             "Composite evals cannot contain other composite evals."
+                        )
+                    if c.eval_type == "dag":
+                        return self._gm.bad_request(
+                            "DAG evaluations cannot be used as composite children. "
+                            "Run them separately."
                         )
 
                 # Enforce homogeneity against the effective axis
@@ -4822,15 +4858,32 @@ class CompositeEvalDetailView(APIView):
                 parent.eval_type = infer_composite_eval_type(
                     derive_eval_type(child) for child in child_qs
                 )
-                try:
-                    pinned_versions = (
-                        _resolve_child_pinned_versions(
-                            req.child_template_ids, req.child_pinned_versions
+                if "child_pinned_versions" not in request_data:
+                    # Capture live links before deletion. The serializer preserves
+                    # field presence, unlike req's default None for omitted pins.
+                    pinned_versions = {
+                        str(link.child_id): link.pinned_version
+                        for link in CompositeEvalChild.objects.filter(
+                            parent=parent, deleted=False
+                        ).select_related("pinned_version")
+                    }
+                else:
+                    try:
+                        pinned_versions = (
+                            _resolve_child_pinned_versions(
+                                req.child_template_ids, req.child_pinned_versions
+                            )
+                            or {}
                         )
-                        or {}
+                    except ValueError as ve:
+                        return self._gm.bad_request(str(ve))
+
+                try:
+                    validate_child_choice_score_overrides(
+                        {str(c.id): c for c in child_qs}, req.child_configs
                     )
-                except ValueError as ve:
-                    return self._gm.bad_request(str(ve))
+                except ChoiceScoreOverrideError as e:
+                    return self._gm.bad_request(str(e))
 
                 # Soft-delete existing children links, then recreate
                 CompositeEvalChild.objects.filter(parent=parent, deleted=False).update(
@@ -4865,6 +4918,14 @@ class CompositeEvalDetailView(APIView):
                     )
                 except ValueError as ve:
                     return self._gm.bad_request(str(ve))
+
+                try:
+                    validate_child_choice_score_overrides(
+                        {str(link.child_id): link.child for link in existing_links},
+                        req.child_configs,
+                    )
+                except ChoiceScoreOverrideError as e:
+                    return self._gm.bad_request(str(e))
 
                 for link in existing_links:
                     cid = str(link.child_id)
@@ -5006,6 +5067,11 @@ def _persist_composite_evaluation(
                 "aggregate_score": outcome.aggregate_score,
                 "aggregate_pass": outcome.aggregate_pass,
                 "summary": outcome.summary,
+                **(
+                    {"jury": outcome.jury_report}
+                    if outcome.jury_report is not None
+                    else {}
+                ),
             },
             reason=outcome.summary or "",
             value=(
@@ -5267,6 +5333,16 @@ class CompositeEvalAdhocExecuteView(APIView):
                         _validate_child_matches_axis(child, req.composite_child_axis)
                     except ValueError as ve:
                         return self._gm.bad_request(str(ve))
+
+            from model_hub.utils.scoring import (
+                ChoiceScoreOverrideError,
+                validate_child_choice_score_overrides,
+            )
+
+            try:
+                validate_child_choice_score_overrides(children_by_id, req.child_configs)
+            except ChoiceScoreOverrideError as e:
+                return self._gm.bad_request(str(e))
 
             # Build an unsaved parent template carrying the aggregation config
             # the runner reads. Never .save() this — it must stay in-memory.
@@ -6876,7 +6952,10 @@ class EvalPlayGroundAPIView(APIView):
 
         validated_data = request.validated_data
         gate = turing_oss_gate_for_template(
-            validated_data.get("model"), validated_data.get("template_id")
+            validated_data.get("model"),
+            validated_data.get("template_id"),
+            organization=getattr(request, "organization", None)
+            or request.user.organization,
         )
         if gate is not None:
             return gate
@@ -6886,6 +6965,8 @@ class EvalPlayGroundAPIView(APIView):
 
             model = validated_data.get("model", None)
             kb_id = validated_data.get("kb_id", None)
+            if kb_id and not knowledge_base_in_scope(request, kb_id):
+                return self._gm.not_found("Knowledge base not found")
             error_localizer = validated_data.get("error_localizer", False)
             runtime_config = validated_data.get("config", {}) or {}
             top_level_params = validated_data.get("params", {}) or {}
@@ -7222,6 +7303,7 @@ class EvalPlayGroundAPIView(APIView):
                 },
             )
             if _session_id and isinstance(mapping_paths, dict) and mapping_paths:
+                from tracer.models.project import Project
                 from tracer.models.trace_session import TraceSession
                 from tracer.services.clickhouse.v2.trace_session_dict_reader import (
                     resolve_session_fields,
@@ -7242,6 +7324,17 @@ class EvalPlayGroundAPIView(APIView):
                     str(_session_id)
                 )
                 if _map_fields is None:
+                    return self._gm.bad_request(f"Session {_session_id} not found")
+                # Same org guard as the session_context branch: a session whose
+                # project is outside the caller's org is answered exactly like a
+                # missing one, and nothing is resolved from it.
+                _map_project_id = _map_fields.get("project_id")
+                if not (
+                    _map_project_id
+                    and Project.objects.filter(
+                        id=_map_project_id, organization=org
+                    ).exists()
+                ):
                     return self._gm.bad_request(f"Session {_session_id} not found")
                 _ss_for_mapping = TraceSession(
                     id=_session_id,
@@ -7382,6 +7475,11 @@ class EvalPlayGroundAPIView(APIView):
                 runtime_config = normalize_eval_runtime_config(
                     eval_template.config, runtime_config
                 )
+                # No save here: the request's Choices override is checked
+                # before it is applied.
+                from model_hub.utils.scoring import validate_choice_score_override
+
+                validate_choice_score_override(eval_template, runtime_config)
             except ValueError as ve:
                 return self._gm.bad_request(str(ve))
 
@@ -7561,6 +7659,13 @@ class EvalPlayGroundFeedbackAPIView(APIView):
                 row_dict = config.get("mappings", {})
             except APICallLog.DoesNotExist:
                 return self._gm.bad_request("Invalid Evaluation Id provided")
+
+            if (
+                action_type == "recalculate"
+                and config.get("kb_id")
+                and not knowledge_base_in_scope(request, config.get("kb_id"))
+            ):
+                return self._gm.not_found("Knowledge base not found")
 
             try:
                 feedback = Feedback.objects.get(
@@ -7857,11 +7962,9 @@ class DeleteEvalTemplateView(APIView):
                     APICallLog.objects.filter(source_id=eval_template_id).update(
                         deleted=True, deleted_at=timezone.now()
                     )
-                soft_delete_eval_results(
-                    EvalLogger.objects.filter(
-                        custom_eval_config__eval_template=eval_template
-                    )
-                )
+                EvalLogger.objects.filter(
+                    custom_eval_config__eval_template=eval_template
+                ).update(deleted=True, deleted_at=timezone.now())
 
                 # EvalSettings has no FK; cascade on the just-verified template id.
                 EvalSettings.objects.filter(
@@ -7963,13 +8066,17 @@ class TestEvaluationTemplateAPIView(APIView):
             validated_data.get("model"),
             template_id=validated_data.get("template_id"),
             eval_type=validated_data.get("eval_type"),
+            organization=getattr(request, "organization", None)
+            or request.user.organization,
         )
         if gate is not None:
             return gate
 
         try:
             template_type = validated_data.get("template_type", None)
-            mappings = validated_data["config"].get("mapping", {})
+            mappings = validated_data.get("mapping") or validated_data["config"].get(
+                "mapping", {}
+            )
             input_data_types = validated_data.get("input_data_types", {})
             model = validated_data.get("model", None)
             config = validated_data.get("config", {})

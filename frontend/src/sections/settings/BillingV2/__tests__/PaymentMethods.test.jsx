@@ -12,12 +12,14 @@ import { enqueueSnackbar } from "notistack";
 const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockDelete = vi.fn();
+const mockPut = vi.fn();
 
 vi.mock("src/utils/axios", () => ({
   default: {
     get: (...args) => mockGet(...args),
     post: (...args) => mockPost(...args),
     delete: (...args) => mockDelete(...args),
+    put: (...args) => mockPut(...args),
   },
   endpoints: {
     settings: {
@@ -123,5 +125,64 @@ describe("PaymentMethods — single-toast on remove (TH-4510)", () => {
         { variant: "error" },
       );
     });
+  });
+});
+
+
+describe("platform card checkout returns", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGet.mockResolvedValue(MOCK_CARDS);
+    mockPut.mockResolvedValue({ data: { result: {} } });
+  });
+
+  it("confirms card=added once and leaves unrelated query parameters", async () => {
+    const prior = window.location.pathname + window.location.search + window.location.hash;
+    window.history.replaceState({}, "", "/dashboard/settings/billing?card=added&session_id=cs_card&keep=1");
+    try {
+      const { default: PaymentMethods } = await import("../PaymentMethods");
+      const view = renderWithQuery(<PaymentMethods />);
+      await waitFor(() => expect(mockPut).toHaveBeenCalledTimes(1));
+      expect(mockPut).toHaveBeenCalledWith("/usage/v2/payment-methods/", { session_id: "cs_card" });
+      await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalledWith("Card added successfully", { variant: "success" }));
+      expect(window.location.search).toBe("?keep=1");
+      view.unmount();
+      renderWithQuery(<PaymentMethods />);
+      await screen.findByText("Visa •••• 4242");
+      expect(mockPut).toHaveBeenCalledTimes(1);
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+    } finally { window.history.replaceState({}, "", prior); }
+  });
+
+  it.each([
+    "topup=success&session_id=cs_credit",
+    "checkout_session=cs_credit",
+    "topup=cancel&session_id=cs_credit",
+  ])("does not confirm a platform card for a credit return (%s)", async (query) => {
+    const prior = window.location.pathname + window.location.search + window.location.hash;
+    window.history.replaceState({}, "", `/dashboard/settings/billing?${query}&keep=1#ai-gateway-credits`);
+    try {
+      const { default: PaymentMethods } = await import("../PaymentMethods");
+      renderWithQuery(<PaymentMethods />);
+      await screen.findByText("Visa •••• 4242");
+      expect(mockPut).not.toHaveBeenCalled();
+      expect(mockPost).not.toHaveBeenCalled();
+      expect(enqueueSnackbar).not.toHaveBeenCalled();
+      expect(window.location.search).toBe(`?${query}&keep=1`);
+      expect(window.location.hash).toBe("#ai-gateway-credits");
+    } finally { window.history.replaceState({}, "", prior); }
+  });
+
+  it("confirms nothing for card=cancelled", async () => {
+    const prior = window.location.pathname + window.location.search + window.location.hash;
+    window.history.replaceState({}, "", "/dashboard/settings/billing?card=cancelled&session_id=cs_card&keep=1");
+    try {
+      const { default: PaymentMethods } = await import("../PaymentMethods");
+      renderWithQuery(<PaymentMethods />);
+      await screen.findByText("Visa •••• 4242");
+      expect(mockPut).not.toHaveBeenCalled();
+      expect(enqueueSnackbar).toHaveBeenCalledWith("Card setup cancelled", { variant: "info" });
+      expect(window.location.search).toBe("?keep=1");
+    } finally { window.history.replaceState({}, "", prior); }
   });
 });

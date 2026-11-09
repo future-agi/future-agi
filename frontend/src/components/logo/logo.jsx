@@ -256,7 +256,7 @@ const Logo = forwardRef(
           alignItems: "center",
         }}
       >
-        <Link component={RouterLink} href="/">
+        <Link component={RouterLink} href="/" aria-label="Future AGI home">
           <Stack
             sx={{
               ml: collapsed ? "0" : "8px",
@@ -392,6 +392,8 @@ const Logo = forwardRef(
         {!collapsed && (
           <Box>
             <IconButton
+              aria-label="Collapse sidebar"
+              aria-expanded={settings.themeLayout !== "mini"}
               onClick={() =>
                 settings.onUpdate(
                   "themeLayout",

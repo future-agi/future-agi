@@ -86,10 +86,10 @@ func main() {
 
 	var rdb *redis.Client
 	if cfg.Auth.RedisAddr != "" {
-		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr, Password: cfg.Auth.RedisPass})
+		rdb = redis.NewClient(cfg.Auth.RedisOptions())
 		defer rdb.Close()
 	} else {
-		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement, usage metering, key-revocation and project-delete cache invalidation are disabled; auth cache entries only expire via TTL")
+		log.Warn("FI_AUTH_REDIS_ADDR not set — project-delete cache invalidation is disabled; authentication still revalidates on the primary within 30s, without stale serving")
 	}
 
 	authenticator, err := auth.New(context.Background(), cfg.Auth, rdb, log)
@@ -100,14 +100,15 @@ func main() {
 	defer authenticator.Close()
 
 	var usageEmitter server.UsageEmitter = server.NoopUsageEmitter{}
-	var metering server.Metering = server.NoopMetering{}
+	// EE/cloud billing fails closed without Redis; OSS is explicitly nonbillable.
+	// USAGE_EVENTS_ENABLED controls emission only and cannot disable budget checks.
+	metering := auth.NewMetering(rdb, authenticator.PGRead(), log)
 	if rdb != nil {
 		if cfg.Auth.UsageEventsOn() {
 			usageEmitter = auth.NewUsageEmitter(rdb, authenticator.PGRead(), log, cfg.Auth.UsageEventsMaxLen)
 		} else {
 			log.Info("usage events off (USAGE_EVENTS_ENABLED=false): nothing writes the usage:events stream")
 		}
-		metering = auth.NewMetering(rdb, authenticator.PGRead(), log)
 	}
 
 	priceTable := loadPriceTable(log, os.Getenv("FI_PRICING_JSON"))
@@ -367,11 +368,31 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 			*endpoint.target = fields
 		}
 	}
-	if v := os.Getenv("FI_AUTH_REDIS_ADDR"); v != "" {
-		c.Auth.RedisAddr = v
+	// API secrets are stored as a keyed hash (READINESS L03): the collector needs
+	// the same pepper as Django, with Django's local fallback and retired list.
+	peppers, pepperErr := auth.ResolveSecretPeppers(
+		os.Getenv("FI_API_SECRET_PEPPER"),
+		strings.Split(os.Getenv("FI_API_SECRET_PEPPERS_RETIRED"), ","),
+		os.Getenv("ENV_TYPE"),
+		os.Getenv("SECRET_KEY"),
+	)
+	if pepperErr != nil {
+		return pepperErr
 	}
-	if v := os.Getenv("FI_AUTH_REDIS_PASSWORD"); v != "" {
-		c.Auth.RedisPass = v
+	c.Auth.Peppers = peppers
+	if current, retired := os.Getenv("SERVICE_ENVELOPE_KID"), os.Getenv("SERVICE_ENVELOPE_RETIRED_PEPPER_KIDS"); current != "" || retired != "" {
+		if current == "" {
+			current = "k1"
+		}
+		c.Auth.EnvelopeKids = []string{current}
+		for _, kid := range strings.Split(retired, ",") {
+			if kid = strings.TrimSpace(kid); kid != "" {
+				c.Auth.EnvelopeKids = append(c.Auth.EnvelopeKids, kid)
+			}
+		}
+	}
+	if err := c.Auth.ApplyRedisEnv(os.Getenv); err != nil {
+		return err
 	}
 	// Same variables as the Django emitter (tfc/settings/settings.py).
 	if v := os.Getenv("USAGE_EVENTS_ENABLED"); v != "" {

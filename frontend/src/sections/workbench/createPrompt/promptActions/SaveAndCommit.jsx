@@ -12,7 +12,7 @@ import {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
@@ -22,21 +22,22 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import VersionStyle from "./VersionStyle";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 
-const SaveAndCommit = ({ open, onClose, data, promptName }) => {
+// IT-R2 G4 P2: the message is optional (empty = the version name, `V1`);
+// the first commit of a prompt asks for its name (prefilled with the
+// current one, `Untitled prompt 1`) and saves it first.
+const SaveAndCommit = ({ open, onClose, data, promptName, askName }) => {
   const { id } = useParams();
   const queryClient = useQueryClient();
   const [messageType, setMessageType] = useState(null);
 
-  const {
-    control,
-    watch,
-    reset,
-    handleSubmit,
-    formState: { isDirty },
-  } = useForm({
-    defaultValues: { message: "" },
+  const { control, watch, reset, handleSubmit, setValue } = useForm({
+    defaultValues: { message: "", name: promptName ?? "" },
   });
   const message = watch("message");
+  const name = watch("name");
+  useEffect(() => {
+    if (open) setValue("name", promptName ?? "");
+  }, [open, promptName, setValue]);
 
   const handleOnClose = () => {
     reset();
@@ -44,7 +45,7 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
   };
 
   const payload = {
-    message: message,
+    message: String(message ?? "").trim() || data?.version || "",
     set_default: data?.isDefault,
     is_draft: data?.isDraft,
     version_name: data?.version,
@@ -66,7 +67,13 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
   };
 
   const { mutate, isPending } = useMutation({
-    mutationFn: (data) => {
+    mutationFn: async (data) => {
+      const newName = String(name ?? "").trim();
+      if (askName && newName && newName !== promptName) {
+        await axios.post(endpoints.develop.runPrompt.getNameChange(id), {
+          name: newName,
+        });
+      }
       return axios.post(
         `${endpoints.develop.runPrompt.commitSavePrompt(id)}`,
         data,
@@ -75,7 +82,7 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
     onSuccess: () => {
       enqueueSnackbar(
         <>
-          Commit for {promptName}&nbsp;
+          Commit for {String(name ?? "").trim() || promptName}&nbsp;
           <VersionStyle text={data?.version} />
           &nbsp;successful
           {messageType === "commitOnly" ? "" : " and set as default"}
@@ -125,6 +132,40 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
       </DialogTitle>
       <Box component={"form"} onSubmit={handleSubmit(onSubmit)}>
         <DialogContent>
+          {askName ? (
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 0.5,
+                padding: "12px 16px",
+                mt: 2,
+                backgroundColor: "background.default",
+                border: (theme) => `1px solid ${theme.palette.divider}`,
+                borderRadius: 0.5,
+              }}
+            >
+              <Typography
+                typography="s1"
+                fontWeight={"fontWeightMedium"}
+                color="text.primary"
+              >
+                Prompt name
+              </Typography>
+              <FormTextFieldV2
+                control={control}
+                hiddenLabel
+                fieldName="name"
+                fullWidth
+                variant="standard"
+                placeholder="Name this prompt"
+                size="small"
+                InputProps={{ disableUnderline: true }}
+                inputProps={{ "data-testid": "commit-prompt-name" }}
+                sx={{ "& .MuiInputBase-input": { padding: 0 } }}
+              />
+            </Box>
+          ) : null}
           <Box
             sx={{
               display: "flex",
@@ -143,7 +184,13 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
               fontWeight={"fontWeightMedium"}
               color="text.primary"
             >
-              Commit message
+              Commit message{" "}
+              <Box
+                component="span"
+                sx={{ color: "text.secondary", fontWeight: 400 }}
+              >
+                (optional · defaults to {data?.version ?? "the version name"})
+              </Box>
             </Typography>
             <FormTextFieldV2
               control={control}
@@ -169,8 +216,8 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
 
         <DialogActions sx={{ pt: "32px" }}>
           <LoadingButton
-            sx={{ px: "16px", color: "text.disabled" }}
-            disabled={!isDirty || isPending}
+            sx={{ px: "16px" }}
+            disabled={isPending}
             loading={isPending}
             variant="outlined"
             type="button"
@@ -184,7 +231,7 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
             variant="contained"
             color="primary"
             type="submit"
-            disabled={!isDirty}
+            disabled={isPending}
           >
             Commit and set as a default version
           </LoadingButton>
@@ -201,4 +248,5 @@ SaveAndCommit.propTypes = {
   onClose: PropTypes.func,
   data: PropTypes.object,
   promptName: PropTypes.string,
+  askName: PropTypes.bool,
 };

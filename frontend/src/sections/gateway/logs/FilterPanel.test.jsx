@@ -63,4 +63,28 @@ describe("FilterPanel", () => {
 
     expect(onApply).toHaveBeenCalledWith({});
   });
+
+  it("sends the date range as instants in the viewer's zone", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    const start = new Date(2026, 9, 20, 10, 30);
+    render(
+      <FilterPanel
+        open
+        onClose={vi.fn()}
+        filters={{ startedAfter: start.toISOString() }}
+        onApply={onApply}
+      />,
+    );
+    // The input shows local time, not the UTC string.
+    expect(screen.getByLabelText("Start Date")).toHaveValue("2026-10-20T10:30");
+    const end = screen.getByLabelText("End Date");
+    await user.clear(end);
+    await user.type(end, "2026-10-20T11:30");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApply).toHaveBeenCalledWith({
+      startedAfter: start.toISOString(),
+      startedBefore: new Date(2026, 9, 20, 11, 30).toISOString(),
+    });
+  });
 });

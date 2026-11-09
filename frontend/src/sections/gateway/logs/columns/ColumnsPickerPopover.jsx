@@ -17,13 +17,15 @@ import {
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import { Link as RouterLink } from "react-router-dom";
-import Iconify from "src/components/iconify";
+import { GatewayIcon } from "../../shell/gateway-icons";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { paths } from "src/routes/paths";
 import { COLUMNS_POPOVER_ID, customNameFromId } from "./columnModel";
 import ClippedColumnLabel from "./ClippedColumnLabel";
 
 const MOVE_HINT_ID = `${COLUMNS_POPOVER_ID}-move-hint`;
+
+const NO_ENTRIES = [];
 
 function matches(label, query) {
   return label.toLowerCase().includes(query);
@@ -75,14 +77,6 @@ const ColumnEntryRow = ({
                 ? `${entry.label} (always visible)`
                 : entry.label,
             }}
-            checkedIcon={<Iconify icon="mdi:checkbox-marked" width={20} />}
-            icon={
-              <Iconify
-                icon="mdi:checkbox-blank-outline"
-                width={20}
-                sx={{ color: "text.disabled" }}
-              />
-            }
             sx={{ p: 0.5 }}
           />
         }
@@ -92,9 +86,10 @@ const ColumnEntryRow = ({
             sx={{ fontSize: "13px", ml: 0.5 }}
           >
             {entry.locked && (
-              <Iconify
-                icon="mdi:lock-outline"
-                width={12}
+              <GatewayIcon
+                name="lock"
+                size={12}
+                aria-hidden
                 sx={{
                   ml: 0.5,
                   verticalAlign: "text-bottom",
@@ -115,7 +110,7 @@ const ColumnEntryRow = ({
             disabled={searching || !entry.canMoveUp}
             onClick={() => handleMove(-1)}
           >
-            <Iconify icon="mdi:chevron-up" width={18} />
+            <GatewayIcon name="chevronUp" size={16} />
           </IconButton>
           <IconButton
             ref={downRef}
@@ -125,7 +120,7 @@ const ColumnEntryRow = ({
             disabled={searching || !entry.canMoveDown}
             onClick={() => handleMove(1)}
           >
-            <Iconify icon="mdi:chevron-down" width={18} />
+            <GatewayIcon name="chevronDown" size={16} />
           </IconButton>
         </Stack>
       )}
@@ -166,8 +161,8 @@ GroupHeading.propTypes = { children: PropTypes.node.isRequired };
 
 /**
  * Columns picker for the Request Logs table. Clone of the house
- * PersonasColumnsPopover pattern with reorder, a custom-properties group,
- * declaration states and a stale group.
+ * PersonasColumnsPopover pattern with reorder, an Agent & billing group, a
+ * custom-properties group, declaration states and a stale group.
  */
 const ColumnsPickerPopover = ({
   anchorEl,
@@ -202,6 +197,14 @@ const ColumnsPickerPopover = ({
         : entries.builtin,
     [entries.builtin, query],
   );
+  const gatewayEntries = entries.gateway ?? NO_ENTRIES;
+  const filteredGateway = useMemo(
+    () =>
+      query
+        ? gatewayEntries.filter((e) => matches(e.label, query))
+        : gatewayEntries,
+    [gatewayEntries, query],
+  );
   const filteredCustom = useMemo(
     () =>
       query
@@ -225,6 +228,7 @@ const ColumnsPickerPopover = ({
     filteredCustom.length === 0;
   const noMatches =
     filteredBuiltin.length === 0 &&
+    filteredGateway.length === 0 &&
     customFilteredOut &&
     filteredStale.length === 0;
 
@@ -290,7 +294,7 @@ const ColumnsPickerPopover = ({
           >
             <Typography variant="subtitle2">Choose columns</Typography>
             <IconButton size="small" aria-label="Close" onClick={onClose}>
-              <Iconify icon="mdi:close" width={18} />
+              <GatewayIcon name="close" size={16} />
             </IconButton>
           </Stack>
           <Box sx={{ px: 1.5, pt: 1 }}>
@@ -349,6 +353,20 @@ const ColumnsPickerPopover = ({
               entry={entry}
               onToggle={onToggle}
               onMove={onMove}
+              searching={Boolean(query)}
+            />
+          ))}
+
+          {filteredGateway.length > 0 && (
+            <GroupHeading>Agent &amp; billing</GroupHeading>
+          )}
+          {filteredGateway.map((entry) => (
+            <ColumnEntryRow
+              key={entry.id}
+              entry={entry}
+              onToggle={onToggle}
+              onMove={onMove}
+              atCap={atCap}
               searching={Boolean(query)}
             />
           ))}
@@ -466,7 +484,7 @@ const ColumnsPickerPopover = ({
                       aria-label={`Remove ${name}`}
                       onClick={() => handleRemove(id, index)}
                     >
-                      <Iconify icon="mdi:close-circle-outline" width={18} />
+                      <GatewayIcon name="close" size={16} />
                     </IconButton>
                   </Stack>
                 );
@@ -493,6 +511,7 @@ ColumnsPickerPopover.propTypes = {
   entries: PropTypes.shape({
     builtin: PropTypes.array.isRequired,
     custom: PropTypes.array.isRequired,
+    gateway: PropTypes.array,
   }).isRequired,
   stale: PropTypes.arrayOf(PropTypes.string).isRequired,
   visibleCount: PropTypes.number.isRequired,

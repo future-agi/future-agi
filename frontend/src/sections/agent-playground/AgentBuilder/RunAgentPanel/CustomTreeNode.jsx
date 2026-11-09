@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import * as React from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -180,7 +181,10 @@ export const CustomTreeNode = ({
                 src="/assets/icons/components/ic_cost.svg"
               />
               <Typography color="text.disabled" typography={"s3"}>
-                {(cost ?? 0).toFixed(4)}
+                {formatExactMoney(cost, {
+                  prefix: "",
+                  minimumFractionDigits: 4,
+                })}
               </Typography>
             </Box>
           </Box>

@@ -1,7 +1,8 @@
 /* eslint-disable react/prop-types */
 import React from "react";
 import { Box, Typography, Stack, Chip, Divider } from "@mui/material";
-import { formatDateTime } from "../utils/formatters";
+import { EMPTY, formatDateTime } from "../utils/formatters";
+import { GATEWAY_MONO } from "../utils/fonts";
 
 const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
   const r = result;
@@ -40,7 +41,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ fontFamily: "monospace" }}
+            sx={{ fontFamily: GATEWAY_MONO }}
           >
             {requestId.substring(0, 12)}...
           </Typography>
@@ -89,7 +90,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
               py: 1.5,
               maxHeight: 400,
               overflow: "auto",
-              fontFamily: isJSON(sourceResponse) ? "monospace" : "inherit",
+              fontFamily: isJSON(sourceResponse) ? GATEWAY_MONO : "inherit",
               fontSize: "0.8125rem",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
@@ -138,7 +139,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
               py: 1.5,
               maxHeight: 400,
               overflow: "auto",
-              fontFamily: isJSON(shadowResponse) ? "monospace" : "inherit",
+              fontFamily: isJSON(shadowResponse) ? GATEWAY_MONO : "inherit",
               fontSize: "0.8125rem",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
@@ -173,7 +174,8 @@ const StatusChip = ({ code, error }) => {
   const ok = code === 200 && !error;
   return (
     <Chip
-      label={code || "N/A"}
+      variant="outlined"
+      label={code || EMPTY}
       size="small"
       sx={{
         height: 18,

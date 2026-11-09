@@ -1,12 +1,18 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/futureagi/agentcc-gateway/internal/httppath"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
+
+// originalRawQueryKey preserves caller input before path parameters overwrite
+// query keys. Delegated handlers must distinguish it from router-only params.
+type originalRawQueryKey struct{}
 
 // Route represents a registered route (kept for external access).
 type Route struct {
@@ -45,6 +51,10 @@ type Router struct {
 	// Track which paths exist (for 405 detection).
 	// Key is the normalized path pattern.
 	knownPaths map[string]bool
+
+	// Every registration, in order, so callers (and tests) can enumerate the
+	// route table instead of keeping a hand list in sync with it.
+	routes []Route
 }
 
 // NewRouter creates a new router.
@@ -58,7 +68,11 @@ func NewRouter() *Router {
 
 // Handle registers a route.
 func (rt *Router) Handle(method, pattern string, handler http.HandlerFunc) {
+	// ServeHTTP serves only canonical paths, so a non-canonical pattern (an
+	// operator-configured "/mcp/", say) would register a dead route.
+	pattern = httppath.Canonical(pattern)
 	rt.knownPaths[pattern] = true
+	rt.routes = append(rt.routes, Route{Method: method, Pattern: pattern, Handler: handler})
 
 	// Check if the pattern contains any parameters.
 	if !strings.Contains(pattern, "{") {
@@ -88,10 +102,29 @@ func (rt *Router) Handle(method, pattern string, handler http.HandlerFunc) {
 	})
 }
 
+// Routes returns every registered route in registration order. The slice is a
+// copy; changing it does not change the router.
+func (rt *Router) Routes() []Route {
+	out := make([]Route, len(rt.routes))
+	copy(out, rt.routes)
+	return out
+}
+
 // ServeHTTP dispatches the request to the matching route.
+//
+// A path that is not canonical ("//v1/x", "/v1/x/", "/./v1/x", "/a/../v1/x")
+// is rejected before any matching. The gates in front of the router decide on
+// the canonical path; refusing every other spelling here means no handler ever
+// runs on a path those gates did not see.
 func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	method := r.Method
+
+	if !httppath.IsCanonical(path) {
+		models.WriteError(w, models.ErrNotFound("non_canonical_path",
+			"Unknown endpoint: "+path+" is not a canonical path; use "+httppath.Canonical(path)))
+		return
+	}
 
 	// Phase 1: Try static O(1) lookup.
 	if handler, ok := rt.static[method+" "+path]; ok {
@@ -115,6 +148,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			// Store path params in query string (matches existing handler expectations).
 			if len(params) > 0 {
+				r = r.WithContext(context.WithValue(r.Context(), originalRawQueryKey{}, r.URL.RawQuery))
 				setPathParams(r, params)
 			}
 
@@ -134,7 +168,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models.WriteError(w, models.ErrNotFound("not_found", "Unknown endpoint: "+path))
+	models.WriteError(w, models.ErrNotFound("not_found", rt.unknownEndpointMessage(method, path)))
 }
 
 // isMethodNotAllowed checks if the path exists for a different method.

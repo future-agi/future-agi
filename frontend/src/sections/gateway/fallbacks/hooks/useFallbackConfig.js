@@ -1,33 +1,54 @@
 import { useMemo } from "react";
-import {
-  useOrgConfig,
-  useCreateOrgConfig,
-} from "../../providers/hooks/useOrgConfig";
-import { writableOrgConfig } from "../../utils/orgConfig";
+import { pick } from "lodash";
+import { useOrgConfig } from "../../providers/hooks/useOrgConfig";
+import { useGatewayContext } from "../../context/useGatewayContext";
+import { buildConfigPatch, useConfigPatch } from "../../hooks/useConfigPatch";
+import { normalizeFallbackRouting } from "../normalizeFallbackRouting";
+
+// The routing keys the Fallbacks page edits. Other routing keys (strategy,
+// auto, policies) belong to other pages; leaving them out of the patch keeps a
+// draft opened before another page saved from writing back the old values.
+const FALLBACK_ROUTING_KEYS = [
+  "fallback_enabled",
+  "default_model",
+  "model_fallbacks",
+  "failover",
+  "retry",
+  "circuit_breaker",
+  "model_timeouts",
+];
 
 /**
- * Wraps useOrgConfig to expose just the routing section
- * and a save function that merges routing changes back into the full config.
+ * Wraps useOrgConfig to expose just the routing section and a save function
+ * that writes only the fallback and reliability keys the draft changed.
  */
 export function useFallbackConfig() {
   const { data: orgConfig, isLoading, error, refetch } = useOrgConfig();
-  const createMutation = useCreateOrgConfig();
+  const { gatewayId } = useGatewayContext();
+  const patchMutation = useConfigPatch({
+    action: "Saving fallback config",
+    successMessage: "Fallback config saved",
+  });
 
-  const routing = useMemo(() => orgConfig?.routing || {}, [orgConfig]);
+  const routing = useMemo(
+    () => normalizeFallbackRouting(orgConfig?.routing || {}),
+    [orgConfig],
+  );
 
-  /**
-   * Save routing changes by creating a new org config version.
-   * Merges the provided routing object into the existing org config.
-   */
-  const saveRouting = (newRouting, description) => {
-    const payload = {
-      ...writableOrgConfig(orgConfig),
-      routing: newRouting,
-      change_description:
-        description || "Updated fallback & reliability config",
-    };
-    return createMutation.mutateAsync(payload);
-  };
+  const saveRouting = (newRouting) =>
+    patchMutation.mutateAsync({
+      gatewayId,
+      patch: buildConfigPatch(
+        { routing: pick(routing, FALLBACK_ROUTING_KEYS) },
+        {
+          routing: pick(
+            normalizeFallbackRouting(newRouting),
+            FALLBACK_ROUTING_KEYS,
+          ),
+        },
+        ["routing"],
+      ),
+    });
 
   return {
     routing,
@@ -36,6 +57,6 @@ export function useFallbackConfig() {
     error,
     refetch,
     saveRouting,
-    isSaving: createMutation.isPending,
+    isSaving: patchMutation.isPending,
   };
 }

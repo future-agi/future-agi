@@ -1,0 +1,1538 @@
+{
+  "description": "Placement vectors for a pushed MCP credential secret (CN7; AM-C20 item 2; AM-C22 for a server with a catalog_ref): one rule on both sides. The gateway's credtemplate.Check (credtemplate.ForCatalogSecret with the catalog below, for a vector with a catalog_ref) and Django's push-time check must give each the same answer: ok, or a refusal naming field (relative to the pushed secret, or url or catalog_ref). reference_header is the server credential's header. Values are test placeholders, never secrets. A vector with no_catalog true is placed with no catalog loaded (the gateway's nil catalog, Django's None): the pushed parts are checked first, then the catalog_ref is refused (AM-C23 (a)).",
+  "catalog": {
+    "description": "The catalog the vectors with a catalog_ref are placed by: provider records in the shape of connector-catalog-bundle/v1's providers (app, id, version and auth.credentialParts), which the gateway reads as credtemplate.Catalog (catalogparts.FromManifest) and Django with connector_catalog_parts.from_providers. Test fixtures, not vendor facts.",
+    "providers": [
+      {
+        "app": "close",
+        "id": "api-key",
+        "version": "1.3.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "header",
+              "name": "Close-API-Key",
+              "secret": true
+            },
+            {
+              "in": "header",
+              "name": "Close-Scope",
+              "secret": false,
+              "value": "mcp.read"
+            }
+          ]
+        }
+      },
+      {
+        "app": "linear",
+        "id": "api-key",
+        "version": "1.0.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "header",
+              "name": "Authorization",
+              "secret": true,
+              "prefix": "Bearer "
+            }
+          ]
+        }
+      },
+      {
+        "app": "acme",
+        "id": "token",
+        "version": "2.0.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "header",
+              "name": "Authorization",
+              "secret": true,
+              "prefix": "Token "
+            }
+          ]
+        }
+      },
+      {
+        "app": "datadog",
+        "id": "api-key",
+        "version": "1.0.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "header",
+              "name": "DD-API-KEY",
+              "secret": true
+            },
+            {
+              "in": "header",
+              "name": "DD-APPLICATION-KEY",
+              "secret": true
+            }
+          ]
+        }
+      },
+      {
+        "app": "acme",
+        "id": "query-key",
+        "version": "1.0.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "query",
+              "name": "api_key",
+              "secret": true
+            },
+            {
+              "in": "query",
+              "name": "format",
+              "secret": false,
+              "value": "json"
+            }
+          ]
+        }
+      },
+      {
+        "app": "hooks",
+        "id": "url-key",
+        "version": "1.0.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "url_variable",
+              "name": "token",
+              "secret": true
+            }
+          ]
+        }
+      },
+      {
+        "app": "acme",
+        "id": "region",
+        "version": "1.0.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "header",
+              "name": "X-Api-Key",
+              "secret": true
+            },
+            {
+              "in": "url_variable",
+              "name": "region",
+              "secret": false,
+              "value": "us"
+            }
+          ]
+        }
+      },
+      {
+        "app": "acme",
+        "id": "oauth",
+        "version": "1.0.0",
+        "auth": {
+          "credentialParts": []
+        }
+      },
+      {
+        "app": "acme",
+        "id": "bad-constant",
+        "version": "1.0.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "header",
+              "name": "X-Api-Key",
+              "secret": true
+            },
+            {
+              "in": "header",
+              "name": "Host",
+              "secret": false,
+              "value": "constant-host"
+            }
+          ]
+        }
+      },
+      {
+        "app": "acme",
+        "id": "no-value",
+        "version": "1.0.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "header",
+              "name": "X-Api-Key",
+              "secret": true
+            },
+            {
+              "in": "header",
+              "name": "X-Mode",
+              "secret": false
+            }
+          ]
+        }
+      },
+      {
+        "app": "acme",
+        "id": "dot-constant",
+        "version": "1.0.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "header",
+              "name": "X-Api-Key",
+              "secret": true
+            },
+            {
+              "in": "url_variable",
+              "name": "seg",
+              "secret": false,
+              "value": ".."
+            }
+          ]
+        }
+      },
+      {
+        "app": "acme",
+        "id": "prefixed-query",
+        "version": "1.0.0",
+        "auth": {
+          "credentialParts": [
+            {
+              "in": "header",
+              "name": "X-Api-Key",
+              "secret": true
+            },
+            {
+              "in": "query",
+              "name": "q",
+              "secret": false,
+              "value": "1",
+              "prefix": "x"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "vectors": [
+    {
+      "name": "legacy bearer",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1",
+        "header": "Authorization"
+      },
+      "ok": true
+    },
+    {
+      "name": "legacy api_key header",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": true
+    },
+    {
+      "name": "legacy api_key in the reference's header",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1"
+      },
+      "ok": true,
+      "reference_header": "X-Vendor-Key"
+    },
+    {
+      "name": "legacy name equal to header",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key",
+        "name": "x-api-key"
+      },
+      "ok": true
+    },
+    {
+      "name": "in header, header equal to name",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key",
+        "in": "header",
+        "name": "X-Api-Key"
+      },
+      "ok": true
+    },
+    {
+      "name": "in header, no header field",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "X-Api-Key"
+      },
+      "ok": true
+    },
+    {
+      "name": "in header Authorization",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1",
+        "header": "Authorization",
+        "in": "header",
+        "name": "Authorization"
+      },
+      "ok": true
+    },
+    {
+      "name": "in query (Browserbase)",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "browserbaseApiKey"
+      },
+      "ok": true
+    },
+    {
+      "name": "in query, other parameters kept",
+      "url": "https://mcp.example.com/mcp?region=eu",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "apiKey"
+      },
+      "ok": true
+    },
+    {
+      "name": "in url_variable in the path",
+      "url": "https://mcp.example.com/mcp/{token}",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "url_variable",
+        "name": "token"
+      },
+      "ok": true
+    },
+    {
+      "name": "in url_variable in the query",
+      "url": "https://mcp.example.com/mcp?session={token}",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "url_variable",
+        "name": "token"
+      },
+      "ok": true
+    },
+    {
+      "name": "two secret headers (Datadog)",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "DD-API-KEY",
+        "parts": [
+          {
+            "in": "header",
+            "name": "DD-APPLICATION-KEY",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "name": "a header and a url_variable part",
+      "url": "https://mcp.example.com/{site}/mcp",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1",
+        "parts": [
+          {
+            "in": "url_variable",
+            "name": "site",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "name": "an http URL on a port",
+      "url": "http://127.0.0.1:8080/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "k"
+      },
+      "ok": true
+    },
+    {
+      "name": "unknown type",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "basic",
+        "value": "test-value-1",
+        "header": "X-Key"
+      },
+      "ok": false,
+      "field": "type"
+    },
+    {
+      "name": "unknown in",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "cookie",
+        "name": "c"
+      },
+      "ok": false,
+      "field": "in"
+    },
+    {
+      "name": "legacy name not its header",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Key",
+        "name": "X-Other"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "legacy bearer named for another header",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1",
+        "header": "X-Key",
+        "name": "X-Key"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "in header without name is its header",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Key",
+        "in": "header"
+      },
+      "ok": true
+    },
+    {
+      "name": "in header, header differs from name",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Other",
+        "in": "header",
+        "name": "X-Key"
+      },
+      "ok": false,
+      "field": "header"
+    },
+    {
+      "name": "in header, reference header differs from name",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "X-Key"
+      },
+      "ok": false,
+      "field": "name",
+      "reference_header": "X-Other"
+    },
+    {
+      "name": "in header, bearer outside Authorization",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "X-Token"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "in query, bearer",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "k"
+      },
+      "ok": false,
+      "field": "type"
+    },
+    {
+      "name": "in query with a header",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Authorization",
+        "in": "query",
+        "name": "k"
+      },
+      "ok": false,
+      "field": "header"
+    },
+    {
+      "name": "in query without name",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "in query, name not a queryName",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "a b"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "in query, the URL already sets it",
+      "url": "https://mcp.example.com/mcp?k=1",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "k"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "in url_variable, name not a varName",
+      "url": "https://mcp.example.com/mcp/{1x}",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "url_variable",
+        "name": "1x"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "in url_variable, the URL does not hold it",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "url_variable",
+        "name": "token"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "in url_variable, a dot segment",
+      "url": "https://mcp.example.com/mcp/{token}",
+      "secret": {
+        "type": "api_key",
+        "value": "..",
+        "in": "url_variable",
+        "name": "token"
+      },
+      "ok": false,
+      "field": "value"
+    },
+    {
+      "name": "a placeholder nothing fills",
+      "url": "https://mcp.example.com/mcp/{other}",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Key"
+      },
+      "ok": false,
+      "field": "url"
+    },
+    {
+      "name": "a variable in the host",
+      "url": "https://{token}.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "url_variable",
+        "name": "token"
+      },
+      "ok": false,
+      "field": "url"
+    },
+    {
+      "name": "a fragment",
+      "url": "https://mcp.example.com/mcp#{token}",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "url_variable",
+        "name": "token"
+      },
+      "ok": false,
+      "field": "url"
+    },
+    {
+      "name": "user info",
+      "url": "https://u:p@mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Key"
+      },
+      "ok": false,
+      "field": "url"
+    },
+    {
+      "name": "not http(s)",
+      "url": "ftp://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Key"
+      },
+      "ok": false,
+      "field": "url"
+    },
+    {
+      "name": "a reserved legacy header",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Content-Type"
+      },
+      "ok": false,
+      "field": "header"
+    },
+    {
+      "name": "a reserved header by name",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "Mcp-Session-Id"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "a reserved header family",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "X-Agentcc-Agent-Depth"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "a header name over 64 characters",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "no value",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "header": "X-Key",
+        "value": ""
+      },
+      "ok": false,
+      "field": "value"
+    },
+    {
+      "name": "a value with surrounding space",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": " v",
+        "header": "X-Key"
+      },
+      "ok": false,
+      "field": "value"
+    },
+    {
+      "name": "a value with a control character",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "v\nx",
+        "header": "X-Key"
+      },
+      "ok": false,
+      "field": "value"
+    },
+    {
+      "name": "a part with an unknown in",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "A",
+        "parts": [
+          {
+            "in": "body",
+            "name": "b",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": false,
+      "field": "parts[0].in"
+    },
+    {
+      "name": "a part in Authorization",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "A",
+        "parts": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": false,
+      "field": "parts[0].name"
+    },
+    {
+      "name": "a part in a reserved header",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "A",
+        "parts": [
+          {
+            "in": "header",
+            "name": "Mcp-Param-X",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": false,
+      "field": "parts[0].name"
+    },
+    {
+      "name": "a part with no value",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "A",
+        "parts": [
+          {
+            "in": "header",
+            "name": "B",
+            "value": ""
+          }
+        ]
+      },
+      "ok": false,
+      "field": "parts[0].value"
+    },
+    {
+      "name": "two parts in one header",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "DD-API-KEY",
+        "parts": [
+          {
+            "in": "header",
+            "name": "dd-api-key",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": false,
+      "field": "parts[0].name"
+    },
+    {
+      "name": "more than 7 parts",
+      "url": "https://mcp.example.com/mcp",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "A",
+        "parts": [
+          {
+            "in": "header",
+            "name": "P0",
+            "value": "test-value-2"
+          },
+          {
+            "in": "header",
+            "name": "P1",
+            "value": "test-value-2"
+          },
+          {
+            "in": "header",
+            "name": "P2",
+            "value": "test-value-2"
+          },
+          {
+            "in": "header",
+            "name": "P3",
+            "value": "test-value-2"
+          },
+          {
+            "in": "header",
+            "name": "P4",
+            "value": "test-value-2"
+          },
+          {
+            "in": "header",
+            "name": "P5",
+            "value": "test-value-2"
+          },
+          {
+            "in": "header",
+            "name": "P6",
+            "value": "test-value-2"
+          },
+          {
+            "in": "header",
+            "name": "P7",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": false,
+      "field": "parts"
+    },
+    {
+      "name": "catalog: close key in its header, no placement",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: close key placed in its header by name, same major",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "Close-API-Key"
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: close key header in another case",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "close-api-key"
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: close key in the reference's header",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.9.4",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1"
+      },
+      "ok": true,
+      "reference_header": "Close-API-Key"
+    },
+    {
+      "name": "catalog: close, a bearer token pushed instead of the key",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1",
+        "header": "Authorization"
+      },
+      "ok": false,
+      "field": "parts"
+    },
+    {
+      "name": "catalog: close, the constant pushed as a part",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "Close-API-Key",
+        "parts": [
+          {
+            "in": "header",
+            "name": "Close-Scope",
+            "value": "mcp.read"
+          }
+        ]
+      },
+      "ok": false,
+      "field": "parts[0].name"
+    },
+    {
+      "name": "catalog: close, only the constant pushed",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0",
+      "secret": {
+        "type": "api_key",
+        "value": "mcp.read",
+        "header": "Close-Scope"
+      },
+      "ok": false,
+      "field": "parts"
+    },
+    {
+      "name": "catalog: close, another major version",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@9.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: close, a part the provider does not declare",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key",
+        "parts": [
+          {
+            "in": "header",
+            "name": "X-Extra",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": false,
+      "field": "parts[0].name"
+    },
+    {
+      "name": "catalog: a provider the catalog does not have",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/other@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: an app the catalog does not have",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "nope/api-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a catalog_ref with no version",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a catalog_ref with two version numbers",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a catalog_ref with a capital",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "Close/api-key@1.3.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: the pushed type is checked before the catalog",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "nope/api-key@1.0.0",
+      "secret": {
+        "type": "oauth",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": false,
+      "field": "type"
+    },
+    {
+      "name": "catalog: a reserved header is refused before the catalog",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Host"
+      },
+      "ok": false,
+      "field": "header"
+    },
+    {
+      "name": "catalog: linear bearer token",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "linear/api-key@1.0.0",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1",
+        "header": "Authorization"
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: linear api_key in Authorization goes as Bearer",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "linear/api-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Authorization"
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: linear key in another header",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "linear/api-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": false,
+      "field": "parts"
+    },
+    {
+      "name": "catalog: another declared prefix, no placement",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "acme/token@2.0.0",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1"
+      },
+      "ok": false,
+      "field": "header"
+    },
+    {
+      "name": "catalog: another declared prefix, in header by name",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "acme/token@2.0.0",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "Authorization"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "catalog: another declared prefix, in header with no name",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "acme/token@2.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Authorization",
+        "in": "header"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "catalog: datadog both keys",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "datadog/api-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "DD-API-KEY",
+        "parts": [
+          {
+            "in": "header",
+            "name": "DD-APPLICATION-KEY",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: datadog both keys, the application key first",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "datadog/api-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "header",
+        "name": "DD-APPLICATION-KEY",
+        "parts": [
+          {
+            "in": "header",
+            "name": "DD-API-KEY",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: datadog both keys in lower case",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "datadog/api-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "dd-api-key",
+        "parts": [
+          {
+            "in": "header",
+            "name": "dd-application-key",
+            "value": "test-value-2"
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: datadog one key only",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "datadog/api-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "DD-API-KEY"
+      },
+      "ok": false,
+      "field": "parts"
+    },
+    {
+      "name": "catalog: query key and a constant parameter",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "acme/query-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "api_key"
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: query key name compared exactly",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "acme/query-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "API_KEY"
+      },
+      "ok": false,
+      "field": "parts"
+    },
+    {
+      "name": "catalog: the constant parameter set by the url",
+      "url": "https://mcp.example.com/mcp?format=xml",
+      "catalog_ref": "acme/query-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "api_key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: the key parameter set by the url",
+      "url": "https://mcp.example.com/mcp?api_key=x",
+      "catalog_ref": "acme/query-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "api_key"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "catalog: url variable key",
+      "url": "https://hooks.example.com/mcp/{token}",
+      "catalog_ref": "hooks/url-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "url_variable",
+        "name": "token"
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: url variable key pushed in a header",
+      "url": "https://hooks.example.com/mcp/{token}",
+      "catalog_ref": "hooks/url-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Token"
+      },
+      "ok": false,
+      "field": "parts"
+    },
+    {
+      "name": "catalog: url variable key the url does not hold",
+      "url": "https://hooks.example.com/mcp",
+      "catalog_ref": "hooks/url-key@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "url_variable",
+        "name": "token"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "catalog: constant url variable",
+      "url": "https://mcp.example.com/{region}/mcp",
+      "catalog_ref": "acme/region@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: constant url variable the url does not hold",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "acme/region@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a placeholder neither the key nor a constant fills",
+      "url": "https://mcp.example.com/{region}/{other}/mcp",
+      "catalog_ref": "acme/region@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": false,
+      "field": "url"
+    },
+    {
+      "name": "catalog: a provider with no declared parts",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "acme/oauth@1.0.0",
+      "secret": {
+        "type": "bearer",
+        "value": "test-value-1",
+        "header": "Authorization"
+      },
+      "ok": true
+    },
+    {
+      "name": "catalog: a provider with no declared parts, still placed on the url",
+      "url": "https://mcp.example.com/mcp?k=1",
+      "catalog_ref": "acme/oauth@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "in": "query",
+        "name": "k"
+      },
+      "ok": false,
+      "field": "name"
+    },
+    {
+      "name": "catalog: a constant in a reserved header",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "acme/bad-constant@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a non-secret part with no value",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "acme/no-value@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a constant that makes a path segment ..",
+      "url": "https://mcp.example.com/{seg}/mcp",
+      "catalog_ref": "acme/dot-constant@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a constant query parameter with a prefix",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "acme/prefixed-query@1.0.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a catalog_ref with a capital in the provider id",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/Api-key@1.3.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a catalog_ref with a -beta suffix",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0-beta",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a catalog_ref with a build suffix",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0+1",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a catalog_ref with a leading space",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": " close/api-key@1.3.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a catalog_ref with a trailing space",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0 ",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a catalog_ref with a trailing newline",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0\n",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "catalog: a catalog_ref with a leading zero",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@01.3.0",
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "no catalog loaded: a well-formed catalog_ref is refused",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0",
+      "no_catalog": true,
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "no catalog loaded: a malformed catalog_ref is refused on catalog_ref",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0-beta",
+      "no_catalog": true,
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Close-API-Key"
+      },
+      "ok": false,
+      "field": "catalog_ref"
+    },
+    {
+      "name": "no catalog loaded: the pushed type is still checked first",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0",
+      "no_catalog": true,
+      "secret": {
+        "type": "oauth",
+        "value": "test-value-1",
+        "header": "X-Api-Key"
+      },
+      "ok": false,
+      "field": "type"
+    },
+    {
+      "name": "no catalog loaded: a reserved header is still refused first",
+      "url": "https://mcp.example.com/mcp",
+      "catalog_ref": "close/api-key@1.3.0",
+      "no_catalog": true,
+      "secret": {
+        "type": "api_key",
+        "value": "test-value-1",
+        "header": "Host"
+      },
+      "ok": false,
+      "field": "header"
+    }
+  ]
+}

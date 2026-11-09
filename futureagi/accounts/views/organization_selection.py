@@ -6,6 +6,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.authentication import allows_no_organization
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
@@ -17,10 +18,14 @@ from accounts.serializers.contracts import (
     OrganizationSwitchRequestSerializer,
     OrganizationSwitchResponseSerializer,
 )
+from accounts.services.hard_erase_issuance_entry import issuance_entry
+from accounts.services.identity_issuance import issue_membership
+from accounts.services.workspace_landing import resolve_user_workspace
 from accounts.services.workspace_membership import resolve_org_membership
 from tfc.constants.roles import RoleMapping
 from tfc.utils.api_contracts import validated_api_request, validated_request
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.tenant_scope import has_membership_rows
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +39,13 @@ def _validate_uuid(value):
         return False
 
 
+def _was_part_of(user, organization):
+    """Recognize membership history or the legacy FK, without granting access."""
+    return has_membership_rows(user, organization) or str(
+        getattr(user, "organization_id", None)
+    ) == str(organization.pk)
+
+
 def _saml_scope_allows(request, organization_id):
     """Keep SAML sessions inside their signing organization before any write."""
 
@@ -41,6 +53,7 @@ def _saml_scope_allows(request, organization_id):
     return auth_scope is None or str(auth_scope.org_id) == str(organization_id)
 
 
+@allows_no_organization
 class OrganizationSelectionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
@@ -63,15 +76,13 @@ class OrganizationSelectionView(APIView):
                     "You don't have access to this organization"
                 )
 
-            try:
-                selected_org = Organization.objects.get(id=organization_id)
-            except Organization.DoesNotExist:
+            # An organization the caller cannot use answers like one that
+            # does not exist.
+            selected_org = Organization.objects.filter(id=organization_id).first()
+            if selected_org is None or not request.user.can_access_organization(
+                selected_org
+            ):
                 return self._gm.bad_request("Organization not found")
-
-            if not request.user.can_access_organization(selected_org):
-                return self._gm.forbidden_response(
-                    "You don't have access to this organization"
-                )
 
             # Update config with new key
             if not request.user.config:
@@ -201,6 +212,7 @@ class OrganizationSelectionView(APIView):
             return self._gm.bad_request("Failed to get organizations")
 
 
+@allows_no_organization
 class SwitchOrganizationView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
@@ -227,14 +239,17 @@ class SwitchOrganizationView(APIView):
                     "You don't have access to this organization"
                 )
 
-            try:
-                selected_org = Organization.objects.get(id=organization_id)
-            except Organization.DoesNotExist:
-                return self._gm.bad_request("Organization not found")
-
             user = request.user
 
+            selected_org = Organization.objects.filter(id=organization_id).first()
+            if selected_org is None:
+                return self._gm.bad_request("Organization not found")
+
             if not user.can_access_organization(selected_org):
+                # Never-associated organizations answer as unknown; former
+                # organizations retain their access-denied response.
+                if not _was_part_of(user, selected_org):
+                    return self._gm.bad_request("Organization not found")
                 return self._gm.forbidden_response(
                     "You don't have access to this organization"
                 )
@@ -290,55 +305,53 @@ class SwitchOrganizationView(APIView):
             return self._gm.bad_request("Failed to switch organization")
 
     def _resolve_workspace_for_org(self, user, organization):
-        """Resolve the best workspace for the given org."""
-        # 1. Check orgWorkspaceMap
-        org_workspace_map = user.config.get("orgWorkspaceMap", {})
-        last_ws_id = org_workspace_map.get(str(organization.id))
-
-        if last_ws_id:
-            try:
-                ws = Workspace.objects.get(
-                    id=last_ws_id, organization=organization, is_active=True
-                )
-                if user.can_access_workspace(ws):
-                    return ws
-            except (Workspace.DoesNotExist, ValueError):
-                pass
-
-        # 2. Org's default workspace
-        try:
-            ws = Workspace.objects.get(
+        """Resolve landing, retaining bootstrap only for an unprovisioned org."""
+        workspace = resolve_user_workspace(user, organization)
+        if workspace is not None:
+            return workspace
+        if (
+            WorkspaceMembership._base_manager.filter(
+                user=user, workspace__organization=organization
+            ).exists()
+            or Workspace.objects.filter(
                 organization=organization, is_default=True, is_active=True
-            )
-            return ws
-        except Workspace.DoesNotExist:
-            pass
+            ).exists()
+        ):
+            return None
 
-        # 3. Create default workspace
+        # Switching/selection is account recovery; provisioning is not. Only a
+        # live global org role can bootstrap, never an ordinary unjoined member.
+        if not user.has_global_workspace_access(organization):
+            return None
+
+        # Keep the existing empty-org provisioning flow separate from selection.
         try:
-            ws = Workspace.objects.create(
-                name="Default Workspace",
-                organization=organization,
-                is_default=True,
-                is_active=True,
-                created_by=user,
-            )
-            # Ensure workspace membership
-            org_role = user.get_organization_role(organization)
-            ws_role = RoleMapping.get_workspace_role(org_role or "Member")
-            WorkspaceMembership.no_workspace_objects.get_or_create(
-                workspace=ws,
-                user=user,
-                defaults={
-                    "role": ws_role,
-                    "invited_by": user,
-                    "is_active": True,
-                    "organization_membership": resolve_org_membership(
-                        user, organization
-                    ),
-                },
-            )
-            return ws
+            with issuance_entry(organizations=[organization.pk], people=[user.pk]):
+                ws = Workspace.objects.create(
+                    name="Default Workspace",
+                    organization=organization,
+                    is_default=True,
+                    is_active=True,
+                    created_by=user,
+                )
+                # Ensure workspace membership
+                org_role = user.get_organization_role(organization)
+                ws_role = RoleMapping.get_workspace_role(org_role or "Member")
+                issue_membership(
+                    WorkspaceMembership.no_workspace_objects,
+                    "get_or_create",
+                    workspace=ws,
+                    user=user,
+                    defaults={
+                        "role": ws_role,
+                        "invited_by": user,
+                        "is_active": True,
+                        "organization_membership": resolve_org_membership(
+                            user, organization
+                        ),
+                    },
+                )
+                return resolve_user_workspace(user, organization)
         except Exception as e:
             logger.error(f"Failed to create default workspace: {e}")
             return None

@@ -9,7 +9,9 @@ import { trackEvent, Events } from "src/utils/Mixpanel";
 import logger from "src/utils/logger";
 import SvgColor from "src/components/svg-color";
 import { useAuthContext } from "src/auth/hooks";
+import { isDatasetTabShown } from "src/launch/launchSwitch";
 
+// D1 tab order: Data · Experiments · Summary · Optimization.
 const TabOptions = [
   { label: "Data", value: "data", icons: "/assets/icons/summary/database.svg" },
   {
@@ -18,14 +20,14 @@ const TabOptions = [
     icons: "/assets/icons/navbar/ic_experiment.svg",
   },
   {
-    label: "Optimization",
-    value: "optimization",
-    icons: "/assets/icons/action_buttons/ic_optimize.svg",
-  },
-  {
     label: "Summary",
     value: "summary",
     icons: "/assets/icons/ic_summary.svg",
+  },
+  {
+    label: "Optimization",
+    value: "optimization",
+    icons: "/assets/icons/action_buttons/ic_optimize.svg",
   },
 ];
 
@@ -154,6 +156,14 @@ const DevelopBar = ({
             {TabOptions.map((tab) => {
               // If hideScenarioFeatures is true, only show the Data tab
               if (hideScenarioFeatures && tab.value !== "data") {
+                return null;
+              }
+              // L6 launch switch: a tab the launch hides (Experiments,
+              // Summary) has no button; compare datasets keeps its Summary.
+              if (
+                !isDatasetTabShown(tab.value) &&
+                !(isCompareDataset && tab.value === "summary")
+              ) {
                 return null;
               }
               // Existing logic for compareDataset

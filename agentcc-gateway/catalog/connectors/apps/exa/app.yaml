@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: exa
+version: 1.0.0
+name: Exa
+description: "Web search, page fetching and multi-step research with Exa Agent."
+vendor:
+  name: Exa
+  domains: [exa.ai]
+eeCategory: research
+group: other
+categories: [research, web-search]
+tags: [search, fetching]
+docsUrl: https://exa.ai/docs/get-started/exa-mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://exa.ai/docs/get-started/exa-mcp
+    fetchedAt: 2026-10-21

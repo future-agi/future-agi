@@ -13,14 +13,17 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
+
 from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import (
     BaseModelViewSetMixin,
     BaseModelViewSetMixinWithUserOrg,
+    request_workspace_q,
 )
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.tenant_scope import caller_organization
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     MonitorMetricTypeChoices,
@@ -80,30 +83,19 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         # Returns None for unauthenticated requests (e.g. drf-yasg's fake view
         # during OpenAPI generation) instead of raising on AnonymousUser, which
         # would otherwise silently drop request bodies from the generated schema.
-        org = getattr(self.request, "organization", None)
-        if org is not None:
-            return org
-        user = getattr(self.request, "user", None)
+        # Otherwise the organization authentication resolved for the caller,
+        # None included (a member removed from every organization): the
+        # account's legacy organization field is not a second source.
+        request = getattr(self, "request", None)
+        user = getattr(request, "user", None)
         if user is None or not user.is_authenticated:
             return None
-        return getattr(user, "organization", None)
+        return caller_organization(request)
 
     def _workspace_scope_q(self, field_name="workspace"):
-        workspace = getattr(self.request, "workspace", None)
-        if not workspace:
-            return Q()
-        if getattr(workspace, "is_default", False):
-            return (
-                Q(**{field_name: workspace})
-                | Q(
-                    **{
-                        f"{field_name}__is_default": True,
-                        f"{field_name}__organization": workspace.organization,
-                    }
-                )
-                | Q(**{f"{field_name}__isnull": True})
-            )
-        return Q(**{field_name: workspace})
+        # The central rule includes authenticated-empty refusal before the
+        # membership fallback; keep that refusal on this direct selector too.
+        return request_workspace_q(self.request, field_name)
 
     def _visible_observe_projects(self):
         organization = self._current_organization()
@@ -131,13 +123,9 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             )
         )
 
-    def get_serializer(self, *args, **kwargs):
-        serializer = super().get_serializer(*args, **kwargs)
-        serializer_obj = getattr(serializer, "child", serializer)
-        fields = getattr(serializer_obj, "fields", None)
-        if fields and "project" in fields:
-            fields["project"].queryset = self._visible_observe_projects()
-        return serializer
+    # get_serializer is DRF's own: UserAlertMonitorSerializer limits ``project``
+    # to the caller's observe projects (organization and workspace) when it is
+    # built with the request, which get_serializer always passes.
 
     def get_queryset(self):
         user_alert_id = self.kwargs.get("pk")
@@ -542,7 +530,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         from tfc.ee_gating import EEResource, check_ee_can_create
         from tracer.models.monitor import UserAlertMonitor
 
-        org = getattr(request, "organization", None) or request.user.organization
+        org = self._current_organization()
+        if org is None:
+            # A caller with no organization has no project to watch.
+            return self._gm.not_found(get_error_message("PROJECT_NOT_FOUND"))
         current_count = UserAlertMonitor.objects.filter(
             organization=org, deleted=False
         ).count()
@@ -554,9 +545,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
         try:
             data = request.data.copy()
-            data["organization"] = (
-                getattr(request, "organization", None) or request.user.organization
-            ).id
+            data["organization"] = org.id
             if getattr(request, "workspace", None):
                 data["workspace"] = request.workspace.id
             data["created_by"] = request.user.id
@@ -612,7 +601,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     @action(detail=False, methods=["post"], url_path="duplicate")
     def duplicate(self, request, *args, **kwargs):
         data = request.validated_data
-        org = getattr(request, "organization", None) or request.user.organization
+        org = self._current_organization()
         try:
             monitor = self._base_monitor_queryset().get(
                 id=data["id"],
@@ -696,7 +685,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     @action(detail=False, methods=["get"], url_path="metric-options")
     def metric_options(self, request, *args, **kwargs):
         try:
-            org = getattr(request, "organization", None) or request.user.organization
+            org = self._current_organization()
             project_id = request.query_params.get("project_id")
             if not project_id:
                 return self._gm.bad_request({"project_id": "This field is required."})
@@ -756,9 +745,12 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         deadline = start_monitor_graph_deadline()
         try:
             data = request.data.copy()
-            data["organization"] = (
-                getattr(request, "organization", None) or request.user.organization
-            ).id
+            # The action requires an authenticated caller, so the organization
+            # is the one authentication resolved, as for the other actions. No
+            # organization: the serializer rejects the body (no project is the
+            # caller's), as it rejects an unknown project.
+            organization = caller_organization(request)
+            data["organization"] = organization.id if organization else None
             if getattr(request, "workspace", None):
                 data["workspace"] = request.workspace.id
 
@@ -897,47 +889,34 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     serializer_class = UserAlertMonitorLogSerializer
+    # A log row's organization is its alert monitor's.
+    organization_lookup = "alert__organization"
 
     def _current_organization(self):
-        return (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        # The organization authentication resolved for the caller, None
+        # included (a member removed from every organization): the account's
+        # legacy organization field is not a second source. A log has no
+        # organization of its own, only its alert's, so every queryset below
+        # depends on this value.
+        return caller_organization(getattr(self, "request", None))
 
+    # A log row has no workspace of its own, so the mixin cannot narrow it;
+    # these apply the mixins' rule through the log's alert monitor, including
+    # authenticated-empty refusal and the independent organization constraint.
     def _workspace_scope_q(self):
-        workspace = getattr(self.request, "workspace", None)
-        if not workspace:
-            return Q()
-        if getattr(workspace, "is_default", False):
-            return (
-                Q(alert__workspace=workspace)
-                | Q(
-                    alert__workspace__is_default=True,
-                    alert__workspace__organization=workspace.organization,
-                )
-                | Q(alert__workspace__isnull=True)
-            )
-        return Q(alert__workspace=workspace)
+        return request_workspace_q(self.request, "alert__workspace")
 
     def _alert_workspace_scope_q(self):
-        workspace = getattr(self.request, "workspace", None)
-        if not workspace:
-            return Q()
-        if getattr(workspace, "is_default", False):
-            return (
-                Q(workspace=workspace)
-                | Q(
-                    workspace__is_default=True,
-                    workspace__organization=workspace.organization,
-                )
-                | Q(workspace__isnull=True)
-            )
-        return Q(workspace=workspace)
+        return request_workspace_q(self.request, "workspace")
 
     def _visible_alert_queryset(self):
+        organization = self._current_organization()
+        if organization is None:
+            # No organization: no alert is the caller's.
+            return UserAlertMonitor.objects.none()
         return UserAlertMonitor.objects.filter(
             self._alert_workspace_scope_q(),
-            organization=self._current_organization(),
+            organization=organization,
             deleted=False,
         )
 
@@ -955,16 +934,15 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
         return serializer
 
     def get_queryset(self):
-        queryset = (
-            super()
-            .get_queryset()
-            .select_related("resolved_by", "alert")
-            .filter(
-                self._workspace_scope_q(),
-                alert__organization=self._current_organization(),
-            )
+        queryset = super().get_queryset().select_related("resolved_by", "alert")
+        organization = self._current_organization()
+        if organization is None:
+            # No organization: no log is the caller's.
+            return queryset.none()
+        return queryset.filter(
+            self._workspace_scope_q(),
+            alert__organization=organization,
         )
-        return queryset
 
     @validated_request(
         request_serializer=UserAlertMonitorLogWriteRequestSerializer,

@@ -1,6 +1,5 @@
 import json
 
-from django.db.models import Q
 from rest_framework import serializers
 
 from tfc.utils.serializer_fields import JSON_VALUE_SCHEMA, JsonValueField
@@ -60,62 +59,20 @@ class TraceSerializer(serializers.ModelSerializer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        request = self.context.get("request")
-        if not request:
-            return
+        from tracer.serializers.relation_scope import scope_relations
 
-        organization = getattr(request, "organization", None) or getattr(
-            request.user, "organization", None
+        scope_relations(
+            self,
+            {
+                "project": ("organization", "workspace"),
+                "project_version": ("project__organization", "project__workspace"),
+                "session": ("project__organization", "project__workspace"),
+            },
         )
-        if not organization:
-            return
-
-        project_scope = Q(organization=organization)
-        related_project_scope = Q(project__organization=organization)
-        workspace = getattr(request, "workspace", None)
-        if workspace:
-            if getattr(workspace, "is_default", False):
-                project_scope &= (
-                    Q(workspace=workspace)
-                    | Q(
-                        workspace__is_default=True, workspace__organization=organization
-                    )
-                    | Q(workspace__isnull=True)
-                )
-                related_project_scope &= (
-                    Q(project__workspace=workspace)
-                    | Q(
-                        project__workspace__is_default=True,
-                        project__workspace__organization=organization,
-                    )
-                    | Q(project__workspace__isnull=True)
-                )
-            else:
-                project_scope &= Q(workspace=workspace)
-                related_project_scope &= Q(project__workspace=workspace)
-
-        project_manager = getattr(Project, "no_workspace_objects", Project.objects)
-        self.fields["project"].queryset = project_manager.filter(
-            project_scope, deleted=False
-        )
-
-        project_version_manager = getattr(
-            ProjectVersion, "no_workspace_objects", ProjectVersion.objects
-        )
-        self.fields["project_version"].queryset = project_version_manager.filter(
-            related_project_scope,
-            project__deleted=False,
-            deleted=False,
-        )
-
-        trace_session_manager = getattr(
-            TraceSession, "no_workspace_objects", TraceSession.objects
-        )
-        self.fields["session"].queryset = trace_session_manager.filter(
-            related_project_scope,
-            project__deleted=False,
-            deleted=False,
-        )
+        for name in ("project_version", "session"):
+            self.fields[name].queryset = self.fields[name].queryset.filter(
+                project__deleted=False
+            )
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

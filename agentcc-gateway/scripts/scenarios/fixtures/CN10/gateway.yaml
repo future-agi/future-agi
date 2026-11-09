@@ -1,0 +1,56 @@
+# Gateway config template for connectors/94_cn_rest_runtime.sh (CN10): one
+# static YAML MCP server, "gmail", on the agentcc-connectors runtime the
+# scenario starts before the gateway. The scenario renders
+# @@CN10_RUNTIME_PORT@@ (the runtime's loopback port, the only private
+# address the gateway may reach) and @@CN10_SERVER_TOKEN@@ (a fresh fake
+# bearer for this run: the runtime takes it as the user's Gmail token);
+# scn_mcp_gateway_template adds the fixed test state key under mcp:, and
+# lib.sh fills base.yaml's placeholders and appends redis:.
+#
+# No model provider is configured (the scenario makes no model call, so
+# scn_up runs with SCN_CATALOG_WAIT_SKIP=all). The X0 mock stands in for
+# Django: the request-log webhook, which carries M15's tool_call records,
+# reaches its /__logs. Every key and token below is a fake value.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  # Org keys are person-owned (733): under a control plane config.yaml holds
+  # only deployment identities (key_type internal, no org_id, no user_id).
+  # scn_up registers acme-app (SCN_KEY of org-acme, user SCN_USER) with the
+  # mock's control plane, which lists it on the key sync (lib.sh, Org keys).
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+# The mock stands in for Django. Its control plane lists the person-owned
+# keys scn_up registers and does not answer the org sync, so configs pushed
+# with scn_org_config stay; the gateway syncs keys on startup (scn_up waits
+# for the first list).
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: true
+  sync_interval: 60s
+mcp:
+  enabled: true
+  # The YAML servers serve the key's org (mcp.static.org_id): M10's legacy
+  # view serves them to that org's principals.
+  static:
+    org_id: "org-acme"
+  egress:
+    private_allow:
+      - "127.0.0.1:@@CN10_RUNTIME_PORT@@"
+  servers:
+    gmail:
+      # M13's client posts to the configured URL exactly: the runtime serves
+      # each app at /<app-id>/mcp.
+      url: "http://127.0.0.1:@@CN10_RUNTIME_PORT@@/gmail/mcp"
+      era: "2025-11-25"
+      transport: "http"
+      auth:
+        type: "bearer"
+        token: "@@CN10_SERVER_TOKEN@@"

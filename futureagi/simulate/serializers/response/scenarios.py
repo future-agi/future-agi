@@ -136,7 +136,13 @@ class ScenarioResponseSerializer(serializers.ModelSerializer):
             graph = prefetched_graphs[0] if prefetched_graphs else None
         else:
             graph = (
-                ScenarioGraph.objects.filter(scenario=obj, is_active=True)
+                ScenarioGraph.objects.filter(
+                    scenario=obj,
+                    organization_id=obj.organization_id,
+                    scenario__workspace_id=obj.workspace_id,
+                    is_active=True,
+                    deleted=False,
+                )
                 .order_by("-created_at")
                 .first()
             )

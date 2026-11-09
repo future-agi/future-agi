@@ -84,7 +84,7 @@ func New(cfg config.OTelConfig) *Plugin {
 	}
 
 	if cfg.Enabled && cfg.IncludeBodies {
-		slog.Warn("otel body capture is enabled — prompts and completions will be sent to the trace collector")
+		slog.Warn("otel body capture is enabled: prompts and completions go to the collector; opted-in MCP full-content capture exports tool inputs and outputs to the organization's collector. It masks secret-named fields and recognized Bearer, sk-, AIza, AKIA/ASIA and JWT formats. Prefix-less Future AGI keys can remain in other text; other sensitive content may still be exported")
 	}
 	if cfg.Enabled && len(cfg.CaptureHeaders) > 0 {
 		slog.Warn("otel request-header capture is enabled — matching headers will be sent to the trace collector",

@@ -97,7 +97,7 @@ celery==5.5.3
     #   django-celery-beat
     #   django-celery-results
     #   flower
-certifi==2025.6.15
+certifi==2026.10.19
     # via
     #   clickhouse-connect
     #   httpcore
@@ -536,7 +536,7 @@ mypy-extensions==1.1.0
     #   typing-inspect
 nexus-rpc==1.4.0
     # via temporalio
-nltk==3.8.1
+nltk==3.10.4
     # via
     #   core-backend (pyproject.toml)
     #   rouge-score

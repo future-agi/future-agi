@@ -1,3 +1,4 @@
+import { useConfirmRemoval } from "../hooks/useConfirmRemoval";
 /* eslint-disable react/prop-types */
 import React, { useState } from "react";
 import {
@@ -5,8 +6,7 @@ import {
   Stack,
   Typography,
   TextField,
-  Switch,
-  FormControlLabel,
+  MenuItem,
   Paper,
   Alert,
   IconButton,
@@ -19,6 +19,31 @@ import {
 } from "@mui/material";
 import { Icon } from "@iconify/react";
 import { useAvailableModels } from "../hooks/useAvailableModels";
+
+// What each override does on the gateway (modeldb/orgdb, the cost and
+// validation plugins, auto, /v1/models, /v1/capabilities, /v1/count_tokens).
+// Change them together.
+// Each help names managed models only on a deployment that offers them.
+const limitsHelp = (managedOffered) =>
+  `A request asking for more output than Max Output Tokens is refused (400 max_tokens_exceeds_limit); one that sets no max_tokens is sent with that limit. An estimated input above Max Input Tokens is refused (413 input_too_large).${managedOffered ? " Limits apply to Future AGI models too." : ""}`;
+const pricingHelp = (managedOffered) =>
+  `Prices calls made with your own provider keys. A Cost Tracking custom price for the same model wins over these; a blank field keeps the model database's price.${managedOffered ? " Future AGI models are always billed at the Future AGI price." : ""}`;
+const CAPABILITIES_HELP =
+  "Off refuses a request that uses the capability (400 model_capability_error). On allows it even where the model database says the model lacks it. Default keeps the model database's value. Prompt Caching only changes what /v1/models and /v1/capabilities report.";
+
+// A capability override is three-state: unset (the model database's value),
+// on or off.
+const CAPABILITY_STATES = [
+  { value: "default", label: "Default" },
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+];
+
+const capabilityState = (v) => {
+  if (v === true) return "on";
+  if (v === false) return "off";
+  return "default";
+};
 
 const CAPABILITY_FIELDS = [
   { key: "function_calling", label: "Function Calling" },
@@ -34,7 +59,14 @@ const CAPABILITY_FIELDS = [
   { key: "reasoning", label: "Reasoning" },
 ];
 
-const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
+// `managedOffered` false: the deployment offers no managed models, so no
+// limit or price is explained for them.
+const ModelDatabaseConfigTab = ({
+  modelDatabase,
+  onChange,
+  managedOffered = true,
+}) => {
+  const [requestRemoval, confirmation] = useConfirmRemoval();
   const availableModels = useAvailableModels();
   const config = modelDatabase || {};
   const overrides = config.overrides || {};
@@ -52,9 +84,11 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
   };
 
   const removeModel = (modelId) => {
-    const updated = { ...overrides };
-    delete updated[modelId];
-    updateOverrides(updated);
+    requestRemoval(`Model override ${modelId}`, () => {
+      const updated = { ...overrides };
+      delete updated[modelId];
+      updateOverrides(updated);
+    });
   };
 
   const updateModel = (modelId, field, value) => {
@@ -80,15 +114,15 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
     });
   };
 
-  const updateCapability = (modelId, field, value) => {
+  // state is "default" (remove the override), "on" or "off".
+  const updateCapability = (modelId, field, state) => {
     const current = overrides[modelId] || {};
-    const capabilities = current.capabilities || {};
+    const capabilities = { ...(current.capabilities || {}) };
+    if (state === "default") delete capabilities[field];
+    else capabilities[field] = state === "on";
     updateOverrides({
       ...overrides,
-      [modelId]: {
-        ...current,
-        capabilities: { ...capabilities, [field]: value },
-      },
+      [modelId]: { ...current, capabilities },
     });
   };
 
@@ -96,6 +130,7 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
 
   return (
     <Box>
+      {confirmation}
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
         <Icon icon="mdi:database-cog-outline" width={24} />
         <Typography variant="h6">Model Database Overrides</Typography>
@@ -103,7 +138,11 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
 
       <Alert severity="info" sx={{ mb: 2 }}>
         Override model metadata (token limits, pricing, capabilities) for this
-        organization. Overrides are merged on top of the global model database.
+        organization&apos;s requests. Overrides are merged on top of the
+        gateway&apos;s model database: a field you leave blank keeps its value.{" "}
+        {managedOffered
+          ? "Prices: a Cost Tracking custom price wins over these, and Future AGI models stay on the Future AGI price."
+          : "Prices: a Cost Tracking custom price wins over these."}
       </Alert>
 
       {/* Add model */}
@@ -177,6 +216,7 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
                 <Box sx={{ flex: 1 }} />
                 <IconButton
                   size="small"
+                  aria-label={`Remove model override ${modelId}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     removeModel(modelId);
@@ -191,6 +231,9 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
                 {/* Token Limits */}
                 <Typography variant="body2" fontWeight={500}>
                   Token Limits
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {limitsHelp(managedOffered)}
                 </Typography>
                 <Stack direction="row" spacing={2}>
                   <TextField
@@ -233,6 +276,9 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
                 <Typography variant="body2" fontWeight={500}>
                   Pricing (USD per token)
                 </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {pricingHelp(managedOffered)}
+                </Typography>
                 <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
                   <TextField
                     size="small"
@@ -271,36 +317,10 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
                     inputProps={{ step: 0.000001 }}
                     sx={{ width: 180 }}
                   />
-                  <TextField
-                    size="small"
-                    type="number"
-                    label="Batch Input per Token"
-                    value={pricing.batch_input_per_token ?? ""}
-                    onChange={(e) =>
-                      updatePricing(
-                        modelId,
-                        "batch_input_per_token",
-                        e.target.value,
-                      )
-                    }
-                    inputProps={{ step: 0.000001 }}
-                    sx={{ width: 180 }}
-                  />
-                  <TextField
-                    size="small"
-                    type="number"
-                    label="Batch Output per Token"
-                    value={pricing.batch_output_per_token ?? ""}
-                    onChange={(e) =>
-                      updatePricing(
-                        modelId,
-                        "batch_output_per_token",
-                        e.target.value,
-                      )
-                    }
-                    inputProps={{ step: 0.000001 }}
-                    sx={{ width: 180 }}
-                  />
+                  {/* No batch price fields: the gateway prices no call at
+                      batch rates (its batch jobs call the provider's regular
+                      API), so a batch price would change nothing. Stored
+                      values are left as they are. */}
                 </Stack>
 
                 <Divider />
@@ -309,22 +329,28 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
                 <Typography variant="body2" fontWeight={500}>
                   Capabilities
                 </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {CAPABILITIES_HELP}
+                </Typography>
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                   {CAPABILITY_FIELDS.map(({ key, label }) => (
-                    <FormControlLabel
+                    <TextField
                       key={key}
-                      control={
-                        <Switch
-                          size="small"
-                          checked={capabilities[key] ?? false}
-                          onChange={(e) =>
-                            updateCapability(modelId, key, e.target.checked)
-                          }
-                        />
+                      select
+                      size="small"
+                      label={label}
+                      value={capabilityState(capabilities[key])}
+                      onChange={(e) =>
+                        updateCapability(modelId, key, e.target.value)
                       }
-                      label={<Typography variant="caption">{label}</Typography>}
-                      sx={{ minWidth: 160 }}
-                    />
+                      sx={{ width: 180 }}
+                    >
+                      {CAPABILITY_STATES.map((st) => (
+                        <MenuItem key={st.value} value={st.value}>
+                          {st.label}
+                        </MenuItem>
+                      ))}
+                    </TextField>
                   ))}
                 </Stack>
               </Stack>

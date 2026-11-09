@@ -25,6 +25,68 @@ import {
   parseAnnotationValue,
   renderAnnotationValue,
 } from "./DevelopCellRenderer/AnnotationCellRenderer/renderAnnotationValue";
+const ICON_SX = { color: "text.secondary" };
+
+/**
+ * The column-type icon of a datapoint card: Run Prompt, eval, optimisation,
+ * annotation label, or the data type (text, JSON, number, …). Shared by the
+ * Row view's FieldCard / OutputCard.
+ */
+export const ColumnTypeIcon = ({ originType, dataType, size = 20 }) => {
+  if (originType === "run_prompt") {
+    return (
+      <SvgColor
+        src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
+        sx={{ width: size, height: size, color: "info.main", flexShrink: 0 }}
+      />
+    );
+  }
+  if (originType === "evaluation") {
+    return (
+      <Iconify
+        icon="material-symbols:check-circle-outline"
+        width={size}
+        sx={{ color: "info.success", flexShrink: 0 }}
+      />
+    );
+  }
+  if (
+    originType === "optimisation" ||
+    originType === "optimisation_evaluation"
+  ) {
+    return (
+      <SvgColor
+        src={`/assets/icons/action_buttons/ic_optimize.svg`}
+        sx={{ width: size, height: size, color: "primary.main", flexShrink: 0 }}
+      />
+    );
+  }
+  const icon =
+    originType === "annotation_label"
+      ? "jam:write"
+      : {
+          text: "material-symbols:notes",
+          array: "material-symbols:data-array",
+          integer: "material-symbols:tag",
+          float: "tabler:decimal",
+          boolean: "material-symbols:toggle-on-outline",
+          datetime: "tabler:calendar",
+          json: "material-symbols:data-object",
+          image: "material-symbols:image-outline",
+          images: "material-symbols:art-track-outline",
+        }[dataType];
+  if (!icon) return null;
+  return (
+    <Iconify icon={icon} width={size} sx={{ ...ICON_SX, flexShrink: 0 }} />
+  );
+};
+
+ColumnTypeIcon.propTypes = {
+  originType: PropTypes.string,
+  dataType: PropTypes.string,
+  size: PropTypes.number,
+};
+
 const DatapointCard = ({
   value,
   column,
@@ -68,61 +130,6 @@ const DatapointCard = ({
     }
     setTabValue(newValue);
   };
-  const iconStyle = {
-    color: "text.secondary",
-  };
-  const renderIcon = () => {
-    if (column?.originType === "run_prompt") {
-      return (
-        <SvgColor
-          src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
-          sx={{ width: 20, height: 20, color: "info.main" }}
-        />
-      );
-    } else if (column?.originType === "evaluation") {
-      return (
-        <Iconify
-          icon="material-symbols:check-circle-outline"
-          sx={{ color: "info.success" }}
-        />
-      );
-    } else if (
-      column?.originType === "optimisation" ||
-      column?.originType === "optimisation_evaluation"
-    ) {
-      return (
-        <SvgColor
-          src={`/assets/icons/action_buttons/ic_optimize.svg`}
-          sx={{ width: 20, height: 20, color: "primary.main" }}
-        />
-      );
-    } else if (column?.originType === "annotation_label") {
-      return <Iconify icon="jam:write" sx={iconStyle} />;
-    } else if (dataType === "text") {
-      return <Iconify icon="material-symbols:notes" sx={iconStyle} />;
-    } else if (dataType === "array") {
-      return <Iconify icon="material-symbols:data-array" sx={iconStyle} />;
-    } else if (dataType === "integer") {
-      return <Iconify icon="material-symbols:tag" sx={iconStyle} />;
-    } else if (dataType === "float") {
-      return <Iconify icon="tabler:decimal" sx={iconStyle} />;
-    } else if (dataType === "boolean") {
-      return (
-        <Iconify icon="material-symbols:toggle-on-outline" sx={iconStyle} />
-      );
-    } else if (dataType === "datetime") {
-      return <Iconify icon="tabler:calendar" sx={iconStyle} />;
-    } else if (dataType === "json") {
-      return <Iconify icon="material-symbols:data-object" sx={iconStyle} />;
-    } else if (dataType === "image") {
-      return <Iconify icon="material-symbols:image-outline" sx={iconStyle} />;
-    } else if (dataType === "images") {
-      return (
-        <Iconify icon="material-symbols:art-track-outline" sx={iconStyle} />
-      );
-    }
-  };
-
   const thoughts = useMemo(() => {
     if (valueInfos) {
       const infoSources = [
@@ -234,7 +241,7 @@ const DatapointCard = ({
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          {renderIcon()}
+          <ColumnTypeIcon originType={column?.originType} dataType={dataType} />
           <CustomTooltip
             title={column?.headerName}
             show={column?.headerName?.length > 40}
@@ -553,7 +560,7 @@ DatapointCard.propTypes = {
   allowCopy: PropTypes.bool,
   onDiffClick: PropTypes.func,
   showDiff: PropTypes.bool,
-  activeTab: PropTypes.bool,
+  activeTab: PropTypes.string,
   sx: PropTypes.object,
   isEmptyField: PropTypes.bool,
   indColsDifTracker: PropTypes.object,

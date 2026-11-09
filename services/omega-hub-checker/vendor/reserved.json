@@ -1,0 +1,12 @@
+{
+  "handles": [
+    "future-agi", "futureagi", "omega", "official", "hub", "admin", "api", "me", "new", "search", "publish",
+    "review", "submissions", "settings", "publishers", "picks", "export", "internal", "security", "support",
+    "rules", "blocklist"
+  ],
+  "statusWords": [
+    "approved", "audited", "certified", "endorsed", "featured", "future-agi", "futureagi", "official",
+    "recommended", "reviewed", "staff-pick", "trusted", "trusted-publisher", "verified"
+  ],
+  "tagOnlyWords": ["community", "curated", "omega", "pick"]
+}

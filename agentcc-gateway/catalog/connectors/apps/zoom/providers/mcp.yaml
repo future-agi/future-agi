@@ -1,0 +1,67 @@
+# Zoom's remote MCP server "Zoom" (Workplace tools) at its global gateway,
+# with OAuth 2.0 and PKCE from Zoom's own authorization server. Zoom admits
+# only clients registered by hand: a General app the customer (or
+# FutureAGI, OA-V Zoom) creates on the Zoom App Marketplace, with the
+# server's tool scopes added to the app. Zoom grants the scopes configured
+# on that app, so the authorization request names none. Zoom has no dynamic
+# or metadata-document registration. EE is left out until its broker is
+# proven with an authorization request that names no scopes, and OSS until
+# its registry can carry the client id and secret Zoom requires.
+schema: "connector-manifest/v1#provider"
+app: zoom
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.zoom.us/mcp/zoom/streamable
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://zoom.us/oauth/authorize
+    tokenUrl: https://zoom.us/oauth/token
+    scopes: []
+    pkce: true
+    tokenBody: form
+    clientAuth: basic
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.zoom.us/docs/mcp/zoom/
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://developers.zoom.us/docs/mcp/zoom/
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developers.zoom.us/docs/mcp/servers.md
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developers.zoom.us/docs/integrations/oauth/
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://developers.zoom.us/docs/mcp/servers/connect-to-zoom-mcp-servers.md
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developers.zoom.us/docs/mcp/servers/connect-to-zoom-mcp-servers.md
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://developers.zoom.us/docs/mcp/servers.md
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://developers.zoom.us/docs/integrations/oauth/
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://developers.zoom.us/docs/mcp/servers/connect-to-zoom-mcp-servers.md
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

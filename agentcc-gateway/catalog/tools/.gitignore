@@ -1,0 +1,3 @@
+# The repo root ignores every media/ directory (Django uploads); the media
+# capability's price cards live in one, so it is re-included here.
+!media/

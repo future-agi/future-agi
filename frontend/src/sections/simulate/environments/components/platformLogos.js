@@ -1,19 +1,17 @@
-import vapiLogo from "src/assets/icons/platform-logos/vapi.svg?raw";
-import retellLogo from "src/assets/icons/platform-logos/retell.svg?raw";
-import blandLogo from "src/assets/icons/platform-logos/bland.svg?raw";
-import elevenlabsLogo from "src/assets/icons/platform-logos/elevenlabs.svg?raw";
-import livekitLogo from "src/assets/icons/platform-logos/livekit.svg?raw";
+import vapiLogo from "src/assets/brand-logos/vapi.svg?raw";
+import retellLogo from "src/assets/brand-logos/retell.svg?raw";
+import livekitLogo from "src/assets/brand-logos/livekit.svg?raw";
 
-/* Official brand marks for the hosted voice platforms, inlined so they inherit
-   `currentColor` (theme-aware). Each vendor's own published logo, used to
-   identify its integration — the same way the app labels its other service
-   integrations. `wordmark` logos already contain the brand name (so the chip
-   drops its text label); `mark` logos are a symbol only (chip keeps the name). */
+/* Official brand marks for the hosted voice platforms: the same bundled files
+   the experiment run-source catalog shows (src/assets/brand-logos; source and
+   licence of each in sections/common/RunSources/brandLogos.js), so a brand
+   has one mark across the product. Inlined so a one-colour mark inherits
+   `currentColor` (theme-aware); an optional `color` is the brand colour a
+   mark is drawn in. Every logo is a symbol (`mark`), so
+   the chip keeps the platform's name next to it. */
 export const PLATFORM_LOGOS = {
-  vapi: { svg: vapiLogo, type: "wordmark", maxWidth: 46 },
-  retell: { svg: retellLogo, type: "wordmark", maxWidth: 54 },
-  retell_chat: { svg: retellLogo, type: "wordmark", maxWidth: 54 },
-  bland: { svg: blandLogo, type: "mark" },
-  elevenlabs: { svg: elevenlabsLogo, type: "mark" },
+  vapi: { svg: vapiLogo, type: "mark" },
+  retell: { svg: retellLogo, type: "mark" },
+  retell_chat: { svg: retellLogo, type: "mark" },
   livekit: { svg: livekitLogo, type: "mark" },
 };

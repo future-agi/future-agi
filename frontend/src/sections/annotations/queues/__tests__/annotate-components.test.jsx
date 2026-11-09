@@ -915,7 +915,7 @@ describe("LabelPanel", () => {
       />,
     );
 
-    const itemNotes = screen.getByPlaceholderText("Add notes for this item...");
+    const itemNotes = screen.getByPlaceholderText(/^Why\? \(optional/);
     expect(itemNotes).toHaveValue("existing whole item note");
 
     await user.clear(itemNotes);
@@ -987,9 +987,7 @@ describe("LabelPanel", () => {
         screen.getByPlaceholderText("Add notes for this label..."),
       ).toHaveValue("");
     });
-    expect(
-      screen.getByPlaceholderText("Add notes for this item..."),
-    ).toHaveValue("");
+    expect(screen.getByPlaceholderText(/^Why\? \(optional/)).toHaveValue("");
 
     expect(
       screen.getByRole("button", { name: /submit & next/i }),
@@ -1090,9 +1088,9 @@ describe("LabelPanel", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByPlaceholderText("Add notes for this item..."),
-      ).toHaveValue("trace-level-only note");
+      expect(screen.getByPlaceholderText(/^Why\? \(optional/)).toHaveValue(
+        "trace-level-only note",
+      );
       expect(
         screen.getByPlaceholderText("Add notes for this label..."),
       ).toHaveValue("");
@@ -2423,6 +2421,9 @@ describe("AnnotationComparisonPanel", () => {
     });
   });
 
+  // Six drafts typed key by key re-render the whole panel on every key; under
+  // the full suite's parallel load that alone takes about 30 s, so this test
+  // has its own 60 s allowance.
   it("keeps request actions reachable when targeted feedback drafts grow", async () => {
     const user = userEvent.setup();
     const manyLabels = Array.from({ length: 6 }, (_, index) => ({
@@ -2462,10 +2463,13 @@ describe("AnnotationComparisonPanel", () => {
           name: new RegExp(`feedback for ${label.name} / narda`, "i"),
         }),
       );
-      await user.type(
-        screen.getByLabelText(`Feedback for ${label.name} / Narda`),
-        `adjust ${label.name}`,
-      );
+      // Each draft is pasted whole: the panel re-renders on every change, and
+      // typing six drafts a key at a time took 9 s alone and ran past the 30 s
+      // test timeout in the full suite.
+      const draft = screen.getByLabelText(`Feedback for ${label.name} / Narda`);
+      await user.click(draft);
+      await user.paste(`adjust ${label.name}`);
+      expect(draft).toHaveValue(`adjust ${label.name}`);
     }
 
     const actionBar = screen.getByTestId("review-action-bar");
@@ -2484,7 +2488,7 @@ describe("AnnotationComparisonPanel", () => {
     expect(
       within(actionBar).getByRole("button", { name: /approve/i }),
     ).toBeDisabled();
-  });
+  }, 60000);
 
   it("does not offer targeted feedback for annotators without a submitted score", () => {
     render(

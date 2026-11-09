@@ -9,6 +9,7 @@ import { usePathname } from "src/routes/hooks";
 import { useActiveLink } from "src/routes/hooks/use-active-link";
 
 import NavItem from "./nav-item";
+import InertNavItem from "../inert-nav-item";
 
 // ----------------------------------------------------------------------
 
@@ -36,6 +37,12 @@ export default function NavList({ data, depth, slotProps }) {
       setOpenMenu(true);
     }
   }, [data.children]);
+
+  if (data.inert) {
+    return (
+      <InertNavItem title={data.title} icon={data.icon} info={data.info} />
+    );
+  }
 
   return (
     <>

@@ -15,7 +15,7 @@ from model_hub.models.dataset_optimization_trial_item import (
     DatasetOptimizationItemEvaluation,
     DatasetOptimizationTrialItem,
 )
-from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.utils.dataset_optimization import (
@@ -57,7 +57,9 @@ def _request_org_workspace(serializer):
 
 def _workspace_filter(workspace, field_name):
     if workspace is None:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
     if getattr(workspace, "is_default", False):
         organization = getattr(workspace, "organization", None)
         query = Q(**{field_name: workspace})
@@ -148,6 +150,14 @@ class DatasetOptimizationCreateSerializer(serializers.ModelSerializer):
         column = self._scoped_column_queryset().filter(id=column_id).first()
         if column is None:
             return value
+        from model_hub.services.external_metrics import external_execution_refusal
+
+        # External metrics (SRV-5) are scored by the caller and never run.
+        refusal = external_execution_refusal(
+            value, queryset=self._scoped_eval_metric_queryset(column.dataset)
+        )
+        if refusal:
+            raise serializers.ValidationError(refusal)
         found_ids = set(
             self._scoped_eval_metric_queryset(column.dataset)
             .filter(id__in=value)
@@ -244,8 +254,12 @@ class DatasetOptimizationCreateSerializer(serializers.ModelSerializer):
 
         # Set ManyToMany relationship for user eval templates
         if user_eval_template_ids:
-            eval_templates = self._scoped_eval_metric_queryset(dataset).filter(
-                id__in=user_eval_template_ids
+            from model_hub.services.external_metrics import exclude_external
+
+            eval_templates = exclude_external(
+                self._scoped_eval_metric_queryset(dataset).filter(
+                    id__in=user_eval_template_ids
+                )
             )
             instance.user_eval_template_ids.set(eval_templates)
 
@@ -340,6 +354,7 @@ class DatasetOptimizationListSerializer(serializers.ModelSerializer):
             "baseline_score",
         ]
 
+    @swagger_serializer_method(serializer_or_field=serializers.IntegerField())
     def get_trial_count(self, obj):
         # Use annotated value if available, otherwise count
         if hasattr(obj, "trial_count"):
@@ -591,14 +606,10 @@ class DatasetOptimizationDetailSerializer(serializers.ModelSerializer):
                     "id": str(eval_metric.id),
                     "eval_id": str(eval_metric.id),
                     "name": (
-                        eval_metric.template.name
-                        if eval_metric.template
-                        else "Eval"
+                        eval_metric.template.name if eval_metric.template else "Eval"
                     ),
                     "template_id": (
-                        str(eval_metric.template.id)
-                        if eval_metric.template
-                        else None
+                        str(eval_metric.template.id) if eval_metric.template else None
                     ),
                 }
             )
@@ -667,3 +678,25 @@ class DatasetOptimizationDetailApiResponseSerializer(serializers.Serializer):
 
     status = serializers.BooleanField()
     result = DatasetOptimizationDetailSerializer()
+
+
+class DatasetOptimizationListMetadataSerializer(serializers.Serializer):
+    total_rows = serializers.IntegerField(
+        help_text="Runs matching the filters, before pagination."
+    )
+
+
+class DatasetOptimizationListResultSerializer(serializers.Serializer):
+    """The run table answered by ``GET /model-hub/dataset-optimization/``."""
+
+    metadata = DatasetOptimizationListMetadataSerializer()
+    table = DatasetOptimizationListSerializer(many=True, read_only=True)
+    column_config = DatasetOptimizationColumnConfigItemSerializer(many=True)
+
+
+class DatasetOptimizationListApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DatasetOptimizationListResultSerializer()
+
+    class Meta:
+        ref_name = None

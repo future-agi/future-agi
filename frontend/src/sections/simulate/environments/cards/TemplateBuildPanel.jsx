@@ -1,91 +1,95 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
-import { useNavigate } from "react-router-dom";
-import {
-  Box, Button, Stack, Tab, Typography,
-} from "@mui/material";
+import { Box, Button, Stack, Tab, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
-import { paths } from "src/routes/paths";
 import { useAdoptTemplate } from "src/api/simulate-environments/environments";
 import { packStats } from "../helpers/packStats";
-import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
-import { seedFromTemplate } from "../workspace/helpers/seedEnvState";
 import SectionCard from "../components/SectionCard";
 import LocalScaffoldCard from "./LocalScaffoldCard";
+import TemplateDraftPreview from "./TemplateDraftPreview";
 import {
   AGENT_STAT_VALUE,
   BUILD_MODES,
   BUILD_MODE_TABS,
-  CLOUD_BULLETS,
-  CLOUD_CARD,
-  NOTHING_TOUCHES_PRODUCTION,
+  DRAFT_BULLETS,
+  DRAFT_CARD,
+  LOCAL_DRAFT_NOTICE,
   STATS_CARD,
   TEMPLATE_ADOPT_LABEL,
   TEMPLATE_SHAPE,
+  TEMPLATE_STAT_COPY,
   surfaceIconFor,
 } from "../useTemplate.constants";
 
 /**
- * Build a prebuilt template — the "where to build it" panel.
- *
- * A template is a world that already exists (seeded state, tools, rules,
- * scenarios and a baseline agent), so there's nothing to derive. The only
- * decision is where to build it: here (cloud sandbox) or locally (CLI
- * scaffold). Rendered as the standalone Use-template page and inline as a
- * detail pane, so it takes a base `template` rather than owning a route.
+ * Inspect a library template locally or show its CLI scaffold instructions.
+ * A preview seeds draft data only: no sandbox, server id or workspace route.
+ * Used by both the standalone template page and the inline browse panel.
  */
 export default function TemplateBuildPanel({ template, showName = false }) {
-  const navigate = useNavigate();
-  const [mode, setMode] = useState(BUILD_MODES.CLOUD);
+  const [mode, setMode] = useState(BUILD_MODES.PREVIEW);
   const adopt = useAdoptTemplate();
-  const adoptEnvironment = useEnvironmentsStore((s) => s.adoptEnvironment);
-  const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
 
   if (!template) return null;
 
-  const rows = (template.seed?.tables || []).reduce((a, t) => a + (t.rows || 0), 0);
+  const rows = (template.seed?.tables || []).reduce(
+    (a, t) => a + (t.rows || 0),
+    0,
+  );
   const stats = [
-    { label: "World", value: `${rows.toLocaleString()} seeded rows` },
-    { label: "Tools", value: `${template.tools?.length || 0} the world answers` },
-    { label: "Hard rules", value: `${template.rules?.length || 0} graded on every run` },
-    { label: "Scenarios", value: `${packStats(template).scenarios} ready to run` },
+    { label: "World", value: TEMPLATE_STAT_COPY.world(rows) },
+    {
+      label: "Tools",
+      value: TEMPLATE_STAT_COPY.tools(template.tools?.length || 0),
+    },
+    {
+      label: "Hard rules",
+      value: TEMPLATE_STAT_COPY.rules(template.rules?.length || 0),
+    },
+    {
+      label: "Scenarios",
+      value: TEMPLATE_STAT_COPY.scenarios(packStats(template).scenarios),
+    },
     { label: "Evals", value: `${template.evalPreset?.length || 0} suggested` },
     { label: "Agent", value: AGENT_STAT_VALUE },
   ];
-
-  // Adopting a template seeds the workspace directly: register the env record,
-  // seed its per-env state (baseline agent, generated scenarios, the preset as
-  // suggested evals, the template lock), then open the workspace. There is no
-  // build page or derivation stream for a prebuilt world.
-  const handleAdopt = () =>
-    adopt.mutate(template.id, {
-      onSuccess: ({ envId }) => {
-        const now = new Date().toISOString();
-        adoptEnvironment({ ...template, id: envId, templateId: template.id }, now);
-        patchEnvState(envId, seedFromTemplate(template, now));
-        navigate(paths.dashboard.simulate.environments.detail(envId));
-      },
-    });
+  // Do not register this draft as an environment or open the backend workspace.
+  // That route has server reads and run controls, neither of which this local
+  // draft can satisfy. Ignore a prior template's draft after a route change.
+  const draft = adopt.data?.templateId === template.id ? adopt.data : null;
 
   return (
     <Stack spacing={2}>
       {showName && (
         <Box>
           <Stack direction="row" alignItems="center" spacing={0.75}>
-            <Iconify icon={surfaceIconFor(template.surface)} width={13} sx={{ color: "text.subtitle" }} />
+            <Iconify
+              icon={surfaceIconFor(template.surface)}
+              width={13}
+              sx={{ color: "text.subtitle" }}
+            />
             <Typography
               sx={{
-                typography: "s3", color: "text.subtitle", fontWeight: "fontWeightBold",
+                typography: "s3",
+                color: "text.subtitle",
+                fontWeight: "fontWeightBold",
                 letterSpacing: 0.5,
               }}
             >
               {(template.surface || "").toUpperCase()}
             </Typography>
           </Stack>
-          <Typography sx={{ typography: "m2", fontWeight: "fontWeightBold", mt: 0.5 }}>{template.name}</Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>{template.tagline}</Typography>
+          <Typography
+            sx={{ typography: "m2", fontWeight: "fontWeightBold", mt: 0.5 }}
+          >
+            {template.name}
+          </Typography>
+          <Typography
+            sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+          >
+            {template.tagline}
+          </Typography>
         </Box>
       )}
 
@@ -98,73 +102,128 @@ export default function TemplateBuildPanel({ template, showName = false }) {
           <Tab
             key={t.value}
             value={t.value}
-            label={(
-              <Stack component="span" direction="row" alignItems="center" spacing={0.75}>
+            label={
+              <Stack
+                component="span"
+                direction="row"
+                alignItems="center"
+                spacing={0.75}
+              >
                 <Iconify icon={t.icon} width={13} />
                 <Box component="span">{t.label}</Box>
               </Stack>
-            )}
+            }
           />
         ))}
       </SegmentedTabs>
 
-      {mode === BUILD_MODES.CLOUD && (
+      {mode === BUILD_MODES.PREVIEW && (
         <>
-          <SectionCard title={CLOUD_CARD.title} subtitle={CLOUD_CARD.subtitle}>
+          <SectionCard title={DRAFT_CARD.title} subtitle={DRAFT_CARD.subtitle}>
             <Stack sx={{ p: 2.5 }} spacing={1.75}>
-              {CLOUD_BULLETS.map((row) => (
-                <Stack key={row.text} direction="row" spacing={1.25} alignItems="flex-start">
-                  <Iconify icon={row.icon} width={16} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
-                  <Typography sx={{ typography: "s2", color: "text.secondary" }}>{row.text}</Typography>
+              {DRAFT_BULLETS.map((row) => (
+                <Stack
+                  key={row.text}
+                  direction="row"
+                  spacing={1.25}
+                  alignItems="flex-start"
+                >
+                  <Iconify
+                    icon={row.icon}
+                    width={16}
+                    sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }}
+                  />
+                  <Typography
+                    sx={{ typography: "s2", color: "text.secondary" }}
+                  >
+                    {row.text}
+                  </Typography>
                 </Stack>
               ))}
             </Stack>
             <Stack
-              direction="row" alignItems="center" spacing={1.5}
-              sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{
+                px: 2.5,
+                py: 2,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
             >
               <Button
-                variant="contained" color="primary"
-                onClick={handleAdopt}
+                variant="contained"
+                color="primary"
+                onClick={() => adopt.mutate(template)}
                 disabled={adopt.isPending}
-                startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold", whiteSpace: "nowrap" }}
+                startIcon={
+                  <Iconify icon="solar:document-text-linear" width={16} />
+                }
+                sx={{
+                  typography: "s2",
+                  fontWeight: "fontWeightBold",
+                  whiteSpace: "nowrap",
+                }}
               >
                 {TEMPLATE_ADOPT_LABEL}
               </Button>
             </Stack>
           </SectionCard>
 
+          <Box
+            sx={{
+              p: 2,
+              borderRadius: 1.25,
+              border: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Stack direction="row" spacing={1.25} alignItems="flex-start">
+              <Iconify
+                icon={LOCAL_DRAFT_NOTICE.icon}
+                width={16}
+                sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }}
+              />
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                <Box
+                  component="span"
+                  sx={{ fontWeight: "fontWeightBold", color: "text.primary" }}
+                >
+                  {LOCAL_DRAFT_NOTICE.heading}
+                </Box>{" "}
+                {LOCAL_DRAFT_NOTICE.body}
+              </Typography>
+            </Stack>
+          </Box>
+
+          {draft && (
+            <TemplateDraftPreview draft={draft} onClose={adopt.reset} />
+          )}
+
           <SectionCard title={STATS_CARD.title} subtitle={STATS_CARD.subtitle}>
             <Stack sx={{ px: 2.5, py: 2 }} spacing={1.25}>
               {stats.map((s) => (
                 <Stack key={s.label} direction="row" spacing={2}>
-                  <Typography sx={{ typography: "s2", color: "text.subtitle", width: 96, flexShrink: 0 }}>
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      color: "text.subtitle",
+                      width: 96,
+                      flexShrink: 0,
+                    }}
+                  >
                     {s.label}
                   </Typography>
-                  <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{s.value}</Typography>
+                  <Typography
+                    sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}
+                  >
+                    {s.value}
+                  </Typography>
                 </Stack>
               ))}
             </Stack>
           </SectionCard>
-
-          <Box
-            sx={{
-              p: 2, borderRadius: 1.25, border: "1px solid",
-              borderColor: (t) => alpha(t.palette.success.main, 0.3),
-              bgcolor: (t) => alpha(t.palette.success.main, t.palette.mode === "dark" ? 0.08 : 0.04),
-            }}
-          >
-            <Stack direction="row" spacing={1.25} alignItems="flex-start">
-              <Iconify icon={NOTHING_TOUCHES_PRODUCTION.icon} width={16} sx={{ color: "success.main", flexShrink: 0, mt: "1px" }} />
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                <Box component="span" sx={{ fontWeight: "fontWeightBold", color: "text.primary" }}>
-                  {NOTHING_TOUCHES_PRODUCTION.heading}
-                </Box>{" "}
-                {NOTHING_TOUCHES_PRODUCTION.body}
-              </Typography>
-            </Stack>
-          </Box>
         </>
       )}
 

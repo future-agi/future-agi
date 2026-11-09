@@ -16,6 +16,7 @@ from model_hub.serializers.develop_dataset_contracts import (
     DevelopDatasetMessageResponseSerializer,
 )
 from model_hub.tasks.develop_dataset import generate_new_columns, generate_new_rows
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -30,7 +31,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None)
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -71,9 +74,16 @@ class AddSyntheticData(APIView):
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             validated_data = request.validated_data
+            if validated_data.get("generation_mode") == "append":
+                from .append_generation import append_generation_response
+
+                return append_generation_response(request, dataset_id)
             dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
+            if validated_data.get("kb_id") and not knowledge_base_in_scope(request, validated_data["kb_id"]):
+                return self._gm.not_found("Knowledge base not found")
 
             if validated_data["num_rows"] < 10:
                 return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))
@@ -145,7 +155,9 @@ class AddSyntheticData(APIView):
                                 defaults={"id": uuid.uuid4(), "value": ""},
                             )
 
-            total_columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
+            total_columns = Column.objects.filter(
+                dataset=dataset, deleted=False
+            ).exclude(
                 source__in=[
                     SourceChoices.EXPERIMENT.value,
                     SourceChoices.EXPERIMENT_EVALUATION.value,
@@ -169,7 +181,9 @@ class AddSyntheticData(APIView):
                         status=CellStatus.RUNNING.value,
                     )
 
-            generate_new_rows.delay(dataset_id, validated_data, gen_columns, new_rows_id)
+            generate_new_rows.delay(
+                dataset_id, validated_data, gen_columns, new_rows_id
+            )
 
             return self._gm.success_response("Data Generation Started")
 

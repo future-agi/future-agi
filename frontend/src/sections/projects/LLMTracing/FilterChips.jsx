@@ -26,6 +26,8 @@ function buildChipParts(filter, fieldLabelMap) {
       more_than: ">",
       less_than: "<",
       between: "between",
+      is_null: "is empty",
+      is_not_null: "is not empty",
     }[op] || op;
 
   const val = filter?.filter_config?.filter_value;

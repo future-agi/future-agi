@@ -107,22 +107,36 @@ func TestWarmPublicationCannotChangeNewGeneration(t *testing.T) {
 			})
 			ck := CacheKey("k", "s")
 			a.cache.m.Store(ck, &cacheEntry{result: old, fetchedAt: time.Now().Add(-2 * time.Minute)})
-			if _, e := a.Authenticate(ctx, "k", "s"); e != nil {
-				t.Fatal(e)
-			}
+			done := make(chan composeAuthOutcome, 1)
+			go func() {
+				got, err := a.Authenticate(ctx, "k", "s")
+				done <- composeAuthOutcome{got, err}
+			}()
 			select {
 			case <-entered:
 			case <-ctx.Done():
-				t.Fatal("warm lookup did not start")
+				t.Fatal("expired-seed foreground lookup did not start")
+			}
+			select {
+			case <-done:
+				t.Fatal("expired seed was served before validation completed")
+			default:
 			}
 			a.InvalidateKey(ck)
 			if got, e := a.Authenticate(ctx, "k", "s"); e != nil || got != fresh {
 				t.Fatalf("fresh lookup failed: %v", e)
 			}
 			closeRelease.Do(func() { close(release) })
-			a.sfKey.Do(ck+":refresh", func() (any, error) { return nil, nil })
+			select {
+			case outcome := <-done:
+				if outcome.result == old {
+					t.Fatal("old foreground completion returned stale authentication")
+				}
+			case <-ctx.Done():
+				t.Fatal("old foreground completion did not settle")
+			}
 			if e, _ := a.cache.peek(ck); e == nil || e.result != fresh {
-				t.Fatal("old refresh changed the new generation")
+				t.Fatal("old completion changed the new generation")
 			}
 		})
 	}

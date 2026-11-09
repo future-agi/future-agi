@@ -26,6 +26,23 @@ type preparedExport struct {
 
 type exportDecoder func() (ptraceotlp.ExportRequest, error)
 
+type expectedTargetKey struct{}
+
+// withExpectedTarget carries an exporter's expected-target assertion to the
+// stamp (auth.StampResourceAttrsExpected), including across an auth restart,
+// which derives its context from this one. A nil assertion adds nothing.
+func withExpectedTarget(ctx context.Context, expected *auth.ExpectedTarget) context.Context {
+	if expected == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, expectedTargetKey{}, expected)
+}
+
+func expectedTargetFrom(ctx context.Context) *auth.ExpectedTarget {
+	expected, _ := ctx.Value(expectedTargetKey{}).(*auth.ExpectedTarget)
+	return expected
+}
+
 // prepareExport owns the pre-enqueue boundary for both transports. decode must
 // return a new request from the original, immutable wire bytes on EVERY call:
 // routing may have renamed resources or removed spans before the stamp fails.
@@ -90,7 +107,7 @@ func (s *Server) prepareExportAttempt(ctx context.Context, decode exportDecoder,
 			return preparedExport{}, &rejection{reason: "routing", kind: rejectBusy, retryAfter: "5", logged: true, msg: "simulation routing temporarily unavailable"}
 		}
 		before := req.Traces().SpanCount()
-		dropped, err := auth.StampResourceAttrs(ctx, s.auth, ck, req.Traces(), result)
+		dropped, err := auth.StampResourceAttrsExpected(ctx, s.auth, ck, req.Traces(), result, expectedTargetFrom(ctx))
 		if err != nil {
 			return preparedExport{}, err
 		}
@@ -131,6 +148,8 @@ func projectPreparationRejection(err error) *rejection {
 	switch {
 	case errors.As(err, &rej):
 		return rej
+	case errors.Is(err, auth.ErrExpectedTargetMismatch):
+		return &rejection{reason: "expected_target", status: http.StatusForbidden, code: codes.PermissionDenied, msg: auth.ErrExpectedTargetMismatch.Error()}
 	case errors.Is(err, auth.ErrProjectResolutionUnavailable), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return rejectProjectUnavailable
 	case errors.Is(err, auth.ErrTooManyNewProjects):

@@ -25,11 +25,20 @@ func (a *Authenticator) HTTPMiddleware(next http.Handler) http.Handler {
 		if err != nil {
 			if errors.Is(err, ErrUnauthenticated) {
 				a.log.Warn("http auth failed", "err", err)
+				if a.retiredPair(r.Context(), apiKey, secretKey) {
+					writeAPIKeyRetired(w)
+					return
+				}
 				http.Error(w, `{"error":"authentication failed"}`, http.StatusUnauthorized)
 				return
 			}
 			a.log.Error("http auth infrastructure error", "err", err)
 			http.Error(w, `{"error":"service temporarily unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+		expected, err := ParseExpectedHTTPHeaders(r.Header)
+		if err != nil || expected.CheckScope(result) != nil {
+			http.Error(w, ErrExpectedTargetMismatch.Error(), http.StatusForbidden)
 			return
 		}
 

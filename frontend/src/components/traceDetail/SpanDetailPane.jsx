@@ -12,6 +12,9 @@ import {
   Button,
   Collapse,
   IconButton,
+  ListItemText,
+  Menu,
+  MenuItem,
   Stack,
   Tab,
   Tabs,
@@ -33,6 +36,8 @@ import {
   defaultStyles,
 } from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
+import { COPY_TOAST, copyAs, toYaml } from "src/sections/common/Values/copyAs";
+import ValueTree from "src/sections/common/Values/ValueTree";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { enqueueSnackbar } from "notistack";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -46,6 +51,7 @@ import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 import EvalsTabView, { collectAllEvalsFromEntry } from "./EvalsTabView";
+import { addEvalsHrefFor } from "./addEvalsHref";
 import EvalRollupBreakdown from "./EvalRollupSection/EvalRollupBreakdown";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import ImageCard from "src/components/multimodal/ImageCard";
@@ -138,13 +144,30 @@ Highlight.propTypes = { text: PropTypes.string, query: PropTypes.string };
 
 /* ── ContentCard (collapsible I/O card) ───────────────── */
 
+// R2 (P6, L6): per-card modes Markdown · Raw · YAML · Tree, and a Copy ▾
+// menu (value / JSON / YAML / path). YAML and Tree need JSON content.
+const CARD_MODES = [
+  ["markdown", "Markdown"],
+  ["json", "Raw"],
+  ["yaml", "YAML"],
+  ["tree", "Tree"],
+];
+const CARD_COPY_ITEMS = [
+  ["value", "Copy value"],
+  ["json", "Copy as JSON"],
+  ["yaml", "Copy as YAML"],
+  ["path", "Copy path"],
+];
+
 const ContentCard = ({ title, content, viewMode = "markdown" }) => {
   const [expanded, setExpanded] = useState(true);
   const [localViewMode, setLocalViewMode] = useState(null); // null = use parent viewMode
+  const [copyEl, setCopyEl] = useState(null);
   const effectiveViewMode = localViewMode || viewMode;
+  const cardPath = String(title || "").toLowerCase();
 
   // Detect if content is JSON (object/array or parseable string)
-  const { isJson, jsonPretty, textContent } = useMemo(() => {
+  const { isJson, jsonPretty, textContent, parsed } = useMemo(() => {
     if (content == null || content === "")
       return { isJson: false, jsonPretty: "", textContent: "" };
 
@@ -154,18 +177,20 @@ const ContentCard = ({ title, content, viewMode = "markdown" }) => {
         isJson: true,
         jsonPretty: JSON.stringify(content, null, 2),
         textContent: JSON.stringify(content, null, 2),
+        parsed: content,
       };
     }
 
     // String — try to parse as JSON
     if (typeof content === "string") {
       try {
-        const parsed = JSON.parse(content);
-        if (typeof parsed === "object" && parsed !== null) {
+        const parsedValue = JSON.parse(content);
+        if (typeof parsedValue === "object" && parsedValue !== null) {
           return {
             isJson: true,
-            jsonPretty: JSON.stringify(parsed, null, 2),
+            jsonPretty: JSON.stringify(parsedValue, null, 2),
             textContent: content,
+            parsed: parsedValue,
           };
         }
       } catch {
@@ -213,40 +238,104 @@ const ContentCard = ({ title, content, viewMode = "markdown" }) => {
         >
           {title}
         </Typography>
-        {/* Per-card Markdown/Raw toggle */}
+        {/* Per-card Markdown / Raw / YAML / Tree toggle */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 0 }}>
-          {["markdown", "json"].map((mode) => (
-            <Typography
-              key={mode}
-              onClick={(e) => {
-                e.stopPropagation();
-                setLocalViewMode(mode);
-              }}
-              sx={{
-                fontSize: 10.5,
-                px: 0.75,
-                py: 0.15,
-                cursor: "pointer",
-                color:
-                  effectiveViewMode === mode ? "text.primary" : "text.disabled",
-                fontWeight: effectiveViewMode === mode ? 600 : 400,
-                "&:hover": { color: "text.secondary" },
-              }}
-            >
-              {mode === "json" ? "Raw" : "Markdown"}
-            </Typography>
-          ))}
+          {CARD_MODES.map(([mode, label]) => {
+            const needsJson = mode === "yaml" || mode === "tree";
+            const disabled = needsJson && !isJson;
+            const active = effectiveViewMode === mode;
+            const pill = (
+              <Typography
+                key={mode}
+                component="span"
+                role="button"
+                aria-pressed={active}
+                aria-disabled={disabled || undefined}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!disabled) setLocalViewMode(mode);
+                }}
+                sx={{
+                  fontSize: 10.5,
+                  px: 0.75,
+                  py: 0.15,
+                  cursor: disabled ? "default" : "pointer",
+                  color: active ? "text.primary" : "text.disabled",
+                  fontWeight: active ? 600 : 400,
+                  opacity: disabled ? 0.6 : 1,
+                  "&:hover": disabled ? {} : { color: "text.secondary" },
+                }}
+              >
+                {label}
+              </Typography>
+            );
+            return disabled ? (
+              <CustomTooltip
+                key={mode}
+                show
+                size="small"
+                placement="top"
+                title={`${label} needs JSON`}
+              >
+                {pill}
+              </CustomTooltip>
+            ) : (
+              pill
+            );
+          })}
         </Box>
-        <IconButton
-          size="small"
-          sx={{ p: 0.25 }}
-          onClick={(e) => {
-            e.stopPropagation();
-            copyText(displayText);
-          }}
+        <CustomTooltip show size="small" placement="top" title="Copy">
+          <IconButton
+            size="small"
+            aria-label="Copy"
+            aria-haspopup="menu"
+            sx={{ p: 0.25 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setCopyEl(e.currentTarget);
+            }}
+          >
+            <Iconify icon="tabler:copy" width={14} color="text.disabled" />
+          </IconButton>
+        </CustomTooltip>
+        <Menu
+          anchorEl={copyEl}
+          open={Boolean(copyEl)}
+          onClose={() => setCopyEl(null)}
+          onClick={(e) => e.stopPropagation()}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
         >
-          <Iconify icon="tabler:copy" width={14} color="text.disabled" />
-        </IconButton>
+          {CARD_COPY_ITEMS.map(([f, label]) => (
+            <MenuItem
+              key={f}
+              onClick={() => {
+                setCopyEl(null);
+                const text =
+                  f === "value"
+                    ? displayText
+                    : copyAs(parsed ?? content, f, { path: cardPath });
+                navigator.clipboard.writeText(text).then(() => {
+                  enqueueSnackbar(COPY_TOAST[f] ?? "Copied", {
+                    variant: "success",
+                    autoHideDuration: 1500,
+                  });
+                });
+              }}
+              sx={{ typography: "s2", minHeight: 30, py: 0.5 }}
+            >
+              <ListItemText
+                primary={label}
+                secondary={f === "path" ? cardPath : null}
+                primaryTypographyProps={{ typography: "s2" }}
+                secondaryTypographyProps={{
+                  typography: "s3",
+                  sx: { fontFamily: "monospace" },
+                }}
+              />
+            </MenuItem>
+          ))}
+        </Menu>
         <Iconify
           icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
           width={16}
@@ -275,8 +364,27 @@ const ContentCard = ({ title, content, viewMode = "markdown" }) => {
             lineHeight: "18px",
           }}
         >
-          {effectiveViewMode === "json" ||
-          (isJson && effectiveViewMode !== "markdown") ? (
+          {isJson && effectiveViewMode === "tree" ? (
+            <Box sx={{ whiteSpace: "normal", fontSize: 12 }}>
+              <ValueTree value={parsed} basePath={cardPath} maxHeight={280} />
+            </Box>
+          ) : isJson && effectiveViewMode === "yaml" ? (
+            <SyntaxHighlighter
+              language="yaml"
+              customStyle={{
+                margin: 0,
+                padding: 0,
+                background: "transparent",
+                fontSize: "11.5px",
+                lineHeight: "18px",
+                fontFamily: "'IBM Plex Mono', 'Fira Code', monospace",
+              }}
+              wrapLongLines
+            >
+              {toYaml(parsed)}
+            </SyntaxHighlighter>
+          ) : effectiveViewMode === "json" ||
+            (isJson && effectiveViewMode !== "markdown") ? (
             /* JSON/Raw — syntax highlighted like a code editor */
             <SyntaxHighlighter
               language="json"
@@ -312,7 +420,13 @@ ContentCard.propTypes = {
 
 /* ── FormatToggle (Markdown/JSON pill) ────────────────── */
 
-const MODE_LABELS = { markdown: "Markdown", json: "JSON", chat: "Chat" };
+const MODE_LABELS = {
+  markdown: "Markdown",
+  json: "JSON",
+  chat: "Chat",
+  yaml: "YAML",
+  tree: "Tree",
+};
 
 const FormatToggle = ({ value, onChange, modes = ["markdown", "json"] }) => (
   <Box
@@ -1261,46 +1375,47 @@ const InlineTagsRow = ({ tags = [], traceId, spanId, readOnly = false }) => {
 
       {!readOnly &&
         (isAdding ? (
-        <Box
-          sx={{ minWidth: 130 }}
-          onBlur={(e) => {
-            // Close if focus leaves the TagInput entirely
-            if (!e.currentTarget.contains(e.relatedTarget)) setIsAdding(false);
-          }}
-        >
-          <TagInput
-            onAdd={(newTag) => {
-              persist([...normalized, newTag]);
-              setIsAdding(false);
+          <Box
+            sx={{ minWidth: 130 }}
+            onBlur={(e) => {
+              // Close if focus leaves the TagInput entirely
+              if (!e.currentTarget.contains(e.relatedTarget))
+                setIsAdding(false);
             }}
-            existingNames={normalized.map((t) => t.name)}
-            disabled={isPending}
-            placeholder="tag name"
-          />
-        </Box>
-      ) : (
-        <Box
-          onClick={() => setIsAdding(true)}
-          sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "2px",
-            px: 0.5,
-            py: "1px",
-            borderRadius: "3px",
-            border: "1px dashed",
-            borderColor: "divider",
-            fontSize: 11,
-            color: "text.disabled",
-            cursor: "pointer",
-            lineHeight: "16px",
-            "&:hover": { borderColor: "primary.main", color: "primary.main" },
-          }}
-        >
-          <Iconify icon="mdi:plus" width={12} />
-          tag
-        </Box>
-      ))}
+          >
+            <TagInput
+              onAdd={(newTag) => {
+                persist([...normalized, newTag]);
+                setIsAdding(false);
+              }}
+              existingNames={normalized.map((t) => t.name)}
+              disabled={isPending}
+              placeholder="tag name"
+            />
+          </Box>
+        ) : (
+          <Box
+            onClick={() => setIsAdding(true)}
+            sx={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "2px",
+              px: 0.5,
+              py: "1px",
+              borderRadius: "3px",
+              border: "1px dashed",
+              borderColor: "divider",
+              fontSize: 11,
+              color: "text.disabled",
+              cursor: "pointer",
+              lineHeight: "16px",
+              "&:hover": { borderColor: "primary.main", color: "primary.main" },
+            }}
+          >
+            <Iconify icon="mdi:plus" width={12} />
+            tag
+          </Box>
+        ))}
     </Stack>
   );
 };
@@ -1728,9 +1843,13 @@ const SpanDetailPane = ({
   onSelectSpan,
   initialEvalFocus = false,
   drawerOpen = true,
+  chipsCollapsed = false,
   readOnly = false,
 }) => {
   const [activeTab, setActiveTab] = useState("preview");
+  // IT-R1 (additive, off by default): the metric chips fold behind
+  // `Details` so the span's input / output come first in a short pane.
+  const [chipsOpen, setChipsOpen] = useState(!chipsCollapsed);
   const evalFocusSeededRef = useRef(false);
   const lastEntryIdRef = useRef(null);
   useEffect(() => {
@@ -1936,20 +2055,47 @@ const SpanDetailPane = ({
           )}
         </Stack>
 
-        {/* Metric chips */}
-        <Stack direction="row" sx={{ mt: 1, flexWrap: "wrap", gap: "4px 8px" }}>
-          {chips.map((c) => (
-            <MetricChip key={c.label} label={c.label} value={c.value} />
-          ))}
-        </Stack>
+        {chipsCollapsed ? (
+          <Button
+            size="small"
+            color="inherit"
+            onClick={() => setChipsOpen((v) => !v)}
+            aria-expanded={chipsOpen}
+            data-testid="span-details-toggle"
+            sx={{
+              mt: 0.5,
+              px: 0.5,
+              minWidth: 0,
+              typography: "s3",
+              color: "text.secondary",
+            }}
+          >
+            {chipsOpen
+              ? "Hide details"
+              : "Details (type, status, time, tokens, cost)"}
+          </Button>
+        ) : null}
+        {chipsOpen ? (
+          <>
+            {/* Metric chips */}
+            <Stack
+              direction="row"
+              sx={{ mt: 1, flexWrap: "wrap", gap: "4px 8px" }}
+            >
+              {chips.map((c) => (
+                <MetricChip key={c.label} label={c.label} value={c.value} />
+              ))}
+            </Stack>
 
-        {/* Tags — span-level, inline add/remove */}
-        <InlineTagsRow
-          tags={span?.tags || []}
-          traceId={span?.trace}
-          spanId={span?.id}
-          readOnly={readOnly}
-        />
+            {/* Tags — span-level, inline add/remove */}
+            <InlineTagsRow
+              tags={span?.tags || []}
+              traceId={span?.trace}
+              spanId={span?.id}
+              readOnly={readOnly}
+            />
+          </>
+        ) : null}
       </Box>
 
       {/* ── Tab Bar ────────────────────────────────── */}
@@ -2165,52 +2311,64 @@ const SpanDetailPane = ({
               />
             )}
             <EvalsTabView
-            evals={collectAllEvalsFromEntry(entry)}
-            onSelectSpan={onSelectSpan}
-            emptyMessage="No evaluations for this span or its children"
-            showErrorLocalization={!readOnly}
-            showFixWithFalcon={!readOnly}
-            onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
-              const traceId = span?.trace;
-              if (level === "eval" && ev) {
+              evals={collectAllEvalsFromEntry(entry)}
+              onSelectSpan={onSelectSpan}
+              onAddEvals={
+                !readOnly && (projectId ?? span?.project) && span?.id
+                  ? () => {
+                      const href = addEvalsHrefFor({
+                        projectId: projectId ?? span?.project,
+                        span,
+                        returnTo: `${window.location.pathname}${window.location.search}`,
+                      });
+                      if (href) window.location.assign(href);
+                    }
+                  : null
+              }
+              emptyMessage="No evaluations for this span or its children"
+              showErrorLocalization={!readOnly}
+              showFixWithFalcon={!readOnly}
+              onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
+                const traceId = span?.trace;
+                if (level === "eval" && ev) {
+                  openFixWithFalcon({
+                    level: "eval",
+                    context: {
+                      trace_id: traceId,
+                      span_id: ev.spanId || ev.observation_span_id || span?.id,
+                      eval_log_id: ev.eval_log_id || ev.cell_id || ev.log_id,
+                      custom_eval_config_id:
+                        ev.custom_eval_config_id || ev.eval_config_id,
+                      eval_name: ev.eval_name,
+                      score: ev.score,
+                      explanation: ev.explanation || ev.eval_explanation,
+                      span_name: ev.spanName,
+                      project_id: projectId,
+                    },
+                  });
+                  return;
+                }
+                // Span-level or trace-level — include pass/fail summary so
+                // Falcon can gate (no fabricated failures when everything passes).
+                const total = (allEvals || []).length;
+                const passCount = (allEvals || []).filter(
+                  (e) => e.score != null && e.score >= 50,
+                ).length;
                 openFixWithFalcon({
-                  level: "eval",
+                  level: isRootSpan ? "trace" : "span",
                   context: {
                     trace_id: traceId,
-                    span_id: ev.spanId || ev.observation_span_id || span?.id,
-                    eval_log_id: ev.eval_log_id || ev.cell_id || ev.log_id,
-                    custom_eval_config_id:
-                      ev.custom_eval_config_id || ev.eval_config_id,
-                    eval_name: ev.eval_name,
-                    score: ev.score,
-                    explanation: ev.explanation || ev.eval_explanation,
-                    span_name: ev.spanName,
+                    span_id: isRootSpan ? undefined : span?.id,
+                    span_name: isRootSpan ? undefined : span?.name,
+                    evals_summary: `${passCount}/${total} passed`,
+                    failing_evals: (failingEvals || []).map((e) => ({
+                      name: e.eval_name,
+                      score: e.score,
+                    })),
                     project_id: projectId,
                   },
                 });
-                return;
-              }
-              // Span-level or trace-level — include pass/fail summary so
-              // Falcon can gate (no fabricated failures when everything passes).
-              const total = (allEvals || []).length;
-              const passCount = (allEvals || []).filter(
-                (e) => e.score != null && e.score >= 50,
-              ).length;
-              openFixWithFalcon({
-                level: isRootSpan ? "trace" : "span",
-                context: {
-                  trace_id: traceId,
-                  span_id: isRootSpan ? undefined : span?.id,
-                  span_name: isRootSpan ? undefined : span?.name,
-                  evals_summary: `${passCount}/${total} passed`,
-                  failing_evals: (failingEvals || []).map((e) => ({
-                    name: e.eval_name,
-                    score: e.score,
-                  })),
-                  project_id: projectId,
-                },
-              });
-            }}
+              }}
             />
           </>
         )}
@@ -2544,219 +2702,223 @@ const AttributesCard = ({
   return (
     <SingleImageViewerProvider>
       <AudioPlaybackProvider>
-    <Box
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "4px",
-        bgcolor: "background.paper",
-        overflow: "hidden",
-      }}
-    >
-      {/* Header — excluded from find-in-page */}
-      <Stack
-        data-search-skip="true"
-        direction="row"
-        alignItems="center"
-        sx={{ px: 1.5, py: 0.75, cursor: "pointer" }}
-        onClick={() => setExpanded((p) => !p)}
-      >
-        <Typography
-          variant="body2"
-          sx={{
-            fontSize: 13,
-            fontWeight: 500,
-            fontFamily: "'IBM Plex Sans', sans-serif",
-            flex: 1,
-          }}
-        >
-          Attributes
-        </Typography>
-        <IconButton
-          size="small"
-          sx={{ p: 0.25 }}
-          onClick={(e) => {
-            e.stopPropagation();
-            copyText(JSON.stringify(parsed, null, 2));
-          }}
-        >
-          <Iconify icon="tabler:copy" width={14} color="text.disabled" />
-        </IconButton>
-        <Iconify
-          icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
-          width={16}
-          sx={{ color: "text.disabled", ml: 0.25 }}
-        />
-      </Stack>
-
-      <Collapse in={expanded}>
-        {/* Search within attributes — hidden when parent owns the query */}
-        {!hideInlineSearch && (
-          <Box sx={{ px: 1.5, pb: 0.75 }}>
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 0.5,
-                px: 1,
-                py: 0.25,
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: "2px",
-                bgcolor: "background.default",
-              }}
-            >
-              <Iconify icon="mdi:magnify" width={12} color="text.disabled" />
-              <Box
-                component="input"
-                placeholder="Search attributes..."
-                value={attrSearch}
-                onChange={(e) => setAttrSearch(e.target.value)}
-                sx={{
-                  border: "none",
-                  outline: "none",
-                  flex: 1,
-                  fontSize: 11,
-                  color: "text.primary",
-                  bgcolor: "transparent",
-                  py: 0.15,
-                  "&::placeholder": { color: "text.disabled" },
-                }}
-              />
-            </Box>
-          </Box>
-        )}
-
         <Box
           sx={{
-            mx: 1.5,
-            mb: 1.5,
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "4px",
+            bgcolor: "background.paper",
             overflow: "hidden",
           }}
         >
-          {/* Table header — excluded from find-in-page */}
-          <Box
+          {/* Header — excluded from find-in-page */}
+          <Stack
             data-search-skip="true"
-            sx={{
-              display: "flex",
-              px: 1.5,
-              py: 0.5,
-              bgcolor: "background.default",
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
+            direction="row"
+            alignItems="center"
+            sx={{ px: 1.5, py: 0.75, cursor: "pointer" }}
+            onClick={() => setExpanded((p) => !p)}
           >
             <Typography
-              variant="caption"
+              variant="body2"
               sx={{
-                fontWeight: 600,
-                fontSize: 11,
-                width: "40%",
-                flexShrink: 0,
+                fontSize: 13,
+                fontWeight: 500,
+                fontFamily: "'IBM Plex Sans', sans-serif",
+                flex: 1,
               }}
             >
-              Path
+              Attributes
             </Typography>
-            <Typography
-              variant="caption"
-              sx={{ fontWeight: 600, fontSize: 11, flex: 1 }}
+            <IconButton
+              size="small"
+              sx={{ p: 0.25 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                copyText(JSON.stringify(parsed, null, 2));
+              }}
             >
-              Value
-            </Typography>
-          </Box>
+              <Iconify icon="tabler:copy" width={14} color="text.disabled" />
+            </IconButton>
+            <Iconify
+              icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
+              width={16}
+              sx={{ color: "text.disabled", ml: 0.25 }}
+            />
+          </Stack>
 
-          {/* Rows */}
-          <Box sx={{ maxHeight: 350, overflowY: "auto" }}>
-            {filteredEntries.length === 0 ? (
-              <Typography
-                variant="caption"
-                color="text.disabled"
-                sx={{ p: 1.5, display: "block", textAlign: "center" }}
-              >
-                {query ? "No matching attributes" : "No attributes"}
-              </Typography>
-            ) : (
-              filteredEntries.map(([key, val]) => {
-                const isObj =
-                  val !== null &&
-                  val !== undefined &&
-                  typeof val === "object" &&
-                  !Array.isArray(val);
-                const isArr = Array.isArray(val);
-                const isEmpty =
-                  val === null ||
-                  val === undefined ||
-                  val === "" ||
-                  (isObj && Object.keys(val).length === 0) ||
-                  (isArr && val.length === 0);
-
-                return (
+          <Collapse in={expanded}>
+            {/* Search within attributes — hidden when parent owns the query */}
+            {!hideInlineSearch && (
+              <Box sx={{ px: 1.5, pb: 0.75 }}>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 0.5,
+                    px: 1,
+                    py: 0.25,
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: "2px",
+                    bgcolor: "background.default",
+                  }}
+                >
+                  <Iconify
+                    icon="mdi:magnify"
+                    width={12}
+                    color="text.disabled"
+                  />
                   <Box
-                    key={key}
+                    component="input"
+                    placeholder="Search attributes..."
+                    value={attrSearch}
+                    onChange={(e) => setAttrSearch(e.target.value)}
                     sx={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      px: 1.5,
-                      py: 0.5,
-                      borderBottom: "1px solid",
-                      borderColor: "divider",
-                      "&:last-child": { borderBottom: "none" },
-                      "&:hover": { bgcolor: "action.hover" },
+                      border: "none",
+                      outline: "none",
+                      flex: 1,
+                      fontSize: 11,
+                      color: "text.primary",
+                      bgcolor: "transparent",
+                      py: 0.15,
+                      "&::placeholder": { color: "text.disabled" },
                     }}
+                  />
+                </Box>
+              </Box>
+            )}
+
+            <Box
+              sx={{
+                mx: 1.5,
+                mb: 1.5,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "4px",
+                overflow: "hidden",
+              }}
+            >
+              {/* Table header — excluded from find-in-page */}
+              <Box
+                data-search-skip="true"
+                sx={{
+                  display: "flex",
+                  px: 1.5,
+                  py: 0.5,
+                  bgcolor: "background.default",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: 600,
+                    fontSize: 11,
+                    width: "40%",
+                    flexShrink: 0,
+                  }}
+                >
+                  Path
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{ fontWeight: 600, fontSize: 11, flex: 1 }}
+                >
+                  Value
+                </Typography>
+              </Box>
+
+              {/* Rows */}
+              <Box sx={{ maxHeight: 350, overflowY: "auto" }}>
+                {filteredEntries.length === 0 ? (
+                  <Typography
+                    variant="caption"
+                    color="text.disabled"
+                    sx={{ p: 1.5, display: "block", textAlign: "center" }}
                   >
-                    <Typography
-                      variant="caption"
-                      fontWeight={500}
-                      noWrap
-                      sx={{
-                        width: "40%",
-                        flexShrink: 0,
-                        pt: 0.15,
-                        fontSize: 11,
-                        color: "text.secondary",
-                      }}
-                    >
-                      {query && key.toLowerCase().includes(query) ? (
-                        <Highlight text={key} query={query} />
-                      ) : (
-                        key
-                      )}
-                    </Typography>
-                    <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-                      {isEmpty ? (
+                    {query ? "No matching attributes" : "No attributes"}
+                  </Typography>
+                ) : (
+                  filteredEntries.map(([key, val]) => {
+                    const isObj =
+                      val !== null &&
+                      val !== undefined &&
+                      typeof val === "object" &&
+                      !Array.isArray(val);
+                    const isArr = Array.isArray(val);
+                    const isEmpty =
+                      val === null ||
+                      val === undefined ||
+                      val === "" ||
+                      (isObj && Object.keys(val).length === 0) ||
+                      (isArr && val.length === 0);
+
+                    return (
+                      <Box
+                        key={key}
+                        sx={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          px: 1.5,
+                          py: 0.5,
+                          borderBottom: "1px solid",
+                          borderColor: "divider",
+                          "&:last-child": { borderBottom: "none" },
+                          "&:hover": { bgcolor: "action.hover" },
+                        }}
+                      >
                         <Typography
                           variant="caption"
-                          color="text.disabled"
-                          sx={{ fontSize: 11 }}
+                          fontWeight={500}
+                          noWrap
+                          sx={{
+                            width: "40%",
+                            flexShrink: 0,
+                            pt: 0.15,
+                            fontSize: 11,
+                            color: "text.secondary",
+                          }}
                         >
-                          {isObj || isArr
-                            ? `empty ${isArr ? "array" : "object"}`
-                            : "—"}
+                          {query && key.toLowerCase().includes(query) ? (
+                            <Highlight text={key} query={query} />
+                          ) : (
+                            key
+                          )}
                         </Typography>
-                      ) : (
-                        <AttrValueCell
-                          value={val}
-                          expanded={expandedKeys[key]}
-                          onToggle={() => toggleKey(key)}
-                          searchQuery={query}
-                          path={key}
-                          spanId={spanId}
-                          traceId={traceId}
-                          audioCache={audioCache}
-                        />
-                      )}
-                    </Box>
-                  </Box>
-                );
-              })
-            )}
-          </Box>
+                        <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                          {isEmpty ? (
+                            <Typography
+                              variant="caption"
+                              color="text.disabled"
+                              sx={{ fontSize: 11 }}
+                            >
+                              {isObj || isArr
+                                ? `empty ${isArr ? "array" : "object"}`
+                                : "—"}
+                            </Typography>
+                          ) : (
+                            <AttrValueCell
+                              value={val}
+                              expanded={expandedKeys[key]}
+                              onToggle={() => toggleKey(key)}
+                              searchQuery={query}
+                              path={key}
+                              spanId={spanId}
+                              traceId={traceId}
+                              audioCache={audioCache}
+                            />
+                          )}
+                        </Box>
+                      </Box>
+                    );
+                  })
+                )}
+              </Box>
+            </Box>
+          </Collapse>
         </Box>
-      </Collapse>
-    </Box>
       </AudioPlaybackProvider>
     </SingleImageViewerProvider>
   );
@@ -2790,6 +2952,7 @@ SpanDetailPane.propTypes = {
   onSelectSpan: PropTypes.func,
   initialEvalFocus: PropTypes.bool,
   drawerOpen: PropTypes.bool,
+  chipsCollapsed: PropTypes.bool,
   readOnly: PropTypes.bool,
 };
 

@@ -41,6 +41,7 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from common.utils.page_limits import enforce_page_size, page_bounds
 from model_hub.models.choices import (
     AnnotationTypeChoices,
     DataTypeChoices,
@@ -76,6 +77,7 @@ from tracer.selectors.trace_filter_reads import (
     numbered_page_depth_exceeded,
 )
 from tracer.serializers.filters import (
+    ObserveGraphDataErrorResponseSerializer,
     ObserveGraphDataQuerySerializer,
     ObserveGraphDataRequestSerializer,
     ObserveGraphDataResponseSerializer,
@@ -167,7 +169,6 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
-from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import count_column_metadata
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
@@ -194,6 +195,7 @@ from tracer.utils.helper import (
     get_annotation_labels_by_project,
     get_annotation_labels_for_project,
     get_default_span_config,
+    unvalidated_relation_keys,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
 )
@@ -695,6 +697,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     serializer_class = ObservationSpanSerializer
 
     def get_queryset(self):
+        if not self.kwargs.get("pk"):
+            enforce_page_size(self.request.query_params.get("page_size"))
         observation_span_id = self.kwargs.get("pk")
         # Get base queryset with automatic filtering from mixin
         query_Set = (
@@ -721,8 +725,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         if trace_id:
             query_Set = query_Set.filter(trace_id=trace_id)
 
-        start = int(page_number) * int(page_size)
-        end = start + int(page_size)
+        start, end = page_bounds(int(page_number), int(page_size), query_Set.count())
 
         return query_Set[start:end]
 
@@ -1180,8 +1183,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Handle prompt version name (from PG, small config table)
         if observation_span["prompt_version"]:
             try:
+                # Only a prompt version of the caller's own templates is named.
                 prompt_version = PromptVersion.objects.get(
-                    id=observation_span["prompt_version"]
+                    id=observation_span["prompt_version"],
+                    original_template__organization=_get_request_organization(request),
                 )
                 observation_span["prompt_template_id"] = str(
                     prompt_version.original_template.id
@@ -1490,6 +1495,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("observation_spans is required")
 
             for observation_span in observation_span_data:
+                if unvalidated_relation_keys(
+                    ObservationSpan,
+                    observation_span,
+                    {"project", "project_version", "trace"},
+                ):
+                    raise ValueError("Unsupported observation span fields")
                 if not observation_span.get("id"):
                     observation_span["id"] = f"span_{uuid.uuid4().hex[:16]}"
                 observation_span["project"] = Project.objects.get(
@@ -1856,9 +1867,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     )
                     task_id = eval_logger.eval_task_id
 
-                    soft_delete_eval_results(
-                        EvalLogger.objects.filter(pk=eval_logger.pk)
-                    )
+                    eval_logger.deleted = True
+                    eval_logger.deleted_at = timezone.now()
+                    eval_logger.save(update_fields=["deleted", "deleted_at"])
                 except EvalLogger.DoesNotExist:
                     raise Exception("No eval associated with this span")  # noqa: B904
 
@@ -1873,17 +1884,16 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
                 if observation_span.project_version:
                     status = evaluate_observation_span(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
+                        observation_span_id=str(observation_span.id),
+                        custom_eval_config_id=str(custom_eval_config.id),
+                        feedback_id=feedback_id,
                     )
                 else:
                     status = evaluate_observation_span_observe(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
+                        observation_span_id=str(observation_span.id),
+                        custom_eval_config_id=str(custom_eval_config.id),
+                        eval_task_id=task_id,
+                        feedback_id=feedback_id,
                     )
 
                 if status:
@@ -3316,7 +3326,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             200: ObserveGraphDataResponseSerializer,
             400: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
-            503: ApiErrorResponseSerializer,
+            503: ObserveGraphDataErrorResponseSerializer,
         },
     )
     @action(detail=False, methods=["post"])
@@ -3464,10 +3474,24 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     graph,
                     allow_sampled=False,
                 ):
+                    logger.warning(
+                        "span_graph_degraded",
+                        query_error_code=graph.get("query_error_code"),
+                        project_id=project_id,
+                        eval_config_id=metric_id if metric_type == "EVAL" else None,
+                    )
+                    graph = {
+                        **graph,
+                        "data": [],
+                        "query_complete": False,
+                        "query_status": "degraded",
+                        "query_sampled": False,
+                        "message": "Graph data is temporarily unavailable. Please retry.",
+                    }
                     return finish(
                         self._gm.custom_error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "Graph data is temporarily unavailable. Please retry.",
+                            graph,
                             code="service_unavailable",
                         )
                     )
@@ -5402,7 +5426,13 @@ def _build_span_response(span):
 
     if data["prompt_version"]:
         try:
-            prompt_version = PromptVersion.objects.get(id=data["prompt_version"])
+            # Only a prompt version of the span project's organization is named.
+            prompt_version = PromptVersion.objects.get(
+                id=data["prompt_version"],
+                original_template__organization_id=getattr(
+                    span.project, "organization_id", None
+                ),
+            )
             data["prompt_template_id"] = str(prompt_version.original_template.id)
             data["prompt_name"] = (
                 str(prompt_version.original_template.name)

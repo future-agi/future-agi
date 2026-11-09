@@ -156,19 +156,20 @@ class TestCreateAdditionalOrganization:
         )
         assert ws_membership.role == OrganizationRoles.WORKSPACE_ADMIN
 
-    def test_creates_system_api_key(self, auth_client, creator_user):
-        """New org gets a system API key."""
+    def test_creates_no_api_key(self, auth_client, creator_user):
+        """Creating an org does not issue credentials of any type."""
+        before = OrgApiKey._base_manager.count()
         response = auth_client.post(
             "/accounts/organizations/new/",
             {"name": "API Key Org"},
             format="json",
         )
+        assert response.status_code == status.HTTP_201_CREATED
         result = response.json().get("result", response.json())
         org_id = result["organization"]["id"]
 
-        assert OrgApiKey.no_workspace_objects.filter(
-            organization_id=org_id, type="system"
-        ).exists()
+        assert not OrgApiKey._base_manager.filter(organization_id=org_id).exists()
+        assert OrgApiKey._base_manager.count() == before
 
     def test_does_not_change_primary_org_fk(
         self, auth_client, creator_user, primary_org

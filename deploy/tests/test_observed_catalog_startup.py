@@ -6,6 +6,8 @@ The installer tests own bounded waits and read-only checks inside the jobs.
 
 from __future__ import annotations
 
+import base64
+import os
 import re
 import shlex
 import shutil
@@ -35,6 +37,9 @@ PRODUCTION_ENV = {
     "CODE_EXECUTOR_VERSION": "startup-contract-executor",
     "SIMULATION_RUNNER_VERSION": "startup-contract-simulation",
     "SECRET_KEY": "startup-contract-secret",
+    "FI_API_SECRET_PEPPER": "startup-contract-api-secret-pepper-0123456789",
+    # A Fernet key (32 bytes, URL-safe base64), as the app requires at start.
+    "INTEGRATION_ENCRYPTION_KEY": base64.urlsafe_b64encode(os.urandom(32)).decode(),
     "AGENTCC_INTERNAL_API_KEY": "startup-contract-internal-key",
     "AGENTCC_ADMIN_TOKEN": "startup-contract-admin-token",
     "PG_PASSWORD": "startup-contract-pg-password",
@@ -43,6 +48,14 @@ PRODUCTION_ENV = {
     "PROPERTY_CATALOG_CONSUMER_PASSWORD": "startup-contract-catalog-writer",
     "FRONTEND_URL": "https://app.example.com",
     "VITE_HOST_API": "https://api.example.com",
+    # The Omega Hub checker and its dedicated runner host (deploy/hub-runner).
+    "OMEGA_HUB_CHECKER_VERSION": "startup-contract-hub-checker",
+    "OMEGA_HUB_CHECKER_TOKEN": "startup-contract-hub-checker-token",
+    "OMEGA_HUB_APP_URL": "https://app.example.com/dashboard/hub",
+    "OMEGA_HUB_PUBLIC_API_URL": "https://api.example.com/omega-hub/v1",
+    "OMEGA_HUB_RUNNER_IMAGE": "registry.example.com/omega-hub-runner@sha256:" + "0" * 64,
+    "OMEGA_HUB_RUNNER_DOCKER_HOST": "tcp://hub-runner.example.internal:2376",
+    "OMEGA_HUB_RUNNER_TLS_DIR": "/etc/futureagi/hub-runner-client",
 }
 PG_BOOTSTRAP = "postgres-schema-bootstrap"
 INDEX_BOOTSTRAP = "property-catalog-clickhouse-bootstrap"
@@ -462,6 +475,8 @@ class StartupComposeContractTests(unittest.TestCase):
     def test_production_jobs_and_all_workers_inherit_required_auth_values(self):
         required = (
             "SECRET_KEY",
+            "FI_API_SECRET_PEPPER",
+            "INTEGRATION_ENCRYPTION_KEY",
             "AGENTCC_INTERNAL_API_KEY",
             "AGENTCC_ADMIN_TOKEN",
             "PG_PASSWORD",

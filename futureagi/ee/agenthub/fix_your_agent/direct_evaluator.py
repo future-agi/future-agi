@@ -10,15 +10,15 @@ No multi-turn conversation simulation is performed.
 
 import asyncio
 import threading
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
-import structlog
 import litellm
+import structlog
 
 from ee.agent_opt.types import EvaluationResult
 from ee.agent_opt.utils.template_variables import (
-    validate_template_variables,
     repair_template_variables,
+    validate_template_variables,
 )
 from model_hub.utils.scoring import score_eval_output
 
@@ -67,13 +67,13 @@ class DirectEvaluator:
 
     def __init__(
         self,
-        user_eval_configs: List[Any],  # List of SimulateEvalConfig or similar
+        user_eval_configs: list[Any],  # List of SimulateEvalConfig or similar
         execution_model: str = "gpt-4o",
         initial_agent_prompt: str = "",
-        organization: Optional[Any] = None,
-        workspace: Optional[Any] = None,
+        organization: Any | None = None,
+        workspace: Any | None = None,
         eval_source: str = "dataset_optimization",
-        template_variables: Optional[Set[str]] = None,
+        template_variables: set[str] | None = None,
         max_parallel_evals: int = 5,
     ):
         self.user_eval_configs = user_eval_configs or []
@@ -97,7 +97,7 @@ class DirectEvaluator:
             else [],
         )
 
-    def evaluate(self, inputs: List[Dict[str, Any]]) -> List[EvaluationResult]:
+    def evaluate(self, inputs: list[dict[str, Any]]) -> list[EvaluationResult]:
         """
         Evaluate each input using direct LLM call + existing eval system.
         Inputs are processed concurrently using asyncio (acompletion for LLM calls).
@@ -123,8 +123,8 @@ class DirectEvaluator:
         return _run_async(self._evaluate_all_async(inputs))
 
     async def _evaluate_all_async(
-        self, inputs: List[Dict[str, Any]]
-    ) -> List[EvaluationResult]:
+        self, inputs: list[dict[str, Any]]
+    ) -> list[EvaluationResult]:
         semaphore = asyncio.Semaphore(self.max_parallel_evals)
         tasks = [
             self._evaluate_single_input_async(idx, input_data, semaphore)
@@ -133,7 +133,7 @@ class DirectEvaluator:
         return await asyncio.gather(*tasks)
 
     async def _evaluate_single_input_async(
-        self, idx: int, input_data: Dict[str, Any], semaphore: asyncio.Semaphore
+        self, idx: int, input_data: dict[str, Any], semaphore: asyncio.Semaphore
     ) -> EvaluationResult:
         async with semaphore:
             try:
@@ -143,7 +143,7 @@ class DirectEvaluator:
                 return EvaluationResult(score=0.0, reason=f"Evaluation failed: {e}")
 
     async def _evaluate_single_input_impl(
-        self, idx: int, input_data: Dict[str, Any]
+        self, idx: int, input_data: dict[str, Any]
     ) -> EvaluationResult:
         try:
             prompt_template = input_data.get("agent_prompt", "")
@@ -258,7 +258,7 @@ class DirectEvaluator:
             logger.error(f"Evaluation failed for input {idx}: {e}", exc_info=True)
             return EvaluationResult(score=0.0, reason=f"Evaluation failed: {e}")
 
-    def _fill_template(self, template: str, variables: Dict[str, Any]) -> str:
+    def _fill_template(self, template: str, variables: dict[str, Any]) -> str:
         """Replace {variable} and {{variable}} placeholders with actual values."""
         import re
 
@@ -303,7 +303,7 @@ class DirectEvaluator:
 
     async def _call_llm_async(self, prompt: str) -> str:
         logger.info(
-            f"DirectEvaluator._call_llm_async called",
+            "DirectEvaluator._call_llm_async called",
             model=self.execution_model,
             prompt_len=len(prompt),
         )
@@ -316,7 +316,7 @@ class DirectEvaluator:
             )
             output = response.choices[0].message.content
             logger.info(
-                f"LLM call succeeded",
+                "LLM call succeeded",
                 output_len=len(output) if output else 0,
             )
             return output
@@ -327,10 +327,10 @@ class DirectEvaluator:
     def _run_eval_with_config(
         self,
         eval_config,
-        input_data: Dict[str, Any],
+        input_data: dict[str, Any],
         output: str,
         prompt: str,
-    ) -> Tuple[float, str]:
+    ) -> tuple[float, str]:
         """
         Run evaluation using existing eval system (run_eval_func).
         Pattern borrowed from SimulationEvaluator._run_eval_with_config().
@@ -344,8 +344,8 @@ class DirectEvaluator:
         Returns:
             Tuple of (score, reason)
         """
-        from model_hub.views.utils.evals import run_eval_func
         from model_hub.models.evals_metric import EvalTemplate
+        from model_hub.views.utils.evals import run_eval_func
 
         eval_template = eval_config.eval_template
 
@@ -420,6 +420,15 @@ class DirectEvaluator:
 
         # Prepare config
         config = eval_config.config.copy() if eval_config.config else {}
+        # Optimizers do not support Choices score overrides. Keep template-only
+        # scoring without mutating the saved binding or other runtime settings.
+        config.pop("choice_scores", None)
+        if isinstance(config.get("run_config"), dict):
+            config["run_config"] = {
+                key: value
+                for key, value in config["run_config"].items()
+                if key != "choice_scores"
+            }
 
         # Run evaluation using existing infrastructure
         try:
@@ -480,8 +489,8 @@ class DirectEvaluator:
             return self._run_eval_direct(eval_template, updated_mapping)
 
     def _run_eval_direct(
-        self, eval_template, mapping: Dict[str, Any]
-    ) -> Tuple[float, str]:
+        self, eval_template, mapping: dict[str, Any]
+    ) -> tuple[float, str]:
         """Fallback: run eval by directly instantiating the eval class."""
         from agentic_eval.core_evals import fi_evals
 

@@ -16,8 +16,8 @@ import GroupCard from "./GroupCard";
 import SvgColor from "../../../components/svg-color";
 import { useEvalStore } from "../store/useEvalStore";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
-import { useNavigate } from "react-router";
 import DeleteGroupModal from "./DeleteGroup";
+import NewGroupDialog from "./NewGroupDialog";
 import EvalPlayground from "../EvalPlayground/EvalPlayground";
 import PropTypes from "prop-types";
 import { useEvaluationContext } from "../../common/EvaluationDrawer/context/EvaluationContext";
@@ -29,7 +29,6 @@ export default function GroupsGrid({ isEvalsView, onGroupSelect }) {
   const { role } = useAuthContext();
   const theme = useTheme();
   const [searchQuery, setSearchQuery] = useState("");
-  const navigate = useNavigate();
   const { setVisibleSection, setCurrentTab } = useEvaluationContext();
 
   const [openDeleteModal, setOpenDeleteModal] = useState(null);
@@ -101,13 +100,14 @@ export default function GroupsGrid({ isEvalsView, onGroupSelect }) {
     scrollContainerRef,
   ]);
 
+  const [newGroupOpen, setNewGroupOpen] = useState(false);
   const handleCreate = () => {
-    setCreateGroupMode(true);
     if (isEvalsView) {
-      navigate("/dashboard/evaluations", {
-        state: { createMode: true },
-      });
+      // L7b G6 groups:create: the Groups page creates the group itself
+      // (name, description, evals) and then opens its page.
+      setNewGroupOpen(true);
     } else {
+      setCreateGroupMode(true);
       setVisibleSection("config");
       setCurrentTab("evals");
     }
@@ -291,6 +291,12 @@ export default function GroupsGrid({ isEvalsView, onGroupSelect }) {
           </Box>
         </Stack>
       </Stack>
+      {isEvalsView && (
+        <NewGroupDialog
+          open={newGroupOpen}
+          onClose={() => setNewGroupOpen(false)}
+        />
+      )}
       <DeleteGroupModal
         open={openDeleteModal !== null}
         id={openDeleteModal}

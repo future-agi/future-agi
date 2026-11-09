@@ -9,12 +9,17 @@ Features:
 - Custom authentication (API key, bearer token)
 - Custom token cost calculations
 - Non-streaming execution (custom models don't support streaming)
+
+The endpoint is a URL a workspace member typed, so every call goes through
+``tfc.utils.ssrf_guard.guarded_post``: the address is checked against the
+deployment's policy on every call (rows saved before the stored config was
+normalized included), redirects are refused, metadata headers are dropped,
+the body is capped and errors are generic. Logs carry no URL or headers.
 """
 
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
-import requests
 import structlog
 
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
@@ -25,6 +30,15 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.payload_builder import (
     PayloadBuilder,
 )
+from tfc.utils.ssrf_guard import (
+    EndpointBlocked,
+    GuardedRequestError,
+    endpoint_status_message,
+    guarded_post,
+)
+
+# Five minutes: some self-hosted models are slow, as before.
+_REQUEST_TIMEOUT_SECONDS = 300
 
 logger = structlog.get_logger(__name__)
 
@@ -35,7 +49,8 @@ class CustomModelHandler(BaseModelHandler):
 
     Custom models are defined in the model_hub.CustomAIModel table with:
     - user_model_id: The model identifier used in requests
-    - key_config: JSON containing endpoint_url and authentication headers
+    - key_config: JSON containing the endpoint (api_base; endpoint_url on rows
+      saved before it was normalized) and authentication headers
     - input_token_cost: Cost per million input tokens
     - output_token_cost: Cost per million output tokens
     - provider: Set to "custom" for custom models
@@ -50,7 +65,7 @@ class CustomModelHandler(BaseModelHandler):
         """
         super().__init__(context)
         self._validate_context()
-        self._custom_model_config: Optional[Dict[str, Any]] = None
+        self._custom_model_config: dict[str, Any] | None = None
         self._load_custom_model_config()
 
     def _load_custom_model_config(self) -> None:
@@ -62,6 +77,7 @@ class CustomModelHandler(BaseModelHandler):
         """
         try:
             from model_hub.models.custom_models import CustomAIModel
+            from model_hub.utils.model_endpoints import custom_endpoint_from_config
 
             custom_model = CustomAIModel.objects.get(
                 organization_id=self.context.organization_id,
@@ -76,13 +92,7 @@ class CustomModelHandler(BaseModelHandler):
             if not key_config:
                 raise ValueError(f"Custom model {self.context.model} has no key_config")
 
-            endpoint_url = key_config.get("endpoint_url")
-            if not endpoint_url:
-                raise ValueError(
-                    f"Custom model {self.context.model} missing endpoint_url in key_config"
-                )
-
-            headers = key_config.get("headers", {})
+            endpoint_url, headers = custom_endpoint_from_config(key_config)
 
             self._custom_model_config = {
                 "endpoint_url": endpoint_url,
@@ -94,7 +104,6 @@ class CustomModelHandler(BaseModelHandler):
 
             logger.info(
                 f"[CustomModel] Loaded config for {self.context.model}",
-                endpoint_url=endpoint_url,
                 has_headers=bool(headers),
             )
 
@@ -104,9 +113,9 @@ class CustomModelHandler(BaseModelHandler):
             )
             raise ValueError(
                 f"Custom model {self.context.model} not found or invalid: {e}"
-            )
+            ) from e
 
-    def _build_request_payload(self) -> Dict[str, Any]:
+    def _build_request_payload(self) -> dict[str, Any]:
         """
         Build request payload for custom model API.
 
@@ -136,7 +145,7 @@ class CustomModelHandler(BaseModelHandler):
 
     def _calculate_token_costs(
         self, prompt_text: str, completion_text: str, image_urls: list
-    ) -> Tuple[int, int, Dict[str, float]]:
+    ) -> tuple[int, int, dict[str, float]]:
         """
         Calculate token counts and costs for custom model.
 
@@ -157,8 +166,14 @@ class CustomModelHandler(BaseModelHandler):
         )
 
         # Count tokens
-        estimated_prompt_tokens = (count_tiktoken_tokens(prompt_text, image_urls) if count_tiktoken_tokens else 0)
-        estimated_completion_tokens = (count_tiktoken_tokens(completion_text) if count_tiktoken_tokens else 0)
+        estimated_prompt_tokens = (
+            count_tiktoken_tokens(prompt_text, image_urls)
+            if count_tiktoken_tokens
+            else 0
+        )
+        estimated_completion_tokens = (
+            count_tiktoken_tokens(completion_text) if count_tiktoken_tokens else 0
+        )
 
         # Prepare usage payload for cost calculation
         token_usage = {
@@ -187,7 +202,7 @@ class CustomModelHandler(BaseModelHandler):
 
     def _extract_message_content_for_token_counting(
         self, messages: list
-    ) -> Tuple[str, list]:
+    ) -> tuple[str, list]:
         """
         Extract text and image URLs from messages for token counting.
 
@@ -218,7 +233,7 @@ class CustomModelHandler(BaseModelHandler):
         return " ".join(text_parts), image_urls
 
     def _make_custom_api_request(
-        self, payload: Dict[str, Any], start_time: float
+        self, payload: dict[str, Any], start_time: float
     ) -> HandlerResponse:
         """
         Make HTTP request to custom model endpoint.
@@ -235,20 +250,29 @@ class CustomModelHandler(BaseModelHandler):
 
         try:
             logger.info(
-                f"[CustomModel] Making request to {endpoint_url}",
+                "[CustomModel] Making request",
                 model=self.context.model,
                 message_count=len(payload.get("messages", [])),
             )
 
-            # Make POST request to custom endpoint
-            response = requests.post(
+            # Address-checked, pinned POST; the policy is applied on every
+            # call, so rows saved before the fix are covered too.
+            response = guarded_post(
                 endpoint_url,
-                headers=headers,
                 json=payload,
-                timeout=300,  # 5 minute timeout for custom models
+                headers=headers,
+                timeout=_REQUEST_TIMEOUT_SECONDS,
             )
-
-            response.raise_for_status()
+            if response.status_code >= 400:
+                logger.warning(
+                    "[CustomModel] Endpoint answered an error status",
+                    model=self.context.model,
+                    status_code=response.status_code,
+                )
+                raise RuntimeError(
+                    "Custom model API request failed: "
+                    + endpoint_status_message(response.status_code)
+                )
             response_content = response.text
 
             end_time = time.time()
@@ -277,20 +301,8 @@ class CustomModelHandler(BaseModelHandler):
                 "response_time": completion_time,
             }
 
-            # Build value_info
-            value_info = {
-                "name": None,
-                "data": {"response": response_content},
-                "failure": None,
-                "runtime": completion_time,
-                "model": self.context.model,
-                "metrics": [],
-                "metadata": metadata,
-                "output": None,
-            }
-
             logger.info(
-                f"[CustomModel] Request completed",
+                "[CustomModel] Request completed",
                 model=self.context.model,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
@@ -305,19 +317,19 @@ class CustomModelHandler(BaseModelHandler):
                 metadata=metadata,
             )
 
-        except requests.exceptions.Timeout as e:
-            logger.error(
-                f"[CustomModel] Request timeout for {self.context.model}: {e}",
-                endpoint=endpoint_url,
+        except (EndpointBlocked, GuardedRequestError) as e:
+            # Value-free: the category, never the URL, address or headers.
+            logger.warning(
+                "[CustomModel] Request refused or failed",
+                model=self.context.model,
+                category=e.category,
             )
-            raise TimeoutError(f"Custom model request timed out after 300 seconds: {e}")
-
-        except requests.exceptions.RequestException as e:
-            logger.exception(
-                f"[CustomModel] Request failed for {self.context.model}: {e}",
-                endpoint=endpoint_url,
-            )
-            raise RuntimeError(f"Custom model API request failed: {e}")
+            if e.category == "timeout":
+                raise TimeoutError(
+                    f"Custom model request timed out after "
+                    f"{_REQUEST_TIMEOUT_SECONDS} seconds: {e}"
+                ) from None
+            raise RuntimeError(f"Custom model API request failed: {e}") from None
 
         except Exception as e:
             logger.exception(
@@ -341,7 +353,7 @@ class CustomModelHandler(BaseModelHandler):
 
         try:
             logger.info(
-                f"[CustomModel] Executing custom model request",
+                "[CustomModel] Executing custom model request",
                 model=self.context.model,
                 organization_id=self.context.organization_id,
             )
@@ -368,7 +380,7 @@ class CustomModelHandler(BaseModelHandler):
         Execute custom model request (asynchronous).
 
         Note: Currently wraps synchronous execution.
-        Custom models use requests library which is synchronous.
+        The guarded POST custom models use is synchronous.
 
         Args:
             streaming: Ignored - custom models don't support streaming

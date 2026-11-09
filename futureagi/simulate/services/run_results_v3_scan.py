@@ -935,6 +935,7 @@ def scan_call_values(
         [],
         {str(row_id) for _, row_id, _ in pending_goals if row_id},
         names=("use_case", "goal"),
+        execution=execution,
     )
     for row, row_id, fallbacks in pending_goals:
         cells = dimensions.get(str(row_id), {})

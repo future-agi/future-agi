@@ -1,0 +1,115 @@
+# Google's BigQuery MCP server: OAuth 2.0 with IAM, no API key. A third-party
+# client uses a Google OAuth client id and secret (a web client whose
+# redirect URI is our callback), with the bigquery scope. The client is
+# Google's group (clientGroup google), so EE may give it its shared Google
+# client, whose secret goes only to Google's token endpoint. access_type
+# offline asks Google for a refresh token.
+#
+# Before a call works, the customer's Cloud project needs the BigQuery MCP
+# server enabled, and the person needs the MCP Tool User role plus BigQuery
+# roles on the data (BigQuery Job User, BigQuery Data Viewer).
+#
+# EE does not receive this provider. EE gives every app in group google
+# whose source is built-in (as every app in ee-apps.json is) FutureAGI's
+# shared Google client when the app has none of its own
+# (EE:packages/server/src/workspace/integrations/apps.ts:117-118 at
+# 49321478e4). That client's project does not have its APIs enabled yet (the
+# owner's registration record, CONNECTORS-PLAN AM-C19), so EE would show
+# BigQuery as connectable while every connect failed. The exclusion lifts
+# when the owner enables the BigQuery API and the BigQuery MCP server on that
+# project and adds the bigquery scope to its consent screen, or when EE
+# stops sharing the Google client with apps beyond its own three.
+schema: "connector-manifest/v1#provider"
+app: google-bigquery
+id: mcp
+version: 1.0.2
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://bigquery.googleapis.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://accounts.google.com/o/oauth2/v2/auth
+    tokenUrl: https://oauth2.googleapis.com/token
+    scopes: ["https://www.googleapis.com/auth/bigquery"]
+    pkce: false
+    tokenBody: form
+    clientAuth: body
+    extraAuthorizeParams: { access_type: offline }
+    revocation:
+      url: https://oauth2.googleapis.com/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered]
+    clientGroup: google
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: auth.oauth2.revocation.url
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://docs.cloud.google.com/bigquery/docs/use-bigquery-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://docs.cloud.google.com/mcp/supported-products
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.cloud.google.com/bigquery/docs/use-bigquery-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.cloud.google.com/bigquery/docs/use-bigquery-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.cloud.google.com/mcp/authenticate-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://docs.cloud.google.com/bigquery/docs/use-bigquery-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.extraAuthorizeParams
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://docs.cloud.google.com/mcp/authenticate-mcp
+    fetchedAt: 2026-10-21
+x-omega:
+  ee: exclude
+  publicClient:
+    supported: false
+    evidence:
+      - url: https://docs.cloud.google.com/mcp/authenticate-mcp
+        fetchedAt: 2026-10-21
+        sha256: c0582e23bc8951ef94e6ce1abc62e8341ee9835aba23d1d57f6df828f3ecb794
+        quote: "You can create an OAuth 2.0 client ID and client secret for your MCP client to use to authenticate to Google and Google Cloud remote MCP servers."
+      - url: https://docs.cloud.google.com/mcp/authenticate-mcp
+        fetchedAt: 2026-10-21
+        sha256: c0582e23bc8951ef94e6ce1abc62e8341ee9835aba23d1d57f6df828f3ecb794
+        quote: "Google and Google Cloud remote MCP servers don't support Dynamic Client Registration or OAuth Client ID Metadata Documents."
+      - url: https://docs.cloud.google.com/bigquery/docs/use-bigquery-mcp
+        fetchedAt: 2026-10-21
+        sha256: f2b3d48595e371bd4195bc0674527ce6c90440e5f67b2ad5194164cff3c44a57
+        quote: "you can enter your Google Cloud credentials, your OAuth Client ID and secret, or an agent identity and credentials."

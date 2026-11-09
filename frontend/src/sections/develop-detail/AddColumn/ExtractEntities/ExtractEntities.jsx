@@ -3,6 +3,8 @@ import React, { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
+import RerunScopeField from "../RerunScopeField";
+import { withRerunScope } from "../rerunScope";
 import ConfigureKeys from "../../Common/ConfigureKeys/ConfigureKeys";
 import { ExtractEntitiesValidationSchema } from "./validation";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -20,6 +22,7 @@ import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { rerunResultToast } from "../rerunResult";
 
 const getDefaultValue = () => {
   return {
@@ -94,21 +97,26 @@ export const ExtractEntitiesChild = ({
         endpoints.develop.addColumns.updateDynamicColumn(editId),
         data,
       ),
-    onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
-        variant: "success",
-      });
+    onSuccess: (res) => {
+      const toast = rerunResultToast("Extract Entities", res);
+      enqueueSnackbar(toast.text, { variant: toast.variant });
       refreshGrid();
       onClose();
     },
   });
 
+  const [rerunScope, setRerunScope] = useState("all");
   const onSubmit = (formValues) => {
     if (editId) {
-      updateColumn({
-        config: formValues,
-        operation_type: "extract_entities",
-      });
+      updateColumn(
+        withRerunScope(
+          {
+            config: formValues,
+            operation_type: "extract_entities",
+          },
+          rerunScope,
+        ),
+      );
       return;
     }
     if (onFormSubmit) {
@@ -153,6 +161,7 @@ export const ExtractEntitiesChild = ({
             {editId ? "Edit Extract Entities" : "Extract Entities"}
           </Typography>
           <IconButton
+            aria-label="Close extract entities"
             onClick={() => {
               reset();
               onClose();
@@ -250,6 +259,9 @@ export const ExtractEntitiesChild = ({
             placeholder="Enter concurrency"
           />
         </Box>
+        {editId && (
+          <RerunScopeField value={rerunScope} onChange={setRerunScope} />
+        )}
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
           {!onFormSubmit && (
             <LoadingButton
@@ -312,8 +324,11 @@ const ExtractEntities = ({ initialData, onFormSubmit }) => {
       anchor="right"
       open={openExtractEntities}
       onClose={onClose}
-      variant="persistent"
+      variant="temporary"
       PaperProps={{
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": "Extract entities",
         sx: {
           height: "100vh",
           position: "fixed",

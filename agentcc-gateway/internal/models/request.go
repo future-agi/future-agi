@@ -1,8 +1,6 @@
 package models
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"slices"
 )
@@ -128,20 +126,16 @@ type Message struct {
 	// web_search_result_location citations; omitempty so it is silent for
 	// providers and requests that produce none.
 	Annotations json.RawMessage `json:"annotations,omitempty"`
+	// Images preserves generated image payloads (including provider metadata)
+	// on OpenAI-compatible responses. Managed requests refuse this response-only
+	// field: priced input images must use the bounded content-part shape.
+	Images json.RawMessage `json:"images,omitempty"`
 }
 
 type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
-}
-
-// NewToolCallID returns a random tool call id in the format call_{hex16}, for
-// providers whose function calls carry no id of their own.
-func NewToolCallID() string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return "call_" + hex.EncodeToString(b)
 }
 
 type FunctionCall struct {

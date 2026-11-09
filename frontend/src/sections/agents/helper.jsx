@@ -399,6 +399,8 @@ export const defaultAgentDefinitionValues = {
   livekitConfigJson: "",
   livekitMaxConcurrency: 5,
   _livekitCredentialsValid: false,
+  // Future AGI Cloud skipped the check: not verified, but the step may go on.
+  _livekitCredentialsSkipped: false,
 };
 
 export const icon = (name) => (
@@ -1092,8 +1094,7 @@ export const useCallLogs = ({
         }
       : {
           retry: (failureCount, queryError) =>
-            !isListCursorContinuationLimitError(queryError) &&
-            failureCount < 1,
+            !isListCursorContinuationLimitError(queryError) && failureCount < 1,
         }),
   });
   return { queryKey, data, isLoading, error };

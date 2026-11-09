@@ -197,7 +197,14 @@ def test_row_data_source_scopes_dataset_and_breaks_equal_order_with_uuid():
     row_data = source[start:end]
 
     assert "_request_dataset_queryset(request)" in row_data
-    assert "requested_column_ids" in row_data
-    assert "unknown_column_ids" in row_data
+    assert "validate_read_columns(filters, sort_configs, columns_map)" in row_data
+    from rest_framework.exceptions import ValidationError
+
+    from model_hub.services.dataset_failed_filters import validate_read_columns
+
+    with pytest.raises(ValidationError, match="inaccessible"):
+        validate_read_columns([{"column_id": str(uuid4())}], [], {})
+    with pytest.raises(ValidationError, match="inaccessible"):
+        validate_read_columns([], [{"column_id": str(uuid4())}], {})
     assert "Q(order=current_row.order, id__gt=current_row.id)" in row_data
     assert '.order_by("order", "id")' in row_data

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,8 @@ func clearCollectorEnv(t *testing.T) {
 	}
 	t.Setenv("PGPASSFILE", filepath.Join(t.TempDir(), "absent.pgpass"))
 	t.Setenv("PGSERVICEFILE", filepath.Join(t.TempDir(), "absent.pg_service.conf"))
+	// Every deployment sets it; secret_pepper_test.go covers its absence.
+	t.Setenv("FI_API_SECRET_PEPPER", testPepper)
 }
 
 func setPGFields(t *testing.T, prefix string) {
@@ -248,7 +251,9 @@ func TestAuthEnvFieldsAndYAMLPrecedence(t *testing.T) {
 	if err := applyEnvOverrides(slog.Default(), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Auth != original {
+	preserved := cfg.Auth
+	preserved.Peppers = nil // resolved from the environment on every start
+	if !reflect.DeepEqual(preserved, original) {
 		t.Fatal("unset environment must preserve YAML")
 	}
 	setPGFields(t, "FI_PG_WRITE")
@@ -295,7 +300,7 @@ func TestAuthEnvInvalidFieldsFailEvenWithLegacyURI(t *testing.T) {
 				if strings.Contains(logs.String(), "private-") {
 					t.Fatal("startup error exposed credentials")
 				}
-				if cfg.Auth != before {
+				if !reflect.DeepEqual(cfg.Auth, before) {
 					t.Fatal("invalid endpoint must not silently select a fallback")
 				}
 			})

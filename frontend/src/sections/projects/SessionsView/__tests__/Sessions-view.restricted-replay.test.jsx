@@ -128,6 +128,8 @@ const lastBulkActionIds = async () => {
   return harness.toolbarProps.at(-1).bulkActions.map((action) => action.id);
 };
 
+// Only Replay Sessions depends on the restriction; "add_to_dataset" (the DSX
+// Add-data sheet, R2 P5) is offered to every org.
 describe("Sessions replay for an org restricted to Environments", () => {
   beforeEach(() => {
     harness.toolbarProps = [];
@@ -136,12 +138,19 @@ describe("Sessions replay for an org restricted to Environments", () => {
   it("drops Replay Sessions from a restricted org's bulk actions", async () => {
     harness.user = { restrict_simulate_to_environments: true };
     renderView();
-    expect(await lastBulkActionIds()).toEqual(["annotation-queue"]);
+    expect(await lastBulkActionIds()).toEqual([
+      "add_to_dataset",
+      "annotation-queue",
+    ]);
   });
 
   it("keeps Replay Sessions for other orgs", async () => {
     harness.user = { restrict_simulate_to_environments: false };
     renderView();
-    expect(await lastBulkActionIds()).toEqual(["replay", "annotation-queue"]);
+    expect(await lastBulkActionIds()).toEqual([
+      "replay",
+      "add_to_dataset",
+      "annotation-queue",
+    ]);
   });
 });

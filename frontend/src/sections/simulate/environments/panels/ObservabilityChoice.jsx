@@ -1,5 +1,15 @@
 import PropTypes from "prop-types";
-import { Box, Checkbox, FormControlLabel, Typography } from "@mui/material";
+import {
+  OBSERVE_KNOWN_ISSUES_URL,
+  SANDBOX_OBSERVE_NOTICE,
+} from "src/utils/platformObserveAvailability";
+import {
+  Box,
+  Checkbox,
+  FormControlLabel,
+  Link,
+  Typography,
+} from "@mui/material";
 
 // The "Turn on observability" choice, shared by the flows that build from code.
 export default function ObservabilityChoice({ checked, onChange }) {
@@ -16,8 +26,21 @@ export default function ObservabilityChoice({ checked, onChange }) {
           />
         }
       />
-      <Typography id="observability-helper" sx={{ typography: "s3", color: "text.subtitle", ml: 4 }}>
-        We can observe your agent only if its code already sends telemetry (OpenTelemetry or traceAI). If it doesn&apos;t, the Environment still builds, without observability.
+      <Typography
+        id="observability-helper"
+        sx={{ typography: "s3", color: "text.subtitle", ml: 4 }}
+      >
+        {SANDBOX_OBSERVE_NOTICE}
+      </Typography>
+      <Typography sx={{ typography: "s3", color: "text.subtitle", ml: 4 }}>
+        Simulation results remain in the simulation views.{" "}
+        <Link
+          href={OBSERVE_KNOWN_ISSUES_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          2.0.0 release notes: Known issues
+        </Link>
       </Typography>
     </Box>
   );

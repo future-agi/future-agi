@@ -13,6 +13,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { palette } from "src/theme/palette";
 
+// Exercise refusal handling through the real, visible controls.
+
 // Keep the real `endpoints` so the create-version URL is the one the page
 // really posts to; only the axios instance is stubbed.
 vi.mock("src/utils/axios", async (importOriginal) => {

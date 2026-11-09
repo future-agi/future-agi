@@ -1,4 +1,15 @@
+import React from "react";
+import {
+  bpText,
+  bpRendered,
+} from "../../components/__tests__/pinCopyBp.fixture";
 import { describe, it, expect } from "vitest";
+import { renderHook } from "@testing-library/react";
+import { createTheme } from "@mui/material/styles";
+import { fireEvent, render, screen, within } from "src/utils/test-utils";
+import DataTable from "src/components/data-table/DataTable";
+import { palette } from "src/theme/palette";
+import { typography } from "src/theme/typography";
 import {
   DEFAULT_COLUMN_CONFIG,
   DATE_OPTION_TO_PERIOD,
@@ -6,7 +17,68 @@ import {
   encodeColumnConfig,
   normalizeRow,
   periodForRange,
+  useColumns,
 } from "../evalUsageColumns";
+
+const RECORDED_SETTINGS = bpText["A2-01"];
+const theme = createTheme({
+  palette: palette("light"),
+  typography,
+  spacing: (factor) => `${0.25 * factor}rem`,
+});
+
+describe("recorded usage version copy", () => {
+  it.each(["Recorded version", "Version"])(
+    "renders an accessible DataTable header and tooltip for column label %s",
+    async (label) => {
+      expect(
+        DEFAULT_COLUMN_CONFIG.find((c) => c.value === "version").label,
+      ).toBe(bpText["A1-01"]);
+      const config = DEFAULT_COLUMN_CONFIG.map((c) =>
+        c.value === "version" ? { ...c, label } : c,
+      );
+      const { result } = renderHook(() => useColumns(config));
+      render(
+        <div style={{ height: 400, width: 800 }}>
+          <DataTable
+            columns={result.current.filter((c) => c.id === "version")}
+            data={[{ id: "usage-1", version: 3 }]}
+            rowCount={1}
+          />
+        </div>,
+        { theme },
+      );
+      const header = screen.getByRole("columnheader", {
+        name: "Recorded version",
+      });
+      expect(header).toHaveAttribute("aria-label", "Recorded version");
+      expect(screen.queryByText("Version", { exact: true })).toBeNull();
+      fireEvent.mouseOver(within(header).getByText("Recorded version"));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        RECORDED_SETTINGS,
+      );
+    },
+  );
+  it.each([3, "3", "v3"])(
+    "marks cell %s as recorded rather than executed",
+    (value) => {
+      const { result } = renderHook(() => useColumns(DEFAULT_COLUMN_CONFIG));
+      const Cell = result.current.find((c) => c.id === "version").cell;
+      render(<Cell getValue={() => value} row={{ original: {} }} />, { theme });
+      expect(
+        screen.getByText(bpRendered.usage(value)).closest("[title]"),
+      ).toHaveAttribute("title", bpText["A2-02"]);
+      expect(screen.queryByText("v3", { exact: true })).toBeNull();
+    },
+  );
+  it.each([null, ""])("keeps an absent version %s blank", (value) => {
+    const { result } = renderHook(() => useColumns(DEFAULT_COLUMN_CONFIG));
+    const Cell = result.current.find((c) => c.id === "version").cell;
+    render(<Cell getValue={() => value} row={{ original: {} }} />, { theme });
+    expect(screen.getByText("—")).toBeTruthy();
+    expect(screen.queryByText(/Recorded/)).toBeNull();
+  });
+});
 
 describe("DATE_OPTION_TO_PERIOD", () => {
   it("maps the optional one-hour picker label to the bounded one-hour API period", () => {

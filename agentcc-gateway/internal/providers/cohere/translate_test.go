@@ -445,8 +445,8 @@ func TestTranslateResponse_UsageWithTokens(t *testing.T) {
 		FinishReason: "COMPLETE",
 		Usage: &cohereUsage{
 			Tokens: &cohereTokens{
-				InputTokens:  50,
-				OutputTokens: 25,
+				InputTokens:  usageCount(50),
+				OutputTokens: usageCount(25),
 			},
 		},
 	}
@@ -477,8 +477,8 @@ func TestTranslateResponse_UsageWithBilledUnits(t *testing.T) {
 		FinishReason: "COMPLETE",
 		Usage: &cohereUsage{
 			BilledUnits: &cohereBilledUnits{
-				InputTokens:  100,
-				OutputTokens: 50,
+				InputTokens:  usageCount(100),
+				OutputTokens: usageCount(50),
 			},
 		},
 	}
@@ -509,12 +509,12 @@ func TestTranslateResponse_UsageTokensPreferredOverBilledUnits(t *testing.T) {
 		FinishReason: "COMPLETE",
 		Usage: &cohereUsage{
 			Tokens: &cohereTokens{
-				InputTokens:  10,
-				OutputTokens: 5,
+				InputTokens:  usageCount(10),
+				OutputTokens: usageCount(5),
 			},
 			BilledUnits: &cohereBilledUnits{
-				InputTokens:  999,
-				OutputTokens: 888,
+				InputTokens:  usageCount(999),
+				OutputTokens: usageCount(888),
 			},
 		},
 	}

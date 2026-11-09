@@ -11,6 +11,7 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.authentication import allows_no_workspace
 from accounts.models import User
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
@@ -27,6 +28,9 @@ from accounts.serializers.contracts import (
     WorkspaceUpdateRequestSerializer,
     WorkspaceUpdateResponseSerializer,
 )
+from accounts.services.hard_erase_issuance_entry import request_issuance_entry
+from accounts.services.identity_issuance import create_person, issue_membership
+from accounts.services.workspace_landing import resolve_user_workspace
 from accounts.services.workspace_membership import create_workspace_membership
 from accounts.utils import generate_password, resolve_org, resolve_org_role
 from tfc.constants.levels import Level
@@ -118,12 +122,14 @@ class WorkspaceManagementView(APIView):
 
         return self._gm.success_response(response)
 
+    @allows_no_workspace("POST")
     @validated_request(
         request_serializer=WorkspaceCreateRequestSerializer,
         responses={201: WorkspaceCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
     @transaction.atomic
+    @request_issuance_entry
     def post(self, request, *args, **kwargs):
         """Create a new workspace"""
         if kwargs.get("workspace_id"):
@@ -138,15 +144,9 @@ class WorkspaceManagementView(APIView):
                 get_error_message("USER_ORGANIZATION_CONNECTION_ERROR")
             )
 
-        # Check permissions: only org-level OWNER/ADMIN can create workspaces
-        # Workspace admins cannot create new workspaces
-        org_role = resolve_org_role(user, organization)
-        has_org_permission = org_role and org_role in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]
-
-        if not has_org_permission:
+        # The POST-only empty-landing marker permits bootstrap, not authority:
+        # recheck the live global role here before any workspace can be created.
+        if not user.has_global_workspace_access(organization):
             return self._gm.forbidden_response(get_error_message("UNAUTHORIZED_ACCESS"))
 
         workspace_name = request.validated_data.get("name")
@@ -369,14 +369,14 @@ class WorkspaceManagementView(APIView):
                                 org_role = None
 
                             # Create new user
-                            new_member = User.objects.create(
+                            new_member = create_person(
                                 email=email,
                                 name=name,
                                 organization=organization,
                                 organization_role=org_role,
                                 is_active=False,  # User needs to activate account
                                 invited_by=user,
-                                config={"defaultWorkspaceId": str(workspace.id)},
+                                config={},
                             )
 
                             # Set password
@@ -390,6 +390,14 @@ class WorkspaceManagementView(APIView):
                                 role=role,
                                 invited_by=user,
                             )
+                            landing_workspace = resolve_user_workspace(
+                                new_member, organization
+                            )
+                            if landing_workspace is not None:
+                                new_member.config["defaultWorkspaceId"] = str(
+                                    landing_workspace.id
+                                )
+                                new_member.save(update_fields=["config"])
 
                             uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
                             token = default_token_generator.make_token(new_member)
@@ -650,6 +658,7 @@ class WorkspaceMembershipView(APIView):
         reject_unknown_fields=True,
     )
     @transaction.atomic
+    @request_issuance_entry
     def post(self, request, workspace_id, *args, **kwargs):
         """Add users to workspace"""
         if kwargs.get("member_id"):
@@ -766,7 +775,9 @@ class WorkspaceMembershipView(APIView):
                                         org_role = None
 
                                     # Create invitation to organization
-                                    OrganizationMembership.objects.create(
+                                    issue_membership(
+                                        OrganizationMembership.objects,
+                                        "create",
                                         user=user_in_other_org,
                                         organization=organization,
                                         role=org_role,
@@ -823,14 +834,14 @@ class WorkspaceMembershipView(APIView):
                                     org_role = None
 
                                 # Create new user
-                                target_user = User.objects.create(
+                                target_user = create_person(
                                     email=user_email,
                                     name=name,
                                     organization=organization,
                                     invited_by=user,
                                     organization_role=org_role,
                                     is_active=False,  # User needs to activate account
-                                    config={"defaultWorkspaceId": str(workspace.id)},
+                                    config={},
                                 )
 
                                 # Set password
@@ -914,6 +925,16 @@ class WorkspaceMembershipView(APIView):
                             "action": "added",
                         }
                     )
+                if not (target_user.config or {}).get("defaultWorkspaceId"):
+                    landing_workspace = resolve_user_workspace(
+                        target_user, organization
+                    )
+                    if landing_workspace is not None:
+                        target_user.config = {
+                            **(target_user.config or {}),
+                            "defaultWorkspaceId": str(landing_workspace.id),
+                        }
+                        target_user.save(update_fields=["config"])
 
             except Exception as e:
                 errors.append(

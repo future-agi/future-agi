@@ -9,7 +9,10 @@ import {
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
-import PropTypes from "prop-types";
+import {
+  OBSERVE_KNOWN_ISSUES_URL,
+  VOICE_OBSERVE_NOTICE,
+} from "src/utils/platformObserveAvailability";
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import {
@@ -22,6 +25,7 @@ import {
   VOICE_TRANSPORT,
   VOICE_TRANSPORT_COPY,
   isLiveKitProvider,
+  livekitValidationStatus,
   supportsConcurrency,
   validateLiveKitCredentials,
 } from "../../constants";
@@ -103,6 +107,7 @@ export default function AgentVoiceForm() {
 
   const [livekitValidation, setLivekitValidation] = useState("idle");
   const [livekitValidationError, setLivekitValidationError] = useState("");
+  const [livekitValidationMessage, setLivekitValidationMessage] = useState("");
 
   // Reset validation when credentials change + auto-validate with debounce
   const autoValidateTimer = useRef(null);
@@ -115,6 +120,7 @@ export default function AgentVoiceForm() {
 
     setLivekitValidation("validating");
     setLivekitValidationError("");
+    setLivekitValidationMessage("");
     const result = await validateLiveKitCredentials({
       livekitUrl,
       livekitApiKey,
@@ -124,14 +130,14 @@ export default function AgentVoiceForm() {
     // Ignore result if aborted
     if (abortControllerRef.current?.signal.aborted) return;
 
-    if (result.valid) {
-      setLivekitValidation("valid");
-      setFormValue("_livekitCredentialsValid", true);
-    } else {
-      setLivekitValidation("invalid");
-      setLivekitValidationError(result.error);
-      setFormValue("_livekitCredentialsValid", false);
-    }
+    // "skipped" (Future AGI Cloud) is not verified, so it is not "valid", but
+    // it unlocks the step: the run reports connection problems instead.
+    const status = livekitValidationStatus(result);
+    setLivekitValidation(status);
+    setFormValue("_livekitCredentialsValid", status === "valid");
+    setFormValue("_livekitCredentialsSkipped", status === "skipped");
+    if (status === "skipped") setLivekitValidationMessage(result.message);
+    if (status === "invalid") setLivekitValidationError(result.error);
   }, [
     livekitUrl,
     livekitApiKey,
@@ -155,7 +161,9 @@ export default function AgentVoiceForm() {
 
     setLivekitValidation("idle");
     setLivekitValidationError("");
+    setLivekitValidationMessage("");
     setFormValue("_livekitCredentialsValid", false);
+    setFormValue("_livekitCredentialsSkipped", false);
 
     if (autoValidateTimer.current) clearTimeout(autoValidateTimer.current);
     if (abortControllerRef.current) abortControllerRef.current.abort();
@@ -179,7 +187,7 @@ export default function AgentVoiceForm() {
     selectedProvider,
   ]);
 
-  const { mutate, isPending, status } = useMutation({
+  const { mutate, isPending } = useMutation({
     /**
      *
      * @param {Object} data
@@ -462,7 +470,7 @@ export default function AgentVoiceForm() {
                 fontWeight={"fontWeightMedium"}
                 color={"text.primary"}
               >
-                Enable observability (Requires API key)
+                Observe availability
               </Typography>
               <Box display="flex" alignItems="center" gap="4px">
                 <Typography
@@ -470,11 +478,10 @@ export default function AgentVoiceForm() {
                   fontWeight={"fontWeightRegular"}
                   color={"text.primary"}
                 >
-                  Turn on observability to track calls, monitor logs, and debug
-                  agent behaviour
+                  {VOICE_OBSERVE_NOTICE}
                 </Typography>
                 <Link
-                  href="https://docs.futureagi.com/docs/observe"
+                  href={OBSERVE_KNOWN_ISSUES_URL}
                   color="blue.500"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -482,7 +489,7 @@ export default function AgentVoiceForm() {
                   fontSize="13px"
                   sx={{ textDecoration: "underline" }}
                 >
-                  Learn more
+                  2.0.0 release notes: Known issues
                 </Link>
               </Box>
             </Box>
@@ -506,6 +513,7 @@ export default function AgentVoiceForm() {
                   <SwitchField
                     control={control}
                     fieldName="observabilityEnabled"
+                    inputProps={{ "aria-label": "Observability" }}
                     label=""
                     labelPlacement="end"
                     disabled={!canEnableObservability}
@@ -609,6 +617,22 @@ export default function AgentVoiceForm() {
                 color="green.600"
               >
                 Connection successful
+              </Typography>
+            </Box>
+          )}
+          {livekitValidation === "skipped" && (
+            <Box display="flex" alignItems="center" gap={0.5}>
+              <SvgColor
+                src="/assets/icons/ic_info.svg"
+                sx={{
+                  width: 16,
+                  height: 16,
+                  color: "text.secondary",
+                  flexShrink: 0,
+                }}
+              />
+              <Typography typography="s2" color="text.secondary">
+                {livekitValidationMessage}
               </Typography>
             </Box>
           )}

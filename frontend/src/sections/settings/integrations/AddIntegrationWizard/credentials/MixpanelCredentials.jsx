@@ -15,6 +15,12 @@ import { useValidateCredentials } from "src/api/integrations";
 import { backButtonSx } from "../../styles";
 import { getErrorMessage, unwrapResponse } from "../../utils";
 
+// Mixpanel is checked by sending it an event (integrations/services/
+// mixpanel_service.py validate_credentials): one for Validate & Continue and
+// one when the connection is made.
+const MIXPANEL_TEST_EVENTS =
+  "Validate & Continue, and connecting, each send one $agentcc_connection_test event to the project to check the credentials.";
+
 export default function MixpanelCredentials({
   data,
   onUpdate,
@@ -92,7 +98,7 @@ export default function MixpanelCredentials({
         size="small"
         fullWidth
         type={showSecret ? "text" : "password"}
-        helperText="Optional — enables historical data import via /import endpoint"
+        helperText="Optional. With the API secret, request logs go to Mixpanel's /import API, which also accepts logs older than 5 days; without it, to /track, which accepts the last 5 days."
         placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         InputProps={{
           endAdornment: (
@@ -104,6 +110,10 @@ export default function MixpanelCredentials({
           ),
         }}
       />
+
+      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+        {MIXPANEL_TEST_EVENTS}
+      </Typography>
 
       {error && (
         <Alert severity="error">

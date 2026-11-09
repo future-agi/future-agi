@@ -9,6 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 from model_hub.models.prompt_folders import PromptFolder
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from model_hub.serializers.prompt_folder import PromptFolderSerializer
+from model_hub.services.prompt_actor import acting_as, request_actor
+from model_hub.services.prompt_label import release_prompts
 from model_hub.utils.workspace_scope import (
     request_organization,
     request_workspace_filter,
@@ -33,22 +35,34 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         )
 
     def get_queryset(self):
-        organization = request_organization(self.request)
-        custom_scope = models.Q(organization=organization) & request_workspace_filter(
-            self.request
-        )
         sample_scope = models.Q(
             is_sample=True,
             organization__isnull=True,
             workspace__isnull=True,
         )
+        organization = request_organization(self.request)
+        if organization is None:
+            # No organization: only the shared sample folders. Filtering on
+            # organization=None would also match every other folder that has
+            # no organization.
+            scope = sample_scope
+        else:
+            scope = (
+                models.Q(organization=organization)
+                & request_workspace_filter(self.request)
+            ) | sample_scope
         return PromptFolder.no_workspace_objects.filter(
-            custom_scope | sample_scope,
+            scope,
             deleted=False,
         ).select_related("organization", "workspace", "created_by", "parent_folder")
 
     def create(self, request, *args, **kwargs):
         """Create a new prompt folder"""
+        if request_organization(request) is None:
+            # A caller with no organization has nowhere to keep a folder. This
+            # answer comes before the body is read, so a parent folder of any
+            # other organization gets the same answer as an unknown one.
+            return self._gm.not_found("Organization not found")
         try:
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
@@ -56,8 +70,9 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_create(serializer)
             except IntegrityError as e:
-                if "unique_prompt_folder_name_organization_workspace_not_deleted" in str(
-                    e
+                if (
+                    "unique_prompt_folder_name_organization_workspace_not_deleted"
+                    in str(e)
                 ):
                     return self._duplicate_name_response()
                 raise
@@ -70,8 +85,7 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Automatically set the organization when creating a prompt folder"""
         serializer.save(
-            organization=getattr(self.request, "organization", None)
-            or self.request.user.organization,
+            organization=request_organization(self.request),
             created_by=self.request.user,
             workspace=getattr(self.request, "workspace", None),
             is_sample=False,
@@ -115,8 +129,9 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_update(serializer)
             except IntegrityError as e:
-                if "unique_prompt_folder_name_organization_workspace_not_deleted" in str(
-                    e
+                if (
+                    "unique_prompt_folder_name_organization_workspace_not_deleted"
+                    in str(e)
                 ):
                     return self._duplicate_name_response()
                 raise
@@ -131,8 +146,7 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     def perform_update(self, serializer):
         """Ensure organization is maintained when updating a prompt folder"""
         serializer.save(
-            organization=getattr(self.request, "organization", None)
-            or self.request.user.organization,
+            organization=request_organization(self.request),
             workspace=getattr(self.request, "workspace", None),
             is_sample=False,
         )
@@ -163,13 +177,17 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         prompt_template_ids = list(prompt_templates.values_list("id", flat=True))
 
         if prompt_template_ids:
-            PromptVersion.objects.filter(
-                original_template_id__in=prompt_template_ids
-            ).update(
-                deleted=True,
-                deleted_at=now,
-            )
-            prompt_templates.update(deleted=True, deleted_at=now)
+            with transaction.atomic(), acting_as(request_actor(self.request)):
+                # The one writer locks the prompts and their versions, then releases each prompt's labels (one
+                # version_deleted webhook event per label), before the rows are soft-deleted in bulk.
+                release_prompts(prompt_template_ids)
+                PromptVersion.objects.filter(
+                    original_template_id__in=prompt_template_ids
+                ).update(
+                    deleted=True,
+                    deleted_at=now,
+                )
+                prompt_templates.update(deleted=True, deleted_at=now)
 
         instance.deleted = True
         instance.deleted_at = now

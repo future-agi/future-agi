@@ -401,6 +401,17 @@ def _check_table(
                 if key in columns
             }
         )
+    if (
+        name == "simulate_agent_definition"
+        and not native
+        and "api_key" in columns
+        and "api_key" not in expected
+    ):
+        # simulate.0102 removes this PG column after 0101 clears its values.
+        # Older landing CREATEs may retain it: validate the exact old shape,
+        # but never add, drop or change it. A live source-owned field, when
+        # present in expected, keeps its independently inspected PG type.
+        expected["api_key"] = _column(_tokens("Nullable(String)"))
     actual = {key: (_tokens(t), k, _tokens(e)) for key, (t, k, e) in columns.items()}
     missing = set(expected) - set(actual)
     eligible = (

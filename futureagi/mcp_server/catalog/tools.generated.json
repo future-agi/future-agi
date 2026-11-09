@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "f4a74ecab77e78df6ca8c6a28b72c655bfd0e4d4f04f91ab376070d60be592d0",
-  "tool_count": 107,
+  "source_contract_sha256": "ef52549ead5c65155400911c2678282d031cdadb85278c3482c38daacf8cb503",
+  "tool_count": 111,
   "tools": [
     {
       "name": "whoami",
@@ -113,6 +113,14 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "folder_path": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "starred": {
+            "type": "boolean",
+            "default": false
+          },
           "search_text": {
             "anyOf": [
               {
@@ -160,6 +168,8 @@
         "parameters": {
           "path": [],
           "query": [
+            "folder_path",
+            "starred",
             "search_text",
             "page",
             "page_size",
@@ -326,8 +336,179 @@
       }
     },
     {
+      "name": "create_dataset_version",
+      "description": "Create an immutable snapshot for a dataset from an explicit items list of at most 10,000 entries. Empty items creates an empty version. Optional parent_version_id preserves stable example identity by external_id. Requires workspace write access. Returns version metadata only. Not idempotent; every accepted retry creates a new version.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DatasetVersionItemCreate"
+            },
+            "maxItems": 10000
+          },
+          "parent_version_id": {
+            "anyOf": [
+              {
+                "title": "Parent version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "metadata": {
+            "title": "Metadata",
+            "type": "object",
+            "additionalProperties": {
+              "description": "Any valid JSON value."
+            }
+          },
+          "source_revision": {
+            "title": "Source revision",
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "dataset_id",
+          "items"
+        ],
+        "definitions": {
+          "DatasetVersionItemCreate": {
+            "required": [
+              "input"
+            ],
+            "type": "object",
+            "properties": {
+              "input": {
+                "title": "Input",
+                "description": "Any non-null JSON value; nested nulls are allowed.",
+                "not": {
+                  "type": "null"
+                }
+              },
+              "expected": {
+                "title": "Expected",
+                "description": "Any valid JSON value."
+              },
+              "metadata": {
+                "title": "Metadata",
+                "type": "object",
+                "additionalProperties": {
+                  "description": "Any valid JSON value."
+                }
+              },
+              "example_id": {
+                "anyOf": [
+                  {
+                    "title": "Example id",
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "external_id": {
+                "anyOf": [
+                  {
+                    "title": "External id",
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source_trace_id": {
+                "anyOf": [
+                  {
+                    "title": "Source trace id",
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source_span_id": {
+                "anyOf": [
+                  {
+                    "title": "Source span id",
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "legacy_row_id": {
+                "anyOf": [
+                  {
+                    "title": "Legacy row id",
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/datasets/{dataset_id}/versions/",
+        "parameters": {
+          "path": [
+            "dataset_id"
+          ],
+          "query": [],
+          "body": [
+            "items",
+            "parent_version_id",
+            "description",
+            "metadata",
+            "source_revision"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "dataset_versions_create"
+      }
+    },
+    {
       "name": "add_dataset_rows",
-      "description": "Add rows to an existing dataset using rows: [{cells: [{column_name: \"input\", value: \"hello\"}]}]. Flat column-to-value row dictionaries are invalid. Column names must already exist and be writable; unknown or duplicate columns reject the batch. Read back the dataset to verify values and counts after writing.",
+      "description": "Add rows to an existing dataset using cells with column_name and value. Column names must already exist in the dataset.",
       "group": "datasets",
       "inputSchema": {
         "type": "object",
@@ -363,8 +544,7 @@
                 "title": "Value",
                 "description": "Any valid JSON value."
               }
-            },
-            "additionalProperties": false
+            }
           },
           "DatasetRowRequest": {
             "type": "object",
@@ -374,11 +554,6 @@
                 "type": "string",
                 "format": "uuid"
               },
-              "order": {
-                "title": "Order",
-                "description": "Legacy input accepted for compatibility; rows are appended in request order.",
-                "type": "integer"
-              },
               "cells": {
                 "type": "array",
                 "items": {
@@ -386,8 +561,7 @@
                 },
                 "default": []
               }
-            },
-            "additionalProperties": false
+            }
           }
         }
       },
@@ -502,6 +676,23 @@
           "source": {
             "title": "Source",
             "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "title": "Role",
+                "type": "string",
+                "enum": [
+                  "input",
+                  "expected",
+                  "metadata",
+                  "none"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -528,7 +719,8 @@
           "body": [
             "new_column_name",
             "column_type",
-            "source"
+            "source",
+            "role"
           ]
         }
       },
@@ -662,6 +854,19 @@
                 "type": "null"
               }
             ]
+          },
+          "pinned_version_id": {
+            "anyOf": [
+              {
+                "title": "Pinned version id",
+                "type": "string",
+                "maxLength": 36,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -697,7 +902,8 @@
             "run",
             "save_as_template",
             "experiment_id",
-            "composite_weight_overrides"
+            "composite_weight_overrides",
+            "pinned_version_id"
           ]
         }
       },
@@ -1546,7 +1752,7 @@
             "type": "integer",
             "description": "Number of results to return per page.",
             "minimum": 1,
-            "maximum": 100
+            "maximum": 5000
           },
           "modality": {
             "type": "array",
@@ -1650,7 +1856,7 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100
+            "maximum": 5000
           }
         },
         "additionalProperties": false,
@@ -1710,15 +1916,8 @@
             ]
           },
           "variable_names": {
-            "anyOf": [
-              {
-                "title": "Variable names",
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "title": "Variable names",
+            "description": "Any valid JSON value."
           },
           "prompt_folder": {
             "anyOf": [
@@ -1807,15 +2006,8 @@
             ]
           },
           "variable_names": {
-            "anyOf": [
-              {
-                "title": "Variable names",
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "title": "Variable names",
+            "description": "Any valid JSON value."
           },
           "prompt_folder": {
             "anyOf": [
@@ -2338,7 +2530,8 @@
                       "enum": [
                         "llm",
                         "code",
-                        "agent"
+                        "agent",
+                        "dag"
                       ]
                     }
                   },
@@ -2349,7 +2542,8 @@
                       "enum": [
                         "llm",
                         "code",
-                        "agent"
+                        "agent",
+                        "dag"
                       ]
                     }
                   },
@@ -5663,6 +5857,11 @@
             "type": "integer",
             "default": 0,
             "minimum": 0
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Workspace selector used by authentication for unpinned API keys. X-Workspace-Id takes precedence. Ignored for an active workspace-pinned key with current access; use a key scoped to the intended workspace."
           }
         },
         "additionalProperties": false
@@ -5690,7 +5889,8 @@
             "sort_by",
             "sort_dir",
             "limit",
-            "offset"
+            "offset",
+            "workspace_id"
           ],
           "body": []
         }
@@ -5715,6 +5915,11 @@
           "project_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Workspace selector used by authentication for unpinned API keys. X-Workspace-Id takes precedence. Ignored for an active workspace-pinned key with current access; use a key scoped to the intended workspace."
           }
         },
         "additionalProperties": false,
@@ -5736,7 +5941,8 @@
             "cluster_id"
           ],
           "query": [
-            "project_id"
+            "project_id",
+            "workspace_id"
           ],
           "body": []
         }
@@ -5766,6 +5972,11 @@
             "default": 20,
             "minimum": 1,
             "maximum": 20
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Workspace selector used by authentication for unpinned API keys. X-Workspace-Id takes precedence. Ignored for an active workspace-pinned key with current access; use a key scoped to the intended workspace."
           }
         },
         "additionalProperties": false,
@@ -5787,7 +5998,8 @@
             "cluster_id"
           ],
           "query": [
-            "rep_limit"
+            "rep_limit",
+            "workspace_id"
           ],
           "body": []
         }
@@ -5819,6 +6031,11 @@
             "type": "integer",
             "default": 0,
             "minimum": 0
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Workspace selector used by authentication for unpinned API keys. X-Workspace-Id takes precedence. Ignored for an active workspace-pinned key with current access; use a key scoped to the intended workspace."
           }
         },
         "additionalProperties": false,
@@ -5841,7 +6058,8 @@
           ],
           "query": [
             "limit",
-            "offset"
+            "offset",
+            "workspace_id"
           ],
           "body": []
         }
@@ -6322,7 +6540,7 @@
             "type": "integer",
             "description": "Number of results to return per page.",
             "minimum": 1,
-            "maximum": 100
+            "maximum": 5000
           }
         },
         "additionalProperties": false
@@ -6449,6 +6667,48 @@
             "items": {
               "$ref": "#/definitions/EvalMetricEntry"
             }
+          },
+          "row_ids": {
+            "description": "Experiment scoping is disabled by default. When disabled on the server, this field is rejected as an unknown field (HTTP 400) in create requests.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 100000
+          },
+          "split_ids": {
+            "description": "Union of live dataset splits, intersected with row_ids before sampling.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 100
+          },
+          "sample": {
+            "$ref": "#/definitions/ExperimentSample"
+          },
+          "metadata": {
+            "title": "Metadata",
+            "description": "Experiment scoping is disabled by default. When disabled on the server, only {} is accepted for this field as a no-op; any other value is rejected as an unknown field (HTTP 400) in create requests.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          },
+          "error_policy": {
+            "title": "Error policy",
+            "description": "Experiment scoping is disabled by default. When disabled on the server, this field is rejected as an unknown field (HTTP 400) in create requests.",
+            "type": "string",
+            "enum": [
+              "zero",
+              "exclude"
+            ]
+          },
+          "limits": {
+            "$ref": "#/definitions/ExperimentLimits"
           }
         },
         "additionalProperties": false,
@@ -6527,6 +6787,70 @@
                     "type": "null"
                   }
                 ]
+              },
+              "pinned_version_id": {
+                "anyOf": [
+                  {
+                    "title": "Pinned version id",
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "ExperimentLimits": {
+            "description": "Experiment scoping is disabled by default. When disabled on the server, this field is rejected as an unknown field (HTTP 400) in create requests and omitted from experiment detail responses.",
+            "type": "object",
+            "properties": {
+              "tokens": {
+                "title": "Tokens",
+                "type": "integer",
+                "maximum": 10000000,
+                "minimum": 1
+              },
+              "messages": {
+                "title": "Messages",
+                "type": "integer",
+                "maximum": 100000,
+                "minimum": 1
+              },
+              "cost_usd": {
+                "title": "Cost usd",
+                "type": "number",
+                "maximum": 100000,
+                "minimum": 1e-06
+              },
+              "timeout_s": {
+                "title": "Timeout s",
+                "type": "integer",
+                "maximum": 43200,
+                "minimum": 1
+              }
+            }
+          },
+          "ExperimentSample": {
+            "description": "Experiment scoping is disabled by default. When disabled on the server, this field is rejected as an unknown field (HTTP 400) in create requests and omitted from experiment detail responses.",
+            "required": [
+              "size",
+              "seed"
+            ],
+            "type": "object",
+            "properties": {
+              "size": {
+                "title": "Size",
+                "type": "integer",
+                "maximum": 100000,
+                "minimum": 1
+              },
+              "seed": {
+                "title": "Seed",
+                "type": "integer",
+                "maximum": 2147483647,
+                "minimum": 0
               }
             }
           },
@@ -6783,7 +7107,13 @@
             "column_id",
             "experiment_type",
             "prompt_config",
-            "user_eval_metrics"
+            "user_eval_metrics",
+            "row_ids",
+            "split_ids",
+            "sample",
+            "metadata",
+            "error_policy",
+            "limits"
           ]
         }
       },
@@ -6792,6 +7122,532 @@
       },
       "source": {
         "operationId": "model-hub_experiments_v2_create"
+      }
+    },
+    {
+      "name": "compare_experiment_runs",
+      "description": "Compare persisted baseline and candidate experiment runs for one metric in the current workspace. Returns case/trial comparisons, missing evidence, assessment counts, and trace references. Both runs must use compatible dataset versions and evaluation plans. This reads stored results without executing tasks or evaluations.",
+      "group": "experiments",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "baseline_run_id": {
+            "title": "Baseline run id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "candidate_run_id": {
+            "title": "Candidate run id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "metric_id": {
+            "title": "Metric id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "passing_score": {
+            "anyOf": [
+              {
+                "title": "Passing score",
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "higher_is_better": {
+            "title": "Higher is better",
+            "type": "boolean",
+            "default": true
+          },
+          "include_trial_stability": {
+            "title": "Include trial stability",
+            "type": "boolean",
+            "default": false
+          },
+          "release_gate": {
+            "$ref": "#/definitions/ReleaseGatePolicy"
+          },
+          "diff_case": {
+            "$ref": "#/definitions/DiffCaseRequest"
+          },
+          "metadata_equals": {
+            "title": "Metadata equals",
+            "type": "object",
+            "additionalProperties": {
+              "description": "Any valid JSON value."
+            }
+          },
+          "split_name": {
+            "title": "Split name",
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "baseline_run_id",
+          "candidate_run_id",
+          "metric_id"
+        ],
+        "definitions": {
+          "DiffCaseRequest": {
+            "required": [
+              "example_id",
+              "trial_number"
+            ],
+            "type": "object",
+            "properties": {
+              "example_id": {
+                "title": "Example id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "trial_number": {
+                "title": "Trial number",
+                "type": "integer",
+                "maximum": 2147483647,
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "ReleaseGateCase": {
+            "required": [
+              "example_id",
+              "trial_number"
+            ],
+            "type": "object",
+            "properties": {
+              "example_id": {
+                "title": "Example id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "trial_number": {
+                "title": "Trial number",
+                "type": "integer",
+                "maximum": 2147483647,
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "ReleaseGatePolicy": {
+            "type": "object",
+            "properties": {
+              "max_regressions": {
+                "title": "Max regressions",
+                "type": "integer",
+                "default": 0,
+                "minimum": 0
+              },
+              "critical_cases": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/ReleaseGateCase"
+                },
+                "default": [],
+                "maxItems": 10000
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/experiment-runs/compare/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "baseline_run_id",
+            "candidate_run_id",
+            "metric_id",
+            "passing_score",
+            "higher_is_better",
+            "include_trial_stability",
+            "release_gate",
+            "diff_case",
+            "metadata_equals",
+            "split_name"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "experiment_runs_compare"
+      }
+    },
+    {
+      "name": "create_external_experiment_run",
+      "description": "Create or replay a pinned external-task run using a caller UUID, immutable dataset version, exact example/trial plan and evaluator bindings. Does not execute any task. Code/config metadata is caller-supplied provenance.",
+      "group": "experiments",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "title": "Run id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "dataset_version_id": {
+            "title": "Dataset version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/ExternalRunIdentity"
+            },
+            "maxItems": 10000,
+            "minItems": 1
+          },
+          "evaluator_metric_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "default": [],
+            "maxItems": 100
+          },
+          "experiment_id": {
+            "anyOf": [
+              {
+                "title": "Experiment id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model_config": {
+            "title": "Model config",
+            "type": "object",
+            "default": {},
+            "additionalProperties": {}
+          },
+          "metadata": {
+            "title": "Metadata",
+            "type": "object",
+            "default": {},
+            "additionalProperties": {}
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "run_id",
+          "dataset_version_id",
+          "expected_items"
+        ],
+        "definitions": {
+          "ExternalRunIdentity": {
+            "required": [
+              "example_id"
+            ],
+            "type": "object",
+            "properties": {
+              "example_id": {
+                "title": "Example id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "trial_number": {
+                "title": "Trial number",
+                "type": "integer",
+                "default": 1,
+                "maximum": 2147483647,
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/experiment-runs/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "run_id",
+            "dataset_version_id",
+            "expected_items",
+            "evaluator_metric_ids",
+            "experiment_id",
+            "model_config",
+            "metadata"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "external_experiment_runs_create"
+      }
+    },
+    {
+      "name": "ingest_external_experiment_results",
+      "description": "Atomically ingest 1\u2013100 completed, failed or skipped external results for a pinned run. Identical per-item receipt/payload replay is safe; conflicts roll back the batch. Does not execute tasks or verify external trace/evaluator provenance.",
+      "group": "experiments",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/ExternalRunResult"
+            },
+            "maxItems": 100,
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "run_id",
+          "items"
+        ],
+        "definitions": {
+          "ExternalRunResult": {
+            "required": [
+              "example_id",
+              "receipt_key",
+              "status"
+            ],
+            "type": "object",
+            "properties": {
+              "example_id": {
+                "title": "Example id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "trial_number": {
+                "title": "Trial number",
+                "type": "integer",
+                "default": 1,
+                "maximum": 2147483647,
+                "minimum": 1
+              },
+              "receipt_key": {
+                "title": "Receipt key",
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              "status": {
+                "title": "Status",
+                "type": "string",
+                "enum": [
+                  "completed",
+                  "failed",
+                  "skipped"
+                ]
+              },
+              "output": {
+                "title": "Output",
+                "description": "Any valid JSON value."
+              },
+              "error": {
+                "title": "Error",
+                "description": "Any valid JSON value."
+              },
+              "trace_id": {
+                "anyOf": [
+                  {
+                    "title": "Trace id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "root_span_id": {
+                "anyOf": [
+                  {
+                    "title": "Root span id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "latency_ms": {
+                "anyOf": [
+                  {
+                    "title": "Latency ms",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "token_usage": {
+                "title": "Token usage",
+                "description": "Any valid JSON value."
+              },
+              "cost": {
+                "anyOf": [
+                  {
+                    "title": "Cost",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "score_refs": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/ExternalRunScore"
+                },
+                "default": [],
+                "maxItems": 100
+              }
+            },
+            "additionalProperties": false
+          },
+          "ExternalRunScore": {
+            "required": [
+              "metric_id",
+              "evaluator_version_id",
+              "status"
+            ],
+            "type": "object",
+            "properties": {
+              "metric_id": {
+                "title": "Metric id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "evaluator_version_id": {
+                "title": "Evaluator version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string",
+                "enum": [
+                  "assessed",
+                  "error",
+                  "unknown",
+                  "not_assessed",
+                  "unsupported"
+                ]
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "title": "Value",
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "explanation": {
+                "anyOf": [
+                  {
+                    "title": "Explanation",
+                    "type": "string",
+                    "maxLength": 16384
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "trace_id": {
+                "anyOf": [
+                  {
+                    "title": "Trace id",
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "span_id": {
+                "anyOf": [
+                  {
+                    "title": "Span id",
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/experiment-runs/{run_id}/results/",
+        "parameters": {
+          "path": [
+            "run_id"
+          ],
+          "query": [],
+          "body": [
+            "items"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "external_experiment_run_results_ingest"
       }
     },
     {
@@ -9291,11 +10147,13 @@
           },
           "started_after": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Requests that started at or after this time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC."
           },
           "started_before": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Requests that started at or before this time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC."
           },
           "min_latency": {
             "type": "integer"
@@ -9324,6 +10182,61 @@
           "ordering": {
             "type": "string",
             "minLength": 1
+          },
+          "billing_mode": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated billing modes (managed, byok)."
+          },
+          "credential_type": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated credential types (managed, byok)."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated agent ids."
+          },
+          "run_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated agent run ids."
+          },
+          "step": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated agent steps."
+          },
+          "policy_variant": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated routing policy variants (stable, candidate)."
+          },
+          "env": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated agent environments."
+          },
+          "error_class": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated attempt error classes: requests with at least one attempt in one of them."
+          },
+          "application": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated values of the request's application tag."
+          },
+          "service": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated values of the request's service tag."
+          },
+          "tags": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated key:value custom tags; any listed value of a key matches, and every key must match."
           }
         },
         "additionalProperties": false
@@ -9366,7 +10279,18 @@
             "max_tokens",
             "q",
             "search",
-            "ordering"
+            "ordering",
+            "billing_mode",
+            "credential_type",
+            "agent_id",
+            "run_id",
+            "step",
+            "policy_variant",
+            "env",
+            "error_class",
+            "application",
+            "service",
+            "tags"
           ],
           "body": []
         }
@@ -10986,10 +11910,6 @@
             "type": "string",
             "minLength": 1,
             "pattern": "^\\d{4}-\\d{2}$"
-          },
-          "workspace_id": {
-            "type": "string",
-            "format": "uuid"
           }
         },
         "additionalProperties": false
@@ -11007,8 +11927,7 @@
           "path": [],
           "query": [
             "period",
-            "period_end",
-            "workspace_id"
+            "period_end"
           ],
           "body": []
         }

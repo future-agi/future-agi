@@ -1,27 +1,24 @@
 /* eslint-disable react/prop-types */
 import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Card,
-  Grid,
-  Typography,
-  Skeleton,
-  Stack,
-  ToggleButton,
-  ToggleButtonGroup,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Chip,
-} from "@mui/material";
+import { Box, Typography, Stack } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsErrors } from "./hooks/useAnalyticsErrors";
 import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
+import { GatewayGrid } from "../components/frame";
+import { formatLogTime } from "../logs/logDates";
+import ChartPanel from "./ChartPanel";
+import GroupByToggle from "./GroupByToggle";
+import { EMPTY } from "../utils/formatters";
+import {
+  UTC_DAYS_NOTE,
+  bucketTime,
+  localTimeAxis,
+  localTimeTooltip,
+} from "../utils/timeZone";
+import { TOP_SERIES, colorsForNames } from "./seriesColors";
+import { barValueOptions } from "./barLabels";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -32,43 +29,86 @@ const GROUP_BY_OPTIONS = [
   ...REQUEST_DIMENSION_OPTIONS,
 ];
 
-const TOP_N = 10;
+const TOP_N = TOP_SERIES;
+
+const formatRate = (value) =>
+  value == null ? "0%" : `${Number(value).toFixed(1)}%`;
+
+function Clipped({ value }) {
+  return (
+    <Box
+      component="span"
+      title={value || undefined}
+      sx={{
+        display: "block",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value || EMPTY}
+    </Box>
+  );
+}
+
+// Each minimum holds its header: the label, 32 px of padding, the 24 px menu
+// button and, sortable, the 24 px sort arrow (analytics/__tests__).
+const TOP_ERROR_COLUMNS = [
+  {
+    field: "name",
+    headerName: "Group",
+    minWidth: 124,
+    flex: 0.8,
+    cellRenderer: ({ value }) => <Clipped value={value || "Unknown"} />,
+  },
+  {
+    field: "error_count",
+    headerName: "Errors",
+    minWidth: 122,
+    flex: 0.5,
+    sort: "desc",
+    valueFormatter: ({ value }) => Number(value ?? 0).toLocaleString(),
+  },
+  {
+    field: "percentage_of_errors",
+    headerName: "Share",
+    minWidth: 120,
+    flex: 0.5,
+    valueFormatter: ({ value }) => formatRate(value),
+  },
+  {
+    field: "error_rate",
+    headerName: "Error rate",
+    minWidth: 144,
+    flex: 0.5,
+    valueFormatter: ({ value }) => formatRate(value),
+  },
+  {
+    field: "last_seen",
+    headerName: "Last seen",
+    minWidth: 170,
+    flex: 0.8,
+    valueFormatter: ({ value }) => (value ? formatLogTime(value) : EMPTY),
+  },
+  {
+    field: "sample_error_message",
+    headerName: "Sample message",
+    minWidth: 240,
+    flex: 2,
+    sortable: false,
+    cellRenderer: ({ value }) => <Clipped value={value} />,
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function computeGranularity(start, end) {
-  if (!start || !end) return "1h";
-  const diffMs = new Date(end).getTime() - new Date(start).getTime();
-  const diffHours = diffMs / (1000 * 60 * 60);
-  if (diffHours <= 6) return "5m";
-  if (diffHours <= 24) return "15m";
-  if (diffHours <= 168) return "1h";
-  if (diffHours <= 720) return "6h";
-  return "1d";
-}
-
-function getChartColors(theme) {
-  return [
-    theme.palette.error.main,
-    theme.palette.warning.main,
-    theme.palette.primary.main,
-    theme.palette.secondary.main,
-    theme.palette.info.main,
-    "#7C4DFF",
-    "#FF6D00",
-    "#00BFA5",
-    "#D500F9",
-    "#64DD17",
-  ];
-}
-
 // ---------------------------------------------------------------------------
 // Chart option builders
 // ---------------------------------------------------------------------------
 
-function buildErrorTrendOptions(theme) {
+function buildErrorTrendOptions(theme, time) {
   return {
     chart: {
       type: "area",
@@ -88,12 +128,10 @@ function buildErrorTrendOptions(theme) {
         stops: [0, 100],
       },
     },
-    xaxis: {
-      type: "datetime",
-      labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-      },
-    },
+    xaxis: localTimeAxis({
+      color: theme.palette.text.secondary,
+      utc: time.utc,
+    }),
     yaxis: {
       labels: {
         style: { colors: theme.palette.text.secondary, fontSize: "11px" },
@@ -110,7 +148,7 @@ function buildErrorTrendOptions(theme) {
     },
     tooltip: {
       theme: theme.palette.mode,
-      x: { format: "MMM dd, HH:mm" },
+      x: localTimeTooltip(time),
       y: { formatter: (val) => `${Number(val)?.toFixed(2) ?? 0}%` },
     },
     grid: {
@@ -128,27 +166,30 @@ function buildErrorTrendOptions(theme) {
 }
 
 function buildBreakdownBarOptions(theme, categories) {
+  // Each count past its bar's end (barLabels.js).
+  const values = barValueOptions(
+    theme,
+    (val) => val?.toLocaleString("en-US") ?? "0",
+  );
+  // One gateway series hue per group (seriesColors.js), highest first.
   return {
     chart: {
       type: "bar",
+      stacked: values.stacked,
       toolbar: { show: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: getChartColors(theme),
+    colors: colorsForNames(theme, categories),
     plotOptions: {
       bar: {
         horizontal: true,
         borderRadius: 4,
         barHeight: "55%",
         distributed: true,
+        dataLabels: { total: values.total },
       },
     },
-    dataLabels: {
-      enabled: true,
-      formatter: (val) => val?.toLocaleString() ?? "0",
-      style: { fontSize: "11px", fontWeight: 600 },
-      offsetX: 5,
-    },
+    dataLabels: values.dataLabels,
     xaxis: {
       categories,
       labels: {
@@ -174,6 +215,7 @@ function buildBreakdownBarOptions(theme, categories) {
       strokeDashArray: 3,
       xaxis: { lines: { show: true } },
       yaxis: { lines: { show: false } },
+      padding: values.gridPadding,
     },
     legend: { show: false },
     responsive: [
@@ -206,14 +248,9 @@ function buildErrorTrendSeries(errorTimeseries) {
 // Main component
 // ---------------------------------------------------------------------------
 
-const ErrorAnalytics = ({ start, end, gatewayId }) => {
+const ErrorAnalytics = ({ start, end, granularity, gatewayId }) => {
   const theme = useTheme();
   const [groupBy, setGroupBy] = useState("status_code");
-
-  const granularity = useMemo(
-    () => computeGranularity(start, end),
-    [start, end],
-  );
 
   const { data, isLoading } = useAnalyticsErrors({
     start,
@@ -235,7 +272,12 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
     () => buildErrorTrendSeries(errorTimeseries),
     [errorTimeseries],
   );
-  const trendOptions = useMemo(() => buildErrorTrendOptions(theme), [theme]);
+  // Day buckets read in the zone the API cut them in.
+  const { day, utc } = bucketTime(granularity, data);
+  const trendOptions = useMemo(
+    () => buildErrorTrendOptions(theme, { day, utc }),
+    [theme, day, utc],
+  );
 
   // Breakdown bar series
   const barCategories = useMemo(
@@ -260,215 +302,89 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
   };
 
   return (
-    <Box>
-      {/* Summary header */}
-      <Stack direction="row" spacing={3} alignItems="center" mb={2}>
-        <Stack direction="row" alignItems="baseline" spacing={1}>
-          <Typography variant="subtitle1" fontWeight={600}>
-            Total Errors:
-          </Typography>
-          <Typography variant="h5" fontWeight={700} color="error.main">
-            {data?.total_errors?.toLocaleString() ?? "--"}
-          </Typography>
-        </Stack>
-        <Stack direction="row" alignItems="baseline" spacing={1}>
-          <Typography variant="subtitle1" fontWeight={600}>
-            Error Rate:
-          </Typography>
-          <Typography variant="h5" fontWeight={700} color="error.main">
-            {data?.overall_error_rate != null
-              ? `${Number(data.overall_error_rate).toFixed(2)}%`
-              : "--"}
-          </Typography>
-        </Stack>
-
-        {/* Group-by toggle */}
-        <Box sx={{ ml: "auto !important" }}>
-          <Stack direction="row" alignItems="center" spacing={2}>
-            <Typography variant="body2" color="text.secondary" fontWeight={500}>
-              Group by:
-            </Typography>
-            <ToggleButtonGroup
-              value={groupBy}
-              exclusive
-              onChange={handleGroupByChange}
-              size="small"
-            >
-              {GROUP_BY_OPTIONS.map((opt) => (
-                <ToggleButton
-                  key={opt.value}
-                  value={opt.value}
-                  sx={{
-                    px: 1.5,
-                    py: 0.25,
-                    textTransform: "none",
-                    fontSize: "0.8125rem",
-                  }}
-                >
-                  {opt.label}
-                </ToggleButton>
-              ))}
-            </ToggleButtonGroup>
-          </Stack>
+    <Stack spacing={1.5}>
+      <Box
+        sx={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 2,
+        }}
+      >
+        <Typography typography="s1" sx={{ fontVariantNumeric: "tabular-nums" }}>
+          {`${(data?.total_errors ?? 0).toLocaleString()} errors`}
+          <Box component="span" sx={{ color: "text.secondary" }}>
+            {` in ${(data?.total_requests ?? 0).toLocaleString()} requests (${formatRate(data?.overall_error_rate)})`}
+          </Box>
+        </Typography>
+        <Box sx={{ ml: { sm: "auto" } }}>
+          <GroupByToggle
+            value={groupBy}
+            options={GROUP_BY_OPTIONS}
+            onChange={(next) => handleGroupByChange(null, next)}
+          />
         </Box>
-      </Stack>
+      </Box>
 
-      <Grid container spacing={3}>
-        {/* Error rate trend */}
-        <Grid item xs={12} md={7}>
-          <Card sx={{ p: 3 }}>
-            <Typography variant="subtitle1" fontWeight={600} mb={2}>
-              Error Rate Over Time
-            </Typography>
-            {isLoading ? (
-              <Skeleton
-                variant="rectangular"
-                height={320}
-                sx={{ borderRadius: 1 }}
-              />
-            ) : trendSeries.length > 0 && trendSeries[0].data.length > 0 ? (
-              <Chart
-                type="area"
-                height={320}
-                options={trendOptions}
-                series={trendSeries}
-              />
-            ) : (
-              <Box
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                height={320}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  No error data available for this time range.
-                </Typography>
-              </Box>
-            )}
-          </Card>
-        </Grid>
+      <Box
+        sx={{
+          display: "grid",
+          gap: 1.5,
+          gridTemplateColumns: { xs: "1fr", md: "7fr 5fr" },
+        }}
+      >
+        <ChartPanel
+          title="Error rate over time"
+          caption={utc ? UTC_DAYS_NOTE : undefined}
+          loading={isLoading}
+          empty={!(trendSeries.length > 0 && trendSeries[0].data.length > 0)}
+          emptyText="No errors in this range."
+        >
+          <Chart
+            type="area"
+            height={280}
+            options={trendOptions}
+            series={trendSeries}
+          />
+        </ChartPanel>
+        <ChartPanel
+          title="Errors by group"
+          loading={isLoading}
+          empty={breakdown.length === 0}
+          emptyText="No errors in this range."
+        >
+          <Chart
+            type="bar"
+            height={Math.max(280, breakdown.length * 34)}
+            options={barOptions}
+            series={barSeries}
+          />
+        </ChartPanel>
+      </Box>
 
-        {/* Error breakdown bar */}
-        <Grid item xs={12} md={5}>
-          <Card sx={{ p: 3 }}>
-            <Typography variant="subtitle1" fontWeight={600} mb={2}>
-              Error Breakdown
-            </Typography>
-            {isLoading ? (
-              <Skeleton
-                variant="rectangular"
-                height={320}
-                sx={{ borderRadius: 1 }}
-              />
-            ) : breakdown.length > 0 ? (
-              <Chart
-                type="bar"
-                height={Math.max(320, breakdown.length * 38)}
-                options={barOptions}
-                series={barSeries}
-              />
-            ) : (
-              <Box
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                height={320}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  No error breakdown available.
-                </Typography>
-              </Box>
-            )}
-          </Card>
-        </Grid>
-
-        {/* Top errors table */}
-        <Grid item xs={12}>
-          <Card sx={{ p: 3 }}>
-            <Typography variant="subtitle1" fontWeight={600} mb={2}>
-              Top Errors
-            </Typography>
-            {isLoading ? (
-              <Stack spacing={1}>
-                {[...Array(5)].map((_, i) => (
-                  <Skeleton
-                    key={i}
-                    variant="rectangular"
-                    height={40}
-                    sx={{ borderRadius: 1 }}
-                  />
-                ))}
-              </Stack>
-            ) : breakdown.length > 0 ? (
-              <TableContainer>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 600 }}>
-                        Error Count
-                      </TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 600 }}>
-                        Error Rate
-                      </TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {breakdown.map((row, index) => (
-                      <TableRow key={index} hover>
-                        <TableCell>
-                          <Chip
-                            label={row.name || "Unknown"}
-                            size="small"
-                            variant="outlined"
-                            color={index === 0 ? "error" : "default"}
-                          />
-                        </TableCell>
-                        <TableCell align="right">
-                          {row.error_count?.toLocaleString() ?? 0}
-                        </TableCell>
-                        <TableCell align="right">
-                          <Typography
-                            variant="body2"
-                            color={
-                              (row.error_rate ?? 0) > 10
-                                ? "error.main"
-                                : (row.error_rate ?? 0) > 5
-                                  ? "warning.main"
-                                  : "text.primary"
-                            }
-                            fontWeight={500}
-                          >
-                            {row.error_rate != null
-                              ? `${Number(row.error_rate).toFixed(2)}%`
-                              : "0%"}
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            ) : (
-              <Box
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                py={4}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  No errors recorded for this time range.
-                </Typography>
-              </Box>
-            )}
-          </Card>
-        </Grid>
-      </Grid>
-    </Box>
+      <ChartPanel title="Top errors" loading={isLoading} height={200}>
+        <GatewayGrid
+          rowData={breakdown}
+          columnDefs={TOP_ERROR_COLUMNS}
+          stateKey="gateway-analytics-errors"
+          getRowId={(params) => String(params.data.name)}
+          domLayout="autoHeight"
+          height="auto"
+          rowHeight={36}
+          headerHeight={36}
+          emptyState={{
+            icon: "inbox",
+            title: "No errors in this range",
+            description: "Requests that failed or were blocked show up here.",
+          }}
+        />
+      </ChartPanel>
+    </Stack>
   );
 };
 
 ErrorAnalytics.propTypes = {
+  granularity: PropTypes.oneOf(["minute", "hour", "day"]),
   start: PropTypes.string,
   end: PropTypes.string,
   gatewayId: PropTypes.string,

@@ -22,10 +22,10 @@ export default function PlatformLogo({ id, name, brand }) {
           flexShrink: 0,
           display: "flex",
           alignItems: "center",
-          ...(spec.keepColor ? {} : { color: "text.primary" }),
+          ...(spec.keepColor ? {} : { color: spec.color ?? "text.primary" }),
           "& svg": {
-            height: isMark ? 15 : 14,
-            width: isMark ? 15 : "auto",
+            height: isMark ? 16 : 14,
+            width: isMark ? 16 : "auto",
             maxWidth: spec.maxWidth || 60,
             display: "block",
             ...(spec.keepColor ? {} : { fill: "currentColor" }),
@@ -37,15 +37,26 @@ export default function PlatformLogo({ id, name, brand }) {
   return (
     <Box
       sx={{
-        width: 15, height: 15, borderRadius: 0.5, flexShrink: 0,
+        width: 15,
+        height: 15,
+        borderRadius: 0.5,
+        flexShrink: 0,
         bgcolor: brand || "text.disabled",
-        display: "flex", alignItems: "center", justifyContent: "center",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
-      <Typography sx={{ fontSize: 9, fontWeight: "800", color: "#fff", lineHeight: 1 }}>
+      <Typography
+        sx={{ fontSize: 9, fontWeight: "800", color: "#fff", lineHeight: 1 }}
+      >
         {(name || "?").trim()[0]?.toUpperCase()}
       </Typography>
     </Box>
   );
 }
-PlatformLogo.propTypes = { id: PropTypes.string, name: PropTypes.string, brand: PropTypes.string };
+PlatformLogo.propTypes = {
+  id: PropTypes.string,
+  name: PropTypes.string,
+  brand: PropTypes.string,
+};

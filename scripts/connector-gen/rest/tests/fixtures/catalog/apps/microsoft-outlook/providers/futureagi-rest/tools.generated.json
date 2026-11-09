@@ -1,0 +1,929 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/8c562525694550601a232cb54014e48c6c7f6da0/openapi/v1.0/openapi.yaml",
+    "sha256": "533f6d86985584327109ba2c52c0e51454ce1ba2153c11f4d841e898b88c5b1b"
+  },
+  "tools": [
+    {
+      "name": "list_messages",
+      "title": "List or search messages",
+      "description": "List the signed-in user's messages, newest first, or search them. search takes KQL, for example \"from:alice@example.com subject:invoice\"; filter takes OData, for example \"isRead eq false\". Use select (for example subject,from,receivedDateTime,bodyPreview) and top (1-1000) to keep results small; the response's @odata.nextLink holds the next page.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Mail.Read"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/me/messages"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "search": {
+            "type": "string",
+            "description": "Search items by search phrases",
+            "x-wireName": "$search"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "get_message",
+      "title": "Read a message",
+      "description": "Read one message by its id (from list_messages), with its body, sender, recipients and conversationId.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Mail.Read"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/me/messages/{message-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "message-id": {
+            "type": "string",
+            "description": "The unique identifier of message"
+          }
+        },
+        "required": ["message-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "fields": [
+          "id",
+          "conversationId",
+          "subject",
+          "from",
+          "toRecipients",
+          "ccRecipients",
+          "receivedDateTime",
+          "isRead",
+          "body"
+        ],
+        "maxBytes": 100000
+      }
+    },
+    {
+      "name": "list_mail_folders",
+      "title": "List mail folders",
+      "description": "List the mailbox's top-level folders, such as Inbox, Drafts and Sent Items, with their ids and unread counts.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Mail.Read"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/me/mailFolders"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "maxBytes": 25000
+      }
+    },
+    {
+      "name": "send_mail",
+      "title": "Send a message",
+      "description": "Send a new message in one call; a copy is saved in Sent Items. Message.toRecipients is a list such as [{\"emailAddress\": {\"address\": \"bob@example.com\"}}]; Message.body is {\"contentType\": \"text\" or \"html\", \"content\": \"...\"}.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["Mail.Send"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1.0/me/sendMail"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "properties": {
+              "Message": {
+                "type": "object",
+                "properties": {
+                  "subject": {
+                    "type": "string",
+                    "description": "The subject of the message."
+                  },
+                  "body": {
+                    "type": "object",
+                    "properties": {
+                      "content": {
+                        "type": "string",
+                        "description": "The content of the item."
+                      },
+                      "contentType": {
+                        "type": "string",
+                        "enum": ["text", "html"],
+                        "description": "The type of the content. Possible values are text and html."
+                      }
+                    },
+                    "description": "The body of the message. It can be in HTML or text format. Find out about safe HTML in a message body."
+                  },
+                  "toRecipients": {
+                    "type": "array",
+                    "description": "The To: recipients for the message.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "emailAddress": {
+                          "type": "object",
+                          "properties": {
+                            "address": {
+                              "type": "string",
+                              "description": "The email address of the person or entity."
+                            },
+                            "name": {
+                              "type": "string",
+                              "description": "The display name of the person or entity."
+                            }
+                          },
+                          "description": "The recipient's email address."
+                        }
+                      }
+                    }
+                  },
+                  "ccRecipients": {
+                    "type": "array",
+                    "description": "The Cc: recipients for the message.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "emailAddress": {
+                          "type": "object",
+                          "properties": {
+                            "address": {
+                              "type": "string",
+                              "description": "The email address of the person or entity."
+                            },
+                            "name": {
+                              "type": "string",
+                              "description": "The display name of the person or entity."
+                            }
+                          },
+                          "description": "The recipient's email address."
+                        }
+                      }
+                    }
+                  }
+                },
+                "additionalProperties": false,
+                "required": ["toRecipients"]
+              }
+            },
+            "additionalProperties": false,
+            "description": "The message to send."
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "reply_to_message",
+      "title": "Reply to a message",
+      "description": "Reply to the sender of a message, by its id, keeping it in the same conversation. Comment is the reply text, for example \"Thanks, Thursday at 3pm works.\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["Mail.Send"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1.0/me/messages/{message-id}/reply"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "message-id": {
+            "type": "string",
+            "description": "The unique identifier of message"
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "Comment": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": ["Comment"],
+            "description": "The reply."
+          }
+        },
+        "required": ["message-id", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "create_reply_draft",
+      "title": "Draft a reply",
+      "description": "Create a reply draft for a message, by its id, without sending it. Returns the draft, whose id send can take.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["Mail.ReadWrite"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1.0/me/messages/{message-id}/createReply"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "message-id": {
+            "type": "string",
+            "description": "The unique identifier of message"
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "Comment": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "description": "The reply text to start the draft with."
+          }
+        },
+        "required": ["message-id", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "fields": ["id", "conversationId", "subject", "toRecipients"]
+      }
+    },
+    {
+      "name": "update_message",
+      "title": "Mark or flag a message",
+      "description": "Change a message's read state, categories, flag or importance, by its id, for example {\"isRead\": true} or {\"flag\": {\"flagStatus\": \"flagged\"}}.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["Mail.ReadWrite"],
+      "operation": {
+        "method": "PATCH",
+        "path": "/v1.0/me/messages/{message-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "message-id": {
+            "type": "string",
+            "description": "The unique identifier of message"
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "isRead": {
+                "type": "boolean",
+                "description": "Indicates whether the message has been read."
+              },
+              "categories": {
+                "type": "array",
+                "description": "The categories associated with the item",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "flag": {
+                "type": "object",
+                "properties": {
+                  "completedDateTime": {
+                    "type": "object",
+                    "properties": {
+                      "dateTime": {
+                        "type": "string",
+                        "description": "A single point of time in a combined date and time representation ({date}T{time}; for example, 2017-08-29T04:00:00.0000000)."
+                      },
+                      "timeZone": {
+                        "type": "string",
+                        "description": "Represents a time zone, for example, 'Pacific Standard Time'. See below for more possible values."
+                      }
+                    },
+                    "description": "The date and time that the follow-up was finished."
+                  },
+                  "dueDateTime": {
+                    "type": "object",
+                    "properties": {
+                      "dateTime": {
+                        "type": "string",
+                        "description": "A single point of time in a combined date and time representation ({date}T{time}; for example, 2017-08-29T04:00:00.0000000)."
+                      },
+                      "timeZone": {
+                        "type": "string",
+                        "description": "Represents a time zone, for example, 'Pacific Standard Time'. See below for more possible values."
+                      }
+                    },
+                    "description": "The date and time that the follow-up is to be finished. Note: To set the due date, you must also specify the startDateTime; otherwise, you get a 400 Bad Request response."
+                  },
+                  "flagStatus": {
+                    "type": "string",
+                    "enum": ["notFlagged", "complete", "flagged"],
+                    "description": "The status for follow-up for an item. Possible values are notFlagged, complete, and flagged."
+                  },
+                  "startDateTime": {
+                    "type": "object",
+                    "properties": {
+                      "dateTime": {
+                        "type": "string",
+                        "description": "A single point of time in a combined date and time representation ({date}T{time}; for example, 2017-08-29T04:00:00.0000000)."
+                      },
+                      "timeZone": {
+                        "type": "string",
+                        "description": "Represents a time zone, for example, 'Pacific Standard Time'. See below for more possible values."
+                      }
+                    },
+                    "description": "The date and time that the follow-up is to begin."
+                  }
+                },
+                "description": "Indicates the status, start date, due date, or completion date for the message."
+              },
+              "importance": {
+                "type": "string",
+                "enum": ["low", "normal", "high"],
+                "description": "The importance of the message. The possible values are: low, normal, and high."
+              }
+            },
+            "additionalProperties": false,
+            "description": "The fields to change."
+          }
+        },
+        "required": ["message-id", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "fields": ["id", "isRead", "categories", "flag", "importance"]
+      }
+    },
+    {
+      "name": "list_calendar_view",
+      "title": "List events in a time window",
+      "description": "List the events of the user's default calendar between startDateTime and endDateTime, recurring occurrences expanded, for example startDateTime=2026-10-21T00:00:00Z and endDateTime=2026-10-28T00:00:00Z. select (for example subject,start,end,location,attendees) keeps results small; @odata.nextLink holds the next page.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Calendars.Read"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/me/calendarView"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "startDateTime": {
+            "type": "string",
+            "description": "The start date and time of the time range, represented in ISO 8601 format. For example, 2019-11-08T19:00:00-08:00"
+          },
+          "endDateTime": {
+            "type": "string",
+            "description": "The end date and time of the time range, represented in ISO 8601 format. For example, 2019-11-08T20:00:00-08:00"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["startDateTime", "endDateTime"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "get_schedule",
+      "title": "Find free and busy times",
+      "description": "Return the free/busy availability of people or rooms between StartTime and EndTime, each {\"dateTime\": \"2026-10-22T09:00:00\", \"timeZone\": \"Pacific Standard Time\"}, for example Schedules=[\"bob@example.com\"]. AvailabilityViewInterval is the slot length in minutes (default 30).",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Calendars.Read"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1.0/me/calendar/getSchedule"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "properties": {
+              "Schedules": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "StartTime": {
+                "type": "object",
+                "properties": {
+                  "dateTime": {
+                    "type": "string",
+                    "description": "A single point of time in a combined date and time representation ({date}T{time}; for example, 2017-08-29T04:00:00.0000000)."
+                  },
+                  "timeZone": {
+                    "type": "string",
+                    "description": "Represents a time zone, for example, 'Pacific Standard Time'. See below for more possible values."
+                  }
+                }
+              },
+              "EndTime": {
+                "type": "object",
+                "properties": {
+                  "dateTime": {
+                    "type": "string",
+                    "description": "A single point of time in a combined date and time representation ({date}T{time}; for example, 2017-08-29T04:00:00.0000000)."
+                  },
+                  "timeZone": {
+                    "type": "string",
+                    "description": "Represents a time zone, for example, 'Pacific Standard Time'. See below for more possible values."
+                  }
+                }
+              },
+              "AvailabilityViewInterval": {
+                "type": "number",
+                "format": "int32",
+                "minimum": -2147483648,
+                "maximum": 2147483647
+              }
+            },
+            "additionalProperties": false,
+            "required": ["Schedules", "StartTime", "EndTime"],
+            "description": "Whose availability to check, and when."
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "create_event",
+      "title": "Create an event",
+      "description": "Create an event in the user's default calendar. start and end are {\"dateTime\": \"2026-10-22T15:00:00\", \"timeZone\": \"Pacific Standard Time\"}; attendees are [{\"emailAddress\": {\"address\": \"bob@example.com\"}, \"type\": \"required\"}], and each attendee gets an invitation.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["Calendars.ReadWrite"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1.0/me/events"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "properties": {
+              "subject": {
+                "type": "string",
+                "description": "The text of the event's subject line."
+              },
+              "body": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "description": "The content of the item."
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "enum": ["text", "html"],
+                    "description": "The type of the content. Possible values are text and html."
+                  }
+                },
+                "description": "The body of the message associated with the event. It can be in HTML or text format."
+              },
+              "start": {
+                "type": "object",
+                "properties": {
+                  "dateTime": {
+                    "type": "string",
+                    "description": "A single point of time in a combined date and time representation ({date}T{time}; for example, 2017-08-29T04:00:00.0000000)."
+                  },
+                  "timeZone": {
+                    "type": "string",
+                    "description": "Represents a time zone, for example, 'Pacific Standard Time'. See below for more possible values."
+                  }
+                },
+                "description": "The start date, time, and time zone of the event. By default, the start time is in UTC."
+              },
+              "end": {
+                "type": "object",
+                "properties": {
+                  "dateTime": {
+                    "type": "string",
+                    "description": "A single point of time in a combined date and time representation ({date}T{time}; for example, 2017-08-29T04:00:00.0000000)."
+                  },
+                  "timeZone": {
+                    "type": "string",
+                    "description": "Represents a time zone, for example, 'Pacific Standard Time'. See below for more possible values."
+                  }
+                },
+                "description": "The date, time, and time zone that the event ends. By default, the end time is in UTC."
+              },
+              "location": {
+                "type": "object",
+                "properties": {
+                  "address": {
+                    "type": "object",
+                    "properties": {
+                      "city": {
+                        "type": "string",
+                        "description": "The city."
+                      },
+                      "countryOrRegion": {
+                        "type": "string",
+                        "description": "The country or region. It's a free-format string value, for example, 'United States'."
+                      },
+                      "postalCode": {
+                        "type": "string",
+                        "description": "The postal code."
+                      },
+                      "state": {
+                        "type": "string",
+                        "description": "The state."
+                      },
+                      "street": {
+                        "type": "string",
+                        "description": "The street."
+                      }
+                    },
+                    "description": "The street address of the location."
+                  },
+                  "coordinates": {
+                    "type": "object",
+                    "properties": {
+                      "accuracy": {
+                        "description": "The accuracy of the latitude and longitude. As an example, the accuracy can be measured in meters, such as the latitude and longitude are accurate to within 50 meters.",
+                        "oneOf": [
+                          {
+                            "type": "number",
+                            "format": "double"
+                          },
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "string",
+                            "enum": ["-INF", "INF", "NaN"]
+                          }
+                        ]
+                      },
+                      "altitude": {
+                        "description": "The altitude of the location.",
+                        "oneOf": [
+                          {
+                            "type": "number",
+                            "format": "double"
+                          },
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "string",
+                            "enum": ["-INF", "INF", "NaN"]
+                          }
+                        ]
+                      },
+                      "altitudeAccuracy": {
+                        "description": "The accuracy of the altitude.",
+                        "oneOf": [
+                          {
+                            "type": "number",
+                            "format": "double"
+                          },
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "string",
+                            "enum": ["-INF", "INF", "NaN"]
+                          }
+                        ]
+                      },
+                      "latitude": {
+                        "description": "The latitude of the location.",
+                        "oneOf": [
+                          {
+                            "type": "number",
+                            "format": "double"
+                          },
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "string",
+                            "enum": ["-INF", "INF", "NaN"]
+                          }
+                        ]
+                      },
+                      "longitude": {
+                        "description": "The longitude of the location.",
+                        "oneOf": [
+                          {
+                            "type": "number",
+                            "format": "double"
+                          },
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "string",
+                            "enum": ["-INF", "INF", "NaN"]
+                          }
+                        ]
+                      }
+                    },
+                    "description": "The geographic coordinates and elevation of the location."
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "description": "The name associated with the location."
+                  },
+                  "locationEmailAddress": {
+                    "type": "string",
+                    "description": "Optional email address of the location."
+                  },
+                  "locationType": {
+                    "type": "string",
+                    "enum": [
+                      "default",
+                      "conferenceRoom",
+                      "homeAddress",
+                      "businessAddress",
+                      "geoCoordinates",
+                      "streetAddress",
+                      "hotel",
+                      "restaurant",
+                      "localBusiness",
+                      "postalAddress"
+                    ],
+                    "description": "The type of location. The possible values are: default, conferenceRoom, homeAddress, businessAddress,geoCoordinates, streetAddress, hotel, restaurant, localBusiness, postalAddress. Read-only."
+                  },
+                  "locationUri": {
+                    "type": "string",
+                    "description": "Optional URI representing the location."
+                  },
+                  "uniqueId": {
+                    "type": "string",
+                    "description": "For internal use only."
+                  },
+                  "uniqueIdType": {
+                    "type": "string",
+                    "enum": [
+                      "unknown",
+                      "locationStore",
+                      "directory",
+                      "private",
+                      "bing"
+                    ],
+                    "description": "For internal use only."
+                  }
+                },
+                "description": "The location of the event."
+              },
+              "attendees": {
+                "type": "array",
+                "description": "The collection of attendees for the event.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "emailAddress": {
+                      "type": "object",
+                      "properties": {
+                        "address": {
+                          "type": "string",
+                          "description": "The email address of the person or entity."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "The display name of the person or entity."
+                        }
+                      },
+                      "description": "The recipient's email address."
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": ["required", "optional", "resource"],
+                      "description": "The type of attendee. The possible values are: required, optional, resource. Currently if the attendee is a person, findMeetingTimes always considers the person is of the Required type."
+                    },
+                    "proposedNewTime": {
+                      "type": "object",
+                      "properties": {
+                        "end": {
+                          "type": "object",
+                          "properties": {
+                            "dateTime": {
+                              "type": "string",
+                              "description": "A single point of time in a combined date and time representation ({date}T{time}; for example, 2017-08-29T04:00:00.0000000)."
+                            },
+                            "timeZone": {
+                              "type": "string",
+                              "description": "Represents a time zone, for example, 'Pacific Standard Time'. See below for more possible values."
+                            }
+                          }
+                        },
+                        "start": {
+                          "type": "object",
+                          "properties": {
+                            "dateTime": {
+                              "type": "string",
+                              "description": "A single point of time in a combined date and time representation ({date}T{time}; for example, 2017-08-29T04:00:00.0000000)."
+                            },
+                            "timeZone": {
+                              "type": "string",
+                              "description": "Represents a time zone, for example, 'Pacific Standard Time'. See below for more possible values."
+                            }
+                          }
+                        }
+                      },
+                      "description": "An alternate date/time proposed by the attendee for a meeting request to start and end. If the attendee hasn't proposed another time, then this property isn't included in a response of a GET event."
+                    },
+                    "status": {
+                      "type": "object",
+                      "properties": {
+                        "response": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "organizer",
+                            "tentativelyAccepted",
+                            "accepted",
+                            "declined",
+                            "notResponded"
+                          ],
+                          "description": "The response type. The possible values are: none, organizer, tentativelyAccepted, accepted, declined, notResponded.To differentiate between none and notResponded:  none – from organizer's perspective. This value is used when the status of an attendee/participant is reported to the organizer of a meeting.  notResponded – from attendee's perspective. Indicates the attendee has not responded to the meeting request.  Clients can treat notResponded == none.  As an example, if attendee Alex hasn't responded to a meeting request, getting Alex' response status for that event in Alex' calendar returns notResponded. Getting Alex' response from the calendar of any other attendee or the organizer's returns none. Getting the organizer's response for the event in anybody's calendar also returns none."
+                        },
+                        "time": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "The date and time when the response was returned. It uses ISO 8601 format and is always in UTC time. For example, midnight UTC on Jan 1, 2014 is 2014-01-01T00:00:00Z",
+                          "pattern": "^[0-9]{4,}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,12})?(Z|[+-][0-9][0-9]:[0-9][0-9])$"
+                        }
+                      },
+                      "description": "The attendee's response (none, accepted, declined, etc.) for the event and date-time that the response was sent."
+                    }
+                  }
+                }
+              },
+              "isOnlineMeeting": {
+                "type": "boolean",
+                "description": "True if this event has online meeting information (that is, onlineMeeting points to an onlineMeetingInfo resource), false otherwise. Default is false (onlineMeeting is null). Optional.  After you set isOnlineMeeting to true, Microsoft Graph initializes onlineMeeting. Subsequently, Outlook ignores any further changes to isOnlineMeeting, and the meeting remains available online."
+              }
+            },
+            "additionalProperties": false,
+            "required": ["subject", "start", "end"],
+            "description": "The event to create."
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      },
+      "response": {
+        "fields": ["id", "subject", "start", "end", "webLink", "onlineMeeting"]
+      }
+    },
+    {
+      "name": "delete_event",
+      "title": "Delete an event",
+      "description": "Delete an event by its id. If the user organizes it, the attendees get a cancellation.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "posture": "deny",
+      "scopes": ["Calendars.ReadWrite"],
+      "operation": {
+        "method": "DELETE",
+        "path": "/v1.0/me/events/{event-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "event-id": {
+            "type": "string",
+            "description": "The unique identifier of event"
+          }
+        },
+        "required": ["event-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    }
+  ]
+}

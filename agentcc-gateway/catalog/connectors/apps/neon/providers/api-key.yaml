@@ -1,0 +1,49 @@
+# Neon's hosted MCP server with a Neon API key as the bearer, over
+# Streamable HTTP (the /sse endpoint is deprecated and takes no API key).
+# Neon recommends MCP for development and testing, not production databases,
+# and grants the server broad management rights: the help text says so. The
+# org can narrow it later with Neon's URL parameters (readonly, projectId,
+# category); none is set here, so the server offers its default tools.
+schema: "connector-manifest/v1#provider"
+app: neon
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.neon.tech/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "A Neon API key. Neon recommends its MCP server for development and testing only, never production databases."
+      helpUrl: https://neon.com/docs/ai/neon-mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://neon.com/docs/ai/neon-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://neon.com/docs/ai/neon-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://neon.com/docs/ai/neon-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://neon.com/docs/ai/neon-mcp-server
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

@@ -1,0 +1,43 @@
+# Stripe's MCP server with an agent API key as the bearer. Stripe stops
+# accepting full-access secret keys and restricted keys without the Agent tag
+# in December 2026. Its stripe_api_read and stripe_api_write tools take any
+# Stripe API method, so per-tool policy sees only read or write.
+schema: "connector-manifest/v1#provider"
+app: stripe
+id: agent-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.stripe.com
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Agent API key
+      help: "A Stripe agent API key. From December 2026 Stripe MCP refuses other secret and restricted keys."
+      helpUrl: https://docs.stripe.com/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.stripe.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://docs.stripe.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.credentialParts
+    url: https://docs.stripe.com/mcp
+    fetchedAt: 2026-10-20
+x-omega: { ossId: stripe }

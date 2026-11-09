@@ -5,6 +5,7 @@ import {
   CircularProgress,
   Divider,
   IconButton,
+  Popover,
   Skeleton,
   Stack,
   Tab,
@@ -26,6 +27,7 @@ import CustomTooltip from "src/components/tooltip";
 
 import { usePromptWorkbenchContext } from "../WorkbenchContext";
 import { useIsVariablesDefined } from "../hooks/use-is-variables-defined";
+import { useExtractAllVariables } from "../hooks/use-extract-all-variables";
 import { usePromptVersions } from "../hooks/use-prompt-versions";
 import {
   changeVersion,
@@ -45,10 +47,12 @@ import { NavLink } from "react-router-dom";
 import { createDraftPayload } from "../../constant";
 import { getMetricsTabSx } from "../Metrics/common";
 import SaveAndCommit from "./SaveAndCommit";
+import { useRunOnDraftGuard } from "./SaveDraftFirstDialog";
 import SvgColor from "src/components/svg-color";
 import { DraftBadge } from "../SharedStyledComponents";
 import VersionStyle from "./VersionStyle";
 import MoreActions from "./MoreActions";
+import RunOnRowsButton from "src/sections/common/RunSources/RunOnRowsButton"; // R4-F frozen line
 import { getColorMap as getTagColorMap } from "../VersionHistory/common";
 
 const PromptActions = () => {
@@ -78,6 +82,7 @@ const PromptActions = () => {
     isEmptyPrompt,
     prompts,
     variableData,
+    setVariableData,
     setPromptName,
     promptGeneratingStatus,
     setLoadingStatus,
@@ -149,6 +154,36 @@ const PromptActions = () => {
   );
 
   const isSingleVersion = selectedVersions.length === 1;
+
+  // IT-R4 G4 P3: a run with an empty variable asks first (`{{x}} is empty,
+  // so lookup_order would be called with no x. [Run anyway] [Fill it]`).
+  const allVariables = useExtractAllVariables(prompts, templateFormat);
+  const [emptyAsk, setEmptyAsk] = useState(null); // {anchor, names}
+  const emptyVariables = (allVariables ?? []).filter((n) => {
+    const v = variableData?.[n];
+    return !(Array.isArray(v) ? v : [v]).some(
+      (x) => x != null && String(x).trim(),
+    );
+  });
+  const toolNames = (modelConfig?.[0]?.tools ?? [])
+    .map((t) => t?.function?.name ?? t?.name)
+    .filter(Boolean);
+  const emptySentence = (names) => {
+    const first = names[0];
+    const what = first.replace(/_/g, " ");
+    const lead = `{{${first}}}${names.length > 1 ? ` and ${names.length - 1} more` : ""} ${names.length > 1 ? "are" : "is"} empty`;
+    return toolNames.length
+      ? `${lead}, so ${toolNames[0]} would be called with no ${what}.`
+      : `${lead}; the run sends ${names.length > 1 ? "them" : "it"} as written.`;
+  };
+  const fillFirstEmpty = () => {
+    const name = emptyAsk?.names?.[0];
+    setEmptyAsk(null);
+    const el = document.querySelector(`[data-testid="variable-value-${name}"]`);
+    // After the popover has handed focus back to Run.
+    if (el) setTimeout(() => el.focus(), 200);
+    else setVariableDrawerOpen(true);
+  };
 
   const noModelIndex = modelConfig?.findIndex((m) => !m?.model);
 
@@ -319,7 +354,28 @@ const PromptActions = () => {
     () => !!selectedVersions?.some((version) => version?.isDraft),
     [selectedVersions],
   );
-  const disableCommit = isAnyPromptDraft || selectedVersions.length > 1;
+  // IT-R2 G4 P2: Commit works once the prompt has content (no run needed);
+  // when it can't, the tooltip says why.
+  const commitBlocked =
+    selectedVersions.length > 1
+      ? "Commit one version at a time: remove the others from Compare first."
+      : isEmptyPrompt?.includes(0)
+        ? "Write a message first, then commit it as a version."
+        : !baseVersion?.version
+          ? "Saving your draft…"
+          : null;
+  const disableCommit = Boolean(commitBlocked);
+  // The stored version (prompt history) says whether it is still a draft:
+  // a run alone does not save a version for experiments.
+  const storedDraft = Boolean(
+    versions?.find((v) => v?.template_version === baseVersion?.version)
+      ?.is_draft,
+  );
+  const runGuard = useRunOnDraftGuard({
+    promptId: id,
+    version: baseVersion?.version,
+    isDraft: Boolean(baseVersion?.isDraft) || storedDraft,
+  });
 
   // const selectedVersion = useMemo(() => {
   //   return versions?.find(
@@ -343,6 +399,9 @@ const PromptActions = () => {
             alignItems: "center",
             gap: "12px",
             flexGrow: 1,
+            // IT-R1 G4: the title gives way (ellipsis) before the buttons
+            // wrap at 1280 px.
+            minWidth: 0,
           }}
         >
           <NavLink
@@ -375,8 +434,12 @@ const PromptActions = () => {
           >
             <CustomTooltip show title="Add New Prompt" arrow size="small">
               <Box
+                component="button"
+                type="button"
+                aria-label="Add New Prompt"
                 sx={{
                   cursor: "pointer",
+                  bgcolor: "transparent",
                   border: "1px solid",
                   borderColor: "divider",
                   color: "text.disabled",
@@ -403,7 +466,7 @@ const PromptActions = () => {
           </ShowComponent>
           {!isLoadingCreate ? (
             <>
-              <Box>
+              <Box sx={{ minWidth: 0, overflow: "hidden" }}>
                 <ShowComponent condition={editName}>
                   <TextField
                     value={title}
@@ -430,12 +493,17 @@ const PromptActions = () => {
                     show={promptName?.length > 30}
                     title={promptName}
                   >
+                    {/* RS-13: the prompt's name is the page's one h1. */}
                     <Typography
+                      component="h1"
                       typography="M3"
                       fontWeight={"fontWeightMedium"}
                       color="text.primary"
                       sx={{
+                        m: 0,
                         cursor: promptName?.length > 30 ? "pointer" : "cursor",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
                       }}
                       width={"auto"}
                       whiteSpace={"nowrap"}
@@ -450,6 +518,7 @@ const PromptActions = () => {
                 <Typography
                   typography="s3"
                   fontWeight={"fontWeightRegular"}
+                  noWrap
                   color={
                     currentTab === "Metrics" ? "text.primary" : "text.disabled"
                   }
@@ -518,6 +587,7 @@ const PromptActions = () => {
                   <span style={{ display: "inline-block" }}>
                     <IconButton
                       onClick={handleEdit}
+                      aria-label="Rename prompt"
                       sx={{
                         padding: 0.5,
                       }}
@@ -543,7 +613,13 @@ const PromptActions = () => {
           )}
         </Box>
 
-        <Box display="flex" gap={theme.spacing(1.5)} alignItems={"flex-start"}>
+        <Box
+          display="flex"
+          gap={theme.spacing(1.5)}
+          alignItems={"flex-start"}
+          sx={{ flexShrink: 0, ml: 1.5 }}
+          onClickCapture={runGuard.onClickCapture}
+        >
           {/* Hide More Actions, Variables, and Run Prompt on Simulation tab */}
           <ShowComponent condition={currentTab !== "Simulation"}>
             <ShowComponent
@@ -552,9 +628,8 @@ const PromptActions = () => {
               <CustomTooltip
                 show
                 title={
-                  disableCommit
-                    ? "Please run the prompt before saving and committing"
-                    : "Save your prompt changes with a clear message, so every update becomes a trackable version."
+                  commitBlocked ??
+                  "Save this prompt as a version (its tools and variables too), so experiments can run it."
                 }
                 arrow
                 size="small"
@@ -686,11 +761,12 @@ const PromptActions = () => {
                 </Typography>
               </Button>
             </CustomTooltip>
-            <CustomTooltip
-              show={Boolean(buttonTooltip)}
-              title={buttonTooltip || ""}
-              arrow
-            >
+            {/* IT-R4 G4 P2: the tooltip wrapper stays mounted (an empty
+                title shows nothing). Toggling `show` swapped a Fragment for
+                a Tooltip under the pointer: the click that blurred a
+                variable's input (committing its value) re-mounted the
+                button between mousedown and mouseup, so Run did nothing. */}
+            <CustomTooltip show title={buttonTooltip || ""} arrow>
               <span style={{ display: "inline-flex" }}>
                 <ShowComponent condition={isGenerating}>
                   <StopGeneratingButton
@@ -705,13 +781,14 @@ const PromptActions = () => {
                 </ShowComponent>
                 <ShowComponent condition={!isGenerating}>
                   <RunPromptButton
+                    data-testid="run-prompt"
                     disabled={
                       loadingPrompt ||
                       currentTab === "Evaluation" ||
                       currentTab === "Metrics" ||
                       !RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]
                     }
-                    onClick={() => {
+                    onClick={(e) => {
                       if (buttonTooltip) {
                         if (noModelIndex !== -1) {
                           setOpenSelectModel(noModelIndex);
@@ -723,7 +800,20 @@ const PromptActions = () => {
                             ),
                           });
                         } else if (!isVariablesDefined) {
-                          setVariableDrawerOpen(true);
+                          // IT-R4 G4 P3: ask in place, not a full-screen
+                          // drawer.
+                          setEmptyAsk({
+                            anchor: e.currentTarget,
+                            names: emptyVariables,
+                          });
+                        } else {
+                          // IT-R4 G4 P2: never a silent click.
+                          enqueueSnackbar(
+                            `Couldn't run yet: ${buttonTooltip}`,
+                            {
+                              variant: "info",
+                            },
+                          );
                         }
                         return;
                       }
@@ -734,6 +824,13 @@ const PromptActions = () => {
                           (item) => item?.version,
                         ),
                       });
+                      if (emptyVariables.length && !emptyAsk) {
+                        setEmptyAsk({
+                          anchor: e.currentTarget,
+                          names: emptyVariables,
+                        });
+                        return;
+                      }
                       if (
                         !checkIfAudioModelHasAudioContent(modelConfig, prompts)
                       ) {
@@ -754,6 +851,52 @@ const PromptActions = () => {
                 </ShowComponent>
               </span>
             </CustomTooltip>
+            <Popover
+              open={Boolean(emptyAsk)}
+              anchorEl={emptyAsk?.anchor ?? null}
+              onClose={() => setEmptyAsk(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+              slotProps={{ paper: { sx: { mt: 0.5, p: 1.5, maxWidth: 340 } } }}
+            >
+              <Stack gap={1} data-testid="run-empty-variables">
+                <Typography typography="s2">
+                  {emptyAsk ? emptySentence(emptyAsk.names) : ""}
+                </Typography>
+                <Stack direction="row" gap={1} justifyContent="flex-end">
+                  <Button size="small" variant="text" onClick={fillFirstEmpty}>
+                    Fill it
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={() => {
+                      setEmptyAsk(null);
+                      if (!isVariablesDefined) {
+                        // Define the missing names (empty) so the run
+                        // sends them as written.
+                        const next = { ...(variableData ?? {}) };
+                        (allVariables ?? []).forEach((n) => {
+                          if (!(n in next)) next[n] = [""];
+                        });
+                        setVariableData(next);
+                        setTimeout(() => saveAndRun(), 0);
+                      } else saveAndRun();
+                    }}
+                  >
+                    Run anyway
+                  </Button>
+                </Stack>
+              </Stack>
+            </Popover>
+            {/* R4-F frozen line: Run on a dataset… (D24; lane Rb fills it) */}
+            <RunOnRowsButton
+              source="prompt"
+              promptId={id}
+              promptVersionId={runGuard.savedVersion ?? baseVersion?.version}
+              label="Run on a dataset…"
+              variant="text"
+            />
           </ShowComponent>
         </Box>
       </Box>
@@ -902,7 +1045,9 @@ const PromptActions = () => {
         onClose={() => setSaveCommitOpen(false)}
         data={baseVersion}
         promptName={promptName}
+        askName={!versions?.some((v) => v && !v.is_draft)}
       />
+      {runGuard.dialog}
     </Stack>
   );
 };

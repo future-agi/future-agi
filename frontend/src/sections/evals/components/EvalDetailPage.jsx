@@ -58,6 +58,19 @@ import TestPlayground from "./TestPlayground";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import EvalFeedbackTab from "./EvalFeedbackTab";
+import {
+  isTypedEvalType,
+  typedEvalLabel,
+} from "src/sections/common/EvalTypes/typedEvalTypes";
+import { versionChipOf } from "./versionChip";
+import TypedEvalDetail from "../types/TypedEvalDetail";
+import { hasTypedDetail } from "../types/typedViews";
+import AgreementTab from "../alignment/AgreementTab";
+import {
+  compositeExtrasBody,
+  rowsFromDetail,
+  validateComposite,
+} from "src/sections/common/EvalTypes/compositeModel";
 import EvalGroundTruthTab from "./EvalGroundTruthTab";
 import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
@@ -68,6 +81,9 @@ import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerCon
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import AllowNaSwitch from "src/sections/common/EvalPicker/AllowNaSwitch";
+import { allowNaApplies } from "src/sections/common/EvalPicker/allowNaModel";
+import { isDecisionModel } from "src/sections/common/DecisionJudges/decisionModels";
 
 const ERROR_LOCALIZER_LOCKED_TOOLTIP =
   "Error Localization isn't enabled for this workspace.";
@@ -168,6 +184,8 @@ const EvalDetailPage = () => {
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
+  // W1-4: a workspace judge may answer N/A (the template's allow_na).
+  const [allowNa, setAllowNa] = useState(false);
   const [choiceScores, setChoiceScores] = useState({});
   const [multiChoice, setMultiChoice] = useState(false);
   const [description, setDescription] = useState("");
@@ -352,6 +370,7 @@ const EvalDetailPage = () => {
               "pass_fail",
           );
           setPassThreshold(evalData.pass_threshold ?? 0.5);
+          setAllowNa(Boolean(config.allow_na ?? evalData.config?.allow_na));
           // Derive choiceScores: use the backend's scored dict if present,
           // otherwise convert the `choices` array (used by deterministic /
           // multi-class evals like tone, customer_agent_*) into a default
@@ -445,6 +464,7 @@ const EvalDetailPage = () => {
               child_name: c.child_name,
               order: c.order,
               weight: c.weight ?? 1.0,
+              config: c.config || {},
             })),
           );
           const weights = {};
@@ -496,6 +516,8 @@ const EvalDetailPage = () => {
         );
       }
       setPassThreshold(config.passThreshold ?? config.pass_threshold ?? 0.5);
+      // W1-4: the version's own N/A rule.
+      setAllowNa(Boolean(config.allow_na ?? evalData?.config?.allow_na));
       setChoiceScores(config.choiceScores || config.choice_scores || {});
       setMultiChoice(config.multiChoice ?? config.multi_choice ?? false);
       if (config.messages && config.messages.length > 0) {
@@ -609,6 +631,7 @@ const EvalDetailPage = () => {
             "pass_fail",
         );
         setPassThreshold(evalData.pass_threshold ?? 0.5);
+        setAllowNa(Boolean(config.allow_na ?? evalData.config?.allow_na));
         // Derive choiceScores: use the backend's scored dict if present,
         // otherwise convert the `choices` array (used by deterministic /
         // multi-class evals like tone, customer_agent_*) into a default
@@ -674,7 +697,18 @@ const EvalDetailPage = () => {
   }, [evalData, versionsData, defaultVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const evalType = evalData?.eval_type || "llm";
+  // W7: a typed eval (decision tree, remote scorer) shows its own Details.
+  const showTypedDetail = isTypedEvalType(evalType) && hasTypedDetail(evalType);
+  // W7: agreement with reviewers, for every eval type, once real.
+  const agreementTabs = AgreementTab.ready ? ["agreement"] : [];
   const isSystemEval = evalData?.owner === "system";
+  // W1-4: where the scorer honours it (the workspace's own judges).
+  const allowNaShown = allowNaApplies({
+    evalType,
+    isSystemEval,
+    decisionModel: isDecisionModel(model) ? model : null,
+    supportsNa: evalData?.supports_na,
+  });
 
   const hasDataInjection =
     evalType === "agent" &&
@@ -724,7 +758,8 @@ const EvalDetailPage = () => {
       compositeDetail.aggregation_function || "weighted_avg",
     );
     setCompositeChildAxis(compositeDetail.composite_child_axis || "");
-    setCompositeChildren(compositeDetail.children || []);
+    // W7-5: each child with its stored seat, judge and level.
+    setCompositeChildren(rowsFromDetail(compositeDetail));
     // Seed weights map from children
     const weights = {};
     (compositeDetail.children || []).forEach((c) => {
@@ -738,8 +773,8 @@ const EvalDetailPage = () => {
   }, [isComposite, compositeDetail]);
 
   const isSaving =
-    updateEval.isLoading ||
-    createVersion.isLoading ||
+    updateEval.isPending ||
+    createVersion.isPending ||
     updateComposite.isPending;
 
   // Extract variables for the test panel
@@ -833,6 +868,7 @@ const EvalDetailPage = () => {
         // Send [] for LLM evals so the BE can persist a user-cleared list.
         // Omitting on empty would leave the previous examples in place.
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
+        allow_na: allowNaShown ? allowNa : undefined,
       };
       await updateEval.mutateAsync(payload);
 
@@ -863,6 +899,7 @@ const EvalDetailPage = () => {
         template_format: templateFormat,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
+        allow_na: allowNaShown ? allowNa : undefined,
       };
       const newVersion = await createVersion.mutateAsync({
         config_snapshot: configSnapshot,
@@ -919,6 +956,8 @@ const EvalDetailPage = () => {
     errorLocalizerActive,
     messages,
     fewShotExamples,
+    allowNa,
+    allowNaShown,
     updateEval,
     createVersion,
     enqueueSnackbar,
@@ -943,6 +982,8 @@ const EvalDetailPage = () => {
         child_template_ids: compositeChildren.map((c) => c.child_id),
         child_configs: buildCompositeChildConfigs(compositeChildren),
         child_weights: Object.keys(weights).length > 0 ? weights : null,
+        // W7-5: jury seats, levels and checks.
+        ...compositeExtrasBody(compositeChildren, compositeChildWeights),
       };
       const result = await updateComposite.mutateAsync(payload);
       const vNum = result?.version_number;
@@ -1031,6 +1072,8 @@ const EvalDetailPage = () => {
           child_template_ids: compositeChildren.map((c) => c.child_id),
           child_configs: buildCompositeChildConfigs(compositeChildren),
           child_weights: Object.keys(weights).length > 0 ? weights : null,
+          // W7-5: jury seats, levels and checks.
+          ...compositeExtrasBody(compositeChildren, compositeChildWeights),
         });
       }
       testPlaygroundRef.current?.runTest?.(evalId);
@@ -1162,11 +1205,7 @@ const EvalDetailPage = () => {
             </Typography>
           </Breadcrumbs>
           <VersionBadge
-            version={
-              viewingVersion
-                ? `V${viewingVersion.version_number}`
-                : evalData.current_version || "V1"
-            }
+            version={versionChipOf({ viewingVersion, evalData, evalType })}
           />
           <Box
             sx={{
@@ -1205,13 +1244,21 @@ const EvalDetailPage = () => {
           >
             {(() => {
               if (!isComposite) {
+                // W7: Decision tree / Remote scorer.
+                if (typedEvalLabel(evalType)) return typedEvalLabel(evalType);
                 return evalType === "code"
                   ? "Code"
                   : evalType === "agent"
                     ? "Agent"
                     : "LLM";
               }
-              const typeLabels = { code: "Code", agent: "Agent", llm: "LLM" };
+              const typeLabels = {
+                code: "Code",
+                agent: "Agent",
+                llm: "LLM",
+                // W7-5: a task-suite check child.
+                check: "Check",
+              };
               const kids =
                 compositeChildren?.length > 0
                   ? compositeChildren
@@ -1319,72 +1366,38 @@ const EvalDetailPage = () => {
       <Tabs
         value={activeTab}
         onChange={handleTabChange}
-        TabIndicatorProps={{ style: { display: "none" } }}
-        sx={{
-          minHeight: 32,
-          mb: 1.5,
-          flexShrink: 0,
-          "& .MuiTab-root": {
-            minHeight: 32,
-            px: 1.5,
-            py: 0,
-            mr: "0px !important",
-            textTransform: "none",
-            fontSize: "13px",
-            borderRadius: "6px",
-          },
-          border: "1px solid",
-          borderColor: "divider",
-          p: "2px",
-          borderRadius: "8px",
-          width: "fit-content",
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(255,255,255,0.04)"
-              : "#f4f4f5",
-        }}
+        sx={{ mb: 1.5, flexShrink: 0 }}
       >
-        {(evalType === "code" || isComposite
-          ? ["details", "usage"]
-          : ["details", "usage", "feedback", "ground_truth"]
+        {/* W7: a typed eval (a decision tree, a remote scorer) reads no
+            feedback or ground truth, so it has the code/composite tabs. */}
+        {(evalType === "code" || isComposite || isTypedEvalType(evalType)
+          ? ["details", "usage", ...agreementTabs]
+          : ["details", "usage", "feedback", "ground_truth", ...agreementTabs]
         ).map((tab) => {
           const labels = {
             details: "Eval Details",
             usage: "Usage",
             feedback: "Feedback",
             ground_truth: "Ground Truth",
+            agreement: "Agreement",
           };
-          return (
-            <Tab
-              key={tab}
-              value={tab}
-              label={labels[tab]}
-              sx={{
-                bgcolor:
-                  activeTab === tab
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.12)"
-                          : "#fff"
-                    : "transparent",
-                boxShadow:
-                  activeTab === tab
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "none"
-                          : "0 1px 3px rgba(0,0,0,0.08)"
-                    : "none",
-                borderRadius: "6px",
-                fontWeight: activeTab === tab ? 600 : 400,
-                color: activeTab === tab ? "text.primary" : "text.disabled",
-              }}
-            />
-          );
+          return <Tab key={tab} value={tab} label={labels[tab]} />;
         })}
       </Tabs>
 
+      {/* ═══ W7: a typed eval's own Details ═══ */}
+      {activeTab === "details" && showTypedDetail && (
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          <TypedEvalDetail
+            evalType={evalType}
+            templateId={evalId}
+            evalData={evalData}
+          />
+        </Box>
+      )}
+
       {/* ═══ Eval Details Tab — playground layout ═══ */}
-      {activeTab === "details" && (
+      {activeTab === "details" && !showTypedDetail && (
         <Box sx={{ flex: 1, minHeight: 0 }}>
           <ResizablePanels
             initialLeftWidth={55}
@@ -1480,6 +1493,7 @@ const EvalDetailPage = () => {
                     childWeights={compositeChildWeights}
                     editable={!isSystemEval}
                     disabled={isSaving}
+                    templateId={evalId}
                     onNameChange={(v) => {
                       setCompositeName(v);
                       markDirty();
@@ -1701,6 +1715,15 @@ const EvalDetailPage = () => {
                       categoryLocked={true}
                     />
                   ))}
+                {allowNaShown && !isComposite && (
+                  <AllowNaSwitch
+                    checked={allowNa}
+                    onChange={(v) => {
+                      setAllowNa(v);
+                      markDirty();
+                    }}
+                  />
+                )}
 
                 {errorLocalizerAvailable &&
                   !isComposite &&
@@ -2019,7 +2042,7 @@ const EvalDetailPage = () => {
                   >
                     <span>
                       <Button
-                        variant={isComposite ? "contained" : "outlined"}
+                        variant="outlined"
                         size="small"
                         onClick={handleTestEvaluation}
                         disabled={
@@ -2103,7 +2126,15 @@ const EvalDetailPage = () => {
                             isSaving ||
                             !isDirty ||
                             compositeChildren.length === 0 ||
-                            !canEditEvals
+                            !canEditEvals ||
+                            // W7-5: seats need a judge; vote rules need weights.
+                            validateComposite({
+                              aggregation: compositeAggEnabled
+                                ? compositeAggFunction
+                                : null,
+                              children: compositeChildren,
+                              weights: compositeChildWeights,
+                            }).length > 0
                           }
                           startIcon={
                             isSaving ? (
@@ -2144,6 +2175,13 @@ const EvalDetailPage = () => {
       {activeTab === "feedback" && (
         <Box sx={{ flex: 1, minHeight: 0 }}>
           <EvalFeedbackTab templateId={evalId} />
+        </Box>
+      )}
+
+      {/* ═══ W7: Agreement Tab ═══ */}
+      {activeTab === "agreement" && (
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <AgreementTab templateId={evalId} evalData={evalData} />
         </Box>
       )}
 

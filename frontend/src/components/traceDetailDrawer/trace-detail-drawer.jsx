@@ -40,6 +40,7 @@ import { useTraceErrorAnalysis } from "./common";
 import ErrorAnalysis from "./ErrorAnalysis";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
+import FindBar from "src/sections/common/Find/FindBar";
 
 const columnOptions = [
   { key: "latency", label: "Latency", visible: true },
@@ -895,6 +896,7 @@ const TraceDetailDrawer = ({
           <Iconify icon="mingcute:close-line" />
         </IconButton>
       </Box>
+      <FindBar scope=".MuiDrawer-paper" label="Find in this trace" />
       {traceData && (
         <TraceDetailDrawerChild
           traceData={traceData}

@@ -1,6 +1,26 @@
 import { DatasetLimitCheckFailedErrorApiCode } from "src/generated/api-contracts/api.schemas";
 import { RESPONSE_CODES } from "./constants";
 
+// This is the only gateway authentication text trusted for display. A backend
+// proxy must never be allowed to surface arbitrary upstream credential details.
+const GATEWAY_AUTHENTICATION_REMEDY =
+  "Gateway authentication failed. Ask your administrator to check the gateway credentials.";
+
+// Null means the caller must keep its existing copy, including its precedence.
+// Do not flatten or mutate the AxiosError: session handling belongs to axios.js.
+export function getGatewayAuthenticationErrorMessage(error) {
+  if (
+    error?.response?.status !== 401 ||
+    error?.response?.data?.code !== "gateway_request_rejected"
+  )
+    return null;
+
+  const message = error.response.data.message;
+  return message === GATEWAY_AUTHENTICATION_REMEDY
+    ? message
+    : GATEWAY_AUTHENTICATION_REMEDY;
+}
+
 const DEFAULT_RATE_LIMIT_MESSAGE = "Rate limit reached.";
 const DEFAULT_RETRY_GUIDANCE = "Please try again in a few minutes.";
 
@@ -14,9 +34,12 @@ const pickMessage = (...messages) =>
 const SAFE_VALIDATION_STATUS_CODES = new Set([400, 404, 409, 422]);
 // Typed API error codes whose message the backend writes for users
 // (futureagi/tfc/utils/error_codes.py), shown whatever their status.
-const USER_FACING_ERROR_CODES = new Set(
-  Object.values(DatasetLimitCheckFailedErrorApiCode),
-);
+// `permission_denied` is DRF's PermissionDenied code: its message says what
+// the user may not do (a dataset access denial also names who can grant it).
+const USER_FACING_ERROR_CODES = new Set([
+  ...Object.values(DatasetLimitCheckFailedErrorApiCode),
+  "permission_denied",
+]);
 const INTERNAL_ERROR_MARKERS =
   /DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|SELECT\s|maximum:\s*\d+|elapsed\s+\d+/i;
 
@@ -27,6 +50,8 @@ const INTERNAL_ERROR_MARKERS =
  * to the caller's safe fallback.
  */
 export function getSafeActionErrorMessage(error, fallback) {
+  const gatewayRemedy = getGatewayAuthenticationErrorMessage(error);
+  if (gatewayRemedy) return gatewayRemedy;
   const responseData = error?.response?.data || {};
   const statusCode = Number(
     error?.response?.status ||
@@ -56,6 +81,44 @@ export function getSafeActionErrorMessage(error, fallback) {
     return fallback;
   }
   return message;
+}
+
+// CBSEC S2/S3/S4: fixed copy approved for the run-test execution action only.
+// Do not add 5xx statuses or generic server error codes to the safe action filter.
+export const TEST_EXECUTION_ERROR_MESSAGES = Object.freeze([
+  "Failed to start test execution. Check the test runs before trying again.",
+  "Test execution service is unavailable. Please try again later.",
+  "Failed to execute test. Check the test runs before trying again.",
+]);
+
+export function getTestExecutionErrorMessage(error) {
+  const fallback = "Something went wrong";
+  const responseData = error?.response?.data || {};
+  const statusCode = Number(
+    error?.response?.status ||
+      responseData?.statusCode ||
+      error?.status ||
+      error?.statusCode,
+  );
+  if (statusCode >= 500 && statusCode < 600) {
+    // Compare raw strings: trimming, joining or prefix matching would widen
+    // the approved bytes. Error codes must not bypass this exact allowlist.
+    const message = pickMessage(
+      responseData?.message,
+      responseData?.detail,
+      responseData?.error,
+      responseData?.result,
+      error?.message,
+      error?.detail,
+      error?.error,
+      error?.result,
+    );
+    return TEST_EXECUTION_ERROR_MESSAGES.includes(message) ? message : fallback;
+  }
+  if (statusCode >= 400 && statusCode < 500) {
+    return getSafeActionErrorMessage(error, fallback);
+  }
+  return fallback;
 }
 
 function withRetryGuidance(message, retryAction) {
@@ -107,6 +170,8 @@ export function getRequestErrorMessage(
   fallback = "Something went wrong",
   options = {},
 ) {
+  const gatewayRemedy = getGatewayAuthenticationErrorMessage(error);
+  if (gatewayRemedy) return gatewayRemedy;
   const { retryAction } = options;
   const responseData = error?.response?.data || {};
   const statusCode =

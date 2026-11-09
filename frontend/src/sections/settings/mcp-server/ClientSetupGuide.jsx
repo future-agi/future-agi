@@ -1,6 +1,7 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -17,6 +18,8 @@ import {
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
+import { deploymentMcpUrl } from "src/utils/deploymentMcpUrl";
+import { buildMcpClientConfigs } from "./clientSetupSnippets";
 
 CopyButton.propTypes = {
   text: PropTypes.string,
@@ -89,7 +92,11 @@ export default function ClientSetupGuide({ config }) {
   const accent = theme.palette.primary.main;
   const accentContrast = theme.palette.primary.contrastText;
 
-  const mcpUrl = config?.mcp_url || "https://api.futureagi.com/mcp";
+  // The endpoint this deployment really serves (GET /mcp/config/ mcp_url,
+  // the same base its OAuth metadata and 401 advertise). When the server
+  // reports none, this app's own API base from config plus /mcp: never a
+  // hard-coded production host (ruling 380).
+  const mcpUrl = config?.mcp_url || deploymentMcpUrl();
 
   const handleCopyUrl = () => {
     navigator.clipboard.writeText(mcpUrl).then(() => {
@@ -97,32 +104,7 @@ export default function ClientSetupGuide({ config }) {
     });
   };
 
-  const configs = useMemo(
-    () => ({
-      cursor: JSON.stringify(
-        { mcpServers: { futureagi: { url: mcpUrl } } },
-        null,
-        2,
-      ),
-      claudeCode: `claude mcp add futureagi --transport http ${mcpUrl}`,
-      vscode: JSON.stringify(
-        { "mcp.servers": { futureagi: { type: "http", url: mcpUrl } } },
-        null,
-        2,
-      ),
-      claudeDesktop: JSON.stringify(
-        { mcpServers: { futureagi: { url: mcpUrl } } },
-        null,
-        2,
-      ),
-      windsurf: JSON.stringify(
-        { mcpServers: { futureagi: { serverUrl: mcpUrl } } },
-        null,
-        2,
-      ),
-    }),
-    [mcpUrl],
-  );
+  const configs = useMemo(() => buildMcpClientConfigs(mcpUrl), [mcpUrl]);
 
   const deepLinks = useMemo(() => {
     // Cursor expects base64-encoded JSON config
@@ -227,6 +209,15 @@ export default function ClientSetupGuide({ config }) {
     bgcolor: alpha(accent, isDark ? 0.08 : 0.04),
   };
 
+  if (!mcpUrl) {
+    return (
+      <Alert severity="info" sx={{ mb: 3 }} data-testid="mcp-url-unknown">
+        This deployment does not report its MCP endpoint. Set BASE_URL to the
+        API&apos;s public URL to connect an IDE.
+      </Alert>
+    );
+  }
+
   return (
     <Card variant="outlined" sx={{ p: 3, mb: 3 }}>
       {/* Header */}
@@ -250,6 +241,7 @@ export default function ClientSetupGuide({ config }) {
         value={mcpUrl}
         fullWidth
         size="small"
+        inputProps={{ "aria-label": "MCP server URL" }}
         InputProps={{
           readOnly: true,
           sx: {

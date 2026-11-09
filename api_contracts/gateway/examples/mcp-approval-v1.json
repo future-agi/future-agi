@@ -1,0 +1,18 @@
+{
+  "approval_id": "apr_01M4ZF0B1C2D3E4F5G6H7J8K9P",
+  "org_id": "0b7c1e52-4f3a-4d0e-9b8a-2a7d6c5e4f31",
+  "virtual_server_id": "vs_01M4ZEB9E0J3AADR85Z4T4428X",
+  "tool": "github_merge_pull_request",
+  "args_hash": "090772cf4068973daad3f715eb788d39fe2c02be42efd86de81f0e59198d6237",
+  "agent_run_id": "run_R2",
+  "principal": {
+    "kind": "key",
+    "key_id": "key_7f3a"
+  },
+  "status": "approved",
+  "requested_at": "2026-10-16T09:10:12Z",
+  "expires_at": "2026-10-16T09:25:12Z",
+  "decided_by": "user_42",
+  "decided_at": "2026-10-16T09:12:40Z",
+  "note": "Reviewed the diff."
+}

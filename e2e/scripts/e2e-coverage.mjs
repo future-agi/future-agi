@@ -189,6 +189,7 @@ export const AREA_OF_E2E_DIR = {
   evals: "EVAL",
   tasks: "TASK",
   datasets: "DATA",
+  experiments: "EXP",
   prompts: "PROMPT",
   agents: "AGENT",
   prototype: "PROTO",
@@ -200,9 +201,12 @@ export const AREA_OF_E2E_DIR = {
   alerts: "ALERT",
   dashboards: "DASH",
   settings: "SET",
+  integrations: "INT",
   "get-started": "GST",
   "falcon-ai": "FALCON",
   "sdk-ingestion": "SDK",
+  // The ruling 706 gateway walks (flows/walks/, e2e/walks/README.md).
+  walks: "WALK",
 };
 
 function areaOf(p) {

@@ -575,7 +575,7 @@ class ObservabilityService:
         )
         chosen = rows.first() or legacy
         try:
-            key = chosen.get_api_key() if chosen else (agent.api_key or None)
+            key = chosen.get_api_key() if chosen else (agent.get_api_key() or None)
         except ValueError as exc:
             raise RetellConfigurationError(
                 "Retell credential could not be decrypted"
@@ -958,7 +958,7 @@ class ObservabilityService:
         Returns:
             The API key if valid, None if missing (logs a warning)
         """
-        api_key = getattr(agent, "api_key", None) if agent else None
+        api_key = agent.get_api_key() if agent else None
         if not api_key:
             logger.warning(
                 "missing_api_key_for_provider",

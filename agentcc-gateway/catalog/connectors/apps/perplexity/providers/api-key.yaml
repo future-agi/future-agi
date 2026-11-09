@@ -1,0 +1,47 @@
+# Perplexity's remote MCP server with a Perplexity API key as the bearer.
+# Tool calls are billed at Perplexity's API prices to that key.
+schema: "connector-manifest/v1#provider"
+app: perplexity
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.perplexity.ai/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "A Perplexity API key, sent as a bearer token. Tool calls are billed to this key at Perplexity's API pricing."
+      helpUrl: https://docs.perplexity.ai/docs/getting-started/integrations/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://docs.perplexity.ai/docs/getting-started/integrations/mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.perplexity.ai/docs/getting-started/integrations/mcp-server
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.perplexity.ai/docs/getting-started/integrations/mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.perplexity.ai/docs/getting-started/integrations/mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.perplexity.ai/docs/getting-started/integrations/mcp-server
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

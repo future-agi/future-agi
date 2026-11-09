@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack } from "@mui/material";
@@ -101,13 +102,7 @@ const formatMs = (ms) => {
   return n < 1000 ? `${Math.round(n)}ms` : `${(n / 1000).toFixed(1)}s`;
 };
 
-const formatCost = (cost) => {
-  if (cost == null) return null;
-  const n = Number(cost);
-  if (!Number.isFinite(n)) return null;
-  if (n < 0.01) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(2)}`;
-};
+const formatCost = (cost) => formatExactMoney(cost, { missing: null });
 
 /**
  * Inline tags row with add/edit/remove — ported from

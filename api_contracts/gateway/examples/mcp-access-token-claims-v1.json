@@ -1,0 +1,43 @@
+{
+  "access": {
+    "header": {
+      "alg": "ES256",
+      "kid": "as-2026-10"
+    },
+    "claims": {
+      "typ": "futureagi-mcp-access",
+      "iss": "https://app.futureagi.com/agentcc/mcp/oauth",
+      "aud": "https://gateway.futureagi.com/mcp/v/vs_01M4ZEB9E0J3AADR85Z4T4428X",
+      "sub": "user_42",
+      "org_id": "0b7c1e52-4f3a-4d0e-9b8a-2a7d6c5e4f31",
+      "client_id": "claude-desktop",
+      "scope": "mcp:tools mcp:resources mcp:prompts",
+      "iat": 1792056600,
+      "nbf": 1792056600,
+      "exp": 1792057500,
+      "jti": "mat_4c2e9a"
+    }
+  },
+  "callback": {
+    "header": {
+      "alg": "ES256",
+      "kid": "cb-2026-10"
+    },
+    "claims": {
+      "typ": "futureagi-mcp-callback",
+      "iss": "https://gateway.futureagi.com/mcp/callback",
+      "aud": "https://gateway.futureagi.com/mcp/v/vs_01M4ZEB9E0J3AADR85Z4T4428X",
+      "org_id": "0b7c1e52-4f3a-4d0e-9b8a-2a7d6c5e4f31",
+      "key_id": "key_7f3a",
+      "run_id": "run_R2",
+      "generation_id": "req_01M4ZF0A9KQ2V7W3X5Y8Z1B4C1",
+      "depth": 1,
+      "allowed_tools": ["github_create_issue", "fagi.web_search"],
+      "max_calls": 8,
+      "iat": 1792056600,
+      "nbf": 1792056600,
+      "exp": 1792057200,
+      "jti": "mcb_8d1f0b"
+    }
+  }
+}

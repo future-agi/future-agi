@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Typography } from "@mui/material";
 import React from "react";
 import HeaderContent from "./HeaderContent";
@@ -54,7 +55,8 @@ const CreateFirstDataset = ({ setCurrentLabel }) => {
               width: "100%",
             }}
           >
-            <iframe
+            <ExternalContentFrame
+              title="Create your first dataset"
               src={iframeVideoLinks}
               frameBorder="0"
               loading="lazy"
@@ -67,7 +69,7 @@ const CreateFirstDataset = ({ setCurrentLabel }) => {
                 height: "100%",
                 colorScheme: "light",
               }}
-            ></iframe>
+            ></ExternalContentFrame>
           </div>
         </Box>
         <CreateDatasetLinks

@@ -115,9 +115,12 @@ const OrgSettings = () => {
           </Typography>
         </Box>
 
+        {/* Below md (the compact Settings shell) the card fills the screen
+            and the label sits above its value. */}
         <Box
           sx={{
-            width: "670px",
+            width: "100%",
+            maxWidth: "670px",
             border: "1px solid",
             borderColor: "divider",
             borderRadius: theme.spacing(1),
@@ -128,6 +131,8 @@ const OrgSettings = () => {
           <Box
             sx={{
               display: "flex",
+              flexWrap: { xs: "wrap", md: "nowrap" },
+              rowGap: 1,
               justifyContent: "flex-start",
               alignItems: "center",
             }}
@@ -135,7 +140,7 @@ const OrgSettings = () => {
             <Typography
               variant="s1"
               sx={{
-                width: "200px",
+                width: { xs: "100%", md: "200px" },
                 color: "text.secondary",
                 fontWeight: "fontWeightRegular",
               }}
@@ -147,7 +152,9 @@ const OrgSettings = () => {
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                width: "70%",
+                width: { xs: "100%", md: "70%" },
+                minWidth: 0,
+                overflowWrap: "anywhere",
               }}
             >
               {isEditing ? (

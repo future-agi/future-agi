@@ -1,3 +1,6 @@
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import React, { useMemo, useState } from "react";
 import {
   Box,
@@ -223,73 +226,7 @@ const AddRowData = ({ dataset }) => {
               </IconButton>
             </Box>
           </Box>
-          <Box display="flex" alignItems="center">
-            <Typography
-              fontWeight={"fontWeightMedium"}
-              color="text.primary"
-              variant="s1"
-              component="span"
-              width="141px"
-            >
-              API Key:
-            </Typography>
-            <Box display="flex" alignItems="center" gap={1}>
-              <Typography
-                bgcolor="background.neutral"
-                borderRadius="8px"
-                variant="s1"
-                fontWeight={"fontWeightRegular"}
-                p="5px 12px"
-                color="black"
-              >
-                {data?.result?.apiKeys?.apiKey}
-              </Typography>
-              <IconButton
-                size="small"
-                onClick={() =>
-                  copyToClipboard(data?.result?.apiKeys?.apiKey, "API Key")
-                }
-                sx={{ color: "text.secondary" }}
-              >
-                <Iconify icon="eva:copy-outline" width={16} height={16} />
-              </IconButton>
-            </Box>
-          </Box>
-          <Box display="flex" alignItems="center">
-            <Typography
-              fontWeight={"fontWeightMedium"}
-              color="text.primary"
-              variant="s1"
-              component="span"
-              width="141px"
-            >
-              Secret Key:
-            </Typography>
-            <Box display="flex" alignItems="center" gap={1}>
-              <Typography
-                bgcolor="background.neutral"
-                borderRadius="8px"
-                variant="s1"
-                fontWeight={"fontWeightRegular"}
-                p="5px 12px"
-                color="black"
-              >
-                {data?.result?.apiKeys?.secretKey}
-              </Typography>
-              <IconButton
-                size="small"
-                onClick={() =>
-                  copyToClipboard(
-                    data?.result?.apiKeys?.secretKey,
-                    "Secret Key",
-                  )
-                }
-                sx={{ color: "text.secondary" }}
-              >
-                <Iconify icon="eva:copy-outline" width={16} height={16} />
-              </IconButton>
-            </Box>
-          </Box>
+          <PersonalKeyControl />
         </Box>
         <TabWrapper>
           <CustomTabs
@@ -323,6 +260,7 @@ const AddRowData = ({ dataset }) => {
         >
           <ShowComponent condition={currentTab === "python"}>
             <FormCodeEditor
+              readOnly
               height="300px"
               defaultLanguage="python"
               control={control}
@@ -333,6 +271,7 @@ const AddRowData = ({ dataset }) => {
           </ShowComponent>
           <ShowComponent condition={currentTab === "typescript"}>
             <FormCodeEditor
+              readOnly
               height="300px"
               defaultLanguage="typescript"
               control={control}
@@ -343,6 +282,7 @@ const AddRowData = ({ dataset }) => {
           </ShowComponent>
           <ShowComponent condition={currentTab === "curl"}>
             <FormCodeEditor
+              readOnly
               height="300px"
               defaultLanguage="bash"
               control={control}
@@ -361,4 +301,10 @@ AddRowData.propTypes = {
   dataset: PropTypes.string,
 };
 
-export default AddRowData;
+export default function DatasetSnippet(props) {
+  return (
+    <PersonalKeySnippet>
+      <AddRowData {...props} />
+    </PersonalKeySnippet>
+  );
+}

@@ -1,0 +1,73 @@
+# Datadog's MCP server with an API key and an application key, two secret
+# headers (DD_API_KEY and DD_APPLICATION_KEY): the multi-part credential
+# AM-C12 (a) and AM-C20 were written for. Datadog lists this method for every
+# site the server supports, UK1 included. It advises a scoped API key and
+# application key from a service account with only the needed permissions.
+#
+# The gateway places both parts (credtemplate, MCPCredentialSecret.parts).
+# Django's vault stores one secret per credential, so adding this provider is
+# refused today (connector_catalog: PARTS_NOT_APPLIED) until the vault stores
+# parts; the access-token provider covers the same server with one secret.
+schema: "connector-manifest/v1#provider"
+app: datadog
+id: api-and-app-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.{site}/v1/mcp
+  urlVariables:
+    site:
+      description: "Your Datadog site: datadoghq.com (US1), us3.datadoghq.com, us5.datadoghq.com, datadoghq.eu, ap1.datadoghq.com, ap2.datadoghq.com or uk1.datadoghq.com."
+      pattern: '^(datadoghq\.com|us3\.datadoghq\.com|us5\.datadoghq\.com|datadoghq\.eu|ap1\.datadoghq\.com|ap2\.datadoghq\.com|uk1\.datadoghq\.com)$'
+      default: datadoghq.com
+      scope: org
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: DD_API_KEY
+      secret: true
+      label: API key
+      help: "A Datadog API key, ideally a scoped key from a service account."
+      helpUrl: https://docs.datadoghq.com/mcp_server/setup/
+    - in: header
+      name: DD_APPLICATION_KEY
+      secret: true
+      label: Application key
+      help: "A Datadog application key from the same service account, whose role has mcp_read (and mcp_write for write tools)."
+      helpUrl: https://docs.datadoghq.com/mcp_server/setup/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.datadoghq.com/mcp_server/setup/
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://docs.datadoghq.com/static/main-dd-js.1175d8fe61a1c9c602a81b2fd4f131ebf4e94d0771c15a71d7851adf9943a2280763d0b476c8d027acb05f8744e6763a2e847a96f95c41f68986ad33a7087ace.js
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.site
+    url: https://docs.datadoghq.com/static/main-dd-js.1175d8fe61a1c9c602a81b2fd4f131ebf4e94d0771c15a71d7851adf9943a2280763d0b476c8d027acb05f8744e6763a2e847a96f95c41f68986ad33a7087ace.js
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.site
+    url: https://docs.datadoghq.com/mcp_server/setup.md
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.datadoghq.com/mcp_server/setup/
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.datadoghq.com/mcp_server/setup.md
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.datadoghq.com/mcp_server/setup.md
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

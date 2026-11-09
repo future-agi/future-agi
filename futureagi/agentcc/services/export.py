@@ -3,6 +3,8 @@ import io
 import json
 from decimal import Decimal
 
+from agentcc.services.provider_label import provider_label
+
 CSV_COLUMNS = [
     "started_at",
     "request_id",
@@ -27,6 +29,15 @@ CSV_COLUMNS = [
 MAX_EXPORT_ROWS = 10_000
 
 
+def _value(log, column):
+    """A column's value for the customer's download: the provider as customer
+    screens name it, "Future AGI managed" for a managed call;
+    the export has no upstream column."""
+    if column == "provider":
+        return provider_label(log.provider, log.billing_mode)
+    return getattr(log, column, "")
+
+
 def export_csv(queryset):
     """Generator that yields CSV rows from a request log queryset."""
     buf = io.StringIO()
@@ -40,7 +51,7 @@ def export_csv(queryset):
     buf.truncate()
 
     for log in queryset.iterator(chunk_size=1000):
-        writer.writerow([getattr(log, col, "") for col in CSV_COLUMNS])
+        writer.writerow([_value(log, col) for col in CSV_COLUMNS])
         buf.seek(0)
         yield buf.read()
         buf.seek(0)
@@ -48,11 +59,13 @@ def export_csv(queryset):
 
 
 def export_json(queryset):
-    """Generator that yields NDJSON lines from a request log queryset."""
+    """Stream one JSON array without materializing the request log queryset."""
+    yield "["
+    first = True
     for log in queryset.iterator(chunk_size=1000):
         row = {}
         for col in CSV_COLUMNS:
-            val = getattr(log, col, "")
+            val = _value(log, col)
             if hasattr(val, "isoformat"):
                 val = val.isoformat()
             elif isinstance(val, Decimal):
@@ -62,4 +75,8 @@ def export_json(queryset):
             else:
                 val = str(val) if val is not None else None
             row[col] = val
-        yield json.dumps(row) + "\n"
+        if not first:
+            yield ",\n"
+        yield json.dumps(row)
+        first = False
+    yield "]\n"

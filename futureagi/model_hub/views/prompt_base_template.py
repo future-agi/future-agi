@@ -5,12 +5,14 @@ from django.http import Http404
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 
 from model_hub.models.prompt_base_template import PromptBaseTemplate
 from model_hub.serializers.prompt_base_template import PromptBaseTemplateSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.pagination import MAX_PAGE_SIZE, PageSizeTooLarge
 
 
 class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
@@ -37,7 +39,9 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     def _workspace_filter(self, field_name="workspace"):
         workspace = getattr(self.request, "workspace", None)
         if workspace is None:
-            return models.Q()
+            from tfc.utils.workspace_scope import empty_workspace_filter
+
+            return empty_workspace_filter()
         if getattr(workspace, "is_default", False):
             organization = getattr(workspace, "organization", None)
             query = models.Q(**{field_name: workspace})
@@ -74,9 +78,7 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_create(serializer)
             except IntegrityError as e:
-                if "unique_prompt_base_template_name_organization_workspace" in str(
-                    e
-                ):
+                if "unique_prompt_base_template_name_organization_workspace" in str(e):
                     return self._duplicate_name_response()
                 raise
             return self._gm.create_response(serializer.data)
@@ -104,6 +106,8 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             name = request.query_params.get("name")
             category = request.query_params.get("category")
             page_size = int(request.query_params.get("page_size", 10))
+            if page_size > MAX_PAGE_SIZE:
+                raise PageSizeTooLarge()
             page_number = int(request.query_params.get("page_number", 0))
             start = page_number * page_size
             end = start + page_size
@@ -147,6 +151,8 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     "total_pages": total_pages,
                 }
             )
+        except APIException:
+            raise
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to list prompt base templates: {str(e)}"
@@ -180,9 +186,7 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_update(serializer)
             except IntegrityError as e:
-                if "unique_prompt_base_template_name_organization_workspace" in str(
-                    e
-                ):
+                if "unique_prompt_base_template_name_organization_workspace" in str(e):
                     return self._duplicate_name_response()
                 raise
             return self._gm.success_response(serializer.data)
@@ -239,9 +243,7 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         """Get all categories for the user's organization"""
         try:
             categories = (
-                self.get_queryset()
-                .values_list("category", flat=True)
-                .distinct()
+                self.get_queryset().values_list("category", flat=True).distinct()
             )
 
             return self._gm.success_response(list(set(categories)))

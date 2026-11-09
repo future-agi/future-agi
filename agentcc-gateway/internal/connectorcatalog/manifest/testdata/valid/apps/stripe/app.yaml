@@ -1,0 +1,18 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#app"
+id: stripe
+version: 1.0.0
+name: Stripe
+description: "Payments, customers and invoices."
+vendor: { name: Stripe, domains: [stripe.com] }
+eeCategory: data
+group: other
+categories: [payments]
+docsUrl: https://docs.stripe.com/mcp
+defaultProvider: stripe-mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.stripe.com/mcp
+    fetchedAt: 2026-10-19

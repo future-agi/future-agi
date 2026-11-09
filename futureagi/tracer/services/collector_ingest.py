@@ -1,71 +1,127 @@
-"""Emit spans to the fi-collector.
-
-The collector's ClickHouse exporter is the sole writer of CH ``spans`` (legacy
-PG->CH CDC chain dropped by default), so any span that must appear in observe
-exports through it. Resolves the org's system key for the platform's own
-emission, and an agent's write-only ``ingest`` key for its sandbox, and ships
-OTLP spans.
-"""
+"""Short-lived collector credentials; deployment rollout remains default OFF."""
 
 from __future__ import annotations
 
+import os
+import time
 import uuid
-from typing import Any, NamedTuple
+from dataclasses import dataclass, field
+from typing import Any
 
 import structlog
+from django.conf import settings
+from django.db import transaction
+
+from accounts.models import Organization
+from accounts.models.workspace import Workspace
+from accounts.services.envelope_keys import current_kid, pair_keys
+from accounts.services.service_grants import issue_person_grant
+from tfc.routers import primary_required
+from tfc.service_envelope import EnvelopeRejected, issue_grant
 
 logger = structlog.get_logger(__name__)
+PLATFORM_EMISSION_STATE = "OFF"
+# The launch planner runs before an attempt exists and its job has no stored
+# launcher identity. It must stay OFF until that trusted attribution is wired.
+SANDBOX_EXPORT_STATE = "OFF"
+DISABLED_REASON = "run_token_unavailable"
 
-# Per-org system key reused to authenticate span emission to the collector.
-_SYSTEM_KEY_NAME = "system_org_key"
 
-# Names an agent's sandbox key for operators reading the table or the logs.
-_EXPORT_KEY_NAME = "simulation_export_key"
-
-
-class ExportCredentials(NamedTuple):
-    api_key: str
-    secret_key: str
+@dataclass(frozen=True)
+class ExportCredentials:
+    api_key: str = field(repr=False)
+    secret_key: str = field(repr=False)
     enabled: bool
 
 
-def resolve_system_emit_credentials(
-    organization_id: str, workspace_id: str | None
-) -> tuple[str, str] | None:
-    """Resolve the org's system (api_key, secret_key) for the platform's own emission.
+def collector_grants_enabled():
+    value = getattr(
+        settings,
+        "COLLECTOR_SERVICE_GRANTS_ENABLED",
+        os.environ.get("COLLECTOR_SERVICE_GRANTS_ENABLED", "false"),
+    )
+    return value is True or value == "true"
 
-    Reuses the org's system key (one per org); else creates it carrying the
-    workspace so the collector resolves projects there. The system key acts as
-    the organisation: never hand it to customer code, which gets
-    ``get_or_create_export_credentials`` instead.
-    """
-    if not organization_id:
+
+@primary_required
+def issue_platform_grant(organization_id, workspace_id, *, source="sim"):
+    if not Organization.objects.filter(pk=organization_id).exists():
+        raise EnvelopeRejected()
+    if (
+        workspace_id
+        and not Workspace._base_manager.filter(
+            pk=workspace_id,
+            organization_id=organization_id,
+            is_active=True,
+            deleted=False,
+        ).exists()
+    ):
+        raise EnvelopeRejected()
+    token, claims = issue_grant(
+        keys=pair_keys("fa", "collector-emit"),
+        kid=current_kid(),
+        kind="platform-emit",
+        org=organization_id,
+        workspace=workspace_id,
+        sub="emit:" + source,
+        ttl=60,
+    )
+    return ExportCredentials("fit_" + claims["id"], token, True)
+
+
+def resolve_system_emit_credentials(organization_id, workspace_id):
+    """Compatibility name: resolves no API key, only a per-export grant."""
+    if not collector_grants_enabled():
+        logger.info("platform_span_export_off", state="OFF", reason=DISABLED_REASON)
         return None
-    from django.db import IntegrityError
+    credentials = issue_platform_grant(organization_id, workspace_id)
+    return credentials.api_key, credentials.secret_key
 
-    from accounts.models.user import OrgApiKey
 
-    # IntegrityError catch re-fetches the winner of a create/create race.
-    # Disabled keys are returned as-is so the collector surfaces the misconfig.
-    lookup = {
-        "organization_id": organization_id,
-        "type": "system",
-        "deleted": False,
-    }
-    try:
-        key, _ = OrgApiKey.no_workspace_objects.get_or_create(
-            defaults={"workspace_id": workspace_id, "name": _SYSTEM_KEY_NAME},
-            **lookup,
+@primary_required
+def issue_sandbox_export_credentials(
+    *, organization_id, workspace_id, agent_definition_id, attempt_id, user_id
+):
+    """Only a trusted launcher may call this with its persisted person identity."""
+    from simulate.models import AgentDefinition, HostedHarnessAttempt
+
+    with transaction.atomic():
+        attempt = (
+            HostedHarnessAttempt._base_manager.select_for_update()
+            .select_related("job")
+            .get(pk=attempt_id)
         )
-    except IntegrityError:
-        key = (
-            OrgApiKey.no_workspace_objects.filter(**lookup)
-            .order_by("created_at")
-            .first()
+        if (
+            str(attempt.job.organization_id) != str(organization_id)
+            or str(attempt.job.workspace_id) != str(workspace_id)
+            or attempt.deleted
+            or attempt.job.deleted
+            or attempt.job.cancel_requested_at
+            or attempt.state not in {"registered", "provisioning", "running"}
+        ):
+            raise EnvelopeRejected()
+        if not AgentDefinition._base_manager.filter(
+            pk=agent_definition_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            deleted=False,
+        ).exists():
+            raise EnvelopeRejected()
+        now = int(time.time())
+        expiry = min(int(attempt.job.deadline_at.timestamp()) + 600, now + 86400)
+        if expiry <= now:
+            raise EnvelopeRejected()
+        # Lock and touch the attempt in the same transaction as its registry row.
+        attempt.save(update_fields=["updated_at"])
+        token, claims, _ = issue_person_grant(
+            kind="sandbox",
+            org=organization_id,
+            workspace=workspace_id,
+            user=user_id,
+            sub=f"attempt:{agent_definition_id}:{attempt_id}",
+            ttl=expiry - now,
         )
-    if key is None:
-        return None
-    return key.api_key, key.secret_key
+    return ExportCredentials("fit_" + claims["id"], token, True)
 
 
 def get_or_create_export_credentials(
@@ -73,53 +129,12 @@ def get_or_create_export_credentials(
     organization_id: str | None,
     workspace_id: str | None,
     agent_definition_id: str | uuid.UUID | None,
-) -> ExportCredentials | None:
-    """Return the write-only key one agent's simulated runs export with.
-
-    The process runs untrusted customer code, so it gets the agent's own
-    ``ingest`` key, which the API refuses, never the system key. The collector
-    files spans under the key's workspace and routes them by its agent, which
-    is why both are required. The key is created on the agent's first launch,
-    unless a deleted key exists. A non-UUID agent id raises ``ValueError``.
-
-    When ``enabled`` is False, do not hand the pair to the sandbox: an operator
-    stopped the export. Deleting does not rotate the key; to replace a leaked
-    pair, delete the row for good or edit the pair.
-    """
-    if not organization_id or not workspace_id or not agent_definition_id:
-        return None
-    from accounts.models.user import OrgApiKey
-
-    agent_id = str(uuid.UUID(str(agent_definition_id)))
-    lookup = {
-        "organization_id": organization_id,
-        "workspace_id": workspace_id,
-        "simulation_agent_id": agent_id,
-        "type": "ingest",
-    }
-    # An operator who disabled or deleted the key has stopped the export, and
-    # minting a new key would undo that. One read sees live and deleted rows
-    # alike (``_base_manager`` also ignores the request's workspace context;
-    # the lookup names both ids), so a delete cannot slip between a check and
-    # a create. A live row sorts first. A deleted key stays stopped until
-    # someone restores it.
-    key = (
-        OrgApiKey._base_manager.filter(**lookup)
-        .order_by("deleted", "-created_at")
-        .first()
+) -> ExportCredentials:
+    # No person or attempt can be inferred safely from an organization/agent.
+    logger.info(
+        "sandbox_span_export_off", state=SANDBOX_EXPORT_STATE, reason=DISABLED_REASON
     )
-    if key is None:
-        # Two first launches of one agent race on the unique constraint;
-        # ``get_or_create`` itself re-reads the winner's row when its insert
-        # loses.
-        key, _ = OrgApiKey.no_workspace_objects.get_or_create(
-            **lookup,
-            deleted=False,
-            defaults={"name": f"{_EXPORT_KEY_NAME} {agent_id}", "user": None},
-        )
-    return ExportCredentials(
-        key.api_key, key.secret_key, key.enabled and not key.deleted
-    )
+    return ExportCredentials("", "", False)
 
 
 def emit_spans_to_collector(
@@ -131,21 +146,30 @@ def emit_spans_to_collector(
     workspace_id: str | None,
     service_name: str = "fi-simulation",
 ) -> int:
-    """Export ``spans`` to the collector. Best-effort: returns count exported, 0 on failure."""
     if not spans:
         return 0
-    credentials = resolve_system_emit_credentials(organization_id, workspace_id)
-    if credentials is None:
-        logger.warning("collector_emit_no_credentials", organization_id=organization_id)
+    if not collector_grants_enabled():
+        logger.info("platform_span_export_off", state="OFF", reason=DISABLED_REASON)
         return 0
-    api_key, secret_key = credentials
-    from simulate.services.sim_collector_emit import export_sim_spans
+    try:
+        source = (
+            "voice"
+            if "voice" in service_name
+            else "provider"
+            if "provider" in service_name
+            else "sim"
+        )
+        credential = issue_platform_grant(organization_id, workspace_id, source=source)
+        from simulate.services.sim_collector_emit import export_sim_spans
 
-    return export_sim_spans(
-        spans,
-        project_name=project_name,
-        project_type=project_type,
-        api_key=api_key,
-        secret_key=secret_key,
-        service_name=service_name,
-    )
+        return export_sim_spans(
+            spans,
+            project_name=project_name,
+            project_type=project_type,
+            api_key=credential.api_key,
+            secret_key=credential.secret_key,
+            service_name=service_name,
+        )
+    except Exception as exc:
+        logger.warning("platform_span_export_unavailable", reason=type(exc).__name__)
+        return 0

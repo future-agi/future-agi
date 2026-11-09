@@ -1,6 +1,18 @@
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "src/utils/test-utils";
 import BulkActionsBar from "../BulkActionsBar";
+import { registerOfflineIcon } from "src/components/iconify/registry";
+import bundled from "src/components/iconify/offline-icons.json";
+
+// This test owns these prop fixtures instead of importing the parent views.
+// Register only its glyphs, just as the production owners do before rendering.
+for (const name of [
+  "mdi:clipboard-list-outline",
+  "mdi:compare-horizontal",
+  "mdi:folder-plus-outline",
+]) {
+  registerOfflineIcon(name, bundled[name]);
+}
 
 describe("BulkActionsBar", () => {
   const defaultProps = {
@@ -138,5 +150,44 @@ describe("BulkActionsBar", () => {
     expect(menuItem).toHaveAttribute("aria-disabled", "true");
     menuItem.click();
     expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it("shows an enabled action's tooltip and the R2 actions (R2)", async () => {
+    const onAction = vi.fn();
+    render(
+      <BulkActionsBar
+        {...defaultProps}
+        selectedCount={1}
+        onAction={onAction}
+        actions={[
+          {
+            id: "compare_traces",
+            label: "Compare 2 traces",
+            icon: "mdi:compare-horizontal",
+            disabled: true,
+            disabledReason: "Select exactly 2 traces",
+          },
+          {
+            id: "add_to_dataset",
+            label: "Add to dataset",
+            icon: "mdi:folder-plus-outline",
+            tooltip: "Add to a dataset to run experiments on",
+          },
+        ]}
+      />,
+    );
+    screen.getByText("Actions").click();
+    const compare = await screen.findByRole("menuitem", {
+      name: "Compare 2 traces",
+    });
+    expect(compare).toHaveAttribute("aria-disabled", "true");
+    const add = await screen.findByRole("menuitem", { name: "Add to dataset" });
+    expect(document.querySelector("[data-missing-icon]")).toBeNull();
+    fireEvent.mouseOver(add);
+    expect(
+      await screen.findByText("Add to a dataset to run experiments on"),
+    ).toBeInTheDocument();
+    add.click();
+    expect(onAction).toHaveBeenCalledWith("add_to_dataset", expect.any(Object));
   });
 });

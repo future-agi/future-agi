@@ -8,7 +8,7 @@ from django.db import migrations, models
 def rename_module_to_subgraph(apps, schema_editor):
     """Rename all Node.type='module' to 'subgraph'."""
     Node = apps.get_model("agent_playground", "Node")
-    Node.objects.filter(type="module").update(type="subgraph")
+    Node.objects.using(schema_editor.connection.alias).filter(type="module").update(type="subgraph")
 
 
 def rename_subgraph_to_module(apps, schema_editor):

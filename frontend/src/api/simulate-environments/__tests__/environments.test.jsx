@@ -456,14 +456,26 @@ describe("useRunSimulation", () => {
 });
 
 describe("useAdoptTemplate", () => {
-  it("mints an env id from a template id without echoing the template", async () => {
+  it("seeds a local template draft without minting an environment or creating a job", async () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useAdoptTemplate(), {
       wrapper: Wrapper,
     });
-    const out = await result.current.mutateAsync("env-voice-support");
-    expect(out.envId).toMatch(/^env-/);
-    expect(out.templateId).toBeUndefined();
+    const out = await result.current.mutateAsync({
+      id: "env-voice-support",
+      name: "Support template",
+      tools: [{ name: "lookup_order", desc: "Look up an order" }],
+      rules: ["Refunds need approval"],
+    });
+    expect(out).not.toHaveProperty("envId");
+    expect(out).not.toHaveProperty("id");
+    expect(out).toMatchObject({
+      kind: "local-template-draft",
+      templateId: "env-voice-support",
+      state: { seededFromTemplate: true, agent: { seeded: true }, runs: [] },
+    });
+    expect(out.state.scenarios.length).toBeGreaterThan(0);
+    expect(createHarnessJob).not.toHaveBeenCalled();
   });
 });
 

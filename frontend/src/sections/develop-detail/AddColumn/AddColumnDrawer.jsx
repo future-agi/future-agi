@@ -1,9 +1,20 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { StaticColumns, DynamicColumns } from "./common";
+import ExpressionColumnDialog from "./Expression/ExpressionColumnDialog";
 import {
+  EXPRESSION_COLUMN_TYPE,
+  useExpressionColumnStore,
+} from "./Expression/expressionColumnModel";
+import {
+  Alert,
   Box,
   Button,
+  ButtonBase,
+  FormControlLabel,
+  Radio,
+  RadioGroup,
   IconButton,
+  MenuItem,
   Modal,
   TextField,
   Typography,
@@ -11,12 +22,18 @@ import {
 import { LoadingButton } from "@mui/lab";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
-import _ from "lodash";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { useParams } from "react-router";
+import { useColumnFromPathStore } from "src/sections/common/Values/columnFromPathStore";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
 import { enqueueSnackbar } from "src/components/snackbar";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
+import {
+  inferRole,
+  ROLE_LABEL,
+  USER_ROLES,
+} from "../DataTab/DataGrid/dataGridView";
 import {
   useConditionalNodeStoreShallow,
   useRetrievalStoreShallow,
@@ -31,6 +48,8 @@ import {
 } from "../states";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
 import { useDevelopDetailContext as useDevelopDetailsContext } from "src/sections/develop-detail/Context/DevelopDetailContext";
+import { useCreatedColumnsStore } from "src/sections/develop-detail/DataTab/Versions/changeSetStore";
+import { runColumnMutation } from "../DataTab/columnMutationRequest";
 
 const dataType = [
   { name: "All" },
@@ -46,6 +65,7 @@ const AddColumnForm = ({
 }) => {
   const setOpenRunPrompt = useRunPromptStoreShallow((s) => s.setOpenRunPrompt);
   const { setActionSource } = useDevelopDetailContext();
+  const { dataset: datasetId } = useParams();
   const setOpenAddColumnApiCall = useAddColumnApiCallStoreShallow(
     (s) => s.setOpenAddColumnApiCall,
   );
@@ -77,9 +97,22 @@ const AddColumnForm = ({
         ? DynamicColumns
         : [...StaticColumns, ...DynamicColumns];
 
-  // Filter columns based on search query
-  const filteredColumns = allColumns.filter((col) =>
-    col.label.toLowerCase().includes(searchQuery.toLowerCase()),
+  // IT-R2 G5 P5: search reads the label, the description and synonyms
+  // (`path`, `nested`, `json` find Extract a JSON key).
+  const q = searchQuery.trim().toLowerCase();
+  // A search looks across Static and Dynamic (the tab is a browse aid).
+  const pool =
+    q && !hideScenarioFeatures
+      ? [...StaticColumns, ...DynamicColumns]
+      : allColumns;
+  const filteredColumns = pool.filter(
+    (col) =>
+      !q ||
+      [col.label, col.helpingText, ...(col.keywords ?? [])].some((t) =>
+        String(t ?? "")
+          .toLowerCase()
+          .includes(q),
+      ),
   );
   // const onSubmit = (data) => {
   //   trackEvent(Events.manualDatasetColumnAdditionSuccessful, {
@@ -113,11 +146,16 @@ const AddColumnForm = ({
     } else if (type === "classification") {
       setOpenClassification(true);
     } else if (type === "extractJsonKey") {
-      setOpenExtractJsonKey(true);
+      // IT-R2 G5 P5: the one path picker (sample values + coverage); the
+      // legacy free-text form stays only where no dataset is open.
+      if (datasetId) useColumnFromPathStore.getState().openFor({ datasetId });
+      else setOpenExtractJsonKey(true);
     } else if (type === "retrieval") {
       setOpenRetrieval(true);
     } else if (type === "conditionalnode") {
       setOpenConditionalNode(true);
+    } else if (type === EXPRESSION_COLUMN_TYPE && datasetId) {
+      useExpressionColumnStore.getState().openFor({ datasetId });
     }
   };
 
@@ -153,8 +191,9 @@ const AddColumnForm = ({
       >
         {filteredColumns.length > 0 ? (
           filteredColumns.map(({ label, value, icon, helpingText }) => (
-            <Box
+            <ButtonBase
               key={value}
+              aria-label={label}
               onClick={() => handleColumnClick({ label, value })}
               sx={{
                 display: "flex",
@@ -164,7 +203,14 @@ const AddColumnForm = ({
                 borderRadius: "8px",
                 backgroundColor: "transparent",
                 transition: "background-color 0.3s ease",
+                alignItems: "stretch",
+                textAlign: "left",
+                flexShrink: 0,
                 "&:hover": { backgroundColor: "action.hover" },
+                "&.Mui-focusVisible": {
+                  outline: "2px solid var(--ds-border-focus)",
+                  outlineOffset: -2,
+                },
               }}
             >
               <Box
@@ -196,7 +242,7 @@ const AddColumnForm = ({
               >
                 {helpingText}
               </Typography>
-            </Box>
+            </ButtonBase>
           ))
         ) : (
           <Typography
@@ -228,6 +274,9 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [staticColumnType, setStaticColumnType] = useState("");
   const [columnName, setColumnName] = useState("");
+  // G3: user columns carry a role; inferred from the name until picked.
+  const [columnRole, setColumnRole] = useState(null);
+  const effectiveRole = columnRole ?? inferRole(columnName);
   const { openAddColumnDrawer, setOpenAddColumnDrawer } =
     useAddColumnDrawerStore();
   const onClose = () => {
@@ -236,30 +285,65 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
 
   const { refreshGrid } = useDevelopDetailsContext();
 
-  const { mutate: addColumn, isPending: isLoading } = useMutation({
+  const {
+    mutate: addColumn,
+    isPending: isLoading,
+    error,
+    reset: resetMutation,
+  } = useMutation({
+    networkMode: "always",
+    meta: { errorHandled: true },
     /**
      * @param {object} d
      */
-    mutationFn: (d) => axios.post(endpoints.develop.addColumn(dataset), d),
-    onSuccess: () => {
-      enqueueSnackbar("Column added successfully", { variant: "success" });
+    mutationFn: (d) =>
+      runColumnMutation((config) =>
+        axios.post(endpoints.develop.addColumn(dataset), d, config),
+      ),
+    onSuccess: (res, d) => {
+      // integration (DV-01): a column is written at once and is not versioned;
+      // say so. Only while changes are pending is it recorded with them
+      // (the store ignores it otherwise), so Discard can offer to delete it.
+      const id = res?.data?.result?.column_id;
+      const name = d?.new_column_name ?? columnName;
+      if (id)
+        useCreatedColumnsStore
+          .getState()
+          .add(dataset, { id, name, from: "add_column" });
+      enqueueSnackbar(
+        `Column “${name}” added`,
+        { variant: "success" },
+      );
       refreshGrid();
       setColumnName("");
+      setColumnRole(null);
       setStaticColumnType("");
       onClose();
     },
   });
 
   const handleClose = () => {
+    if (isLoading) return;
+    resetMutation();
     setStaticColumnType("");
     setColumnName("");
+    setColumnRole(null);
     onClose();
   };
 
-  return (
-    <Modal open={openAddColumnDrawer} onClose={handleClose} disableAutoFocus>
+  // HO D7: the Expression column dialog outlives this menu.
+  return [
+    <ExpressionColumnDialog key="expression-column" />,
+    <Modal key="add-column" open={openAddColumnDrawer} onClose={handleClose}>
       <Box
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-column-title"
+        tabIndex={-1}
         sx={{
+          maxWidth: "calc(100vw - 32px)",
+          maxHeight: "calc(100vh - 32px)",
+          overflowY: "auto",
           position: "absolute",
           top: "50%",
           left: "50%",
@@ -269,7 +353,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
             : hideScenarioFeatures
               ? "592px"
               : "850px",
-          height: staticColumnType ? "205px" : "700px",
+          height: staticColumnType ? "auto" : "700px",
           bgcolor: "background.paper",
           borderRadius: "16px",
           boxShadow: 24,
@@ -277,6 +361,8 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
         }}
       >
         <IconButton
+          aria-label="Close add columns"
+          disabled={isLoading}
           onClick={handleClose}
           sx={{
             position: "absolute",
@@ -286,7 +372,12 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
         >
           <Iconify icon="mingcute:close-line" />
         </IconButton>
-        <Typography fontWeight={700} fontSize={"18px"} color="text.primary">
+        <Typography
+          id="add-column-title"
+          fontWeight={700}
+          fontSize={"18px"}
+          color="text.primary"
+        >
           {staticColumnType ? `${staticColumnType} Column` : "Add Columns"}
         </Typography>
         {!staticColumnType ? (
@@ -295,6 +386,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
               fullWidth
               size="small"
               placeholder="Search Columns"
+              inputProps={{ "aria-label": "Search column types" }}
               searchQuery={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -311,41 +403,40 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
                   >
                     DATA TYPE
                   </Typography>
-                  <Box sx={{ marginTop: "20px" }}>
-                    {dataType.map((val, index) => (
-                      <Box
-                        key={index}
-                        onClick={() => setSelectedDataType(val.name)}
+                  <RadioGroup
+                    aria-label="Column category"
+                    value={selectedDataType}
+                    onChange={(event) =>
+                      setSelectedDataType(event.target.value)
+                    }
+                    sx={{ mt: "20px" }}
+                  >
+                    {dataType.map(({ name }) => (
+                      <FormControlLabel
+                        key={name}
+                        value={name}
+                        control={<Radio size="small" />}
+                        label={name}
                         sx={{
-                          borderTopLeftRadius: "10px",
-                          borderBottomLeftRadius: "10px",
-                          backgroundColor:
-                            selectedDataType === val.name
-                              ? "action.hover"
-                              : "background.paper",
-                          height: "39px",
-                          paddingLeft: "20px",
-                          marginBottom: "7px",
-                          display: "flex",
-                          alignItems: "center",
-                          cursor: "pointer",
+                          m: 0,
+                          mb: 1,
+                          borderRadius: "var(--ds-radius-lg)",
+                          bgcolor:
+                            selectedDataType === name
+                              ? "var(--ds-bg-selected)"
+                              : "transparent",
+                          color:
+                            selectedDataType === name
+                              ? "var(--ds-fg-default)"
+                              : "text.secondary",
+                          "& .MuiFormControlLabel-label": {
+                            fontSize: 14,
+                            fontWeight: 500,
+                          },
                         }}
-                      >
-                        <Typography
-                          sx={{
-                            fontSize: "14px",
-                            fontWeight: 600,
-                            color:
-                              selectedDataType === val.name
-                                ? "primary.main"
-                                : "text.secondary",
-                          }}
-                        >
-                          {val.name}
-                        </Typography>
-                      </Box>
+                      />
                     ))}
-                  </Box>
+                  </RadioGroup>
                 </Box>
               )}
               <Box
@@ -366,15 +457,40 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
           </Box>
         ) : (
           <Box sx={{ marginTop: "25px", marginRight: "30px" }}>
-            <TextField
-              fullWidth
-              size="small"
-              label="Column name"
-              placeholder="Enter column name"
-              value={columnName}
-              required
-              onChange={(e) => setColumnName(e.target.value)}
-            />
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {getSafeActionErrorMessage(error, "Couldn't save the column")}
+              </Alert>
+            )}
+            <Box sx={{ display: "flex", gap: 1.5 }}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Column name"
+                autoFocus
+                placeholder="Enter column name"
+                value={columnName}
+                disabled={isLoading}
+                required
+                onChange={(e) => setColumnName(e.target.value)}
+              />
+              <TextField
+                select
+                size="small"
+                label="Role"
+                value={effectiveRole}
+                disabled={isLoading}
+                onChange={(e) => setColumnRole(e.target.value)}
+                sx={{ width: 200, flexShrink: 0 }}
+                helperText={columnRole ? " " : "From the column name"}
+              >
+                {[...USER_ROLES, "none"].map((role) => (
+                  <MenuItem key={role} value={role}>
+                    {role === "none" ? "No role" : ROLE_LABEL[role]}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Box>
             <Box
               sx={{
                 display: "flex",
@@ -395,6 +511,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
                   border: "1px solid var(--border-default)",
                 }}
                 onClick={handleClose}
+                disabled={isLoading}
               >
                 Cancel
               </Button>
@@ -413,6 +530,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
                     column_type: staticColumnType
                       .toLowerCase()
                       .replace(/\s+/g, ""),
+                    role: effectiveRole,
                   });
                 }}
                 disabled={!columnName}
@@ -424,8 +542,8 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
           </Box>
         )}
       </Box>
-    </Modal>
-  );
+    </Modal>,
+  ];
 };
 
 AddColumnDrawer.propTypes = {

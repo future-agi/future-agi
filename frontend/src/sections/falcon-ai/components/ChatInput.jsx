@@ -21,10 +21,12 @@ import { alpha, useTheme } from "@mui/material/styles";
 import { useRouter } from "src/routes/hooks";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
+import { captureFalconRequest } from "../store/falconRequestGuard";
 import { uploadFile } from "../hooks/useFalconAPI";
 import ContextSelector from "./ContextSelector";
 import SlashCommandPicker from "./SlashCommandPicker";
 import AttachedFileChip from "./AttachedFileChip";
+import { isPrototypeMode } from "src/utils/prototype";
 export default function ChatInput({ onSend, onStop }) {
   const [text, setText] = useState("");
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -119,9 +121,11 @@ export default function ChatInput({ onSend, onStop }) {
         return;
       }
 
+      const isCurrent = captureFalconRequest({ conversation: true });
       setIsUploading(true);
       try {
         const resp = await uploadFile(file);
+        if (!isCurrent()) return;
         if (resp.status && resp.result) {
           addAttachedFile(resp.result);
         }
@@ -199,11 +203,13 @@ export default function ChatInput({ onSend, onStop }) {
         .slice(0, 5);
       if (validFiles.length === 0) return;
 
+      const isCurrent = captureFalconRequest({ conversation: true });
       setIsUploading(true);
       try {
         const results = await Promise.allSettled(
           validFiles.map((file) => uploadFile(file)),
         );
+        if (!isCurrent()) return;
         for (const result of results) {
           if (
             result.status === "fulfilled" &&
@@ -495,24 +501,28 @@ export default function ChatInput({ onSend, onStop }) {
                 />
               </MenuItem>
 
-              <MenuItem
-                onMouseEnter={handleConnectorsHover}
-                sx={{ gap: 1.5, py: 1, justifyContent: "space-between" }}
-              >
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+              {/* L7c g1 (settings:pages): no connector can be added in the
+                  prototype (Falcon AI Connectors is absent there). */}
+              {isPrototypeMode() ? null : (
+                <MenuItem
+                  onMouseEnter={handleConnectorsHover}
+                  sx={{ gap: 1.5, py: 1, justifyContent: "space-between" }}
+                >
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                    <Iconify
+                      icon="mdi:puzzle-outline"
+                      width={18}
+                      sx={{ color: "text.secondary" }}
+                    />
+                    <Typography sx={{ fontSize: 14 }}>Connectors</Typography>
+                  </Box>
                   <Iconify
-                    icon="mdi:puzzle-outline"
-                    width={18}
-                    sx={{ color: "text.secondary" }}
+                    icon="mdi:chevron-right"
+                    width={16}
+                    sx={{ color: "text.disabled" }}
                   />
-                  <Typography sx={{ fontSize: 14 }}>Connectors</Typography>
-                </Box>
-                <Iconify
-                  icon="mdi:chevron-right"
-                  width={16}
-                  sx={{ color: "text.disabled" }}
-                />
-              </MenuItem>
+                </MenuItem>
+              )}
             </Menu>
 
             {/* Connectors submenu */}

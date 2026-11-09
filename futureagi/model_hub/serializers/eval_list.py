@@ -11,12 +11,12 @@ from rest_framework import serializers
 
 class EvalListFiltersSerializer(serializers.Serializer):
     eval_type = serializers.ListField(
-        child=serializers.ChoiceField(choices=["llm", "code", "agent"]),
+        child=serializers.ChoiceField(choices=["llm", "code", "agent", "dag"]),
         required=False,
         allow_empty=True,
     )
     eval_type_not = serializers.ListField(
-        child=serializers.ChoiceField(choices=["llm", "code", "agent"]),
+        child=serializers.ChoiceField(choices=["llm", "code", "agent", "dag"]),
         required=False,
         allow_empty=True,
     )

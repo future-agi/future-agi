@@ -27,12 +27,37 @@ import Iconify from "src/components/iconify";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import FilterChips from "src/sections/projects/LLMTracing/FilterChips";
 import { useParams } from "src/routes/hooks";
-import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
+import {
+  useDatasetColumnConfig,
+  useGetJsonColumnSchema,
+} from "src/api/develop/develop-detail";
+import { schemaPathOptions } from "src/sections/common/Values/PathInput";
+import { dominantKind } from "src/sections/common/Values/inferSchema";
 import { useDatasetColumnValues } from "src/hooks/useDashboards";
 import { getRandomId } from "src/utils/utils";
+import { isPrototypeMode } from "src/utils/prototype";
 import { useDevelopFilterStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
-import { transformFilter, validateFilter } from "./common";
+import { useAssignments, useTranslateInfo } from "src/api/develop/row-collab";
+import CollabValueSelect from "./CollabValueSelect";
+import {
+  COLLAB_CATEGORY,
+  collabChipValue,
+  collabFieldProperties,
+} from "./collabFilterFields";
+import {
+  PATH_FIELD_SEPARATOR,
+  transformFilter,
+  validateFilter,
+} from "./common";
+
+// W5 grid seam G4: the AI box posts /model-hub/ai-filter/, which no
+// prototype handler answers, so prototype builds (and tests) leave it out.
+// The one prototype flag is utils/prototype.
+const PROTOTYPE_BUILD = isPrototypeMode() || import.meta.env.MODE === "test";
+// HO D3: the live collaboration keys (assigned to, comments, language) are
+// answered where the W4 reads are served (prototype mode).
+const COLLAB_FIELDS_SERVED = isPrototypeMode();
 
 // Column data types the backend can filter on.
 // Audio and other media are excluded intentionally.
@@ -146,9 +171,10 @@ export const storeFilterToPanel = (storeFilter, columnLookup) => {
   const col = columnLookup[storeFilter.columnId];
   const panelType = col?.panelType || "string";
   const category =
-    col?.originType === "evaluation" || col?.originType === "evaluation_reason"
+    col?.category ??
+    (col?.originType === "evaluation" || col?.originType === "evaluation_reason"
       ? "evaluation"
-      : "dataset";
+      : "dataset");
   return {
     field: storeFilter.columnId,
     registryId:
@@ -197,6 +223,27 @@ function normalizePickerValues(values) {
   return Array.from(new Set(cleanValues));
 }
 
+// IT-R5 G5 P1: the panel stores a typed string as the list operator `in`
+// (its picker can collect several values), so one value used to read
+// `is one of e`. For the chip only, one value reads as `is` / `is not`;
+// the stored predicate and the request keep the canonical list shape.
+export const singleValueChip = (apiFilter) => {
+  const op = apiFilter?.filter_config?.filter_op;
+  const value = apiFilter?.filter_config?.filter_value;
+  if ((op !== "in" && op !== "not_in") || !Array.isArray(value)) {
+    return apiFilter;
+  }
+  if (value.length !== 1) return apiFilter;
+  return {
+    ...apiFilter,
+    filter_config: {
+      ...apiFilter.filter_config,
+      filter_op: op === "in" ? "equals" : "not_equals",
+      filter_value: value[0],
+    },
+  };
+};
+
 export const panelFilterToStore = (panelFilter) => {
   const storeType = PANEL_TYPE_TO_STORE_TYPE[panelFilter.fieldType] || "text";
   const rawValue = valuePanelToStore(
@@ -241,9 +288,11 @@ export const DatasetColumnValuePicker = ({
   // datasets it's the dataset UUID (see DevelopFilterBox).
   freeSoloValues = false,
 }) => {
-  const columnId = property?.id;
+  // FA Path properties (R2 P6) suggest their enum values; no fetch. HO D3:
+  // a Collaboration field picks one of the server's values by its label.
+  const columnId = property?.path || property?.enumLabels ? null : property?.id;
   const {
-    data: suggestions = [],
+    data: fetchedSuggestions = [],
     isLoading,
     isError,
     hasNextPage,
@@ -254,7 +303,23 @@ export const DatasetColumnValuePicker = ({
     columnId,
     enabled: Boolean(projectId && columnId),
   });
+  const suggestions = property?.path
+    ? property.enumValues ?? []
+    : fetchedSuggestions;
   const [inputValue, setInputValue] = useState("");
+  const stringValue = Array.isArray(value) ? value[0] || "" : value || "";
+  const [stringInputValue, setStringInputValue] = useState(stringValue);
+  useEffect(() => {
+    setStringInputValue(stringValue);
+  }, [stringValue]);
+  if (property?.enumLabels)
+    return (
+      <CollabValueSelect
+        value={value}
+        onChange={onChange}
+        property={property}
+      />
+    );
   const loadMoreControl = hasNextPage ? (
     <Button
       size="small"
@@ -409,8 +474,15 @@ export const DatasetColumnValuePicker = ({
     );
   }
 
-  // string / fallback — single text value with suggestion dropdown.
-  const strVal = Array.isArray(value) ? value[0] || "" : value || "";
+  // string / fallback — single text value with suggestion dropdown. Keep the
+  // text field's draft separate from the selected Autocomplete value: updating
+  // the row on every keystroke makes MUI replay the controlled value and can
+  // leave only the last character in the filter. Enter and blur are the commit
+  // points for an exact value; choosing a suggestion still commits immediately.
+  const strVal = stringValue;
+  const commitTypedValue = () => {
+    if (stringInputValue !== strVal) onChange(stringInputValue);
+  };
   return (
     <Box sx={{ flex: 1, minWidth: 140, maxWidth: 240 }}>
       <Autocomplete
@@ -418,9 +490,18 @@ export const DatasetColumnValuePicker = ({
         size="small"
         options={suggestions}
         value={strVal}
-        // onInputChange fires for both typing and option-pick so a user who
-        // types a novel substring still gets it flushed to the store.
-        onInputChange={(_, newVal) => onChange(newVal || "")}
+        inputValue={stringInputValue}
+        onInputChange={(_, newVal) => setStringInputValue(newVal || "")}
+        onChange={(_, newVal) => {
+          const nextValue =
+            typeof newVal === "string"
+              ? newVal
+              : newVal == null
+                ? ""
+                : String(newVal);
+          setStringInputValue(nextValue);
+          onChange(nextValue);
+        }}
         loading={isLoading}
         noOptionsText={
           isError ? "Suggestions unavailable. Enter an exact value." : undefined
@@ -434,6 +515,14 @@ export const DatasetColumnValuePicker = ({
             helperText={
               isError ? "Suggestions unavailable; typed values still work." : ""
             }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.stopPropagation();
+                commitTypedValue();
+              }
+            }}
+            onBlur={commitTypedValue}
             InputProps={{
               ...params.InputProps,
               sx: { fontSize: 12, height: 28 },
@@ -484,11 +573,124 @@ export const buildProperties = (allColumns) => {
     .filter(Boolean);
 };
 
+const PATH_PANEL_TYPE = { number: "number", boolean: "boolean" };
+const MAX_PATHS_PER_COLUMN = 40;
+
+/**
+ * Filter fields for typed JSON paths (R2-SPEC P6 §3.3), from the
+ * json-schema's `paths[]`: `metadata.customer.tier` (string),
+ * `expected.citations[0].page` (number), `conversation[*].tool_calls[*]
+ * .function.name` (any of a list → `contains`). Field id
+ * `<columnId>::<path>`; the API filter carries `filter_config.path`.
+ */
+export const buildPathProperties = (schemas) => {
+  const out = [];
+  const perColumn = new Map();
+  Object.entries(schemas ?? {}).forEach(([columnId, entry]) => {
+    schemaPathOptions({ [columnId]: entry }).forEach((p) => {
+      const kind = dominantKind(p.kinds);
+      if (kind === "object" || kind === "null") return;
+      const n = perColumn.get(columnId) ?? 0;
+      if (n >= MAX_PATHS_PER_COLUMN) return;
+      perColumn.set(columnId, n + 1);
+      const multi = p.rel.includes("[*]") || kind === "array";
+      const panelType = multi ? "array" : PATH_PANEL_TYPE[kind] ?? "string";
+      out.push({
+        id: `${columnId}${PATH_FIELD_SEPARATOR}${p.rel}`,
+        name: p.path,
+        type: panelType,
+        category: "dataset",
+        originType: "OTHERS",
+        panelType,
+        path: p.rel,
+        enumValues: p.enum_values ?? [],
+      });
+    });
+  });
+  return out;
+};
+
 export const DEVELOP_FILTER_CATEGORIES = [
   { key: "all", label: "All", icon: "mdi:view-grid-outline" },
   { key: "dataset", label: "Dataset", icon: "mdi:table" },
   { key: "evaluation", label: "Evals", icon: "mdi:check-circle-outline" },
 ];
+
+const RESERVED_CATEGORIES = new Set(["all", "evaluation", "system"]);
+
+/** The panel's category for a dataset column: its own name (IT-R1 G5 P9). */
+const columnCategory = (name) => {
+  const key = String(name ?? "").trim();
+  if (!key) return "dataset";
+  return RESERVED_CATEGORIES.has(key.toLowerCase()) ? `${key} column` : key;
+};
+
+/**
+ * IT-R1 G5 P9: properties grouped by column. Each dataset column and its
+ * typed paths share one category named after the column (`conversation`,
+ * `expected`, `metadata` …), so the sidebar lists columns and the item tag
+ * names the column instead of repeating `Dataset` 70 times. Each column is
+ * followed by its own paths. Evals stay `evaluation`. Pure.
+ */
+export function groupPropertiesByColumn(
+  columnProps,
+  pathProps,
+  columnNames = {},
+) {
+  const byColumn = new Map();
+  (pathProps ?? []).forEach((p) => {
+    const colId = String(p.id).split(PATH_FIELD_SEPARATOR)[0];
+    if (!byColumn.has(colId)) byColumn.set(colId, []);
+    byColumn.get(colId).push(p);
+  });
+  const out = [];
+  const used = new Set();
+  // Plain columns (no nested paths) share one `columns` group; a column with
+  // paths is its own group, the column first, then its paths.
+  (columnProps ?? []).forEach((c) => {
+    const paths = byColumn.get(c.id) ?? [];
+    const cat =
+      c.category === "evaluation"
+        ? "evaluation"
+        : paths.length
+          ? columnCategory(c.name)
+          : "columns";
+    out.push({ ...c, category: cat });
+    paths.forEach((p) => {
+      out.push({ ...p, category: cat });
+      used.add(p.id);
+    });
+  });
+  // Paths of json / conversation columns (not filterable as a whole).
+  byColumn.forEach((paths, colId) => {
+    const left = paths.filter((p) => !used.has(p.id));
+    if (!left.length) return;
+    const cat = columnCategory(
+      columnNames[colId] ?? left[0].name.split(".")[0],
+    );
+    left.forEach((p) => out.push({ ...p, category: cat }));
+  });
+  return out;
+}
+
+/** Sidebar: All, one entry per column (grid order), Evals. Pure. */
+export function columnCategories(properties) {
+  const keys = [];
+  (properties ?? []).forEach((p) => {
+    if (p.category && p.category !== "evaluation" && !keys.includes(p.category))
+      keys.push(p.category);
+  });
+  const hasEvals = (properties ?? []).some((p) => p.category === "evaluation");
+  return [
+    DEVELOP_FILTER_CATEGORIES[0],
+    ...keys.map((k) =>
+      k === "columns"
+        ? { key: k, label: "Columns", icon: "mdi:table" }
+        : { key: k, label: k, icon: "mdi:code-braces" },
+    ),
+    ...(hasEvals ? [DEVELOP_FILTER_CATEGORIES[2]] : []),
+  ];
+}
 
 const DevelopFilterBox = () => {
   const {
@@ -503,7 +705,50 @@ const DevelopFilterBox = () => {
 
   const allColumns = useDatasetColumnConfig(dataset, false, true);
 
-  const properties = useMemo(() => buildProperties(allColumns), [allColumns]);
+  const { data: jsonSchemas } = useGetJsonColumnSchema(dataset);
+  const collabOpts = { enabled: COLLAB_FIELDS_SERVED && Boolean(dataset) };
+  const { data: assignmentsRead } = useAssignments(dataset, {}, collabOpts);
+  const { data: translateRead } = useTranslateInfo(
+    dataset,
+    undefined,
+    collabOpts,
+  );
+  const collabProps = useMemo(
+    () =>
+      COLLAB_FIELDS_SERVED
+        ? collabFieldProperties({
+            assignments: assignmentsRead,
+            translate: translateRead,
+          })
+        : [],
+    [assignmentsRead, translateRead],
+  );
+  const properties = useMemo(() => {
+    const base = buildProperties(allColumns);
+    // A column made from a path (`Column from path…`) wins over the path.
+    const names = new Set(base.map((p) => p.name));
+    const columnNames = Object.fromEntries(
+      (allColumns ?? []).map((c) => [
+        c?.col?.id ?? c?.field,
+        c?.col?.name ?? c?.headerName,
+      ]),
+    );
+    return [
+      ...groupPropertiesByColumn(
+        base,
+        buildPathProperties(jsonSchemas).filter((p) => !names.has(p.name)),
+        columnNames,
+      ),
+      ...collabProps,
+    ];
+  }, [allColumns, jsonSchemas, collabProps]);
+  const categories = useMemo(
+    () =>
+      columnCategories(properties).map((c) =>
+        c.key === COLLAB_CATEGORY.key ? COLLAB_CATEGORY : c,
+      ),
+    [properties],
+  );
 
   const columnLookup = useMemo(() => {
     const m = {};
@@ -561,17 +806,21 @@ const DevelopFilterBox = () => {
   // or a column hidden after save doesn't flash the fallback label.
   const chipFilters = useMemo(
     () =>
-      filters
-        .filter(validateFilter)
-        .map(transformFilter)
-        .map((f) => ({
+      filters.filter(validateFilter).map((storeFilter) => {
+        const f = collabChipValue(
+          singleValueChip(transformFilter(storeFilter)),
+          collabProps,
+        );
+        return {
           ...f,
-          display_name:
-            labelLookup?.[f?.column_id] ??
-            columnLookup?.[f?.column_id]?.name ??
-            f.display_name,
-        })),
-    [filters, columnLookup, labelLookup],
+          display_name: f.filter_config?.path
+            ? columnLookup?.[storeFilter.columnId]?.name ?? f.display_name
+            : labelLookup?.[f?.column_id] ??
+              columnLookup?.[f?.column_id]?.name ??
+              f.display_name,
+        };
+      }),
+    [filters, columnLookup, labelLookup, collabProps],
   );
 
   // Map a chip-list index back to the corresponding index in the store's
@@ -642,7 +891,7 @@ const DevelopFilterBox = () => {
       />
       <TraceFilterPanel
         anchorEl={anchorEl}
-        open={isDevelopFilterOpen}
+        open={isDevelopFilterOpen && Boolean(anchorEl)}
         onClose={handleClose}
         currentFilters={panelCurrentFilters}
         onApply={handleApply}
@@ -655,9 +904,12 @@ const DevelopFilterBox = () => {
         //       the backend runs the agent with per-column value grounding.
         projectId={dataset}
         source="dataset"
-        showAi
+        // W5 grid seam G4: absent in prototype builds (see PROTOTYPE_BUILD).
+        showAi={!PROTOTYPE_BUILD}
         showQueryTab
-        categories={DEVELOP_FILTER_CATEGORIES}
+        aiPlaceholder="e.g. rows where metadata.customer.tier is enterprise"
+        closeOnApply
+        categories={categories}
         panelWidth={560}
       />
     </>
@@ -673,6 +925,9 @@ DatasetColumnValuePicker.propTypes = {
   property: PropTypes.shape({
     id: PropTypes.string,
     name: PropTypes.string,
+    path: PropTypes.string,
+    enumValues: PropTypes.array,
+    enumLabels: PropTypes.object,
   }),
   projectId: PropTypes.string,
   freeSoloValues: PropTypes.bool,

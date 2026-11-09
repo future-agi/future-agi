@@ -1,4 +1,11 @@
-import { Box, Typography, useTheme, Checkbox } from "@mui/material";
+import {
+  formatExactMoney,
+  isMoneyValue,
+  moneySign,
+  roundMoneyPercent,
+  sumMoneyValues,
+} from "src/sections/common/format/money";
+import { Box, Typography, useTheme, Checkbox, Button } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import ApexCharts from "react-apexcharts";
@@ -31,51 +38,66 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
       stt: theme.palette.blue[500], // blue[500]
     };
 
-    return costBreakdownOrder
-      .map((curr) => ({
-        label: curr.label,
-        value: curr.value,
-        cost: costBreakdown?.[curr.value]?.cost ?? 0,
-        color: colorMap[curr.value],
-      }))
-      .filter((item) => item.cost > 0);
+    return costBreakdownOrder.map((curr) => ({
+      label: curr.label,
+      value: curr.value,
+      cost: costBreakdown?.[curr.value]?.cost,
+      color: colorMap[curr.value],
+    }));
   }, [costBreakdown, theme.palette.blue]);
 
-  // State to track which items are visible
-  const [visibleItems, setVisibleItems] = useState(() =>
-    allData.reduce((acc, item) => ({ ...acc, [item.value]: true }), {}),
-  );
+  const allVisibleItems = () =>
+    allData.reduce((acc, item) => ({ ...acc, [item.value]: true }), {});
+  const [visibleItems, setVisibleItems] = useState(allVisibleItems);
+  const restoreItems = () => setVisibleItems(allVisibleItems());
 
-  // Filtered series based on visible items
-  const { series, labels, colors } = useMemo(() => {
-    const seriesData = [];
-    const labelsData = [];
-    const colorsData = [];
-
-    allData.forEach((item) => {
-      if (visibleItems[item.value]) {
-        seriesData.push(item.cost);
-        labelsData.push(item.label);
-        colorsData.push(item.color);
-      }
-    });
-
-    return { series: seriesData, labels: labelsData, colors: colorsData };
-  }, [allData, visibleItems]);
+  // Numeric coordinates are decoration only. Use the same plottable population
+  // for drawing and the last-visible guard, not checked zero/unknown rows.
+  const plottableData = allData.filter((item) => {
+    const coordinate = Number(item.cost);
+    return (
+      moneySign(item.cost) === 1 &&
+      Number.isFinite(coordinate) &&
+      coordinate > 0
+    );
+  });
+  const plottedData = plottableData.filter((item) => visibleItems[item.value]);
+  const series = plottedData.map((item) => Number(item.cost));
+  const labels = plottedData.map((item) => item.label);
+  const colors = plottedData.map((item) => item.color);
+  const hasHiddenItems = allData.some((item) => !visibleItems[item.value]);
 
   const toggleItem = (value) => {
-    const visibleCount = Object.values(visibleItems).filter((v) => v).length; //if one item is visible and user clicks on it, show all items
-    if (visibleCount === 1 && visibleItems[value]) {
-      setVisibleItems(
-        allData.reduce((acc, item) => ({ ...acc, [item.value]: true }), {}),
-      );
-    } else {
-      setVisibleItems((prev) => ({
-        ...prev,
-        [value]: !prev[value],
-      }));
-    }
+    setVisibleItems((prev) => {
+      const visiblePlottable = plottableData.filter((item) => prev[item.value]);
+      if (
+        visiblePlottable.length === 1 &&
+        visiblePlottable[0].value === value
+      ) {
+        return allVisibleItems();
+      }
+      return { ...prev, [value]: !prev[value] };
+    });
   };
+
+  const exactSeries = plottedData.map((item) => item.cost);
+  // Hiding an unpriced component must never turn a partial total into a known
+  // total. Zero-valued components still belong to the priced population.
+  const hasUnknownCost = allData.some((item) => !isMoneyValue(item.cost));
+  const totalCost = hasUnknownCost
+    ? null
+    : sumMoneyValues(
+        allData
+          // With no chart, show the full call total rather than a selection of
+          // zero companions that conceals a hidden paid component after refresh.
+          .filter((item) => !plottedData.length || visibleItems[item.value])
+          .map((item) => item.cost),
+      );
+  const shareText = (cost) => {
+    const percentage = roundMoneyPercent(cost, totalCost);
+    return percentage == null ? "—" : `${percentage}%`;
+  };
+  const allCostsZero = allData.every((item) => moneySign(item.cost) === 0);
 
   const pieOptions = {
     chart: {
@@ -117,8 +139,10 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
               fontWeight: 600,
               fontSize: "18px",
               fontFamily: "IBM Plex Sans",
-              formatter: (val) => {
-                return `$${Number(val).toFixed(2)}`;
+              formatter: (val, opts) => {
+                return opts?.seriesIndex != null
+                  ? formatExactMoney(exactSeries[opts.seriesIndex])
+                  : `≈ ${formatExactMoney(val)}`;
               },
             },
             total: {
@@ -129,9 +153,8 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
               fontSize: "14px",
               fontFamily: "IBM Plex Sans",
               color: "var(--text-secondary)",
-              formatter: (w) => {
-                const total = w.globals.seriesTotals.reduce((a, b) => a + b, 0);
-                return `$${total.toFixed(2)}`;
+              formatter: () => {
+                return formatExactMoney(totalCost);
               },
             },
           },
@@ -141,8 +164,8 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
     dataLabels: {
       enabled: true,
       formatter: (val, opts) => {
-        const actualValue = opts.w.config.series[opts.seriesIndex];
-        return [`$${Number(actualValue).toFixed(2)}`, `${val.toFixed(1)}%`];
+        const actualValue = exactSeries[opts.seriesIndex];
+        return [formatExactMoney(actualValue), shareText(actualValue)];
       },
       style: {
         fontSize: "14px",
@@ -156,9 +179,9 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
     },
     tooltip: {
       enabled: true,
-      custom: ({ series, seriesIndex, _, w }) => {
+      custom: ({ seriesIndex, w }) => {
         const label = w.globals.labels[seriesIndex];
-        const value = series[seriesIndex];
+        const value = exactSeries[seriesIndex];
         const color = w.config.colors[seriesIndex];
 
         return `
@@ -205,7 +228,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
               color: var(--text-primary);
               margin-top: 4px;
             ">
-              $${Number(value).toFixed(2)}
+              ${formatExactMoney(value)}
             </div>
           </div>
         `;
@@ -213,23 +236,25 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
     },
   };
 
-  const isCostPreset = series.some((item) => item > 0);
+  const isCostPreset = plottedData.length > 0;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <Typography typography="s1_2" fontWeight="fontWeightMedium">
         Cost Breakdown (Call cost distribution)
       </Typography>
-      <ShowComponent condition={isCostPreset}>
+      <ShowComponent condition={isCostPreset || hasHiddenItems}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Box sx={{ flex: "1 1 0", minWidth: 0 }}>
-            <ApexCharts
-              options={pieOptions}
-              series={series}
-              type="donut"
-              height="280px"
-            />
-          </Box>
+          <ShowComponent condition={isCostPreset}>
+            <Box sx={{ flex: "1 1 0", minWidth: 0 }}>
+              <ApexCharts
+                options={pieOptions}
+                series={series}
+                type="donut"
+                height="280px"
+              />
+            </Box>
+          </ShowComponent>
           {/* Custom Legend with Checkboxes */}
           <Box
             sx={{
@@ -240,14 +265,9 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
             }}
           >
             {allData.map((item) => {
-              const percentage = (
-                (item.cost /
-                  allData.reduce(
-                    (sum, i) => sum + (visibleItems[i.value] ? i.cost : 0),
-                    0,
-                  )) *
-                100
-              ).toFixed(1);
+              const percentage = shareText(
+                visibleItems[item.value] ? item.cost : "0",
+              );
 
               return (
                 <Box
@@ -266,6 +286,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
                   onClick={() => toggleItem(item.value)}
                 >
                   <Checkbox
+                    inputProps={{ "aria-label": `Show ${item.label} cost` }}
                     checked={visibleItems[item.value]}
                     onChange={(e) => {
                       e.stopPropagation();
@@ -310,13 +331,17 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
                       component="span"
                     >
                       {" "}
-                      ${item.cost.toFixed(2)} ({" "}
-                      {visibleItems[item.value] ? percentage : "0.0"}%)
+                      {formatExactMoney(item.cost)} ({percentage})
                     </Typography>
                   </Box>
                 </Box>
               );
             })}
+            <ShowComponent condition={hasHiddenItems}>
+              <Button size="small" onClick={restoreItems}>
+                Restore all components
+              </Button>
+            </ShowComponent>
           </Box>
         </Box>
       </ShowComponent>
@@ -330,7 +355,11 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
           }}
         >
           <Typography typography="s1_2" color="text.disabled">
-            All costs are $0 for this call
+            {allCostsZero
+              ? "All costs are $0 for this call"
+              : hasUnknownCost
+                ? "Cost data is unavailable for this call"
+                : `Total cost: ${formatExactMoney(totalCost)} (chart unavailable)`}
           </Typography>
         </Box>
       </ShowComponent>
@@ -342,14 +371,14 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
           icon="/assets/icons/simulate/ic_speach_to_text.svg"
           iconColor="orange.500"
           iconBgColor="orange.o5"
-          value={costBreakdown?.stt?.cost ?? 0}
+          value={costBreakdown?.stt?.cost}
         />
         <CostCard
           title="LLM cost"
           icon="/assets/icons/simulate/ic_llm.svg"
           iconColor="primary.main"
           iconBgColor="action.hover"
-          value={costBreakdown?.llm?.cost ?? 0}
+          value={costBreakdown?.llm?.cost}
           additionalInfo={[
             {
               label: "Prompt tokens",
@@ -366,7 +395,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
           icon="/assets/icons/simulate/ic_text_to_speach.svg"
           iconColor="blue.500"
           iconBgColor="blue.o5"
-          value={costBreakdown?.tts?.cost ?? 0}
+          value={costBreakdown?.tts?.cost}
         />
       </Box>
     </Box>
@@ -376,15 +405,15 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
 TestDetailCostBreakdown.propTypes = {
   costBreakdown: PropTypes.shape({
     llm: PropTypes.shape({
-      cost: PropTypes.number,
+      cost: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
       promptTokens: PropTypes.number,
       completionTokens: PropTypes.number,
     }),
     stt: PropTypes.shape({
-      cost: PropTypes.number,
+      cost: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
     }),
     tts: PropTypes.shape({
-      cost: PropTypes.number,
+      cost: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
     }),
   }),
 };

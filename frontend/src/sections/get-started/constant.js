@@ -49,8 +49,7 @@ export const setupObserveVideoContent = {
   title: "What is observability and how to use?",
   description:
     "Monitor and analyze system performance in real-time. Identify bottlenecks, track anomalies, and ensure seamless operation.",
-  srcThumbnail:
-    "https://cdn.loom.com/sessions/thumbnails/c4440ec37395445f8f520a28fa79cdab-a22a142a928a289f-full-play.gif",
+  srcThumbnail: "/assets/icons/action_buttons/ic_filled_play_button.svg",
   buttonTitle: "Check Now",
   linkTitle: "View Doc",
   viewDocLink: docLinks.observeOverview,
@@ -62,8 +61,7 @@ export const runFirstExperimentVideoContent = {
   title: "How to create experiment?",
   description:
     "Start testing models and explore different outcomes. Get insights quickly and refine your approach.",
-  srcThumbnail:
-    "https://cdn.loom.com/sessions/thumbnails/6670aff8264d4f1d86da26c77ba12f9c-88bfb4c5b0f3dd7d-full-play.gif",
+  srcThumbnail: "/assets/icons/action_buttons/ic_filled_play_button.svg",
   buttonTitle: "Check Now",
   linkTitle: "View Doc",
   viewDocLink: docLinks.experimentOverview,

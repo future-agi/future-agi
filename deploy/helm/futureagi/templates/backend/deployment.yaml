@@ -2,7 +2,13 @@
 {{- $ctx := dict "root" . "component" "backend" -}}
 {{- $image := include "futureagi.image" (dict "root" . "image" $b.image "digestKey" "backend") -}}
 {{- $pullPolicy := include "futureagi.imagePullPolicy" (dict "root" . "image" $b.image) -}}
-{{- $env := include "futureagi.env.python" (dict "root" . "component" (dict "SERVICE_TYPE" "backend") "overrides" $b.extraEnv) -}}
+{{- /* The session exchange signs with omega.issuer's key, and the API sends
+revocations to Omega EE (omega.hostEvents), with omega.enabled; the pods that
+get the channel carry the label EE admits senders by. config.extraEnvFrom
+cannot supply either (futureagi.omega.envFromPins). */ -}}
+{{- $channel := include "futureagi.omega.hostEvents.env" . | fromYaml -}}
+{{- $component := merge (dict "SERVICE_TYPE" "backend") (include "futureagi.omega.issuer.env" . | fromYaml) $channel (include "futureagi.omega.envFromPins" . | fromYaml) -}}
+{{- $env := include "futureagi.env.python" (dict "root" . "component" $component "overrides" $b.extraEnv) -}}
 {{- $containerSecurity := include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $b.containerSecurityContext) -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -31,6 +37,9 @@ spec:
         {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
         {{- with $b.podLabels }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $channel }}
+        {{- include "futureagi.omega.hostEvents.senderLabel" . | nindent 8 }}
         {{- end }}
       annotations:
         checksum/secrets: {{ include "futureagi.secretsChecksum" . }}
@@ -119,7 +128,7 @@ spec:
             failureThreshold: 60
           readinessProbe:
             httpGet:
-              path: /health/
+              path: {{ ternary "/readyz/" "/health/" .Values.hosted.enabled }}
               port: http
               httpHeaders:
                 - name: Host
@@ -143,11 +152,14 @@ spec:
             {{- $containerSecurity | nindent 12 }}
           volumeMounts:
             {{- include "futureagi.python.volumeMounts" . | trim | nindent 12 }}
+            {{- include "futureagi.block" (dict "text" (include "futureagi.omega.backend.volumeMounts" .) "indent" 12) }}
             {{- with $b.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+        {{- include "futureagi.block" (dict "text" (include "futureagi.omega.backend.tlsSidecar" .) "indent" 8) }}
       volumes:
         {{- include "futureagi.python.volumes" . | trim | nindent 8 }}
+        {{- include "futureagi.block" (dict "text" (include "futureagi.omega.backend.volumes" .) "indent" 8) }}
         {{- with $b.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

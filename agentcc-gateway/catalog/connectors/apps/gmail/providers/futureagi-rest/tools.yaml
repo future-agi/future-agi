@@ -1,0 +1,282 @@
+# The curated overlay for Gmail's K2 tools (connector-gen/rest-overlay/v1):
+# which Gmail API methods become tools, and how. generate.py turns it and the
+# pinned Discovery document into tools.generated.json.
+#
+# Each tool's scope is the narrowest one the Discovery method accepts that
+# the tool needs. Annotations: what HTTP decides (the generator derives it),
+# plus Google's own hints where Google publishes them for the same action in
+# its Gmail MCP tool reference (label_thread, unlabel_thread, create_label,
+# create_draft): unlabel is destructive (it can archive a thread or drop a
+# label), label is not. Sending mail reaches people outside the mailbox, so
+# send_message and send_draft are openWorld.
+#
+# Replying in a thread takes two calls, because a generated tool makes one
+# request: get_message with format=metadata and metadataHeaders Message-ID,
+# References and Subject, then send_message or create_draft with that
+# threadId, In-Reply-To and References headers and the same Subject in raw
+# (Discovery's Message.threadId; Google's sending guide).
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/gmail-v1.discovery.json.gz
+tools:
+  - name: get_profile
+    title: Get the mailbox profile
+    description: >-
+      Return the connected mailbox's email address and its message and thread totals, for example
+      {"emailAddress": "alice@example.com", "messagesTotal": 1532, "threadsTotal": 811}.
+      Use it to learn which mailbox is connected.
+    operation: { id: gmail.users.getProfile }
+    params:
+      fixed: { userId: me }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [https://www.googleapis.com/auth/gmail.readonly]
+    response:
+      fields: [emailAddress, messagesTotal, threadsTotal]
+
+  - name: search_threads
+    title: Search threads
+    description: >-
+      Search the mailbox's threads and return their ids and snippets, newest first. q uses Gmail search
+      syntax, for example `from:alice@example.com is:unread newer_than:7d` or `subject:invoice has:attachment`;
+      leave it out to list the latest threads. labelIds keeps only threads with all of those labels (ids from
+      list_labels, such as INBOX). Pass nextPageToken back as pageToken for the next page.
+    operation: { id: gmail.users.threads.list }
+    params:
+      fixed: { userId: me }
+      exclude: [includeSpamTrash]
+      describe:
+        q: "Gmail search query, for example `from:alice@example.com is:unread` or `after:2026/10/01 has:attachment`."
+        maxResults: "Threads per page, 1-500 (default 100). Use 10-25 for a first look."
+        labelIds: "Label ids from list_labels, such as INBOX or Label_12; a thread must have all of them."
+        pageToken: "nextPageToken from the previous page."
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [https://www.googleapis.com/auth/gmail.readonly]
+    response:
+      fields: [threads.id, threads.snippet, nextPageToken, resultSizeEstimate]
+      maxBytes: 25000
+
+  - name: get_thread
+    title: Read a thread
+    description: >-
+      Read every message of one thread by its id (from search_threads), oldest first.
+      format=metadata returns headers only (pick them with metadataHeaders, for example From, To, Subject, Date);
+      format=full also returns the bodies, base64url-encoded in payload.parts[].body.data.
+    operation: { id: gmail.users.threads.get }
+    params:
+      fixed: { userId: me }
+      describe:
+        id: "Thread id from search_threads, for example 18c2f0d7a1b2c3d4."
+        metadataHeaders: "With format=metadata, the headers to return, for example From, Subject and Date."
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [https://www.googleapis.com/auth/gmail.readonly]
+    response:
+      fields:
+        [
+          id,
+          messages.id,
+          messages.threadId,
+          messages.labelIds,
+          messages.snippet,
+          messages.payload,
+        ]
+      maxBytes: 100000
+
+  - name: get_message
+    title: Read a message
+    description: >-
+      Read one message by its id, for example 18c2f0d7a1b2c3d4. format=metadata returns headers only;
+      format=full returns the body parts, base64url-encoded; format=raw returns the whole RFC 2822 message in raw.
+      Before replying, read the parent with format=metadata and metadataHeaders Message-ID, References and
+      Subject: the reply needs them.
+    operation: { id: gmail.users.messages.get }
+    params:
+      fixed: { userId: me }
+      describe:
+        id: "Message id from get_thread or search results, for example 18c2f0d7a1b2c3d4."
+        metadataHeaders: "With format=metadata, the headers to return, for example Message-ID, References and Subject."
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [https://www.googleapis.com/auth/gmail.readonly]
+    response:
+      fields: [id, threadId, labelIds, snippet, payload, raw]
+      maxBytes: 100000
+
+  - name: list_labels
+    title: List labels
+    description: >-
+      List the mailbox's labels with their ids: system labels such as INBOX, SENT, UNREAD and STARRED, and the
+      user's own, such as Label_12. Use the ids with search_threads, label_thread and unlabel_thread.
+    operation: { id: gmail.users.labels.list }
+    params:
+      fixed: { userId: me }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [https://www.googleapis.com/auth/gmail.labels]
+    response:
+      fields: [labels.id, labels.name, labels.type]
+
+  - name: list_drafts
+    title: List drafts
+    description: >-
+      List saved drafts with their ids and message ids, newest first. q filters them with Gmail search syntax,
+      for example `subject:proposal`. Pass nextPageToken back as pageToken for the next page.
+    operation: { id: gmail.users.drafts.list }
+    params:
+      fixed: { userId: me }
+      exclude: [includeSpamTrash]
+      describe:
+        q: "Gmail search query over the drafts, for example `to:bob@example.com`."
+        maxResults: "Drafts per page, 1-500 (default 100)."
+        pageToken: "nextPageToken from the previous page."
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [https://www.googleapis.com/auth/gmail.readonly]
+    response:
+      fields:
+        [
+          drafts.id,
+          drafts.message.id,
+          drafts.message.threadId,
+          nextPageToken,
+          resultSizeEstimate,
+        ]
+      maxBytes: 25000
+
+  - name: create_draft
+    title: Create a draft
+    description: >-
+      Save a draft without sending it. message.raw is the whole RFC 2822 message, base64url-encoded, for example
+      the encoding of "To: bob@example.com\r\nSubject: Hello\r\n\r\nHi Bob". To draft a reply, set message.threadId
+      to the thread's id, put In-Reply-To and References headers with the parent's Message-ID in the message, and
+      keep its Subject (read them with get_message first). Returns the draft id for send_draft.
+    operation: { id: gmail.users.drafts.create }
+    params:
+      fixed: { userId: me }
+    body:
+      fields: [message.raw, message.threadId]
+      required: [message, message.raw]
+      description: The draft to create.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    posture: ask
+    scopes: [https://www.googleapis.com/auth/gmail.compose]
+    response:
+      fields: [id, message.id, message.threadId]
+
+  - name: send_draft
+    title: Send a draft
+    description: >-
+      Send a draft saved earlier, by the id create_draft or list_drafts returned, for example
+      r-5108413232411426193. The draft is removed and the sent message is returned.
+    operation: { id: gmail.users.drafts.send }
+    params:
+      fixed: { userId: me }
+    body:
+      fields: [id]
+      required: [id]
+      description: The draft to send.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [https://www.googleapis.com/auth/gmail.compose]
+    response:
+      fields: [id, threadId, labelIds]
+
+  - name: send_message
+    title: Send a message
+    description: >-
+      Send an email. raw is the whole RFC 2822 message, base64url-encoded, for example the encoding of
+      "To: bob@example.com\r\nSubject: Hello\r\n\r\nHi Bob". To reply in a thread, set threadId to the thread's id,
+      put In-Reply-To and References headers with the parent's Message-ID in the message, and keep its Subject
+      (read them with get_message first); otherwise Gmail starts a new thread.
+    operation: { id: gmail.users.messages.send }
+    params:
+      fixed: { userId: me }
+    body:
+      fields: [raw, threadId]
+      required: [raw]
+      description: The message to send.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [https://www.googleapis.com/auth/gmail.send]
+    response:
+      fields: [id, threadId, labelIds]
+
+  - name: label_thread
+    title: Add labels to a thread
+    description: >-
+      Add labels to every message of a thread, by label id from list_labels, for example
+      addLabelIds=["STARRED"] or ["Label_12"]. Adding a label the thread already has changes nothing.
+    operation: { id: gmail.users.threads.modify }
+    params:
+      fixed: { userId: me }
+      describe:
+        id: "Thread id from search_threads."
+    body:
+      fields: [addLabelIds]
+      required: [addLabelIds]
+      description: The labels to add.
+    annotations:
+      { destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    posture: ask
+    scopes: [https://www.googleapis.com/auth/gmail.modify]
+    response:
+      fields: [id, messages.id, messages.labelIds]
+
+  - name: unlabel_thread
+    title: Remove labels from a thread
+    description: >-
+      Remove labels from every message of a thread, by label id from list_labels: removing UNREAD marks it
+      read, removing INBOX archives it. Removing a label the thread does not have changes nothing.
+    operation: { id: gmail.users.threads.modify }
+    params:
+      fixed: { userId: me }
+      describe:
+        id: "Thread id from search_threads."
+    body:
+      fields: [removeLabelIds]
+      required: [removeLabelIds]
+      description: The labels to remove.
+    annotations:
+      { destructiveHint: true, idempotentHint: true, openWorldHint: false }
+    posture: deny
+    scopes: [https://www.googleapis.com/auth/gmail.modify]
+    response:
+      fields: [id, messages.id, messages.labelIds]
+
+  - name: create_label
+    title: Create a label
+    description: >-
+      Create a label of the user's own, for example name="Receipts" or a nested "Clients/Acme". Returns its id
+      for label_thread.
+    operation: { id: gmail.users.labels.create }
+    params:
+      fixed: { userId: me }
+    body:
+      fields: [name, labelListVisibility, messageListVisibility]
+      required: [name]
+      description: The label to create.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    posture: ask
+    scopes: [https://www.googleapis.com/auth/gmail.labels]
+    response:
+      fields: [id, name, type]
+
+  - name: trash_thread
+    title: Move a thread to the trash
+    description: >-
+      Move every message of a thread to the trash, by thread id from search_threads.
+    operation: { id: gmail.users.threads.trash }
+    params:
+      fixed: { userId: me }
+      describe:
+        id: "Thread id from search_threads."
+    annotations: { destructiveHint: true, openWorldHint: false }
+    posture: deny
+    scopes: [https://www.googleapis.com/auth/gmail.modify]
+    response:
+      fields: [id, messages.id, messages.labelIds]

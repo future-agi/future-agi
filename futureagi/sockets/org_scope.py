@@ -1,8 +1,9 @@
 """Organization resolution for WebSocket consumers.
 
-SAML credentials are bound to one organization. Other WebSocket sessions retain
-the legacy membership-based resolution until that behavior is addressed
-separately.
+SAML credentials are bound to one organization. Other WebSocket sessions use
+the account's first active membership; the legacy organization field counts
+only for an account with no membership rows at all, as HTTP authentication
+rules. An account whose memberships are all inactive has no organization.
 """
 
 from channels.db import database_sync_to_async
@@ -30,4 +31,7 @@ def _resolve_legacy_socket_organization(user):
     )
     if membership is not None:
         return membership.organization_id
-    return getattr(user, "organization_id", None)
+    from tfc.utils.tenant_scope import user_organization
+
+    organization = user_organization(user)
+    return organization.id if organization is not None else None

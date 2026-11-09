@@ -1,0 +1,61 @@
+# Gateway config template for 64_m8_identity.sh sections 1-5: request auth
+# OFF, one config key, and one static YAML MCP server, "primary", on the mock
+# scn_mcp_up started as "primary" (not marked propagate_depth), bound to
+# org-acme by mcp.static.org_id.
+#
+# Request auth is off on purpose: the gateway's KeyAuth middleware then lets
+# every /mcp request through, so each 401 the scenario sees is the MCP
+# identity's own (M8), which the gateway installs whatever auth.enabled says.
+# With request auth off a keyless request is served only while the operator's
+# servers are bound to no org (as on the release line; section 6 runs
+# gateway-no-static-org.yaml for that); here they are org-acme's, so it is
+# 401. The config keys load either way.
+#
+# scn_mcp_gateway_template (lib_mcp.sh) renders @@MCP_<NAME>_URL@@ and adds
+# the fixed test state key under `mcp:`; scn_up renders base.yaml's
+# placeholders and appends `redis:`. Every key and token below is a fake value
+# for the local mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: false
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+    - name: "acme-revocable"
+      key: "scn-test-key-m8-revocable"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+providers:
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+logging:
+  level: "info"
+mcp:
+  enabled: true
+  # The YAML servers are org-acme's (mcp.static.org_id). From W3b, M9's tenancy
+  # and M10's legacy view serve them only to that org's principals (a principal
+  # with no org gets them only while static.org_id is unset; IC-R1-7), and both
+  # keys above resolve to org-acme. Nothing reads it before those merges.
+  static:
+    org_id: "org-acme"
+  servers:
+    primary:
+      url: "@@MCP_PRIMARY_URL@@"
+      transport: "http"
+      auth:
+        type: "bearer"
+        token: "scn-test-mcp-upstream-token"

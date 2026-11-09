@@ -1,3 +1,4 @@
+import json
 import uuid
 from pathlib import Path
 
@@ -112,13 +113,22 @@ def test_compare_row_route_delete_is_method_guarded(auth_client):
 
 @pytest.mark.django_db
 def test_compare_delete_falls_back_to_synchronous_cleanup(
-    auth_client, monkeypatch, tmp_path
+    auth_client, monkeypatch, tmp_path, compare_datasets
 ):
     compare_id = uuid.uuid4()
     monkeypatch.chdir(tmp_path)
     compare_dir = Path(get_compare_local_dir(compare_id))
     compare_dir.mkdir(parents=True)
-    (compare_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    (compare_dir / "metadata.json").write_text(
+        json.dumps({
+            "base_dataset_id": str(compare_datasets["base_dataset"].id),
+            "comparison_datasets": [
+                str(compare_datasets["base_dataset"].id),
+                str(compare_datasets["other_dataset"].id),
+            ],
+        }),
+        encoding="utf-8",
+    )
 
     def raise_temporal_unavailable(*args, **kwargs):
         raise RuntimeError("Temporal unavailable")

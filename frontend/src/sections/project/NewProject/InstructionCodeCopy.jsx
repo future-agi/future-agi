@@ -1,23 +1,36 @@
 import { Box, IconButton } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
+import { usePersonalKeyText } from "src/components/personal-key-snippet-context";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import Iconify from "src/components/iconify";
-import { copyToClipboard } from "src/utils/utils";
+import { copyText } from "src/sections/omega/code/clipboard";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { primaryFont } from "src/theme/typography";
+import { NO_RECORDING_CLASS } from "src/sections/omega/code/noRecording";
 
-const InstructionCodeCopy = ({ text, language, onCopy }) => {
-  const onCopyClick = () => {
-    copyToClipboard(text);
-    enqueueSnackbar("Copied to clipboard", { variant: "success" });
-    if (onCopy) {
-      onCopy();
-    }
+const InstructionCodeCopy = ({ text: template, language, onCopy }) => {
+  const fill = usePersonalKeyText();
+  const text = fill(template);
+  const copyRoot = React.useRef(null);
+  const onCopyClick = async () => {
+    const copied = await copyText(text, copyRoot.current);
+    enqueueSnackbar(
+      copied
+        ? "Copied to clipboard"
+        : "Could not copy. Select and copy the code.",
+      { variant: copied ? "success" : "error" },
+    );
+    if (copied) onCopy?.();
   };
   return (
-    <Box sx={{ position: "relative", maxWidth: "100%" }}>
+    <Box
+      className={NO_RECORDING_CLASS}
+      ref={copyRoot}
+      sx={{ position: "relative", maxWidth: "100%" }}
+    >
       <IconButton
+        aria-label="Copy code"
         sx={{ position: "absolute", right: "2px", top: "8px", zIndex: 1 }}
         onClick={onCopyClick}
       >

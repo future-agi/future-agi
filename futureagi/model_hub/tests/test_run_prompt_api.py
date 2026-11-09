@@ -18,6 +18,7 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -1918,7 +1919,8 @@ class TestRunPromptDatabaseState:
     def test_edit_run_prompt_updates_database_entries(
         self, auth_client, dataset, run_prompt_column, run_prompter
     ):
-        """Verify database entries are updated correctly on edit."""
+        """Verify an edit saves configuration and completes when there are no rows."""
+        assert not Row.objects.filter(dataset=dataset, deleted=False).exists()
         # Link run_prompt_column to run_prompter
         run_prompt_column.source_id = run_prompter.id
         run_prompt_column.save()
@@ -1952,11 +1954,13 @@ class TestRunPromptDatabaseState:
         with patch(
             "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
         ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/edit_run_prompt_column/",
-                payload,
-                format="json",
-            )
+            with TestCase.captureOnCommitCallbacks(execute=True):
+                response = auth_client.post(
+                    "/model-hub/develops/edit_run_prompt_column/",
+                    payload,
+                    format="json",
+                )
+            mock_task.assert_not_called()
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -1967,7 +1971,8 @@ class TestRunPromptDatabaseState:
         assert run_prompter.temperature == 0.3
         assert run_prompter.max_tokens == 300
         assert run_prompter.output_format == "object"
-        assert run_prompter.status == StatusType.RUNNING.value
+        # With no selected rows, the saved edit is a completed no-op.
+        assert run_prompter.status == StatusType.COMPLETED.value
 
         # Verify Column updates
         run_prompt_column.refresh_from_db()

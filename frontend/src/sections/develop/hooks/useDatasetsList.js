@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
+/** DL#21: how often the list polls while an experiment runs. */
+export const RUNNING_POLL_MS = 5000;
+
 export const normalizeDatasetRow = (dataset) => ({
   ...dataset,
   numberOfDatapoints:
@@ -49,6 +52,14 @@ export function useDatasetsList({
       };
     },
     keepPreviousData: true,
+    // DL#21: poll every 5 s while an experiment runs (React Query pauses
+    // the interval while the tab is hidden).
+    refetchInterval: (query) =>
+      query?.state?.data?.items?.some(
+        (d) => d.last_experiment?.status === "Running",
+      )
+        ? RUNNING_POLL_MS
+        : false,
   });
 }
 

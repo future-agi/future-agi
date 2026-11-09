@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Typography } from "@mui/material";
 import React, { useState } from "react";
 import HeaderContent from "./HeaderContent";
@@ -74,7 +75,7 @@ const SetupObsabilityInApplication = ({ setCurrentLabel }) => {
               width: "100%",
             }}
           >
-            <iframe
+            <ExternalContentFrame
               src={iframeVideo}
               title="Observe: Future AGI"
               frameBorder="0"

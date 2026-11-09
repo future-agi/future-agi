@@ -269,7 +269,9 @@ const SheetTableView = forwardRef((props, ref) => {
   useEffect(() => {
     // refresh rows if status is not completed
     let interval;
-    if (status !== "Completed") {
+    // v2.1 g8: Failed / PartialCompleted are final (the mock reads files
+    // at once); only an unknown or processing status polls.
+    if (!["Completed", "PartialCompleted", "Failed"].includes(status)) {
       interval = setInterval(() => {
         refreshRowsManual();
       }, 10000);

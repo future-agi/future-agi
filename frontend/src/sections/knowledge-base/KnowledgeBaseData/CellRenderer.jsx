@@ -21,8 +21,13 @@ const cellStyles = {
   },
 };
 
+// v2.1 g8 (kb:page): a knowledge base with a file that failed is not
+// processing; it says that some files failed (the files list names them).
+export const kbStatusLabel = (value) =>
+  value === "PartialCompleted" ? "Some files failed" : value;
+
 export const ProcessingStatusCell = ({ value, data }) => {
-  const status = value === "PartialCompleted" ? "Processing" : value;
+  const status = value === "PartialCompleted" ? "Failed" : value;
   const statusIconSrc = statusIcons[status];
 
   return (
@@ -57,7 +62,7 @@ export const ProcessingStatusCell = ({ value, data }) => {
           src={statusIconSrc}
         />
         <Typography variant="s2" fontWeight={"fontWeightMedium"}>
-          {status}
+          {kbStatusLabel(value)}
         </Typography>
         {status === "Failed" && data?.error && (
           <CustomTooltip show={true} title={data.error} arrow>

@@ -35,6 +35,7 @@ import {
   buildProperties,
   DatasetColumnValuePicker,
   panelFilterToStore,
+  singleValueChip,
   storeFilterToPanel,
   unwrapScalarValue,
 } from "../DevelopFilterBox";
@@ -385,5 +386,60 @@ describe("transformFilter", () => {
         },
       }),
     ).toThrow(/Unsupported filter operator/);
+  });
+});
+
+describe("IT-R5 G5 P1: a typed value commits whole and reads `is`", () => {
+  it("shows one stored `in` value as `is <value>` on the chip only", () => {
+    const store = panelFilterToStore({
+      field: "col_tier",
+      fieldCategory: "dataset",
+      fieldType: "string",
+      operator: "in",
+      value: "enterprise",
+    });
+    // The stored predicate keeps the canonical list shape (TH-6621).
+    expect(store.filterConfig).toMatchObject({
+      filterOp: "in",
+      filterValue: ["enterprise"],
+    });
+    const chip = singleValueChip(transformFilter(store));
+    expect(chip.filter_config).toMatchObject({
+      filter_op: "equals",
+      filter_value: "enterprise",
+    });
+  });
+
+  it("keeps `is one of` for two or more values and maps not_in to is not", () => {
+    const many = singleValueChip({
+      column_id: "c",
+      filter_config: { filter_op: "in", filter_value: ["a", "b"] },
+    });
+    expect(many.filter_config.filter_op).toBe("in");
+    const neg = singleValueChip({
+      column_id: "c",
+      filter_config: { filter_op: "not_in", filter_value: ["a"] },
+    });
+    expect(neg.filter_config).toMatchObject({
+      filter_op: "not_equals",
+      filter_value: "a",
+    });
+  });
+
+  it("commits the full typed text on Enter, not the last keystroke", () => {
+    const onChange = vi.fn();
+    render(
+      React.createElement(DatasetColumnValuePicker, {
+        property: { id: "col_tier", type: "string" },
+        value: "",
+        onChange,
+        datasetId: "ds",
+      }),
+    );
+    const input = screen.getByRole("combobox");
+    fireEvent.change(input, { target: { value: "enterprise" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onChange).toHaveBeenLastCalledWith("enterprise");
+    expect(onChange).not.toHaveBeenCalledWith("e");
   });
 });

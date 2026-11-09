@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from model_hub.models.eval_groups import EvalGroup
 from model_hub.schema.eval_group import PageType
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
 
@@ -31,6 +32,82 @@ class EvalGroupSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return obj.created_by.name
         return obj.organization.name if obj.organization else "Future-agi Built"
+
+
+# Response contracts of EvalGroupView.list and .retrieve, which build their
+# rows by hand and answer GeneralMethods.success_response() (HTTP 200).
+
+
+class EvalGroupListItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    description = serializers.CharField(allow_null=True, allow_blank=True)
+    created_at = serializers.DateTimeField()
+    required_keys = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Union of the member templates' required mapping keys.",
+    )
+    evals_count = serializers.IntegerField()
+    is_sample = serializers.BooleanField()
+
+
+class EvalGroupListResultSerializer(serializers.Serializer):
+    data = EvalGroupListItemSerializer(many=True)
+    total_count = serializers.IntegerField()
+    total_pages = serializers.IntegerField()
+
+
+class EvalGroupListApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalGroupListResultSerializer()
+
+    class Meta:
+        ref_name = None
+
+
+class EvalGroupMemberSerializer(serializers.Serializer):
+    eval_template_id = serializers.UUIDField()
+    name = serializers.CharField()
+    description = serializers.CharField(allow_null=True, allow_blank=True)
+    added_on = serializers.DateTimeField()
+    added_by = serializers.CharField()
+    tags = serializers.ListField(child=serializers.CharField())
+    required_keys = serializers.ListField(child=serializers.CharField())
+    optional_keys = serializers.ListField(child=serializers.CharField())
+    models = serializers.ListField(child=serializers.CharField())
+
+
+class EvalGroupFunctionParamTemplateSerializer(serializers.Serializer):
+    eval_template_id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class EvalGroupFunctionParamRequirementSerializer(serializers.Serializer):
+    schema = JsonValueField(help_text="The function parameter's schema.")
+    supported_by = EvalGroupFunctionParamTemplateSerializer(many=True)
+    required_for = EvalGroupFunctionParamTemplateSerializer(many=True)
+
+
+class EvalGroupDetailResultSerializer(serializers.Serializer):
+    eval_group = EvalGroupSerializer(read_only=True)
+    members = EvalGroupMemberSerializer(many=True)
+    required_keys = serializers.ListField(child=serializers.CharField())
+    models = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Models every member template supports.",
+    )
+    function_params_requirements = serializers.DictField(
+        child=EvalGroupFunctionParamRequirementSerializer(),
+        help_text="Function parameters keyed by name.",
+    )
+
+
+class EvalGroupDetailApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalGroupDetailResultSerializer()
+
+    class Meta:
+        ref_name = None
 
 
 class ApplyEvalGroupFiltersSerializer(StrictInputSerializer):

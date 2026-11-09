@@ -179,7 +179,8 @@ const DatasetOptimizationTrialDetail = ({
 
   // Get trial name from API response
   const trialName = trialData?.trialName || trialData?.trial_name;
-  const optimizationName = trialData?.optimizationName;
+  const optimizationName =
+    trialData?.optimization_name ?? trialData?.optimizationName;
   const scorePercentageChange =
     trialData?.scorePercentageChange || trialData?.score_percentage_change;
   const basePrompt = trialData?.basePrompt || trialData?.base_prompt;

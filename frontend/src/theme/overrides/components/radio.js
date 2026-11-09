@@ -1,14 +1,13 @@
 // ----------------------------------------------------------------------
 
 export function radio(theme) {
-  const lightMode = theme.palette.mode === "light";
-
   return {
     // CHECKBOX, RADIO, SWITCH
     MuiFormControlLabel: {
       styleOverrides: {
         label: {
-          ...theme.typography.body2,
+          fontSize: 13,
+          lineHeight: "20px",
         },
       },
     },
@@ -17,11 +16,10 @@ export function radio(theme) {
       styleOverrides: {
         root: {
           padding: theme.spacing(1),
-          color: lightMode
-            ? theme.palette.black?.o20
-            : theme.palette.grey?.[600],
+          color: theme.palette.border.strong,
+          "& .MuiSvgIcon-root": { fontSize: 18 },
           "&.Mui-checked": {
-            color: theme.palette.purple?.[300],
+            color: theme.palette.control.checked,
           },
         },
       },

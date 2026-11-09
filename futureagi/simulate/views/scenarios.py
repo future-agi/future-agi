@@ -1,19 +1,30 @@
 import json
+import logging
 import re
 import traceback
 import uuid
+from collections.abc import Mapping
+from functools import wraps
 
-from accounts.models.user import User
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import close_old_connections, models, transaction
-from django.db.models import Count, Max, OuterRef, Q, Subquery
+from django.db.models import Count, Max, OuterRef, Prefetch, Q, Subquery
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import (
+    APIException,
+    NotFound,
+    PermissionDenied,
+    ValidationError,
+)
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from accounts.models.user import User
+from common.utils.page_limits import enforce_page_size
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -44,6 +55,7 @@ try:
 except ImportError:
     get_personas_by_language = None
 from drf_yasg.utils import swagger_auto_schema
+
 from simulate.models import AgentDefinition, AgentVersion, Persona, Scenarios
 from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.simulator_agent import SimulatorAgent
@@ -69,8 +81,15 @@ from simulate.serializers.response.scenarios import (
     ScenarioPromptsUpdateResponseSerializer,
     ScenarioResponseSerializer,
 )
+from simulate.services.harness_provider import (
+    request_workspace as resolve_request_workspace,
+)
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
-from tfc.middleware.workspace_context import get_current_organization
+from tfc.middleware.workspace_context import (
+    get_current_organization,
+    get_current_user,
+    get_current_workspace,
+)
 from tfc.temporal.simulate import (
     start_add_columns_workflow_sync,
     start_add_scenario_rows_workflow_sync,
@@ -159,18 +178,11 @@ def convert_personas_to_property_list(persona_ids):
 def _scenario_add_columns_serializer_context(request, scenario_id=None):
     """Attach the scenario when available so duplicate-column validation stays in the serializer."""
 
-    organization = getattr(request, "organization", None) or request.user.organization
+    # This callback runs before serializer validation, so it has its own guard.
+    queryset = _scenario_queryset(request)
     scenario = None
-    if scenario_id and organization:
-        scenario = (
-            Scenarios.objects.filter(
-                id=scenario_id,
-                organization=organization,
-                deleted=False,
-            )
-            .select_related("dataset")
-            .first()
-        )
+    if scenario_id and _request_organization(request):
+        scenario = queryset.filter(id=scenario_id).select_related("dataset").first()
     return {"request": request, "scenario": scenario}
 
 
@@ -179,9 +191,178 @@ def _request_organization(request):
 
 
 def _request_workspace(request):
-    return getattr(request, "workspace", None) or getattr(
-        request.user, "workspace", None
+    # Prefer auth-populated request context; the canonical header fallback checks
+    # organization, active state and membership. A rejected header never falls back.
+    try:
+        workspace = resolve_request_workspace(request)
+    except (DjangoValidationError, ValueError) as exc:
+        raise PermissionDenied("Access denied to this workspace") from exc
+    if workspace is None:
+        # Legacy session callers carry middleware context rather than an attribute.
+        # An ambient workspace alone (or user.workspace) is not authorization.
+        user = getattr(request, "user", None)
+        organization = getattr(request, "organization", None) or getattr(
+            user, "organization", None
+        )
+        candidate = get_current_workspace()
+        if (
+            user is not None
+            and getattr(user, "is_authenticated", False)
+            and get_current_user() == user
+            and organization is not None
+            and get_current_organization() == organization
+            and candidate is not None
+            and candidate.organization_id == organization.pk
+            and candidate.is_active
+            and user.can_access_workspace(candidate)
+        ):
+            workspace = candidate
+    if workspace is None:
+        raise PermissionDenied(
+            {"code": "workspace_required", "message": "Workspace is required."},
+            code="workspace_required",
+        )
+    request.workspace = workspace
+    return workspace
+
+
+def _require_scenario_workspace(handler):
+    @wraps(handler)
+    def scoped(self, request, *args, **kwargs):
+        _request_workspace(request)
+        return handler(self, request, *args, **kwargs)
+
+    return scoped
+
+
+def _scope_scenario_queryset(queryset, organization, workspace):
+    """Reject foreign roots and mixed references in SQL, before FK hydration.
+
+    Null references remain valid. PromptVersion has no tenant columns, so its
+    own parent template is the authorization path, independently of the
+    scenario's prompt_template FK. Do not modify persisted relationships.
+    """
+    queryset = queryset.filter(
+        organization=organization, workspace=workspace, deleted=False
     )
+    for relation in (
+        "dataset",
+        "simulator_agent",
+        "agent_definition",
+        "prompt_template",
+    ):
+        queryset = queryset.filter(
+            Q(**{f"{relation}__isnull": True})
+            | Q(
+                **{
+                    f"{relation}__organization": organization,
+                    f"{relation}__workspace": workspace,
+                }
+            )
+        )
+    return queryset.filter(
+        Q(prompt_version__isnull=True)
+        | Q(
+            prompt_version__original_template__organization=organization,
+            prompt_version__original_template__workspace=workspace,
+            prompt_version__original_template__deleted=False,
+            prompt_version__deleted=False,
+        )
+    )
+
+
+def _scenario_queryset(request):
+    workspace = _request_workspace(request)
+    return _scope_scenario_queryset(
+        Scenarios.objects.all(), _request_organization(request), workspace
+    )
+
+
+def _validate_scenario_create_references(request, data):
+    """Scope references before business validation, inside is_valid's error boundary."""
+    from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+    workspace = _request_workspace(request)
+    organization = _request_organization(request)
+    if not isinstance(data, Mapping):
+        return  # The declared serializer handles malformed bodies.
+
+    fields = ScenarioCreateRequestSerializer().fields
+    if "personas" in data:
+        try:
+            persona_ids = fields["personas"].run_validation(data["personas"])
+        except ValidationError:
+            persona_ids = None  # Leave malformed input to normal field validation.
+        if persona_ids:
+            # Check the entire set before any business validator, metadata write
+            # or workflow handoff. Global system personas remain supported.
+            wanted = set(persona_ids)
+            found = set(
+                Persona.no_workspace_objects.filter(
+                    Q(persona_type=Persona.PersonaType.SYSTEM)
+                    | Q(
+                        persona_type=Persona.PersonaType.WORKSPACE,
+                        organization=organization,
+                        workspace=workspace,
+                    ),
+                    id__in=wanted,
+                    deleted=False,
+                ).values_list("id", flat=True)
+            )
+            if found != wanted:
+                raise ValidationError(
+                    {"personas": ["Persona not found or not accessible."]}
+                )
+
+    scope = {"organization": organization, "workspace": workspace}
+    references = (
+        ("dataset_id", Dataset, scope),
+        ("agent_definition_id", AgentDefinition, scope),
+        (
+            "agent_definition_version_id",
+            AgentVersion,
+            {
+                **scope,
+                "agent_definition__organization": organization,
+                "agent_definition__workspace": workspace,
+                "agent_definition__deleted": False,
+            },
+        ),
+        ("prompt_template_id", PromptTemplate, scope),
+        (
+            "prompt_version_id",
+            PromptVersion,
+            {
+                "original_template__organization": organization,
+                "original_template__workspace": workspace,
+            },
+        ),
+    )
+    for field_name, model, filters in references:
+        if field_name not in data:
+            continue
+        try:
+            # Use the declared UUID parser, including its non-string inputs.
+            object_id = fields[field_name].run_validation(data[field_name])
+        except ValidationError:
+            continue  # Preserve the normal field-validation error contract.
+        if object_id is not None:
+            try:
+                get_object_or_404(model, id=object_id, deleted=False, **filters)
+            except Http404:
+                if field_name in {"dataset_id", "agent_definition_id"}:
+                    # These are field errors in dev. Foreign and absent IDs still
+                    # have identical errors without reaching business validators.
+                    raise ValidationError(
+                        {field_name: ["Related resource not found."]}
+                    ) from None
+                raise
+
+
+class _WorkspaceScopedScenarioCreateRequestSerializer(ScenarioCreateRequestSerializer):
+    def to_internal_value(self, data):
+        _validate_scenario_create_references(self.context["request"], data)
+        return super().to_internal_value(data)
 
 
 class ScenariosListView(APIView):
@@ -235,6 +416,7 @@ class ScenariosListView(APIView):
         },
         reject_unknown_fields=True,
     )
+    @_require_scenario_workspace
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of scenarios for the user's organization
@@ -244,6 +426,7 @@ class ScenariosListView(APIView):
         - page: page number (default: 1)
         """
         try:
+            enforce_page_size(request.query_params.get("limit"))
             # Get the organization of the logged-in user
             user_organization = (
                 getattr(request, "organization", None) or request.user.organization
@@ -257,10 +440,14 @@ class ScenariosListView(APIView):
             agent_definition_id = validated_query.get("agent_definition_id", None)
             agent_type = validated_query.get("agent_type", None)
 
-            # Build base queryset with optimized joins
-            base_queryset = Scenarios.objects.filter(
-                organization=user_organization,
-                deleted=False,
+            # Keep the IR manager-filter seam, then narrow before loading rows.
+            base_queryset = _scope_scenario_queryset(
+                Scenarios.objects.filter(
+                    organization=user_organization,
+                    deleted=False,
+                ),
+                user_organization,
+                _request_workspace(request),
             )
 
             if agent_definition_id:
@@ -270,19 +457,40 @@ class ScenariosListView(APIView):
 
             # Annotate with dataset row count (avoids N+1 COUNT queries)
             row_count_subquery = (
-                Row.objects.filter(dataset=OuterRef("dataset"), deleted=False)
+                Row.objects.filter(
+                    dataset=OuterRef("dataset"),
+                    dataset__organization=user_organization,
+                    dataset__workspace=request.workspace,
+                    deleted=False,
+                )
                 .values("dataset")
                 .annotate(cnt=Count("id"))
                 .values("cnt")
             )
 
-            scenarios = base_queryset.select_related(
-                "dataset",
-                "simulator_agent",
-                "prompt_template",
-                "prompt_version",
-                "agent_definition",
-            ).annotate(_dataset_row_count=Subquery(row_count_subquery))
+            scenarios = (
+                base_queryset.select_related(
+                    "dataset",
+                    "simulator_agent",
+                    "prompt_template",
+                    "prompt_version",
+                    "agent_definition",
+                )
+                .annotate(_dataset_row_count=Subquery(row_count_subquery))
+                .prefetch_related(
+                    Prefetch(
+                        "graphs",
+                        queryset=ScenarioGraph.objects.filter(
+                            organization=user_organization,
+                            scenario__organization=user_organization,
+                            scenario__workspace=request.workspace,
+                            is_active=True,
+                            deleted=False,
+                        ).order_by("-created_at"),
+                        to_attr="_active_graphs",
+                    )
+                )
+            )
 
             # Apply search filter if search query is provided
             if search_query:
@@ -316,6 +524,8 @@ class ScenariosListView(APIView):
 
         except NotFound:
             raise
+        except APIException:
+            raise
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to retrieve scenarios: {str(e)}"
@@ -332,12 +542,22 @@ class ScenariosListView(APIView):
         },
         reject_unknown_fields=True,
     )
+    @_require_scenario_workspace
     def get_multi_datasets_column_configs(self, request, *args, **kwargs):
         scenario_ids = request.validated_query_data["scenarios"]
 
         try:
-            # Get all unique dataset IDs from the filtered scenarios
-            scenarios = Scenarios.objects.filter(id__in=scenario_ids, deleted=False)
+            # Caller-supplied IDs are never an authorization boundary.
+            scenarios = (
+                _scenario_queryset(request)
+                .filter(
+                    id__in=scenario_ids,
+                    organization=_request_organization(request),
+                    workspace=request.workspace,
+                    deleted=False,
+                )
+                .select_related("dataset")
+            )
 
             return Response(
                 ScenarioMultiDatasetResponseSerializer(
@@ -360,14 +580,17 @@ class CreateScenarioView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @_require_scenario_workspace
     @validated_request(
-        request_serializer=ScenarioCreateRequestSerializer,
+        request_serializer=_WorkspaceScopedScenarioCreateRequestSerializer,
         tags=["Scenarios"],
         operation_summary="Create scenario",
         operation_description="Creates a new scenario (dataset, script, or graph kind). Returns 202 with processing status.",
         responses={
             202: ScenarioCreateResponseSerializer,
             400: ScenarioErrorResponseSerializer,
+            403: ScenarioErrorResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
             500: ScenarioErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -426,6 +649,8 @@ class CreateScenarioView(APIView):
                 status=status.HTTP_202_ACCEPTED,
             )
 
+        except Http404:
+            return self.gm.not_found("Scenario or related resource not found.")
         except Exception as e:
             traceback.print_exc()
             return self.gm.internal_server_error_response(
@@ -434,6 +659,7 @@ class CreateScenarioView(APIView):
 
     def _create_temp_scenario(self, request, validated_data):
         """Create a temporary scenario record with PROCESSING status"""
+        request_workspace = _request_workspace(request)
         try:
             source_type = validated_data.get("source_type", "agent_definition")
 
@@ -450,18 +676,16 @@ class CreateScenarioView(APIView):
                     "id": validated_data.get("prompt_template_id"),
                     "deleted": False,
                     "organization": _request_organization(request),
+                    "workspace": request_workspace,
                 }
-                request_workspace = _request_workspace(request)
-                if request_workspace:
-                    pt_filters["workspace"] = request_workspace
-                prompt_template = PromptTemplate.objects.get(**pt_filters)
+                prompt_template = get_object_or_404(PromptTemplate, **pt_filters)
 
                 pv_filters = {
                     "id": validated_data.get("prompt_version_id"),
                     "deleted": False,
                     "original_template": prompt_template,
                 }
-                prompt_version = PromptVersion.objects.get(**pv_filters)
+                prompt_version = get_object_or_404(PromptVersion, **pv_filters)
                 # Create simulator agent with generic prompt for prompt-based scenarios
                 agent_prompt = generate_simulator_agent_prompt(agent_definition=None)
                 simulator_agent = SimulatorAgent.objects.create(
@@ -472,9 +696,11 @@ class CreateScenarioView(APIView):
                 )
             else:
                 simulator_agent = self._create_simulator_agent(request, validated_data)
-                agent_definition = AgentDefinition.objects.get(
+                agent_definition = get_object_or_404(
+                    AgentDefinition,
                     id=validated_data.get("agent_definition_id"),
                     organization=_request_organization(request),
+                    workspace=request_workspace,
                     deleted=False,
                 )
 
@@ -514,7 +740,7 @@ class CreateScenarioView(APIView):
                 ),
                 source_type=source_type,
                 organization=_request_organization(request),
-                workspace=_request_workspace(request),
+                workspace=request_workspace,
                 dataset=None,
                 simulator_agent=simulator_agent,
                 status=StatusType.PROCESSING.value,
@@ -524,15 +750,20 @@ class CreateScenarioView(APIView):
                 metadata=metadata,
             )
             return scenario
+        except Http404:
+            raise
         except Exception as e:
             raise Exception(f"Failed to create temporary scenario: {str(e)}") from e
 
     def _create_simulator_agent(self, request, validated_data):
         """Create a simulator agent from validated data"""
+        request_workspace = _request_workspace(request)
         try:
-            agent_definition = AgentDefinition.objects.get(
+            agent_definition = get_object_or_404(
+                AgentDefinition,
                 id=validated_data.get("agent_definition_id"),
                 organization=_request_organization(request),
+                workspace=request_workspace,
                 deleted=False,
             )
             agent_version = None
@@ -545,6 +776,7 @@ class CreateScenarioView(APIView):
                         id=agent_definition_version_id,
                         agent_definition=agent_definition,
                         organization=_request_organization(request),
+                        workspace=request_workspace,
                         deleted=False,
                     )
                 except AgentVersion.DoesNotExist:
@@ -571,14 +803,14 @@ class CreateScenarioView(APIView):
                 ),
                 initial_message_delay=validated_data.get("initial_message_delay", 0),
                 organization=_request_organization(request),
-                workspace=_request_workspace(request),
+                workspace=request_workspace,
             )
             return simulator_agent
+        except Http404:
+            raise
         except Exception as e:
             raise Exception(f"Failed to create simulator agent: {str(e)}")  # noqa: B904
 
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -633,18 +865,14 @@ class ScenarioDetailView(APIView):
             500: ScenarioErrorResponseSerializer,
         },
     )
+    @_require_scenario_workspace
     def get(self, request, scenario_id, *args, **kwargs):
         """
         Get details of a specific scenario with graph and prompts information
         """
         try:
             # Get the scenario
-            scenario = get_object_or_404(
-                Scenarios,
-                id=scenario_id,
-                organization=_request_organization(request),
-                deleted=False,
-            )
+            scenario = get_object_or_404(_scenario_queryset(request), id=scenario_id)
 
             # Handle prompt-based scenarios (no agent_definition)
             if scenario.agent_definition:
@@ -714,11 +942,16 @@ class ScenarioDetailView(APIView):
             )
 
     def _get_scenario_graph_data(self, scenario):
-        """Get graph data for a scenario"""
+        """Scope graph organization directly and workspace through its scenario."""
         try:
             # Get the most recent active graph for this scenario
             graph = (
-                ScenarioGraph.objects.filter(scenario=scenario, is_active=True)
+                ScenarioGraph.objects.filter(
+                    scenario=scenario,
+                    organization_id=scenario.organization_id,
+                    scenario__workspace_id=scenario.workspace_id,
+                    is_active=True,
+                )
                 .order_by("-created_at")
                 .first()
             )
@@ -762,23 +995,21 @@ class DeleteScenarioView(APIView):
             500: ScenarioErrorResponseSerializer,
         },
     )
+    @_require_scenario_workspace
     def delete(self, request, scenario_id, *args, **kwargs):
         """
         Soft delete a scenario by setting deleted=True
         """
         try:
             # Get the scenario
-            scenario = get_object_or_404(
-                Scenarios,
-                id=scenario_id,
-                organization=_request_organization(request),
-                deleted=False,
-            )
+            scenario = get_object_or_404(_scenario_queryset(request), id=scenario_id)
 
             with transaction.atomic():
                 scenario.delete()
                 ScenarioGraph.objects.filter(
                     scenario=scenario,
+                    organization_id=scenario.organization_id,
+                    scenario__workspace_id=scenario.workspace_id,
                     deleted=False,
                 ).update(deleted=True, deleted_at=timezone.now())
 
@@ -821,18 +1052,14 @@ class EditScenarioView(APIView):
         },
         reject_unknown_fields=True,
     )
+    @_require_scenario_workspace
     def put(self, request, scenario_id, *args, **kwargs):
         """
         Update scenario name and description
         """
         try:
             # Get the scenario
-            scenario = get_object_or_404(
-                Scenarios,
-                id=scenario_id,
-                organization=_request_organization(request),
-                deleted=False,
-            )
+            scenario = get_object_or_404(_scenario_queryset(request), id=scenario_id)
 
             validated_data = request.validated_data
 
@@ -845,7 +1072,12 @@ class EditScenarioView(APIView):
                 # Handle graph update through ScenarioGraph model
                 # Get the most recent active graph for this scenario
                 scenario_graph = (
-                    ScenarioGraph.objects.filter(scenario=scenario, is_active=True)
+                    ScenarioGraph.objects.filter(
+                        scenario=scenario,
+                        organization_id=scenario.organization_id,
+                        scenario__workspace_id=scenario.workspace_id,
+                        is_active=True,
+                    )
                     .order_by("-created_at")
                     .first()
                 )
@@ -857,7 +1089,7 @@ class EditScenarioView(APIView):
                     scenario_graph.graph_config = graph_config
                     scenario_graph.save()
                 else:
-                    # Create new graph if none exists
+                    # Graph workspace is inherited from the already scoped scenario.
                     ScenarioGraph.objects.create(
                         scenario=scenario,
                         name=f"{scenario.name} - Graph",
@@ -876,6 +1108,18 @@ class EditScenarioView(APIView):
                 scenario.simulator_agent.prompt = validated_data.get("prompt")
                 scenario.simulator_agent.save()
             scenario.save()
+
+            # The nested scenario serializer otherwise performs its own graph read.
+            # Populate its cache after writes, even for edits without a graph payload.
+            # An empty scoped list must also prevent an unscoped relation fallback.
+            scenario._active_graphs = list(
+                ScenarioGraph.objects.filter(
+                    scenario=scenario,
+                    organization_id=scenario.organization_id,
+                    scenario__workspace_id=scenario.workspace_id,
+                    is_active=True,
+                ).order_by("-created_at")
+            )
 
             return Response(
                 ScenarioEditResponseSerializer(
@@ -919,18 +1163,14 @@ class EditScenarioPromptsView(APIView):
         },
         reject_unknown_fields=True,
     )
+    @_require_scenario_workspace
     def put(self, request, scenario_id, *args, **kwargs):
         """
         Update scenario prompts
         """
         try:
             # Get the scenario
-            scenario = get_object_or_404(
-                Scenarios,
-                id=scenario_id,
-                organization=_request_organization(request),
-                deleted=False,
-            )
+            scenario = get_object_or_404(_scenario_queryset(request), id=scenario_id)
 
             validated_data = request.validated_data
             prompts = validated_data["prompts"]
@@ -995,6 +1235,7 @@ class AddScenarioRowsView(APIView):
         },
         reject_unknown_fields=True,
     )
+    @_require_scenario_workspace
     def post(self, request, scenario_id, *args, **kwargs):
         """
         Add new rows to a scenario's dataset
@@ -1011,12 +1252,7 @@ class AddScenarioRowsView(APIView):
 
         try:
             # Get the scenario
-            scenario = get_object_or_404(
-                Scenarios,
-                id=scenario_id,
-                organization=_request_organization(request),
-                deleted=False,
-            )
+            scenario = get_object_or_404(_scenario_queryset(request), id=scenario_id)
 
             # Check if scenario has a dataset
             if not scenario.dataset:
@@ -1127,6 +1363,8 @@ class AddScenarioColumnsView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    # serializer_context reads the scenario/dataset, so guard outside validation.
+    @_require_scenario_workspace
     @validated_request(
         tags=["Scenarios"],
         operation_summary="Add columns to scenario",
@@ -1174,12 +1412,7 @@ class AddScenarioColumnsView(APIView):
                 pass
 
             # Get the scenario
-            scenario = get_object_or_404(
-                Scenarios,
-                id=scenario_id,
-                organization=_request_organization(request),
-                deleted=False,
-            )
+            scenario = get_object_or_404(_scenario_queryset(request), id=scenario_id)
 
             # Check if scenario has a dataset
             if not scenario.dataset:

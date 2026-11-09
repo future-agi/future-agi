@@ -153,9 +153,27 @@ class AgentDefinition(BaseModel):
         KnowledgeBaseFile, on_delete=models.CASCADE, null=True, blank=True
     )
 
-    api_key = models.CharField(
-        max_length=255, null=True, blank=True, help_text="API key for the agent"
-    )
+    encrypted_api_key = models.TextField(null=True, blank=True, editable=False)
+
+    def __init__(self, *args, **kwargs):
+        # Preserve direct model/create/bulk_create input without a plaintext
+        # attribute or column. DB hydration supplies encrypted_api_key instead.
+        api_key = kwargs.pop("api_key", models.NOT_PROVIDED)
+        super().__init__(*args, **kwargs)
+        if api_key is not models.NOT_PROVIDED:
+            self.set_api_key(api_key)
+
+    def set_api_key(self, value: str | None) -> None:
+        """Encrypt new clear input; persist with save/update_fields afterwards."""
+        from simulate.services.agent_api_key_storage import encrypt_api_key
+
+        self.encrypted_api_key = encrypt_api_key(value)
+
+    def get_api_key(self) -> str:
+        """Authorized internal read only; no plaintext or prefix fallback."""
+        from simulate.services.agent_api_key_storage import decrypt_api_key
+
+        return decrypt_api_key(self.encrypted_api_key)
 
     observability_provider = models.OneToOneField(
         ObservabilityProvider,

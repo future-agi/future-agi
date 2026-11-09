@@ -1,0 +1,16 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": true,
+    "result": {
+      "vs_id": "vs_01K7CN5EEAGENTM0DE00000001",
+      "connection_id": "int_4f2a9c1e7b3d",
+      "removed": true
+    }
+  }
+}

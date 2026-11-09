@@ -1,0 +1,636 @@
+{
+  "contract": "omega-ee-attach/v1",
+  "schema": "schema.json",
+  "fixtures": [
+    {
+      "file": "provision/error-unavailable.response.json",
+      "def": "provision_unavailable_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/ensure-agent.request.json",
+      "def": "provision_ensure_request",
+      "expect": "valid"
+    },
+    {
+      "file": "provision/ensure-agent.response.json",
+      "def": "provision_ensure_response",
+      "expect": "valid",
+      "checks": ["vs_url_matches_id"]
+    },
+    {
+      "file": "provision/ensure-agent.repeat.response.json",
+      "def": "provision_ensure_response",
+      "expect": "valid",
+      "checks": ["vs_url_matches_id"]
+    },
+    {
+      "file": "provision/ensure-user.request.json",
+      "def": "provision_ensure_request",
+      "expect": "valid"
+    },
+    {
+      "file": "provision/ensure-user.response.json",
+      "def": "provision_ensure_response",
+      "expect": "valid",
+      "checks": ["vs_url_matches_id"]
+    },
+    {
+      "file": "provision/detach.request.json",
+      "def": "provision_detach_request",
+      "expect": "valid"
+    },
+    {
+      "file": "provision/detach.response.json",
+      "def": "provision_detach_response",
+      "expect": "valid"
+    },
+    {
+      "file": "provision/agent-key-mint.request.json",
+      "def": "provision_agent_key_mint_request",
+      "expect": "valid"
+    },
+    {
+      "file": "provision/agent-key-mint.response.json",
+      "def": "provision_agent_key_mint_response",
+      "expect": "valid"
+    },
+    {
+      "file": "provision/agent-key-revoke.request.json",
+      "def": "provision_agent_key_revoke_request",
+      "expect": "valid"
+    },
+    {
+      "file": "provision/agent-key-revoke.response.json",
+      "def": "provision_agent_key_revoke_response",
+      "expect": "valid"
+    },
+    {
+      "file": "provision/error-not-ee-credential.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-mode-mismatch.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-unknown-server.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-agent-key.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-agent-key-other-workspace.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-mode-change.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-not-found.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-sync-failed.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-agent-key-gateway-unreachable.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-agent-key-cap.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-agent-key-out-of-scope.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-agent-key-mint-replayed.response.json",
+      "def": "provision_agent_key_mint_replayed_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-idempotency-key-reused.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/error-idempotency-key-invalid.response.json",
+      "def": "django_error_response",
+      "expect": "valid",
+      "checks": ["django_error_consistent"]
+    },
+    {
+      "file": "provision/agent-keys-find.request.json",
+      "def": "provision_agent_keys_find_request",
+      "expect": "valid"
+    },
+    {
+      "file": "provision/agent-keys-find.response.json",
+      "def": "provision_agent_keys_find_response",
+      "expect": "valid"
+    },
+    {
+      "file": "mcp/initialize.agent.request.json",
+      "def": "mcp_request",
+      "expect": "valid"
+    },
+    {
+      "file": "mcp/tools-list.agent.request.json",
+      "def": "mcp_request",
+      "expect": "valid"
+    },
+    {
+      "file": "mcp/tools-list.agent.response.json",
+      "def": "mcp_tools_list_response",
+      "expect": "valid"
+    },
+    {
+      "file": "mcp/tools-call.agent.request.json",
+      "def": "mcp_request",
+      "expect": "valid"
+    },
+    {
+      "file": "mcp/tools-call.user.request.json",
+      "def": "mcp_request",
+      "expect": "valid"
+    },
+    {
+      "file": "mcp/tools-list.user.request.json",
+      "def": "mcp_request",
+      "expect": "valid"
+    },
+    {
+      "file": "mcp/tools-list.user.response.json",
+      "def": "mcp_tools_list_response",
+      "expect": "valid"
+    },
+    {
+      "file": "mcp/tools-call.approval-retry.request.json",
+      "def": "mcp_request",
+      "expect": "valid"
+    },
+    {
+      "file": "mcp/tools-call.with-agent-context.request.json",
+      "def": "mcp_request",
+      "expect": "valid"
+    },
+    {
+      "file": "results/success.json",
+      "def": "mcp_tools_call_success",
+      "expect": "valid"
+    },
+    {
+      "file": "results/auth_required.json",
+      "def": "mcp_tools_call_denial",
+      "expect": "valid",
+      "checks": ["denial_text", "pre_dispatch_not_executed"]
+    },
+    {
+      "file": "results/auth_required.no_user_identity.json",
+      "def": "mcp_tools_call_denial",
+      "expect": "valid",
+      "checks": ["denial_text", "pre_dispatch_not_executed"]
+    },
+    {
+      "file": "results/approval_required.json",
+      "def": "mcp_tools_call_denial",
+      "expect": "valid",
+      "checks": ["denial_text", "pre_dispatch_not_executed"]
+    },
+    {
+      "file": "results/tool_rate_limited.json",
+      "def": "mcp_tools_call_denial",
+      "expect": "valid",
+      "checks": ["denial_text", "pre_dispatch_not_executed"]
+    },
+    {
+      "file": "results/tool_budget_exhausted.json",
+      "def": "mcp_tools_call_denial",
+      "expect": "valid",
+      "checks": ["denial_text", "pre_dispatch_not_executed"]
+    },
+    {
+      "file": "results/tool_denied.json",
+      "def": "mcp_tools_call_denial",
+      "expect": "valid",
+      "checks": ["denial_text", "pre_dispatch_not_executed"]
+    },
+    {
+      "file": "protocol/401-invalid-api-key.json",
+      "def": "gateway_key_gate_error",
+      "expect": "valid"
+    },
+    {
+      "file": "protocol/403-ip-not-allowed.json",
+      "def": "gateway_ip_rule_error",
+      "expect": "valid"
+    },
+    {
+      "file": "protocol/401-invalid-token.json",
+      "def": "mcp_protocol_error",
+      "expect": "valid",
+      "checks": ["protocol_401_shape"]
+    },
+    {
+      "file": "protocol/404-virtual-server-not-found.json",
+      "def": "mcp_protocol_error",
+      "expect": "valid",
+      "checks": ["protocol_404_shape"]
+    },
+    {
+      "file": "protocol/404-unknown-session.json",
+      "def": "mcp_session_not_found",
+      "expect": "valid"
+    },
+    {
+      "file": "protocol/404-mcp-not-served.json",
+      "def": "gateway_route_not_found",
+      "expect": "valid"
+    },
+    {
+      "file": "protocol/403-key-scope-denied.json",
+      "def": "gateway_key_scope_error",
+      "expect": "valid"
+    },
+    {
+      "file": "protocol/402-agent-key-budget-exhausted.json",
+      "def": "gateway_key_budget_error",
+      "expect": "valid"
+    },
+    {
+      "file": "tokens/m24-access-token-claims.json",
+      "def": "m24_access_token_claims",
+      "expect": "valid",
+      "checks": ["token_lifetime"]
+    },
+    {
+      "file": "tokens/m24-token-response.json",
+      "def": "m24_token_response",
+      "expect": "valid"
+    },
+    {
+      "file": "tokens/ee-host-identity.json",
+      "def": "ee_host_identity",
+      "expect": "valid"
+    },
+    {
+      "file": "forbidden/tools-call.end-user-header.json",
+      "def": "mcp_request",
+      "expect": "invalid",
+      "because": {
+        "path": "/http/headers",
+        "keyword": "propertyNames"
+      }
+    },
+    {
+      "file": "forbidden/tools-call.user-id-header.json",
+      "def": "mcp_request",
+      "expect": "invalid",
+      "because": {
+        "path": "/http/headers",
+        "keyword": "propertyNames"
+      }
+    },
+    {
+      "file": "forbidden/tools-call.vendor-token-header.json",
+      "def": "mcp_request",
+      "expect": "invalid",
+      "because": {
+        "path": "/http/headers",
+        "keyword": "propertyNames"
+      }
+    },
+    {
+      "file": "forbidden/tools-call.vendor-token-as-bearer.json",
+      "def": "mcp_request",
+      "expect": "invalid",
+      "because": {
+        "path": "/http/headers/authorization",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "file": "forbidden/tools-call.agent-meta-user.json",
+      "def": "mcp_request",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/params/_meta/io.futureagi~1agent",
+        "keyword": "additionalProperties"
+      }
+    },
+    {
+      "file": "forbidden/ensure.request-agent-without-key.json",
+      "def": "provision_ensure_request",
+      "expect": "invalid",
+      "because": {
+        "path": "/body",
+        "keyword": "required"
+      }
+    },
+    {
+      "file": "forbidden/ensure.request-legacy-key-id.json",
+      "def": "provision_ensure_request",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/agent_key_id",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "file": "forbidden/ensure.request-system-org-key.json",
+      "def": "provision_ensure_request",
+      "expect": "invalid",
+      "because": {
+        "path": "/http/headers/x-api-key",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "file": "forbidden/ensure.request-admin-token.json",
+      "def": "provision_ensure_request",
+      "expect": "invalid",
+      "because": {
+        "path": "/http/headers",
+        "keyword": "additionalProperties"
+      }
+    },
+    {
+      "file": "forbidden/ensure.response-with-credential.json",
+      "def": "provision_ensure_response",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/result",
+        "keyword": "additionalProperties"
+      }
+    },
+    {
+      "file": "forbidden/ensure.response-private-url.json",
+      "def": "provision_ensure_response",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/result/url",
+        "keyword": "not"
+      }
+    },
+    {
+      "file": "forbidden/ensure.response-short-ipv4-url.json",
+      "def": "provision_ensure_response",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/result/url",
+        "keyword": "not"
+      }
+    },
+    {
+      "file": "forbidden/ensure.response-ip-in-name-url.json",
+      "def": "provision_ensure_response",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/result/url",
+        "keyword": "not"
+      }
+    },
+    {
+      "file": "forbidden/ensure.response-hex-ipv4-url.json",
+      "def": "provision_ensure_response",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/result/url",
+        "keyword": "not"
+      }
+    },
+    {
+      "file": "forbidden/ensure.response-hex-in-name-url.json",
+      "def": "provision_ensure_response",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/result/url",
+        "keyword": "not"
+      }
+    },
+    {
+      "file": "forbidden/ensure.response-http-url.json",
+      "def": "provision_ensure_response",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/result/url",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "file": "forbidden/ensure.response-url-other-vs.json",
+      "def": "provision_ensure_response",
+      "expect": "invalid",
+      "because": {
+        "check": "vs_url_matches_id"
+      }
+    },
+    {
+      "file": "forbidden/tools-list.name-too-long.json",
+      "def": "mcp_tools_list_response",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/result/tools/0/name",
+        "keyword": "maxLength"
+      }
+    },
+    {
+      "file": "forbidden/agent-key-mint.request-without-idempotency-key.json",
+      "def": "provision_agent_key_mint_request",
+      "expect": "invalid",
+      "because": {
+        "path": "/http/headers",
+        "keyword": "required"
+      }
+    },
+    {
+      "file": "forbidden/agent-key-mint.replayed-with-key.json",
+      "def": "provision_agent_key_mint_replayed_response",
+      "expect": "invalid",
+      "because": {
+        "path": "/body",
+        "keyword": "additionalProperties"
+      }
+    },
+    {
+      "file": "forbidden/tools-list.flat-name.json",
+      "def": "mcp_tools_list_response",
+      "expect": "invalid",
+      "because": {
+        "path": "/body/result/tools/0/name",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "file": "forbidden/denial.executed-true.json",
+      "def": "mcp_tools_call_denial",
+      "expect": "invalid",
+      "because": {
+        "check": "pre_dispatch_not_executed"
+      }
+    },
+    {
+      "file": "forbidden/m24-claims.over-900s.json",
+      "def": "m24_access_token_claims",
+      "expect": "invalid",
+      "because": {
+        "check": "token_lifetime"
+      }
+    }
+  ],
+  "cross_checks": [
+    {
+      "check": "idempotent_repeat",
+      "first": "provision/ensure-agent.response.json",
+      "repeat": "provision/ensure-agent.repeat.response.json"
+    },
+    {
+      "check": "request_matches_provisioned",
+      "provisioned": "provision/ensure-agent.response.json",
+      "requests": [
+        "mcp/initialize.agent.request.json",
+        "mcp/tools-list.agent.request.json",
+        "mcp/tools-call.agent.request.json",
+        "mcp/tools-call.approval-retry.request.json",
+        "mcp/tools-call.with-agent-context.request.json"
+      ],
+      "authorization": "Bearer {{ORG_VIRTUAL_KEY}}"
+    },
+    {
+      "check": "request_matches_provisioned",
+      "provisioned": "provision/ensure-user.response.json",
+      "requests": [
+        "mcp/tools-list.user.request.json",
+        "mcp/tools-call.user.request.json"
+      ],
+      "authorization": "Bearer {{M24_ACCESS_TOKEN}}"
+    },
+    {
+      "check": "ensure_echoes_request",
+      "request": "provision/ensure-agent.request.json",
+      "response": "provision/ensure-agent.response.json"
+    },
+    {
+      "check": "ensure_echoes_request",
+      "request": "provision/ensure-user.request.json",
+      "response": "provision/ensure-user.response.json"
+    },
+    {
+      "check": "token_audience_is_provisioned_url",
+      "claims": "tokens/m24-access-token-claims.json",
+      "provisioned": "provision/ensure-user.response.json"
+    },
+    {
+      "check": "listed_tools_are_called_names",
+      "list": "mcp/tools-list.agent.response.json",
+      "calls": [
+        "mcp/tools-call.agent.request.json",
+        "mcp/tools-call.approval-retry.request.json",
+        "mcp/tools-call.with-agent-context.request.json"
+      ]
+    },
+    {
+      "check": "listed_tools_are_called_names",
+      "list": "mcp/tools-list.user.response.json",
+      "calls": ["mcp/tools-call.user.request.json"]
+    },
+    {
+      "check": "the_404s_are_told_apart_by_body",
+      "bodies": [
+        {
+          "file": "protocol/404-unknown-session.json",
+          "def": "mcp_session_not_found"
+        },
+        {
+          "file": "protocol/404-virtual-server-not-found.json",
+          "def": "mcp_protocol_error"
+        },
+        {
+          "file": "protocol/404-mcp-not-served.json",
+          "def": "gateway_route_not_found"
+        }
+      ]
+    },
+    {
+      "check": "agent_key_minted_is_bound",
+      "mint_request": "provision/agent-key-mint.request.json",
+      "mint_response": "provision/agent-key-mint.response.json",
+      "ensure_request": "provision/ensure-agent.request.json",
+      "requests": [
+        "mcp/initialize.agent.request.json",
+        "mcp/tools-list.agent.request.json",
+        "mcp/tools-call.agent.request.json",
+        "mcp/tools-call.approval-retry.request.json",
+        "mcp/tools-call.with-agent-context.request.json"
+      ],
+      "revoke_request": "provision/agent-key-revoke.request.json",
+      "revoke_response": "provision/agent-key-revoke.response.json",
+      "provisioning": [
+        "provision/ensure-agent.request.json",
+        "provision/ensure-user.request.json",
+        "provision/detach.request.json"
+      ]
+    },
+    {
+      "check": "token_matches_host_identity",
+      "claims": "tokens/m24-access-token-claims.json",
+      "identity": "tokens/ee-host-identity.json",
+      "ensure_request": "provision/ensure-user.request.json",
+      "provisioned": "provision/ensure-user.response.json"
+    },
+    {
+      "check": "protocol_header_only_with_om2",
+      "initialize": "mcp/initialize.agent.request.json",
+      "today": [
+        "mcp/initialize.agent.request.json",
+        "mcp/tools-list.agent.request.json",
+        "mcp/tools-call.agent.request.json",
+        "mcp/tools-list.user.request.json",
+        "mcp/tools-call.user.request.json"
+      ],
+      "om2": [
+        "mcp/tools-call.approval-retry.request.json",
+        "mcp/tools-call.with-agent-context.request.json"
+      ]
+    },
+    {
+      "check": "mint_replay_names_the_minted_key",
+      "mint_request": "provision/agent-key-mint.request.json",
+      "mint_response": "provision/agent-key-mint.response.json",
+      "replayed": "provision/error-agent-key-mint-replayed.response.json",
+      "find_request": "provision/agent-keys-find.request.json",
+      "find_response": "provision/agent-keys-find.response.json"
+    }
+  ]
+}

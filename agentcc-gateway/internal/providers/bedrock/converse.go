@@ -128,7 +128,7 @@ type converseSchema struct {
 type converseResponse struct {
 	Output     converseOutput `json:"output"`
 	StopReason string         `json:"stopReason"`
-	Usage      converseUsage  `json:"usage"`
+	Usage      *converseUsage `json:"usage"`
 }
 
 type converseOutput struct {
@@ -136,9 +136,9 @@ type converseOutput struct {
 }
 
 type converseUsage struct {
-	InputTokens  int `json:"inputTokens"`
-	OutputTokens int `json:"outputTokens"`
-	TotalTokens  int `json:"totalTokens"`
+	InputTokens  *int `json:"inputTokens"`
+	OutputTokens *int `json:"outputTokens"`
+	TotalTokens  int  `json:"totalTokens"`
 }
 
 func buildConverseRequest(req *models.ChatCompletionRequest) (*converseRequest, string) {
@@ -418,11 +418,7 @@ func translateConverseResponse(resp *converseResponse, model string) *models.Cha
 			Message:      msg,
 			FinishReason: mapStopReason(resp.StopReason),
 		}},
-		Usage: &models.Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
-		},
+		Usage: resp.Usage.toUsage(),
 	}
 }
 
@@ -683,10 +679,7 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 
 	case "metadata":
 		var e struct {
-			Usage struct {
-				InputTokens  int `json:"inputTokens"`
-				OutputTokens int `json:"outputTokens"`
-			} `json:"usage"`
+			Usage *converseUsage `json:"usage"`
 		}
 		json.Unmarshal(msg.Payload, &e)
 		return &models.StreamChunk{
@@ -695,11 +688,7 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 			Model:   s.model,
 			Created: s.created,
 			Choices: []models.StreamChoice{{Index: 0, Delta: models.Delta{}}},
-			Usage: &models.Usage{
-				PromptTokens:     e.Usage.InputTokens,
-				CompletionTokens: e.Usage.OutputTokens,
-				TotalTokens:      e.Usage.InputTokens + e.Usage.OutputTokens,
-			},
+			Usage:   e.Usage.toUsage(),
 		}, true, nil
 	}
 

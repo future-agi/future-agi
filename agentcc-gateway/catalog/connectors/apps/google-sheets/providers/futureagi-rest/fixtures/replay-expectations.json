@@ -1,0 +1,78 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "google-sheets",
+  "source": "V10 synthetic catalog fixtures; not live acceptance",
+  "test_account": "v10-synthetic-unverified-google-sheets",
+  "tools": 8,
+  "vendor_404": "Google sheets.googleapis.com 404",
+  "drive_checks": [
+    {
+      "name": "first_tool_read_only",
+      "jq": ".tools[] | select(.name == \"get_spreadsheet\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "fixture_resource_returned",
+      "jq": ".calls[0].result.content[0].text | contains(\"fixture\")",
+      "want": "true"
+    },
+    {
+      "name": "typed_first_projection",
+      "jq": ".calls[0].result.content[0].text | fromjson | .spreadsheetId",
+      "want": "sheet-fixture"
+    },
+    {
+      "name": "get_spreadsheet_annotations",
+      "jq": ".tools[] | select(.name == \"get_spreadsheet\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "create_spreadsheet_annotations",
+      "jq": ".tools[] | select(.name == \"create_spreadsheet\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "get_values_annotations",
+      "jq": ".tools[] | select(.name == \"get_values\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "batch_get_values_annotations",
+      "jq": ".tools[] | select(.name == \"batch_get_values\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "update_values_annotations",
+      "jq": ".tools[] | select(.name == \"update_values\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false true true false"
+    },
+    {
+      "name": "append_values_annotations",
+      "jq": ".tools[] | select(.name == \"append_values\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "clear_values_annotations",
+      "jq": ".tools[] | select(.name == \"clear_values\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false true false false"
+    },
+    {
+      "name": "copy_sheet_annotations",
+      "jq": ".tools[] | select(.name == \"copy_sheet\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    }
+  ],
+  "vendor_request_checks": [
+    {
+      "name": "documented_first_request",
+      "index": 0,
+      "want": "GET /v4/spreadsheets/sheet-fixture?includeGridData=false"
+    }
+  ],
+  "every_vendor_request": [
+    {
+      "name": "documented_api_prefix",
+      "jq": ".path | startswith(\"/v4/spreadsheets\")"
+    }
+  ]
+}

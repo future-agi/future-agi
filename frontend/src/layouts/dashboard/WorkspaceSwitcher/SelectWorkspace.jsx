@@ -9,6 +9,7 @@ import { useCreateWorkspaceModal } from "../states";
 import { useScrollEnd } from "../../../hooks/use-scroll-end";
 import { ShowComponent } from "../../../components/show";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { isPrototypeMode } from "src/utils/prototype";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useOrganization } from "src/contexts/OrganizationContext";
 
@@ -186,7 +187,8 @@ const SelectWorkspaceChild = React.forwardRef(
           </ShowComponent>
         </Box>
         <Box>
-          <ShowComponent condition={canCreateWorkspace}>
+          {/* L7b absent-sweep: not mocked, so absent in prototype builds. */}
+          <ShowComponent condition={canCreateWorkspace && !isPrototypeMode()}>
             <Button
               variant="text"
               color="primary"

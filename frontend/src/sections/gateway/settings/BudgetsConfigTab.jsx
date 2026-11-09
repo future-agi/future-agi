@@ -1,5 +1,6 @@
+import { useConfirmRemoval } from "../hooks/useConfirmRemoval";
 /* eslint-disable react/prop-types */
-import React, { useState } from "react";
+import React, { useId, useState } from "react";
 import {
   Box,
   Stack,
@@ -19,6 +20,14 @@ import {
 } from "@mui/material";
 import { Icon } from "@iconify/react";
 import { useAvailableModels } from "../hooks/useAvailableModels";
+import {
+  ORG_DIALOG_KEYS,
+  budgetRows,
+  budgetsEnabled,
+  isDialogEntry,
+} from "../budgets/budgetLevels";
+import { formatCostUpperBound } from "../utils/formatters";
+import { GATEWAY_MONO } from "../utils/fonts";
 
 const PERIODS = [
   { value: "daily", label: "Daily" },
@@ -31,6 +40,7 @@ const PERIODS = [
 // Per-model sub-budgets within a hierarchy level entry
 // ---------------------------------------------------------------------------
 const PerModelBudgets = ({ perModel, onUpdate }) => {
+  const [requestRemoval, confirmation] = useConfirmRemoval();
   const availableModels = useAvailableModels();
   const entries = perModel || {};
   const [newModelName, setNewModelName] = useState("");
@@ -46,13 +56,16 @@ const PerModelBudgets = ({ perModel, onUpdate }) => {
   };
 
   const handleRemove = (model) => {
-    const updated = { ...entries };
-    delete updated[model];
-    onUpdate(updated);
+    requestRemoval(`Per-model budget ${model}`, () => {
+      const updated = { ...entries };
+      delete updated[model];
+      onUpdate(updated);
+    });
   };
 
   return (
     <Box sx={{ pl: 2, pt: 1 }}>
+      {confirmation}
       <Typography
         variant="caption"
         color="text.secondary"
@@ -83,7 +96,11 @@ const PerModelBudgets = ({ perModel, onUpdate }) => {
             sx={{ width: 120 }}
             inputProps={{ step: 0.01, min: 0 }}
           />
-          <IconButton size="small" onClick={() => handleRemove(model)}>
+          <IconButton
+            size="small"
+            aria-label={`Remove model limit ${model}`}
+            onClick={() => handleRemove(model)}
+          >
             <Icon icon="mdi:close" width={16} color="#d32f2f" />
           </IconButton>
         </Stack>
@@ -137,7 +154,9 @@ const BudgetLevelSection = ({
   onUpdate,
   placeholder,
 }) => {
+  const [requestRemoval, confirmation] = useConfirmRemoval();
   const [expanded, setExpanded] = useState(false);
+  const bodyId = useId();
   const [newName, setNewName] = useState("");
   const items = entries || {};
   const count = Object.keys(items).length;
@@ -151,9 +170,11 @@ const BudgetLevelSection = ({
   };
 
   const handleRemove = (name) => {
-    const updated = { ...items };
-    delete updated[name];
-    onUpdate(updated);
+    requestRemoval(`${title}: ${name}`, () => {
+      const updated = { ...items };
+      delete updated[name];
+      onUpdate(updated);
+    });
   };
 
   const handleEntryChange = (name, field, value) => {
@@ -164,6 +185,7 @@ const BudgetLevelSection = ({
 
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
+      {confirmation}
       <Stack
         direction="row"
         alignItems="center"
@@ -178,13 +200,24 @@ const BudgetLevelSection = ({
         {count > 0 && (
           <Chip label={count} size="small" color="primary" variant="outlined" />
         )}
-        <Icon
-          icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
-          width={20}
-        />
+        <IconButton
+          size="small"
+          aria-label={title}
+          aria-expanded={expanded}
+          aria-controls={bodyId}
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded(!expanded);
+          }}
+        >
+          <Icon
+            icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
+            width={20}
+          />
+        </IconButton>
       </Stack>
 
-      <Collapse in={expanded}>
+      <Collapse in={expanded} id={bodyId}>
         <Box sx={{ mt: 2 }}>
           {count === 0 && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
@@ -259,7 +292,11 @@ const BudgetLevelSection = ({
                     }
                     label={<Typography variant="caption">Hard</Typography>}
                   />
-                  <IconButton size="small" onClick={() => handleRemove(name)}>
+                  <IconButton
+                    size="small"
+                    aria-label={`Remove ${title.toLowerCase().replace(/budgets$/, "budget")} ${name}`}
+                    onClick={() => handleRemove(name)}
+                  >
                     <Icon
                       icon="mdi:delete-outline"
                       width={18}
@@ -305,6 +342,53 @@ const BudgetLevelSection = ({
 };
 
 // ---------------------------------------------------------------------------
+// The org budget saved from Budgets > Set Budget (read here, edited there)
+// ---------------------------------------------------------------------------
+const DialogOrgBudgets = ({ budgets }) => {
+  const rows = budgetRows(budgets).filter((r) =>
+    ORG_DIALOG_KEYS.includes(r.level),
+  );
+  return (
+    <Stack spacing={0.75}>
+      {rows.map((row) => {
+        const details = [row.period, row.action];
+        if (row.action === "throttle") {
+          details.push(
+            `${row.throttleRpm ?? 1} requests a minute per gateway replica past the limit`,
+          );
+        }
+        if (row.alertThreshold != null) {
+          details.push(`alert at ${row.alertThreshold}%`);
+        }
+        if (!row.inForce) details.push("not in force");
+        return (
+          <Stack
+            key={row.id}
+            direction="row"
+            spacing={1}
+            alignItems="baseline"
+            flexWrap="wrap"
+          >
+            <Typography variant="body2" fontWeight={500}>
+              {row.label}
+            </Typography>
+            <Typography variant="body2" sx={{ fontFamily: GATEWAY_MONO }}>
+              {row.limit > 0 ? formatCostUpperBound(row.limit) : "No limit"}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {details.join(" \u00b7 ")}
+            </Typography>
+          </Stack>
+        );
+      })}
+      <Typography variant="caption" color="text.secondary">
+        Set from Budgets &gt; Set Budget; edit or remove it there.
+      </Typography>
+    </Stack>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 const BudgetsConfigTab = ({
@@ -313,8 +397,14 @@ const BudgetsConfigTab = ({
   onBudgetsChange,
   onCostTrackingChange,
 }) => {
+  const [requestRemoval, confirmation] = useConfirmRemoval();
   const availableModels = useAvailableModels();
   const budgetConfig = budgets || {};
+  // The same on/off the push sends: as chosen, else on when a level is set.
+  const enabled = budgetsEnabled(budgetConfig);
+  const dialogOrgBudget = ORG_DIALOG_KEYS.some((key) =>
+    isDialogEntry(budgetConfig[key]),
+  );
   const costConfig = costTracking || {};
   const customPricing =
     costConfig.custom_pricing || costConfig.customPricing || {};
@@ -345,13 +435,16 @@ const BudgetsConfigTab = ({
   };
 
   const handleRemovePricing = (model) => {
-    const updated = { ...customPricing };
-    delete updated[model];
-    updateCost("custom_pricing", updated);
+    requestRemoval(`Custom price for ${model}`, () => {
+      const updated = { ...customPricing };
+      delete updated[model];
+      updateCost("custom_pricing", updated);
+    });
   };
 
   return (
     <Box>
+      {confirmation}
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
         <Icon icon="mdi:wallet-outline" width={24} />
         <Typography variant="h6">Budgets & Cost Tracking</Typography>
@@ -367,7 +460,7 @@ const BudgetsConfigTab = ({
       <FormControlLabel
         control={
           <Switch
-            checked={budgetConfig.enabled || false}
+            checked={enabled}
             onChange={(e) => updateBudget("enabled", e.target.checked)}
           />
         }
@@ -375,26 +468,34 @@ const BudgetsConfigTab = ({
         sx={{ mb: 2 }}
       />
 
-      {budgetConfig.enabled && (
+      {enabled && (
         <Stack spacing={3}>
           {/* Organization Budget (existing) */}
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
               Organization Budget
             </Typography>
-            <Stack direction="row" spacing={2} flexWrap="wrap">
-              <TextField
-                label="Spend Limit (USD)"
-                type="number"
-                size="small"
-                value={budgetConfig.org_limit || budgetConfig.orgLimit || ""}
-                onChange={(e) =>
-                  updateBudget("org_limit", Number(e.target.value) || 0)
-                }
-                helperText="0 = unlimited"
-                sx={{ width: 160 }}
-                inputProps={{ step: 0.01, min: 0 }}
-              />
+            {dialogOrgBudget && <DialogOrgBudgets budgets={budgetConfig} />}
+            <Stack
+              direction="row"
+              spacing={2}
+              flexWrap="wrap"
+              sx={dialogOrgBudget ? { mt: 1.5 } : undefined}
+            >
+              {!dialogOrgBudget && (
+                <TextField
+                  label="Spend Limit (USD)"
+                  type="number"
+                  size="small"
+                  value={budgetConfig.org_limit || budgetConfig.orgLimit || ""}
+                  onChange={(e) =>
+                    updateBudget("org_limit", Number(e.target.value) || 0)
+                  }
+                  helperText="0 = unlimited"
+                  sx={{ width: 160 }}
+                  inputProps={{ step: 0.01, min: 0 }}
+                />
+              )}
               <TextField
                 select
                 label="Budget Period"
@@ -415,40 +516,46 @@ const BudgetsConfigTab = ({
                   </MenuItem>
                 ))}
               </TextField>
-              <TextField
-                label="Warning Threshold"
-                type="number"
-                size="small"
-                value={
-                  budgetConfig.warn_threshold ||
-                  budgetConfig.warnThreshold ||
-                  0.8
-                }
-                onChange={(e) =>
-                  updateBudget("warn_threshold", Number(e.target.value) || 0)
-                }
-                helperText="0-1 (e.g. 0.8 = 80%)"
-                sx={{ width: 160 }}
-                inputProps={{ step: 0.05, min: 0, max: 1 }}
-              />
-            </Stack>
-            <FormControlLabel
-              control={
-                <Switch
+              {!dialogOrgBudget && (
+                <TextField
+                  label="Warning Threshold"
+                  type="number"
                   size="small"
-                  checked={
-                    budgetConfig.hard_limit ?? budgetConfig.hardLimit ?? true
+                  value={
+                    budgetConfig.warn_threshold ||
+                    budgetConfig.warnThreshold ||
+                    0.8
                   }
-                  onChange={(e) => updateBudget("hard_limit", e.target.checked)}
+                  onChange={(e) =>
+                    updateBudget("warn_threshold", Number(e.target.value) || 0)
+                  }
+                  helperText="0-1 (e.g. 0.8 = 80%)"
+                  sx={{ width: 160 }}
+                  inputProps={{ step: 0.05, min: 0, max: 1 }}
                 />
-              }
-              label={
-                <Typography variant="body2">
-                  Hard limit (block requests when exceeded)
-                </Typography>
-              }
-              sx={{ mt: 1 }}
-            />
+              )}
+            </Stack>
+            {!dialogOrgBudget && (
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={
+                      budgetConfig.hard_limit ?? budgetConfig.hardLimit ?? true
+                    }
+                    onChange={(e) =>
+                      updateBudget("hard_limit", e.target.checked)
+                    }
+                  />
+                }
+                label={
+                  <Typography variant="body2">
+                    Hard limit (block requests when exceeded)
+                  </Typography>
+                }
+                sx={{ mt: 1 }}
+              />
+            )}
           </Paper>
 
           {/* Hierarchical Budget Levels */}
@@ -563,6 +670,7 @@ const BudgetsConfigTab = ({
                 />
                 <IconButton
                   size="small"
+                  aria-label={`Remove custom pricing ${model}`}
                   onClick={() => handleRemovePricing(model)}
                 >
                   <Icon icon="mdi:delete-outline" width={18} color="#d32f2f" />

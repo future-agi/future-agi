@@ -13,6 +13,8 @@ These tests verify the complete flow including:
 Run with: pytest model_hub/tests/test_dataset_huggingface_api.py -v
 """
 
+import json
+from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +25,7 @@ from model_hub.models.choices import (
     DatasetSourceChoices,
     DataTypeChoices,
     SourceChoices,
+    StatusType,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 
@@ -252,6 +255,175 @@ class TestProcessHuggingFaceColumnsJsonSerialization:
             assert cell.value == test_values[index]
 
 
+class _InlineExecutor:
+    """Runs submitted work at once, in the test's thread (the test database
+    transaction is not visible to other threads)."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def submit(self, fn, *args, **kwargs):
+        future = Future()
+        try:
+            future.set_result(fn(*args, **kwargs))
+        except Exception as exc:  # noqa: BLE001 - mirrors a pool future
+            future.set_exception(exc)
+        return future
+
+
+HF_UNAVAILABLE_REASON = "Hugging Face import is not available in this build."
+HF_LOAD_FAILED_REASON = "Unable to get data from Hugging Face. Please try again later."
+
+
+class TestProcessHuggingFaceDatasetFailurePath:
+    """
+    DSX launch PF-5 (GE-3): when the Hugging Face load fails, every row's
+    cells say why, and nothing is written twice.
+
+    Before the fix the failure branch read ``rows[i]`` with an integer key,
+    but rows cross Temporal as JSON (string keys): it raised ``KeyError: 0``,
+    wrote no ERROR cell, Temporal retried it, and the columns still ended
+    COMPLETED, so the dataset showed blank cells with no reason. A worker
+    without the ``ml`` extra (no ``datasets``) always fails that way.
+    """
+
+    @pytest.fixture
+    def hf_dataset(self, db, organization, workspace):
+        ds = Dataset.objects.create(
+            name="HuggingFace Failure Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        ds.column_order = []
+        ds.save()
+        return ds
+
+    @pytest.fixture
+    def hf_columns(self, db, hf_dataset):
+        cols = []
+        for name in ("sepal", "species"):
+            col = Column.objects.create(
+                name=name,
+                dataset=hf_dataset,
+                data_type=DataTypeChoices.TEXT.value,
+                source=SourceChoices.OTHERS.value,
+            )
+            hf_dataset.column_order.append(str(col.id))
+            cols.append(col)
+        hf_dataset.save()
+        return cols
+
+    @staticmethod
+    def _rows(dataset, count, key):
+        return {
+            key(i): str(Row.objects.create(dataset=dataset, order=i).id)
+            for i in range(count)
+        }
+
+    @staticmethod
+    def _run(dataset, columns, rows, num_rows):
+        from model_hub.views.utils.hugginface import process_huggingface_dataset
+
+        try:
+            process_huggingface_dataset(
+                str(dataset.id),
+                "scikit-learn/iris",
+                "default",
+                "train",
+                str(dataset.organization_id),
+                num_rows,
+                [str(c.id) for c in columns],
+                rows,
+            )
+        except Exception as exc:  # noqa: BLE001 - the test asserts on it
+            return exc
+        return None
+
+    @staticmethod
+    def _cells_by_pair(dataset):
+        pairs = {}
+        for cell in Cell.objects.filter(dataset=dataset):
+            pairs.setdefault((str(cell.row_id), str(cell.column_id)), []).append(cell)
+        return pairs
+
+    @patch("model_hub.views.utils.hugginface.load_hf_dataset_with_retries")
+    def test_missing_ml_extra_writes_a_reason_in_every_cell_and_is_not_retried(
+        self, mock_load, hf_dataset, hf_columns
+    ):
+        from temporalio.exceptions import ApplicationError
+
+        mock_load.side_effect = ImportError(
+            "`datasets` is part of the optional `ml` dependency group, "
+            "which is not installed in this build"
+        )
+        rows = self._rows(hf_dataset, 3, str)  # as after Temporal
+
+        raised = self._run(hf_dataset, hf_columns, rows, 3)
+
+        assert isinstance(raised, ApplicationError), (
+            f"expected a non-retryable ApplicationError, got {raised!r}"
+        )
+        assert raised.non_retryable is True
+        pairs = self._cells_by_pair(hf_dataset)
+        assert set(pairs) == {
+            (row_id, str(col.id)) for row_id in rows.values() for col in hf_columns
+        }
+        for cells in pairs.values():
+            assert len(cells) == 1
+            assert cells[0].status == CellStatus.ERROR.value
+            assert json.loads(cells[0].value_infos)["reason"] == (HF_UNAVAILABLE_REASON)
+        for col in hf_columns:
+            col.refresh_from_db()
+            assert col.status == StatusType.COMPLETED.value
+
+    @pytest.mark.parametrize(
+        "key", [int, str], ids=["direct-int-keys", "temporal-str-keys"]
+    )
+    @patch("model_hub.views.utils.hugginface.close_old_connections")
+    @patch("model_hub.views.utils.hugginface.ThreadPoolExecutor", _InlineExecutor)
+    @patch("model_hub.views.utils.hugginface.load_hf_dataset_with_retries")
+    def test_mid_stream_failure_keeps_one_cell_per_row_and_column(
+        self, mock_load, _mock_close, key, hf_dataset, hf_columns
+    ):
+        def stream():
+            yield {"sepal": "5.1", "species": "Iris-setosa"}
+            raise ConnectionError("stream dropped after the first row")
+
+        mock_load.return_value = stream()
+        rows = self._rows(hf_dataset, 3, key)
+
+        raised = self._run(hf_dataset, hf_columns, rows, 3)
+
+        assert raised is None, f"the failure path raised {raised!r}"
+        pairs = self._cells_by_pair(hf_dataset)
+        assert {pair: len(cells) for pair, cells in pairs.items()} == {
+            (row_id, str(col.id)): 1 for row_id in rows.values() for col in hf_columns
+        }
+        first = rows[key(0)]
+        assert {pairs[(first, str(col.id))][0].value for col in hf_columns} == {
+            "5.1",
+            "Iris-setosa",
+        }
+        for (row_id, _col), cells in pairs.items():
+            if row_id == first:
+                assert cells[0].status == CellStatus.PASS.value
+            else:
+                assert cells[0].status == CellStatus.ERROR.value
+                assert json.loads(cells[0].value_infos)["reason"] == (
+                    HF_LOAD_FAILED_REASON
+                )
+        for col in hf_columns:
+            col.refresh_from_db()
+            assert col.status == StatusType.COMPLETED.value
+
+
 class TestCreateDatasetFromHuggingFaceE2E:
     """
     End-to-end tests for CreateDatasetFromHuggingFaceView.
@@ -362,19 +534,19 @@ class TestCreateDatasetFromHuggingFaceE2E:
 
         if response.status_code == status.HTTP_200_OK:
             # Verify rows dict has integer keys (before JSON serialization)
-            assert (
-                0 in captured_rows or "0" in captured_rows
-            ), "Rows dict should have key 0 (integer or string)"
-            assert (
-                1 in captured_rows or "1" in captured_rows
-            ), "Rows dict should have key 1 (integer or string)"
+            assert 0 in captured_rows or "0" in captured_rows, (
+                "Rows dict should have key 0 (integer or string)"
+            )
+            assert 1 in captured_rows or "1" in captured_rows, (
+                "Rows dict should have key 1 (integer or string)"
+            )
 
             # The actual keys should be integers at this point
             # (before Temporal JSON serialization)
             if 0 in captured_rows:
-                assert isinstance(
-                    list(captured_rows.keys())[0], int
-                ), "View should create rows with integer keys"
+                assert isinstance(list(captured_rows.keys())[0], int), (
+                    "View should create rows with integer keys"
+                )
         else:
             # Print response for debugging
             print(f"Response: {response.status_code} - {response.json()}")
@@ -413,8 +585,9 @@ class TestHuggingFaceListFeatureCompat:
         "Feature type 'List' not found". GREEN once model_hub.utils.utils
         aliases `List` to LargeList at import.
         """
-        import model_hub.utils.utils  # noqa: F401  (import installs the List alias)
         from datasets import Features
+
+        import model_hub.utils.utils  # noqa: F401  (import installs the List alias)
 
         features = Features.from_dict(self.SQUAD_ANSWERS_SCHEMA)
 
@@ -426,11 +599,17 @@ class TestHuggingFaceListFeatureCompat:
 
     def test_top_level_list_feature_parses(self):
         """A plain List-of-scalars column (the other Hub shape) also parses."""
-        import model_hub.utils.utils  # noqa: F401
         from datasets import Features
 
+        import model_hub.utils.utils  # noqa: F401
+
         features = Features.from_dict(
-            {"tags": {"feature": {"dtype": "string", "_type": "Value"}, "_type": "List"}}
+            {
+                "tags": {
+                    "feature": {"dtype": "string", "_type": "Value"},
+                    "_type": "List",
+                }
+            }
         )
 
         assert "tags" in features

@@ -158,7 +158,7 @@ const ImagesCellRenderer = ({
                 },
               }}
             >
-              {imageUrls.map((url, index) => (
+              {imageUrls.slice(0, 1).map((url, index) => (
                 <GridIcon
                   key={index}
                   height="100%"
@@ -179,13 +179,45 @@ const ImagesCellRenderer = ({
                   sx={{
                     cursor: "pointer",
                     borderRadius: "8px",
-                    minWidth: "80px",
-                    maxWidth: "120px",
+                    minWidth: "40px",
+                    maxWidth: "64px",
                     height: "100%",
                     flexShrink: 0,
                   }}
                 />
               ))}
+              {imageUrls.length > 1 && (
+                <Box
+                  component="button"
+                  type="button"
+                  aria-label={`${imageUrls.length} images`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleImageClick(1);
+                  }}
+                  onMouseEnter={() => {
+                    window.__imageClick = true;
+                  }}
+                  onMouseLeave={() => {
+                    window.__imageClick = false;
+                  }}
+                  sx={{
+                    alignSelf: "center",
+                    flexShrink: 0,
+                    px: 0.75,
+                    border: 0,
+                    borderRadius: 0.5,
+                    cursor: "pointer",
+                    typography: "s3",
+                    fontWeight: 500,
+                    lineHeight: "20px",
+                    bgcolor: "action.hover",
+                    color: "text.secondary",
+                  }}
+                >
+                  {`+${imageUrls.length - 1}`}
+                </Box>
+              )}
             </Box>
           ) : (
             dataset &&
@@ -303,7 +335,7 @@ const ImagesCellRenderer = ({
         onDelete={handleDelete}
         isPending={isPending}
         fileName="these images"
-        fileType="images"
+        fileType="image"
       />
     </>
   );

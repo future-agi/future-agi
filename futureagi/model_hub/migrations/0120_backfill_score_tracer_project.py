@@ -6,7 +6,7 @@ def _backfill(apps, schema_editor):
         backfill_tracer_project_ids,
     )
 
-    backfill_tracer_project_ids()
+    backfill_tracer_project_ids(db_connection=schema_editor.connection)
 
 
 def _noop(apps, schema_editor):

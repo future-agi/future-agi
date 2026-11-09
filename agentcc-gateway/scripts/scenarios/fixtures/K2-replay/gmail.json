@@ -1,0 +1,72 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "gmail",
+  "source": "CN14c K2 replay assertions (approved at 35d425a977)",
+  "test_account": "cn14-synthetic-unverified",
+  "tools": 13,
+  "vendor_404": "Google gmail.googleapis.com 404",
+  "drive_checks": [
+    {
+      "name": "profile_read_only",
+      "jq": ".tools[] | select(.name == \"get_profile\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "send_open_world",
+      "jq": ".tools[] | select(.name == \"send_message\") | .annotations.openWorldHint",
+      "want": "true"
+    },
+    {
+      "name": "send_not_read_only",
+      "jq": ".tools[] | select(.name == \"send_message\") | .annotations.readOnlyHint",
+      "want": "false"
+    },
+    {
+      "name": "unlabel_destructive",
+      "jq": ".tools[] | select(.name == \"unlabel_thread\") | .annotations.destructiveHint",
+      "want": "true"
+    },
+    {
+      "name": "trash_destructive",
+      "jq": ".tools[] | select(.name == \"trash_thread\") | .annotations.destructiveHint",
+      "want": "true"
+    },
+    {
+      "name": "label_not_destructive",
+      "jq": ".tools[] | select(.name == \"label_thread\") | .annotations.destructiveHint",
+      "want": "false"
+    },
+    {
+      "name": "userId_not_an_input",
+      "jq": "[.tools[] | .inputSchema.properties | has(\"userId\")] | any",
+      "want": "false"
+    },
+    {
+      "name": "profile_projected",
+      "jq": ".calls[0].result.content[0].text | (contains(\"user-1@example.com\") and (contains(\"historyId\") | not))",
+      "want": "true"
+    },
+    {
+      "name": "search_threads",
+      "jq": ".calls[1].result.content[0].text | contains(\"Here are the quarterly numbers\")",
+      "want": "true"
+    },
+    {
+      "name": "reply_headers",
+      "jq": ".calls[3].result.content[0].text | contains(\"cn14-m1@mailhost\")",
+      "want": "true"
+    },
+    {
+      "name": "draft_threaded",
+      "jq": ".calls[6].result.content[0].text | contains(\"t-1\")",
+      "want": "true"
+    },
+    {
+      "name": "send_message_sent",
+      "jq": ".calls[8].result.content[0].text | contains(\"SENT\")",
+      "want": "true"
+    }
+  ],
+  "vendor_request_checks": [],
+  "every_vendor_request": []
+}

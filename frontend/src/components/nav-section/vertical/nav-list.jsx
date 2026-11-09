@@ -8,6 +8,7 @@ import { usePathname } from "src/routes/hooks";
 import { useActiveLink } from "src/routes/hooks/use-active-link";
 
 import NavItem from "./nav-item";
+import InertNavItem from "../inert-nav-item";
 import { Box } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import Label from "src/components/label";
@@ -41,6 +42,12 @@ export default function NavList({ data, depth, slotProps }) {
       setOpenMenu((prev) => !prev);
     }
   }, [data.children]);
+
+  if (data.inert) {
+    return (
+      <InertNavItem title={data.title} icon={data.icon} info={data.info} />
+    );
+  }
 
   return (
     <>

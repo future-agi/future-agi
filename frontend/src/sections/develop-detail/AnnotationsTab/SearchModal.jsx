@@ -59,7 +59,7 @@ const SearchModal = ({ peopleAssigned, onItemClick, isCheckable }) => {
             <Box display="flex" alignItems="center" gap={1}>
               {isCheckable && <Checkbox />}
               <img
-                src={"https://cdn-icons-png.flaticon.com/512/149/149071.png"}
+                src={"/assets/icons/navbar/ic_user.svg"}
                 alt={i.name}
                 onClick={onItemClick}
                 style={{

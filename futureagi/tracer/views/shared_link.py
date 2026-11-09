@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
+from accounts.authentication import allows_no_organization
 from accounts.models.user import User
 from accounts.utils import get_request_organization
 from tfc.middleware.workspace_context import (
@@ -254,6 +255,7 @@ def _check_shared_link_access(request, token):
         410: SharedLinkResolveErrorSerializer,
     },
 )
+@allows_no_organization
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def resolve_shared_link(request, token):
@@ -701,7 +703,9 @@ def _shared_resource_exists(resource_type, resource_id, organization, workspace)
 
 def _workspace_scope_q(workspace, lookup):
     if not workspace:
-        return models.Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
     if getattr(workspace, "is_default", False):
         return (
             models.Q(**{lookup: workspace})

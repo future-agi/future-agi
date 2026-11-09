@@ -5,6 +5,7 @@ from django.core.validators import URLValidator
 from django.db import transaction
 from rest_framework import serializers
 
+from agentcc.services.credential_manager import mask_key
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import AgentTypeChoices
@@ -32,9 +33,8 @@ def _extract_credentials_input(
     Call this **before** ``super().create()``/``update()`` — the livekit
     fields must be removed from ``validated_data`` so ``ModelSerializer``
     doesn't try to write them to non-existent columns on
-    ``AgentDefinition``. ``api_key`` and ``assistant_id`` stay in place
-    (they're real model columns) and are copied into the input model by
-    read-only lookup.
+    ``AgentDefinition``. ``api_key`` stays temporarily for the caller to pop
+    and encrypt via set_api_key; ``assistant_id`` remains a model column.
     """
     return ProviderCredentialsInput(
         provider=validated_data.get("provider") or fallback_provider,
@@ -54,7 +54,7 @@ class AgentDefinitionOperationSerializer(serializers.Serializer):
     """Serializer for operations on agent definition apart from CRUD"""
 
     assistant_id = serializers.CharField()
-    api_key = serializers.CharField()
+    api_key = serializers.CharField(write_only=True)
     provider = serializers.ChoiceField(
         choices=[
             ProviderChoices.VAPI,
@@ -72,6 +72,14 @@ class AgentDefinitionOperationSerializer(serializers.Serializer):
 
 class AgentDefinitionSerializer(serializers.ModelSerializer):
     """Serializer for AgentDefinition model"""
+
+    api_key = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=255,
+    )
 
     # LiveKit fields are write-only — validated by DRF but routed to the
     # ProviderCredentials table by create()/update() instead of being
@@ -177,6 +185,8 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                 data["assistant_id"] = creds.assistant_id or data.get(
                     "assistant_id", ""
                 )
+        else:
+            data["api_key"] = mask_key(instance.get_api_key())
         data.pop("livekit_api_secret", None)
         return data
 
@@ -233,8 +243,8 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             return value
 
         # outbound: require api_key and assistant_id from incoming data or existing instance
-        api_key = (self.initial_data or {}).get("api_key") or getattr(
-            self.instance, "api_key", None
+        api_key = (self.initial_data or {}).get("api_key") or (
+            self.instance.get_api_key() if self.instance is not None else None
         )
         assistant_id = (self.initial_data or {}).get("assistant_id") or getattr(
             self.instance, "assistant_id", None
@@ -306,7 +316,15 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             if not is_livekit:
                 # Contact number is optional when API key + assistant ID are
                 # provided (web bridge will be used instead of SIP/phone).
-                api_key = attrs.get("api_key", getattr(self.instance, "api_key", None))
+                api_key = (
+                    attrs["api_key"]
+                    if "api_key" in attrs
+                    else (
+                        self.instance.get_api_key()
+                        if self.instance is not None
+                        else None
+                    )
+                )
                 assistant_id = attrs.get(
                     "assistant_id", getattr(self.instance, "assistant_id", None)
                 )
@@ -367,8 +385,14 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
 
                 # Outbound voice calls require api_key and assistant_id
                 if not inbound:
-                    api_key = attrs.get(
-                        "api_key", getattr(self.instance, "api_key", None)
+                    api_key = (
+                        attrs["api_key"]
+                        if "api_key" in attrs
+                        else (
+                            self.instance.get_api_key()
+                            if self.instance is not None
+                            else None
+                        )
                     )
                     assistant_id = attrs.get(
                         "assistant_id",
@@ -392,7 +416,13 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             and provider not in ("others", "livekit", "livekit_bridge")
             and inbound
         ):
-            api_key = attrs.get("api_key", getattr(self.instance, "api_key", None))
+            api_key = (
+                attrs["api_key"]
+                if "api_key" in attrs
+                else (
+                    self.instance.get_api_key() if self.instance is not None else None
+                )
+            )
             assistant_id = attrs.get(
                 "assistant_id", getattr(self.instance, "assistant_id", None)
             )
@@ -412,10 +442,11 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         creds_input = _extract_credentials_input(validated_data, fallback_provider="")
-        if is_masked(validated_data.get("api_key") or ""):
-            validated_data.pop("api_key", None)
-
-        instance = super().create(validated_data)
+        api_key = validated_data.pop("api_key", None)
+        instance = AgentDefinition(**validated_data)
+        if not is_masked(api_key or ""):
+            instance.set_api_key(api_key)
+        instance.save()
 
         creds_input.provider = instance.provider or creds_input.provider
         version = instance.latest_version
@@ -438,9 +469,10 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             validated_data, fallback_provider=instance.provider or ""
         )
 
-        new_api_key = validated_data.get("api_key")
-        if new_api_key is not None and is_masked(new_api_key):
-            validated_data.pop("api_key")
+        if "api_key" in validated_data:
+            new_api_key = validated_data.pop("api_key")
+            if not is_masked(new_api_key or ""):
+                instance.set_api_key(new_api_key)
 
         instance = super().update(instance, validated_data)
 
@@ -502,6 +534,14 @@ class AgentDefinitionListSerializer(serializers.ModelSerializer):
 
 class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating AgentDefinition model from version creation"""
+
+    api_key = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=255,
+    )
 
     knowledge_base = serializers.PrimaryKeyRelatedField(
         queryset=KnowledgeBaseFile.objects.none(),
@@ -585,6 +625,7 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
                 organization=organization
             )
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         # Serialize concurrent writes on this agent (see
         # AgentDefinitionSerializer.update for the same pattern).
@@ -612,7 +653,10 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
         )
         instance.inbound = validated_data.get("inbound", instance.inbound)
         instance.agent_type = validated_data.get("agent_type", instance.agent_type)
-        instance.api_key = validated_data.get("api_key", instance.api_key)
+        if "api_key" in validated_data:
+            new_api_key = validated_data.pop("api_key")
+            if not is_masked(new_api_key or ""):
+                instance.set_api_key(new_api_key)
         instance.model = validated_data.get("model", instance.model)
         instance.model_details = validated_data.get(
             "model_details", instance.model_details

@@ -11,6 +11,7 @@ import json
 import uuid
 
 import pytest
+from django.db import connection
 
 
 def _load_migration():
@@ -40,6 +41,7 @@ class TestMigrationBackfillLogic:
     ):
         """Logs without version_id get stamped with the template's default version."""
         from django.apps import apps as real_apps
+
         from ee.usage.models.usage import APICallLog, APICallStatusChoices
         from model_hub.models.choices import OwnerChoices, SourceChoices
         from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
@@ -72,7 +74,9 @@ class TestMigrationBackfillLogic:
         )
 
         mod = _load_migration()
-        mod.backfill_apicalllog_version_info(real_apps, schema_editor=None)
+        mod.backfill_apicalllog_version_info(
+            real_apps, schema_editor=connection.schema_editor()
+        )
 
         log.refresh_from_db()
         assert log.config.get("version_id") == str(version.id)
@@ -83,6 +87,7 @@ class TestMigrationBackfillLogic:
     ):
         """Logs that already have version_id must not be overwritten."""
         from django.apps import apps as real_apps
+
         from ee.usage.models.usage import APICallLog, APICallStatusChoices
         from model_hub.models.choices import OwnerChoices, SourceChoices
         from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
@@ -112,7 +117,9 @@ class TestMigrationBackfillLogic:
         )
 
         mod = _load_migration()
-        mod.backfill_apicalllog_version_info(real_apps, schema_editor=None)
+        mod.backfill_apicalllog_version_info(
+            real_apps, schema_editor=connection.schema_editor()
+        )
 
         log.refresh_from_db()
         # Must not overwrite the existing version_id
@@ -126,6 +133,7 @@ class TestMigrationBackfillLogic:
         The migration must unwrap these so JSONB operators work.
         """
         from django.apps import apps as real_apps
+
         from ee.usage.models.usage import APICallLog, APICallStatusChoices
         from model_hub.models.choices import OwnerChoices, SourceChoices
         from model_hub.models.evals_metric import EvalTemplate
@@ -155,7 +163,9 @@ class TestMigrationBackfillLogic:
         assert isinstance(log.config, str), "Precondition: config should be a string"
 
         mod = _load_migration()
-        mod.backfill_apicalllog_version_info(real_apps, schema_editor=None)
+        mod.backfill_apicalllog_version_info(
+            real_apps, schema_editor=connection.schema_editor()
+        )
 
         log.refresh_from_db()
         assert isinstance(log.config, dict), "Config must be unwrapped to a dict"
@@ -166,6 +176,7 @@ class TestMigrationBackfillLogic:
     ):
         """A user template with zero versions gets v1 created and stamped."""
         from django.apps import apps as real_apps
+
         from ee.usage.models.usage import APICallLog, APICallStatusChoices
         from model_hub.models.choices import OwnerChoices, SourceChoices
         from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
@@ -193,7 +204,9 @@ class TestMigrationBackfillLogic:
         )
 
         mod = _load_migration()
-        mod.backfill_apicalllog_version_info(real_apps, schema_editor=None)
+        mod.backfill_apicalllog_version_info(
+            real_apps, schema_editor=connection.schema_editor()
+        )
 
         created = EvalTemplateVersion.objects.filter(
             eval_template=template, deleted=False

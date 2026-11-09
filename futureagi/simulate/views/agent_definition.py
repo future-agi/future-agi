@@ -9,12 +9,14 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
+from common.utils.page_limits import enforce_page_size
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.serializers.agent_definition import AgentDefinitionSerializer
 from simulate.serializers.requests.agent_definition import (
@@ -31,6 +33,7 @@ from simulate.serializers.response.agent_definition import (
     AgentDefinitionDeleteResponseSerializer,
     AgentDefinitionDetailResponseSerializer,
     AgentDefinitionEditResponseSerializer,
+    AgentDefinitionListPageSerializer,
     AgentDefinitionListResponseSerializer,
     AgentDefinitionResponseSerializer,
     AgentRunsResponseSerializer,
@@ -64,7 +67,7 @@ from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.pagination import ExtendedPageNumberPagination, PageSizeTooLarge
 from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ProviderChoices
 from tracer.models.replay_session import ReplaySession
@@ -78,7 +81,10 @@ from tracer.services.observability_switch import (
     set_agent_observability,
 )
 from tracer.utils.otel import ResourceLimitError
-from tracer.utils.replay_session import link_agent_to_replay_session
+from tracer.utils.replay_session import (
+    link_agent_to_replay_session,
+    replay_session_for_agent_link,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -106,7 +112,7 @@ class AgentDefinitionView(APIView):
     @validated_request(
         query_serializer=AgentDefinitionFilterSerializer,
         responses={
-            200: AgentDefinitionListResponseSerializer(many=True),
+            200: AgentDefinitionListPageSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
@@ -119,6 +125,7 @@ class AgentDefinitionView(APIView):
         Get paginated list of agent definitions for the user's organization.
         """
         try:
+            enforce_page_size(request.query_params.get("limit"))
             user_organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
@@ -199,7 +206,9 @@ class AgentDefinitionView(APIView):
             )
             return paginator.get_paginated_response(serializer.data)
 
-        except NotFound:
+        except (NotFound, PageSizeTooLarge):
+            raise
+        except APIException:
             raise
         except Exception as e:
             return self._gm.internal_server_error_response(
@@ -300,16 +309,24 @@ class CreateAgentDefinitionView(APIView):
                     ProviderChoices.OTHERS,
                 ]
             )
+            if validated.get("knowledge_base") and not knowledge_base_in_scope(
+                request, validated.get("knowledge_base")
+            ):
+                return self._gm.bad_request("Knowledge base not found")
 
             with transaction.atomic():
+                # Refuse unknown/foreign targets before saving any agent,
+                # version or credentials. Keep the target locked through link.
+                if replay_session_id:
+                    replay_session_for_agent_link(replay_session_id, request)
+
                 # Create agent definition — livekit_* fields are NOT model
                 # columns, they're routed to ProviderCredentials below.
-                agent = AgentDefinition.objects.create(
+                agent = AgentDefinition(
                     agent_name=validated["agent_name"],
                     agent_type=validated["agent_type"],
                     description=description,
                     provider=provider,
-                    api_key=api_key,
                     assistant_id=assistant_id,
                     authentication_method=validated.get("authentication_method") or "",
                     language=validated.get("language"),
@@ -326,6 +343,9 @@ class CreateAgentDefinitionView(APIView):
                     workspace=workspace,
                     observability_provider=None,
                 )
+
+                agent.set_api_key(api_key)
+                agent.save()
 
                 # Create the first version first so ProviderCredentials can link to it.
                 version = agent.create_version(
@@ -365,12 +385,12 @@ class CreateAgentDefinitionView(APIView):
                 )
                 version.save(update_fields=["configuration_snapshot"])
 
-            if replay_session_id:
-                link_agent_to_replay_session(
-                    replay_session_id=replay_session_id,
-                    agent=agent,
-                    organization=organization,
-                )
+                if replay_session_id:
+                    link_agent_to_replay_session(
+                        replay_session_id=replay_session_id,
+                        agent=agent,
+                        request=request,
+                    )
 
             response_data = {
                 "message": "Agent definition created successfully",
@@ -384,9 +404,10 @@ class CreateAgentDefinitionView(APIView):
             return self._gm.bad_request("PROJECT CREATION LIMIT REACHED")
         except ObservabilityRefused as error:
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
+        except Exception:
+            logger.exception("Failed to create agent definition")
             return self._gm.internal_server_error_response(
-                f"Failed to create agent definition: {str(e)}"
+                "Agent definition creation could not be confirmed. Check the agent definitions before trying again."
             )
 
 
@@ -734,6 +755,10 @@ class EditAgentDefinitionView(APIView):
             # they live on the related ProviderCredentials row and are
             # routed below via ``_sync_provider_credentials``.
             validated = request.validated_data
+            if validated.get("knowledge_base") and not knowledge_base_in_scope(
+                request, validated.get("knowledge_base")
+            ):
+                return self._gm.bad_request("Knowledge base not found")
             incoming_api_key = validated.get("api_key")
             preserve_existing_api_key = incoming_api_key is not None and is_masked(
                 incoming_api_key
@@ -761,14 +786,20 @@ class EditAgentDefinitionView(APIView):
                 if field == "api_key" and preserve_existing_api_key:
                     continue
                 if field in validated:
-                    setattr(agent, field, validated[field])
-                    changed_fields.append(field)
+                    if field == "api_key":
+                        agent.set_api_key(validated[field])
+                        changed_fields.append("encrypted_api_key")
+                    else:
+                        setattr(agent, field, validated[field])
+                        changed_fields.append(field)
             if "knowledge_base" in validated:
                 agent.knowledge_base_id = validated["knowledge_base"]
                 changed_fields.append("knowledge_base")
             # Only what this request set: a full save of this copy could undo an
             # observability link another request wrote meanwhile.
             with transaction.atomic():
+                # Lock the same row through credential synchronization.
+                AgentDefinition.objects.select_for_update(of=("self",)).get(pk=agent.pk)
                 agent.save(update_fields=[*changed_fields, "updated_at"])
 
                 # Route livekit_* fields to ProviderCredentials so they

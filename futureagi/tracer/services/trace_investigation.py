@@ -47,9 +47,7 @@ logger = structlog.get_logger(__name__)
 
 CONTRACT_VERSION = "omega-investigation/v1"
 _DEFAULT_LIMITS = {
-    # On the benchmark 5 of 190 investigations took 180-230 s. One that runs
-    # out of time is retried from the start, which costs a full rerun.
-    "deadline_seconds": 300,
+    "deadline_seconds": 180,
     "max_model_calls": 12,
     "max_children": 2,
     "max_parallel_children": 2,

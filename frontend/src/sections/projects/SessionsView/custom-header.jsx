@@ -1,12 +1,22 @@
-import React, { useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { Box, IconButton, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
 
 const CustomHeader = (props) => {
-  const { displayName, showColumnMenu } = props;
+  const { displayName, showColumnMenu, column, progressSort } = props;
   const refButton = useRef(null);
+  // R2D-04: clicking the header text sorts (asc → desc → none), like the
+  // column menu; the arrow and aria-sort follow the column's sort.
+  const sortable = Boolean(column?.getColDef?.()?.sortable);
+  const [sort, setSort] = useState(column?.getSort?.() ?? null);
+  useEffect(() => {
+    if (!column?.addEventListener) return undefined;
+    const onSort = () => setSort(column.getSort?.() ?? null);
+    column.addEventListener("sortChanged", onSort);
+    return () => column.removeEventListener?.("sortChanged", onSort);
+  }, [column]);
   const scheduleIconItems = ["Start Time", "Latency", "End Time", "Duration"];
   const isScheduleIcon = scheduleIconItems.includes(displayName);
   const renderIcon = () => {
@@ -147,15 +157,51 @@ const CustomHeader = (props) => {
         width: "100%",
       }}
     >
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+      <Box
+        role={sortable ? "button" : undefined}
+        tabIndex={sortable ? 0 : undefined}
+        aria-sort={
+          sort === "asc" ? "ascending" : sort === "desc" ? "descending" : "none"
+        }
+        title={sortable ? `Sort by ${displayName}` : undefined}
+        onClick={(e) => sortable && progressSort?.(e.shiftKey)}
+        onKeyDown={(e) => {
+          if (sortable && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            progressSort?.(e.shiftKey);
+          }
+        }}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          minWidth: 0,
+          cursor: sortable ? "pointer" : "default",
+          "&:hover .sort-hint": { opacity: 1 },
+        }}
+      >
         {renderIcon()}
         <Typography
           variant="s1"
           fontWeight={"fontWeightMedium"}
-          color={"text.secondary"}
+          color={sort ? "text.primary" : "text.secondary"}
+          noWrap
         >
           {displayName}
         </Typography>
+        {sortable && (
+          <Iconify
+            className="sort-hint"
+            icon={sort === "asc" ? "mdi:arrow-up" : "mdi:arrow-down"}
+            width={14}
+            sx={{
+              color: sort ? "primary.main" : "text.disabled",
+              opacity: sort ? 1 : 0,
+              transition: "opacity 120ms",
+              flexShrink: 0,
+            }}
+          />
+        )}
       </Box>
       <IconButton
         size="small"
@@ -179,6 +225,7 @@ CustomHeader.propTypes = {
   dataType: PropTypes.string,
   group: PropTypes.bool,
   showColumnMenu: PropTypes.func.isRequired,
+  progressSort: PropTypes.func,
 };
 
 export default CustomHeader;

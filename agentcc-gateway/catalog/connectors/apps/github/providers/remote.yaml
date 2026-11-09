@@ -1,0 +1,97 @@
+# GitHub's remote MCP server with a user access token from a GitHub App.
+# GitHub's authorization server takes pre-registered clients only (its
+# metadata names no registration endpoint). A GitHub App's only scope is
+# offline_access, which returns an expiring token and a refresh token; the
+# app's permissions, not scopes, decide what its tokens reach. So the client
+# for this group, FutureAGI's or an org's own, is a GitHub App. A classic
+# OAuth App asks for scopes such as repo and read:org instead (the server's
+# protected-resource metadata lists them), so it is not this group's client.
+schema: "connector-manifest/v1#provider"
+app: github
+id: remote
+version: 1.0.1
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://github.blog/changelog/2025-09-04-remote-github-mcp-server-is-now-generally-available/
+transport:
+  kind: http
+  url: https://api.githubcopilot.com/mcp/
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://github.com/login/oauth/authorize
+    tokenUrl: https://github.com/login/oauth/access_token
+    scopes: [offline_access]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    refresh: { supported: true, rotates: true }
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+  - fact: transport.variant
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://github.com/.well-known/oauth-authorization-server/login/oauth
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://github.com/.well-known/oauth-authorization-server/login/oauth
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://github.com/.well-known/oauth-authorization-server/login/oauth
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.pkce
+    url: https://github.com/.well-known/oauth-authorization-server/login/oauth
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.refresh
+    url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://github.com/.well-known/oauth-authorization-server/login/oauth
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+x-omega:
+  ossId: github-remote
+  publicClient:
+    supported: false
+    evidence:
+      - url: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app
+        fetchedAt: 2026-10-20
+        sha256: 11b1b4c387b6233c0b7a63af7682a32ba3c06409faffa172c8a1ef11094b4160
+        quote: "client_secret string Required. The client secret for your GitHub App."
+      - url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps
+        fetchedAt: 2026-10-20
+        sha256: 680fee73781f3c9a8b2b0342de7238611d3fa4fa2f6566b0f39c66c278f65c6a
+        quote: "client_secret string Required The client secret you received from GitHub for your OAuth app."
+    notes: "GitHub's device flow needs no secret, but omega mcp login runs the authorization-code flow only."

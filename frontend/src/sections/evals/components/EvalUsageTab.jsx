@@ -27,6 +27,7 @@ import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback
 import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
 import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
+import { RECORDED_VERSION_TOOLTIP } from "../Helpers/evalVersionCopy";
 import { isEditableElement } from "src/utils/keyboardUtils";
 import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import UsageChart from "./UsageChart";
@@ -933,12 +934,11 @@ const DetailPanelContent = ({
               />
               {row.version != null && row.version !== "" && (
                 <DetailRow
-                  label="Version"
+                  label="Recorded version"
                   value={
-                    typeof row.version === "number" ||
-                    !String(row.version).startsWith("v")
-                      ? `v${row.version}`
-                      : String(row.version)
+                    <span title={RECORDED_VERSION_TOOLTIP}>
+                      {`Recorded ${typeof row.version === "number" || !String(row.version).startsWith("v") ? `v${row.version}` : String(row.version)}`}
+                    </span>
                   }
                 />
               )}

@@ -4,7 +4,15 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import useRequestColumns from "../useRequestColumns";
-import { DEFAULT_CONFIG } from "../columnModel";
+import { BUILTIN_COLUMNS } from "../columnModel";
+
+// Every built-in shown, in the canonical order: a plain config for the
+// mechanics below (the default view hides three, see DEFAULT_CONFIG).
+const PLAIN = Object.freeze({
+  v: 1,
+  columns: BUILTIN_COLUMNS.map((col) => ({ id: col.id })),
+  hidden: [],
+});
 
 const { get } = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock("src/utils/axios", () => ({
@@ -38,8 +46,8 @@ beforeEach(() => {
   localStorage.setItem(
     KEY,
     JSON.stringify({
-      ...DEFAULT_CONFIG,
-      columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      ...PLAIN,
+      columns: [...PLAIN.columns, { id: "metadata:tenant" }],
     }),
   );
 });

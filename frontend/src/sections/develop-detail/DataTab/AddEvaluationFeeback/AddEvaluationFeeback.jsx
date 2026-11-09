@@ -798,7 +798,8 @@ RadioField.propTypes = {
   label: PropTypes.string || undefined,
   groupSx: PropTypes.object,
   options: PropTypes.arrayOf(
-    PropTypes.shape({ label: PropTypes.string, value: PropTypes.string }),
+    // The re-tune options pass JSX labels (title + description).
+    PropTypes.shape({ label: PropTypes.node, value: PropTypes.string }),
   ),
 };
 

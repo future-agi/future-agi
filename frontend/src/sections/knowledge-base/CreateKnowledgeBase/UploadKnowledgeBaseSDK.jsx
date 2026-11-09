@@ -1,3 +1,6 @@
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import { Box, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useEffect, useState } from "react";
@@ -54,6 +57,7 @@ const UploadKnowledgeBaseSDK = ({ pythonCode }) => {
 
   return (
     <Box>
+      <PersonalKeyControl />
       <TabWrapper>
         <CustomTabs
           textColor="primary"
@@ -126,4 +130,10 @@ UploadKnowledgeBaseSDK.propTypes = {
   pythonCode: PropTypes.string,
 };
 
-export default UploadKnowledgeBaseSDK;
+export default function KnowledgeBaseSnippet(props) {
+  return (
+    <PersonalKeySnippet>
+      <UploadKnowledgeBaseSDK {...props} />
+    </PersonalKeySnippet>
+  );
+}

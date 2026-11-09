@@ -2,7 +2,7 @@ import uuid
 
 import jsonschema
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, router, transaction
 
 from agent_playground.models.choices import (
     RESERVED_NAME_CHARS,
@@ -127,7 +127,7 @@ class Node(BaseModel):
                 instance=self.config, schema=self.node_template.config_schema
             )
         except jsonschema.ValidationError as e:
-            raise ValidationError(f"Invalid config: {e.message}")
+            raise ValidationError(f"Invalid config: {e.message}")  # noqa: B904
 
     def _validate_subgraph_node_config(self) -> None:
         """
@@ -243,7 +243,19 @@ class Node(BaseModel):
         self._validate_no_graph_reference_cycle()
 
     def save(self, *args, **kwargs):
+        from agent_playground.services.engine.output_sinks.scope import (
+            validate_node_sink_save,
+        )
+
+        using = kwargs.get("using") or router.db_for_write(type(self))
+        kwargs["using"] = using
         skip_validation = kwargs.pop("skip_validation", False)
-        if not skip_validation:
-            self.clean()
-        super().save(*args, **kwargs)
+        with transaction.atomic(using=using):
+            # Compare to persisted primary state, not a stale/cached instance.
+            # Draft/schema bypasses never bypass exact tenant authorization.
+            validate_node_sink_save(
+                self, using=using, update_fields=kwargs.get("update_fields")
+            )
+            if not skip_validation:
+                self.clean()
+            super().save(*args, **kwargs)

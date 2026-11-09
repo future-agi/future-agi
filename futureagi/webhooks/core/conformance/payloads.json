@@ -1,0 +1,1763 @@
+{
+  "conformance_version": "1.4.0",
+  "file": "payloads",
+  "rules": {
+    "serialization": "UTF-8 JSON, separators ',' and ':', no whitespace, no trailing newline, non-ASCII as raw UTF-8 (never \\u escapes), the escapes of RFC 8259 with lower-case hex for other control characters, '/' not escaped, keys in the builder order below, no NaN or Infinity. Numbers are IEEE-754 doubles written exactly as ECMAScript Number::toString writes them (what JSON.stringify emits): integers below 2^53 in full, 1.0 -> 1, 0.00001, 1.5e-7, 1e+21, 2^60 -> 1152921504606847000, -0.0 -> 0. JSON.stringify(JSON.parse(body)) reproduces every body. Every string is valid Unicode and every number finite: intake refuses a notice whose webhook_context holds a lone surrogate or a non-finite number (b8/fixtures.json rules.context), so no body ever needs one.",
+    "envelope_order": [
+      "id",
+      "type",
+      "api_version",
+      "timestamp",
+      "organization_id",
+      "workspace_id",
+      "test (tests only)",
+      "data"
+    ],
+    "prompt.version.created": "data: prompt{id,name}, version{id,version,commit_message,[commit_message_truncated],is_default,labels[{id,name,type}],created_at,created_by}, previous_version{id,version}|null, links{app,api}, then content or content_omitted (full mode only); timestamp = version.created_at",
+    "prompt.label.changed": "data: action, cause, prompt{id,name}, label{id,name,type}, revision, from_version{id,version}|null, to_version{id,version,commit_message,[commit_message_truncated]}|null, changed_at, changed_by, links{app,api}, then content (full mode only); action is assigned when from is null, removed when to is null, else moved; timestamp = changed_at",
+    "deployment.run": "B8-EVENT-CONTRACT.md section 7.1, keys in the order of section 12.5; context_dropped follows context; error keys type, code, http_status, host (present ones only); only the named notice fields are copied. run.context keys are the customer's, so they are written in the order JSON.parse gives them (ECMA-262 OrdinaryOwnPropertyKeys): keys that are array indexes (0 or a decimal integer without a leading zero, below 2^32 - 1) ascending by value first, then the other keys in received order. data.deployment.name is X-Omega-Deployment-Name decoded by the deployment_name_header rule",
+    "people": "{id, name} with name the display name or null; {id} when include_people_names is false; null when no person acted",
+    "commit_message": "scrub, then cut. Scrub: every match of the secret-shape pattern sk-[A-Za-z0-9_-]{8,}|whsec_[A-Za-z0-9+/=]{8,} (one alternation, leftmost first, non-overlapping) is replaced by the 10 characters [redacted], in thin and full mode, in version.commit_message and to_version.commit_message. Cut: thin keeps the first 200 Unicode code points of the scrubbed text, full the first 1,000; commit_message_truncated: true right after it when cut; no ellipsis. Cutting first could leave the head of a key (sk-p) too short to match",
+    "test_events": "id evt_test_<ulid>, test: true after workspace_id, nil UUID for prompt, version and label ids, names prefixed '[Test] ', dep-0000000000000000 for a deployment",
+    "secret_shapes": "the vectors use only 'sk-' + 8 or more of [A-Za-z0-9_-] and 'whsec_' + 8 or more base64 characters; FA's scrubber may know more shapes (owned by the scrubber, not these vectors), and masks each match with [redacted]. A shape in run context drops the whole context (context_dropped); in full-mode content it omits the content (content_omitted); in a commit message it is masked in place",
+    "deployment_name_header": "X-Omega-Deployment-Name (percent-encoded UTF-8, contract section 4.3): the wire value must be visible ASCII (U+0020-U+007E); each %XX with two hex digits (either case) is one byte, any other character is its own byte (a '%' without two hex digits stays as it is, '+' is not a space); the bytes must be strict UTF-8 (no invalid, truncated, overlong or surrogate sequence; a U+FEFF is kept). Otherwise intake answers 400 invalid_header, field X-Omega-Deployment-Name (contract section 5.1 step 3). Do not use a decoder that throws on a lone '%' (decodeURIComponent) or replaces bad bytes (unquote's default)",
+    "full_mode": "content{messages[{role,text}] or template, variables[], model}; nothing else (P3)",
+    "fan_out": "events in acceptance order; endpoints in id order; an endpoint takes the event when its workspace matches (or it is org-wide) and any subscription matches the type (exact or group 'x.*') and its filters; a targeted endpoint takes it without a subscription, or through its subscriptions' filters minus the deployment filter, and never twice; deployment.run.failed subscriptions default statuses to [failed, interrupted]; every non-test delivery takes the endpoint's next sequence number; an endpoint that is not enabled gets paused deliveries until paused_count reaches 10,000, then skipped (backlog_cap), both numbered; tests go only to their endpoint, with seq null"
+  },
+  "build": [
+    {
+      "id": "b8-12-5",
+      "builder": "deployment.run",
+      "input": {
+        "dep_id": "dep-3f9a0c1d2e4b5a69",
+        "notice_b64": "eyJwcm90b2NvbCI6Im9tZWdhLWRlcGxveS1ydW4tZXZlbnQvdjEiLCJub3RpY2VfaWQiOiIwMWExNjMyMC0wZjlhLTdhM2ItOWM1NS0yZjFlOGEwYjZkMTMiLCJldmVudCI6InJ1bi5jb21wbGV0ZWQiLCJydW4iOnsiaWQiOiJydW5fMDFNNUhIWlgzSkI4RjBSRkNWRldRNE1WNDEiLCJ0aHJlYWRfaWQiOiJ0aF8wMU01SEhYSjZDM1c3MlRGMkJCOU1RSDFXUCIsImFzc2lzdGFudF9pZCI6bnVsbCwid29ya2Zsb3dfaWQiOiJzdXBwb3J0LWFnZW50IiwicmV2aXNpb24iOjQsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwic3VwZXJzdGVwcyI6OSwiZXJyb3IiOm51bGwsInRyYWNlX2lkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJ3ZWJob29rIjoid2hlcF8wMU01RkZRVjlSNUNZNFRRS0ZFMjBTNThYTSIsIndlYmhvb2tfY29udGV4dCI6eyJ0aWNrZXQiOiI0ODIxMyIsInF1ZXVlIjoicmVmdW5kcyJ9fSwidXNhZ2UiOnsiaW5wdXRfdG9rZW5zIjoxODM0LCJvdXRwdXRfdG9rZW5zIjo0MDIsInRvdGFsX3Rva2VucyI6MjIzNiwibW9kZWxfY2FsbHMiOjN9fQ==",
+        "headers": {
+          "X-Omega-Deployment-Name": "support-agent",
+          "X-Omega-Deployment-Environment": "production",
+          "X-Omega-Deployment-Url": "https://support-agent.example.test"
+        },
+        "fa": {
+          "event_id": "evt_01M5HJ03YMFHNNMJ9R4WB0BX73",
+          "organization_id": "11111111-1111-4111-8111-111111111111",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "project_id": "8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f",
+          "verified_by_trace": true,
+          "observe_usage": {
+            "input_tokens": 1834,
+            "output_tokens": 402,
+            "total_tokens": 2236,
+            "model_calls": 3
+          },
+          "cost": {
+            "usd_micros": 4127,
+            "final": true
+          },
+          "links": {
+            "deployment": "https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69",
+            "trace": "https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        }
+      },
+      "schema": "urn:futureagi:webhooks:v1:deployment.run.completed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEowM1lNRkhOTk1KOVI0V0IwQlg3MyIsInR5cGUiOiJkZXBsb3ltZW50LnJ1bi5jb21wbGV0ZWQiLCJhcGlfdmVyc2lvbiI6InYxIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwib3JnYW5pemF0aW9uX2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwid29ya3NwYWNlX2lkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwiZGF0YSI6eyJkZXBsb3ltZW50Ijp7ImlkIjoiZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJuYW1lIjoic3VwcG9ydC1hZ2VudCIsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInJldmlzaW9uIjo0fSwicnVuIjp7ImlkIjoicnVuXzAxTTVISFpYM0pCOEYwUkZDVkZXUTRNVjQxIiwidGhyZWFkX2lkIjoidGhfMDFNNUhIWEo2QzNXNzJURjJCQjlNUUgxV1AiLCJhc3Npc3RhbnRfaWQiOm51bGwsIndvcmtmbG93X2lkIjoic3VwcG9ydC1hZ2VudCIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwiZHVyYXRpb25fbXMiOjY4MzAsInF1ZXVlX21zIjoxMTAsInN1cGVyc3RlcHMiOjksImVycm9yIjpudWxsLCJjb250ZXh0Ijp7InRpY2tldCI6IjQ4MjEzIiwicXVldWUiOiJyZWZ1bmRzIn0sInZlcmlmaWVkX2J5X3RyYWNlIjp0cnVlfSwidXNhZ2UiOnsiaW5wdXRfdG9rZW5zIjoxODM0LCJvdXRwdXRfdG9rZW5zIjo0MDIsInRvdGFsX3Rva2VucyI6MjIzNiwibW9kZWxfY2FsbHMiOjMsInNvdXJjZSI6Im9ic2VydmUifSwiY29zdCI6eyJ1c2RfbWljcm9zIjo0MTI3LCJmaW5hbCI6dHJ1ZSwiYmFzaXMiOiJvYnNlcnZlX21vZGVsX3ByaWNlcyJ9LCJ0cmFjZSI6eyJpZCI6IjRiZjkyZjM1NzdiMzRkYTZhM2NlOTI5ZDBlMGU0NzM2IiwicHJvamVjdF9pZCI6IjhkM2U1ZjEwLTJhNGItNGM2ZC04ZTlmLTBhMWIyYzNkNGU1ZiJ9LCJsaW5rcyI6eyJkZXBsb3ltZW50IjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0L2Rhc2hib2FyZC9kZXBsb3ltZW50cy9kZXAtM2Y5YTBjMWQyZTRiNWE2OSIsInRyYWNlIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0L2Rhc2hib2FyZC9vYnNlcnZlLzhkM2U1ZjEwLTJhNGItNGM2ZC04ZTlmLTBhMWIyYzNkNGU1Zi90cmFjZS80YmY5MmYzNTc3YjM0ZGE2YTNjZTkyOWQwZTBlNDczNiIsInJ1bl9hcGkiOiJodHRwczovL3N1cHBvcnQtYWdlbnQuZXhhbXBsZS50ZXN0L3N0dWRpby92MS9ydW5zL3J1bl8wMU01SEhaWDNKQjhGMFJGQ1ZGV1E0TVY0MSJ9fX0=",
+        "body_text": "{\"id\":\"evt_01M5HJ03YMFHNNMJ9R4WB0BX73\",\"type\":\"deployment.run.completed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T10:20:07.950Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"deployment\":{\"id\":\"dep-3f9a0c1d2e4b5a69\",\"name\":\"support-agent\",\"environment\":\"production\",\"revision\":4},\"run\":{\"id\":\"run_01M5HHZX3JB8F0RFCVFWQ4MV41\",\"thread_id\":\"th_01M5HHXJ6C3W72TF2BB9MQH1WP\",\"assistant_id\":null,\"workflow_id\":\"support-agent\",\"status\":\"succeeded\",\"attempt\":1,\"trigger\":{\"kind\":\"api\",\"cron_id\":null},\"created_at\":\"2026-10-22T10:20:01.010Z\",\"started_at\":\"2026-10-22T10:20:01.120Z\",\"ended_at\":\"2026-10-22T10:20:07.950Z\",\"duration_ms\":6830,\"queue_ms\":110,\"supersteps\":9,\"error\":null,\"context\":{\"ticket\":\"48213\",\"queue\":\"refunds\"},\"verified_by_trace\":true},\"usage\":{\"input_tokens\":1834,\"output_tokens\":402,\"total_tokens\":2236,\"model_calls\":3,\"source\":\"observe\"},\"cost\":{\"usd_micros\":4127,\"final\":true,\"basis\":\"observe_model_prices\"},\"trace\":{\"id\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"project_id\":\"8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f\"},\"links\":{\"deployment\":\"https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69\",\"trace\":\"https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736\",\"run_api\":\"https://support-agent.example.test/studio/v1/runs/run_01M5HHZX3JB8F0RFCVFWQ4MV41\"}}}",
+        "bytes": 1415,
+        "sha256": "4c9fa8f5522c936a8308bf01decbd1568966efbb1deacbc03ad6bb9211a1b7ed"
+      },
+      "note": "B8-EVENT-CONTRACT.md section 12.1 -> section 12.5, byte for byte"
+    },
+    {
+      "id": "b8-12-4-cancelled-queued",
+      "builder": "deployment.run",
+      "input": {
+        "dep_id": "dep-3f9a0c1d2e4b5a69",
+        "notice_b64": "eyJwcm90b2NvbCI6Im9tZWdhLWRlcGxveS1ydW4tZXZlbnQvdjEiLCJub3RpY2VfaWQiOiIwMWExNjMyNC1mOTk5LTcwYjItYmQ0ZS01ZjYwNzE4MjkzYTQiLCJldmVudCI6InJ1bi5mYWlsZWQiLCJydW4iOnsiaWQiOiJydW5fMDFNNUhKOTBLQ0RTRU1SRVNBMzQ0RkZTUE4iLCJ0aHJlYWRfaWQiOm51bGwsImFzc2lzdGFudF9pZCI6bnVsbCwid29ya2Zsb3dfaWQiOiJuaWdodGx5LWRpZ2VzdCIsInJldmlzaW9uIjo0LCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJzdGF0dXMiOiJjYW5jZWxsZWQiLCJhdHRlbXB0IjoxLCJ0cmlnZ2VyIjp7ImtpbmQiOiJjcm9uIiwiY3Jvbl9pZCI6ImNyb25fbmlnaHRseS1kaWdlc3QifSwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjQ6NTkuNTAwWiIsInN0YXJ0ZWRfYXQiOm51bGwsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyNTozMC4wMDRaIiwic3VwZXJzdGVwcyI6MCwiZXJyb3IiOnsidHlwZSI6IlJ1bkNhbmNlbGxlZCIsImNvZGUiOiJjYW5jZWxsZWQifSwidHJhY2VfaWQiOm51bGwsIndlYmhvb2siOm51bGwsIndlYmhvb2tfY29udGV4dCI6bnVsbH0sInVzYWdlIjpudWxsfQ==",
+        "headers": {
+          "X-Omega-Deployment-Name": "nightly-digest",
+          "X-Omega-Deployment-Environment": "production",
+          "X-Omega-Deployment-Url": "https://nightly-digest.example.test"
+        },
+        "fa": {
+          "event_id": "evt_01M5HJ9YCTPK6Y9EVZ0NC16YAP",
+          "organization_id": "11111111-1111-4111-8111-111111111111",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "project_id": "8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f",
+          "verified_by_trace": false,
+          "observe_usage": null,
+          "cost": null,
+          "links": {
+            "deployment": "https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69",
+            "trace": "https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        }
+      },
+      "schema": "urn:futureagi:webhooks:v1:deployment.run.failed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEo5WUNUUEs2WTlFVlowTkMxNllBUCIsInR5cGUiOiJkZXBsb3ltZW50LnJ1bi5mYWlsZWQiLCJhcGlfdmVyc2lvbiI6InYxIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yMlQxMDoyNTozMC4wMDRaIiwib3JnYW5pemF0aW9uX2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwid29ya3NwYWNlX2lkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwiZGF0YSI6eyJkZXBsb3ltZW50Ijp7ImlkIjoiZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJuYW1lIjoibmlnaHRseS1kaWdlc3QiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJyZXZpc2lvbiI6NH0sInJ1biI6eyJpZCI6InJ1bl8wMU01SEo5MEtDRFNFTVJFU0EzNDRGRlNQTiIsInRocmVhZF9pZCI6bnVsbCwiYXNzaXN0YW50X2lkIjpudWxsLCJ3b3JrZmxvd19pZCI6Im5pZ2h0bHktZGlnZXN0Iiwic3RhdHVzIjoiY2FuY2VsbGVkIiwiYXR0ZW1wdCI6MSwidHJpZ2dlciI6eyJraW5kIjoiY3JvbiIsImNyb25faWQiOiJjcm9uX25pZ2h0bHktZGlnZXN0In0sImNyZWF0ZWRfYXQiOiIyMDI2LTEwLTIyVDEwOjI0OjU5LjUwMFoiLCJzdGFydGVkX2F0IjpudWxsLCJlbmRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjU6MzAuMDA0WiIsImR1cmF0aW9uX21zIjpudWxsLCJxdWV1ZV9tcyI6bnVsbCwic3VwZXJzdGVwcyI6MCwiZXJyb3IiOnsidHlwZSI6IlJ1bkNhbmNlbGxlZCIsImNvZGUiOiJjYW5jZWxsZWQifSwiY29udGV4dCI6bnVsbCwidmVyaWZpZWRfYnlfdHJhY2UiOmZhbHNlfSwidXNhZ2UiOm51bGwsImNvc3QiOm51bGwsInRyYWNlIjpudWxsLCJsaW5rcyI6eyJkZXBsb3ltZW50IjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0L2Rhc2hib2FyZC9kZXBsb3ltZW50cy9kZXAtM2Y5YTBjMWQyZTRiNWE2OSIsInRyYWNlIjpudWxsLCJydW5fYXBpIjoiaHR0cHM6Ly9uaWdodGx5LWRpZ2VzdC5leGFtcGxlLnRlc3Qvc3R1ZGlvL3YxL3J1bnMvcnVuXzAxTTVISjkwS0NEU0VNUkVTQTM0NEZGU1BOIn19fQ==",
+        "body_text": "{\"id\":\"evt_01M5HJ9YCTPK6Y9EVZ0NC16YAP\",\"type\":\"deployment.run.failed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T10:25:30.004Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"deployment\":{\"id\":\"dep-3f9a0c1d2e4b5a69\",\"name\":\"nightly-digest\",\"environment\":\"production\",\"revision\":4},\"run\":{\"id\":\"run_01M5HJ90KCDSEMRESA344FFSPN\",\"thread_id\":null,\"assistant_id\":null,\"workflow_id\":\"nightly-digest\",\"status\":\"cancelled\",\"attempt\":1,\"trigger\":{\"kind\":\"cron\",\"cron_id\":\"cron_nightly-digest\"},\"created_at\":\"2026-10-22T10:24:59.500Z\",\"started_at\":null,\"ended_at\":\"2026-10-22T10:25:30.004Z\",\"duration_ms\":null,\"queue_ms\":null,\"supersteps\":0,\"error\":{\"type\":\"RunCancelled\",\"code\":\"cancelled\"},\"context\":null,\"verified_by_trace\":false},\"usage\":null,\"cost\":null,\"trace\":null,\"links\":{\"deployment\":\"https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69\",\"trace\":null,\"run_api\":\"https://nightly-digest.example.test/studio/v1/runs/run_01M5HJ90KCDSEMRESA344FFSPN\"}}}",
+        "bytes": 1036,
+        "sha256": "ff94f7e5a4f923f0a393c0feeef7697d6b28568319c0f3991b7df630fc773516"
+      },
+      "note": "section 12.4: started_at null, so duration_ms, queue_ms, trace, cost, links.trace are null"
+    },
+    {
+      "id": "b8-context-secret-shape",
+      "builder": "deployment.run",
+      "input": {
+        "dep_id": "dep-3f9a0c1d2e4b5a69",
+        "notice_b64": "eyJwcm90b2NvbCI6Im9tZWdhLWRlcGxveS1ydW4tZXZlbnQvdjEiLCJub3RpY2VfaWQiOiIwMWExNjMyMC0wZjlhLTdhM2ItOWM1NS0yZjFlOGEwYjZkMTMiLCJldmVudCI6InJ1bi5jb21wbGV0ZWQiLCJydW4iOnsiaWQiOiJydW5fMDFNNUhIWlgzSkI4RjBSRkNWRldRNE1WNDEiLCJ0aHJlYWRfaWQiOiJ0aF8wMU01SEhYSjZDM1c3MlRGMkJCOU1RSDFXUCIsImFzc2lzdGFudF9pZCI6bnVsbCwid29ya2Zsb3dfaWQiOiJzdXBwb3J0LWFnZW50IiwicmV2aXNpb24iOjQsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwic3VwZXJzdGVwcyI6OSwiZXJyb3IiOm51bGwsInRyYWNlX2lkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJ3ZWJob29rIjoid2hlcF8wMU01RkZRVjlSNUNZNFRRS0ZFMjBTNThYTSIsIndlYmhvb2tfY29udGV4dCI6eyJ0aWNrZXQiOiI0ODIxMyIsInRva2VuIjoic2stbGl2ZS1jYW5hcnkwMTIzNDU2Nzg5In19LCJ1c2FnZSI6eyJpbnB1dF90b2tlbnMiOjE4MzQsIm91dHB1dF90b2tlbnMiOjQwMiwidG90YWxfdG9rZW5zIjoyMjM2LCJtb2RlbF9jYWxscyI6M319",
+        "headers": {
+          "X-Omega-Deployment-Name": "support-agent",
+          "X-Omega-Deployment-Environment": "production",
+          "X-Omega-Deployment-Url": "https://support-agent.example.test"
+        },
+        "fa": {
+          "event_id": "evt_01M5HJ03YMFHNNMJ9R4WB0BX73",
+          "organization_id": "11111111-1111-4111-8111-111111111111",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "project_id": "8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f",
+          "verified_by_trace": true,
+          "observe_usage": {
+            "input_tokens": 1834,
+            "output_tokens": 402,
+            "total_tokens": 2236,
+            "model_calls": 3
+          },
+          "cost": {
+            "usd_micros": 4127,
+            "final": true
+          },
+          "links": {
+            "deployment": "https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69",
+            "trace": "https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        }
+      },
+      "schema": "urn:futureagi:webhooks:v1:deployment.run.completed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEowM1lNRkhOTk1KOVI0V0IwQlg3MyIsInR5cGUiOiJkZXBsb3ltZW50LnJ1bi5jb21wbGV0ZWQiLCJhcGlfdmVyc2lvbiI6InYxIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwib3JnYW5pemF0aW9uX2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwid29ya3NwYWNlX2lkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwiZGF0YSI6eyJkZXBsb3ltZW50Ijp7ImlkIjoiZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJuYW1lIjoic3VwcG9ydC1hZ2VudCIsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInJldmlzaW9uIjo0fSwicnVuIjp7ImlkIjoicnVuXzAxTTVISFpYM0pCOEYwUkZDVkZXUTRNVjQxIiwidGhyZWFkX2lkIjoidGhfMDFNNUhIWEo2QzNXNzJURjJCQjlNUUgxV1AiLCJhc3Npc3RhbnRfaWQiOm51bGwsIndvcmtmbG93X2lkIjoic3VwcG9ydC1hZ2VudCIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwiZHVyYXRpb25fbXMiOjY4MzAsInF1ZXVlX21zIjoxMTAsInN1cGVyc3RlcHMiOjksImVycm9yIjpudWxsLCJjb250ZXh0IjpudWxsLCJjb250ZXh0X2Ryb3BwZWQiOiJzZWNyZXRfc2hhcGUiLCJ2ZXJpZmllZF9ieV90cmFjZSI6dHJ1ZX0sInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MTgzNCwib3V0cHV0X3Rva2VucyI6NDAyLCJ0b3RhbF90b2tlbnMiOjIyMzYsIm1vZGVsX2NhbGxzIjozLCJzb3VyY2UiOiJvYnNlcnZlIn0sImNvc3QiOnsidXNkX21pY3JvcyI6NDEyNywiZmluYWwiOnRydWUsImJhc2lzIjoib2JzZXJ2ZV9tb2RlbF9wcmljZXMifSwidHJhY2UiOnsiaWQiOiI0YmY5MmYzNTc3YjM0ZGE2YTNjZTkyOWQwZTBlNDczNiIsInByb2plY3RfaWQiOiI4ZDNlNWYxMC0yYTRiLTRjNmQtOGU5Zi0wYTFiMmMzZDRlNWYifSwibGlua3MiOnsiZGVwbG95bWVudCI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdC9kYXNoYm9hcmQvZGVwbG95bWVudHMvZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJ0cmFjZSI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdC9kYXNoYm9hcmQvb2JzZXJ2ZS84ZDNlNWYxMC0yYTRiLTRjNmQtOGU5Zi0wYTFiMmMzZDRlNWYvdHJhY2UvNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJydW5fYXBpIjoiaHR0cHM6Ly9zdXBwb3J0LWFnZW50LmV4YW1wbGUudGVzdC9zdHVkaW8vdjEvcnVucy9ydW5fMDFNNUhIWlgzSkI4RjBSRkNWRldRNE1WNDEifX19",
+        "body_text": "{\"id\":\"evt_01M5HJ03YMFHNNMJ9R4WB0BX73\",\"type\":\"deployment.run.completed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T10:20:07.950Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"deployment\":{\"id\":\"dep-3f9a0c1d2e4b5a69\",\"name\":\"support-agent\",\"environment\":\"production\",\"revision\":4},\"run\":{\"id\":\"run_01M5HHZX3JB8F0RFCVFWQ4MV41\",\"thread_id\":\"th_01M5HHXJ6C3W72TF2BB9MQH1WP\",\"assistant_id\":null,\"workflow_id\":\"support-agent\",\"status\":\"succeeded\",\"attempt\":1,\"trigger\":{\"kind\":\"api\",\"cron_id\":null},\"created_at\":\"2026-10-22T10:20:01.010Z\",\"started_at\":\"2026-10-22T10:20:01.120Z\",\"ended_at\":\"2026-10-22T10:20:07.950Z\",\"duration_ms\":6830,\"queue_ms\":110,\"supersteps\":9,\"error\":null,\"context\":null,\"context_dropped\":\"secret_shape\",\"verified_by_trace\":true},\"usage\":{\"input_tokens\":1834,\"output_tokens\":402,\"total_tokens\":2236,\"model_calls\":3,\"source\":\"observe\"},\"cost\":{\"usd_micros\":4127,\"final\":true,\"basis\":\"observe_model_prices\"},\"trace\":{\"id\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"project_id\":\"8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f\"},\"links\":{\"deployment\":\"https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69\",\"trace\":\"https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736\",\"run_api\":\"https://support-agent.example.test/studio/v1/runs/run_01M5HHZX3JB8F0RFCVFWQ4MV41\"}}}",
+        "bytes": 1416,
+        "sha256": "00fdf152c654d8d0e097ecf6f1c9b0f4b02366cade4b26a1266c48fa3371a1c6"
+      },
+      "note": "B8-T13: a secret-shaped value drops the whole context"
+    },
+    {
+      "id": "b8-no-public-url-utf8-name",
+      "builder": "deployment.run",
+      "input": {
+        "dep_id": "dep-3f9a0c1d2e4b5a69",
+        "notice_b64": "eyJwcm90b2NvbCI6Im9tZWdhLWRlcGxveS1ydW4tZXZlbnQvdjEiLCJub3RpY2VfaWQiOiIwMWExNjMyMC0wZjlhLTdhM2ItOWM1NS0yZjFlOGEwYjZkMTMiLCJldmVudCI6InJ1bi5jb21wbGV0ZWQiLCJydW4iOnsiaWQiOiJydW5fMDFNNUhIWlgzSkI4RjBSRkNWRldRNE1WNDEiLCJ0aHJlYWRfaWQiOiJ0aF8wMU01SEhYSjZDM1c3MlRGMkJCOU1RSDFXUCIsImFzc2lzdGFudF9pZCI6bnVsbCwid29ya2Zsb3dfaWQiOiJzdXBwb3J0LWFnZW50IiwicmV2aXNpb24iOjQsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwic3VwZXJzdGVwcyI6OSwiZXJyb3IiOm51bGwsInRyYWNlX2lkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJ3ZWJob29rIjoid2hlcF8wMU01RkZRVjlSNUNZNFRRS0ZFMjBTNThYTSIsIndlYmhvb2tfY29udGV4dCI6eyJ0aWNrZXQiOiI0ODIxMyIsInF1ZXVlIjoicmVmdW5kcyJ9fSwidXNhZ2UiOnsiaW5wdXRfdG9rZW5zIjoxODM0LCJvdXRwdXRfdG9rZW5zIjo0MDIsInRvdGFsX3Rva2VucyI6MjIzNiwibW9kZWxfY2FsbHMiOjN9fQ==",
+        "headers": {
+          "X-Omega-Deployment-Name": "support%20agent%20%E2%9C%93",
+          "X-Omega-Deployment-Environment": "production",
+          "X-Omega-Deployment-Url": "-"
+        },
+        "fa": {
+          "event_id": "evt_01M5HJ03YMFHNNMJ9R4WB0BX73",
+          "organization_id": "11111111-1111-4111-8111-111111111111",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "project_id": "8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f",
+          "verified_by_trace": true,
+          "observe_usage": {
+            "input_tokens": 1834,
+            "output_tokens": 402,
+            "total_tokens": 2236,
+            "model_calls": 3
+          },
+          "cost": {
+            "usd_micros": 4127,
+            "final": true
+          },
+          "links": {
+            "deployment": "https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69",
+            "trace": "https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        }
+      },
+      "schema": "urn:futureagi:webhooks:v1:deployment.run.completed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEowM1lNRkhOTk1KOVI0V0IwQlg3MyIsInR5cGUiOiJkZXBsb3ltZW50LnJ1bi5jb21wbGV0ZWQiLCJhcGlfdmVyc2lvbiI6InYxIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwib3JnYW5pemF0aW9uX2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwid29ya3NwYWNlX2lkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwiZGF0YSI6eyJkZXBsb3ltZW50Ijp7ImlkIjoiZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJuYW1lIjoic3VwcG9ydCBhZ2VudCDinJMiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJyZXZpc2lvbiI6NH0sInJ1biI6eyJpZCI6InJ1bl8wMU01SEhaWDNKQjhGMFJGQ1ZGV1E0TVY0MSIsInRocmVhZF9pZCI6InRoXzAxTTVISFhKNkMzVzcyVEYyQkI5TVFIMVdQIiwiYXNzaXN0YW50X2lkIjpudWxsLCJ3b3JrZmxvd19pZCI6InN1cHBvcnQtYWdlbnQiLCJzdGF0dXMiOiJzdWNjZWVkZWQiLCJhdHRlbXB0IjoxLCJ0cmlnZ2VyIjp7ImtpbmQiOiJhcGkiLCJjcm9uX2lkIjpudWxsfSwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMDEwWiIsInN0YXJ0ZWRfYXQiOiIyMDI2LTEwLTIyVDEwOjIwOjAxLjEyMFoiLCJlbmRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDcuOTUwWiIsImR1cmF0aW9uX21zIjo2ODMwLCJxdWV1ZV9tcyI6MTEwLCJzdXBlcnN0ZXBzIjo5LCJlcnJvciI6bnVsbCwiY29udGV4dCI6eyJ0aWNrZXQiOiI0ODIxMyIsInF1ZXVlIjoicmVmdW5kcyJ9LCJ2ZXJpZmllZF9ieV90cmFjZSI6dHJ1ZX0sInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MTgzNCwib3V0cHV0X3Rva2VucyI6NDAyLCJ0b3RhbF90b2tlbnMiOjIyMzYsIm1vZGVsX2NhbGxzIjozLCJzb3VyY2UiOiJvYnNlcnZlIn0sImNvc3QiOnsidXNkX21pY3JvcyI6NDEyNywiZmluYWwiOnRydWUsImJhc2lzIjoib2JzZXJ2ZV9tb2RlbF9wcmljZXMifSwidHJhY2UiOnsiaWQiOiI0YmY5MmYzNTc3YjM0ZGE2YTNjZTkyOWQwZTBlNDczNiIsInByb2plY3RfaWQiOiI4ZDNlNWYxMC0yYTRiLTRjNmQtOGU5Zi0wYTFiMmMzZDRlNWYifSwibGlua3MiOnsiZGVwbG95bWVudCI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdC9kYXNoYm9hcmQvZGVwbG95bWVudHMvZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJ0cmFjZSI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdC9kYXNoYm9hcmQvb2JzZXJ2ZS84ZDNlNWYxMC0yYTRiLTRjNmQtOGU5Zi0wYTFiMmMzZDRlNWYvdHJhY2UvNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJydW5fYXBpIjpudWxsfX19",
+        "body_text": "{\"id\":\"evt_01M5HJ03YMFHNNMJ9R4WB0BX73\",\"type\":\"deployment.run.completed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T10:20:07.950Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"deployment\":{\"id\":\"dep-3f9a0c1d2e4b5a69\",\"name\":\"support agent ✓\",\"environment\":\"production\",\"revision\":4},\"run\":{\"id\":\"run_01M5HHZX3JB8F0RFCVFWQ4MV41\",\"thread_id\":\"th_01M5HHXJ6C3W72TF2BB9MQH1WP\",\"assistant_id\":null,\"workflow_id\":\"support-agent\",\"status\":\"succeeded\",\"attempt\":1,\"trigger\":{\"kind\":\"api\",\"cron_id\":null},\"created_at\":\"2026-10-22T10:20:01.010Z\",\"started_at\":\"2026-10-22T10:20:01.120Z\",\"ended_at\":\"2026-10-22T10:20:07.950Z\",\"duration_ms\":6830,\"queue_ms\":110,\"supersteps\":9,\"error\":null,\"context\":{\"ticket\":\"48213\",\"queue\":\"refunds\"},\"verified_by_trace\":true},\"usage\":{\"input_tokens\":1834,\"output_tokens\":402,\"total_tokens\":2236,\"model_calls\":3,\"source\":\"observe\"},\"cost\":{\"usd_micros\":4127,\"final\":true,\"basis\":\"observe_model_prices\"},\"trace\":{\"id\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"project_id\":\"8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f\"},\"links\":{\"deployment\":\"https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69\",\"trace\":\"https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736\",\"run_api\":null}}}",
+        "bytes": 1341,
+        "sha256": "80408adedda41efbc6cc61171ce17495c95d9b92172ff2d79e307a7bb7d4542e"
+      },
+      "note": "X-Omega-Deployment-Url '-' gives run_api null; the name is percent-decoded UTF-8, sent as raw UTF-8"
+    },
+    {
+      "id": "b8-runtime-usage-partial-cost",
+      "builder": "deployment.run",
+      "input": {
+        "dep_id": "dep-3f9a0c1d2e4b5a69",
+        "notice_b64": "eyJwcm90b2NvbCI6Im9tZWdhLWRlcGxveS1ydW4tZXZlbnQvdjEiLCJub3RpY2VfaWQiOiIwMWExNjMyMC0wZjlhLTdhM2ItOWM1NS0yZjFlOGEwYjZkMTMiLCJldmVudCI6InJ1bi5jb21wbGV0ZWQiLCJydW4iOnsiaWQiOiJydW5fMDFNNUhIWlgzSkI4RjBSRkNWRldRNE1WNDEiLCJ0aHJlYWRfaWQiOiJ0aF8wMU01SEhYSjZDM1c3MlRGMkJCOU1RSDFXUCIsImFzc2lzdGFudF9pZCI6bnVsbCwid29ya2Zsb3dfaWQiOiJzdXBwb3J0LWFnZW50IiwicmV2aXNpb24iOjQsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwic3VwZXJzdGVwcyI6OSwiZXJyb3IiOm51bGwsInRyYWNlX2lkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJ3ZWJob29rIjoid2hlcF8wMU01RkZRVjlSNUNZNFRRS0ZFMjBTNThYTSIsIndlYmhvb2tfY29udGV4dCI6eyJ0aWNrZXQiOiI0ODIxMyIsInF1ZXVlIjoicmVmdW5kcyJ9fSwidXNhZ2UiOnsiaW5wdXRfdG9rZW5zIjoxODM0LCJvdXRwdXRfdG9rZW5zIjo0MDIsInRvdGFsX3Rva2VucyI6MjIzNiwibW9kZWxfY2FsbHMiOjN9fQ==",
+        "headers": {
+          "X-Omega-Deployment-Name": "support-agent",
+          "X-Omega-Deployment-Environment": "production",
+          "X-Omega-Deployment-Url": "https://support-agent.example.test"
+        },
+        "fa": {
+          "event_id": "evt_01M5HJ03YMFHNNMJ9R4WB0BX73",
+          "organization_id": "11111111-1111-4111-8111-111111111111",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "project_id": "8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f",
+          "verified_by_trace": false,
+          "observe_usage": null,
+          "cost": {
+            "usd_micros": 1200,
+            "final": false
+          },
+          "links": {
+            "deployment": "https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69",
+            "trace": "https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        }
+      },
+      "schema": "urn:futureagi:webhooks:v1:deployment.run.completed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEowM1lNRkhOTk1KOVI0V0IwQlg3MyIsInR5cGUiOiJkZXBsb3ltZW50LnJ1bi5jb21wbGV0ZWQiLCJhcGlfdmVyc2lvbiI6InYxIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwib3JnYW5pemF0aW9uX2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwid29ya3NwYWNlX2lkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwiZGF0YSI6eyJkZXBsb3ltZW50Ijp7ImlkIjoiZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJuYW1lIjoic3VwcG9ydC1hZ2VudCIsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInJldmlzaW9uIjo0fSwicnVuIjp7ImlkIjoicnVuXzAxTTVISFpYM0pCOEYwUkZDVkZXUTRNVjQxIiwidGhyZWFkX2lkIjoidGhfMDFNNUhIWEo2QzNXNzJURjJCQjlNUUgxV1AiLCJhc3Npc3RhbnRfaWQiOm51bGwsIndvcmtmbG93X2lkIjoic3VwcG9ydC1hZ2VudCIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwiZHVyYXRpb25fbXMiOjY4MzAsInF1ZXVlX21zIjoxMTAsInN1cGVyc3RlcHMiOjksImVycm9yIjpudWxsLCJjb250ZXh0Ijp7InRpY2tldCI6IjQ4MjEzIiwicXVldWUiOiJyZWZ1bmRzIn0sInZlcmlmaWVkX2J5X3RyYWNlIjpmYWxzZX0sInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MTgzNCwib3V0cHV0X3Rva2VucyI6NDAyLCJ0b3RhbF90b2tlbnMiOjIyMzYsIm1vZGVsX2NhbGxzIjozLCJzb3VyY2UiOiJydW50aW1lIn0sImNvc3QiOnsidXNkX21pY3JvcyI6MTIwMCwiZmluYWwiOmZhbHNlLCJiYXNpcyI6Im9ic2VydmVfbW9kZWxfcHJpY2VzIn0sInRyYWNlIjp7ImlkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJwcm9qZWN0X2lkIjoiOGQzZTVmMTAtMmE0Yi00YzZkLThlOWYtMGExYjJjM2Q0ZTVmIn0sImxpbmtzIjp7ImRlcGxveW1lbnQiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL2RlcGxveW1lbnRzL2RlcC0zZjlhMGMxZDJlNGI1YTY5IiwidHJhY2UiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL29ic2VydmUvOGQzZTVmMTAtMmE0Yi00YzZkLThlOWYtMGExYjJjM2Q0ZTVmL3RyYWNlLzRiZjkyZjM1NzdiMzRkYTZhM2NlOTI5ZDBlMGU0NzM2IiwicnVuX2FwaSI6Imh0dHBzOi8vc3VwcG9ydC1hZ2VudC5leGFtcGxlLnRlc3Qvc3R1ZGlvL3YxL3J1bnMvcnVuXzAxTTVISFpYM0pCOEYwUkZDVkZXUTRNVjQxIn19fQ==",
+        "body_text": "{\"id\":\"evt_01M5HJ03YMFHNNMJ9R4WB0BX73\",\"type\":\"deployment.run.completed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T10:20:07.950Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"deployment\":{\"id\":\"dep-3f9a0c1d2e4b5a69\",\"name\":\"support-agent\",\"environment\":\"production\",\"revision\":4},\"run\":{\"id\":\"run_01M5HHZX3JB8F0RFCVFWQ4MV41\",\"thread_id\":\"th_01M5HHXJ6C3W72TF2BB9MQH1WP\",\"assistant_id\":null,\"workflow_id\":\"support-agent\",\"status\":\"succeeded\",\"attempt\":1,\"trigger\":{\"kind\":\"api\",\"cron_id\":null},\"created_at\":\"2026-10-22T10:20:01.010Z\",\"started_at\":\"2026-10-22T10:20:01.120Z\",\"ended_at\":\"2026-10-22T10:20:07.950Z\",\"duration_ms\":6830,\"queue_ms\":110,\"supersteps\":9,\"error\":null,\"context\":{\"ticket\":\"48213\",\"queue\":\"refunds\"},\"verified_by_trace\":false},\"usage\":{\"input_tokens\":1834,\"output_tokens\":402,\"total_tokens\":2236,\"model_calls\":3,\"source\":\"runtime\"},\"cost\":{\"usd_micros\":1200,\"final\":false,\"basis\":\"observe_model_prices\"},\"trace\":{\"id\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"project_id\":\"8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f\"},\"links\":{\"deployment\":\"https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69\",\"trace\":\"https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736\",\"run_api\":\"https://support-agent.example.test/studio/v1/runs/run_01M5HHZX3JB8F0RFCVFWQ4MV41\"}}}",
+        "bytes": 1417,
+        "sha256": "6db5497ec7fcd3e0f77973ce13e03f63e0e1a7eb1d9c4ffb44130bf990c48815"
+      },
+      "note": "no root span yet: usage from the notice (source runtime), cost not final"
+    },
+    {
+      "id": "b8-context-numbers",
+      "builder": "deployment.run",
+      "input": {
+        "dep_id": "dep-3f9a0c1d2e4b5a69",
+        "notice_b64": "eyJwcm90b2NvbCI6Im9tZWdhLWRlcGxveS1ydW4tZXZlbnQvdjEiLCJub3RpY2VfaWQiOiIwMWExNjMyMC0wZjlhLTdhM2ItOWM1NS0yZjFlOGEwYjZkMTMiLCJldmVudCI6InJ1bi5jb21wbGV0ZWQiLCJydW4iOnsiaWQiOiJydW5fMDFNNUhIWlgzSkI4RjBSRkNWRldRNE1WNDEiLCJ0aHJlYWRfaWQiOiJ0aF8wMU01SEhYSjZDM1c3MlRGMkJCOU1RSDFXUCIsImFzc2lzdGFudF9pZCI6bnVsbCwid29ya2Zsb3dfaWQiOiJzdXBwb3J0LWFnZW50IiwicmV2aXNpb24iOjQsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwic3VwZXJzdGVwcyI6OSwiZXJyb3IiOm51bGwsInRyYWNlX2lkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJ3ZWJob29rIjoid2hlcF8wMU01RkZRVjlSNUNZNFRRS0ZFMjBTNThYTSIsIndlYmhvb2tfY29udGV4dCI6eyJzY29yZSI6MSwicmF0aW8iOjIuNSwibiI6LTMsIm9rIjp0cnVlLCJ0aW55IjowLjAwMDAxLCJ0aW5pZXIiOjEuNWUtNywiYmlnIjoxZSsyMSwicG93NjAiOjExNTI5MjE1MDQ2MDY4NDcwMDAsImJpZ2ludCI6MTIzNDU2Nzg5MDEyMzQ1NjcwMDAsIm5lZ3plcm8iOjAsInN1bSI6MC4zMDAwMDAwMDAwMDAwMDAwNH19LCJ1c2FnZSI6eyJpbnB1dF90b2tlbnMiOjE4MzQsIm91dHB1dF90b2tlbnMiOjQwMiwidG90YWxfdG9rZW5zIjoyMjM2LCJtb2RlbF9jYWxscyI6M319",
+        "headers": {
+          "X-Omega-Deployment-Name": "support-agent",
+          "X-Omega-Deployment-Environment": "production",
+          "X-Omega-Deployment-Url": "https://support-agent.example.test"
+        },
+        "fa": {
+          "event_id": "evt_01M5HJ03YMFHNNMJ9R4WB0BX73",
+          "organization_id": "11111111-1111-4111-8111-111111111111",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "project_id": "8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f",
+          "verified_by_trace": true,
+          "observe_usage": {
+            "input_tokens": 1834,
+            "output_tokens": 402,
+            "total_tokens": 2236,
+            "model_calls": 3
+          },
+          "cost": {
+            "usd_micros": 4127,
+            "final": true
+          },
+          "links": {
+            "deployment": "https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69",
+            "trace": "https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        }
+      },
+      "schema": "urn:futureagi:webhooks:v1:deployment.run.completed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEowM1lNRkhOTk1KOVI0V0IwQlg3MyIsInR5cGUiOiJkZXBsb3ltZW50LnJ1bi5jb21wbGV0ZWQiLCJhcGlfdmVyc2lvbiI6InYxIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwib3JnYW5pemF0aW9uX2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwid29ya3NwYWNlX2lkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwiZGF0YSI6eyJkZXBsb3ltZW50Ijp7ImlkIjoiZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJuYW1lIjoic3VwcG9ydC1hZ2VudCIsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInJldmlzaW9uIjo0fSwicnVuIjp7ImlkIjoicnVuXzAxTTVISFpYM0pCOEYwUkZDVkZXUTRNVjQxIiwidGhyZWFkX2lkIjoidGhfMDFNNUhIWEo2QzNXNzJURjJCQjlNUUgxV1AiLCJhc3Npc3RhbnRfaWQiOm51bGwsIndvcmtmbG93X2lkIjoic3VwcG9ydC1hZ2VudCIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwiZHVyYXRpb25fbXMiOjY4MzAsInF1ZXVlX21zIjoxMTAsInN1cGVyc3RlcHMiOjksImVycm9yIjpudWxsLCJjb250ZXh0Ijp7InNjb3JlIjoxLCJyYXRpbyI6Mi41LCJuIjotMywib2siOnRydWUsInRpbnkiOjAuMDAwMDEsInRpbmllciI6MS41ZS03LCJiaWciOjFlKzIxLCJwb3c2MCI6MTE1MjkyMTUwNDYwNjg0NzAwMCwiYmlnaW50IjoxMjM0NTY3ODkwMTIzNDU2NzAwMCwibmVnemVybyI6MCwic3VtIjowLjMwMDAwMDAwMDAwMDAwMDA0fSwidmVyaWZpZWRfYnlfdHJhY2UiOnRydWV9LCJ1c2FnZSI6eyJpbnB1dF90b2tlbnMiOjE4MzQsIm91dHB1dF90b2tlbnMiOjQwMiwidG90YWxfdG9rZW5zIjoyMjM2LCJtb2RlbF9jYWxscyI6Mywic291cmNlIjoib2JzZXJ2ZSJ9LCJjb3N0Ijp7InVzZF9taWNyb3MiOjQxMjcsImZpbmFsIjp0cnVlLCJiYXNpcyI6Im9ic2VydmVfbW9kZWxfcHJpY2VzIn0sInRyYWNlIjp7ImlkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJwcm9qZWN0X2lkIjoiOGQzZTVmMTAtMmE0Yi00YzZkLThlOWYtMGExYjJjM2Q0ZTVmIn0sImxpbmtzIjp7ImRlcGxveW1lbnQiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL2RlcGxveW1lbnRzL2RlcC0zZjlhMGMxZDJlNGI1YTY5IiwidHJhY2UiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL29ic2VydmUvOGQzZTVmMTAtMmE0Yi00YzZkLThlOWYtMGExYjJjM2Q0ZTVmL3RyYWNlLzRiZjkyZjM1NzdiMzRkYTZhM2NlOTI5ZDBlMGU0NzM2IiwicnVuX2FwaSI6Imh0dHBzOi8vc3VwcG9ydC1hZ2VudC5leGFtcGxlLnRlc3Qvc3R1ZGlvL3YxL3J1bnMvcnVuXzAxTTVISFpYM0pCOEYwUkZDVkZXUTRNVjQxIn19fQ==",
+        "body_text": "{\"id\":\"evt_01M5HJ03YMFHNNMJ9R4WB0BX73\",\"type\":\"deployment.run.completed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T10:20:07.950Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"deployment\":{\"id\":\"dep-3f9a0c1d2e4b5a69\",\"name\":\"support-agent\",\"environment\":\"production\",\"revision\":4},\"run\":{\"id\":\"run_01M5HHZX3JB8F0RFCVFWQ4MV41\",\"thread_id\":\"th_01M5HHXJ6C3W72TF2BB9MQH1WP\",\"assistant_id\":null,\"workflow_id\":\"support-agent\",\"status\":\"succeeded\",\"attempt\":1,\"trigger\":{\"kind\":\"api\",\"cron_id\":null},\"created_at\":\"2026-10-22T10:20:01.010Z\",\"started_at\":\"2026-10-22T10:20:01.120Z\",\"ended_at\":\"2026-10-22T10:20:07.950Z\",\"duration_ms\":6830,\"queue_ms\":110,\"supersteps\":9,\"error\":null,\"context\":{\"score\":1,\"ratio\":2.5,\"n\":-3,\"ok\":true,\"tiny\":0.00001,\"tinier\":1.5e-7,\"big\":1e+21,\"pow60\":1152921504606847000,\"bigint\":12345678901234567000,\"negzero\":0,\"sum\":0.30000000000000004},\"verified_by_trace\":true},\"usage\":{\"input_tokens\":1834,\"output_tokens\":402,\"total_tokens\":2236,\"model_calls\":3,\"source\":\"observe\"},\"cost\":{\"usd_micros\":4127,\"final\":true,\"basis\":\"observe_model_prices\"},\"trace\":{\"id\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"project_id\":\"8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f\"},\"links\":{\"deployment\":\"https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69\",\"trace\":\"https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736\",\"run_api\":\"https://support-agent.example.test/studio/v1/runs/run_01M5HHZX3JB8F0RFCVFWQ4MV41\"}}}",
+        "bytes": 1558,
+        "sha256": "0713f7c97b371d0305edea193e9d1fa826e85bed63b35b59a6b96dae6b19f8e0"
+      },
+      "note": "numbers are IEEE-754 doubles written as ECMAScript Number::toString (JSON.stringify): 1.0 -> 1, 0.00001 (not 1e-05), 1.5e-7, 1e+21, 2^60 -> 1152921504606847000, -0.0 -> 0"
+    },
+    {
+      "id": "b8-failed-tool-error-unknown-fields",
+      "builder": "deployment.run",
+      "input": {
+        "dep_id": "dep-3f9a0c1d2e4b5a69",
+        "notice_b64": "eyJwcm90b2NvbCI6Im9tZWdhLWRlcGxveS1ydW4tZXZlbnQvdjEiLCJub3RpY2VfaWQiOiIwMWExNjM0NS1hMGY3LTc4OGQtOTcyYi1lY2FlNTA0MGVkOTYiLCJldmVudCI6InJ1bi5mYWlsZWQiLCJydW4iOnsiaWQiOiJydW5fMDFNNUhNOTNXMFFTTUZXWlZXNjU4WlRENEciLCJ0aHJlYWRfaWQiOiJ0aF8wMU01SEhYSjZDM1c3MlRGMkJCOU1RSDFXUCIsImFzc2lzdGFudF9pZCI6bnVsbCwid29ya2Zsb3dfaWQiOiJzdXBwb3J0LWFnZW50IiwicmV2aXNpb24iOjQsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInN0YXR1cyI6ImZhaWxlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImJhdGNoIiwiY3Jvbl9pZCI6bnVsbH0sImNyZWF0ZWRfYXQiOiIyMDI2LTEwLTIyVDExOjAwOjAwLjAwMFoiLCJzdGFydGVkX2F0IjoiMjAyNi0xMC0yMlQxMTowMDowMC4yNTBaIiwiZW5kZWRfYXQiOiIyMDI2LTEwLTIyVDExOjAxOjEwLjAwMFoiLCJzdXBlcnN0ZXBzIjo5LCJlcnJvciI6eyJ0eXBlIjoiSFRUUEVycm9yIiwiY29kZSI6InRvb2xfZXJyb3IiLCJodHRwX3N0YXR1cyI6NTAyLCJob3N0IjoiYXBpLnZlbmRvci5leGFtcGxlIn0sInRyYWNlX2lkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJ3ZWJob29rIjpudWxsLCJ3ZWJob29rX2NvbnRleHQiOm51bGwsInByaW9yaXR5IjoiaGlnaCJ9LCJ1c2FnZSI6eyJpbnB1dF90b2tlbnMiOjE4MzQsIm91dHB1dF90b2tlbnMiOjQwMiwidG90YWxfdG9rZW5zIjoyMjM2LCJtb2RlbF9jYWxscyI6M30sInNkayI6eyJpZ25vcmVkIjp0cnVlfX0=",
+        "headers": {
+          "X-Omega-Deployment-Name": "support-agent",
+          "X-Omega-Deployment-Environment": "production",
+          "X-Omega-Deployment-Url": "https://support-agent.example.test"
+        },
+        "fa": {
+          "event_id": "evt_01M5HMF760HR6HVAYCKXED67GR",
+          "organization_id": "11111111-1111-4111-8111-111111111111",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "project_id": "8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f",
+          "verified_by_trace": true,
+          "observe_usage": {
+            "input_tokens": 1834,
+            "output_tokens": 402,
+            "total_tokens": 2236,
+            "model_calls": 3
+          },
+          "cost": {
+            "usd_micros": 4127,
+            "final": true
+          },
+          "links": {
+            "deployment": "https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69",
+            "trace": "https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        }
+      },
+      "schema": "urn:futureagi:webhooks:v1:deployment.run.failed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SE1GNzYwSFI2SFZBWUNLWEVENjdHUiIsInR5cGUiOiJkZXBsb3ltZW50LnJ1bi5mYWlsZWQiLCJhcGlfdmVyc2lvbiI6InYxIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yMlQxMTowMToxMC4wMDBaIiwib3JnYW5pemF0aW9uX2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwid29ya3NwYWNlX2lkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwiZGF0YSI6eyJkZXBsb3ltZW50Ijp7ImlkIjoiZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJuYW1lIjoic3VwcG9ydC1hZ2VudCIsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInJldmlzaW9uIjo0fSwicnVuIjp7ImlkIjoicnVuXzAxTTVITTkzVzBRU01GV1pWVzY1OFpURDRHIiwidGhyZWFkX2lkIjoidGhfMDFNNUhIWEo2QzNXNzJURjJCQjlNUUgxV1AiLCJhc3Npc3RhbnRfaWQiOm51bGwsIndvcmtmbG93X2lkIjoic3VwcG9ydC1hZ2VudCIsInN0YXR1cyI6ImZhaWxlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImJhdGNoIiwiY3Jvbl9pZCI6bnVsbH0sImNyZWF0ZWRfYXQiOiIyMDI2LTEwLTIyVDExOjAwOjAwLjAwMFoiLCJzdGFydGVkX2F0IjoiMjAyNi0xMC0yMlQxMTowMDowMC4yNTBaIiwiZW5kZWRfYXQiOiIyMDI2LTEwLTIyVDExOjAxOjEwLjAwMFoiLCJkdXJhdGlvbl9tcyI6Njk3NTAsInF1ZXVlX21zIjoyNTAsInN1cGVyc3RlcHMiOjksImVycm9yIjp7InR5cGUiOiJIVFRQRXJyb3IiLCJjb2RlIjoidG9vbF9lcnJvciIsImh0dHBfc3RhdHVzIjo1MDIsImhvc3QiOiJhcGkudmVuZG9yLmV4YW1wbGUifSwiY29udGV4dCI6bnVsbCwidmVyaWZpZWRfYnlfdHJhY2UiOnRydWV9LCJ1c2FnZSI6eyJpbnB1dF90b2tlbnMiOjE4MzQsIm91dHB1dF90b2tlbnMiOjQwMiwidG90YWxfdG9rZW5zIjoyMjM2LCJtb2RlbF9jYWxscyI6Mywic291cmNlIjoib2JzZXJ2ZSJ9LCJjb3N0Ijp7InVzZF9taWNyb3MiOjQxMjcsImZpbmFsIjp0cnVlLCJiYXNpcyI6Im9ic2VydmVfbW9kZWxfcHJpY2VzIn0sInRyYWNlIjp7ImlkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJwcm9qZWN0X2lkIjoiOGQzZTVmMTAtMmE0Yi00YzZkLThlOWYtMGExYjJjM2Q0ZTVmIn0sImxpbmtzIjp7ImRlcGxveW1lbnQiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL2RlcGxveW1lbnRzL2RlcC0zZjlhMGMxZDJlNGI1YTY5IiwidHJhY2UiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL29ic2VydmUvOGQzZTVmMTAtMmE0Yi00YzZkLThlOWYtMGExYjJjM2Q0ZTVmL3RyYWNlLzRiZjkyZjM1NzdiMzRkYTZhM2NlOTI5ZDBlMGU0NzM2IiwicnVuX2FwaSI6Imh0dHBzOi8vc3VwcG9ydC1hZ2VudC5leGFtcGxlLnRlc3Qvc3R1ZGlvL3YxL3J1bnMvcnVuXzAxTTVITTkzVzBRU01GV1pWVzY1OFpURDRHIn19fQ==",
+        "body_text": "{\"id\":\"evt_01M5HMF760HR6HVAYCKXED67GR\",\"type\":\"deployment.run.failed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T11:01:10.000Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"deployment\":{\"id\":\"dep-3f9a0c1d2e4b5a69\",\"name\":\"support-agent\",\"environment\":\"production\",\"revision\":4},\"run\":{\"id\":\"run_01M5HM93W0QSMFWZVW658ZTD4G\",\"thread_id\":\"th_01M5HHXJ6C3W72TF2BB9MQH1WP\",\"assistant_id\":null,\"workflow_id\":\"support-agent\",\"status\":\"failed\",\"attempt\":1,\"trigger\":{\"kind\":\"batch\",\"cron_id\":null},\"created_at\":\"2026-10-22T11:00:00.000Z\",\"started_at\":\"2026-10-22T11:00:00.250Z\",\"ended_at\":\"2026-10-22T11:01:10.000Z\",\"duration_ms\":69750,\"queue_ms\":250,\"supersteps\":9,\"error\":{\"type\":\"HTTPError\",\"code\":\"tool_error\",\"http_status\":502,\"host\":\"api.vendor.example\"},\"context\":null,\"verified_by_trace\":true},\"usage\":{\"input_tokens\":1834,\"output_tokens\":402,\"total_tokens\":2236,\"model_calls\":3,\"source\":\"observe\"},\"cost\":{\"usd_micros\":4127,\"final\":true,\"basis\":\"observe_model_prices\"},\"trace\":{\"id\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"project_id\":\"8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f\"},\"links\":{\"deployment\":\"https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69\",\"trace\":\"https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736\",\"run_api\":\"https://support-agent.example.test/studio/v1/runs/run_01M5HM93W0QSMFWZVW658ZTD4G\"}}}",
+        "bytes": 1462,
+        "sha256": "2316a78691879d75459c24c7b711a67ac9ece4a5e76e44847d0cb3c704951974"
+      },
+      "note": "a failed run; unknown notice fields are never copied"
+    },
+    {
+      "id": "pvc-thin",
+      "builder": "prompt.version.created",
+      "input": {
+        "event_id": "evt_01M5HFRP00ZBVRRVCSQS3WFSB6",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Tighten the refund wording",
+          "is_default": false,
+          "labels": [],
+          "created_at": "2026-10-22T09:41:07.200Z",
+          "created_by": {
+            "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+            "name": "Asha Rao"
+          }
+        },
+        "previous_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "content": {
+          "messages": [
+            {
+              "role": "system",
+              "text": "You answer refund questions."
+            },
+            {
+              "role": "user",
+              "text": "{{question}}"
+            }
+          ],
+          "variables": [
+            "question"
+          ],
+          "model": "gpt-4o-mini"
+        }
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.version.created",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEZSUDAwWkJWUlJWQ1NRUzNXRlNCNiIsInR5cGUiOiJwcm9tcHQudmVyc2lvbi5jcmVhdGVkIiwiYXBpX3ZlcnNpb24iOiJ2MSIsInRpbWVzdGFtcCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsIm9yZ2FuaXphdGlvbl9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIndvcmtzcGFjZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImRhdGEiOnsicHJvbXB0Ijp7ImlkIjoiNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwibmFtZSI6InN1cHBvcnQtcmVwbHkifSwidmVyc2lvbiI6eyJpZCI6IjliMWQyYzNlLTRmNWEtNGI2Yy04ZDdlLTlmMGExYjJjM2Q0ZSIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjoiVGlnaHRlbiB0aGUgcmVmdW5kIHdvcmRpbmciLCJpc19kZWZhdWx0IjpmYWxzZSwibGFiZWxzIjpbXSwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsImNyZWF0ZWRfYnkiOnsiaWQiOiJhNTFmNmU3ZC04YzliLTRhMGYtOWUxZC0yYzNiNGE1ZjZlN2QiLCJuYW1lIjoiQXNoYSBSYW8ifX0sInByZXZpb3VzX3ZlcnNpb24iOnsiaWQiOiI0N2FhNWI2Yy03ZDhlLTRmOWEtOGIwYy0xZDJlM2Y0YTViNmMiLCJ2ZXJzaW9uIjoidjYifSwibGlua3MiOnsiYXBwIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0L2Rhc2hib2FyZC9wcm9tcHQvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwiYXBpIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS50ZXN0L21vZGVsLWh1Yi9wcm9tcHQtdGVtcGxhdGVzLzZjMGU0YjBhLTFkMmUtNGYzYS04YjRjLTVkNmU3ZjhhOWIwYy8ifX19",
+        "body_text": "{\"id\":\"evt_01M5HFRP00ZBVRRVCSQS3WFSB6\",\"type\":\"prompt.version.created\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:41:07.200Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"Tighten the refund wording\",\"is_default\":false,\"labels\":[],\"created_at\":\"2026-10-22T09:41:07.200Z\",\"created_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"}},\"previous_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 867,
+        "sha256": "894b1acd6b622ee686225d935a964cf9b795ff7bacfaa1f96f559b953c14502f"
+      },
+      "note": "DESIGN.md section 14.2, thin mode"
+    },
+    {
+      "id": "pvc-thin-no-names",
+      "builder": "prompt.version.created",
+      "input": {
+        "event_id": "evt_01M5HFRP00ZBVRRVCSQS3WFSB6",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Tighten the refund wording",
+          "is_default": false,
+          "labels": [],
+          "created_at": "2026-10-22T09:41:07.200Z",
+          "created_by": {
+            "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+            "name": "Asha Rao"
+          }
+        },
+        "previous_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "content": {
+          "messages": [
+            {
+              "role": "system",
+              "text": "You answer refund questions."
+            },
+            {
+              "role": "user",
+              "text": "{{question}}"
+            }
+          ],
+          "variables": [
+            "question"
+          ],
+          "model": "gpt-4o-mini"
+        }
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": false
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.version.created",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEZSUDAwWkJWUlJWQ1NRUzNXRlNCNiIsInR5cGUiOiJwcm9tcHQudmVyc2lvbi5jcmVhdGVkIiwiYXBpX3ZlcnNpb24iOiJ2MSIsInRpbWVzdGFtcCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsIm9yZ2FuaXphdGlvbl9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIndvcmtzcGFjZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImRhdGEiOnsicHJvbXB0Ijp7ImlkIjoiNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwibmFtZSI6InN1cHBvcnQtcmVwbHkifSwidmVyc2lvbiI6eyJpZCI6IjliMWQyYzNlLTRmNWEtNGI2Yy04ZDdlLTlmMGExYjJjM2Q0ZSIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjoiVGlnaHRlbiB0aGUgcmVmdW5kIHdvcmRpbmciLCJpc19kZWZhdWx0IjpmYWxzZSwibGFiZWxzIjpbXSwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsImNyZWF0ZWRfYnkiOnsiaWQiOiJhNTFmNmU3ZC04YzliLTRhMGYtOWUxZC0yYzNiNGE1ZjZlN2QifX0sInByZXZpb3VzX3ZlcnNpb24iOnsiaWQiOiI0N2FhNWI2Yy03ZDhlLTRmOWEtOGIwYy0xZDJlM2Y0YTViNmMiLCJ2ZXJzaW9uIjoidjYifSwibGlua3MiOnsiYXBwIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0L2Rhc2hib2FyZC9wcm9tcHQvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwiYXBpIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS50ZXN0L21vZGVsLWh1Yi9wcm9tcHQtdGVtcGxhdGVzLzZjMGU0YjBhLTFkMmUtNGYzYS04YjRjLTVkNmU3ZjhhOWIwYy8ifX19",
+        "body_text": "{\"id\":\"evt_01M5HFRP00ZBVRRVCSQS3WFSB6\",\"type\":\"prompt.version.created\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:41:07.200Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"Tighten the refund wording\",\"is_default\":false,\"labels\":[],\"created_at\":\"2026-10-22T09:41:07.200Z\",\"created_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\"}},\"previous_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 849,
+        "sha256": "64decd59aa81a44385f14dd7d24190c2acc8911c3380e04dfd3aeccdd243ac08"
+      },
+      "note": "include_people_names = false: people are {id} only"
+    },
+    {
+      "id": "pvc-no-display-name-first-version",
+      "builder": "prompt.version.created",
+      "input": {
+        "event_id": "evt_01M5HFRP00ZBVRRVCSQS3WFSB6",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Tighten the refund wording",
+          "is_default": false,
+          "labels": [
+            {
+              "id": "33333333-3333-4333-8333-333333333333",
+              "name": "Production",
+              "type": "system"
+            }
+          ],
+          "created_at": "2026-10-22T09:41:07.200Z",
+          "created_by": {
+            "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+            "name": null
+          }
+        },
+        "previous_version": null,
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "content": {
+          "messages": [
+            {
+              "role": "system",
+              "text": "You answer refund questions."
+            },
+            {
+              "role": "user",
+              "text": "{{question}}"
+            }
+          ],
+          "variables": [
+            "question"
+          ],
+          "model": "gpt-4o-mini"
+        }
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.version.created",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEZSUDAwWkJWUlJWQ1NRUzNXRlNCNiIsInR5cGUiOiJwcm9tcHQudmVyc2lvbi5jcmVhdGVkIiwiYXBpX3ZlcnNpb24iOiJ2MSIsInRpbWVzdGFtcCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsIm9yZ2FuaXphdGlvbl9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIndvcmtzcGFjZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImRhdGEiOnsicHJvbXB0Ijp7ImlkIjoiNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwibmFtZSI6InN1cHBvcnQtcmVwbHkifSwidmVyc2lvbiI6eyJpZCI6IjliMWQyYzNlLTRmNWEtNGI2Yy04ZDdlLTlmMGExYjJjM2Q0ZSIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjoiVGlnaHRlbiB0aGUgcmVmdW5kIHdvcmRpbmciLCJpc19kZWZhdWx0IjpmYWxzZSwibGFiZWxzIjpbeyJpZCI6IjMzMzMzMzMzLTMzMzMtNDMzMy04MzMzLTMzMzMzMzMzMzMzMyIsIm5hbWUiOiJQcm9kdWN0aW9uIiwidHlwZSI6InN5c3RlbSJ9XSwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsImNyZWF0ZWRfYnkiOnsiaWQiOiJhNTFmNmU3ZC04YzliLTRhMGYtOWUxZC0yYzNiNGE1ZjZlN2QiLCJuYW1lIjpudWxsfX0sInByZXZpb3VzX3ZlcnNpb24iOm51bGwsImxpbmtzIjp7ImFwcCI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdC9kYXNoYm9hcmQvcHJvbXB0LzZjMGU0YjBhLTFkMmUtNGYzYS04YjRjLTVkNmU3ZjhhOWIwYyIsImFwaSI6Imh0dHBzOi8vYXBpLmV4YW1wbGUudGVzdC9tb2RlbC1odWIvcHJvbXB0LXRlbXBsYXRlcy82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMvIn19fQ==",
+        "body_text": "{\"id\":\"evt_01M5HFRP00ZBVRRVCSQS3WFSB6\",\"type\":\"prompt.version.created\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:41:07.200Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"Tighten the refund wording\",\"is_default\":false,\"labels\":[{\"id\":\"33333333-3333-4333-8333-333333333333\",\"name\":\"Production\",\"type\":\"system\"}],\"created_at\":\"2026-10-22T09:41:07.200Z\",\"created_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":null}},\"previous_version\":null,\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 886,
+        "sha256": "ef6869a1ab95eff657852285fcb4a56cd14994833c2fa2d5d39ee466a25e9cdb"
+      },
+      "note": "no display name is null, never an email; the first version has previous_version null; a label at creation"
+    },
+    {
+      "id": "pvc-thin-truncated",
+      "builder": "prompt.version.created",
+      "input": {
+        "event_id": "evt_01M5HFRP00ZBVRRVCSQS3WFSB6",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Préciser le remboursement ✓ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "is_default": false,
+          "labels": [],
+          "created_at": "2026-10-22T09:41:07.200Z",
+          "created_by": {
+            "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+            "name": "Asha Rao"
+          }
+        },
+        "previous_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "content": {
+          "messages": [
+            {
+              "role": "system",
+              "text": "You answer refund questions."
+            },
+            {
+              "role": "user",
+              "text": "{{question}}"
+            }
+          ],
+          "variables": [
+            "question"
+          ],
+          "model": "gpt-4o-mini"
+        }
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.version.created",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEZSUDAwWkJWUlJWQ1NRUzNXRlNCNiIsInR5cGUiOiJwcm9tcHQudmVyc2lvbi5jcmVhdGVkIiwiYXBpX3ZlcnNpb24iOiJ2MSIsInRpbWVzdGFtcCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsIm9yZ2FuaXphdGlvbl9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIndvcmtzcGFjZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImRhdGEiOnsicHJvbXB0Ijp7ImlkIjoiNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwibmFtZSI6InN1cHBvcnQtcmVwbHkifSwidmVyc2lvbiI6eyJpZCI6IjliMWQyYzNlLTRmNWEtNGI2Yy04ZDdlLTlmMGExYjJjM2Q0ZSIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjoiUHLDqWNpc2VyIGxlIHJlbWJvdXJzZW1lbnQg4pyTIHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHgiLCJjb21taXRfbWVzc2FnZV90cnVuY2F0ZWQiOnRydWUsImlzX2RlZmF1bHQiOmZhbHNlLCJsYWJlbHMiOltdLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwOTo0MTowNy4yMDBaIiwiY3JlYXRlZF9ieSI6eyJpZCI6ImE1MWY2ZTdkLThjOWItNGEwZi05ZTFkLTJjM2I0YTVmNmU3ZCIsIm5hbWUiOiJBc2hhIFJhbyJ9fSwicHJldmlvdXNfdmVyc2lvbiI6eyJpZCI6IjQ3YWE1YjZjLTdkOGUtNGY5YS04YjBjLTFkMmUzZjRhNWI2YyIsInZlcnNpb24iOiJ2NiJ9LCJsaW5rcyI6eyJhcHAiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL3Byb21wdC82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJhcGkiOiJodHRwczovL2FwaS5leGFtcGxlLnRlc3QvbW9kZWwtaHViL3Byb21wdC10ZW1wbGF0ZXMvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjLyJ9fX0=",
+        "body_text": "{\"id\":\"evt_01M5HFRP00ZBVRRVCSQS3WFSB6\",\"type\":\"prompt.version.created\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:41:07.200Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"Préciser le remboursement ✓ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"commit_message_truncated\":true,\"is_default\":false,\"labels\":[],\"created_at\":\"2026-10-22T09:41:07.200Z\",\"created_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"}},\"previous_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 1076,
+        "sha256": "33075cb6accdeec3004a71f2207bed75eb5125244084ae0a4e88ba0ad5254df4"
+      },
+      "note": "thin: the first 200 code points, commit_message_truncated true; raw UTF-8"
+    },
+    {
+      "id": "pvc-full-truncated",
+      "builder": "prompt.version.created",
+      "input": {
+        "event_id": "evt_01M5HFRP00ZBVRRVCSQS3WFSB6",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Préciser le remboursement ✓ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "is_default": false,
+          "labels": [],
+          "created_at": "2026-10-22T09:41:07.200Z",
+          "created_by": {
+            "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+            "name": "Asha Rao"
+          }
+        },
+        "previous_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "content": {
+          "messages": [
+            {
+              "role": "system",
+              "text": "You answer refund questions."
+            },
+            {
+              "role": "user",
+              "text": "{{question}}"
+            }
+          ],
+          "variables": [
+            "question"
+          ],
+          "model": "gpt-4o-mini"
+        }
+      },
+      "variant": {
+        "payload_mode": "full",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.version.created",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEZSUDAwWkJWUlJWQ1NRUzNXRlNCNiIsInR5cGUiOiJwcm9tcHQudmVyc2lvbi5jcmVhdGVkIiwiYXBpX3ZlcnNpb24iOiJ2MSIsInRpbWVzdGFtcCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsIm9yZ2FuaXphdGlvbl9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIndvcmtzcGFjZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImRhdGEiOnsicHJvbXB0Ijp7ImlkIjoiNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwibmFtZSI6InN1cHBvcnQtcmVwbHkifSwidmVyc2lvbiI6eyJpZCI6IjliMWQyYzNlLTRmNWEtNGI2Yy04ZDdlLTlmMGExYjJjM2Q0ZSIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjoiUHLDqWNpc2VyIGxlIHJlbWJvdXJzZW1lbnQg4pyTIHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eCIsImNvbW1pdF9tZXNzYWdlX3RydW5jYXRlZCI6dHJ1ZSwiaXNfZGVmYXVsdCI6ZmFsc2UsImxhYmVscyI6W10sImNyZWF0ZWRfYXQiOiIyMDI2LTEwLTIyVDA5OjQxOjA3LjIwMFoiLCJjcmVhdGVkX2J5Ijp7ImlkIjoiYTUxZjZlN2QtOGM5Yi00YTBmLTllMWQtMmMzYjRhNWY2ZTdkIiwibmFtZSI6IkFzaGEgUmFvIn19LCJwcmV2aW91c192ZXJzaW9uIjp7ImlkIjoiNDdhYTViNmMtN2Q4ZS00ZjlhLThiMGMtMWQyZTNmNGE1YjZjIiwidmVyc2lvbiI6InY2In0sImxpbmtzIjp7ImFwcCI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdC9kYXNoYm9hcmQvcHJvbXB0LzZjMGU0YjBhLTFkMmUtNGYzYS04YjRjLTVkNmU3ZjhhOWIwYyIsImFwaSI6Imh0dHBzOi8vYXBpLmV4YW1wbGUudGVzdC9tb2RlbC1odWIvcHJvbXB0LXRlbXBsYXRlcy82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMvIn0sImNvbnRlbnQiOnsibWVzc2FnZXMiOlt7InJvbGUiOiJzeXN0ZW0iLCJ0ZXh0IjoiWW91IGFuc3dlciByZWZ1bmQgcXVlc3Rpb25zLiJ9LHsicm9sZSI6InVzZXIiLCJ0ZXh0Ijoie3txdWVzdGlvbn19In1dLCJ2YXJpYWJsZXMiOlsicXVlc3Rpb24iXSwibW9kZWwiOiJncHQtNG8tbWluaSJ9fX0=",
+        "body_text": "{\"id\":\"evt_01M5HFRP00ZBVRRVCSQS3WFSB6\",\"type\":\"prompt.version.created\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:41:07.200Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"Préciser le remboursement ✓ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"commit_message_truncated\":true,\"is_default\":false,\"labels\":[],\"created_at\":\"2026-10-22T09:41:07.200Z\",\"created_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"}},\"previous_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"},\"content\":{\"messages\":[{\"role\":\"system\",\"text\":\"You answer refund questions.\"},{\"role\":\"user\",\"text\":\"{{question}}\"}],\"variables\":[\"question\"],\"model\":\"gpt-4o-mini\"}}}",
+        "bytes": 2042,
+        "sha256": "43975923bdd520bf1a2ba675fedcf54ba30f827eb9b15ff32d2255f4281e98c7"
+      },
+      "note": "full: the first 1,000 code points, plus the content allowlist"
+    },
+    {
+      "id": "pvc-full",
+      "builder": "prompt.version.created",
+      "input": {
+        "event_id": "evt_01M5HFRP00ZBVRRVCSQS3WFSB6",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Tighten the refund wording",
+          "is_default": false,
+          "labels": [],
+          "created_at": "2026-10-22T09:41:07.200Z",
+          "created_by": {
+            "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+            "name": "Asha Rao"
+          }
+        },
+        "previous_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "content": {
+          "messages": [
+            {
+              "role": "system",
+              "text": "You answer refund questions."
+            },
+            {
+              "role": "user",
+              "text": "{{question}}"
+            }
+          ],
+          "variables": [
+            "question"
+          ],
+          "model": "gpt-4o-mini"
+        }
+      },
+      "variant": {
+        "payload_mode": "full",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.version.created",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEZSUDAwWkJWUlJWQ1NRUzNXRlNCNiIsInR5cGUiOiJwcm9tcHQudmVyc2lvbi5jcmVhdGVkIiwiYXBpX3ZlcnNpb24iOiJ2MSIsInRpbWVzdGFtcCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsIm9yZ2FuaXphdGlvbl9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIndvcmtzcGFjZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImRhdGEiOnsicHJvbXB0Ijp7ImlkIjoiNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwibmFtZSI6InN1cHBvcnQtcmVwbHkifSwidmVyc2lvbiI6eyJpZCI6IjliMWQyYzNlLTRmNWEtNGI2Yy04ZDdlLTlmMGExYjJjM2Q0ZSIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjoiVGlnaHRlbiB0aGUgcmVmdW5kIHdvcmRpbmciLCJpc19kZWZhdWx0IjpmYWxzZSwibGFiZWxzIjpbXSwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsImNyZWF0ZWRfYnkiOnsiaWQiOiJhNTFmNmU3ZC04YzliLTRhMGYtOWUxZC0yYzNiNGE1ZjZlN2QiLCJuYW1lIjoiQXNoYSBSYW8ifX0sInByZXZpb3VzX3ZlcnNpb24iOnsiaWQiOiI0N2FhNWI2Yy03ZDhlLTRmOWEtOGIwYy0xZDJlM2Y0YTViNmMiLCJ2ZXJzaW9uIjoidjYifSwibGlua3MiOnsiYXBwIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0L2Rhc2hib2FyZC9wcm9tcHQvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwiYXBpIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS50ZXN0L21vZGVsLWh1Yi9wcm9tcHQtdGVtcGxhdGVzLzZjMGU0YjBhLTFkMmUtNGYzYS04YjRjLTVkNmU3ZjhhOWIwYy8ifSwiY29udGVudCI6eyJtZXNzYWdlcyI6W3sicm9sZSI6InN5c3RlbSIsInRleHQiOiJZb3UgYW5zd2VyIHJlZnVuZCBxdWVzdGlvbnMuIn0seyJyb2xlIjoidXNlciIsInRleHQiOiJ7e3F1ZXN0aW9ufX0ifV0sInZhcmlhYmxlcyI6WyJxdWVzdGlvbiJdLCJtb2RlbCI6ImdwdC00by1taW5pIn19fQ==",
+        "body_text": "{\"id\":\"evt_01M5HFRP00ZBVRRVCSQS3WFSB6\",\"type\":\"prompt.version.created\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:41:07.200Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"Tighten the refund wording\",\"is_default\":false,\"labels\":[],\"created_at\":\"2026-10-22T09:41:07.200Z\",\"created_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"}},\"previous_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"},\"content\":{\"messages\":[{\"role\":\"system\",\"text\":\"You answer refund questions.\"},{\"role\":\"user\",\"text\":\"{{question}}\"}],\"variables\":[\"question\"],\"model\":\"gpt-4o-mini\"}}}",
+        "bytes": 1033,
+        "sha256": "aaae8d9ada4d01cb1b100529f42a3b12eadfd793eb73a71b334542337be02a6f"
+      },
+      "note": "full mode: content allowlist"
+    },
+    {
+      "id": "pvc-full-content-secret",
+      "builder": "prompt.version.created",
+      "input": {
+        "event_id": "evt_01M5HFRP00ZBVRRVCSQS3WFSB6",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Tighten the refund wording",
+          "is_default": false,
+          "labels": [],
+          "created_at": "2026-10-22T09:41:07.200Z",
+          "created_by": {
+            "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+            "name": "Asha Rao"
+          }
+        },
+        "previous_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "content": {
+          "messages": [
+            {
+              "role": "system",
+              "text": "Use key sk-proj-abcdefghijkl for lookups."
+            },
+            {
+              "role": "user",
+              "text": "{{question}}"
+            }
+          ],
+          "variables": [
+            "question"
+          ],
+          "model": "gpt-4o-mini"
+        }
+      },
+      "variant": {
+        "payload_mode": "full",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.version.created",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEZSUDAwWkJWUlJWQ1NRUzNXRlNCNiIsInR5cGUiOiJwcm9tcHQudmVyc2lvbi5jcmVhdGVkIiwiYXBpX3ZlcnNpb24iOiJ2MSIsInRpbWVzdGFtcCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsIm9yZ2FuaXphdGlvbl9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIndvcmtzcGFjZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImRhdGEiOnsicHJvbXB0Ijp7ImlkIjoiNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwibmFtZSI6InN1cHBvcnQtcmVwbHkifSwidmVyc2lvbiI6eyJpZCI6IjliMWQyYzNlLTRmNWEtNGI2Yy04ZDdlLTlmMGExYjJjM2Q0ZSIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjoiVGlnaHRlbiB0aGUgcmVmdW5kIHdvcmRpbmciLCJpc19kZWZhdWx0IjpmYWxzZSwibGFiZWxzIjpbXSwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsImNyZWF0ZWRfYnkiOnsiaWQiOiJhNTFmNmU3ZC04YzliLTRhMGYtOWUxZC0yYzNiNGE1ZjZlN2QiLCJuYW1lIjoiQXNoYSBSYW8ifX0sInByZXZpb3VzX3ZlcnNpb24iOnsiaWQiOiI0N2FhNWI2Yy03ZDhlLTRmOWEtOGIwYy0xZDJlM2Y0YTViNmMiLCJ2ZXJzaW9uIjoidjYifSwibGlua3MiOnsiYXBwIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0L2Rhc2hib2FyZC9wcm9tcHQvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwiYXBpIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS50ZXN0L21vZGVsLWh1Yi9wcm9tcHQtdGVtcGxhdGVzLzZjMGU0YjBhLTFkMmUtNGYzYS04YjRjLTVkNmU3ZjhhOWIwYy8ifSwiY29udGVudF9vbWl0dGVkIjoic2VjcmV0X3NoYXBlIn19",
+        "body_text": "{\"id\":\"evt_01M5HFRP00ZBVRRVCSQS3WFSB6\",\"type\":\"prompt.version.created\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:41:07.200Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"Tighten the refund wording\",\"is_default\":false,\"labels\":[],\"created_at\":\"2026-10-22T09:41:07.200Z\",\"created_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"}},\"previous_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"},\"content_omitted\":\"secret_shape\"}}",
+        "bytes": 900,
+        "sha256": "df206d7b631af0d63d56ae2d8a8a86a825062b1da483fc1b44c3c3376027530b"
+      },
+      "note": "a secret shape in the content: content left out, content_omitted secret_shape"
+    },
+    {
+      "id": "pvc-null-message-system",
+      "builder": "prompt.version.created",
+      "input": {
+        "event_id": "evt_01M5HFRP00ZBVRRVCSQS3WFSB6",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": null,
+          "is_default": false,
+          "labels": [],
+          "created_at": "2026-10-22T09:41:07.200Z",
+          "created_by": null
+        },
+        "previous_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "content": {
+          "messages": [
+            {
+              "role": "system",
+              "text": "You answer refund questions."
+            },
+            {
+              "role": "user",
+              "text": "{{question}}"
+            }
+          ],
+          "variables": [
+            "question"
+          ],
+          "model": "gpt-4o-mini"
+        }
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.version.created",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEZSUDAwWkJWUlJWQ1NRUzNXRlNCNiIsInR5cGUiOiJwcm9tcHQudmVyc2lvbi5jcmVhdGVkIiwiYXBpX3ZlcnNpb24iOiJ2MSIsInRpbWVzdGFtcCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsIm9yZ2FuaXphdGlvbl9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIndvcmtzcGFjZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImRhdGEiOnsicHJvbXB0Ijp7ImlkIjoiNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwibmFtZSI6InN1cHBvcnQtcmVwbHkifSwidmVyc2lvbiI6eyJpZCI6IjliMWQyYzNlLTRmNWEtNGI2Yy04ZDdlLTlmMGExYjJjM2Q0ZSIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjpudWxsLCJpc19kZWZhdWx0IjpmYWxzZSwibGFiZWxzIjpbXSwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsImNyZWF0ZWRfYnkiOm51bGx9LCJwcmV2aW91c192ZXJzaW9uIjp7ImlkIjoiNDdhYTViNmMtN2Q4ZS00ZjlhLThiMGMtMWQyZTNmNGE1YjZjIiwidmVyc2lvbiI6InY2In0sImxpbmtzIjp7ImFwcCI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdC9kYXNoYm9hcmQvcHJvbXB0LzZjMGU0YjBhLTFkMmUtNGYzYS04YjRjLTVkNmU3ZjhhOWIwYyIsImFwaSI6Imh0dHBzOi8vYXBpLmV4YW1wbGUudGVzdC9tb2RlbC1odWIvcHJvbXB0LXRlbXBsYXRlcy82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMvIn19fQ==",
+        "body_text": "{\"id\":\"evt_01M5HFRP00ZBVRRVCSQS3WFSB6\",\"type\":\"prompt.version.created\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:41:07.200Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":null,\"is_default\":false,\"labels\":[],\"created_at\":\"2026-10-22T09:41:07.200Z\",\"created_by\":null},\"previous_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 784,
+        "sha256": "ea1e44cb063cbc593fbba7155c9460c9cdb182d547c3f1c82c9b06c54dd64b7d"
+      },
+      "note": "no commit message; created by the system (null)"
+    },
+    {
+      "id": "plc-moved",
+      "builder": "prompt.label.changed",
+      "input": {
+        "event_id": "evt_01JBF3Q7Z8X4N6R2T5V9W0YB1C",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "label": {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "name": "Production",
+          "type": "system"
+        },
+        "revision": 12,
+        "from_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6",
+          "commit_message": "Older wording"
+        },
+        "to_version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Tighten the refund wording"
+        },
+        "changed_at": "2026-10-22T09:59:58.120Z",
+        "changed_by": {
+          "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+          "name": "Asha Rao"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        }
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.label.changed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMUpCRjNRN1o4WDRONlIyVDVWOVcwWUIxQyIsInR5cGUiOiJwcm9tcHQubGFiZWwuY2hhbmdlZCIsImFwaV92ZXJzaW9uIjoidjEiLCJ0aW1lc3RhbXAiOiIyMDI2LTEwLTIyVDA5OjU5OjU4LjEyMFoiLCJvcmdhbml6YXRpb25faWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJ3b3Jrc3BhY2VfaWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJkYXRhIjp7ImFjdGlvbiI6Im1vdmVkIiwiY2F1c2UiOiJsYWJlbF9jaGFuZ2UiLCJwcm9tcHQiOnsiaWQiOiI2YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJuYW1lIjoic3VwcG9ydC1yZXBseSJ9LCJsYWJlbCI6eyJpZCI6IjMzMzMzMzMzLTMzMzMtNDMzMy04MzMzLTMzMzMzMzMzMzMzMyIsIm5hbWUiOiJQcm9kdWN0aW9uIiwidHlwZSI6InN5c3RlbSJ9LCJyZXZpc2lvbiI6MTIsImZyb21fdmVyc2lvbiI6eyJpZCI6IjQ3YWE1YjZjLTdkOGUtNGY5YS04YjBjLTFkMmUzZjRhNWI2YyIsInZlcnNpb24iOiJ2NiJ9LCJ0b192ZXJzaW9uIjp7ImlkIjoiOWIxZDJjM2UtNGY1YS00YjZjLThkN2UtOWYwYTFiMmMzZDRlIiwidmVyc2lvbiI6InY3IiwiY29tbWl0X21lc3NhZ2UiOiJUaWdodGVuIHRoZSByZWZ1bmQgd29yZGluZyJ9LCJjaGFuZ2VkX2F0IjoiMjAyNi0xMC0yMlQwOTo1OTo1OC4xMjBaIiwiY2hhbmdlZF9ieSI6eyJpZCI6ImE1MWY2ZTdkLThjOWItNGEwZi05ZTFkLTJjM2I0YTVmNmU3ZCIsIm5hbWUiOiJBc2hhIFJhbyJ9LCJsaW5rcyI6eyJhcHAiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL3Byb21wdC82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJhcGkiOiJodHRwczovL2FwaS5leGFtcGxlLnRlc3QvbW9kZWwtaHViL3Byb21wdC10ZW1wbGF0ZXMvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjLyJ9fX0=",
+        "body_text": "{\"id\":\"evt_01JBF3Q7Z8X4N6R2T5V9W0YB1C\",\"type\":\"prompt.label.changed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:59:58.120Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"action\":\"moved\",\"cause\":\"label_change\",\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"label\":{\"id\":\"33333333-3333-4333-8333-333333333333\",\"name\":\"Production\",\"type\":\"system\"},\"revision\":12,\"from_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"to_version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"Tighten the refund wording\"},\"changed_at\":\"2026-10-22T09:59:58.120Z\",\"changed_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 977,
+        "sha256": "089e402a2e4447b87d36db77944ea5650513634c40fc13c49012f43cdfa02896"
+      },
+      "note": "DESIGN.md section 14.3: one moved event (from_version carries no commit_message)"
+    },
+    {
+      "id": "plc-assigned",
+      "builder": "prompt.label.changed",
+      "input": {
+        "event_id": "evt_01M5HGN4Y05TXS554035GWTCG3",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "label": {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "name": "Production",
+          "type": "system"
+        },
+        "revision": 1,
+        "from_version": null,
+        "to_version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Tighten the refund wording"
+        },
+        "changed_at": "2026-10-22T09:59:58.120Z",
+        "changed_by": {
+          "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+          "name": "Asha Rao"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        }
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.label.changed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEdONFkwNVRYUzU1NDAzNUdXVENHMyIsInR5cGUiOiJwcm9tcHQubGFiZWwuY2hhbmdlZCIsImFwaV92ZXJzaW9uIjoidjEiLCJ0aW1lc3RhbXAiOiIyMDI2LTEwLTIyVDA5OjU5OjU4LjEyMFoiLCJvcmdhbml6YXRpb25faWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJ3b3Jrc3BhY2VfaWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJkYXRhIjp7ImFjdGlvbiI6ImFzc2lnbmVkIiwiY2F1c2UiOiJsYWJlbF9jaGFuZ2UiLCJwcm9tcHQiOnsiaWQiOiI2YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJuYW1lIjoic3VwcG9ydC1yZXBseSJ9LCJsYWJlbCI6eyJpZCI6IjMzMzMzMzMzLTMzMzMtNDMzMy04MzMzLTMzMzMzMzMzMzMzMyIsIm5hbWUiOiJQcm9kdWN0aW9uIiwidHlwZSI6InN5c3RlbSJ9LCJyZXZpc2lvbiI6MSwiZnJvbV92ZXJzaW9uIjpudWxsLCJ0b192ZXJzaW9uIjp7ImlkIjoiOWIxZDJjM2UtNGY1YS00YjZjLThkN2UtOWYwYTFiMmMzZDRlIiwidmVyc2lvbiI6InY3IiwiY29tbWl0X21lc3NhZ2UiOiJUaWdodGVuIHRoZSByZWZ1bmQgd29yZGluZyJ9LCJjaGFuZ2VkX2F0IjoiMjAyNi0xMC0yMlQwOTo1OTo1OC4xMjBaIiwiY2hhbmdlZF9ieSI6eyJpZCI6ImE1MWY2ZTdkLThjOWItNGEwZi05ZTFkLTJjM2I0YTVmNmU3ZCIsIm5hbWUiOiJBc2hhIFJhbyJ9LCJsaW5rcyI6eyJhcHAiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL3Byb21wdC82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJhcGkiOiJodHRwczovL2FwaS5leGFtcGxlLnRlc3QvbW9kZWwtaHViL3Byb21wdC10ZW1wbGF0ZXMvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjLyJ9fX0=",
+        "body_text": "{\"id\":\"evt_01M5HGN4Y05TXS554035GWTCG3\",\"type\":\"prompt.label.changed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:59:58.120Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"action\":\"assigned\",\"cause\":\"label_change\",\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"label\":{\"id\":\"33333333-3333-4333-8333-333333333333\",\"name\":\"Production\",\"type\":\"system\"},\"revision\":1,\"from_version\":null,\"to_version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"Tighten the refund wording\"},\"changed_at\":\"2026-10-22T09:59:58.120Z\",\"changed_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 923,
+        "sha256": "11e9399ff14fdf3ed299ccb3bebe032e2f9638649e9975650e836d724de3c01d"
+      },
+      "note": "assigned: from_version null"
+    },
+    {
+      "id": "plc-removed-replaced",
+      "builder": "prompt.label.changed",
+      "input": {
+        "event_id": "evt_01M5HGN4Y1DGDAA122N4Z45G7B",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "label": {
+          "id": "55555555-5555-4555-8555-555555555555",
+          "name": "Staging",
+          "type": "system"
+        },
+        "revision": 4,
+        "from_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6",
+          "commit_message": "Older wording"
+        },
+        "to_version": null,
+        "changed_at": "2026-10-22T09:59:58.120Z",
+        "changed_by": {
+          "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+          "name": "Asha Rao"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "cause": "replaced"
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.label.changed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEdONFkxREdEQUExMjJONFo0NUc3QiIsInR5cGUiOiJwcm9tcHQubGFiZWwuY2hhbmdlZCIsImFwaV92ZXJzaW9uIjoidjEiLCJ0aW1lc3RhbXAiOiIyMDI2LTEwLTIyVDA5OjU5OjU4LjEyMFoiLCJvcmdhbml6YXRpb25faWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJ3b3Jrc3BhY2VfaWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJkYXRhIjp7ImFjdGlvbiI6InJlbW92ZWQiLCJjYXVzZSI6InJlcGxhY2VkIiwicHJvbXB0Ijp7ImlkIjoiNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwibmFtZSI6InN1cHBvcnQtcmVwbHkifSwibGFiZWwiOnsiaWQiOiI1NTU1NTU1NS01NTU1LTQ1NTUtODU1NS01NTU1NTU1NTU1NTUiLCJuYW1lIjoiU3RhZ2luZyIsInR5cGUiOiJzeXN0ZW0ifSwicmV2aXNpb24iOjQsImZyb21fdmVyc2lvbiI6eyJpZCI6IjQ3YWE1YjZjLTdkOGUtNGY5YS04YjBjLTFkMmUzZjRhNWI2YyIsInZlcnNpb24iOiJ2NiJ9LCJ0b192ZXJzaW9uIjpudWxsLCJjaGFuZ2VkX2F0IjoiMjAyNi0xMC0yMlQwOTo1OTo1OC4xMjBaIiwiY2hhbmdlZF9ieSI6eyJpZCI6ImE1MWY2ZTdkLThjOWItNGEwZi05ZTFkLTJjM2I0YTVmNmU3ZCIsIm5hbWUiOiJBc2hhIFJhbyJ9LCJsaW5rcyI6eyJhcHAiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL3Byb21wdC82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJhcGkiOiJodHRwczovL2FwaS5leGFtcGxlLnRlc3QvbW9kZWwtaHViL3Byb21wdC10ZW1wbGF0ZXMvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjLyJ9fX0=",
+        "body_text": "{\"id\":\"evt_01M5HGN4Y1DGDAA122N4Z45G7B\",\"type\":\"prompt.label.changed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:59:58.120Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"action\":\"removed\",\"cause\":\"replaced\",\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"label\":{\"id\":\"55555555-5555-4555-8555-555555555555\",\"name\":\"Staging\",\"type\":\"system\"},\"revision\":4,\"from_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"to_version\":null,\"changed_at\":\"2026-10-22T09:59:58.120Z\",\"changed_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 869,
+        "sha256": "bb893b0aba3aca75e6e99ec7641ba960fd563360c0bbdcfff327f8e715fa090f"
+      },
+      "note": "a set-replace dropped Staging: removed / replaced (O2)"
+    },
+    {
+      "id": "plc-removed-version-deleted",
+      "builder": "prompt.label.changed",
+      "input": {
+        "event_id": "evt_01M5HGN4Y2262Z6Z9KP3W9WCRZ",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "label": {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "name": "Production",
+          "type": "system"
+        },
+        "revision": 13,
+        "from_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6",
+          "commit_message": "Older wording"
+        },
+        "to_version": null,
+        "changed_at": "2026-10-22T09:59:58.120Z",
+        "changed_by": null,
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "cause": "version_deleted"
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": false
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.label.changed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEdONFkyMjYyWjZaOUtQM1c5V0NSWiIsInR5cGUiOiJwcm9tcHQubGFiZWwuY2hhbmdlZCIsImFwaV92ZXJzaW9uIjoidjEiLCJ0aW1lc3RhbXAiOiIyMDI2LTEwLTIyVDA5OjU5OjU4LjEyMFoiLCJvcmdhbml6YXRpb25faWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJ3b3Jrc3BhY2VfaWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJkYXRhIjp7ImFjdGlvbiI6InJlbW92ZWQiLCJjYXVzZSI6InZlcnNpb25fZGVsZXRlZCIsInByb21wdCI6eyJpZCI6IjZjMGU0YjBhLTFkMmUtNGYzYS04YjRjLTVkNmU3ZjhhOWIwYyIsIm5hbWUiOiJzdXBwb3J0LXJlcGx5In0sImxhYmVsIjp7ImlkIjoiMzMzMzMzMzMtMzMzMy00MzMzLTgzMzMtMzMzMzMzMzMzMzMzIiwibmFtZSI6IlByb2R1Y3Rpb24iLCJ0eXBlIjoic3lzdGVtIn0sInJldmlzaW9uIjoxMywiZnJvbV92ZXJzaW9uIjp7ImlkIjoiNDdhYTViNmMtN2Q4ZS00ZjlhLThiMGMtMWQyZTNmNGE1YjZjIiwidmVyc2lvbiI6InY2In0sInRvX3ZlcnNpb24iOm51bGwsImNoYW5nZWRfYXQiOiIyMDI2LTEwLTIyVDA5OjU5OjU4LjEyMFoiLCJjaGFuZ2VkX2J5IjpudWxsLCJsaW5rcyI6eyJhcHAiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL3Byb21wdC82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJhcGkiOiJodHRwczovL2FwaS5leGFtcGxlLnRlc3QvbW9kZWwtaHViL3Byb21wdC10ZW1wbGF0ZXMvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjLyJ9fX0=",
+        "body_text": "{\"id\":\"evt_01M5HGN4Y2262Z6Z9KP3W9WCRZ\",\"type\":\"prompt.label.changed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:59:58.120Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"action\":\"removed\",\"cause\":\"version_deleted\",\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"label\":{\"id\":\"33333333-3333-4333-8333-333333333333\",\"name\":\"Production\",\"type\":\"system\"},\"revision\":13,\"from_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"to_version\":null,\"changed_at\":\"2026-10-22T09:59:58.120Z\",\"changed_by\":null,\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 821,
+        "sha256": "8c5c92a52488d3a1228c2962b8f8d6cb8a95fcd77f34442ed3b9262fc698fceb"
+      },
+      "note": "version soft-deleted while holding the label; no actor"
+    },
+    {
+      "id": "plc-custom-label-truncated",
+      "builder": "prompt.label.changed",
+      "input": {
+        "event_id": "evt_01M5HGN4Y3DKFX4WETCDEMJ7HQ",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "label": {
+          "id": "66666666-6666-4666-8666-666666666666",
+          "name": "canary-eu",
+          "type": "custom"
+        },
+        "revision": 2,
+        "from_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6",
+          "commit_message": "Older wording"
+        },
+        "to_version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        },
+        "changed_at": "2026-10-22T09:59:58.120Z",
+        "changed_by": {
+          "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+          "name": "Asha Rao"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        }
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.label.changed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEdONFkzREtGWDRXRVRDREVNSjdIUSIsInR5cGUiOiJwcm9tcHQubGFiZWwuY2hhbmdlZCIsImFwaV92ZXJzaW9uIjoidjEiLCJ0aW1lc3RhbXAiOiIyMDI2LTEwLTIyVDA5OjU5OjU4LjEyMFoiLCJvcmdhbml6YXRpb25faWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJ3b3Jrc3BhY2VfaWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJkYXRhIjp7ImFjdGlvbiI6Im1vdmVkIiwiY2F1c2UiOiJsYWJlbF9jaGFuZ2UiLCJwcm9tcHQiOnsiaWQiOiI2YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJuYW1lIjoic3VwcG9ydC1yZXBseSJ9LCJsYWJlbCI6eyJpZCI6IjY2NjY2NjY2LTY2NjYtNDY2Ni04NjY2LTY2NjY2NjY2NjY2NiIsIm5hbWUiOiJjYW5hcnktZXUiLCJ0eXBlIjoiY3VzdG9tIn0sInJldmlzaW9uIjoyLCJmcm9tX3ZlcnNpb24iOnsiaWQiOiI0N2FhNWI2Yy03ZDhlLTRmOWEtOGIwYy0xZDJlM2Y0YTViNmMiLCJ2ZXJzaW9uIjoidjYifSwidG9fdmVyc2lvbiI6eyJpZCI6IjliMWQyYzNlLTRmNWEtNGI2Yy04ZDdlLTlmMGExYjJjM2Q0ZSIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjoieXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXkiLCJjb21taXRfbWVzc2FnZV90cnVuY2F0ZWQiOnRydWV9LCJjaGFuZ2VkX2F0IjoiMjAyNi0xMC0yMlQwOTo1OTo1OC4xMjBaIiwiY2hhbmdlZF9ieSI6eyJpZCI6ImE1MWY2ZTdkLThjOWItNGEwZi05ZTFkLTJjM2I0YTVmNmU3ZCIsIm5hbWUiOiJBc2hhIFJhbyJ9LCJsaW5rcyI6eyJhcHAiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL3Byb21wdC82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJhcGkiOiJodHRwczovL2FwaS5leGFtcGxlLnRlc3QvbW9kZWwtaHViL3Byb21wdC10ZW1wbGF0ZXMvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjLyJ9fX0=",
+        "body_text": "{\"id\":\"evt_01M5HGN4Y3DKFX4WETCDEMJ7HQ\",\"type\":\"prompt.label.changed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:59:58.120Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"action\":\"moved\",\"cause\":\"label_change\",\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"label\":{\"id\":\"66666666-6666-4666-8666-666666666666\",\"name\":\"canary-eu\",\"type\":\"custom\"},\"revision\":2,\"from_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"to_version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\",\"commit_message_truncated\":true},\"changed_at\":\"2026-10-22T09:59:58.120Z\",\"changed_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 1181,
+        "sha256": "93bf7adfb8e61348a8b6335b894d6e866b55c627ba2cf16a480e03959d7eb40a"
+      },
+      "note": "a custom label; to_version.commit_message cut to 200 with commit_message_truncated"
+    },
+    {
+      "id": "plc-test-delivery",
+      "builder": "prompt.label.changed",
+      "input": {
+        "event_id": "evt_test_01M5HGN4Y4KY3D10C89HYPB6HF",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "label": {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "name": "Production",
+          "type": "system"
+        },
+        "revision": 12,
+        "from_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6",
+          "commit_message": "Older wording"
+        },
+        "to_version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Tighten the refund wording"
+        },
+        "changed_at": "2026-10-22T09:59:58.120Z",
+        "changed_by": {
+          "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+          "name": "Asha Rao"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/00000000-0000-0000-0000-000000000000",
+          "api": "https://api.example.test/model-hub/prompt-templates/00000000-0000-0000-0000-000000000000/"
+        },
+        "test": true
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.label.changed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF90ZXN0XzAxTTVIR040WTRLWTNEMTBDODlIWVBCNkhGIiwidHlwZSI6InByb21wdC5sYWJlbC5jaGFuZ2VkIiwiYXBpX3ZlcnNpb24iOiJ2MSIsInRpbWVzdGFtcCI6IjIwMjYtMTAtMjJUMDk6NTk6NTguMTIwWiIsIm9yZ2FuaXphdGlvbl9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIndvcmtzcGFjZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsInRlc3QiOnRydWUsImRhdGEiOnsiYWN0aW9uIjoibW92ZWQiLCJjYXVzZSI6ImxhYmVsX2NoYW5nZSIsInByb21wdCI6eyJpZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIm5hbWUiOiJbVGVzdF0gc3VwcG9ydC1yZXBseSJ9LCJsYWJlbCI6eyJpZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsIm5hbWUiOiJbVGVzdF0gUHJvZHVjdGlvbiIsInR5cGUiOiJzeXN0ZW0ifSwicmV2aXNpb24iOjEyLCJmcm9tX3ZlcnNpb24iOnsiaWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJ2ZXJzaW9uIjoidjYifSwidG9fdmVyc2lvbiI6eyJpZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjoiVGlnaHRlbiB0aGUgcmVmdW5kIHdvcmRpbmcifSwiY2hhbmdlZF9hdCI6IjIwMjYtMTAtMjJUMDk6NTk6NTguMTIwWiIsImNoYW5nZWRfYnkiOnsiaWQiOiJhNTFmNmU3ZC04YzliLTRhMGYtOWUxZC0yYzNiNGE1ZjZlN2QiLCJuYW1lIjoiQXNoYSBSYW8ifSwibGlua3MiOnsiYXBwIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0L2Rhc2hib2FyZC9wcm9tcHQvMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAwIiwiYXBpIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS50ZXN0L21vZGVsLWh1Yi9wcm9tcHQtdGVtcGxhdGVzLzAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMC8ifX19",
+        "body_text": "{\"id\":\"evt_test_01M5HGN4Y4KY3D10C89HYPB6HF\",\"type\":\"prompt.label.changed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:59:58.120Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"test\":true,\"data\":{\"action\":\"moved\",\"cause\":\"label_change\",\"prompt\":{\"id\":\"00000000-0000-0000-0000-000000000000\",\"name\":\"[Test] support-reply\"},\"label\":{\"id\":\"00000000-0000-0000-0000-000000000000\",\"name\":\"[Test] Production\",\"type\":\"system\"},\"revision\":12,\"from_version\":{\"id\":\"00000000-0000-0000-0000-000000000000\",\"version\":\"v6\"},\"to_version\":{\"id\":\"00000000-0000-0000-0000-000000000000\",\"version\":\"v7\",\"commit_message\":\"Tighten the refund wording\"},\"changed_at\":\"2026-10-22T09:59:58.120Z\",\"changed_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/00000000-0000-0000-0000-000000000000\",\"api\":\"https://api.example.test/model-hub/prompt-templates/00000000-0000-0000-0000-000000000000/\"}}}",
+        "bytes": 1008,
+        "sha256": "264ad2e50a21c9726fd6e1eb6e924c8d7b1e306da381a16fc91899bd8926ca51"
+      },
+      "note": "a test: test true in the signed body, nil UUIDs for prompt, version and label ids (links too, so a receiver that fetches them gets 404), names prefixed '[Test] '"
+    },
+    {
+      "id": "pvc-thin-secret-straddles-cut",
+      "builder": "prompt.version.created",
+      "input": {
+        "event_id": "evt_01M5HFRP01W1CCXBGW3D4S98WZ",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyysk-proj-abcdefghijkl was rotated",
+          "is_default": false,
+          "labels": [],
+          "created_at": "2026-10-22T09:41:07.200Z",
+          "created_by": {
+            "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+            "name": "Asha Rao"
+          }
+        },
+        "previous_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        },
+        "content": {
+          "messages": [
+            {
+              "role": "system",
+              "text": "You answer refund questions."
+            },
+            {
+              "role": "user",
+              "text": "{{question}}"
+            }
+          ],
+          "variables": [
+            "question"
+          ],
+          "model": "gpt-4o-mini"
+        }
+      },
+      "variant": {
+        "payload_mode": "thin",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.version.created",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEZSUDAxVzFDQ1hCR1czRDRTOThXWiIsInR5cGUiOiJwcm9tcHQudmVyc2lvbi5jcmVhdGVkIiwiYXBpX3ZlcnNpb24iOiJ2MSIsInRpbWVzdGFtcCI6IjIwMjYtMTAtMjJUMDk6NDE6MDcuMjAwWiIsIm9yZ2FuaXphdGlvbl9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIndvcmtzcGFjZV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImRhdGEiOnsicHJvbXB0Ijp7ImlkIjoiNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjIiwibmFtZSI6InN1cHBvcnQtcmVwbHkifSwidmVyc2lvbiI6eyJpZCI6IjliMWQyYzNlLTRmNWEtNGI2Yy04ZDdlLTlmMGExYjJjM2Q0ZSIsInZlcnNpb24iOiJ2NyIsImNvbW1pdF9tZXNzYWdlIjoieXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eVtyZWQiLCJjb21taXRfbWVzc2FnZV90cnVuY2F0ZWQiOnRydWUsImlzX2RlZmF1bHQiOmZhbHNlLCJsYWJlbHMiOltdLCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQwOTo0MTowNy4yMDBaIiwiY3JlYXRlZF9ieSI6eyJpZCI6ImE1MWY2ZTdkLThjOWItNGEwZi05ZTFkLTJjM2I0YTVmNmU3ZCIsIm5hbWUiOiJBc2hhIFJhbyJ9fSwicHJldmlvdXNfdmVyc2lvbiI6eyJpZCI6IjQ3YWE1YjZjLTdkOGUtNGY5YS04YjBjLTFkMmUzZjRhNWI2YyIsInZlcnNpb24iOiJ2NiJ9LCJsaW5rcyI6eyJhcHAiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL3Byb21wdC82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJhcGkiOiJodHRwczovL2FwaS5leGFtcGxlLnRlc3QvbW9kZWwtaHViL3Byb21wdC10ZW1wbGF0ZXMvNmMwZTRiMGEtMWQyZS00ZjNhLThiNGMtNWQ2ZTdmOGE5YjBjLyJ9fX0=",
+        "body_text": "{\"id\":\"evt_01M5HFRP01W1CCXBGW3D4S98WZ\",\"type\":\"prompt.version.created\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:41:07.200Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy[red\",\"commit_message_truncated\":true,\"is_default\":false,\"labels\":[],\"created_at\":\"2026-10-22T09:41:07.200Z\",\"created_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"}},\"previous_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 1073,
+        "sha256": "70c3e4eca3b59abf1629998827f568439d58f49889c3a74564693cdaa6c4c050"
+      },
+      "note": "scrub, then cut: the key at code points 196-215 becomes [redacted] first, so the 200-code-point cut keeps '[red' and no part of the key (cutting first would leave 'sk-p', too short to match, in the body)"
+    },
+    {
+      "id": "plc-full-commit-secrets-masked",
+      "builder": "prompt.label.changed",
+      "input": {
+        "event_id": "evt_01M5HGN4Y5YR9V38FR858Q2F2Y",
+        "organization_id": "11111111-1111-4111-8111-111111111111",
+        "workspace_id": "22222222-2222-4222-8222-222222222222",
+        "prompt": {
+          "id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "name": "support-reply"
+        },
+        "label": {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "name": "Production",
+          "type": "system"
+        },
+        "revision": 14,
+        "from_version": {
+          "id": "47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c",
+          "version": "v6",
+          "commit_message": "Older wording"
+        },
+        "to_version": {
+          "id": "9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "version": "v7",
+          "commit_message": "Rotate whsec_AAECAwQFBgcICQoL and sk-ant-api03-abcdefgh; sk-1234567 is a ticket, not a key"
+        },
+        "changed_at": "2026-10-22T09:59:58.120Z",
+        "changed_by": {
+          "id": "a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d",
+          "name": "Asha Rao"
+        },
+        "links": {
+          "app": "https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "api": "https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/"
+        }
+      },
+      "variant": {
+        "payload_mode": "full",
+        "include_people_names": true
+      },
+      "schema": "urn:futureagi:webhooks:v1:prompt.label.changed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEdONFk1WVI5VjM4RlI4NThRMkYyWSIsInR5cGUiOiJwcm9tcHQubGFiZWwuY2hhbmdlZCIsImFwaV92ZXJzaW9uIjoidjEiLCJ0aW1lc3RhbXAiOiIyMDI2LTEwLTIyVDA5OjU5OjU4LjEyMFoiLCJvcmdhbml6YXRpb25faWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJ3b3Jrc3BhY2VfaWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJkYXRhIjp7ImFjdGlvbiI6Im1vdmVkIiwiY2F1c2UiOiJsYWJlbF9jaGFuZ2UiLCJwcm9tcHQiOnsiaWQiOiI2YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMiLCJuYW1lIjoic3VwcG9ydC1yZXBseSJ9LCJsYWJlbCI6eyJpZCI6IjMzMzMzMzMzLTMzMzMtNDMzMy04MzMzLTMzMzMzMzMzMzMzMyIsIm5hbWUiOiJQcm9kdWN0aW9uIiwidHlwZSI6InN5c3RlbSJ9LCJyZXZpc2lvbiI6MTQsImZyb21fdmVyc2lvbiI6eyJpZCI6IjQ3YWE1YjZjLTdkOGUtNGY5YS04YjBjLTFkMmUzZjRhNWI2YyIsInZlcnNpb24iOiJ2NiJ9LCJ0b192ZXJzaW9uIjp7ImlkIjoiOWIxZDJjM2UtNGY1YS00YjZjLThkN2UtOWYwYTFiMmMzZDRlIiwidmVyc2lvbiI6InY3IiwiY29tbWl0X21lc3NhZ2UiOiJSb3RhdGUgW3JlZGFjdGVkXSBhbmQgW3JlZGFjdGVkXTsgc2stMTIzNDU2NyBpcyBhIHRpY2tldCwgbm90IGEga2V5In0sImNoYW5nZWRfYXQiOiIyMDI2LTEwLTIyVDA5OjU5OjU4LjEyMFoiLCJjaGFuZ2VkX2J5Ijp7ImlkIjoiYTUxZjZlN2QtOGM5Yi00YTBmLTllMWQtMmMzYjRhNWY2ZTdkIiwibmFtZSI6IkFzaGEgUmFvIn0sImxpbmtzIjp7ImFwcCI6Imh0dHBzOi8vYXBwLmV4YW1wbGUudGVzdC9kYXNoYm9hcmQvcHJvbXB0LzZjMGU0YjBhLTFkMmUtNGYzYS04YjRjLTVkNmU3ZjhhOWIwYyIsImFwaSI6Imh0dHBzOi8vYXBpLmV4YW1wbGUudGVzdC9tb2RlbC1odWIvcHJvbXB0LXRlbXBsYXRlcy82YzBlNGIwYS0xZDJlLTRmM2EtOGI0Yy01ZDZlN2Y4YTliMGMvIn19fQ==",
+        "body_text": "{\"id\":\"evt_01M5HGN4Y5YR9V38FR858Q2F2Y\",\"type\":\"prompt.label.changed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T09:59:58.120Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"action\":\"moved\",\"cause\":\"label_change\",\"prompt\":{\"id\":\"6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"name\":\"support-reply\"},\"label\":{\"id\":\"33333333-3333-4333-8333-333333333333\",\"name\":\"Production\",\"type\":\"system\"},\"revision\":14,\"from_version\":{\"id\":\"47aa5b6c-7d8e-4f9a-8b0c-1d2e3f4a5b6c\",\"version\":\"v6\"},\"to_version\":{\"id\":\"9b1d2c3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e\",\"version\":\"v7\",\"commit_message\":\"Rotate [redacted] and [redacted]; sk-1234567 is a ticket, not a key\"},\"changed_at\":\"2026-10-22T09:59:58.120Z\",\"changed_by\":{\"id\":\"a51f6e7d-8c9b-4a0f-9e1d-2c3b4a5f6e7d\",\"name\":\"Asha Rao\"},\"links\":{\"app\":\"https://app.example.test/dashboard/prompt/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c\",\"api\":\"https://api.example.test/model-hub/prompt-templates/6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c/\"}}}",
+        "bytes": 1018,
+        "sha256": "19451a4c1fa34e35f6790b4dbe420f75eeb31948cb26e31715718858fc35206d"
+      },
+      "note": "full mode masks too: each secret shape becomes [redacted] in place (the message is kept, not dropped); sk- with only 7 characters after it is not a secret shape"
+    },
+    {
+      "id": "b8-context-key-order",
+      "builder": "deployment.run",
+      "input": {
+        "dep_id": "dep-3f9a0c1d2e4b5a69",
+        "notice_b64": "eyJwcm90b2NvbCI6Im9tZWdhLWRlcGxveS1ydW4tZXZlbnQvdjEiLCJub3RpY2VfaWQiOiIwMWExNjMyMC0wZjlhLTdhM2ItOWM1NS0yZjFlOGEwYjZkMTMiLCJldmVudCI6InJ1bi5jb21wbGV0ZWQiLCJydW4iOnsiaWQiOiJydW5fMDFNNUhIWlgzSkI4RjBSRkNWRldRNE1WNDEiLCJ0aHJlYWRfaWQiOiJ0aF8wMU01SEhYSjZDM1c3MlRGMkJCOU1RSDFXUCIsImFzc2lzdGFudF9pZCI6bnVsbCwid29ya2Zsb3dfaWQiOiJzdXBwb3J0LWFnZW50IiwicmV2aXNpb24iOjQsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwic3VwZXJzdGVwcyI6OSwiZXJyb3IiOm51bGwsInRyYWNlX2lkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJ3ZWJob29rIjoid2hlcF8wMU01RkZRVjlSNUNZNFRRS0ZFMjBTNThYTSIsIndlYmhvb2tfY29udGV4dCI6eyJiIjoxLCIxMCI6InRlbiIsIjIiOiJ0d28iLCJhIjp0cnVlLCIwMSI6Inplcm8tb25lIiwiNDI5NDk2NzI5NCI6Imxhcmdlc3QgaW5kZXgiLCI0Mjk0OTY3Mjk1Ijoibm90IGFuIGluZGV4In19LCJ1c2FnZSI6eyJpbnB1dF90b2tlbnMiOjE4MzQsIm91dHB1dF90b2tlbnMiOjQwMiwidG90YWxfdG9rZW5zIjoyMjM2LCJtb2RlbF9jYWxscyI6M319",
+        "headers": {
+          "X-Omega-Deployment-Name": "support-agent",
+          "X-Omega-Deployment-Environment": "production",
+          "X-Omega-Deployment-Url": "https://support-agent.example.test"
+        },
+        "fa": {
+          "event_id": "evt_01M5HJ0ARS4SYQH5XHCE4RRBB8",
+          "organization_id": "11111111-1111-4111-8111-111111111111",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "project_id": "8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f",
+          "verified_by_trace": true,
+          "observe_usage": {
+            "input_tokens": 1834,
+            "output_tokens": 402,
+            "total_tokens": 2236,
+            "model_calls": 3
+          },
+          "cost": {
+            "usd_micros": 4127,
+            "final": true
+          },
+          "links": {
+            "deployment": "https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69",
+            "trace": "https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        }
+      },
+      "schema": "urn:futureagi:webhooks:v1:deployment.run.completed",
+      "expected": {
+        "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEowQVJTNFNZUUg1WEhDRTRSUkJCOCIsInR5cGUiOiJkZXBsb3ltZW50LnJ1bi5jb21wbGV0ZWQiLCJhcGlfdmVyc2lvbiI6InYxIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwib3JnYW5pemF0aW9uX2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwid29ya3NwYWNlX2lkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwiZGF0YSI6eyJkZXBsb3ltZW50Ijp7ImlkIjoiZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJuYW1lIjoic3VwcG9ydC1hZ2VudCIsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInJldmlzaW9uIjo0fSwicnVuIjp7ImlkIjoicnVuXzAxTTVISFpYM0pCOEYwUkZDVkZXUTRNVjQxIiwidGhyZWFkX2lkIjoidGhfMDFNNUhIWEo2QzNXNzJURjJCQjlNUUgxV1AiLCJhc3Npc3RhbnRfaWQiOm51bGwsIndvcmtmbG93X2lkIjoic3VwcG9ydC1hZ2VudCIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwiZHVyYXRpb25fbXMiOjY4MzAsInF1ZXVlX21zIjoxMTAsInN1cGVyc3RlcHMiOjksImVycm9yIjpudWxsLCJjb250ZXh0Ijp7IjIiOiJ0d28iLCIxMCI6InRlbiIsIjQyOTQ5NjcyOTQiOiJsYXJnZXN0IGluZGV4IiwiYiI6MSwiYSI6dHJ1ZSwiMDEiOiJ6ZXJvLW9uZSIsIjQyOTQ5NjcyOTUiOiJub3QgYW4gaW5kZXgifSwidmVyaWZpZWRfYnlfdHJhY2UiOnRydWV9LCJ1c2FnZSI6eyJpbnB1dF90b2tlbnMiOjE4MzQsIm91dHB1dF90b2tlbnMiOjQwMiwidG90YWxfdG9rZW5zIjoyMjM2LCJtb2RlbF9jYWxscyI6Mywic291cmNlIjoib2JzZXJ2ZSJ9LCJjb3N0Ijp7InVzZF9taWNyb3MiOjQxMjcsImZpbmFsIjp0cnVlLCJiYXNpcyI6Im9ic2VydmVfbW9kZWxfcHJpY2VzIn0sInRyYWNlIjp7ImlkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJwcm9qZWN0X2lkIjoiOGQzZTVmMTAtMmE0Yi00YzZkLThlOWYtMGExYjJjM2Q0ZTVmIn0sImxpbmtzIjp7ImRlcGxveW1lbnQiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL2RlcGxveW1lbnRzL2RlcC0zZjlhMGMxZDJlNGI1YTY5IiwidHJhY2UiOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QvZGFzaGJvYXJkL29ic2VydmUvOGQzZTVmMTAtMmE0Yi00YzZkLThlOWYtMGExYjJjM2Q0ZTVmL3RyYWNlLzRiZjkyZjM1NzdiMzRkYTZhM2NlOTI5ZDBlMGU0NzM2IiwicnVuX2FwaSI6Imh0dHBzOi8vc3VwcG9ydC1hZ2VudC5leGFtcGxlLnRlc3Qvc3R1ZGlvL3YxL3J1bnMvcnVuXzAxTTVISFpYM0pCOEYwUkZDVkZXUTRNVjQxIn19fQ==",
+        "body_text": "{\"id\":\"evt_01M5HJ0ARS4SYQH5XHCE4RRBB8\",\"type\":\"deployment.run.completed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T10:20:07.950Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"deployment\":{\"id\":\"dep-3f9a0c1d2e4b5a69\",\"name\":\"support-agent\",\"environment\":\"production\",\"revision\":4},\"run\":{\"id\":\"run_01M5HHZX3JB8F0RFCVFWQ4MV41\",\"thread_id\":\"th_01M5HHXJ6C3W72TF2BB9MQH1WP\",\"assistant_id\":null,\"workflow_id\":\"support-agent\",\"status\":\"succeeded\",\"attempt\":1,\"trigger\":{\"kind\":\"api\",\"cron_id\":null},\"created_at\":\"2026-10-22T10:20:01.010Z\",\"started_at\":\"2026-10-22T10:20:01.120Z\",\"ended_at\":\"2026-10-22T10:20:07.950Z\",\"duration_ms\":6830,\"queue_ms\":110,\"supersteps\":9,\"error\":null,\"context\":{\"2\":\"two\",\"10\":\"ten\",\"4294967294\":\"largest index\",\"b\":1,\"a\":true,\"01\":\"zero-one\",\"4294967295\":\"not an index\"},\"verified_by_trace\":true},\"usage\":{\"input_tokens\":1834,\"output_tokens\":402,\"total_tokens\":2236,\"model_calls\":3,\"source\":\"observe\"},\"cost\":{\"usd_micros\":4127,\"final\":true,\"basis\":\"observe_model_prices\"},\"trace\":{\"id\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"project_id\":\"8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f\"},\"links\":{\"deployment\":\"https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69\",\"trace\":\"https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736\",\"run_api\":\"https://support-agent.example.test/studio/v1/runs/run_01M5HHZX3JB8F0RFCVFWQ4MV41\"}}}",
+        "bytes": 1489,
+        "sha256": "a095fe4d57b817184f320b75d29a686ec36d986fe374271cb998196f9bc324c4"
+      },
+      "note": "customer keys in the order JSON.parse gives them: array indexes (2, 10, 4294967294) ascending first, then the rest as received (01 and 4294967295 are not indexes)"
+    }
+  ],
+  "deployment_name_header": [
+    {
+      "id": "plain",
+      "value": "support-agent",
+      "expected": {
+        "name": "support-agent"
+      },
+      "note": ""
+    },
+    {
+      "id": "utf8",
+      "value": "support%20agent%20%E2%9C%93",
+      "expected": {
+        "name": "support agent ✓"
+      },
+      "note": "percent-encoded UTF-8"
+    },
+    {
+      "id": "lower-case-hex",
+      "value": "caf%c3%a9",
+      "expected": {
+        "name": "café"
+      },
+      "note": "hex digits in either case"
+    },
+    {
+      "id": "plus-is-literal",
+      "value": "a+b",
+      "expected": {
+        "name": "a+b"
+      },
+      "note": "'+' is not a space"
+    },
+    {
+      "id": "raw-space",
+      "value": "support agent",
+      "expected": {
+        "name": "support agent"
+      },
+      "note": "a raw space is visible ASCII"
+    },
+    {
+      "id": "lone-percent",
+      "value": "100%",
+      "expected": {
+        "name": "100%"
+      },
+      "note": "a '%' without two hex digits stays as it is"
+    },
+    {
+      "id": "percent-one-hex-digit",
+      "value": "50%2",
+      "expected": {
+        "name": "50%2"
+      },
+      "note": ""
+    },
+    {
+      "id": "percent-not-hex",
+      "value": "a%zz",
+      "expected": {
+        "name": "a%zz"
+      },
+      "note": ""
+    },
+    {
+      "id": "bom-kept",
+      "value": "%EF%BB%BFname",
+      "expected": {
+        "name": "﻿name"
+      },
+      "note": "a decoded U+FEFF is kept, not stripped"
+    },
+    {
+      "id": "invalid-utf8",
+      "value": "%FF",
+      "expected": {
+        "status": 400,
+        "code": "invalid_header",
+        "field": "X-Omega-Deployment-Name"
+      },
+      "note": ""
+    },
+    {
+      "id": "truncated-sequence",
+      "value": "caf%C3",
+      "expected": {
+        "status": 400,
+        "code": "invalid_header",
+        "field": "X-Omega-Deployment-Name"
+      },
+      "note": ""
+    },
+    {
+      "id": "encoded-surrogate",
+      "value": "%ED%A0%80",
+      "expected": {
+        "status": 400,
+        "code": "invalid_header",
+        "field": "X-Omega-Deployment-Name"
+      },
+      "note": "an encoded surrogate is not UTF-8"
+    },
+    {
+      "id": "overlong",
+      "value": "%C0%AF",
+      "expected": {
+        "status": 400,
+        "code": "invalid_header",
+        "field": "X-Omega-Deployment-Name"
+      },
+      "note": "an overlong encoding is not UTF-8"
+    },
+    {
+      "id": "raw-non-ascii",
+      "value": "café",
+      "expected": {
+        "status": 400,
+        "code": "invalid_header",
+        "field": "X-Omega-Deployment-Name"
+      },
+      "note": "a raw byte above 0x7E (frameworks hand header bytes over as Latin-1)"
+    },
+    {
+      "id": "control-character",
+      "value": "a\tb",
+      "expected": {
+        "status": 400,
+        "code": "invalid_header",
+        "field": "X-Omega-Deployment-Name"
+      },
+      "note": ""
+    }
+  ],
+  "fan_out": {
+    "input": {
+      "endpoints": [
+        {
+          "id": "whep_A",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "status": "enabled",
+          "subscriptions": [
+            {
+              "event_type": "prompt.*"
+            }
+          ]
+        },
+        {
+          "id": "whep_B",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "status": "enabled",
+          "subscriptions": [
+            {
+              "event_type": "prompt.label.changed",
+              "filters": {
+                "label_names": [
+                  "Production"
+                ],
+                "actions": [
+                  "moved",
+                  "assigned"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "whep_C",
+          "workspace_id": null,
+          "status": "enabled",
+          "accepts_run_targeting": true,
+          "subscriptions": [
+            {
+              "event_type": "deployment.run.*"
+            }
+          ]
+        },
+        {
+          "id": "whep_D",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "status": "disabled_auto",
+          "next_seq": 41,
+          "paused_count": 9999,
+          "subscriptions": [
+            {
+              "event_type": "prompt.*"
+            }
+          ]
+        },
+        {
+          "id": "whep_E",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "status": "enabled",
+          "accepts_run_targeting": true,
+          "subscriptions": [
+            {
+              "event_type": "prompt.version.created"
+            }
+          ]
+        },
+        {
+          "id": "whep_F",
+          "workspace_id": "44444444-4444-4444-8444-444444444444",
+          "status": "enabled",
+          "subscriptions": [
+            {
+              "event_type": "prompt.*"
+            }
+          ]
+        },
+        {
+          "id": "whep_G",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "status": "enabled",
+          "subscriptions": [
+            {
+              "event_type": "deployment.run.failed",
+              "filters": {
+                "statuses": [
+                  "cancelled"
+                ]
+              }
+            },
+            {
+              "event_type": "deployment.run.completed"
+            }
+          ]
+        },
+        {
+          "id": "whep_H",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "status": "enabled",
+          "accepts_run_targeting": true,
+          "subscriptions": [
+            {
+              "event_type": "deployment.run.*",
+              "filters": {
+                "deployment_ids": [
+                  "dep-0123456789abcdef"
+                ],
+                "environments": [
+                  "production"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "events": [
+        {
+          "id": "evt_1",
+          "type": "prompt.version.created",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "prompt_id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c"
+        },
+        {
+          "id": "evt_2",
+          "type": "prompt.label.changed",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "prompt_id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "label_name": "Production",
+          "action": "moved"
+        },
+        {
+          "id": "evt_3",
+          "type": "prompt.label.changed",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "prompt_id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "label_name": "Staging",
+          "action": "moved"
+        },
+        {
+          "id": "evt_4",
+          "type": "deployment.run.completed",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "deployment_id": "dep-3f9a0c1d2e4b5a69",
+          "environment": "production",
+          "trigger_kind": "api",
+          "status": "succeeded",
+          "targeted_endpoint_id": "whep_E"
+        },
+        {
+          "id": "evt_5",
+          "type": "deployment.run.failed",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "deployment_id": "dep-3f9a0c1d2e4b5a69",
+          "environment": "production",
+          "trigger_kind": "cron",
+          "status": "cancelled"
+        },
+        {
+          "id": "evt_6",
+          "type": "deployment.run.failed",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "deployment_id": "dep-3f9a0c1d2e4b5a69",
+          "environment": "production",
+          "trigger_kind": "api",
+          "status": "failed",
+          "targeted_endpoint_id": "whep_C"
+        },
+        {
+          "id": "evt_test_7",
+          "type": "prompt.label.changed",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "test": true,
+          "test_endpoint_id": "whep_A"
+        },
+        {
+          "id": "evt_8",
+          "type": "prompt.version.created",
+          "workspace_id": "44444444-4444-4444-8444-444444444444",
+          "prompt_id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c"
+        },
+        {
+          "id": "evt_9",
+          "type": "deployment.run.failed",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "deployment_id": "dep-3f9a0c1d2e4b5a69",
+          "environment": "production",
+          "trigger_kind": "api",
+          "status": "interrupted",
+          "targeted_endpoint_id": "whep_H"
+        },
+        {
+          "id": "evt_10",
+          "type": "deployment.run.failed",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "deployment_id": "dep-3f9a0c1d2e4b5a69",
+          "environment": "preview",
+          "trigger_kind": "api",
+          "status": "failed",
+          "targeted_endpoint_id": "whep_H"
+        },
+        {
+          "id": "evt_11",
+          "type": "prompt.label.changed",
+          "workspace_id": "22222222-2222-4222-8222-222222222222",
+          "prompt_id": "6c0e4b0a-1d2e-4f3a-8b4c-5d6e7f8a9b0c",
+          "label_name": "Production",
+          "action": "removed"
+        }
+      ]
+    },
+    "expected": [
+      {
+        "event_id": "evt_1",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_A",
+            "seq": 1,
+            "status": "pending",
+            "targeted": false
+          },
+          {
+            "endpoint_id": "whep_D",
+            "seq": 41,
+            "status": "paused",
+            "targeted": false
+          },
+          {
+            "endpoint_id": "whep_E",
+            "seq": 1,
+            "status": "pending",
+            "targeted": false
+          }
+        ]
+      },
+      {
+        "event_id": "evt_2",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_A",
+            "seq": 2,
+            "status": "pending",
+            "targeted": false
+          },
+          {
+            "endpoint_id": "whep_B",
+            "seq": 1,
+            "status": "pending",
+            "targeted": false
+          },
+          {
+            "endpoint_id": "whep_D",
+            "seq": 42,
+            "status": "skipped",
+            "skip_reason": "backlog_cap",
+            "targeted": false
+          }
+        ]
+      },
+      {
+        "event_id": "evt_3",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_A",
+            "seq": 3,
+            "status": "pending",
+            "targeted": false
+          },
+          {
+            "endpoint_id": "whep_D",
+            "seq": 43,
+            "status": "skipped",
+            "skip_reason": "backlog_cap",
+            "targeted": false
+          }
+        ]
+      },
+      {
+        "event_id": "evt_4",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_C",
+            "seq": 1,
+            "status": "pending",
+            "targeted": false
+          },
+          {
+            "endpoint_id": "whep_E",
+            "seq": 2,
+            "status": "pending",
+            "targeted": true
+          },
+          {
+            "endpoint_id": "whep_G",
+            "seq": 1,
+            "status": "pending",
+            "targeted": false
+          }
+        ]
+      },
+      {
+        "event_id": "evt_5",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_G",
+            "seq": 2,
+            "status": "pending",
+            "targeted": false
+          }
+        ]
+      },
+      {
+        "event_id": "evt_6",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_C",
+            "seq": 2,
+            "status": "pending",
+            "targeted": false
+          }
+        ]
+      },
+      {
+        "event_id": "evt_test_7",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_A",
+            "seq": null,
+            "status": "pending",
+            "targeted": false
+          }
+        ]
+      },
+      {
+        "event_id": "evt_8",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_F",
+            "seq": 1,
+            "status": "pending",
+            "targeted": false
+          }
+        ]
+      },
+      {
+        "event_id": "evt_9",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_C",
+            "seq": 3,
+            "status": "pending",
+            "targeted": false
+          },
+          {
+            "endpoint_id": "whep_H",
+            "seq": 1,
+            "status": "pending",
+            "targeted": true
+          }
+        ]
+      },
+      {
+        "event_id": "evt_10",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_C",
+            "seq": 4,
+            "status": "pending",
+            "targeted": false
+          }
+        ]
+      },
+      {
+        "event_id": "evt_11",
+        "deliveries": [
+          {
+            "endpoint_id": "whep_A",
+            "seq": 4,
+            "status": "pending",
+            "targeted": false
+          },
+          {
+            "endpoint_id": "whep_D",
+            "seq": 44,
+            "status": "skipped",
+            "skip_reason": "backlog_cap",
+            "targeted": false
+          }
+        ]
+      }
+    ]
+  }
+}

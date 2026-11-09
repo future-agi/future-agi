@@ -1,0 +1,57 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "google-calendar",
+  "source": "CN14c K2 replay assertions (approved at 35d425a977)",
+  "test_account": "cn14-synthetic-unverified",
+  "tools": 8,
+  "vendor_404": "Google www.googleapis.com 404",
+  "drive_checks": [
+    {
+      "name": "free_busy_read_only",
+      "jq": ".tools[] | select(.name == \"query_free_busy\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "delete_destructive",
+      "jq": ".tools[] | select(.name == \"delete_event\") | .annotations.destructiveHint",
+      "want": "true"
+    },
+    {
+      "name": "update_idempotent",
+      "jq": ".tools[] | select(.name == \"update_event\") | .annotations.idempotentHint",
+      "want": "true"
+    },
+    {
+      "name": "create_open_world",
+      "jq": ".tools[] | select(.name == \"create_event\") | .annotations.openWorldHint",
+      "want": "true"
+    },
+    {
+      "name": "list_events",
+      "jq": ".calls[1].result.content[0].text | contains(\"Team sync\")",
+      "want": "true"
+    },
+    {
+      "name": "free_busy",
+      "jq": ".calls[3].result.content[0].text | (contains(\"busy\") and contains(\"notFound\"))",
+      "want": "true"
+    },
+    {
+      "name": "create_event",
+      "jq": ".calls[4].result.content[0].text | contains(\"e-2\")",
+      "want": "true"
+    },
+    {
+      "name": "quick_add",
+      "jq": ".calls[5].result.content[0].text | contains(\"Lunch with Bob\")",
+      "want": "true"
+    },
+    {
+      "name": "update_event_projected",
+      "jq": ".calls[6].result.content[0].text | (contains(\"T11:00:00-07:00\") and (contains(\"summary\") | not))",
+      "want": "true"
+    }
+  ],
+  "vendor_request_checks": [],
+  "every_vendor_request": []
+}

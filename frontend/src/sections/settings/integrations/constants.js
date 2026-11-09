@@ -1,3 +1,5 @@
+import { CAPABILITY } from "src/hooks/useCapabilities";
+
 export const DEFAULT_LANGFUSE_HOST = "https://cloud.langfuse.com";
 
 export const SYNC_INTERVALS = [
@@ -25,8 +27,20 @@ export const SKIP_PROJECT_MAPPING_PLATFORMS = [
   "datadog",
   "posthog",
   "mixpanel",
+  "cloud_storage",
   "message_queue",
   "linear",
+];
+
+// Platforms that export AI Gateway request logs (integrations/temporal/activities.py
+// EXPORT_PLATFORMS). Their first sync exports the last 24 hours, or from the
+// date chosen, and each sync after it the request logs that arrived since.
+export const EXPORT_PLATFORMS = [
+  "datadog",
+  "posthog",
+  "mixpanel",
+  "cloud_storage",
+  "message_queue",
 ];
 
 // Platforms that skip sync settings (no polling / backfill — action-only integrations)
@@ -64,49 +78,41 @@ export const PLATFORMS = [
     description: "Open-source LLM observability platform",
     wizardDescription: "Import traces, spans, and scores from Langfuse",
     logo: "/assets/icons/integrations/langfuse.svg",
-    available: true,
   },
   {
     id: "datadog",
     name: "Datadog",
-    description: "APM, metrics, logs, and distributed traces",
-    wizardDescription:
-      "Export Agent Command Center metrics, logs, and traces to Datadog",
+    description: "AI Gateway request logs and metrics",
+    wizardDescription: "Export AI Gateway request logs and metrics to Datadog",
     logo: "/assets/icons/integrations/datadog.svg",
-    available: true,
   },
   {
     id: "posthog",
     name: "PostHog",
-    description: "Open-source product analytics",
+    description: "AI Gateway request logs as PostHog events",
     wizardDescription: "Export LLM usage events to PostHog",
     logo: "/assets/icons/integrations/posthog.svg",
-    available: true,
   },
   {
     id: "pagerduty",
     name: "PagerDuty",
     description: "Incident management and on-call alerting",
-    wizardDescription:
-      "Route Agent Command Center alerts to PagerDuty incidents",
+    wizardDescription: "Route AI Gateway alerts to PagerDuty incidents",
     logo: "/assets/icons/integrations/pagerduty.svg",
-    available: true,
   },
   {
     id: "mixpanel",
     name: "Mixpanel",
-    description: "Product analytics and user tracking",
+    description: "AI Gateway request logs as Mixpanel events",
     wizardDescription: "Export LLM usage events to Mixpanel",
     logo: "/assets/icons/integrations/mixpanel.svg",
-    available: true,
   },
   {
     id: "cloud_storage",
     name: "Cloud Storage",
-    description: "S3, Azure Blob, or GCS log archival",
+    description: "Request log archival in Amazon S3",
     wizardDescription: "Ship request logs to cloud object storage",
     logo: "/assets/icons/integrations/cloud-storage.svg",
-    available: true,
   },
   {
     id: "message_queue",
@@ -114,7 +120,6 @@ export const PLATFORMS = [
     description: "SQS or Pub/Sub real-time log streaming",
     wizardDescription: "Publish request logs to a message queue",
     logo: "/assets/icons/integrations/message-queue.svg",
-    available: true,
   },
   {
     id: "slack",
@@ -124,7 +129,6 @@ export const PLATFORMS = [
     logo: null,
     icon: "simple-icons:slack",
     iconColor: "#E01E5A",
-    available: true,
   },
   {
     id: "linear",
@@ -134,22 +138,76 @@ export const PLATFORMS = [
     logo: null,
     icon: "simple-icons:linear",
     iconColor: "#5E6AD2",
-    available: true,
-  },
-  {
-    id: "langsmith",
-    name: "LangSmith",
-    description: "LangChain's tracing and evaluation platform",
-    wizardDescription: "Import traces from LangSmith",
-    logo: "/assets/icons/integrations/langsmith.svg",
-    available: false,
-  },
-  {
-    id: "arize",
-    name: "Arize",
-    description: "ML observability and monitoring",
-    wizardDescription: "Import traces from Arize Phoenix",
-    logo: "/assets/icons/integrations/arize.svg",
-    available: false,
   },
 ];
+
+// Destinations the Add Integration flow does not offer. A destination is
+// offered once an end-to-end flow (e2e/flows/integrations/) shows the
+// product delivering to it; it comes back by deleting its entry here.
+// "<platform>" leaves a platform out of the page grid and the wizard;
+// "<platform>/<sub_platform>" leaves one choice out of its credentials step.
+// A connection that already exists for one of them stays listed and
+// manageable on the Integrations page.
+export const UNLISTED_DESTINATIONS = [
+  "langfuse",
+  "pagerduty",
+  "message_queue",
+  "cloud_storage/azure_blob",
+  "cloud_storage/gcs",
+];
+
+export const isDestinationListed = (platform, subPlatform) =>
+  !UNLISTED_DESTINATIONS.includes(platform) &&
+  !(
+    subPlatform && UNLISTED_DESTINATIONS.includes(`${platform}/${subPlatform}`)
+  );
+
+// The platforms the page grid and the wizard can offer.
+export const LISTED_PLATFORMS = PLATFORMS.filter((platform) =>
+  isDestinationListed(platform.id),
+);
+
+// A platform whose one use is a feature the deployment may not allow is
+// offered only where the deployment's capabilities allow that feature:
+// Linear issues are created from Error Feed clusters.
+export const PLATFORM_CAPABILITY = { linear: CAPABILITY.ERROR_FEED };
+
+// The listed platforms a deployment offers, given which capabilities it allows.
+export const offeredPlatforms = (isAllowed) =>
+  LISTED_PLATFORMS.filter((platform) => {
+    const capability = PLATFORM_CAPABILITY[platform.id];
+    return !capability || isAllowed(capability);
+  });
+
+// The name a new connection gets: its storage or queue choice, or its platform.
+const SUB_PLATFORM_NAMES = {
+  s3: "Amazon S3",
+  azure_blob: "Azure Blob",
+  gcs: "Google Cloud Storage",
+  sqs: "Amazon SQS",
+  pubsub: "Google Pub/Sub",
+};
+export const connectionName = (platform, credentials) =>
+  SUB_PLATFORM_NAMES[credentials?.sub_platform] ||
+  PLATFORMS.find((p) => p.id === platform)?.name ||
+  platform;
+
+// The credentials an export's Edit dialog replaces, by the key its
+// credentials step stores them under (the backend's EDITABLE_CREDENTIALS in
+// futureagi/integrations/views/integration_connection.py). They are checked
+// with the platform before they are saved.
+export const EDITABLE_CREDENTIALS = {
+  datadog: [{ key: "api_key", label: "API Key", secret: true }],
+  posthog: [{ key: "api_key", label: "Project API Key", secret: true }],
+  mixpanel: [
+    { key: "project_token", label: "Project Token", secret: true },
+    { key: "api_secret", label: "API Secret", secret: true },
+  ],
+  cloud_storage: [
+    { key: "access_key_id", label: "Access Key ID", secret: false },
+    { key: "secret_access_key", label: "Secret Access Key", secret: true },
+  ],
+};
+
+export const platformName = (platform) =>
+  PLATFORMS.find((p) => p.id === platform)?.name || platform;

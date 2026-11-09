@@ -1,0 +1,91 @@
+{{- if include "futureagi.hub.enabled" . }}
+{{- $c := .Values.hub.checker -}}
+{{- $ctx := dict "root" . "component" "hub-checker" -}}
+{{- $backend := include "futureagi.component" (dict "root" . "component" "backend") -}}
+{{- /* The checker's whole environment: the registry, its token, and the runner
+host it runs uploads on. No database, storage or provider credential. */ -}}
+{{- $env := dict
+      "OMEGA_HUB_URL" (printf "http://%s:%v" $backend .Values.backend.service.port)
+      "OMEGA_HUB_RUNNER_IMAGE" $c.runner.image
+      "OMEGA_HUB_RUNNER_RUNTIME" "runsc"
+      "OMEGA_HUB_RUNNER_WAIT" "0"
+      "DOCKER_HOST" $c.runner.dockerHost
+      "DOCKER_TLS_VERIFY" "1"
+      "DOCKER_CERT_PATH" "/certs/client"
+      "HOME" "/tmp" -}}
+{{- /* No proxy or CA settings (global.proxy, global.caBundle): it reaches the
+backend in the cluster and the runner host directly, and the docker CLI would
+send its runner connection through an HTTPS_PROXY. */ -}}
+{{- $env = mergeOverwrite $env ($c.extraEnv | default dict) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- include "futureagi.block" (dict "text" (include "futureagi.workloadAnnotations" $) "indent" 2) }}
+spec:
+  replicas: {{ $c.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
+        {{- with $c.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $c.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      # The checker never calls the Kubernetes API.
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $c)) "indent" 6) }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "root" . "uid" 1000) | nindent 8 }}
+      # The worker finishes or abandons its job on SIGTERM; an abandoned job's
+      # lease expires and another checker claims it.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: checker
+          image: {{ include "futureagi.image" (dict "root" . "image" $c.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $c.image) }}
+          env:
+            - name: OMEGA_HUB_CHECKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- include "futureagi.secretEnv" (dict "name" "OMEGA_HUB_CHECKER_TOKEN" "secret" (include "futureagi.hub.tokenSecretName" .) "key" "OMEGA_HUB_CHECKER_TOKEN") | nindent 12 }}
+            {{- include "futureagi.envMap" $env | nindent 12 }}
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "root" .) | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: runner-client
+              mountPath: /certs/client
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        # The runner host's client certificate, readable by the checker's group only.
+        - name: runner-client
+          secret:
+            secretName: {{ $c.runner.tlsSecret }}
+            defaultMode: 0440
+            items:
+              - {key: ca.pem, path: ca.pem}
+              - {key: cert.pem, path: cert.pem}
+              - {key: key.pem, path: key.pem}
+{{- end }}

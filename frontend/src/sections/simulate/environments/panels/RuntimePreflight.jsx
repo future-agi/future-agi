@@ -5,6 +5,16 @@ import Iconify from "src/components/iconify";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { BUILD_TONES } from "../buildEnvironment/buildTones";
 
+// A probe the deployment declined to send (Future AGI Cloud never contacts a
+// customer's LiveKit URL) neither passed nor failed, and does not block the run.
+const probeVerdict = (probe) => {
+  if (probe.skipped)
+    return { text: "not verified on hosted", color: BUILD_TONES.grey };
+  return probe.ok
+    ? { text: "verified", color: BUILD_TONES.green }
+    : { text: "failed", color: BUILD_TONES.red };
+};
+
 export default function RuntimePreflight({ status = "idle", canRun = false, blockedReason = null, onRun, result, error }) {
   if (status === "idle" || status === "running") {
     const running = status === "running";
@@ -92,14 +102,17 @@ export default function RuntimePreflight({ status = "idle", canRun = false, bloc
             Provide one credential set: {choice.options.map((option) => option.join(" + ")).join(" or ")}
           </Typography>
         ))}
-        {probes.map((probe) => (
-          <Box key={`${probe.provider}:${probe.aliases.join(",")}`}>
-            <Typography sx={{ typography: "s2", color: probe.ok ? BUILD_TONES.green : BUILD_TONES.red }}>
-              {probe.label}: {probe.ok ? "verified" : "failed"}
-            </Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{probe.message}</Typography>
-          </Box>
-        ))}
+        {probes.map((probe) => {
+          const verdict = probeVerdict(probe);
+          return (
+            <Box key={`${probe.provider}:${probe.aliases.join(",")}`}>
+              <Typography sx={{ typography: "s2", color: verdict.color }}>
+                {probe.label}: {verdict.text}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{probe.message}</Typography>
+            </Box>
+          );
+        })}
         {!credentials && (
           <Typography sx={{ typography: "s3", color: BUILD_TONES.red }}>
             Preflight did not return a credential report. Re-run before building.

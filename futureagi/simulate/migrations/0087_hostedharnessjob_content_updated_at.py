@@ -11,7 +11,7 @@ def backfill_content_updated_at(apps, schema_editor):
     because a poll tick moves it.
     """
     HostedHarnessJob = apps.get_model("simulate", "HostedHarnessJob")
-    HostedHarnessJob.objects.filter(content_updated_at__isnull=True).update(
+    HostedHarnessJob.objects.using(schema_editor.connection.alias).filter(content_updated_at__isnull=True).update(
         content_updated_at=Coalesce(F("terminal_at"), F("created_at"))
     )
 

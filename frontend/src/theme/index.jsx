@@ -17,7 +17,9 @@ import { typography } from "./typography";
 import RTL from "./options/right-to-left";
 import { customShadows } from "./custom-shadows";
 import { componentsOverrides } from "./overrides";
-import { createPresets } from "./options/presets";
+import { dsShape } from "./ds-tokens";
+import "./tokens.css";
+import "./legacy-bridge.css";
 import { createContrast } from "./options/contrast";
 
 // ----------------------------------------------------------------------
@@ -30,14 +32,13 @@ export default function ThemeProvider({ children }) {
   const effectiveMode =
     settings.themeMode === "system" ? systemMode : settings.themeMode;
 
-  const presets = createPresets(settings.themeColorPresets);
-
   const contrast = createContrast(settings.themeContrast, effectiveMode);
 
   // Sync data-theme attribute and CSS variables from palette on <body>
   useEffect(() => {
     const body = document.body;
     body.setAttribute("data-theme", effectiveMode);
+    document.documentElement.setAttribute("data-theme", effectiveMode);
   }, [effectiveMode]);
 
   const memoizedValue = useMemo(
@@ -47,21 +48,16 @@ export default function ThemeProvider({ children }) {
       },
       customShadows: {
         ...customShadows(effectiveMode),
-        ...presets.customShadows,
       },
-      direction: settings.themeDirection,
+      direction: /** @type {"ltr" | "rtl"} */ (
+        settings.themeDirection === "rtl" ? "rtl" : "ltr"
+      ),
       shadows: shadows(effectiveMode),
-      shape: { borderRadius: 8 },
+      shape: dsShape,
       typography,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      effectiveMode,
-      settings.themeDirection,
-      presets.palette,
-      presets.customShadows,
-      contrast.palette,
-    ],
+    [effectiveMode, settings.themeDirection, contrast.palette],
   );
 
   const theme = createTheme(memoizedValue);
@@ -87,7 +83,7 @@ export default function ThemeProvider({ children }) {
     s.setProperty("--border-hover", p.border?.hover || p.divider);
     s.setProperty("--border-active", p.border?.active || p.divider);
     s.setProperty("--border-light", p.border?.default || "#e6e6e6");
-    s.setProperty("--surface-menu", p.background.neutral);
+    s.setProperty("--surface-menu", p.background.overlay);
     s.setProperty("--surface-header", p.background.neutral);
     s.setProperty("--surface-row-active", p.action.selected);
     s.setProperty("--surface-row-hover", p.action.hover);

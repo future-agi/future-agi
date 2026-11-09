@@ -53,20 +53,14 @@ describe("DatetimeCellRenderer", () => {
 
   it("keeps the time for timestamps", () => {
     const { rerender } = render(
-      <DatetimeCellRenderer
-        value="2026-01-29T14:30:00"
-        {...rendererProps}
-      />,
+      <DatetimeCellRenderer value="2026-01-29T14:30:00" {...rendererProps} />,
     );
-    expect(screen.getByText("29/01/2026 14:30")).toBeInTheDocument();
+    expect(screen.getByLabelText("29/01/2026 14:30")).toBeInTheDocument();
 
     rerender(
-      <DatetimeCellRenderer
-        value="2026-01-29T00:00:00"
-        {...rendererProps}
-      />,
+      <DatetimeCellRenderer value="2026-01-29T00:00:00" {...rendererProps} />,
     );
-    expect(screen.getByText("29/01/2026 00:00")).toBeInTheDocument();
+    expect(screen.getByLabelText("29/01/2026 00:00")).toBeInTheDocument();
   });
 
   it("keeps showing Invalid Date for non-empty malformed date values", () => {
@@ -77,7 +71,7 @@ describe("DatetimeCellRenderer", () => {
 });
 
 describe("JsonCellRenderer", () => {
-  it("parses valid JSON strings before rendering the JSON viewer", () => {
+  it("parses valid JSON strings into a typed summary (R2 P6)", () => {
     render(
       <JsonCellRenderer
         value='{"notes":"hello","count":2}'
@@ -85,9 +79,9 @@ describe("JsonCellRenderer", () => {
       />,
     );
 
-    expect(screen.getByTestId("json-viewer")).toHaveTextContent(
-      '{"notes":"hello","count":2}',
-    );
+    expect(screen.getByText("{2 keys}")).toBeInTheDocument();
+    expect(screen.getByText("notes: hello")).toBeInTheDocument();
+    expect(screen.getByText("count: 2")).toBeInTheDocument();
   });
 
   it("renders blank JSON strings as blank cells", () => {

@@ -368,19 +368,34 @@ def test_oversized_evidence_does_not_fail_grouping_or_change_priority(
 
 @pytest.mark.django_db(transaction=True)
 def test_severity_migration_roundtrip_on_isolated_test_schema():
-    from django.db import connection
+    from django.db import DEFAULT_DB_ALIAS, connections
     from django.db.migrations.loader import MigrationLoader
 
+    from accounts.services.hard_erase_migrations import migration_sql_allowed
+    from accounts.tests.hard_erase_fixture import FixtureExecutor
+
+    # Use the actual wrapper, not django.db.connection's proxy: migration SQL
+    # authority is bound by connection identity to the cursor's real wrapper.
+    connection = connections[DEFAULT_DB_ALIAS]
     with override_settings(MIGRATION_MODULES={}):
         loader = MigrationLoader(connection)
     migration = loader.get_migration("tracer", "0106_grouping_severity")
     before = loader.project_state([("tracer", "0105_tracegroupingattempt_and_more")])
-    # pytest --nomigrations builds the current model schema. Exercise the actual
-    # new migration backwards and forwards, not just model-created tables.
-    with connection.schema_editor() as editor:
-        migration.unapply(before, editor)
-    with connection.schema_editor() as editor:
-        migration.apply(before, editor)
+    # pytest --nomigrations builds the current model schema. The real executor
+    # enters hard_erase_migrations' scope through schema-editor exit; the existing
+    # fixture subclass avoids altering the persistent migration recorder.
+    executor = FixtureExecutor(connection)
+    assert not migration_sql_allowed(connection)
+    executor.unapply_migration(before.clone(), migration)
+    try:
+        assert not migration_sql_allowed(connection)
+        assert (
+            "tracer_trace_grouping_severity_job"
+            not in connection.introspection.table_names()
+        )
+    finally:
+        executor.apply_migration(before.clone(), migration)
+    assert not migration_sql_allowed(connection)
     assert (
         "tracer_trace_grouping_severity_job" in connection.introspection.table_names()
     )

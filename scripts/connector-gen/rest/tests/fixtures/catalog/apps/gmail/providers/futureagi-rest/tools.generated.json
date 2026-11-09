@@ -1,0 +1,433 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/gmail/v1/gmail-api.json",
+    "sha256": "f651441dcc942f428d92768e8b20c94a28ff82bf485b79872d9eef267a894225"
+  },
+  "tools": [
+    {
+      "name": "search_threads",
+      "title": "Search threads",
+      "description": "Search the user's mail threads with a Gmail query and return thread ids and snippets, newest first. The query uses Gmail search syntax, for example `from:alice@example.com is:unread newer_than:7d`. Pass nextPageToken back as pageToken for the next page.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+      "operation": {
+        "method": "GET",
+        "path": "/gmail/v1/users/me/threads"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "labelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Only return threads with labels that match all of the specified label IDs."
+          },
+          "maxResults": {
+            "type": "integer",
+            "format": "uint32",
+            "default": 100,
+            "description": "Threads per page, 1-500 (default 100). Use 10-25 for a first look."
+          },
+          "pageToken": {
+            "type": "string",
+            "description": "Page token to retrieve a specific page of results in the list."
+          },
+          "q": {
+            "type": "string",
+            "description": "Gmail search query, for example `subject:invoice has:attachment after:2026/10/01`."
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://gmail.googleapis.com"
+      },
+      "response": {
+        "fields": [
+          "threads.id",
+          "threads.snippet",
+          "nextPageToken",
+          "resultSizeEstimate"
+        ],
+        "maxBytes": 25000
+      }
+    },
+    {
+      "name": "get_thread",
+      "title": "Read a thread",
+      "description": "Read every message of one thread by its id (from search_threads), oldest first. format=metadata returns headers only (pick them with metadataHeaders, for example From, To, Subject, Date); format=full also returns bodies, base64url-encoded in payload.parts[].body.data.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+      "operation": {
+        "method": "GET",
+        "path": "/gmail/v1/users/me/threads/{id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the thread to retrieve."
+          },
+          "format": {
+            "type": "string",
+            "enum": ["full", "metadata", "minimal"],
+            "default": "full",
+            "description": "The format to return the messages in."
+          },
+          "metadataHeaders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "When given and format is METADATA, only include headers specified."
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": false,
+        "x-origin": "https://gmail.googleapis.com"
+      },
+      "response": {
+        "fields": [
+          "id",
+          "messages.id",
+          "messages.threadId",
+          "messages.labelIds",
+          "messages.snippet",
+          "messages.payload"
+        ],
+        "maxBytes": 100000
+      }
+    },
+    {
+      "name": "get_message",
+      "title": "Read a message",
+      "description": "Read one message by its id, for example 18c2f0d7a1b2c3d4. format=metadata returns headers only; format=full returns the body parts, base64url-encoded; format=raw returns the whole RFC 2822 message in raw.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+      "operation": {
+        "method": "GET",
+        "path": "/gmail/v1/users/me/messages/{id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the message to retrieve. This ID is usually retrieved using `messages.list`. The ID is also contained in the result when a message is inserted (`messages.insert`) or imported (`messages.import`)."
+          },
+          "format": {
+            "type": "string",
+            "enum": ["minimal", "full", "raw", "metadata"],
+            "default": "full",
+            "description": "The format to return the message in."
+          },
+          "metadataHeaders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "When given and format is `METADATA`, only include headers specified."
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": false,
+        "x-origin": "https://gmail.googleapis.com"
+      },
+      "response": {
+        "fields": ["id", "threadId", "labelIds", "snippet", "payload", "raw"],
+        "maxBytes": 100000
+      }
+    },
+    {
+      "name": "list_labels",
+      "title": "List labels",
+      "description": "List the mailbox's labels: system labels such as INBOX, SENT, UNREAD and STARRED, and the user's own, with their ids (for example Label_12). Use the ids with modify_thread.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+      "operation": {
+        "method": "GET",
+        "path": "/gmail/v1/users/me/labels"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false,
+        "x-origin": "https://gmail.googleapis.com"
+      },
+      "response": {
+        "fields": ["labels.id", "labels.name", "labels.type"]
+      }
+    },
+    {
+      "name": "get_profile",
+      "title": "Get the mailbox profile",
+      "description": "Return the signed-in user's email address and message and thread totals, for example {\"emailAddress\": \"alice@example.com\", \"messagesTotal\": 1532}. Use it to learn which mailbox is connected.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+      "operation": {
+        "method": "GET",
+        "path": "/gmail/v1/users/me/profile"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false,
+        "x-origin": "https://gmail.googleapis.com"
+      }
+    },
+    {
+      "name": "send_message",
+      "title": "Send a message",
+      "description": "Send an email. raw is the whole RFC 2822 message, base64url-encoded, for example the encoding of \"To: bob@example.com\\r\\nSubject: Hello\\r\\n\\r\\nHi Bob\". To reply in a thread, set threadId and put In-Reply-To and References headers in the message.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/gmail.send"],
+      "operation": {
+        "method": "POST",
+        "path": "/gmail/v1/users/me/messages/send"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "description": "The message to send.",
+            "properties": {
+              "raw": {
+                "type": "string",
+                "format": "byte",
+                "description": "The entire email message in an RFC 2822 formatted and base64url encoded string. Returned in `messages.get` and `drafts.get` responses when the `format=RAW` parameter is supplied. @required gmail.users.drafts.create gmail.users.drafts.update"
+              },
+              "threadId": {
+                "type": "string",
+                "description": "The ID of the thread the message belongs to. To add a message or draft to a thread, the following criteria must be met: 1. The requested `threadId` must be specified on the `Message` or `Draft.Message` you supply with your request. 2. The `References` and `In-Reply-To` headers must be set in compliance with the [RFC 2822](https://tools.ietf.org/html/rfc2822) standard. 3. The `Subject` headers must match. "
+              }
+            },
+            "additionalProperties": false,
+            "required": ["raw"]
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://gmail.googleapis.com"
+      },
+      "response": {
+        "fields": ["id", "threadId", "labelIds"]
+      }
+    },
+    {
+      "name": "create_draft",
+      "title": "Create a draft",
+      "description": "Save a draft without sending it. message.raw is the RFC 2822 message, base64url-encoded; set message.threadId to draft a reply in a thread. Returns the draft id for send_draft.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/gmail.compose"],
+      "operation": {
+        "method": "POST",
+        "path": "/gmail/v1/users/me/drafts"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "description": "The draft to create.",
+            "properties": {
+              "message": {
+                "type": "object",
+                "description": "The message content of the draft.",
+                "properties": {
+                  "raw": {
+                    "type": "string",
+                    "format": "byte",
+                    "description": "The entire email message in an RFC 2822 formatted and base64url encoded string. Returned in `messages.get` and `drafts.get` responses when the `format=RAW` parameter is supplied. @required gmail.users.drafts.create gmail.users.drafts.update"
+                  },
+                  "threadId": {
+                    "type": "string",
+                    "description": "The ID of the thread the message belongs to. To add a message or draft to a thread, the following criteria must be met: 1. The requested `threadId` must be specified on the `Message` or `Draft.Message` you supply with your request. 2. The `References` and `In-Reply-To` headers must be set in compliance with the [RFC 2822](https://tools.ietf.org/html/rfc2822) standard. 3. The `Subject` headers must match. "
+                  }
+                },
+                "additionalProperties": false,
+                "required": ["raw"]
+              }
+            },
+            "additionalProperties": false,
+            "required": ["message"]
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://gmail.googleapis.com"
+      },
+      "response": {
+        "fields": ["id", "message.id", "message.threadId"]
+      }
+    },
+    {
+      "name": "send_draft",
+      "title": "Send a draft",
+      "description": "Send a draft saved earlier, by the id create_draft returned, for example r-5108413232411426193. The draft is removed and the sent message is returned.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/gmail.compose"],
+      "operation": {
+        "method": "POST",
+        "path": "/gmail/v1/users/me/drafts/send"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "description": "The draft to send.",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The immutable ID of the draft."
+              }
+            },
+            "additionalProperties": false,
+            "required": ["id"]
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://gmail.googleapis.com"
+      },
+      "response": {
+        "fields": ["id", "threadId", "labelIds"]
+      }
+    },
+    {
+      "name": "modify_thread",
+      "title": "Change a thread's labels",
+      "description": "Add or remove labels on every message of a thread, by label id from list_labels. For example remove UNREAD to mark it read, or add STARRED. Adding a label it already has changes nothing.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+      "operation": {
+        "method": "POST",
+        "path": "/gmail/v1/users/me/threads/{id}/modify"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the thread to modify."
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "addLabelIds": {
+                "type": "array",
+                "description": "A list of IDs of labels to add to this thread. You can add up to 100 labels with each update.",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "removeLabelIds": {
+                "type": "array",
+                "description": "A list of IDs of labels to remove from this thread. You can remove up to 100 labels with each update.",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The labels to add and remove."
+          }
+        },
+        "required": ["id", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://gmail.googleapis.com"
+      },
+      "response": {
+        "fields": ["id", "messages.id", "messages.labelIds"]
+      }
+    },
+    {
+      "name": "trash_message",
+      "title": "Move a message to the trash",
+      "description": "Move one message to the trash, by its id. Gmail deletes trashed messages for good after 30 days.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "deny",
+      "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+      "operation": {
+        "method": "POST",
+        "path": "/gmail/v1/users/me/messages/{id}/trash"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the message to Trash."
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": false,
+        "x-origin": "https://gmail.googleapis.com"
+      },
+      "response": {
+        "fields": ["id", "labelIds"]
+      }
+    }
+  ]
+}

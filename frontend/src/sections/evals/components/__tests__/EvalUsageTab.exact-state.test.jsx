@@ -1,4 +1,5 @@
 import React from "react";
+import { bpText, bpRendered } from "./pinCopyBp.fixture";
 import PropTypes from "prop-types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "src/utils/test-utils";
@@ -38,10 +39,21 @@ vi.mock("../UsageChart", () => ({
   default: () => <div data-testid="usage-chart" />,
 }));
 vi.mock("src/components/data-table", () => {
-  const MockDataTable = ({ emptyMessage }) => (
-    <div data-testid="usage-table">{emptyMessage}</div>
+  const MockDataTable = ({ emptyMessage, data = [], onRowClick }) => (
+    <div data-testid="usage-table">
+      {emptyMessage}
+      {data.map((row) => (
+        <button key={row.id} type="button" onClick={() => onRowClick(row)}>
+          Open usage row
+        </button>
+      ))}
+    </div>
   );
-  MockDataTable.propTypes = { emptyMessage: PropTypes.string };
+  MockDataTable.propTypes = {
+    emptyMessage: PropTypes.string,
+    data: PropTypes.array,
+    onRowClick: PropTypes.func,
+  };
   const MockDataTablePagination = ({ page, onPageChange }) => (
     <div data-testid="usage-pagination">
       <span>Page {page}</span>
@@ -136,6 +148,35 @@ describe("EvalUsageTab exact read states", () => {
       refresh: h.refetchLogs,
     };
   });
+
+  it.each([3, "3", "v3"])(
+    "A1-03/04 and A2-03 render the approved detail version for %s",
+    async (version) => {
+      const row = { id: "usage-bp", version, detail: {} };
+      h.chart = {
+        data: { stats: {}, chart: [] },
+        isLoading: false,
+        isFetching: false,
+        isError: false,
+        refresh: h.refetchChart,
+      };
+      h.logs = {
+        data: { table: [row], pagination: { total: 1 } },
+        isLoading: false,
+        isFetching: false,
+        isError: false,
+        refresh: h.refetchLogs,
+      };
+      render(<EvalUsageTab templateId="eval-1" />);
+      fireEvent.click(screen.getByRole("button", { name: "Open usage row" }));
+      expect(
+        await screen.findByText(bpText["A1-03"], { exact: true }),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(bpRendered.detail(row), { exact: true }),
+      ).toHaveAttribute("title", bpText["A2-03"]);
+    },
+  );
 
   it("uses generic retry states and does not present failures as zero data", () => {
     render(<EvalUsageTab templateId="eval-1" />);

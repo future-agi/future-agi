@@ -98,7 +98,15 @@ func New(ctx context.Context, cfg Config, rdb *redis.Client, log *slog.Logger) (
 	if !cfg.IsEnabled() {
 		return nil, nil
 	}
+	if cfg.CacheTTL > 30*time.Second || cfg.WarmTTL != 0 {
+		log.Warn("authentication cache limited to 30s with no stale-serving window; Redis only accelerates eviction")
+	}
 	cfg.defaults()
+	for _, kid := range cfg.EnvelopeKids {
+		if !envelopeKid.MatchString(kid) {
+			return nil, errors.New("invalid configured envelope key label")
+		}
+	}
 
 	pg, err := NewPGResolver(ctx, cfg)
 	if err != nil {
@@ -156,7 +164,8 @@ func (a *Authenticator) InvalidateKey(cacheKey string) {
 }
 
 // WatchRevocations evicts cache entries on two Redis channels: fi:auth:revoke
-// (payload = cache key) drops the whole entry; fi:project:invalidate
+// (payload = "apikey:" + sha256(api_key), or a legacy cache key) drops the
+// key's entries; fi:project:invalidate
 // (payload = project_id) drops that mapping from every entry. Blocks until ctx
 // is cancelled; no-op if Redis is unconfigured.
 func (a *Authenticator) WatchRevocations(ctx context.Context) {
@@ -166,24 +175,39 @@ func (a *Authenticator) WatchRevocations(ctx context.Context) {
 	pubsub := a.rdb.Subscribe(ctx, revocationChannel, projectInvalidateChannel)
 	defer pubsub.Close()
 
-	for {
-		select {
-		case msg, ok := <-pubsub.Channel():
-			if !ok {
-				return
+	// Receive observes reconnect confirmations, unlike Channel. Closing on
+	// cancellation also unblocks an idle Receive when Redis sends nothing.
+	stop := context.AfterFunc(ctx, func() { _ = pubsub.Close() })
+	defer stop()
+	confirmed := false
+	var receiveLog LogLimiter
+	for ctx.Err() == nil {
+		value, err := pubsub.Receive(ctx)
+		if err != nil {
+			a.cache.flush()
+			if ctx.Err() == nil && receiveLog.Allow("receive", time.Now()) {
+				a.log.Warn("auth revocation subscription receive failed; cache flushed", "err", err)
 			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+			continue
+		}
+		switch msg := value.(type) {
+		case *redis.Subscription:
+			if confirmed {
+				a.cache.flush()
+			}
+			confirmed = true
+		case *redis.Message:
 			switch msg.Channel {
 			case revocationChannel:
-				a.InvalidateKey(msg.Payload)
-				a.log.Debug("revoked key evicted from cache", "cache_key", msg.Payload[:min(len(msg.Payload), 8)]+"…")
+				a.evictCredential(msg.Payload)
 			case projectInvalidateChannel:
-				if n := a.cache.evictProjectID(msg.Payload); n > 0 {
-					a.log.Debug("deleted project evicted from cache",
-						"project_id", msg.Payload, "entries", n)
-				}
+				a.cache.evictProjectID(msg.Payload)
 			}
-		case <-ctx.Done():
-			return
 		}
 	}
 }
@@ -211,26 +235,44 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 		return nil, nil // auth disabled
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ck := CacheKey(apiKey, secretKey)
-	// At most one revalidation, with the original caller deadline. Repeated
-	// invalidation fails closed rather than retrying indefinitely.
+	var claims *GrantClaims
+	if strings.HasPrefix(apiKey, "fit_") {
+		var err error
+		claims, err = VerifyCollectorGrant(apiKey, secretKey, a.cfg.Peppers, a.cfg.EnvelopeKids, time.Now())
+		if err != nil {
+			return nil, err
+		}
+	}
+	// One retry, under the original deadline. A notice fences both publication
+	// and admission; a result rejected by either must never be served stale.
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		entry, status := a.cache.get(ck)
-		switch status {
-		case "fresh":
-			return entry.result, nil
-		case "warm":
-			go a.sfKey.Do(ck+":refresh", func() (any, error) {
-				a.refreshKey(context.Background(), apiKey, secretKey)
-				return nil, nil
-			})
-			return entry.result, nil
+		if claims != nil && time.Now().Unix() >= claims.Exp {
+			return nil, ErrUnauthenticated
 		}
-
-		result, err := a.authenticateUncached(ctx, apiKey, secretKey, ck)
+		if entry, status := a.cache.get(ck); status == "fresh" && sameGrant(entry.result.Grant, claims) {
+			current, err := a.cachedCredentialCurrent(ctx, apiKey, secretKey, ck, entry.result)
+			if err != nil {
+				return nil, err
+			}
+			if claims != nil && time.Now().Unix() >= claims.Exp {
+				return nil, ErrUnauthenticated
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if current {
+				return entry.result, nil
+			}
+			continue
+		}
+		result, err := a.authenticateUncached(ctx, apiKey, secretKey, ck, claims)
 		var changed *ProjectAuthChangedError
 		if errors.As(err, &changed) {
 			continue
@@ -240,24 +282,39 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 	return nil, &ProjectAuthChangedError{}
 }
 
-func (a *Authenticator) authenticateUncached(ctx context.Context, apiKey, secretKey, ck string) (*ResolveResult, error) {
-	epoch := a.cache.keyGeneration(ck)
-	// A request after invalidation must not join a lookup started before it.
-	lookup := a.sfKey.DoChan(fmt.Sprintf("%s:%d", ck, epoch), func() (any, error) {
+func (a *Authenticator) authenticateUncached(ctx context.Context, apiKey, secretKey, ck string, claims *GrantClaims) (*ResolveResult, error) {
+	stamp, epoch, err := a.cache.validationStamp(ctx, ck)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Neither a post-notice caller nor a different token sharing a jti may
+	// join the old flight. No raw credential is retained in the flight name.
+	flight := fmt.Sprintf("%s:%d:%d:%s", ck, stamp.generation, epoch, APIKeyDigest(secretKey))
+	lookup := a.sfKey.DoChan(flight, func() (any, error) {
 		sfCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		result, err := a.keyResolver().ValidateKey(sfCtx, apiKey, secretKey)
+		result, err := a.resolveCredential(sfCtx, apiKey, secretKey, claims)
 		if err != nil {
 			return nil, err
 		}
-		if !a.cache.publishValidated(ck, result, epoch) {
+		if (claims != nil && time.Now().Unix() >= claims.Exp) || (result != nil && !sameGrant(result.Grant, claims)) {
+			return nil, ErrUnauthenticated
+		}
+		published, err := a.cache.publishValidatedWithBudget(sfCtx, ck, result, epoch, stamp, a.eligibilityNow)
+		if err != nil {
+			return nil, err
+		}
+		if !published {
 			return nil, &ProjectAuthChangedError{}
 		}
 		if result == nil {
 			return nil, ErrUnauthenticated
 		}
-		// Publish once inside singleflight, not once per waiter: a late waiter
-		// must not overwrite a more recent cache refresh.
+		// Only the shared worker publishes. A late waiter cannot overwrite a
+		// fresh result, and canceling one waiter does not cancel its followers.
 		return result, nil
 	})
 	var resolved singleflight.Result
@@ -273,8 +330,20 @@ func (a *Authenticator) authenticateUncached(ctx context.Context, apiKey, secret
 		return nil, fmt.Errorf("auth resolve: %w", resolved.Err)
 	}
 	result, _ := resolved.Val.(*ResolveResult)
-	entry, _ := a.cache.peek(ck)
-	if entry == nil || entry.result != result {
+	if result == nil || !sameGrant(result.Grant, claims) || (claims != nil && time.Now().Unix() >= claims.Exp) {
+		return nil, ErrUnauthenticated
+	}
+	current, err := a.cache.currentResult(ctx, ck, result)
+	if err != nil {
+		return nil, err
+	}
+	if claims != nil && time.Now().Unix() >= claims.Exp {
+		return nil, ErrUnauthenticated
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !current {
 		return nil, &ProjectAuthChangedError{}
 	}
 	return result, nil
@@ -314,13 +383,11 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		return errors.New("resolve projects requires a PostgreSQL project resolver")
 	}
 
-	// A sandbox key's hidden name is put in its map by routing alone; looking
-	// it up here could bind it to a visible project of the same name.
-	if result.KeyType == keyTypeIngest {
-		missing = withoutReservedNames(missing)
-		if len(missing) == 0 {
-			return nil
-		}
+	// Only verified sandbox routing can populate hidden names. Neither a
+	// personal key nor a platform grant can resolve or create one here.
+	missing = withoutReservedNames(missing)
+	if len(missing) == 0 {
+		return nil
 	}
 
 	// Batch resolve from PG read pool
@@ -418,22 +485,82 @@ func (a *Authenticator) recordProjectTypes(cacheKey string, result *ResolveResul
 	a.cache.addProjectTypesScoped(cacheKey, result, types)
 }
 
-// refreshKey re-validates a key in the background (warm stale refresh).
-func (a *Authenticator) refreshKey(ctx context.Context, apiKey, secretKey string) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	ck := CacheKey(apiKey, secretKey)
-	epoch := a.cache.keyGeneration(ck)
-
-	result, err := a.keyResolver().ValidateKey(ctx, apiKey, secretKey)
-	if err != nil {
-		a.log.Debug("background key refresh failed", "err", err)
-		return
+// ResolveProjectsForExpectedTarget resolves only existing projects and requires every
+// project_name to identify the one exporter-asserted project. It never auto-creates.
+func (a *Authenticator) ResolveProjectsForExpectedTarget(ctx context.Context, cacheKey string, result *ResolveResult, names []string, expectedProjectID string) error {
+	if result == nil || expectedProjectID == "" || result.OrgID == "" || result.WorkspaceID == "" {
+		return ErrExpectedTargetMismatch
 	}
-	if result == nil {
-		a.cache.invalidateGeneration(ck, epoch)
-		return
+	if a != nil && a.cache.projectEntry(cacheKey, result) == nil {
+		return ErrExpectedTargetMismatch
 	}
-	a.cache.publishValidated(ck, result, epoch)
+	missing, scoped := result.MissingProjectsInWorkspace(result.WorkspaceID, names)
+	if !scoped {
+		return ErrExpectedTargetMismatch
+	}
+	for _, name := range names {
+		if isReservedProjectName(name) {
+			return ErrExpectedTargetMismatch
+		}
+	}
+	if len(missing) > 0 {
+		if a == nil {
+			return ErrExpectedTargetMismatch
+		}
+		resolver := a.projects
+		if resolver == nil {
+			resolver = a.pg
+		}
+		if resolver == nil {
+			return ErrExpectedTargetMismatch
+		}
+		resolved, types, err := resolveProjectsTyped(ctx, resolver, result.OrgID, result.WorkspaceID, missing)
+		if err != nil {
+			return fmt.Errorf("resolve expected projects: %w", err)
+		}
+		// addProjectsScoped records the projects on result and on the same live
+		// cache entry, or reports that the entry changed.
+		if !a.cache.addProjectsScoped(cacheKey, result, resolved) {
+			return ErrExpectedTargetMismatch
+		}
+		a.recordProjectTypes(cacheKey, result, types)
+	}
+	for _, name := range names {
+		id, ok := result.GetProjectInWorkspace(result.WorkspaceID, name)
+		if !ok || id != expectedProjectID {
+			return ErrExpectedTargetMismatch
+		}
+	}
+	if a != nil && a.cache.projectEntry(cacheKey, result) == nil {
+		return ErrExpectedTargetMismatch
+	}
+	return nil
+}
+
+func sameGrant(a, b *GrantClaims) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
+}
+
+func (a *Authenticator) resolveCredential(ctx context.Context, api, secret string, grant *GrantClaims) (*ResolveResult, error) {
+	resolver := a.keyResolver()
+	if grant != nil {
+		validator, ok := resolver.(interface {
+			ValidateGrant(context.Context, *GrantClaims) (*ResolveResult, error)
+		})
+		if !ok || (a.keys == nil && a.pg == nil) {
+			return nil, errors.New("auth resolver does not support grants")
+		}
+		return validator.ValidateGrant(ctx, grant)
+	}
+	return resolver.ValidateKey(ctx, api, secret)
+}
+
+func (a *Authenticator) evictCredential(payload string) {
+	if digest, ok := strings.CutPrefix(payload, RevocationPrefix); ok {
+		a.cache.evictAPIKey(digest)
+	} else if id, ok := strings.CutPrefix(payload, "grant:"); ok {
+		a.cache.evictGrant(id)
+	} else {
+		a.InvalidateKey(payload) // legacy pair-digest notices
+	}
 }

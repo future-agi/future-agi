@@ -1,7 +1,13 @@
 import PropTypes from "prop-types";
+import {
+  OBSERVE_KNOWN_ISSUES_URL,
+  VOICE_OBSERVE_NOTICE,
+  SANDBOX_OBSERVE_NOTICE,
+} from "src/utils/platformObserveAvailability";
 import React, { useState } from "react";
 import {
   Box,
+  Link,
   CircularProgress,
   Skeleton,
   Stack,
@@ -46,9 +52,10 @@ export default function ObservabilityToggle({ agent }) {
     );
   };
 
-  const caption = checked
-    ? "Tracking this agent's calls and logs in Observe."
-    : "Turn on to track calls, monitor logs and debug this agent.";
+  const caption =
+    agent.agentKind === "source"
+      ? SANDBOX_OBSERVE_NOTICE
+      : VOICE_OBSERVE_NOTICE;
 
   return (
     <Box
@@ -62,10 +69,10 @@ export default function ObservabilityToggle({ agent }) {
     >
       {/* The switch sits next to its label, and the label toggles it too. */}
       <Stack
-        direction="row"
-        alignItems="center"
+        direction={{ xs: "column", sm: "row" }}
+        alignItems={{ xs: "flex-start", sm: "center" }}
         spacing={1}
-        sx={{ pl: 1, pr: 2, minHeight: 44 }}
+        sx={{ pl: 1, pr: 2, py: 1, minHeight: 44 }}
       >
         <Stack
           component="label"
@@ -102,11 +109,17 @@ export default function ObservabilityToggle({ agent }) {
           <CircularProgress size={12} aria-label="Saving" />
         )}
         <Typography
-          noWrap
           title={caption}
           sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}
         >
-          {caption}
+          {caption}{" "}
+          <Link
+            href={OBSERVE_KNOWN_ISSUES_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            2.0.0 release notes: Known issues
+          </Link>
         </Typography>
       </Stack>
       {error && (

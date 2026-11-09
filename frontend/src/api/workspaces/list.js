@@ -42,6 +42,9 @@ export function useWorkspacesList({ enabled = true } = {}) {
   return {
     data: query.data,
     fetchNextPage: query.fetchNextPage,
+    // The role guard's Retry. The observer binds refetch once, so reading it
+    // tracks a value that never changes and adds no render.
+    refetch: query.refetch,
     // A disabled query is still pending, which is what the switcher renders on
     // — it would skeleton forever once the org is known to be unavailable.
     isPending: query.isPending && !orgUnavailable,
@@ -49,6 +52,9 @@ export function useWorkspacesList({ enabled = true } = {}) {
     // Scope could not be established, which is terminal: without this the role
     // guard has no exit, since its only one is isError.
     isError: query.isError || orgUnavailable,
+    // Which isError is terminal: no refetch can help while the org is unknown
+    // (the query stays disabled), so callers must not offer a Retry for it.
+    isOrgUnavailable: orgUnavailable,
     // A disabled query is not "loading", but callers have nothing to render
     // while the org is still being resolved.
     isLoading: query.isLoading || orgResolving,

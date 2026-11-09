@@ -11,11 +11,18 @@ import { Divider, Typography } from "@mui/material";
 
 // ----------------------------------------------------------------------
 
-function NavSectionVertical({ data, slotProps, isBottomSection, ...other }) {
+function NavSectionVertical({
+  data,
+  slotProps,
+  isBottomSection,
+  label = "Main",
+  ...other
+}) {
   return (
     <Stack
       component="nav"
       id="nav-section-vertical"
+      aria-label={label}
       sx={{ pt: isBottomSection ? 0 : 0 }}
       {...other}
     >
@@ -35,6 +42,8 @@ NavSectionVertical.propTypes = {
   data: PropTypes.array,
   slotProps: PropTypes.object,
   isBottomSection: PropTypes.bool,
+  // The landmark's name; every nav on a page needs a different one.
+  label: PropTypes.string,
 };
 
 const MemoizedNavSectionVertical = memo(NavSectionVertical);
@@ -61,6 +70,7 @@ function Group({ subheader, items, slotProps }) {
       {subheader ? (
         <>
           <ListSubheader
+            component="div"
             disableGutters
             disableSticky
             onClick={handleToggle}

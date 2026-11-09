@@ -29,11 +29,20 @@ import { useQueryClient } from "@tanstack/react-query";
 import JsonCellRenderer from "./CellRenderers/JsonCellRenderer";
 import FileCellRenderer from "./CellRenderers/FileCellRenderer";
 import PersonaCellRenderer from "./CellRenderers/PersonaCellRenderer";
+import ConversationCellRenderer from "./CellRenderers/ConversationCellRenderer";
+import ChecksCellRenderer from "./CellRenderers/ChecksCellRenderer";
+import TraceItemCellRenderer from "./CellRenderers/TraceItemCellRenderer";
+import EnumCellRenderer from "./CellRenderers/EnumCellRenderer";
+import VideoCellRenderer from "./CellRenderers/VideoCellRenderer";
 import { ORIGIN_OF_COLUMNS } from "src/utils/constants";
 import EvaluationReasonFallback from "../EvaluationReasonFallback";
 import { ShowComponent } from "src/components/show";
+import CellChrome from "src/sections/develop-detail/DataTab/DataGrid/CellChrome";
+import MediaCellRenderer, {
+  mediaCellKind,
+} from "./CellRenderers/MediaCellRenderer";
 
-const CustomCellRender = (props) => {
+const BaseCellRender = (props) => {
   const hoverButtonVisible = props?.column?.colDef?.col?.isHoverButtonVisible;
   const dataType = props?.column?.colDef?.dataType;
   const originType = props?.column?.colDef?.originType;
@@ -224,7 +233,7 @@ const CustomCellRender = (props) => {
                     Add feedback
                   </Button>
                 )}
-                {column?.metadata?.runPrompt && (
+                {column?.metadata?.run_prompt && (
                   <Button
                     variant="outlined"
                     sx={buttonSx}
@@ -293,6 +302,25 @@ const CustomCellRender = (props) => {
       />
     );
   }
+  // R4 (lane M): media, call and persona values render through MediaValue
+  // (image strips, click-to-play waveforms, PDF / video / call / persona
+  // chips); everything else (and empty media cells) renders as before.
+  if (
+    originType !== OriginTypes.EVALUATION &&
+    originType !== OriginTypes.OPTIMISATION_EVALUATION &&
+    originType !== OriginTypes.ANNOTATION_LABEL &&
+    mediaCellKind(value, dataType)
+  )
+    return (
+      <MediaCellRenderer
+        value={value}
+        dataType={dataType}
+        dense={(props?.node?.rowHeight ?? 60) < 44}
+        editable={Boolean(props?.editable)}
+        onEditCell={() => props.colDef?.cellRendererParams?.onEditCell?.(props)}
+      />
+    );
+
   if (dataType === DataTypes.AUDIO) {
     const cacheKey = `wavesurfer-${rowId}-${column.id}-${value}`;
     return (
@@ -493,10 +521,38 @@ const CustomCellRender = (props) => {
       );
     case DataTypes.PERSONA:
       return <PersonaCellRenderer value={value} />;
+    // Round 2 types (R2-SPEC P5 / P6): L5b and L6 fill these renderers.
+    case DataTypes.CONVERSATION:
+    case DataTypes.CHECKS:
+    case DataTypes.TRACE:
+    case DataTypes.ENUM:
+    case DataTypes.VIDEO: {
+      const Renderer = {
+        [DataTypes.CONVERSATION]: ConversationCellRenderer,
+        [DataTypes.CHECKS]: ChecksCellRenderer,
+        [DataTypes.TRACE]: TraceItemCellRenderer,
+        [DataTypes.ENUM]: EnumCellRenderer,
+        [DataTypes.VIDEO]: VideoCellRenderer,
+      }[dataType];
+      return (
+        <Box ref={cellRef} sx={{ height: "100%" }}>
+          <Renderer
+            isHover={isRowHovered}
+            value={value}
+            valueReason={valueReason}
+            formattedValueReason={formattedValueReason}
+            originType={originType}
+            metadata={cellData?.metadata}
+            valueInfos={valueInfos}
+            cellData={cellData}
+          />
+        </Box>
+      );
+    }
   }
 };
 
-CustomCellRender.propTypes = {
+BaseCellRender.propTypes = {
   column: PropTypes.object,
   value: PropTypes.any,
   data: PropTypes.object,
@@ -505,6 +561,43 @@ CustomCellRender.propTypes = {
   editable: PropTypes.bool,
   originOfColumn: PropTypes.string,
   onRerun: PropTypes.func,
+};
+
+/**
+ * Data grid cell. On the versioned dataset grid (`versioned` via
+ * cellRendererParams) the cell sits in CellChrome: pending-edit markers,
+ * Compact / Wrap text with the ⤢ expander (area-datasets G4, G10).
+ * Scenario and experiment grids render the classic cell unchanged.
+ */
+const CustomCellRender = (props) => {
+  if (!props?.versioned || props?.node?.rowPinned) {
+    return <BaseCellRender {...props} />;
+  }
+  const colDef = props?.column?.colDef;
+  const cell = props?.data?.[props?.column?.colId];
+  return (
+    <CellChrome
+      datasetId={props.datasetId}
+      rowId={props?.data?.row_id}
+      columnId={props?.column?.colId}
+      columnName={colDef?.headerName}
+      value={props?.value}
+      cell={{
+        dataType: colDef?.dataType,
+        originType: colDef?.originType,
+        status: cell?.status?.toLowerCase(),
+        simulatedHost: cell?.value_infos?.simulated_host ?? null,
+      }}
+    >
+      <BaseCellRender {...props} />
+    </CellChrome>
+  );
+};
+
+CustomCellRender.propTypes = {
+  ...BaseCellRender.propTypes,
+  versioned: PropTypes.bool,
+  datasetId: PropTypes.string,
 };
 
 export default React.memo(CustomCellRender);

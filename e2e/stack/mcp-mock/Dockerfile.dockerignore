@@ -1,0 +1,13 @@
+# The build context of e2e/stack/mcp-mock/Dockerfile is the repository root
+# (bin/e2e build mcpmock); only these paths are sent.
+*
+!agentcc-gateway/go.mod
+!agentcc-gateway/go.sum
+!agentcc-gateway/cmd/agentcc-mcpmock/
+!agentcc-gateway/cmd/agentcc-mcpmock/**
+agentcc-gateway/cmd/agentcc-mcpmock/**/*_test.go
+!agentcc-gateway/scripts/scenarios/fixtures/mcp/common/
+!agentcc-gateway/scripts/scenarios/fixtures/mcp/common/*.json
+!e2e/stack/mcp-mock/main.go
+!e2e/stack/mcp-mock/fixtures-next/
+!e2e/stack/mcp-mock/fixtures-next/*.json

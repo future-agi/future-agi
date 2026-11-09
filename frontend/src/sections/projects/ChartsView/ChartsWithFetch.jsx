@@ -15,6 +15,7 @@ import {
   QUERY_FAILED_RETRY_MESSAGE,
 } from "src/utils/queryReadState";
 import { INTERACTIVE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+import { evalQualitySummary } from "src/utils/evalQualityMetrics";
 
 const EVAL_CHART_REQUEST_TIMEOUT_MS = INTERACTIVE_REQUEST_TIMEOUT_MS;
 
@@ -91,6 +92,7 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
       series: result.map((seriesObj) => ({
         name: seriesObj?.name,
         data: (seriesObj?.data ?? []).map((item) => ({
+          ...item,
           x: normalizeTimestamp(item.timestamp),
           y: item?.value,
         })),
@@ -128,6 +130,11 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
         </Box>
       )}
       <ChartsGenerator {...evalsChartData} onZoom={handleZoomChange} />
+      {queryReadState === "complete" && (
+        <Typography variant="caption" color="text.secondary" role="status">
+          {evalQualitySummary(result?.[0]?.data ?? null, true)}
+        </Typography>
+      )}
     </Box>
   );
 }

@@ -1,0 +1,207 @@
+{
+  "schemaVersion": "omega-refusal-codes/v1",
+  "about": "Every refusal code the Omega path can send a Future AGI tab. omegaReasons.js must map each one (and each pinned reason, creator-only verb and detail key) to Future AGI copy; contract/extract-refusal-codes.mjs re-reads the sources and fails on drift.",
+  "sources": {
+    "ee": {
+      "repository": "future-agi/omega-ee",
+      "ref": "ee/p-e-auth 28498cc5 (READINESS lane 1.2, CP:E-AUTH)",
+      "files": ["packages/server/src/managed-auth/host-assertion-codes.ts"],
+      "legacy": ["unauthorized", "host_delegation_scope_unavailable"],
+      "codes": {
+        "assertion_expired": {
+          "statuses": [401],
+          "reasons": []
+        },
+        "assertion_invalid": {
+          "statuses": [401],
+          "reasons": []
+        },
+        "assertion_replayed": {
+          "statuses": [401],
+          "reasons": []
+        },
+        "host_delegation_scope_denied": {
+          "statuses": [403],
+          "reasons": [
+            "path_refused",
+            "role_below_floor",
+            "route_not_in_manifest",
+            "scope_pivot"
+          ]
+        },
+        "host_delegation_scope_unavailable": {
+          "statuses": [403],
+          "reasons": []
+        },
+        "identity_not_connected": {
+          "statuses": [403],
+          "reasons": []
+        },
+        "role_out_of_date": {
+          "statuses": [403],
+          "reasons": []
+        },
+        "unauthorized": {
+          "statuses": [401],
+          "reasons": []
+        },
+        "verification_unavailable": {
+          "statuses": [503],
+          "reasons": []
+        }
+      }
+    },
+    "eeWorkspace": {
+      "repository": "future-agi/omega-ee",
+      "ref": "ee/p-e-auth 28498cc5 and the manifest EE ee/omega-integration-20261013 a54da5c9 (identical in these files)",
+      "files": [
+        "packages/server/src/workspace/sandboxes-*.ts (not sandboxes-operator-routes.ts)",
+        "packages/server/src/workspace/sandboxes/**/*.ts",
+        "packages/server/src/workspace/project-deployments/**/*.ts",
+        "packages/server/src/workspace/credential-vault-routes.ts",
+        "packages/server/src/workspace/service.ts requireEnvironmentAuthority"
+      ],
+      "legacy": [],
+      "codes": {
+        "forbidden": {
+          "statuses": [403],
+          "reasons": []
+        },
+        "role_forbidden": {
+          "statuses": [403],
+          "reasons": ["not_creator"],
+          "verbs": ["destroy", "operate", "view"],
+          "detail": ["reason", "role", "verb"]
+        },
+        "unauthenticated": {
+          "statuses": [401, 403],
+          "reasons": [],
+          "verbs": [],
+          "detail": []
+        }
+      }
+    },
+    "gateway": {
+      "repository": "future-agi/future-agi-x-omega",
+      "ref": "omega/p-f-gate 73c9f640a (READINESS lane 1.3, CP:F-GATE)",
+      "files": ["services/omega-gateway/src/*.mjs"],
+      "legacy": [],
+      "codes": {
+        "bad_request_target": {
+          "statuses": [400],
+          "reasons": []
+        },
+        "credential_in_query": {
+          "statuses": [400],
+          "reasons": []
+        },
+        "method_not_allowed": {
+          "statuses": [405],
+          "reasons": []
+        },
+        "not_found": {
+          "statuses": [404],
+          "reasons": ["public_share_closed"]
+        },
+        "omega_assertion_rejected": {
+          "statuses": [401],
+          "reasons": ["expired_assertion"]
+        },
+        "omega_assertion_required": {
+          "statuses": [401],
+          "reasons": []
+        },
+        "omega_gateway_draining": {
+          "statuses": [503],
+          "reasons": []
+        },
+        "omega_gateway_failure": {
+          "statuses": [502],
+          "reasons": []
+        },
+        "omega_issuer_unavailable": {
+          "statuses": [503],
+          "reasons": ["issuer_failed", "issuer_malformed", "issuer_unreachable"]
+        },
+        "omega_rate_limit_unavailable": {
+          "statuses": [503],
+          "reasons": ["rate_store_unavailable"]
+        },
+        "omega_rate_limited": {
+          "statuses": [429],
+          "reasons": ["exchange_throttled", "rate_limited"]
+        },
+        "omega_remote_timeout": {
+          "statuses": [504],
+          "reasons": []
+        },
+        "omega_remote_unreachable": {
+          "statuses": [502],
+          "reasons": []
+        },
+        "omega_role_not_permitted": {
+          "statuses": [403],
+          "reasons": ["role_below_floor"]
+        },
+        "omega_scope_mismatch": {
+          "statuses": [403],
+          "reasons": ["scope_mismatch", "scope_pivot"]
+        },
+        "omega_session_unavailable": {
+          "statuses": [401],
+          "reasons": ["exchange_refused", "no_bearer"]
+        },
+        "omega_viewer_not_admitted": {
+          "statuses": [403],
+          "reasons": ["viewer"]
+        },
+        "origin_not_allowed": {
+          "statuses": [403],
+          "reasons": []
+        },
+        "request_body_too_large": {
+          "statuses": [413],
+          "reasons": []
+        },
+        "request_body_unreadable": {
+          "statuses": [400],
+          "reasons": []
+        },
+        "route_not_allowed": {
+          "statuses": [403],
+          "reasons": ["path_refused", "route_not_in_manifest"]
+        }
+      }
+    },
+    "django": {
+      "repository": "future-agi/future-agi-x-omega",
+      "ref": "omega/p-f-gate 73c9f640a (the session exchange)",
+      "files": ["futureagi/accounts/views/omega_session.py"],
+      "legacy": [],
+      "codes": {
+        "delegation_unavailable": {
+          "statuses": [503],
+          "reasons": []
+        },
+        "omega_viewer_not_admitted": {
+          "statuses": [403],
+          "reasons": []
+        },
+        "throttled": {
+          "statuses": [429],
+          "reasons": []
+        }
+      }
+    }
+  },
+  "legacyCodes": {
+    "unauthorized": "EE before reason codes (a54da5c9): every failed host assertion is 401 {error: unauthorized, message: 'Valid Omega API key required.'}",
+    "host_delegation_scope_unavailable": "EE before E-AUTH (a54da5c9): 403 for a route family the host assertion cannot reach"
+  },
+  "bodyShapes": {
+    "ee": "{error: <code>, message, retryable} for host-assertion refusals (host-assertion-codes.ts refusalBody); {error: 'host_delegation_scope_denied', reason} flat for route refusals (EE index.ts:3695 at 28498cc5). Checked by reading the source.",
+    "gateway": "{error: <code>, reason?, rateClass?, retryAfterSeconds?} flat (services/omega-gateway/src/server.mjs, credential.mjs at 73c9f640a).",
+    "django": "the API envelope {status: false, type, code, detail, message, error, result} (tfc/utils/api_errors.py build_error_envelope); the client reads `code`.",
+    "eeWorkspace": "{schemaVersion, error: {code, message, detail?}} (WorkspaceSandboxError / WorkspaceDeploymentError, sandboxes-types.ts:257). role_forbidden carries detail {reason: 'not_creator', verb} for creator-only sandbox access (sandboxes/access/creator-only.ts), or detail {role} for an owner-or-admin action (sandboxes-routes.ts:139 sandbox settings, project-deployments/routes.ts:90). Checked by reading the source. credential-vault-routes.ts answers {schemaVersion, error: {code, message}} through its own error(status, code, message): 403 forbidden (a guest, unproven workspace authority, or a mutation without admin access) and 401 unauthenticated."
+  }
+}

@@ -179,7 +179,12 @@ export default function Actions({
           </IconButton>
           {/* </CustomTooltip> */}
           <Button
-            disabled={status?.status !== "Completed"}
+            // v2.1 g8 (kb:page): files that failed do not block the ones
+            // that were read; only a KB with no readable file has nothing
+            // to generate from.
+            disabled={
+              !["Completed", "PartialCompleted"].includes(status?.status)
+            }
             onClick={() => {
               if (RolePermission.KNOWLEDGE_BASE[PERMISSIONS.CREATE][role]) {
                 handleActionClick("create-synthetic-data");

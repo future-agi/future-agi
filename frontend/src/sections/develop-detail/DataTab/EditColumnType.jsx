@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import React, { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { useParams } from "react-router";
@@ -27,32 +27,16 @@ import {
   useEditColumnTypeStore,
 } from "../states";
 import { useDevelopDetailContext } from "../Context/DevelopDetailContext";
+import { COLUMN_TYPES, typeChangeConfirmText } from "./columnTypeText";
 
-// - "text"
-// - "boolean"
-// - "integer"
-// - "float"
-// - "json"
-// - "array"
-// - "datetime"
-const ColumnTypes = [
-  { label: "Text", value: "text" },
-  { label: "Boolean", value: "boolean" },
-  { label: "Integer", value: "integer" },
-  { label: "Float", value: "float" },
-  { label: "JSON", value: "json" },
-  { label: "Array", value: "array" },
-  { label: "Datetime", value: "datetime" },
-  { label: "Image", value: "image" },
-  { label: "Images", value: "images" },
-  { label: "Audio", value: "audio" },
-  { label: "Document", value: "document" },
-];
+const ColumnTypes = COLUMN_TYPES;
 
 const EditColumnType = () => {
   const { editColumnType, setEditColumnType } = useEditColumnTypeStore();
   const resetFilters = useDevelopFilterStoreShallow((s) => s.resetFilters);
   const [isAlert, setIsAlert] = React.useState(false);
+  // The type the confirm is about (the form's pick when Update was pressed).
+  const [pendingType, setPendingType] = React.useState(null);
   const { dataset } = useParams();
   const defaultValues = {
     newColumnType: editColumnType?.dataType || "",
@@ -96,10 +80,12 @@ const EditColumnType = () => {
         endpoints.develop.updateColumnType(dataset, editColumnType.id),
         d,
       ),
-    onSuccess: () => {
-      enqueueSnackbar("Column type updated successfully", {
-        variant: "success",
-      });
+    onSuccess: (res) => {
+      // The server says what happened (how many values were emptied).
+      enqueueSnackbar(
+        res?.data?.result?.message || "Column type updated successfully",
+        { variant: "success" },
+      );
       refreshGrid();
       queryClient.invalidateQueries({
         queryKey: ["json-column-schema", dataset],
@@ -112,6 +98,7 @@ const EditColumnType = () => {
 
   const onCloseCallback = () => {
     setIsAlert(false);
+    setPendingType(null);
     formReset();
     resetMutation();
     onClose();
@@ -120,6 +107,7 @@ const EditColumnType = () => {
   const onSubmit = (data) => {
     // @ts-ignore
     if (editColumnType?.dataType !== data?.newColumnType) {
+      setPendingType(data.newColumnType);
       setIsAlert(true);
     } else {
       setIsAlert(false);
@@ -148,6 +136,39 @@ const EditColumnType = () => {
     });
   };
 
+  // K4F (merge M12): before a forced change, ask how many values do not fit
+  // (`preview: true` changes nothing and answers `invalid_count`), so the
+  // confirm says plainly what is emptied, in every version.
+  const preview = useQuery({
+    queryKey: ["column-type-preview", dataset, editColumnType?.id, pendingType],
+    queryFn: () =>
+      axios.put(
+        endpoints.develop.updateColumnType(dataset, editColumnType.id),
+        {
+          new_column_type: pendingType,
+          preview: true,
+          force_update: true,
+        },
+      ),
+    select: (res) => res?.data?.result ?? null,
+    enabled: Boolean(isAlert && pendingType && editColumnType?.id),
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
+  });
+  const invalidCount = preview.isError
+    ? null
+    : preview.isSuccess
+      ? Number(preview.data?.invalid_count ?? 0)
+      : undefined;
+  const pendingLabel =
+    ColumnTypes.find((t) => t.value === pendingType)?.label ?? pendingType;
+  const confirmText = typeChangeConfirmText({
+    invalidCount,
+    type: pendingType,
+    label: pendingLabel,
+  });
+
   return (
     <>
       {!isAlert && (
@@ -175,7 +196,10 @@ const EditColumnType = () => {
               <Typography fontWeight={700} fontSize="18px">
                 Update Column Type
               </Typography>
-              <IconButton onClick={onCloseCallback}>
+              <IconButton
+                aria-label="Close edit column type"
+                onClick={onCloseCallback}
+              >
                 <Iconify icon="mdi:close" />
               </IconButton>
             </Box>
@@ -243,22 +267,31 @@ const EditColumnType = () => {
       )}
       {isAlert && (
         <ConfirmDialog
-          content="Are you sure you want to proceed? This action can cause loss of data."
+          content={
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              data-testid="edit-column-type-confirm-text"
+            >
+              {confirmText}
+            </Typography>
+          }
           action={
-            <Button
+            <LoadingButton
               variant="contained"
               color="error"
               size="small"
               sx={{ px: 2.5 }}
+              loading={isPending}
+              disabled={invalidCount === undefined}
               onClick={handleSubmit(forceUpdate)} // Ensure this triggers submission
             >
               Confirm
-            </Button>
+            </LoadingButton>
           }
           open={isAlert}
           onClose={onCloseCallback}
-          title="Confirm Action"
-          message="Are you sure you want to proceed? This action can cause your data loss."
+          title={`Change “${editColumnType?.name ?? "column"}” to ${pendingLabel}?`}
         />
       )}
     </>

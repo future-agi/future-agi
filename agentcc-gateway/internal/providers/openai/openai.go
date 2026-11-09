@@ -17,6 +17,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/admission"
 	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
@@ -26,8 +27,9 @@ type Provider struct {
 	baseURL    string
 	pathPrefix string
 	apiKey     string
+	headers    common.HeaderDefaults
 	httpClient *http.Client
-	semaphore  chan struct{}
+	slots      *admission.Limiter
 	// openAIAPI reports whether baseURL points at the official OpenAI API, whose
 	// max_tokens/max_completion_tokens handling differs from other OpenAI-format
 	// upstreams. See normalizeMaxTokens.
@@ -37,6 +39,11 @@ type Provider struct {
 // officialAPIHost is the host of the official OpenAI API. Other upstreams speak
 // the same wire format but not the same parameter contract.
 const officialAPIHost = "api.openai.com"
+
+// Image-generation deltas carry whole base64 images rather than text-sized
+// tokens. Match the non-streaming response budget while retaining a hard per-
+// line bound (including the newline); the scanner still starts with only 64 KiB.
+const maxChatCompletionStreamTokenBytes = 10 * 1024 * 1024
 
 // isOfficialAPI reports whether baseURL points at the official OpenAI API.
 func isOfficialAPI(baseURL string) bool {
@@ -49,19 +56,21 @@ func isOfficialAPI(baseURL string) bool {
 
 // New creates a new OpenAI-compatible provider.
 func New(id string, cfg config.ProviderConfig) (*Provider, error) {
+	headers, err := common.NewHeaderDefaults(cfg.Headers)
+	if err != nil {
+		return nil, err
+	}
 	timeout := cfg.DefaultTimeout
 	if timeout == 0 {
 		timeout = 60 * time.Second
 	}
 
-	maxConcurrent := cfg.MaxConcurrent
-	if maxConcurrent == 0 {
-		maxConcurrent = 100
-	}
-
+	// max_concurrent, conn_pool_size and queue_timeout come resolved from the
+	// registry (local or remote defaults); admission and these defaults cover
+	// an instance built from a config that left them unset.
 	poolSize := cfg.ConnPoolSize
-	if poolSize == 0 {
-		poolSize = 100
+	if poolSize <= 0 {
+		poolSize = admission.DefaultConnPoolSize
 	}
 
 	transport := &http.Transport{
@@ -81,11 +90,12 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
 		pathPrefix: cfg.EffectiveAPIPathPrefix(),
 		apiKey:     cfg.APIKey,
+		headers:    headers,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   timeout,
 		},
-		semaphore: make(chan struct{}, maxConcurrent),
+		slots:     admission.New(id, cfg.MaxConcurrent, cfg.QueueTimeout),
 		openAIAPI: isOfficialAPI(cfg.BaseURL),
 	}, nil
 }
@@ -125,18 +135,19 @@ func (p *Provider) ID() string { return p.id }
 // request this provider serves.
 func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
 
+// acquireSemaphore takes one of the entry's upstream slots. Its error, a
+// provider_busy 503 once the queue wait ends or a gateway timeout when ctx
+// ends first, is the call's answer: nothing was sent upstream.
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
-	select {
-	case p.semaphore <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return p.slots.Acquire(ctx)
 }
 
 func (p *Provider) releaseSemaphore() {
-	<-p.semaphore
+	p.slots.Release()
 }
+
+// Admission is the instance's upstream slots (providers.SlotHolder).
+func (p *Provider) Admission() *admission.Limiter { return p.slots }
 
 // OCR forwards a /v1/ocr request to the provider's upstream. Used for
 // Mistral (which serves POST https://api.mistral.ai/v1/ocr) when aliased to
@@ -144,7 +155,7 @@ func (p *Provider) releaseSemaphore() {
 // body parsed into the shared OCRResponse shape.
 func (p *Provider) OCR(ctx context.Context, req *models.OCRRequest) (*models.OCRResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -158,11 +169,11 @@ func (p *Provider) OCR(ctx context.Context, req *models.OCRRequest) (*models.OCR
 		return nil, models.ErrInternal(fmt.Sprintf("creating request: %v", err))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("provider request timed out")
@@ -192,7 +203,7 @@ func (p *Provider) OCR(ctx context.Context, req *models.OCRRequest) (*models.OCR
 // /v1/chat/completions with the "not a chat model" error.
 func (p *Provider) TextCompletion(ctx context.Context, req *models.CompletionRequest) (*models.CompletionResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -210,11 +221,11 @@ func (p *Provider) TextCompletion(ctx context.Context, req *models.CompletionReq
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("provider request timed out")
@@ -241,7 +252,7 @@ func (p *Provider) TextCompletion(ctx context.Context, req *models.CompletionReq
 // ChatCompletion sends a non-streaming chat completion request.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -265,11 +276,11 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("provider request timed out")
@@ -305,7 +316,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer close(errs)
 
 		if err := p.acquireSemaphore(ctx); err != nil {
-			errs <- models.ErrGatewayTimeout("provider concurrency limit reached")
+			errs <- err
 			return
 		}
 		defer p.releaseSemaphore()
@@ -314,10 +325,6 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		reqCopy := *req
 		reqCopy.Model = actualModel
 		reqCopy.Stream = true
-		// An OpenAI-format stream reports usage only when asked. Asked here,
-		// every route that streams through this provider can be priced, not
-		// only the one that remembered to set it.
-		reqCopy.StreamOptions = &models.StreamOptions{IncludeUsage: true}
 		p.normalizeMaxTokens(&reqCopy)
 
 		body, err := json.Marshal(&reqCopy)
@@ -334,11 +341,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "text/event-stream")
-		if p.apiKey != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+		if credential := p.credential(ctx); credential != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+credential)
 		}
 
-		resp, err := p.httpClient.Do(httpReq)
+		resp, err := p.do(httpReq)
 		if err != nil {
 			if common.TimedOut(ctx, err) {
 				errs <- models.ErrGatewayTimeout("provider request timed out")
@@ -360,8 +367,9 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			return
 		}
 
+		models.MarkStreamAccepted(ctx)
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		scanner.Buffer(make([]byte, 0, 64*1024), maxChatCompletionStreamTokenBytes)
 
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -370,16 +378,27 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 				continue
 			}
 
-			if !strings.HasPrefix(line, "data: ") {
+			if !strings.HasPrefix(line, "data:") {
 				continue
 			}
 
-			data := strings.TrimPrefix(line, "data: ")
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 
 			if data == "[DONE]" {
 				return
 			}
 
+			if failure, evidence := streamErrorEnvelope([]byte(data)); failure != nil {
+				if evidence.Usage != nil || evidence.UpstreamProvider != "" || evidence.ID != "" || evidence.Model != "" {
+					select {
+					case chunks <- evidence:
+					case <-ctx.Done():
+						return
+					}
+				}
+				errs <- failure
+				return
+			}
 			var chunk models.StreamChunk
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 				slog.Warn("failed to parse stream chunk",
@@ -388,12 +407,6 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 					"provider", p.id,
 				)
 				continue
-			}
-			if streamErrorChunk(chunk) {
-				// The upstream failed mid-stream. Relayed as a chunk, the
-				// error reached the client but the stream ended as a success.
-				errs <- parseProviderError(http.StatusBadGateway, []byte(data))
-				return
 			}
 
 			select {
@@ -420,11 +433,11 @@ func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error)
 		return nil, err
 	}
 
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		return nil, err
 	}
@@ -445,7 +458,7 @@ func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error)
 // CreateImage sends an image generation request (DALL-E).
 func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*models.ImageResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -463,11 +476,11 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("image request timed out")
@@ -496,7 +509,7 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 // CreateSpeech sends a text-to-speech request and returns an audio stream.
 func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) (io.ReadCloser, string, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, "", models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, "", err
 	}
 	// NOTE: semaphore is released when the caller closes the returned ReadCloser.
 
@@ -516,11 +529,11 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
 		if common.TimedOut(ctx, err) {
@@ -564,7 +577,7 @@ func (s *semaphoreReadCloser) Close() error {
 // CreateTranscription sends an audio transcription request (Whisper).
 func (p *Provider) CreateTranscription(ctx context.Context, req *models.TranscriptionRequest) (*models.TranscriptionResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -615,11 +628,11 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 	}
 
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("transcription request timed out")
@@ -647,7 +660,7 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 // CreateResponse sends a Responses API request and returns the raw JSON response.
 func (p *Provider) CreateResponse(ctx context.Context, reqBody []byte) ([]byte, int, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, 0, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, 0, err
 	}
 	defer p.releaseSemaphore()
 
@@ -657,11 +670,11 @@ func (p *Provider) CreateResponse(ctx context.Context, reqBody []byte) ([]byte, 
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
 			return nil, 0, models.ErrGatewayTimeout("responses request timed out")
@@ -685,7 +698,7 @@ func (p *Provider) CreateResponse(ctx context.Context, reqBody []byte) ([]byte, 
 // StreamResponse sends a streaming Responses API request and returns the SSE stream.
 func (p *Provider) StreamResponse(ctx context.Context, reqBody []byte) (io.ReadCloser, int, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, 0, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, 0, err
 	}
 	// NOTE: semaphore is released when the caller closes the returned ReadCloser.
 
@@ -697,11 +710,11 @@ func (p *Provider) StreamResponse(ctx context.Context, reqBody []byte) (io.ReadC
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
 		if common.TimedOut(ctx, err) {
@@ -727,7 +740,7 @@ func (p *Provider) StreamResponse(ctx context.Context, reqBody []byte) (io.ReadC
 // CreateTranslation sends an audio translation request (Whisper — translates to English).
 func (p *Provider) CreateTranslation(ctx context.Context, req *models.TranslationRequest) (*models.TranslationResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -772,11 +785,11 @@ func (p *Provider) CreateTranslation(ctx context.Context, req *models.Translatio
 	}
 
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("translation request timed out")
@@ -804,7 +817,7 @@ func (p *Provider) CreateTranslation(ctx context.Context, req *models.Translatio
 // CreateEmbedding sends an embedding request.
 func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -822,11 +835,11 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("embedding request timed out")
@@ -855,7 +868,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 // ProxyAssistantsRequest forwards a non-streaming Assistants API request to OpenAI.
 func (p *Provider) ProxyAssistantsRequest(ctx context.Context, method string, path string, body []byte, queryParams url.Values) ([]byte, int, http.Header, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, 0, nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, 0, nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -876,11 +889,11 @@ func (p *Provider) ProxyAssistantsRequest(ctx context.Context, method string, pa
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("OpenAI-Beta", "assistants=v2")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
 			return nil, 0, nil, models.ErrGatewayTimeout("assistants request timed out")
@@ -912,7 +925,7 @@ func (p *Provider) ProxyAssistantsRequest(ctx context.Context, method string, pa
 // StreamAssistantsRequest forwards a streaming Assistants API request to OpenAI.
 func (p *Provider) StreamAssistantsRequest(ctx context.Context, method string, path string, body []byte, queryParams url.Values) (io.ReadCloser, int, http.Header, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, 0, nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, 0, nil, err
 	}
 	// NOTE: semaphore is released when the caller closes the returned ReadCloser.
 
@@ -935,11 +948,11 @@ func (p *Provider) StreamAssistantsRequest(ctx context.Context, method string, p
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("OpenAI-Beta", "assistants=v2")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
 		if common.TimedOut(ctx, err) {
@@ -973,7 +986,7 @@ func (p *Provider) StreamAssistantsRequest(ctx context.Context, method string, p
 // ProxyVectorStoresRequest forwards a Vector Stores API request (no OpenAI-Beta header).
 func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, path string, body []byte, queryParams url.Values) ([]byte, int, http.Header, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, 0, nil, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, 0, nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -993,11 +1006,11 @@ func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, 
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if credential := p.credential(ctx); credential != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+credential)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
 			return nil, 0, nil, models.ErrGatewayTimeout("vector stores request timed out")
@@ -1027,19 +1040,37 @@ func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, 
 
 // Close releases resources.
 func (p *Provider) Close() error {
+	p.slots.Close()
 	p.httpClient.CloseIdleConnections()
 	return nil
 }
 
-func parseProviderError(status int, body []byte) *models.APIError {
+func parseProviderError(status int, body []byte) (result *models.APIError) {
+	// HTTP failures can carry paid generation evidence too. Decode only the
+	// known fields; never keep the raw error body in billing records.
+	defer func() {
+		if result != nil {
+			result.ProviderRejected = status >= 400 && status <= 599
+		}
+		var response models.ChatCompletionResponse
+		if result != nil && json.Unmarshal(body, &response) == nil {
+			result.BillingEvidence = &models.ProviderBillingEvidence{
+				Generation: models.GenerationFromResponse(&response), Usage: response.Usage,
+			}
+		}
+	}()
 	// Try to parse as OpenAI error format.
 	var errResp models.ErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
+		// Status is what the client gets (an upstream 5xx is a 502);
+		// UpstreamStatus keeps the provider's own for the status lists.
 		return &models.APIError{
-			Status:  mapProviderStatus(status),
-			Type:    errResp.Error.Type,
-			Code:    errResp.Error.Code,
-			Message: errResp.Error.Message,
+			Status:         mapProviderStatus(status),
+			Type:           errResp.Error.Type,
+			Code:           errResp.Error.Code,
+			Message:        errResp.Error.Message,
+			UpstreamStatus: status,
+			ProviderStatus: status,
 		}
 	}
 
@@ -1048,15 +1079,10 @@ func parseProviderError(status int, body []byte) *models.APIError {
 	if len(msg) > 500 {
 		msg = msg[:500] + "..."
 	}
-	return models.ErrUpstreamProvider(status, fmt.Sprintf("provider error (HTTP %d): %s", status, msg))
-}
-
-// streamErrorChunk reports whether a stream chunk is an upstream's error
-// object, which an OpenAI-compatible server sends in place of a chunk when it
-// fails mid-stream.
-func streamErrorChunk(chunk models.StreamChunk) bool {
-	raw, ok := chunk.Extra["error"]
-	return ok && string(raw) != "null"
+	e := models.ErrUpstreamProvider(status, fmt.Sprintf("provider error (HTTP %d): %s", status, msg))
+	// This fallback read a real HTTP error, not a synthetic gateway failure.
+	e.ProviderStatus = status
+	return e
 }
 
 // resolveModelName returns the model ID as-is. Historically this stripped

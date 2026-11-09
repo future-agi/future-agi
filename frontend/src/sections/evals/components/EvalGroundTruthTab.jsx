@@ -19,13 +19,7 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
@@ -37,8 +31,8 @@ import axios from "src/utils/axios";
 import {
   useDevelopDatasetList,
   useGetDatasetColumns,
-  useGetDatasetDetail,
 } from "src/api/develop/develop-detail";
+import ConfirmDialog from "src/sections/common/ux/ConfirmDialog";
 import { useEvalDetail } from "../hooks/useEvalDetail";
 import {
   useDeleteGroundTruth,
@@ -1850,6 +1844,8 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
     RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const deleteInFlight = useRef(false);
 
   // Eval data - to get required_keys (variables)
   const { data: evalData } = useEvalDetail(templateId);
@@ -1866,6 +1862,11 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
     useGroundTruthList(templateId);
   const datasets = listData?.items || [];
   const activeDataset = datasets[0];
+
+  // A confirmation applies only to the dataset and permissions it opened with.
+  useEffect(() => {
+    setDeleteTarget(null);
+  }, [templateId, activeDataset?.id, canEdit]);
 
   const { data: previewData } = useGroundTruthData(activeDataset?.id, {
     page: 1,
@@ -1892,14 +1893,26 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
   const totalRows = activeDataset?.row_count || 0;
 
   const handleDelete = useCallback(async () => {
-    if (!activeDataset) return;
+    if (
+      !deleteTarget ||
+      deleteTarget.id !== activeDataset?.id ||
+      !canEdit ||
+      deleteGt.isPending ||
+      deleteInFlight.current
+    )
+      return;
+    // Block repeated clicks even before the mutation's pending state renders.
+    deleteInFlight.current = true;
     try {
-      await deleteGt.mutateAsync(activeDataset.id);
+      await deleteGt.mutateAsync(deleteTarget.id);
+      setDeleteTarget(null);
       enqueueSnackbar("Dataset deleted", { variant: "success" });
     } catch {
       enqueueSnackbar("Failed to delete", { variant: "error" });
+    } finally {
+      deleteInFlight.current = false;
     }
-  }, [activeDataset, deleteGt, enqueueSnackbar]);
+  }, [activeDataset?.id, canEdit, deleteGt, deleteTarget, enqueueSnackbar]);
 
   const handleTriggerEmbed = useCallback(async () => {
     if (!activeDataset) return;
@@ -1979,6 +1992,21 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
         templateId={templateId}
         evalVariables={evalVariables}
         canEdit={canEdit}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Delete dataset"
+        body="This action cannot be undone."
+        items={deleteTarget ? [deleteTarget.name] : []}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        danger
+        busy={deleteGt.isPending}
+        onConfirm={handleDelete}
+        onClose={() => {
+          if (!deleteInFlight.current) setDeleteTarget(null);
+        }}
       />
 
       {/* Empty state - clicks opens drawer */}
@@ -2063,7 +2091,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                 <IconButton
                   size="small"
                   color="error"
-                  onClick={handleDelete}
+                  onClick={() => setDeleteTarget(activeDataset)}
                   disabled={deleteGt.isPending || !canEdit}
                 >
                   <Iconify icon="mdi:delete-outline" width={16} />

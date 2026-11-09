@@ -1,3 +1,8 @@
+import {
+  formatExactMoney,
+  sumMoneyValues,
+  roundMoneyPercent,
+} from "src/sections/common/format/money";
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
@@ -26,10 +31,7 @@ const fmtDuration = (seconds) => {
   return `${m}:${String(s).padStart(2, "0")}`;
 };
 
-const fmtMoney = (n) => {
-  if (n == null || !Number.isFinite(n)) return "$0.00";
-  return `$${n.toFixed(n < 0.1 ? 3 : 2)}`;
-};
+const fmtMoney = formatExactMoney;
 
 const fmtNumber = (n) => {
   if (n == null || !Number.isFinite(n)) return "—";
@@ -455,14 +457,14 @@ const CostBreakdown = ({ costBreakdown }) => {
       const entry = costBreakdown[s.key];
       return {
         ...s,
-        cost: entry?.cost ?? 0,
+        cost: entry?.cost,
         promptTokens: entry?.promptTokens,
         completionTokens: entry?.completionTokens,
       };
-    }).filter((r) => r.cost > 0 || r.promptTokens || r.completionTokens);
+    });
   }, [costBreakdown]);
 
-  const total = rows.reduce((sum, r) => sum + r.cost, 0);
+  const total = sumMoneyValues(rows.map((r) => r.cost));
 
   if (rows.length === 0) return null;
 
@@ -492,7 +494,7 @@ const CostBreakdown = ({ costBreakdown }) => {
         }}
       >
         {rows.map((row, i) => {
-          const pct = total > 0 ? (row.cost / total) * 100 : 0;
+          const pct = roundMoneyPercent(row.cost, total);
           return (
             <Box
               key={row.key}
@@ -534,7 +536,7 @@ const CostBreakdown = ({ costBreakdown }) => {
                   <Box
                     sx={{
                       height: "100%",
-                      width: `${pct}%`,
+                      width: pct == null ? 0 : `${pct}%`,
                       bgcolor:
                         theme.palette.blue?.[500] || theme.palette.primary.main,
                       transition: "width 200ms",
@@ -582,7 +584,7 @@ const CostBreakdown = ({ costBreakdown }) => {
                     fontFamily: "monospace",
                   }}
                 >
-                  {pct.toFixed(0)}%
+                  {pct == null ? "—" : `${pct}%`}
                 </Typography>
               </Stack>
             </Box>

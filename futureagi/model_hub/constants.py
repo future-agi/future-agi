@@ -339,8 +339,8 @@ fetch(url, {{
 # Generate cURL code
 PROMPT_CURL_CODE = """
 curl --location '{api_url}' \\
---header 'X-Api-Key: YOUR_API_KEY' \\
---header 'X-Secret-Key: YOUR_SECRET_KEY' \\
+--header 'X-Api-Key: <YOUR_API_KEY>' \\
+--header 'X-Secret-Key: <YOUR_SECRET_KEY>' \\
 --header 'Content-Type: application/json' \\
 --data '{{
     "name": "{name}",

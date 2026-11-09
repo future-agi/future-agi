@@ -85,6 +85,12 @@ export const getSessionListColumnDef = (col) => {
     headerComponentParams: { dataType: "text" },
     filter: id === "duration" || id === "lastMessage" ? false : undefined,
     cellRenderer: SessionCellRenderer,
+    // R2D-04: Pass/Fail evals render `Pass` / `Fail`, never `-` for a 0.
+    cellRendererParams: {
+      passFail:
+        col.groupBy === "Evaluation Metrics" &&
+        (col.outputType ?? col.output_type) === "Pass/Fail",
+    },
     cellStyle: {
       paddingInline: "0 17px",
       justifyContent: "flex-end",

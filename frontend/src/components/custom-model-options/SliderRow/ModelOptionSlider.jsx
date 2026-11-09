@@ -14,7 +14,8 @@ const PortalValueLabel = ({ children, value, open }) => (
 
 PortalValueLabel.propTypes = {
   children: PropTypes.node.isRequired,
-  value: PropTypes.number.isRequired,
+  // MUI passes the valueLabelFormat output here, which callers format as text.
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.node]).isRequired,
   open: PropTypes.bool.isRequired,
 };
 

@@ -1,0 +1,47 @@
+{
+  "source": "future-agi/product-design",
+  "revision": "3513a47a4db764c1d7a902bb9472229e02bb56fd",
+  "documentationVersion": "0.2",
+  "upstreamGeneratedMetadataVersion": "0.1.7",
+  "generatedFiles": ["ds-tokens.js", "tokens.css"],
+  "generatedPolicy": "Verbatim copies except provenance headers; never hand-edit values.",
+  "implementationSources": [
+    {
+      "revision": "05a5f9f77a2193fac06c6fe1cbed528d28a535a7",
+      "scope": "theme adapters, shared components, status map"
+    },
+    {
+      "revision": "affa74ec196929d5b38f95133cbabdd881022049",
+      "scope": "control guard rules only"
+    },
+    {
+      "revision": "148ee8a615189dd6c90f2082461c0fe626d953d7",
+      "scope": "theme/tooltip/segmented refinements and report guard"
+    },
+    {
+      "revision": "2c38e27fc2758983be4cde6c3166f9ada2dd761a",
+      "scope": "generic drawer and drawer-stack hook"
+    }
+  ],
+  "method": "Allowlisted extraction/adaptation, not cherry-picks: all upstream commits mix foundation and screen/prototype changes.",
+  "compatibility": [
+    "Legacy palette exports, syntax, typography variants and CSS variables remain adapters until rollout step 2.",
+    "Stored color presets no longer override the product accent; bold contrast strengthens borders without shadows.",
+    "Explicit per-screen grid parameters and styles still win and remain report-mode debt.",
+    "Legacy status inference and labels remain compatible; canceled/stopped is neutral, running informational.",
+    "MetricStrip is for actual measures; navigation counts and object facts are not tiles."
+  ],
+  "upstreamQuestions": [
+    "Docs say v0.2; generated metadata still says v0.1.7. Kept unchanged for owner/Vel resolution.",
+    "Generated title_sm is 15/22/600; component guidance requires medium section/panel titles. Section uses generated title_xs 13/20/500 without changing the pin."
+  ],
+  "outOfScope": [
+    "marketing",
+    "documentation pages",
+    "repo-wide codemod",
+    "screen migrations",
+    "backend",
+    "active DSX/gateway/7C proof heads",
+    "public publishing"
+  ]
+}

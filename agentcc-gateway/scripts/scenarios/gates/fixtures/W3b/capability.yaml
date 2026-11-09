@@ -1,0 +1,62 @@
+# W3b_capability_ledger_live.sh's gateway config: V5's fixture (fixtures/V5/gateway.yaml)
+# with the gate's catalog, V5's echo cards plus a byok_only one.
+# V5's scenario gateway config (07_v5_capability_core.sh), rendered by scn_up
+# from lib.sh's placeholders. The capability mock's address is not one of
+# them: the gateway expands ${SCN_CAP}, which lib_cap.sh's scn_cap_up exports
+# before scn_up starts the gateway.
+#
+# echo-a and echo-b are the capability mock's echo fakes. Their operator
+# entries are FutureAGI's managed credentials for the test capability echo
+# (managed: true), and their base URLs are where the core sends a call, BYOK
+# or managed. Their prices come from the fixture cards in tools/echo, which
+# tools.catalog_dir names and the W2c integrator's SR7 binding loads.
+#
+# Every key and token below is a fake value for the local mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  # Org keys are person-owned (733): under a control plane config.yaml holds
+  # only deployment identities (key_type internal, no org_id, no user_id).
+  # scn_up registers acme-app (SCN_KEY of org-acme, user SCN_USER) with the
+  # mock's control plane, which lists it on the key sync (lib.sh, Org keys).
+providers:
+  echo-a:
+    base_url: "${SCN_CAP}/echo-a"
+    api_key: "scn-test-managed-echo-a"
+    api_format: "openai"
+    managed: true
+    auto_discover: false
+  echo-b:
+    base_url: "${SCN_CAP}/echo-b"
+    api_key: "scn-test-managed-echo-b"
+    api_format: "openai"
+    managed: true
+    auto_discover: false
+tools:
+  enabled: true
+  catalog_dir: "@@SCN_ROOT@@/gates/fixtures/W3b/tools" # V5's two echo cards plus echo-c, byok_only (IC-10's live row)
+capabilities:
+  echo:
+    timeout_ms: 5000
+managed:
+  markup_percent: 5
+  require_credits: true
+cost_tracking:
+  enabled: true
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+# The X0 mock stands in for Django: request logs reach its /__logs.
+# Its control plane lists the person-owned keys scn_up registers and does
+# not answer the org sync, so configs pushed with scn_org_config stay; the
+# gateway syncs keys on startup (scn_up waits for the first list).
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: true
+  sync_interval: 60s

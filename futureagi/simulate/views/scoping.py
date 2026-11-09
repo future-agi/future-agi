@@ -5,7 +5,9 @@ def run_test_workspace_filter(request, relation_prefix=""):
     """Return a Q object limiting a RunTest relation to the active workspace."""
     workspace = getattr(request, "workspace", None)
     if workspace is None:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     prefix = f"{relation_prefix}__" if relation_prefix else ""
     workspace_query = Q(**{f"{prefix}workspace": workspace})

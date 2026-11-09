@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
@@ -120,7 +121,7 @@ const CloudProviderCardComponent = ({
             }}
           >
             <Image
-              src={provider.logoUrl}
+              src={localProviderLogo(provider)}
               alt={provider.display_name}
               width={25}
               height={25}

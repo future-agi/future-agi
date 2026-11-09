@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, ClassVar, Optional, Type
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 from pydantic import BaseModel as PydanticBaseModel
 
@@ -27,6 +27,12 @@ class ToolContext:
     user: Any  # accounts.models.User
     organization: Any  # accounts.models.Organization
     workspace: Any  # accounts.models.Workspace
+    # Only FalconAIConsumer opts in. Background jobs may carry an arbitrary
+    # organization user for ownership without acting as an interactive caller.
+    interactive_falcon_socket: bool = False
+    # Opt-in live authorization/lifetime policy for trace error-analysis workers.
+    # No interactive or other background caller installs it.
+    background_analysis: Any = None
 
     @property
     def user_id(self):
@@ -52,16 +58,16 @@ class ToolResult:
     """
 
     content: str
-    data: Optional[dict] = None
+    data: dict | None = None
     is_error: bool = False
-    error_code: Optional[str] = None
+    error_code: str | None = None
 
     @classmethod
     def error(
         cls,
         message: str,
-        data: Optional[dict] = None,
-        error_code: Optional[str] = None,
+        data: dict | None = None,
+        error_code: str | None = None,
     ) -> ToolResult:
         return cls(
             content=f"**Error:** {message}",
@@ -121,7 +127,7 @@ class BaseTool(ABC):
     name: str
     description: str
     category: str
-    input_model: ClassVar[Type[PydanticBaseModel]] = EmptyInput
+    input_model: ClassVar[type[PydanticBaseModel]] = EmptyInput
 
     @abstractmethod
     def execute(self, params: PydanticBaseModel, context: ToolContext) -> ToolResult:
@@ -141,7 +147,19 @@ class BaseTool(ABC):
         so that BaseModel managers, AutoWorkspaceField, and queryset scoping
         work correctly without touching django.conf.settings.
         """
+        from ai_tools.background import background_tool_denial
         from tfc.middleware.workspace_context import workspace_context
+        from tracer.services.background_transport import (
+            analysis_transport_scope,
+            current_guard,
+        )
+
+        guard = getattr(context, "background_analysis", None) or current_guard()
+        if guard is not None:
+            context = guard.check()
+        denial = background_tool_denial(self, context)
+        if denial is not None:
+            return denial
 
         try:
             cleaned = self._clean_params(raw_params or {})
@@ -165,13 +183,24 @@ class BaseTool(ABC):
             )
 
         try:
-            with workspace_context(
-                workspace=context.workspace,
-                organization=context.organization,
-                user=context.user,
+            with (
+                analysis_transport_scope(guard),
+                workspace_context(
+                    workspace=context.workspace,
+                    organization=context.organization,
+                    user=context.user,
+                ),
             ):
-                return self.execute(params, context)
+                if guard is not None:
+                    context = guard.check()
+                result = self.execute(params, context)
+                if guard is not None:
+                    guard.check()
+                return result
         except Exception as e:
+            guard = getattr(context, "background_analysis", None)
+            if guard is not None:
+                guard.check()  # Terminal aborts must not become retryable tool errors.
             from ai_tools.error_codes import code_from_exception
 
             logger.exception(f"Tool {self.name} failed: {e}")

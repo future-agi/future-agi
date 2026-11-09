@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React from "react";
 import PropTypes from "prop-types";
 
 import Box from "@mui/material/Box";
@@ -7,28 +7,25 @@ import { useLocation } from "react-router";
 import { alpha, useTheme } from "@mui/material/styles";
 
 import LoadingTemplate from "../../sections/workbench/LoadingTemplate";
-import {
-  RocketMascot,
-  LOADING_MESSAGES,
-  pickRandom,
-} from "../rocket-mascot";
+import { RocketMascot } from "../rocket-mascot";
+
+// The app-wide loader. It says "Loading…" and nothing else: no rotating jokes,
+// no invented progress. A caller may pass a factual `message` (what is loading).
+const LOADING_LABEL = "Loading\u2026";
 
 // ----------------------------------------------------------------------
 
 export default function LoadingScreen({
-  sx,
+  sx = undefined,
   variant = "rocket",
   compact = false,
-  message: messageOverride,
+  message: messageOverride = undefined,
   ...other
 }) {
   const location = useLocation();
   const theme = useTheme();
 
-  const message = useMemo(
-    () => messageOverride || pickRandom(LOADING_MESSAGES),
-    [messageOverride],
-  );
+  const message = messageOverride || null;
 
   if (location?.state?.fromOption === "use-template") {
     return <LoadingTemplate sx={{ mt: "46px" }} />;
@@ -49,7 +46,13 @@ export default function LoadingScreen({
 
   if (compact) {
     return (
-      <Box sx={baseSx} role="status" aria-live="polite" aria-busy="true" {...other}>
+      <Box
+        sx={baseSx}
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        {...other}
+      >
         <OrbitDots />
       </Box>
     );
@@ -57,7 +60,13 @@ export default function LoadingScreen({
 
   if (variant === "orbit") {
     return (
-      <Box sx={baseSx} role="status" aria-live="polite" aria-busy="true" {...other}>
+      <Box
+        sx={baseSx}
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        {...other}
+      >
         <OrbitLoader />
         <Box sx={{ textAlign: "center", maxWidth: 420, mt: 1 }}>
           <Typography
@@ -65,19 +74,18 @@ export default function LoadingScreen({
             color="text.primary"
             letterSpacing="0.02em"
           >
-            Standing by
+            {LOADING_LABEL}
           </Typography>
-          <Typography
-            variant="caption"
-            fontFamily="IBM Plex Mono, ui-monospace, monospace"
-            color={alpha(theme.palette.text.secondary, 0.8)}
-            mt={0.5}
-            sx={{
-              "&::before": { content: '"// "', color: "text.disabled" },
-            }}
-          >
-            {message}
-          </Typography>
+          {message && (
+            <Typography
+              variant="caption"
+              component="p"
+              color={alpha(theme.palette.text.secondary, 0.8)}
+              mt={0.5}
+            >
+              {message}
+            </Typography>
+          )}
         </Box>
       </Box>
     );
@@ -85,7 +93,13 @@ export default function LoadingScreen({
 
   // Default: rocket mascot
   return (
-    <Box sx={baseSx} role="status" aria-live="polite" aria-busy="true" {...other}>
+    <Box
+      sx={baseSx}
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      {...other}
+    >
       <RocketMascot variant="launching" size={140} />
       <Box sx={{ textAlign: "center", maxWidth: 420 }}>
         <Typography
@@ -94,16 +108,13 @@ export default function LoadingScreen({
           color="text.primary"
           lineHeight={1.3}
         >
-          Preparing for liftoff
+          {LOADING_LABEL}
         </Typography>
-        <Typography
-          variant="body2"
-          fontStyle="italic"
-          color="text.secondary"
-          mt={0.5}
-        >
-          {message}
-        </Typography>
+        {message && (
+          <Typography variant="body2" color="text.secondary" mt={0.5}>
+            {message}
+          </Typography>
+        )}
       </Box>
     </Box>
   );

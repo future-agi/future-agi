@@ -31,7 +31,7 @@ def repair_error_counts(apps, schema_editor):
     TraceErrorGroup = apps.get_model("tracer", "TraceErrorGroup")
 
     base_qs = (
-        TraceErrorGroup.objects.filter(source="scanner", deleted=False)
+        TraceErrorGroup.objects.using(schema_editor.connection.alias).filter(source="scanner", deleted=False)
         .annotate(
             actual=Count(
                 "scan_issues",
@@ -58,7 +58,7 @@ def repair_error_counts(apps, schema_editor):
         if stale:
             for cluster in stale:
                 cluster.error_count = cluster.actual
-            TraceErrorGroup.objects.bulk_update(
+            TraceErrorGroup.objects.using(schema_editor.connection.alias).bulk_update(
                 stale, ["error_count"], batch_size=len(stale)
             )
 

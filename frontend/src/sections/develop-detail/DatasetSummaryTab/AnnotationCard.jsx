@@ -7,9 +7,8 @@ import { useRunAnnotationsStore } from "../states";
 import AnnotatorPerformace from "./AnnotatorPerformace";
 import SvgColor from "src/components/svg-color";
 import AnnotationsChartsRenderer from "./AnnotationsChartsRenderer";
-import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
+import { camelizeKeys, useAnnotationSummary } from "./summaryApi";
 import AnnotationCardLoading from "./Loaders/AnnotationCardLoading";
 
 // Utility function to convert seconds to human-readable format
@@ -75,32 +74,51 @@ const headerData = [
 ];
 
 const AnnotationCard = (props) => {
-  const { setCurrentTab, datasetId } = props;
+  const {
+    setCurrentTab,
+    datasetId,
+    summary,
+    showHeader = true,
+    hideEmpty = false,
+  } = props;
   const { setOpenRunAnnotations } = useRunAnnotationsStore();
   const { dataset } = useParams();
 
   const activeDatasetId = datasetId || dataset;
 
-  const { data, isPending, isLoading } = useQuery({
-    queryKey: ["annotation-summary", activeDatasetId],
-    queryFn: () =>
-      axios.get(
-        endpoints.dataset.annotationSummary(activeDatasetId),
-        // {
-        //   ...(selectedColumns?.length > 0 && {
-        //     params: { column_ids: selectedColumns.join(",") },
-        //   }),
-        // }
-      ),
-    select: (e) => e?.data?.result || [],
-    enabled: Boolean(activeDatasetId),
-  });
-
-  const { header, annotators, labels } = data || {
-    header: {},
-    annotators: [],
-    labels: [],
-  };
+  // The API is snake_case (R6): camelize the keys the charts read, but keep
+  // each label's graph_data keys (they are label values, e.g. "Not sure").
+  const query = useAnnotationSummary(activeDatasetId);
+  const raw = summary ?? query.data;
+  const isPending = summary ? false : query.isPending;
+  const isLoading = summary ? false : query.isLoading;
+  const { header, annotators, labels } = useMemo(() => {
+    if (!raw) return { header: {}, annotators: [], labels: [] };
+    return {
+      header: camelizeKeys(raw.header ?? {}),
+      annotators: camelizeKeys(raw.annotators ?? []),
+      labels: (raw.labels ?? []).map((l) => {
+        const label = {
+          ...camelizeKeys({ ...l, graph_data: undefined }),
+          graphData: l.graph_data,
+        };
+        if (label.labelCoverage != null)
+          label.labelCoverage = `${label.labelCoverage}%`;
+        if (label.type === "star" && l.graph_data) {
+          const entries = Object.entries(l.graph_data);
+          const total = entries.reduce((s, [, n]) => s + n, 0);
+          const happy = (l.graph_data["4"] ?? 0) + (l.graph_data["5"] ?? 0);
+          if (total) {
+            label.satisfactionRate = `${Math.round((happy / total) * 100)}%`;
+            label.modeValue =
+              label.modeValue ??
+              `${entries.sort((a, b) => b[1] - a[1])[0][0]} stars`;
+          }
+        }
+        return label;
+      }),
+    };
+  }, [raw]);
 
   const isEmpty = useMemo(() => {
     if (
@@ -108,7 +126,7 @@ const AnnotationCard = (props) => {
       labels?.length > 0 ||
       header?.datasetCoverage ||
       header?.overallAgreement ||
-      header?.completionETA
+      header?.completionEta
     ) {
       return false;
     }
@@ -122,7 +140,7 @@ const AnnotationCard = (props) => {
   return (
     <Box display={"flex"} gap={2} flexDirection={"column"} height="97%">
       <ShowComponent condition={!isEmpty}>
-        <Box display="flex" gap={2}>
+        <Box display={showHeader ? "flex" : "none"} gap={2}>
           {headerData.map((item) => {
             return (
               <Box
@@ -184,7 +202,7 @@ const AnnotationCard = (props) => {
         <AnnotationsChartsRenderer labels={labels} names={annotators} />
         <AnnotatorPerformace annotatorList={annotators} />
       </ShowComponent>
-      <ShowComponent condition={isEmpty}>
+      <ShowComponent condition={isEmpty && !hideEmpty}>
         <EmptyCard
           tab={"annotation"}
           setCurrentTab={setCurrentTab}
@@ -203,6 +221,10 @@ export default AnnotationCard;
 
 AnnotationCard.propTypes = {
   setCurrentTab: PropTypes.func,
+  summary: PropTypes.object,
+  showHeader: PropTypes.bool,
+  // no empty state when the page already shows human review (judge reviews)
+  hideEmpty: PropTypes.bool,
   datasetId: PropTypes.string,
   selectedColumns: PropTypes.array,
   datasetIndex: PropTypes.number,

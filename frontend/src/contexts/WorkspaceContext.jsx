@@ -22,6 +22,8 @@ import {
   SS_KEY_WS_LEVEL,
 } from "src/utils/sessionKeys";
 
+import { useWorkspaceUnavailableRecovery } from "./useWorkspaceUnavailableRecovery";
+
 // --- sessionStorage helpers ---------------------------------------------------
 
 const EMPTY_WORKSPACE = {
@@ -163,6 +165,23 @@ export function WorkspaceProvider({ children }) {
     () => !!readSessionWorkspaceForOrg(readSessionOrgId()),
   );
 
+  const applyUserWorkspace = useCallback((userInfo, fallbackOrgId = null) => {
+    const next = userInfo?.default_workspace_id
+      ? {
+          id: userInfo.default_workspace_id,
+          name: userInfo.default_workspace_name ?? null,
+          displayName: userInfo.default_workspace_display_name ?? null,
+          role: userInfo.default_workspace_role ?? null,
+          wsLevel: userInfo.ws_level ?? null,
+          orgId: userInfo.organization?.id || fallbackOrgId,
+        }
+      : { ...EMPTY_WORKSPACE };
+    setWorkspace(next);
+    writeSessionWorkspace(next);
+    setWorkspaceHeader(next.id);
+    setIsReady(true);
+  }, []);
+
   // When user data arrives (login / refresh), seed workspace if not already set
   useEffect(() => {
     if (!authenticated || !user) return;
@@ -200,28 +219,8 @@ export function WorkspaceProvider({ children }) {
     }
 
     // Nothing usable stored → seed from user-info (new tab / org changed)
-    const seedDefaultWsId = user.default_workspace_id;
-    if (seedDefaultWsId) {
-      const seedWsLevel = user.ws_level;
-      const initial = {
-        id: seedDefaultWsId,
-        name: user.default_workspace_name ?? null,
-        displayName: user.default_workspace_display_name ?? null,
-        role: user.default_workspace_role ?? null,
-        wsLevel: seedWsLevel != null ? seedWsLevel : null,
-        orgId: activeOrgId,
-      };
-      setWorkspace(initial);
-      writeSessionWorkspace(initial);
-      setWorkspaceHeader(initial.id);
-      setIsReady(true);
-    } else {
-      clearSessionWorkspace();
-      setWorkspaceHeader(null);
-      setWorkspace({ ...EMPTY_WORKSPACE });
-      setIsReady(true);
-    }
-  }, [authenticated, user, currentOrganizationId]);
+    applyUserWorkspace(user, activeOrgId);
+  }, [authenticated, user, currentOrganizationId, applyUserWorkspace]);
 
   // Switch workspace — called from UI
   const switchWorkspace = useCallback(
@@ -285,6 +284,14 @@ export function WorkspaceProvider({ children }) {
     setWorkspace({ ...EMPTY_WORKSPACE });
     setIsReady(false);
   }, []);
+
+  useWorkspaceUnavailableRecovery({
+    authenticated,
+    userId: user?.id,
+    organizationId: user?.organization?.id || currentOrganizationId,
+    clearWorkspace,
+    applyUserWorkspace,
+  });
 
   // Clear on logout (but NOT during initial auth loading — sessionStorage
   // must survive page refreshes for workspace switching to work correctly)

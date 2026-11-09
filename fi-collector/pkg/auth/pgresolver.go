@@ -3,14 +3,11 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -20,10 +17,13 @@ type ResolveResult struct {
 	OrgID       string
 	WorkspaceID string
 	UserID      string
-	KeyType     string // "system", "user", "mcp", "ingest"
-	// SimulationAgent is the agent an "ingest" key names; its ID is empty for
-	// every other key and for an ingest key made for no agent. It is set once
-	// before the result is cached and never changed.
+	KeyType     string // personal keys have type "user"; grants have no key type
+	Principal   Principal
+	Grant       *GrantClaims // immutable verified claims, nil for personal keys
+	// APIKeyDigest is sha256(api_key): a revocation names the key by it.
+	APIKeyDigest string
+	// SimulationAgent comes only from a verified sandbox grant and its live
+	// registry binding. It is immutable for the life of this result.
 	SimulationAgent SimulationAgent
 	// columnsMissing marks an ingest key read without the agent column, so
 	// routing cannot know its agent.
@@ -238,16 +238,20 @@ func (r *ResolveResult) DeleteProjectByID(projectID string) bool {
 
 // PGResolver validates API keys and resolves projects directly against PG.
 type PGResolver struct {
-	read  *pgxpool.Pool
-	write *pgxpool.Pool
-	// columns picks the key statement; nil behaves as "not checked yet", which
-	// reads keys without the agent column.
+	read         *pgxpool.Pool
+	write        *pgxpool.Pool
+	peppers      *SecretPeppers
+	envelopeKids []string
+	// columns is shared with the routing readiness check, not key validation.
 	columns *routingColumns
 }
 
 // NewPGResolver opens read and write connection pools.
 func NewPGResolver(ctx context.Context, cfg Config) (*PGResolver, error) {
 	cfg.defaults()
+	if cfg.Peppers == nil {
+		return nil, ErrPepperMissing
+	}
 
 	readCfg, err := pgxpool.ParseConfig(cfg.PGRead)
 	if err != nil {
@@ -277,7 +281,7 @@ func NewPGResolver(ctx context.Context, cfg Config) (*PGResolver, error) {
 		}
 	}
 
-	return &PGResolver{read: readPool, write: writePool}, nil
+	return &PGResolver{read: readPool, write: writePool, peppers: cfg.Peppers, envelopeKids: cfg.EnvelopeKids}, nil
 }
 
 // ReadPool returns the read connection pool.
@@ -289,97 +293,6 @@ func (r *PGResolver) Close() {
 		r.write.Close()
 	}
 	r.read.Close()
-}
-
-const validateKeyQuery = `
-		SELECT k.organization_id, k.workspace_id, k.user_id, k.type
-		FROM accounts_orgapikey k
-		WHERE k.api_key = $1 AND k.secret_key = $2
-		  AND k.enabled = true AND k.deleted = false
-		LIMIT 1`
-
-// validateKeyWithAgentQuery also reads the agent of a sandbox key. The join is
-// a left join so that a key whose agent row was deleted still validates and is
-// told apart from an invalid key.
-const validateKeyWithAgentQuery = `
-		SELECT k.organization_id, k.workspace_id, k.user_id, k.type,
-		       k.simulation_agent_id, a.organization_id, a.deleted
-		FROM accounts_orgapikey k
-		LEFT JOIN simulate_agent_definition a
-		  ON a.id = k.simulation_agent_id AND k.type = 'ingest'
-		WHERE k.api_key = $1 AND k.secret_key = $2
-		  AND k.enabled = true AND k.deleted = false
-		LIMIT 1`
-
-// ValidateKey checks an API key pair and returns the associated org context.
-// Returns nil, nil if the key is not found (invalid credentials).
-func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) (*ResolveResult, error) {
-	withAgent := r.columns.state() == columnsPresent
-	res, err := r.validateKey(ctx, apiKey, secretKey, withAgent)
-	if withAgent && isUndefinedColumn(err) {
-		// A migration was rolled back since the last check: do not fail every
-		// uncached key until the next one.
-		r.columns.set(columnsMissing)
-		return r.validateKey(ctx, apiKey, secretKey, false)
-	}
-	return res, err
-}
-
-func isUndefinedColumn(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "42703"
-}
-
-func (r *PGResolver) validateKey(ctx context.Context, apiKey, secretKey string, withAgent bool) (*ResolveResult, error) {
-	var orgID, keyType string
-	var workspaceID, userID *string
-	var agentID, agentOrgID *string
-	var agentDeleted *bool
-
-	var err error
-	if withAgent {
-		err = r.read.QueryRow(ctx, validateKeyWithAgentQuery, apiKey, secretKey).Scan(
-			&orgID, &workspaceID, &userID, &keyType, &agentID, &agentOrgID, &agentDeleted)
-	} else {
-		err = r.read.QueryRow(ctx, validateKeyQuery, apiKey, secretKey).Scan(&orgID, &workspaceID, &userID, &keyType)
-	}
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, nil // invalid key
-		}
-		return nil, fmt.Errorf("validate key: %w", err)
-	}
-
-	effectiveWorkspace := ""
-	if workspaceID != nil {
-		effectiveWorkspace = *workspaceID
-	}
-	if effectiveWorkspace == "" {
-		effectiveWorkspace, err = r.resolveDefaultWorkspace(ctx, orgID)
-		if err != nil {
-			return nil, fmt.Errorf("validate key workspace: %w", err)
-		}
-	}
-	res := &ResolveResult{
-		OrgID: orgID, WorkspaceID: effectiveWorkspace,
-		KeyType: keyType, Projects: make(map[string]string),
-	}
-	if userID != nil {
-		res.UserID = *userID
-	}
-	if keyType == keyTypeIngest {
-		if !withAgent {
-			res.columnsMissing = true
-		} else if agentID != nil && *agentID != "" {
-			res.SimulationAgent = SimulationAgent{ID: *agentID}
-			if agentOrgID != nil {
-				res.SimulationAgent.OrgID = *agentOrgID
-			}
-			// No agent row (hard-deleted) reads as deleted.
-			res.SimulationAgent.Deleted = agentOrgID == nil || agentDeleted == nil || *agentDeleted
-		}
-	}
-	return res, nil
 }
 
 const resolveProjectsQuery = `
@@ -446,13 +359,13 @@ func (r *PGResolver) ResolveProjectsWithTypes(
 }
 
 func (r *PGResolver) resolveDefaultWorkspace(ctx context.Context, orgID string) (string, error) {
-	if r == nil || r.read == nil || ctx == nil || orgID == "" {
+	if r == nil || r.write == nil || ctx == nil || orgID == "" {
 		return "", fmt.Errorf("default workspace resolution requires a resolver context")
 	}
 	const query = `SELECT id FROM accounts_workspace
 		WHERE organization_id = $1 AND is_default = true AND is_active = true AND deleted = false
 		ORDER BY id LIMIT 2`
-	rows, err := r.read.Query(ctx, query, orgID)
+	rows, err := r.write.Query(ctx, query, orgID)
 	if err != nil {
 		return "", fmt.Errorf("resolve default workspace: %w", err)
 	}

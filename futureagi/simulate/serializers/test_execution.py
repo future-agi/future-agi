@@ -7,7 +7,8 @@ from django.db.models import Count, Q
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
-from model_hub.models.develop_dataset import Cell, Column, Row
+from common.utils.page_limits import PageSizeIntegerField
+from model_hub.models.develop_dataset import Row
 from model_hub.services.error_localizer_service import error_localizer_enabled
 from simulate.models import (
     CallExecution,
@@ -17,6 +18,11 @@ from simulate.models import (
 )
 from simulate.serializers.chat_message import ChatMessageSerializer
 from simulate.utils.eval_summary import iter_live_eval_outputs
+from simulate.utils.owned_relations import (
+    owned_call_scenario_map,
+    owned_scenario_graphs,
+)
+from simulate.utils.scenario_rows import org_cells, org_columns, org_rows
 from simulate.utils.test_execution_utils import canonical_scenario_column_name
 from tracer.models.observability_provider import ProviderChoices
 from tracer.serializers.filters import (
@@ -53,9 +59,8 @@ class TestExecutionListQuerySerializer(serializers.Serializer):
     search = serializers.CharField(required=False, allow_blank=True, default="")
     status = serializers.CharField(required=False, allow_blank=True, default="")
     page = serializers.IntegerField(required=False, min_value=1)
-    # The list never capped `limit`; documenting it must not start rejecting
-    # callers that already passed values above 100.
-    limit = serializers.IntegerField(required=False, min_value=1)
+    # Keep historical >100 pages supported, up to the shared read ceiling.
+    limit = PageSizeIntegerField(required=False, min_value=1)
 
 
 class ExecutionDetailQuerySerializer(StrictInputSerializer):
@@ -64,7 +69,7 @@ class ExecutionDetailQuerySerializer(StrictInputSerializer):
     row_groups = JsonArrayQueryParamField(required=False, default=list)
     group_keys = JsonArrayQueryParamField(required=False, default=list)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
-    limit = serializers.IntegerField(required=False, default=30, min_value=1)
+    limit = PageSizeIntegerField(required=False, default=30, min_value=1)
 
 
 class CallTranscriptSerializer(serializers.ModelSerializer):
@@ -305,6 +310,20 @@ def _normalize_eval_value(value, output_type):
     return value
 
 
+def _execution_organization_id(call_execution):
+    """The organization of the call's own run test; None when it has none.
+
+    Only a ``CallExecution`` instance carries one. A plain dict (a grouping
+    row) gives None, so ``get_scenario_columns``' per-row fallback reads
+    nothing for it: grouped rows already return ``{}``, and no caller passes
+    any other dict today. A new dict caller must pass a model instance, or
+    prefetch its rows into ``rows_map`` from its own organization.
+    """
+    test_execution = getattr(call_execution, "test_execution", None)
+    run_test = getattr(test_execution, "run_test", None)
+    return getattr(run_test, "organization_id", None)
+
+
 class CallExecutionDetailSerializer(serializers.ModelSerializer):
     """Serializer for CallExecution model with new payload structure"""
 
@@ -314,7 +333,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
     duration = serializers.SerializerMethodField()
     start_time = serializers.SerializerMethodField()
     transcript = serializers.SerializerMethodField()
-    scenario = serializers.CharField(source="scenario.name", read_only=True)
+    scenario = serializers.SerializerMethodField(allow_null=True)
     overall_score = serializers.SerializerMethodField()
     response_time = serializers.SerializerMethodField()
     audio_url = serializers.URLField(source="recording_url", read_only=True)
@@ -1029,12 +1048,16 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 dataset_columns = columns_by_dataset.get(ds_id, []) if ds_id else []
                 row_cells = cells_by_row.get(row_id_str, {})
             else:
-                # Fallback: individual queries (for grouped results or missing context)
+                # Fallback: individual queries (for grouped results or missing
+                # context). The row id can come from caller-written
+                # call_metadata, so only live rows, columns and cells of the
+                # call's own organization are read (T6 #7d).
+                organization_id = _execution_organization_id(obj)
                 try:
-                    row = Row.all_objects.get(id=row_id)
+                    row = org_rows(organization_id).get(id=row_id)
                 except Row.DoesNotExist:
                     return {}
-                dataset_columns = Column.all_objects.filter(
+                dataset_columns = org_columns(organization_id).filter(
                     id__in=row.dataset.column_order
                 )
                 row_cells = None
@@ -1047,10 +1070,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                         cell = row_cells.get(str(dataset_column.id))
                     else:
                         # Fallback: individual query
-                        cell = Cell.all_objects.filter(
-                            column=dataset_column,
-                            row_id=row.id,
-                        ).first()
+                        cell = (
+                            org_cells(organization_id)
+                            .filter(column=dataset_column, row_id=row.id)
+                            .first()
+                        )
                     cell_value = cell.value or "" if cell else ""
                 except Exception:
                     cell_value = ""
@@ -1086,20 +1110,92 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
         return scenario_data
 
+    def _get_owned_scenario(self, obj):
+        call_id = getattr(obj, "pk", None)
+        if call_id is None:
+            return None
+        scenarios = self.context.get("owned_call_scenarios")
+        if scenarios is not None:
+            # A missing page-map entry is an authoritative negative result.
+            return scenarios.get(str(call_id))
+
+        request = self.context.get("request")
+        caller_tenant = None
+        if request is not None:
+            organization = getattr(request, "organization", None) or getattr(
+                getattr(request, "user", None), "organization", None
+            )
+            caller_tenant = (
+                getattr(organization, "pk", None),
+                getattr(getattr(request, "workspace", None), "pk", None),
+            )
+        cache = self.__dict__.setdefault("_owned_scenario_cache", {}).setdefault(
+            caller_tenant, {}
+        )
+        if str(call_id) not in cache:
+            # many=True callers share one projection, rather than one lookup
+            # per row. Single detail/internal readers use the same safe helper.
+            instances = (
+                getattr(self.parent, "instance", None)
+                if isinstance(self.parent, serializers.ListSerializer)
+                else None
+            )
+            call_ids = (
+                {getattr(item, "pk", None) for item in instances}
+                if instances is not None
+                else {call_id}
+            )
+            call_ids = (call_ids | {call_id}) - {None}
+            projection = owned_call_scenario_map(call_ids, caller_tenant=caller_tenant)
+            cache.update({str(pk): projection.get(str(pk)) for pk in call_ids})
+        return cache[str(call_id)]
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
+    def get_scenario(self, obj):
+        scenario = self._get_owned_scenario(obj)
+        return scenario["name"] if scenario is not None else None
+
     def get_scenario_id(self, obj):
-        """Get scenario ID"""
-        return str(obj.scenario.id) if obj.scenario_id else None
+        """Keep the existing string-id type without traversing the raw FK."""
+        scenario = self._get_owned_scenario(obj)
+        return scenario["id"] if scenario is not None else None
 
     def _get_active_scenario_graph(self, obj):
         if not obj.scenario_id:
             return None
-        from simulate.models.scenario_graph import ScenarioGraph
+        # Page readers supply a single owned batch; an absent key is a negative
+        # cache, never permission to retry with an unscoped scenario-id lookup.
+        graphs = self.context.get("owned_scenario_graphs")
+        if graphs is not None:
+            return graphs.get(str(obj.scenario_id))
 
-        return (
-            ScenarioGraph.objects.filter(scenario_id=obj.scenario_id, is_active=True)
-            .order_by("-created_at")
-            .first()
-        )
+        request = self.context.get("request")
+        if request is not None:
+            organization = getattr(request, "organization", None) or getattr(
+                getattr(request, "user", None), "organization", None
+            )
+            organization_id = getattr(organization, "pk", None)
+            workspace_id = getattr(getattr(request, "workspace", None), "pk", None)
+        else:
+            # Internal single-call readers use the run's own tenant, not the
+            # scenario's tenant (a call may carry a mixed scenario FK).
+            run_test = obj.test_execution.run_test
+            organization_id = run_test.organization_id
+            workspace_id = run_test.workspace_id
+        key = (organization_id, workspace_id, obj.scenario_id)
+        cache = self.__dict__.setdefault("_owned_graph_cache", {})
+        if key not in cache:
+            cache[key] = (
+                owned_scenario_graphs(
+                    organization_id=organization_id, workspace_id=workspace_id
+                )
+                .filter(scenario_id=obj.scenario_id, is_active=True)
+                .order_by("-created_at")
+                .first()
+            )
+        return cache[key]
 
     def get_scenario_graph(self, obj):
         graph = self._get_active_scenario_graph(obj)
@@ -1804,6 +1900,21 @@ class TestExecutionSerializer(serializers.ModelSerializer):
         # Calculate percentage
         percentage = (call_counts["connected_calls"] / calls_attempted) * 100
         return round(percentage, 2)
+
+
+class TestExecutionListPageSerializer(serializers.Serializer):
+    """Paginated response for GET /simulate/api/test-executions/.
+
+    The view answers ``ExtendedPageNumberPagination.get_paginated_response``
+    directly, not the success envelope.
+    """
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = TestExecutionSerializer(many=True, read_only=True)
+    total_pages = serializers.IntegerField(read_only=True)
+    current_page = serializers.IntegerField(read_only=True)
 
 
 class DebugAnalysisEvidenceSerializer(serializers.Serializer):

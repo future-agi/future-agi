@@ -72,7 +72,7 @@ def backfill_apicalllog_version_info(apps, schema_editor):
         # OSS build — usage app not installed
         return
 
-    from django.db import connection
+    connection = schema_editor.connection
 
     # The unwrap pass uses PostgreSQL JSONB operators; on any other vendor
     # the per-row stamping loop below still handles string configs.
@@ -84,13 +84,13 @@ def backfill_apicalllog_version_info(apps, schema_editor):
 
     # Filter to user-owned templates only. System templates intentionally
     # stay unversioned — their Usage tab shows a dash.
-    templates = EvalTemplate.objects.filter(deleted=False, owner="user")
+    templates = EvalTemplate.objects.using(schema_editor.connection.alias).filter(deleted=False, owner="user")
 
     versions_created = 0
     total_updated = 0
     for template in templates.iterator():
         default_version = (
-            EvalTemplateVersion.objects.filter(
+            EvalTemplateVersion.objects.using(schema_editor.connection.alias).filter(
                 eval_template_id=template.id,
                 is_default=True,
                 deleted=False,
@@ -103,7 +103,7 @@ def backfill_apicalllog_version_info(apps, schema_editor):
             # matching the runtime EvalTemplateVersionManager.get_default
             # so historical stamps agree with what would run today.
             default_version = (
-                EvalTemplateVersion.objects.filter(
+                EvalTemplateVersion.objects.using(schema_editor.connection.alias).filter(
                     eval_template_id=template.id,
                     deleted=False,
                 )
@@ -116,7 +116,7 @@ def backfill_apicalllog_version_info(apps, schema_editor):
             # the template's current config/criteria/model so the version
             # actually describes what the template looks like today.
             try:
-                default_version = EvalTemplateVersion.objects.create(
+                default_version = EvalTemplateVersion.objects.using(schema_editor.connection.alias).create(
                     eval_template_id=template.id,
                     version_number=1,
                     is_default=True,
@@ -150,7 +150,7 @@ def backfill_apicalllog_version_info(apps, schema_editor):
         version_number = default_version.version_number
 
         # Stamp untagged logs in 500-row batches.
-        logs = APICallLog.objects.filter(
+        logs = APICallLog.objects.using(schema_editor.connection.alias).filter(
             source_id=str(template.id),
             deleted=False,
         )
@@ -172,11 +172,11 @@ def backfill_apicalllog_version_info(apps, schema_editor):
             log.config = config
             batch.append(log)
             if len(batch) >= 500:
-                APICallLog.objects.bulk_update(batch, ["config"])
+                APICallLog.objects.using(schema_editor.connection.alias).bulk_update(batch, ["config"])
                 total_updated += len(batch)
                 batch = []
         if batch:
-            APICallLog.objects.bulk_update(batch, ["config"])
+            APICallLog.objects.using(schema_editor.connection.alias).bulk_update(batch, ["config"])
             total_updated += len(batch)
 
     if versions_created:

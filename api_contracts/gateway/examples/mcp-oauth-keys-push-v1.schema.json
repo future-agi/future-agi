@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-oauth-keys-push-v1.schema.json",
+  "title": "mcp-oauth-keys-push-v1",
+  "description": "PUT /-/mcp/oauth/keys (plan section 6.22): the public verification keys of Django's authorization server, with a version the gateway applies only when newer. A key carrying a private member (d, p, q or k) is refused. The shape is the MCPOAuthKeysPush definition of the admin contract.",
+  "$ref": "../agentcc-admin.schema.json#/$defs/MCPOAuthKeysPush"
+}

@@ -135,16 +135,16 @@ export function convertTotalsToMetrics(totals) {
         ? "negative"
         : "positive";
 
-    let value = typeof data.cost === "number" ? data.cost : 0;
+    let value = data.cost;
 
     // Optionally replace credits_used value with total_credit if available
-    if (key === "credits_used" && typeof data.total_credit === "number") {
+    if (key === "credits_used" && data.total_credit != null) {
       value = data.total_credit;
     }
 
     let formattedValue = "$0";
     try {
-      formattedValue = fCurrency(value, true) || "$0";
+      formattedValue = fCurrency(value, true) || "—";
     } catch (e) {
       formattedValue = "$0";
     }
@@ -181,10 +181,10 @@ export function convertWorkspaceToMetrics(ws) {
 
   return mapping.map(({ key, data }) => {
     const d = data || {};
-    const value = typeof d.cost === "number" ? d.cost : 0;
+    const value = d.cost;
     let formattedValue = "$0";
     try {
-      formattedValue = fCurrency(value, true) || "$0";
+      formattedValue = fCurrency(value, true) || "—";
     } catch (e) {
       formattedValue = "$0";
     }

@@ -386,14 +386,16 @@ class TestGetOrCreateAgentDefinition:
 
         mock_new_agent_def = MagicMock()
         mock_new_agent_def.id = uuid.uuid4()
-        mock_agent_def_model.objects.create.return_value = mock_new_agent_def
+        mock_agent_def_model.return_value = mock_new_agent_def
 
         result = get_or_create_agent_definition(
             mock_project, "New Agent", "Description", "text"
         )
 
         assert result == mock_new_agent_def
-        mock_agent_def_model.objects.create.assert_called_once()
+        mock_agent_def_model.assert_called_once()
+        mock_new_agent_def.set_api_key.assert_called_once_with(None)
+        mock_new_agent_def.save.assert_called_once_with()
         mock_new_agent_def.create_version.assert_called_once()
 
     @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
@@ -410,13 +412,13 @@ class TestGetOrCreateAgentDefinition:
 
         mock_new_agent_def = MagicMock()
         mock_new_agent_def.id = uuid.uuid4()
-        mock_agent_def_model.objects.create.return_value = mock_new_agent_def
+        mock_agent_def_model.return_value = mock_new_agent_def
 
         get_or_create_agent_definition(
             mock_project, "Agent Name", "Agent Desc", "voice"
         )
 
-        mock_agent_def_model.objects.create.assert_called_once_with(
+        mock_agent_def_model.assert_called_once_with(
             agent_name="Agent Name",
             description="Agent Desc",
             agent_type="voice",
@@ -442,10 +444,16 @@ class TestGetOrCreateAgentDefinition:
 
         mock_new_agent_def = MagicMock()
         mock_new_agent_def.id = uuid.uuid4()
-        mock_agent_def_model.objects.create.return_value = mock_new_agent_def
+        mock_agent_def_model.return_value = mock_new_agent_def
 
         get_or_create_agent_definition(mock_project, "Agent", "Desc", "text")
 
+        # Persistence must complete before the initial snapshot is created.
+        assert [entry[0] for entry in mock_new_agent_def.mock_calls] == [
+            "set_api_key", "save", "create_version"
+        ]
+        mock_new_agent_def.set_api_key.assert_called_once_with(None)
+        mock_new_agent_def.save.assert_called_once_with()
         mock_new_agent_def.create_version.assert_called_once_with(
             description="Desc",
             commit_message="Initial version from replay session",

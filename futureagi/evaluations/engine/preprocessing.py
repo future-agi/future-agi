@@ -10,14 +10,12 @@ network access or ML models inside the sandbox.
 
 import base64
 import json
-import os
 
 import structlog
 
 from agentic_eval.core.embeddings.serving_client import (
     ServingUnavailableError,
     require_serving,
-    serving_base_url,
 )
 from tfc.utils.ssrf_guard import safe_fetch
 
@@ -57,7 +55,12 @@ def _fetch_url_bytes(url):
                 url=stripped[:120],
             )
             return None
-        ct = (response.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
+        ct = (
+            (response.headers.get("Content-Type", "") or "")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
         if ct in _REJECTED_CONTENT_TYPES:
             logger.warning(
                 "image_preprocess_rejected_content_type",
@@ -67,7 +70,9 @@ def _fetch_url_bytes(url):
             return None
         return response.content, ct or "application/octet-stream"
     except Exception as e:
-        logger.warning("image_preprocess_fetch_failed", url=stripped[:120], error=str(e))
+        logger.warning(
+            "image_preprocess_fetch_failed", url=stripped[:120], error=str(e)
+        )
         return None
 
 
@@ -187,14 +192,15 @@ def preprocess_inputs(eval_name, inputs):
 @register_preprocessor("embedding_similarity")
 @register_preprocessor("semantic_list_contains")
 def _preprocess_serving_embeddings(inputs):
-    """Evals whose sandbox code calls model serving directly.
+    """The built-in embedding evals, which score in the backend through model
+    serving (``calculate_embedding_similarity`` and
+    ``calculate_semantic_list_contains``).
 
-    Fails fast when serving is not running, instead of letting the sandbox
-    time out on it and report a 0 score, and hands the sandbox the configured
-    ``MODEL_SERVING_URL`` in place of its built-in ``http://serving:8080``.
+    Fails fast with the reason when serving is not running, before the eval
+    runs. The inputs carry no serving URL: the backend has it, and the
+    result echoes its inputs.
     """
     require_serving()
-    inputs["_model_serving_url"] = serving_base_url()
     return inputs
 
 
@@ -292,7 +298,7 @@ def _preprocess_fid(inputs):
         return inputs
 
     try:
-        import numpy as np
+        import numpy as np  # noqa: F401 - availability check
         import torch
         from torchmetrics.image.fid import FrechetInceptionDistance
 
@@ -312,7 +318,9 @@ def _preprocess_fid(inputs):
         fake_pil = _parse_image_list(fake_images)
 
         if len(real_pil) < 2 or len(fake_pil) < 2:
-            inputs["_fid_error"] = f"FID requires at least 2 images per set (got {len(real_pil)} real, {len(fake_pil)} fake)"
+            inputs["_fid_error"] = (
+                f"FID requires at least 2 images per set (got {len(real_pil)} real, {len(fake_pil)} fake)"
+            )
             return inputs
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -330,8 +338,8 @@ def _preprocess_fid(inputs):
             fid_metric.update(x, real=False)
 
         # Extract the raw features
-        real_features = fid_metric.real_features_sum.cpu().numpy()
-        fake_features = fid_metric.fake_features_sum.cpu().numpy()
+        _real_features = fid_metric.real_features_sum.cpu().numpy()
+        _fake_features = fid_metric.fake_features_sum.cpu().numpy()
 
         # Actually, we need per-image features, not sums.
         # Simpler approach: compute FID directly and pass the score
@@ -415,6 +423,7 @@ def _preprocess_dead_air_detection(inputs):
 
     try:
         import io
+
         import librosa
     except ImportError as e:
         logger.warning("dead_air_preprocess_librosa_missing", error=str(e))

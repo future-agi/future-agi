@@ -146,8 +146,8 @@ NOTE     The CA bundle {{ $v.global.caBundle.configMap | default $v.global.caBun
 {{- if eq (toString $v.global.airgap) "true" }}
 
 NOTE     Air-gapped: telemetry and the license heartbeat are off{{ if $v.serving.enabled }}, serving runs offline from its
-         pre-seeded volume{{ end }}. One minimal registration attempt remains; offline it fails
-         harmlessly and is retried. Mirror every image first:
+         pre-seeded volume{{ end }}. Deployment telemetry sends nothing to Future AGI,
+         including no registration attempt or retry. Mirror every image first:
            hack/list-images.sh -- -f your-values.yaml   (from the chart's source, or the
            futureagi-images-<version>.txt release asset), then `oras copy -r` or `crane copy`
            each one, and set global.imageRegistry and global.imagePullSecrets (now {{ $v.global.imageRegistry | default "not set" }}).
@@ -166,12 +166,18 @@ NOTE     No LLM provider key is set (secrets.llm): built-in evals need one. Work
 {{- end }}
 {{- if $v.codeExecutor.enabled }}
 
-NOTE     The code sandbox (codeExecutor) runs privileged: nsjail needs Linux namespaces.
-         Restricted Pod Security namespaces and some managed clusters refuse it.
+NOTE     The code sandbox (codeExecutor) sets privileged: false and runs as non-root
+         UID/GID 65534 with a read-only root filesystem. It drops ALL capabilities,
+         then adds NET_ADMIN; allowPrivilegeEscalation is true for the fixed init
+         launcher's file capabilities. The launcher drops capabilities before the
+         server starts; nsjail uses an unprivileged user namespace for mount isolation.
+         Baseline and Restricted Pod Security are not supported (NET_ADMIN,
+         Unconfined seccomp/AppArmor). Use a privileged-level namespace label or
+         an equivalent exemption; the cluster must allow unprivileged user namespaces.
 {{- else if not $v.codeExecutor.localFallback }}
 
 NOTE     Custom code evals are refused: the code sandbox is off. Turn it on with
-         codeExecutor.enabled=true (needs privileged pods), or run them inside the
+         codeExecutor.enabled=true (requires the sandbox security settings), or run them inside the
          worker pods with codeExecutor.localFallback=true (trusted users only).
 {{- end }}
 {{- if not $v.serving.enabled }}
@@ -181,10 +187,22 @@ NOTE     Embedding-based evals and knowledge bases (and, with an Enterprise
 {{- end }}
 {{- if and $v.config.telemetry (ne (toString $v.global.airgap) "true") }}
 
-NOTE     Deployment telemetry is on: an instance id, the version, the emails of
-         owners, admins and staff/superuser accounts, and usage counts every
-         6 hours; never traces, prompts or other content.
-         Opt out with config.telemetry=false.
+NOTE     Deployment telemetry is on so Future AGI can count installs and plan release testing.
+NOTE     Deployment telemetry is on: when the first owner/admin account exists, a
+         registration with an instance id, the version and the deployment type
+         (schema_version, instance_id, version, deployment_type, timestamp,
+         telemetry_disabled=false)
+{{- if $v.config.telemetryShareAdminEmails }}
+         plus the emails and domains of owners, admins and staff/superuser
+         accounts (config.telemetryShareAdminEmails=true), then usage counts
+         every 6 hours and content-free journey events; never traces, prompts
+         or other content.
+{{- else }}
+         and no emails unless config.telemetryShareAdminEmails=true, then usage
+         counts every 6 hours and content-free journey events; never traces,
+         prompts or other content.
+{{- end }}
+         Opt out with config.telemetry=false to send no deployment telemetry to Future AGI.
 {{- end }}
 {{- if not $v.secrets.existingSecret }}
 
@@ -194,6 +212,6 @@ NOTE     The generated keys are in the Secret {{ include "futureagi.secretName" 
 {{- else if not $v.secrets.agentccWebhookSecret }}
 
 NOTE     The application keys, AGENTCC_WEBHOOK_SECRET included, come from the Secret
-         {{ $v.secrets.existingSecret }}: a pod does not start while one of the seven is missing.
+         {{ $v.secrets.existingSecret }}: a pod does not start while one of the eight is missing.
          (secrets.agentccWebhookSecret, when set, provides the webhook secret instead.)
 {{- end }}

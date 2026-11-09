@@ -22,8 +22,11 @@ import {
   useReplaySessionsStoreShallow,
   useSessionsGridStoreShallow,
 } from "./store";
-import { useCreateAgentDefinitionVersion } from "src/api/agent-definition/agent-definition-version";
-import { useCreateAgentDefinition } from "../../../../api/agent-definition/agent-definition-version";
+import {
+  getAgentDefinitionCreationErrorMessage,
+  useCreateAgentDefinition,
+  useCreateAgentDefinitionVersion,
+} from "src/api/agent-definition/agent-definition-version";
 
 export const StyledBox = styled(Box)(({ theme }) => ({
   padding: theme.spacing(2),
@@ -211,7 +214,13 @@ const AgentDefinitionDetails = () => {
     });
 
   const { mutate: createAgentDefinition, isPending: isCreating } =
-    useCreateAgentDefinition();
+    useCreateAgentDefinition({
+      onError: (err) => {
+        enqueueSnackbar(getAgentDefinitionCreationErrorMessage(err), {
+          variant: "error",
+        });
+      },
+    });
 
   const handleSaveAgentDefinition = () => {
     // Get the current form values

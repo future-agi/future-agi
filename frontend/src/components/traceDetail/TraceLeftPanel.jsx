@@ -6,11 +6,13 @@ import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph
 import TraceTreeV2 from "./TraceTreeV2";
 import SpanTreeTimeline from "./SpanTreeTimeline";
 import { buildTraceGraph } from "./buildTraceGraph";
+import { isPrototypeMode } from "src/utils/prototype";
 
 // Memoized agent graph from span tree — uses buildTraceGraph for grouping.
 // Click cycles through spans belonging to the clicked node.
 export const TraceAgentGraph = React.memo(({ spans, onSelectSpan }) => {
   const graphData = useMemo(() => buildTraceGraph(spans), [spans]);
+  const proto = isPrototypeMode();
   const clickIndexRef = useRef({});
 
   const handleNodeClick = useCallback(
@@ -56,6 +58,10 @@ export const TraceAgentGraph = React.memo(({ spans, onSelectSpan }) => {
           isLoading={false}
           onNodeClick={handleNodeClick}
           direction="TB"
+          {...(proto
+            ? // Prototype (IT-R1 G4): readable labels, pan, a visible Expand.
+              { readableMinZoom: 0.92, wrapLabels: true, expandLabel: "Expand" }
+            : {})}
         />
       </Box>
     </Box>

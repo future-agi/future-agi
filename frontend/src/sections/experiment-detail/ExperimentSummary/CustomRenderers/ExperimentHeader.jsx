@@ -25,7 +25,7 @@ const ExperimentHeader = (props) => {
 
   const renderIcon = () => {
     switch (props?.column?.colId) {
-      case "experimentDatasetName":
+      case "experiment_dataset_name":
         return (
           <Iconify
             icon="mdi:text"
@@ -33,16 +33,16 @@ const ExperimentHeader = (props) => {
           />
         );
 
-      case "averageResponseTime":
+      case "average_response_time":
         return (
           <Iconify
             icon="ic:baseline-schedule"
             sx={{ width: "20px", height: "20px", color: "text.primary" }}
           />
         );
-      case "promptToken":
-      case "completionToken":
-      case "totalToken":
+      case "prompt_token":
+      case "completion_token":
+      case "total_token":
         return (
           <SvgColor
             src={`/assets/icons/ic_tokens_experiment.svg`}

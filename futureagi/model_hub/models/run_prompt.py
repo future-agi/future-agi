@@ -247,6 +247,14 @@ class PromptTemplate(BaseModel):
         blank=True,
     )
 
+    def save(self, *args, **kwargs):
+        # Soft-deleting a prompt releases its labels (one version_deleted webhook event each) before its versions
+        # are soft-deleted, through the one prompt writer (webhooks DESIGN.md section 14.3).
+        from model_hub.services.prompt_label import template_saving
+
+        with template_saving(self, kwargs.get("update_fields")):
+            super().save(*args, **kwargs)
+
 
 class PromptVersion(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -287,22 +295,46 @@ class PromptVersion(BaseModel):
         unique_together = [("original_template", "template_version")]
         ordering = ["-created_at"]
 
-    def save(self, *args, **kwargs):
-        if self.is_default:
-            PromptVersion.objects.filter(
-                original_template=self.original_template
-            ).exclude(id=self.id).update(is_default=False)
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        # The stored is_draft and deleted, as loaded: a save of a version loaded committed takes no row lock in the
+        # one prompt writer (version_saving).
+        loaded = instance.__dict__
+        instance._loaded_flags = {
+            "pk": instance.pk,
+            **{f: loaded[f] for f in ("is_draft", "deleted") if f in loaded},
+        }
+        return instance
 
-        super().save(*args, **kwargs)
+    def refresh_from_db(self, *args, **kwargs):
+        super().refresh_from_db(*args, **kwargs)
+        self._loaded_flags = None  # unknown again (a refresh may cover some fields only): the next save locks
+
+    def save(self, *args, **kwargs):
+        # A committed insert, a draft becoming committed, or a soft delete is reported to the one prompt writer,
+        # which publishes the webhook event (webhooks DESIGN.md section 14.3).
+        from model_hub.services.prompt_label import version_saving
+
+        with version_saving(self, kwargs.get("update_fields")):
+            if self.is_default:
+                PromptVersion.objects.filter(
+                    original_template=self.original_template
+                ).exclude(id=self.id).update(is_default=False)
+
+            super().save(*args, **kwargs)
 
     def add_label(self, label):
-        """Add a label to this prompt version, preventing duplicates"""
-        if not self.labels.filter(id=label.id).exists():
-            self.labels.add(label)
+        """Put a label on this prompt version (moving it off the prompt's other versions), through the one writer."""
+        from model_hub.services.prompt_label import move_label
+
+        move_label(self, label)
 
     def remove_label(self, label):
-        """Remove a label from this prompt version"""
-        self.labels.remove(label)
+        """Take a label off this prompt version, through the one writer."""
+        from model_hub.services.prompt_label import remove_label
+
+        remove_label(self, label)
 
 
 class SchemaTypeChoices(Enum):

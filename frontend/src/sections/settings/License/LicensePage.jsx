@@ -105,7 +105,12 @@ export default function LicensePage() {
 
   const stateColor = LICENSE_STATE_COLOR[license_state] || "default";
   const expiresAt = license.expires_at ? new Date(license.expires_at) : null;
-  const featureEntries = Object.entries(features || {});
+  // Licensed features only: the hosted Omega products and their parts
+  // (`omega_*`) are decided by rollout and readiness, never by a license, and a
+  // product or part that is not open must not be named here.
+  const featureEntries = Object.entries(features || {}).filter(
+    ([key]) => !key.startsWith("omega_"),
+  );
 
   return (
     <Box>

@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from ee.falcon_ai.consumers import FalconAIConsumer
 
 logger = logging.getLogger("tests.usage_events")
@@ -32,6 +33,12 @@ def _make_consumer(query_string="workspace_id=ws-123", user=None):
     consumer.accept = AsyncMock()
     consumer.close = AsyncMock()
     consumer.send_json = AsyncMock()
+    # These protocol unit tests use synthetic user/org objects. Live turn
+    # authorization and its ordering use real rows in test_chat_turn_access_gate.
+    consumer._chat_access_allowed = AsyncMock(return_value=True)
+    # Synthetic protocol targets are authorized here; real conversation scoping
+    # and denial-before-effects are covered in test_chat_conversation_boundary.
+    consumer._owns_conversation = AsyncMock(return_value=True)
     return consumer
 
 

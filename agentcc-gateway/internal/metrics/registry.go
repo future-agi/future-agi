@@ -2,7 +2,9 @@ package metrics
 
 import (
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +16,40 @@ type Registry struct {
 	startTime  time.Time
 	counters   sync.Map // name → *CounterVec
 	histograms sync.Map // name → *Histogram
+
+	collectorsMu sync.Mutex
+	collectors   map[string]Collector
+}
+
+// Sample is one line of a collected Family: the family's name plus Suffix
+// (a histogram's "_bucket", "_sum" or "_count"; "" otherwise), its labels and
+// its value.
+type Sample struct {
+	Suffix string
+	Labels map[string]string
+	Value  float64
+}
+
+// Family is one metric a Collector reads at scrape time. Type is the
+// exposition type: "gauge", "counter" or "histogram".
+type Family struct {
+	Name, Help, Type string
+	Samples          []Sample
+}
+
+// Collector returns metrics whose values live elsewhere (another package's
+// gauges and counters), read each time the registry renders.
+type Collector func() []Family
+
+// SetCollector installs collector under name, replacing any collector set
+// under that name before, so installing one twice renders it once.
+func (r *Registry) SetCollector(name string, collector Collector) {
+	r.collectorsMu.Lock()
+	defer r.collectorsMu.Unlock()
+	if r.collectors == nil {
+		r.collectors = make(map[string]Collector)
+	}
+	r.collectors[name] = collector
 }
 
 // NewRegistry creates a new metrics registry.
@@ -95,7 +131,52 @@ func (r *Registry) Render() string {
 		h.render(&b, name)
 	}
 
+	r.renderCollected(&b)
 	return b.String()
+}
+
+// renderCollected writes every collector's families, collectors in name
+// order.
+func (r *Registry) renderCollected(b *strings.Builder) {
+	r.collectorsMu.Lock()
+	names := make([]string, 0, len(r.collectors))
+	for name := range r.collectors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	collectors := make([]Collector, len(names))
+	for i, name := range names {
+		collectors[i] = r.collectors[name]
+	}
+	r.collectorsMu.Unlock()
+
+	for _, collect := range collectors {
+		for _, f := range collect() {
+			fmt.Fprintf(b, "# HELP %s %s\n", f.Name, f.Help)
+			fmt.Fprintf(b, "# TYPE %s %s\n", f.Name, f.Type)
+			for _, s := range f.Samples {
+				b.WriteString(f.Name)
+				b.WriteString(s.Suffix)
+				if lbl := formatLabels(s.Labels); lbl != "" {
+					b.WriteByte('{')
+					b.WriteString(lbl)
+					b.WriteByte('}')
+				}
+				b.WriteByte(' ')
+				b.WriteString(formatValue(s.Value))
+				b.WriteByte('\n')
+			}
+		}
+	}
+}
+
+// formatValue writes v as an integer when it is one, else in the shortest
+// form that reads back as v.
+func formatValue(v float64) string {
+	if v == math.Trunc(v) && math.Abs(v) < 1e15 {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
 // CounterVec is a counter with label dimensions.
@@ -216,30 +297,13 @@ func (h *Histogram) render(b *strings.Builder, name string) {
 	}
 }
 
-// labelsKey produces a deterministic string key from label pairs.
+// labelsKey produces a deterministic string key from label pairs: the
+// labels as formatLabels writes them, so two different label sets never share
+// a key (an escaped value cannot hold the quote that ends it, whatever commas
+// or equals signs it holds).
 func labelsKey(labels map[string]string) string {
-	if len(labels) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(labels))
-	for k := range labels {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	for i, k := range keys {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(labels[k])
-	}
-	return b.String()
+	return formatLabels(labels)
 }
-
-// labelValueEscaper escapes label values per the Prometheus text format.
-var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
 
 // formatLabels formats labels for Prometheus output (key="value").
 func formatLabels(labels map[string]string) string {
@@ -256,7 +320,25 @@ func formatLabels(labels map[string]string) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		fmt.Fprintf(&b, "%s=\"%s\"", k, labelValueEscaper.Replace(labels[k]))
+		b.WriteString(k)
+		b.WriteString(`="`)
+		b.WriteString(escapeLabelValue(labels[k]))
+		b.WriteByte('"')
 	}
 	return b.String()
+}
+
+// labelValueEscaper escapes a label value as the Prometheus text exposition
+// format defines: backslash, double quote and line feed. A label value can be
+// a name the caller chose or the upstream echoed (the model), so unescaped it
+// could end its label set and start a series of its own.
+var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+
+// escapeLabelValue returns v escaped for a label value; a value with nothing
+// to escape is returned as it is.
+func escapeLabelValue(v string) string {
+	if !strings.ContainsAny(v, "\\\"\n") {
+		return v
+	}
+	return labelValueEscaper.Replace(v)
 }

@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { create } from "zustand";
+import { captureFalconRequest } from "src/sections/falcon-ai/store/falconRequestGuard";
 
 /**
  * UI-only state for the Error Feed.
@@ -100,7 +101,8 @@ export const useErrorFeedStore = create((set, get) => ({
     set((s) => ({
       analyzePendingStartByCluster: {
         ...s.analyzePendingStartByCluster,
-        [clusterId]: value,
+        // The passive effect must retain the scope of the scheduling click.
+        [clusterId]: value ? captureFalconRequest() : null,
       },
     })),
   // Drops the pending-start flag for one cluster (removes the key rather

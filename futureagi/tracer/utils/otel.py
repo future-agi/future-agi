@@ -3,7 +3,7 @@ import re
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from django.core.cache import cache
@@ -14,14 +14,13 @@ from litellm import cost_per_token, model_cost
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
-
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import StatusType
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_mapping import require_mapping_paths
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.utils.storage import upload_audio_to_s3, upload_image_to_s3, upload_video_to_s3
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import ObservationSpan, UserIdType
@@ -41,12 +40,13 @@ from tracer.utils.semantic_conventions import (
     detect_semconv,
     get_attribute,
 )
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
     log_and_deduct_cost_for_resource_request = None
+
+logger = structlog.get_logger(__name__)
 
 
 class OtelSpan:
@@ -1095,7 +1095,9 @@ def _deduct_project_creation_cost(
         or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
     ):
         raise ResourceLimitError(
-            "Trace creation not allowed due to plan limits or insufficient credits."
+            # PROPOSED copy; keep in sync with INSUFFICIENT_CREDITS.
+            "This request could not be completed. Try again later; "
+            "if it keeps happening, contact your administrator."
         )
 
     return call_log_row
@@ -1178,7 +1180,7 @@ def get_or_create_project(
             )
 
     except Exception as e:
-        raise Exception(f"Failed to create or get project: {str(e)}")
+        raise Exception(f"Failed to create or get project: {str(e)}") from e
 
 
 def _get_eval_template(eval_template_name, project):
@@ -1702,15 +1704,15 @@ def bulk_convert_otel_spans_to_observation_spans(
         )
         raise ValueError(
             f"Error converting OTel spans to Observation spans in bulk: {str(e)}"
-        )
+        ) from e
 
 
 def calculate_cost(
     attributes: dict,
-    prompt_tokens: Optional[int],
-    completion_tokens: Optional[int],
-    model: Optional[str],
-    organization_id: Optional[str] = None,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    model: str | None,
+    organization_id: str | None = None,
 ):
     """
     Calculates cost for a span. Checks user-provided cost attributes first
@@ -1745,10 +1747,10 @@ def calculate_cost(
 
 
 def calculate_cost_from_tokens(
-    prompt_tokens: Optional[int],
-    completion_tokens: Optional[int],
-    model: Optional[str],
-    organization_id: Optional[str] = None,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    model: str | None,
+    organization_id: str | None = None,
 ):
     """
     Calculates the cost of a model call based on the number of prompt and completion tokens.

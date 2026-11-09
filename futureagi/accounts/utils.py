@@ -24,8 +24,10 @@ from accounts.disposable_domains import DISPOSABLE_EMAIL_DOMAINS
 from accounts.models.organization import Organization
 from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
-from accounts.models.user import OrgApiKey, User
+from accounts.models.user import User
 from accounts.serializers.user import UserSignupSerializer
+from accounts.services.hard_erase_issuance_entry import issuance_entry
+from accounts.services.identity_issuance import issue_membership
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -42,21 +44,6 @@ from tfc.utils.email import email_helper
 from tfc.utils.parse_errors import parse_serialized_errors
 
 logger = structlog.get_logger(__name__)
-
-
-def _record_signup_api_key_event(key_id, organization_id):
-    try:
-        from tfc.deployment_telemetry.events import record_event
-
-        record_event(
-            "api_key_created",
-            actor_type="api_key",
-            actor_id=key_id,
-            source="system",
-            organization_id=organization_id,
-        )
-    except Exception:
-        logger.debug("deployment_telemetry_signup_api_key_event_failed", exc_info=True)
 
 
 def _fire_deployment_telemetry_registration(user_id=None, source="system"):
@@ -100,19 +87,20 @@ def resolve_org_role(user, organization):
     """Return the user's role in the given organization via membership lookup.
 
     Falls back to user.organization_role only for truly legacy accounts
-    (users with no membership records at all for this org).
+    (users with no membership history, including removed rows).
     """
-    mem = OrganizationMembership.no_workspace_objects.filter(
-        user=user, organization=organization, is_active=True
+    if organization is None:
+        return None
+    mem = OrganizationMembership._base_manager.filter(
+        user=user, organization=organization, is_active=True, deleted=False
     ).first()
     if mem:
-        return mem.role
+        return Level.to_org_string(mem.level) if mem.level is not None else mem.role
 
-    # Fallback: legacy field (only for truly legacy accounts)
-    # Users with deactivated memberships should NOT get this fallback.
+    # A tombstone must never resurrect the legacy role on the shared identity.
     if user.organization_id and user.organization_id == organization.id:
-        has_any_membership = OrganizationMembership.no_workspace_objects.filter(
-            user=user, organization=organization
+        has_any_membership = OrganizationMembership._base_manager.filter(
+            user=user
         ).exists()
         if not has_any_membership:
             return user.organization_role
@@ -328,28 +316,39 @@ def first_signup(data, mode=None, telemetry_source="web"):
 
     serializer = UserSignupSerializer(data=data)
     if serializer.is_valid():
-        user = serializer.save()
-        organization = Organization.objects.create(
-            name=data["company_name"], region=settings.REGION
-        )
-        user.organization = organization
-        user.organization_role = "Owner"
-        user.is_active = True
-        user.save()
-
-        # Create OrganizationMembership for RBAC (1-user-1-org invariant)
         from accounts.models.organization_membership import OrganizationMembership
+        from accounts.services.default_workspace import provision_default_workspace
         from tfc.constants.levels import Level
 
-        OrganizationMembership.objects.get_or_create(
-            user=user,
-            organization=organization,
-            defaults={
-                "role": "Owner",
-                "level": Level.OWNER,
-                "is_active": True,
-            },
-        )
+        # One transaction: an account never exists without its organization,
+        # its membership and the organization's default workspace. Landing
+        # only reads, so nothing creates that workspace later.
+        organization = Organization(name=data["company_name"], region=settings.REGION)
+        with issuance_entry(
+            new_organizations=[organization.pk], emails=[data["email"]]
+        ):
+            user = serializer.save()
+            organization.save(force_insert=True)
+            user.organization = organization
+            user.organization_role = "Owner"
+            user.is_active = True
+            user.save()
+
+            # Create OrganizationMembership for RBAC (1-user-1-org invariant)
+            org_membership, _ = issue_membership(
+                OrganizationMembership.objects,
+                "get_or_create",
+                user=user,
+                organization=organization,
+                defaults={
+                    "role": "Owner",
+                    "level": Level.OWNER,
+                    "is_active": True,
+                },
+            )
+            provision_default_workspace(
+                organization, user, organization_membership=org_membership
+            )
 
         # Create billing subscription (Free plan default).
         # Skip when ee is absent — no subscription model.
@@ -369,9 +368,6 @@ def first_signup(data, mode=None, telemetry_source="web"):
 
     if email:
         user = User.objects.get(email=email)
-        apiKeys = OrgApiKey.no_workspace_objects.filter(
-            organization=organization, type="system", enabled=True
-        )
         properties = get_mixpanel_properties(user=user, mode=mode)
         if mode:
             event_name = MixpanelEvents.SSO_SIGNUP.value
@@ -380,21 +376,12 @@ def first_signup(data, mode=None, telemetry_source="web"):
         mixpanel_tracker.set_details(user)
         track_mixpanel_event(event_name, properties)
 
-        if len(apiKeys) == 0:
-            system_key = OrgApiKey.no_workspace_objects.create(
-                organization=organization, type="system"
-            )
-            transaction.on_commit(
-                lambda key_id=system_key.id, org_id=organization.id: _record_signup_api_key_event(
-                    key_id, org_id
-                )
-            )
         if generated_password:
             process_post_registration(user.id, generated_password)
 
         transaction.on_commit(
-            lambda user_id=user.id, source=telemetry_source: _fire_deployment_telemetry_registration(
-                user_id, source
+            lambda user_id=user.id, source=telemetry_source: (
+                _fire_deployment_telemetry_registration(user_id, source)
             )
         )
         return user

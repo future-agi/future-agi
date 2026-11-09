@@ -1,4 +1,5 @@
 import React from "react";
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import {
   Box,
   LinearProgress,
@@ -119,7 +120,9 @@ const ObserveInstruments = ({
                     >
                       <Box display="flex" alignItems="center" gap={2}>
                         <img
-                          src={item?.logo}
+                          src={localProviderLogo(
+                            item?.provider ?? item?.name ?? key,
+                          )}
                           alt={`${item?.name} Logo`}
                           style={{
                             width: "25px",

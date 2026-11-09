@@ -15,6 +15,19 @@ import { LoadingButton } from "@mui/lab";
 import TotpSection from "src/sections/settings/Security/TotpSection";
 import PasskeySection from "src/sections/settings/Security/PasskeySection";
 import RecoveryCodesSection from "src/sections/settings/Security/RecoveryCodesSection";
+import { isPrototypeMode } from "src/utils/prototype";
+
+// L7b absent-sweep (settings:pages): a prototype build shows the profile
+// read-only (name and email from the mocked user); editing the name,
+// resetting the password, 2FA and passkeys are not mocked, so absent there.
+const READ_ONLY = isPrototypeMode();
+
+// Below md (the compact Settings shell) the cards fill the screen instead of a
+// fixed 670 px, and each row stacks its label above its value.
+const CARD_WIDTH = { width: "100%", maxWidth: "670px" };
+const ROW_WRAP = { flexWrap: { xs: "wrap", md: "nowrap" }, rowGap: 1 };
+const LABEL_WIDTH = { xs: "100%", md: "200px" };
+const VALUE_WIDTH = { xs: "100%", md: "70%" };
 
 const ProfileSettings = () => {
   const theme = useTheme();
@@ -30,6 +43,7 @@ const ProfileSettings = () => {
       const res = await axios.get(endpoints.twoFactor.status);
       return res.data;
     },
+    enabled: !READ_ONLY,
   });
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
@@ -154,7 +168,7 @@ const ProfileSettings = () => {
 
         <Box
           sx={{
-            width: "670px",
+            ...CARD_WIDTH,
             border: "1px solid",
             borderColor: "divider",
             borderRadius: theme.spacing(1),
@@ -166,6 +180,7 @@ const ProfileSettings = () => {
             sx={{
               display: "flex",
               justifyContent: "flex-start",
+              ...ROW_WRAP,
               borderBottom: "1px solid",
               borderColor: "divider",
               paddingBottom: theme.spacing(2.5),
@@ -174,7 +189,7 @@ const ProfileSettings = () => {
             <Typography
               variant="s1"
               sx={{
-                width: "200px",
+                width: LABEL_WIDTH,
                 color: "text.primary",
                 fontWeight: "fontWeightRegular",
               }}
@@ -185,7 +200,9 @@ const ProfileSettings = () => {
               sx={{
                 display: "flex",
                 justifyContent: "space-between",
-                width: "70%",
+                width: VALUE_WIDTH,
+                minWidth: 0,
+                overflowWrap: "anywhere",
               }}
             >
               <Typography
@@ -206,27 +223,30 @@ const ProfileSettings = () => {
                   userName
                 )}
               </Typography>
-              <Tooltip title="Edit Name">
-                <Iconify
-                  icon="fluent:edit-12-regular"
-                  color="text.primary"
-                  onClick={() => {
-                    trackEvent(Events.editNameClicked);
-                    setOpenProfileInfoModal(true);
-                  }}
-                  sx={{
-                    cursor: "pointer",
-                    width: "20px",
-                    height: "20px",
-                  }}
-                />
-              </Tooltip>
+              {!READ_ONLY && (
+                <Tooltip title="Edit Name">
+                  <Iconify
+                    icon="fluent:edit-12-regular"
+                    color="text.primary"
+                    onClick={() => {
+                      trackEvent(Events.editNameClicked);
+                      setOpenProfileInfoModal(true);
+                    }}
+                    sx={{
+                      cursor: "pointer",
+                      width: "20px",
+                      height: "20px",
+                    }}
+                  />
+                </Tooltip>
+              )}
             </Box>
           </Box>
           <Box
             sx={{
               display: "flex",
               justifyContent: "flex-start",
+              ...ROW_WRAP,
               borderBottom: "1px solid",
               borderColor: "background.neutral",
               marginTop: theme.spacing(2.5),
@@ -236,7 +256,7 @@ const ProfileSettings = () => {
             <Typography
               variant="s1"
               sx={{
-                width: "200px",
+                width: LABEL_WIDTH,
                 color: "text.primary",
                 fontWeight: "fontWeightRegular",
               }}
@@ -247,7 +267,9 @@ const ProfileSettings = () => {
               sx={{
                 display: "flex",
                 justifyContent: "space-between",
-                width: "70%",
+                width: VALUE_WIDTH,
+                minWidth: 0,
+                overflowWrap: "anywhere",
               }}
             >
               <Typography
@@ -275,13 +297,14 @@ const ProfileSettings = () => {
             sx={{
               display: "flex",
               justifyContent: "flex-start",
+              ...ROW_WRAP,
               marginTop: theme.spacing(2.5),
             }}
           >
             <Typography
               variant="s1"
               sx={{
-                width: "200px",
+                width: LABEL_WIDTH,
                 color: "text.primary",
                 fontWeight: "fontWeightRegular",
               }}
@@ -292,7 +315,9 @@ const ProfileSettings = () => {
               sx={{
                 display: "flex",
                 justifyContent: "space-between",
-                width: "70%",
+                width: VALUE_WIDTH,
+                minWidth: 0,
+                overflowWrap: "anywhere",
               }}
             >
               <Typography
@@ -305,27 +330,29 @@ const ProfileSettings = () => {
                 **********
               </Typography>
 
-              <LoadingButton
-                variant="outlined"
-                color="primary"
-                size="small"
-                loading={isResettingPassword}
-                onClick={
-                  !resetPasswordDisabled ? handleResetPassword : undefined
-                }
-                sx={{
-                  width: "156px",
-                  "&:disabled": {
-                    color: "common.white",
-                    backgroundColor: "action.hover",
-                  },
-                }}
-                disabled={resetPasswordDisabled}
-              >
-                <Typography variant="s2" fontWeight={"fontWeightMedium"}>
-                  Reset Password
-                </Typography>
-              </LoadingButton>
+              {!READ_ONLY && (
+                <LoadingButton
+                  variant="outlined"
+                  color="primary"
+                  size="small"
+                  loading={isResettingPassword}
+                  onClick={
+                    !resetPasswordDisabled ? handleResetPassword : undefined
+                  }
+                  sx={{
+                    width: "156px",
+                    "&:disabled": {
+                      color: "common.white",
+                      backgroundColor: "action.hover",
+                    },
+                  }}
+                  disabled={resetPasswordDisabled}
+                >
+                  <Typography variant="s2" fontWeight={"fontWeightMedium"}>
+                    Reset Password
+                  </Typography>
+                </LoadingButton>
+              )}
             </Box>
           </Box>
         </Box>
@@ -335,7 +362,7 @@ const ProfileSettings = () => {
             sx={{
               display: "flex",
               alignItems: "center",
-              width: "670px",
+              ...CARD_WIDTH,
               marginTop: theme.spacing(2),
               backgroundColor: "background.neutral",
               paddingX: theme.spacing(1.5),
@@ -364,65 +391,67 @@ const ProfileSettings = () => {
         )}
 
         {/* Security Section */}
-        <Box sx={{ marginTop: theme.spacing(2) }}>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            Security
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.secondary",
-              marginTop: theme.spacing(0.5),
-              marginBottom: theme.spacing(2),
-            }}
-          >
-            Manage two-factor authentication and passkeys
-          </Typography>
+        {!READ_ONLY && (
+          <Box sx={{ marginTop: theme.spacing(2) }}>
+            <Typography
+              sx={{
+                typography: "m2",
+                fontWeight: "fontWeightSemiBold",
+                color: "text.primary",
+              }}
+            >
+              Security
+            </Typography>
+            <Typography
+              sx={{
+                typography: "s1",
+                fontWeight: "fontWeightRegular",
+                color: "text.secondary",
+                marginTop: theme.spacing(0.5),
+                marginBottom: theme.spacing(2),
+              }}
+            >
+              Manage two-factor authentication and passkeys
+            </Typography>
 
-          {is2faLoading ? (
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                height: "100px",
-              }}
-            >
-              <CircularProgress size={24} />
-            </Box>
-          ) : (
-            <Box
-              sx={{
-                display: "flex",
-                flexDirection: "column",
-                gap: theme.spacing(2),
-              }}
-            >
-              <TotpSection
-                totp={twoFaStatus?.methods?.totp}
-                onStatusChange={refetch2fa}
-              />
-              <PasskeySection
-                passkey={twoFaStatus?.methods?.passkey}
-                onStatusChange={refetch2fa}
-              />
-              {twoFactorEnabled && (
-                <RecoveryCodesSection
-                  remaining={recoveryCodesRemaining}
-                  hasTotp={twoFaStatus?.methods?.totp?.enabled}
+            {is2faLoading ? (
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  height: "100px",
+                }}
+              >
+                <CircularProgress size={24} />
+              </Box>
+            ) : (
+              <Box
+                sx={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: theme.spacing(2),
+                }}
+              >
+                <TotpSection
+                  totp={twoFaStatus?.methods?.totp}
                   onStatusChange={refetch2fa}
                 />
-              )}
-            </Box>
-          )}
-        </Box>
+                <PasskeySection
+                  passkey={twoFaStatus?.methods?.passkey}
+                  onStatusChange={refetch2fa}
+                />
+                {twoFactorEnabled && (
+                  <RecoveryCodesSection
+                    remaining={recoveryCodesRemaining}
+                    hasTotp={twoFaStatus?.methods?.totp?.enabled}
+                    onStatusChange={refetch2fa}
+                  />
+                )}
+              </Box>
+            )}
+          </Box>
+        )}
 
         <ProfileInfoModal
           open={openProfileInfoModal}

@@ -58,7 +58,12 @@ def _chspan_field_value(span, field_name):
         strings on CHSpan; decode them so callers see Python dicts/lists
         (matching the prior Django JSONField behavior).
     """
-    if field_name in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+    if field_name in (
+        "model_parameters",
+        "input_images",
+        "eval_input",
+        "eval_attributes",
+    ):
         from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
         extra = CHSpanReader.attributes_extra_as_dict(span)
@@ -76,7 +81,12 @@ def _chspan_field_value(span, field_name):
         merged.update(span.attrs_number or {})
         merged.update(span.attrs_bool or {})
         for k, v in extra.items():
-            if k not in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+            if k not in (
+                "model_parameters",
+                "input_images",
+                "eval_input",
+                "eval_attributes",
+            ):
                 merged[k] = v
         return merged
     if field_name == "metadata":
@@ -186,7 +196,9 @@ def _mapped_span_fields(column_span_mapping_data):
     return fields
 
 
-def _export_span_rows(reader, span_ids, mapped_span_fields, project_id=None, org_id=None):
+def _export_span_rows(
+    reader, span_ids, mapped_span_fields, project_id=None, org_id=None
+):
     if not span_ids:
         return {}
 
@@ -348,6 +360,7 @@ def process_spans_chunk_task(
     column_span_mapping_data,
     project_id=None,
     org_id=None,
+    source_context=None,
 ):
     """
     Process a chunk of observation spans and create rows + cells.
@@ -362,6 +375,9 @@ def process_spans_chunk_task(
             - column_id: UUID of the column
             - span_field: Field name on ObservationSpan
             - column_name: Column name (fallback if span_field not provided)
+        source_context: Optional row source context (v1) built by the import
+            request. When given, each new row's source is recorded with its
+            rows; ``None`` records nothing.
 
     Returns:
         Dict with rows_created and cells_created counts
@@ -376,6 +392,16 @@ def process_spans_chunk_task(
         # dataset cells; hydrating full CHSpan rows reads fat payload columns
         # and can exceed CH memory limits on large exports.
         mapped_span_fields = _mapped_span_fields(column_span_mapping_data)
+        # shared-edit(F54): an import with a source context also reads provenance.
+        if source_context is not None:
+            from model_hub.services.row_sources import provenance_span_fields
+
+            mapped_span_fields = mapped_span_fields | provenance_span_fields(
+                source_context,
+                dataset_id=dataset_id,
+                project_id=project_id,
+                org_id=org_id,
+            )
         with get_reader() as reader:
             by_id = {}
             for start in range(0, len(span_ids), CH_EXPORT_READ_BATCH_SIZE):
@@ -452,9 +478,7 @@ def process_spans_chunk_task(
 
             for log in EvalLogger.objects.filter(
                 observation_span_id__in=span_ids
-            ).order_by(
-                "created_at"
-            ):  # ascending → most recent wins per key
+            ).order_by("created_at"):  # ascending → most recent wins per key
                 key = log.eval_type_id or str(log.id)
                 if log.output_float is not None:
                     score = log.output_float
@@ -489,7 +513,7 @@ def process_spans_chunk_task(
                 ] = score.value
 
         # Create all Row objects for this chunk (in memory - no DB operation)
-        for i, observation_span in enumerate(observation_spans):
+        for i, _observation_span in enumerate(observation_spans):
             row = Row(id=uuid.uuid4(), dataset_id=dataset_id, order=rows_count + i)
             rows_to_create.append(row)
 
@@ -500,7 +524,9 @@ def process_spans_chunk_task(
             created_rows = Row.objects.bulk_create(rows_to_create)
 
             # Create all Cell objects (in memory - no DB operation yet)
-            for observation_span, row in zip(observation_spans, created_rows):
+            for observation_span, row in zip(
+                observation_spans, created_rows, strict=False
+            ):
                 for column_mapping in column_span_mapping_data:
                     column_id = column_mapping["column_id"]
                     span_field = column_mapping["span_field"]
@@ -534,6 +560,18 @@ def process_spans_chunk_task(
 
             # Bulk create all cells (DB operation)
             Cell.objects.bulk_create(cells_to_create, batch_size=1000)
+            # hook(F54): record each new row's import source with its rows.
+            from model_hub.services.row_sources import record_row_sources
+
+            record_row_sources(
+                dataset_id=dataset_id,
+                rows=[
+                    (row.id, span)
+                    for row, span in zip(created_rows, observation_spans, strict=True)
+                ],
+                source_context=source_context,
+                project_id=project_id,
+            )
 
         logger.info(
             f"dataset_chunk_processed: chunk_size={len(span_ids)}, "

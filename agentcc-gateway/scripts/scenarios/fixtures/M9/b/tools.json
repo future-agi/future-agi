@@ -1,0 +1,9 @@
+[
+  {
+    "name": "b_delete_repo",
+    "description": "Org B's only tool (65_m9_tenancy.sh).",
+    "inputSchema": { "type": "object" },
+    "annotations": { "destructiveHint": true },
+    "result": { "content": [{ "type": "text", "text": "org-b mock" }] }
+  }
+]

@@ -9,7 +9,7 @@ These functions take explicit parameters instead of reading from `self`.
 
 import structlog
 
-from evaluations.constants import FUTUREAGI_EVAL_TYPES
+from evaluations.constants import SERVING_EMBEDDING_EVAL_TYPES
 
 logger = structlog.get_logger(__name__)
 
@@ -108,11 +108,19 @@ def resolve_version(eval_template, version_number=None, organization=None):
         return None
 
 
-def apply_version_overrides(config, resolved_version, criteria=None):
+def apply_version_overrides(
+    config, resolved_version, criteria=None, saved_choices=False
+):
     """
     Apply prompt overrides from the resolved version to the config.
 
     Returns (config, criteria) where criteria may be updated from the version.
+
+    The version's saved choice definition (choices, choice_scores,
+    multi_choice and output type) replaces the live one only with
+    ``saved_choices``, which callers set for a version the binding pins. A
+    default version resolved for an unpinned run keeps the template's live
+    choices, which the template editor changes in place.
 
     Extracted from EvaluationRunner._apply_version_overrides (eval_runner.py:1678).
     """
@@ -139,6 +147,10 @@ def apply_version_overrides(config, resolved_version, criteria=None):
     if resolved_version.model:
         config["model"] = resolved_version.model
 
+    from evaluations.engine.version_choices import version_choice_config
+
+    if saved_choices and "output_type" in config:
+        config.update(version_choice_config(None, resolved_version))
     return config, criteria
 
 
@@ -150,7 +162,10 @@ def resolve_pass_threshold(
     """Priority: runtime_config[run_config][pass_threshold] > runtime_config[pass_threshold] > resolved_version.pass_threshold > eval_template.pass_threshold > 0.5."""
     if isinstance(runtime_config, dict):
         run_config = runtime_config.get("run_config") or {}
-        if isinstance(run_config, dict) and run_config.get("pass_threshold") is not None:
+        if (
+            isinstance(run_config, dict)
+            and run_config.get("pass_threshold") is not None
+        ):
             return float(run_config["pass_threshold"])
         if runtime_config.get("pass_threshold") is not None:
             return float(runtime_config["pass_threshold"])
@@ -184,6 +199,47 @@ def resolve_binding_model(
 
     template_config = getattr(eval_template, "config", None) or {}
     return template_config.get("model")
+
+
+def choice_score_override(runtime_config: dict | None) -> dict | None:
+    """The binding's per-evaluation choice score edit, or None.
+
+    Priority: runtime_config[run_config][choice_scores] > runtime_config[choice_scores]
+    (observe and simulate bindings store the edit at the top level). Only a
+    non-empty dict is an override.
+    """
+    if not isinstance(runtime_config, dict):
+        return None
+    run_config = runtime_config.get("run_config")
+    if isinstance(run_config, dict):
+        nested = run_config.get("choice_scores")
+        if isinstance(nested, dict) and nested:
+            return nested
+    top_level = runtime_config.get("choice_scores")
+    if isinstance(top_level, dict) and top_level:
+        return top_level
+    return None
+
+
+_CHOICE_SCORES_UNSET = object()
+
+
+def resolve_choice_scores(
+    eval_template, runtime_config: dict | None = None, *, base_scores=_CHOICE_SCORES_UNSET
+):
+    """Overlay named binding scores on the selected live or saved choice map.
+
+    Omitting ``base_scores`` preserves the two-argument live-template API.
+    An explicitly supplied None or empty saved map must not fall back to live
+    scores. Without an override the selected map is returned unchanged.
+    """
+    if base_scores is _CHOICE_SCORES_UNSET:
+        base_scores = getattr(eval_template, "choice_scores", None)
+    override = choice_score_override(runtime_config)
+    if override is None:
+        return base_scores
+    base = base_scores if isinstance(base_scores, dict) else {}
+    return {**base, **override}
 
 
 def _get_api_key(model, organization_id, workspace_id=None):
@@ -300,8 +356,10 @@ def prepare_eval_config(
 
     # AgentEvaluator — multi-turn reasoning via Falcon AI AgentLoop
     if eval_type_id == "AgentEvaluator":
-        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
-            "rule_prompt"
+        config["rule_prompt"] = (
+            config["rule_prompt"]
+            if "rule_prompt" in config
+            else eval_template.config.get("rule_prompt")
         )
         config["model"] = model or eval_template.config.get("model")
         raw_output = eval_template.config.get("output")
@@ -344,11 +402,15 @@ def prepare_eval_config(
     # CustomPromptEvaluator — LLM-as-judge
     elif eval_type_id == "CustomPromptEvaluator":
         config["provider"] = eval_template.config.get("provider")
-        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
-            "rule_prompt"
+        config["rule_prompt"] = (
+            config["rule_prompt"]
+            if "rule_prompt" in config
+            else eval_template.config.get("rule_prompt")
         )
-        config["system_prompt"] = config["system_prompt"] if "system_prompt" in config else eval_template.config.get(
-            "system_prompt"
+        config["system_prompt"] = (
+            config["system_prompt"]
+            if "system_prompt" in config
+            else eval_template.config.get("system_prompt")
         )
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
@@ -428,6 +490,7 @@ def create_eval_instance(
     workspace_id=None,
     version_number=None,
     is_futureagi=False,
+    saved_choices=False,
 ):
     """
     Create an evaluator instance ready to call .run().
@@ -438,6 +501,10 @@ def create_eval_instance(
     3. Applies version overrides
     4. Handles function eval params normalization
     5. Instantiates the evaluator class
+
+    ``saved_choices`` runs the resolved version's saved choice definition; only
+    a binding that pins that version sets it (EvaluationRunner). Every other
+    run, including Observe evaluations, keeps the template's live choices.
 
     Extracted from EvaluationRunner._create_eval_instance (eval_runner.py:1711).
 
@@ -474,7 +541,9 @@ def create_eval_instance(
     )
 
     # Apply version overrides
-    config, criteria = apply_version_overrides(config, resolved_version, criteria)
+    config, criteria = apply_version_overrides(
+        config, resolved_version, criteria, saved_choices=saved_choices
+    )
 
     from agentic_eval.core_evals.fi_evals.eval_type import is_function_eval
 
@@ -503,11 +572,20 @@ def create_eval_instance(
     # a binding when the template default is True).
     eval_type_id_for_overrides = eval_template.config.get("eval_type_id", "")
     _allowed = _RUNTIME_ALLOWED_KEYS.get(eval_type_id_for_overrides)
-    if _allowed and runtime_config:
-        _overrides = (runtime_config or {}).get("run_config") or {}
-        for key, value in _overrides.items():
-            if key in _allowed and value is not None:
-                config[key] = value
+    if _allowed and isinstance(runtime_config, dict):
+        _overrides = runtime_config.get("run_config")
+        if isinstance(_overrides, dict):
+            for key, value in _overrides.items():
+                # The shared resolver overlays scores on the selected base below;
+                # replacing the base here would lose its unspecified labels.
+                if key in _allowed and key != "choice_scores" and value is not None:
+                    config[key] = value
+    # Version selection happened first. Pass/fail and stored scores now apply
+    # the same partial overlay, including an explicitly empty/None saved map.
+    if _allowed and "choice_scores" in _allowed and "choice_scores" in config:
+        config["choice_scores"] = resolve_choice_scores(
+            eval_template, runtime_config, base_scores=config["choice_scores"]
+        )
 
     # Handle function eval params normalization — but NOT CustomCodeEval
     # which already got its config ({"code": ...}) from prepare_eval_config.
@@ -546,6 +624,32 @@ def create_eval_instance(
             )
     elif config:
         config.pop("template_format", None)
+
+    # Their params arrive as run kwargs and their constructors take none, so
+    # nothing a binding stores here (the legacy configure form keeps
+    # similarity_threshold and match_all in its "config") may reach them.
+    # A binding pinned to a system version seeded before SYSTEM_EVALS_VERSION
+    # 29 resolves CustomCodeEval from that version's snapshot: its code scored
+    # the same but cannot reach serving, so the backend function runs instead.
+    if eval_type_id in SERVING_EMBEDDING_EVAL_TYPES:
+        if getattr(eval_template, "owner", None) == "system":
+            from evaluations.engine.registry import get_eval_class
+
+            eval_class = get_eval_class(eval_type_id)
+        return eval_class(), criteria
+
+    # Code that calls model serving (a user's copy of a built-in embedding
+    # eval) can never reach it from the code sandbox. Every surface builds its
+    # evaluator here before it preprocesses the inputs, so the refusal comes
+    # before the name-keyed serving preflight: a copy that kept the built-in's
+    # name would otherwise report serving as down. custom_code_eval refuses
+    # the same code too, for callers that build CustomCodeEval elsewhere.
+    if eval_type_id == "CustomCodeEval" and isinstance(config, dict):
+        from agentic_eval.core_evals.fi_evals.function.internal_service_code import (
+            refuse_internal_service_code,
+        )
+
+        refuse_internal_service_code(config.get("code"))
 
     # Instantiate
     if not config and not is_futureagi:

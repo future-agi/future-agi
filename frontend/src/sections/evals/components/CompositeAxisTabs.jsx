@@ -26,24 +26,37 @@ export const COMPOSITE_AXIS_OPTIONS = [
   },
 ];
 
+// L7c g7 (evalcreate:composite): Create offers only judge evals that score
+// Pass/Fail or 0-1 (no Choices, no Code type), so the child axis offers
+// those two. A composite saved on another axis still shows its own.
+const OFFERED_AXES = new Set(["pass_fail", "percentage"]);
+export const axisOptionsFor = (value) =>
+  COMPOSITE_AXIS_OPTIONS.filter(
+    (t) => OFFERED_AXES.has(t.value) || t.value === value,
+  );
+
 /**
  * Maps a composite_child_axis value to the filters the eval picker
  * should apply so that only children of the matching shape are shown.
- * Every axis also locks template_type to "single" — a composite cannot
- * contain another composite.
+ * Every axis, including legacy unset axes, excludes composites and DAGs:
+ * ordinary composite execution does not dispatch decision trees.
  */
 export function axisToLockedFilters(axis) {
+  const supportedChildren = {
+    template_type: ["single"],
+    eval_type_not: ["dag"],
+  };
   switch (axis) {
     case "pass_fail":
-      return { output_type: ["pass_fail"], template_type: ["single"] };
+      return { ...supportedChildren, output_type: ["pass_fail"] };
     case "percentage":
-      return { output_type: ["percentage"], template_type: ["single"] };
+      return { ...supportedChildren, output_type: ["percentage"] };
     case "choices":
-      return { output_type: ["deterministic"], template_type: ["single"] };
+      return { ...supportedChildren, output_type: ["deterministic"] };
     case "code":
-      return { eval_type: ["code"], template_type: ["single"] };
+      return { ...supportedChildren, eval_type: ["code"] };
     default:
-      return null;
+      return supportedChildren;
   }
 }
 
@@ -94,7 +107,7 @@ const CompositeAxisTabs = ({ value, onChange, disabled = false }) => {
               : "background.neutral",
         }}
       >
-        {COMPOSITE_AXIS_OPTIONS.map((t) => (
+        {axisOptionsFor(value).map((t) => (
           <Tab
             key={t.value}
             value={t.value}

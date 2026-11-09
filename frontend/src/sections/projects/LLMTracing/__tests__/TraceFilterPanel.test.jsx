@@ -15,8 +15,11 @@ import {
   TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES,
 } from "src/api/contracts/filter-contract";
 import {
+  ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
   FILTER_VALUE_PAGE_SIZE,
+  FILTER_VALUE_SEARCH_DEBOUNCE_MS,
   PROPERTY_CATALOG_PAGE_SIZE,
+  PROPERTY_CATALOG_SEARCH_DEBOUNCE_MS,
 } from "src/config/runtime_limits";
 import axios, { endpoints } from "src/utils/axios";
 import TraceFilterPanel, {
@@ -1102,6 +1105,27 @@ const selectQueryPhaseOption = async (typed, nextPlaceholder) => {
     expect(input).toHaveAttribute("placeholder", nextPlaceholder),
   );
   return input;
+};
+
+// Types into a search box and fires every search debounce on fake timers
+// (tests F4): the debounced request is issued exactly when the debounce
+// elapses, never "eventually" on a loaded host. Real timers come back before
+// any findBy/waitFor runs.
+const SEARCH_DEBOUNCE_MS = Math.max(
+  ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
+  FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+  PROPERTY_CATALOG_SEARCH_DEBOUNCE_MS,
+);
+const typeAndSettleSearch = async (input, value) => {
+  vi.useFakeTimers();
+  try {
+    fireEvent.change(input, { target: { value } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 };
 
 const scrollQueryOptionsToEnd = async () => {
@@ -6218,24 +6242,21 @@ describe("filter-value picker bounded-read UX", () => {
       fireEvent.click(
         document.querySelector(`[data-filter-value-trigger="${propertyId}"]`),
       );
-      fireEvent.change(screen.getByPlaceholderText("Search values..."), {
-        target: { value: "needle" },
-      });
+      await typeAndSettleSearch(
+        screen.getByPlaceholderText("Search values..."),
+        "needle",
+      );
 
-      await waitFor(
-        () =>
-          expect(dashboardFilterValuesMock).toHaveBeenCalledWith(
-            expect.objectContaining({
-              propertyId: expectedPropertyId,
-              metricName: expectedMetricName,
-              metricType: "system_metric",
-              pageSize: FILTER_VALUE_PAGE_SIZE,
-              search: "needle",
-              searchGesture: "needle",
-              source,
-            }),
-          ),
-        { timeout: 1_500 },
+      expect(dashboardFilterValuesMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          propertyId: expectedPropertyId,
+          metricName: expectedMetricName,
+          metricType: "system_metric",
+          pageSize: FILTER_VALUE_PAGE_SIZE,
+          search: "needle",
+          searchGesture: "needle",
+          source,
+        }),
       );
       document.body.removeChild(anchorEl);
     },
@@ -6305,23 +6326,20 @@ describe("filter-value picker bounded-read UX", () => {
       fireEvent.click(
         document.querySelector(`[data-filter-value-trigger="${propertyId}"]`),
       );
-      fireEvent.change(screen.getByPlaceholderText("Search values..."), {
-        target: { value: "needle" },
-      });
+      await typeAndSettleSearch(
+        screen.getByPlaceholderText("Search values..."),
+        "needle",
+      );
 
-      await waitFor(
-        () =>
-          expect(dashboardFilterValuesMock).toHaveBeenCalledWith(
-            expect.objectContaining({
-              metricName: propertyId,
-              metricType,
-              pageSize: FILTER_VALUE_PAGE_SIZE,
-              search: "needle",
-              searchGesture: "needle",
-              source: "traces",
-            }),
-          ),
-        { timeout: 1_500 },
+      expect(dashboardFilterValuesMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metricName: propertyId,
+          metricType,
+          pageSize: FILTER_VALUE_PAGE_SIZE,
+          search: "needle",
+          searchGesture: "needle",
+          source: "traces",
+        }),
       );
       document.body.removeChild(anchorEl);
     },

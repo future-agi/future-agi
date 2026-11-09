@@ -6,7 +6,6 @@ import {
   Stack,
   Chip,
   Button,
-  Tabs,
   Tab,
   Card,
   CardContent,
@@ -19,6 +18,7 @@ import {
   Skeleton,
   Collapse,
 } from "@mui/material";
+import { CustomTabs } from "src/components/tabs/tabs";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import PageErrorState from "../components/PageErrorState";
@@ -34,6 +34,9 @@ import {
   useDeleteExperiment,
 } from "./hooks/useExperiments";
 import SideBySideViewer from "./SideBySideViewer";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
+import { GATEWAY_MONO } from "../utils/fonts";
 
 const STATUS_COLORS = {
   active: "success",
@@ -56,6 +59,8 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
   const resumeMutation = useResumeExperiment();
   const completeMutation = useCompleteExperiment();
   const deleteMutation = useDeleteExperiment();
+  // Every shadow-experiment write is Owner or Admin only (useGatewayAdmin).
+  const { canEdit } = useGatewayAdmin();
 
   const handlePause = () => {
     pauseMutation.mutate(experimentId, {
@@ -156,6 +161,7 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
               {experiment.name}
             </Typography>
             <Chip
+              variant="outlined"
               label={status}
               color={STATUS_COLORS[status] || "default"}
               size="small"
@@ -176,37 +182,68 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
         <Stack direction="row" spacing={1}>
           {status === "active" && (
             <>
-              <Button size="small" variant="outlined" onClick={handlePause}>
-                Pause
-              </Button>
-              <Button size="small" variant="outlined" onClick={handleComplete}>
-                Complete
-              </Button>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handlePause}
+                  disabled={!canEdit}
+                >
+                  Pause
+                </Button>
+              </GatewayAdminOnly>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleComplete}
+                  disabled={!canEdit}
+                >
+                  Complete
+                </Button>
+              </GatewayAdminOnly>
             </>
           )}
           {status === "paused" && (
             <>
-              <Button size="small" variant="outlined" onClick={handleResume}>
-                Resume
-              </Button>
-              <Button size="small" variant="outlined" onClick={handleComplete}>
-                Complete
-              </Button>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleResume}
+                  disabled={!canEdit}
+                >
+                  Resume
+                </Button>
+              </GatewayAdminOnly>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleComplete}
+                  disabled={!canEdit}
+                >
+                  Complete
+                </Button>
+              </GatewayAdminOnly>
             </>
           )}
-          <Button
-            size="small"
-            variant="outlined"
-            color="error"
-            onClick={handleDelete}
-          >
-            Delete
-          </Button>
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              size="small"
+              variant="outlined"
+              color="error"
+              onClick={handleDelete}
+              disabled={!canEdit}
+            >
+              Delete
+            </Button>
+          </GatewayAdminOnly>
         </Stack>
       </Stack>
 
       {/* Tabs */}
-      <Tabs
+      <CustomTabs
         value={activeTab}
         onChange={(_, val) => setActiveTab(val)}
         sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
@@ -214,7 +251,7 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
         {TAB_LABELS.map((label) => (
           <Tab key={label} label={label} sx={{ textTransform: "none" }} />
         ))}
-      </Tabs>
+      </CustomTabs>
 
       {activeTab === 0 && (
         <OverviewTab experimentId={experimentId} experiment={experiment} />
@@ -485,7 +522,7 @@ const ResultsTab = ({ experimentId, experiment }) => {
                     <TableCell>
                       <Typography
                         variant="body2"
-                        sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}
+                        sx={{ fontFamily: GATEWAY_MONO, fontSize: "0.8rem" }}
                       >
                         {formatDateTime(r.created_at)}
                       </Typography>

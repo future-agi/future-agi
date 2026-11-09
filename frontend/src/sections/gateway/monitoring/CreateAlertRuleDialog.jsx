@@ -15,11 +15,22 @@ import { enqueueSnackbar } from "notistack";
 import { useUpdateConfig } from "../providers/hooks/useGatewayConfig";
 import {
   ALERT_METRIC_OPTIONS,
+  ALERT_SEVERITY_OPTIONS,
+  DEFAULT_ALERT_COOLDOWN,
   DEFAULT_ALERT_METRIC,
+  DEFAULT_ALERT_SEVERITY,
+  DEFAULT_ALERT_WINDOW,
+  GATEWAY_EMPTY_ALERT_WINDOW,
+  isAlertDuration,
 } from "../constants/alerting";
+import { reportAlertingSaved } from "./alertingModel";
 
 const CONDITIONS = [">", ">=", "<", "<=", "=="];
-const SEVERITIES = ["critical", "warning", "info"];
+
+// An empty duration is left out of the rule (the gateway applies its default);
+// anything else must be a duration the gateway can read.
+const durationInvalid = (value) =>
+  value.trim() !== "" && !isAlertDuration(value);
 
 const CreateAlertRuleDialog = ({
   open,
@@ -32,19 +43,23 @@ const CreateAlertRuleDialog = ({
   const [metric, setMetric] = useState(DEFAULT_ALERT_METRIC);
   const [condition, setCondition] = useState(">");
   const [threshold, setThreshold] = useState("");
-  const [window, setWindow] = useState("5m");
-  const [severity, setSeverity] = useState("warning");
+  const [window, setWindow] = useState(DEFAULT_ALERT_WINDOW);
+  const [cooldown, setCooldown] = useState(DEFAULT_ALERT_COOLDOWN);
+  const [severity, setSeverity] = useState(DEFAULT_ALERT_SEVERITY);
   const [ruleChannels, setRuleChannels] = useState([]);
 
   const updateConfig = useUpdateConfig();
+  const windowInvalid = durationInvalid(window);
+  const cooldownInvalid = durationInvalid(cooldown);
 
   const resetForm = () => {
     setName("");
     setMetric(DEFAULT_ALERT_METRIC);
     setCondition(">");
     setThreshold("");
-    setWindow("5m");
-    setSeverity("warning");
+    setWindow(DEFAULT_ALERT_WINDOW);
+    setCooldown(DEFAULT_ALERT_COOLDOWN);
+    setSeverity(DEFAULT_ALERT_SEVERITY);
     setRuleChannels([]);
   };
 
@@ -60,11 +75,12 @@ const CreateAlertRuleDialog = ({
       metric,
       condition,
       threshold: Number(threshold),
-      window,
       channels: ruleChannels,
       severity,
       enabled: true,
     };
+    if (window.trim()) rule.window = window.trim();
+    if (cooldown.trim()) rule.cooldown = cooldown.trim();
 
     // Send the whole array rather than a single name-keyed entry: the patch
     // endpoint only deep-merges dict-into-dict, so a keyed object would replace
@@ -77,14 +93,14 @@ const CreateAlertRuleDialog = ({
       // switch for it — without it the rule syncs and is then never evaluated.
       { gatewayId, config: { alerting: { enabled: true, rules } } },
       {
-        onSuccess: () => {
-          enqueueSnackbar(`Alert rule "${ruleName}" created`, {
-            variant: "success",
-          });
+        onSuccess: (result) => {
+          reportAlertingSaved(result, `Alert rule "${ruleName}" created`);
           handleClose();
         },
         onError: () => {
-          enqueueSnackbar("Failed to create alert rule", { variant: "error" });
+          enqueueSnackbar("The alert rule could not be created", {
+            variant: "error",
+          });
         },
       },
     );
@@ -92,11 +108,11 @@ const CreateAlertRuleDialog = ({
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Create Alert Rule</DialogTitle>
+      <DialogTitle>Create alert rule</DialogTitle>
       <DialogContent>
         <Stack spacing={2} mt={1}>
           <TextField
-            label="Rule Name"
+            label="Rule name"
             fullWidth
             required
             value={name}
@@ -140,28 +156,50 @@ const CreateAlertRuleDialog = ({
               placeholder="e.g., 5"
             />
           </Stack>
-          <TextField
-            label="Window"
-            fullWidth
-            value={window}
-            onChange={(e) => setWindow(e.target.value)}
-            placeholder="e.g., 5m, 1h"
-          />
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+            <TextField
+              label="Window"
+              fullWidth
+              value={window}
+              onChange={(e) => setWindow(e.target.value)}
+              placeholder="e.g., 5m, 1h"
+              error={windowInvalid}
+              helperText={
+                windowInvalid
+                  ? "Not a duration: use e.g. 30s, 5m or 1h."
+                  : `The metric is summed (latency averaged) over this window. Empty: ${GATEWAY_EMPTY_ALERT_WINDOW}.`
+              }
+            />
+            <TextField
+              label="Cooldown"
+              fullWidth
+              value={cooldown}
+              onChange={(e) => setCooldown(e.target.value)}
+              placeholder={`e.g., ${DEFAULT_ALERT_COOLDOWN}, 1h`}
+              error={cooldownInvalid}
+              helperText={
+                cooldownInvalid
+                  ? "Not a duration: use e.g. 30s, 15m or 1h."
+                  : `After it fires, the rule waits this long before it can fire again. Empty: ${DEFAULT_ALERT_COOLDOWN}; 0s fires on every request past the threshold.`
+              }
+            />
+          </Stack>
           <TextField
             label="Severity"
             select
             fullWidth
             value={severity}
             onChange={(e) => setSeverity(e.target.value)}
+            helperText="Sent with every alert: the webhook payload's severity and a line in the Slack message."
           >
-            {SEVERITIES.map((s) => (
-              <MenuItem key={s} value={s}>
-                {s}
+            {ALERT_SEVERITY_OPTIONS.map((s) => (
+              <MenuItem key={s.value} value={s.value}>
+                {s.label}
               </MenuItem>
             ))}
           </TextField>
           <TextField
-            label="Notify Channels"
+            label="Notify channels"
             select
             fullWidth
             value={ruleChannels}
@@ -182,7 +220,8 @@ const CreateAlertRuleDialog = ({
           </TextField>
           {updateConfig.isError && (
             <Alert severity="error">
-              {updateConfig.error?.message || "Failed to create rule"}
+              {updateConfig.error?.message ||
+                "The alert rule could not be created"}
             </Alert>
           )}
         </Stack>
@@ -191,10 +230,17 @@ const CreateAlertRuleDialog = ({
         <Button onClick={handleClose}>Cancel</Button>
         <Button
           variant="contained"
+          color="primary"
           onClick={handleCreate}
-          disabled={!name.trim() || !threshold || updateConfig.isPending}
+          disabled={
+            !name.trim() ||
+            !threshold ||
+            windowInvalid ||
+            cooldownInvalid ||
+            updateConfig.isPending
+          }
         >
-          {updateConfig.isPending ? "Creating..." : "Create Rule"}
+          {updateConfig.isPending ? "Creating..." : "Create rule"}
         </Button>
       </DialogActions>
     </Dialog>

@@ -1,0 +1,104 @@
+{
+  "schema": "contract-updates-713-v1",
+  "review": "Opus row review owed; no release acceptance claimed",
+  "rows": [
+    {
+      "id": "CU-J00-L1-32",
+      "test": "JRN-E2E-000.L1",
+      "old": "Exactly one active org-config version after the first key on every profile",
+      "new": "Exactly zero on default-off stock with null mirror; exactly one on the declared new-org-default-on profile",
+      "contract_source": "OWNER-RULINGS-20261019.md 708 addendum 32, lines 9750-9755; JOURNEYS-708 J00 amendment",
+      "contract_commit": "Product interface pinned by HR-JRN-03 to 3184d9212bb2e7c18acd8fa2d981f61d395fc7a3:futureagi/agentcc/services/managed_models_default.py:90-103",
+      "acceptance": "708 addendum 32; HR-JRN-03-R2-RESULT-1028.json result.verify.state=review_clean at 3ddeb78b3a20b591f9515a4722a1c58dbd8e48f0; MAIN-NOTE-REVIEW-CLEAN-3ddeb78b3a.md; helper forward-merged in fix round 1",
+      "requiring_tests": ["W00 phased census", "harness/census-result.spec.ts"],
+      "scenario_preserved": true,
+      "safety_properties": "No opt-in or configured state accepted as default-off; no result absence/staleness/partiality is a pass",
+      "fallibility": "OWED for this composition: accepted helper has 42 reader controls and live CAT-2 fallibility; journey execution is independently blocked before provisioning by HR-JRN-01, not HR-JRN-03 acceptance"
+    },
+    {
+      "id": "CU-J00-L1-38",
+      "test": "JRN-E2E-000.L1",
+      "old": "All 34 CAT-2 IDs absent from both catalogues",
+      "new": "Each exact ID absent or blocked with input/output/billed prices null; every credits request refused before upstream; both catalogues and both census phases checked",
+      "contract_source": "OWNER-RULINGS-20261019.md 708 addendum 38; JOURNEYS-708 J00 amendment",
+      "contract_commit": "Accepted helper 3ddeb78b3a20b591f9515a4722a1c58dbd8e48f0 forward-merged; 708 add.41 placement retains v2 on pre-708i products. Raw per-token checks require the later accepted v3 helper and product fix, not a local harness edit",
+      "acceptance": "708 addendum 38 explicitly accepts blocked-unpriced visibility, not credits availability",
+      "requiring_tests": [
+        "W00 CAT-2 exact 34 ID census",
+        "harness/census-result.spec.ts"
+      ],
+      "scenario_preserved": true,
+      "safety_properties": "All 34 exact IDs retained; credits denial and zero upstream calls added; BYOK catalogue visibility does not enable credits",
+      "fallibility": "OWED on journey composition; no publication-blocked L1 is credited as passing. Helper acceptance is now established, not a gap"
+    },
+    {
+      "id": "CU-J00-SURFACES-38",
+      "tests": ["JRN-E2E-000.L8", "JRN-E2E-000.L9", "JRN-E2E-000.L10"],
+      "old": "Obligations named in J00 but not implemented by W00",
+      "new": "Separate fresh-org UI/API/storage tests with explicit absence branches; existing J00/J03 assertions unchanged",
+      "contract_source": "708 addendum 38 final bullet",
+      "contract_commit": "Product UI/API pins: bbaf95c973",
+      "acceptance": "Assigned continuation scope",
+      "requiring_tests": ["default-off-surfaces.spec.ts"],
+      "fallibility": "Cloud disposable assertion perturbation scheduled; runtime result is external RESULT.json"
+    },
+    {
+      "id": "CU-J00-KEYS-733",
+      "test": "JRN-E2E-000.L11",
+      "old": "No separate fresh-org key census",
+      "new": "Detect served bootstrap 410; older stack explicitly NOT_PRESENT; presence remains harness-blocked until keyless phased provisioning is accepted",
+      "contract_source": "733 add.3 / JOURNEYS-708 J00 amendment",
+      "contract_commit": "Presence is detected from served behaviour, not inferred from a source SHA",
+      "acceptance": "Assigned continuation scope with presence gate",
+      "requiring_tests": ["default-off-keys.spec.ts"],
+      "fallibility": "Zero-row census and its fallibility OWED under HR-JRN-17; NOT_PRESENT is not a pass"
+    },
+    {
+      "id": "CU-J00-L10-STORAGE-PIN",
+      "test": "JRN-E2E-000.L10",
+      "old": "Initial draft queried a nonexistent agentcc_guardrail_config table",
+      "new": "Assert empty agentcc_org_config.guardrails JSON plus zero policy and request-log rows before and after visiting history",
+      "contract_source": "708 add.38 unchanged; this corrects a test storage pin, not a product expectation",
+      "contract_commit": "bbaf95c973:futureagi/agentcc/models/org_config.py:35 and guardrail_policy.py:58",
+      "acceptance": "No contract relaxation; empty guardrails are asserted explicitly rather than dropping the check",
+      "requiring_tests": ["JRN-E2E-000.L10"],
+      "fallibility": "Disposable cloud perturbation scheduled; final runtime evidence is in RESULT.json"
+    },
+    {
+      "id": "CU-JRN-PUBLICATION-PREPROVISION",
+      "tests": [
+        "JRN-E2E-000.L1-L11",
+        "JRN-E2E-003.L1-L8",
+        "JRN-E2E-003.L1-legacy"
+      ],
+      "old": "ScopeActors could provision and write raw attachments; runner could fall back to JSON-only reporting and pull sanitized summaries",
+      "new": "Journeys config refuses before dependencies or fixtures; direct spec invocations have a definition-time HARNESS-GAP skip. Every assertion remains intact. No environment flag can waive acceptance",
+      "contract_source": "Continuation value-free requirement and fix-round finding 3; stricter safety contract wins under 713",
+      "contract_commit": "No new harness implementation or unaccepted HR-JRN-01 merge. Latest HR-JRN-01 candidate 0a4202724e remains blocked in HR-JRN-01-R4-REVIEW-1028.json",
+      "acceptance": "Assigned fix-round permits explicit pre-provisioning refusal/skip; enabling requires a separate accepted harness integration",
+      "requiring_tests": [
+        "Cloud config refusal before any fixture",
+        "Direct journeys run skips all 20 legs with zero attachments",
+        "Accepted census graph lists one W00 dependency per browser"
+      ],
+      "scenario_preserved": true,
+      "safety_properties": "No raw seeded value is produced while publication is unaccepted; no product failure can be converted to pass",
+      "fallibility": "OWED until cloud gate executes; no managed execution claimed"
+    },
+    {
+      "id": "CU-J00-L1-DEPENDENCY-BINDING",
+      "test": "JRN-E2E-000.L1",
+      "old": "Journeys-only projects, no W00 producer; Git-less runner and optional dynamic reader imports",
+      "new": "Static accepted reader imports; accepted census dependency graph; run and result directory exported once per invocation; real committed composition and independent built/running image attestation",
+      "contract_source": "HR-JRN-03 acceptance consumer instructions at 3ddeb78b3a and fix-round findings 1-2",
+      "acceptance": "HR-JRN-03-R2-RESULT-1028.json result.verify.state=review_clean at 3ddeb78b3a20b591f9515a4722a1c58dbd8e48f0",
+      "requiring_tests": [
+        "harness/census-result.spec.ts",
+        "Both-browser W00 then J00.L1 on the managed composition"
+      ],
+      "scenario_preserved": true,
+      "safety_properties": "Absent, stale, mismatched or partial census evidence still fails; no copied fixture, no --no-deps, no fabricated source attestation",
+      "fallibility": "OWED on this composition; runtime binding rejects a dirty composition before result consumption"
+    }
+  ]
+}

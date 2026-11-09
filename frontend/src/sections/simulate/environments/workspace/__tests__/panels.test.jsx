@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import PropTypes from "prop-types";
-import { act, render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -39,19 +39,6 @@ vi.mock("../evals/EvalsStep", () => ({
 }));
 vi.mock("../runs/summary/RunsSummary", () => ({ default: () => <div>runs-body</div> }));
 vi.mock("../versions/VersionsPanel", () => ({ default: () => <div>versions-body</div> }));
-vi.mock("../improvements/ImprovementsPanel", () => ({
-  default: () => <div>improvements-body</div>,
-}));
-
-// No fixes unless an Improvements case says otherwise.
-const NO_FIXES = { fixes: [], count: 0, isLoading: false };
-const fixRuns = vi.hoisted(() => ({ value: null }));
-vi.mock("src/api/simulate-environments/fixRuns", () => ({
-  useEnvironmentFixRuns: () => fixRuns.value,
-}));
-beforeEach(() => {
-  fixRuns.value = NO_FIXES;
-});
 
 // The real runs hook by default; the loading cases override it.
 vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
@@ -230,18 +217,36 @@ describe("WorkspacePanels", () => {
     expect(screen.queryByRole("tab", { name: /Runs \d/ })).toBeNull();
   });
 
-  it("shows neither the hint nor the gap list when a gap tab is hovered", async () => {
+  it("shows a gap badge whose tooltip lists the missing pieces", async () => {
+    const user = userEvent.setup();
+    renderPanels({
+      gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
+      counts: { scenarios: 2, evals: 0 },
+    });
+
+    await user.hover(screen.getByText("Evaluations"));
+    expect(await screen.findByText("Needs your input before you can run:")).toBeInTheDocument();
+    expect(screen.getByText(/No evaluations added/)).toBeInTheDocument();
+  });
+
+  it("explains a tab on hover instead of repeating it as a heading", async () => {
+    const user = userEvent.setup();
+    renderPanels();
+    await user.hover(screen.getByText("Contract"));
+    expect(await screen.findByText(/What this environment is made of/)).toBeInTheDocument();
+    // The hint describes the tab; it never replaces the tab's name.
+    expect(screen.getByRole("tab", { name: "Contract" })).toBeInTheDocument();
+  });
+
+  it("keeps the gap list in the tooltip alongside the tab's explanation", async () => {
     const user = userEvent.setup();
     renderPanels({
       gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
       counts: { scenarios: 2, evals: 0 },
     });
     await user.hover(screen.getByText("Evaluations"));
-    // Wait past a tooltip's open delay so one would have shown by now.
-    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
-    expect(screen.queryByRole("tooltip")).toBeNull();
-    expect(screen.queryByText(/These decide whether each task passed/)).toBeNull();
-    expect(screen.queryByText("Needs your input before you can run:")).toBeNull();
+    expect(await screen.findByText(/These decide whether each task passed/)).toBeInTheDocument();
+    expect(screen.getByText("Needs your input before you can run:")).toBeInTheDocument();
   });
 
   it("falls back to the Overview body for an unknown tab", () => {
@@ -401,32 +406,6 @@ describe("Versions tab", () => {
     renderPanels({ tab: "versions" });
     expect(screen.queryByText("versions-body")).toBeNull();
     expect(screen.getByText(/overview-body/)).toBeInTheDocument();
-  });
-});
-
-describe("Improvements tab", () => {
-  it("is hidden until the environment has a fix", () => {
-    renderPanels({ tab: "improvements" });
-    expect(screen.queryByRole("tab", { name: /Improvements/ })).toBeNull();
-    expect(screen.queryByText("improvements-body")).toBeNull();
-  });
-
-  it("shows with its count and renders its panel once there are fixes", () => {
-    fixRuns.value = { fixes: [{}, {}, {}], count: 3, isLoading: false };
-    renderPanels({ tab: "improvements", counts: { scenarios: 0, evals: 0 } });
-    const tab = screen.getByRole("tab", { name: /Improvements/ });
-    expect(within(tab).getByText("3")).toBeInTheDocument();
-    expect(screen.getByText("improvements-body")).toBeInTheDocument();
-  });
-
-  it("keeps the tab for ?tab=improvements while the list loads", () => {
-    fixRuns.value = { ...NO_FIXES, isLoading: true };
-    renderPanels({ tab: "improvements" });
-    expect(screen.getByRole("tab", { name: /Improvements/ })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByText("improvements-body")).toBeInTheDocument();
   });
 });
 

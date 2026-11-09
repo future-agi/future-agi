@@ -1,0 +1,2637 @@
+# Generated once by the hub-backend lane from the omega_hub urlconf; kept in step by
+# omega_hub/tests/test_openapi.py. The integrator regenerates api_contracts/ from the app.
+openapi: 3.1.0
+info:
+  title: Omega Hub registry API
+  version: 1.0.0
+  description:
+    "The Omega Hub registry in the Future AGI private fork (Django app omega_hub). Public reads return approved
+    versions only. There are no comment, discussion, question, reply or thread endpoints (SPEC §2.2); conversation lives on
+    Discord. Errors use {error: {code, message, fix}}; texts are the OMEGA_HUB_* keys of tfc/utils/error_codes.py."
+servers:
+  - url: http://127.0.0.1:8740
+    description: lane dev server (scripts/omega-hub/dev-up.sh)
+  - url: https://api.futureagi.com
+    description: production (owner decision 10)
+tags:
+  - name: public
+  - name: signed-in
+  - name: publishing
+  - name: maintainers
+  - name: checker
+paths:
+  /omega-hub/v1/entries:
+    get:
+      summary: Search and list entries (cards)
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next:
+                    type:
+                      - string
+                      - "null"
+                  previous:
+                    type:
+                      - string
+                      - "null"
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EntryCard"
+                  facets:
+                    type: object
+                  sort:
+                    description:
+                      The order applied. Without a sort parameter it is trending once any
+                      listed entry has a non-zero Trending score, and new until then; relevance when
+                      q is set.
+                    enum:
+                      - trending
+                      - new
+                      - likes
+                      - installs
+                      - relevance
+        default:
+          $ref: "#/components/responses/Error"
+      description: Unranked entries appear only when q is set, after every ranked match.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: false
+          schema:
+            enum:
+              - app
+              - agent
+              - team
+              - skill
+              - plugin
+              - mcp
+              - workflow
+        - name: vendor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: noKey
+          in: query
+          required: false
+          schema:
+            enum:
+              - "1"
+        - name: tag
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: tier
+          in: query
+          required: false
+          schema:
+            enum:
+              - official
+              - verified
+              - community
+        - name: publisher
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sort
+          in: query
+          required: false
+          schema:
+            enum:
+              - trending
+              - new
+              - likes
+              - installs
+        - $ref: "#/components/parameters/page"
+        - $ref: "#/components/parameters/pageSize"
+  /omega-hub/v1/entries/{publisher}/{name}:
+    get:
+      summary: Entry detail with the latest version inline
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryDetail"
+        "301": &id001
+          $ref: "#/components/responses/Moved"
+        "410": &id002
+          $ref: "#/components/responses/Gone"
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+  /omega-hub/v1/entries/{publisher}/{name}/versions:
+    get:
+      summary: Versions of an entry
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VersionRow"
+        "301": *id001
+        "410": *id002
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+  /omega-hub/v1/entries/{publisher}/{name}/versions/{version}:
+    get:
+      summary: One approved (or yanked) version
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionDetail"
+        "301": *id001
+        "410": *id002
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+        - $ref: "#/components/parameters/version"
+  /omega-hub/v1/entries/{publisher}/{name}/versions/{version}/files/{path}:
+    get:
+      summary: A file of an approved version (text/plain, or image bytes with CSP default-src 'none')
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: File
+          content:
+            text/plain: {}
+            image/png: {}
+        "301": *id001
+        "410": *id002
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+        - $ref: "#/components/parameters/version"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+  /omega-hub/v1/entries/{publisher}/{name}/versions/{version}/bundle:
+    get:
+      summary: The canonical bundle; counted per SPEC §6.2
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: omega-hub-bundle/v1
+          headers:
+            X-Omega-Hub-Digest:
+              schema:
+                type: string
+            X-Omega-Hub-Bundle-Sha256:
+              schema:
+                type: string
+            X-Omega-Hub-Yanked:
+              schema:
+                type: string
+          content:
+            application/gzip: {}
+        "301": *id001
+        "410": *id002
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+        - $ref: "#/components/parameters/version"
+        - name: source
+          in: query
+          required: false
+          description:
+            Web downloads return the same bundle without recording a download count.
+            An omitted source still counts as cli; other unknown sources are refused.
+          schema:
+            enum:
+              - cli
+              - studio
+              - deploy
+              - console
+              - web
+            default: cli
+  /omega-hub/v1/entries/{publisher}/{name}/versions/{version}/cast:
+    get:
+      summary: The demo cast
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: asciicast
+          content:
+            text/plain: {}
+        "301": *id001
+        "410": *id002
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+        - $ref: "#/components/parameters/version"
+  /omega-hub/v1/entries/{publisher}/{name}/remixes:
+    get:
+      summary: Approved entries whose latest version remixes this one
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EntryCard"
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+  /omega-hub/v1/publishers:
+    get:
+      summary: Publishers index
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: tier
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sort
+          in: query
+          required: false
+          schema:
+            enum:
+              - installs
+              - new
+        - $ref: "#/components/parameters/page"
+        - $ref: "#/components/parameters/pageSize"
+    post:
+      summary: Create a publisher
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnedPublisher"
+        default:
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                handle:
+                  type: string
+                kind:
+                  enum:
+                    - user
+                    - organization
+                organizationId:
+                  type: string
+                displayName:
+                  type: string
+              required:
+                - handle
+                - kind
+                - displayName
+  /omega-hub/v1/publishers/{handle}:
+    get:
+      summary: Publisher profile, totals and entry cards
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Publisher"
+        "301": *id001
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/handle"
+    patch:
+      summary: Edit the profile (owner, or the organisation's Admins and Owners)
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnedPublisher"
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/handle"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName:
+                  type: string
+                bio:
+                  type: string
+                website:
+                  type: string
+                githubLogin:
+                  type: string
+  /omega-hub/v1/publishers/{handle}/avatar:
+    get:
+      summary: The publisher's uploaded avatar (no third-party images)
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: PNG or JPEG
+          content:
+            image/png: {}
+            image/jpeg: {}
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/handle"
+    post:
+      summary: Upload an avatar (PNG or JPEG, at most 256 KiB)
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/handle"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+              required:
+                - avatar
+  /omega-hub/v1/publishers/{handle}/verification-request:
+    post:
+      summary: Ask a maintainer to verify the publisher
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/handle"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                evidence:
+                  type: string
+                  maxLength: 1000
+              required:
+                - evidence
+  /omega-hub/v1/picks:
+    get:
+      summary: Maintainer picks for a week
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EntryCard"
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: week
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+  /omega-hub/v1/tags:
+    get:
+      summary: Tags with counts
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    tag:
+                      type: string
+                    count:
+                      type: integer
+        default:
+          $ref: "#/components/responses/Error"
+  /omega-hub/v1/export:
+    get:
+      summary: The registry export omega-hub-registry/v1 (ETag, If-None-Match, max-age=300)
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistryExport"
+        "304":
+          description: Not modified
+        default:
+          $ref: "#/components/responses/Error"
+  /omega-hub/v1/rules:
+    get:
+      summary: The rules file omega-hub-rules/v1 (ETag)
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        "304":
+          description: Not modified
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: version
+          in: query
+          required: false
+          schema:
+            type: integer
+  /omega-hub/v1/blocklist:
+    get:
+      summary: The blocklist omega-hub-blocklist/v1 (ETag, If-None-Match; not counted, nothing stored)
+      tags:
+        - public
+      security:
+        - {}
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Blocklist"
+        "304":
+          description: Not modified
+        default:
+          $ref: "#/components/responses/Error"
+  /omega-hub/v1/me:
+    get:
+      summary: "Who am I: user, publishers, isMaintainer, emailVerified"
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+        - hubToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+  /omega-hub/v1/me/tokens:
+    get:
+      summary: My Hub tokens
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Create a Hub token (plaintext returned once)
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                publisher:
+                  type: string
+                name:
+                  type: string
+                days:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+              required:
+                - publisher
+                - name
+  /omega-hub/v1/me/tokens/{tokenId}:
+    delete:
+      summary: Revoke a Hub token
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+  /omega-hub/v1/me/likes:
+    get:
+      summary: Entries I liked (only for myself)
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EntryCard"
+        default:
+          $ref: "#/components/responses/Error"
+  /omega-hub/v1/me/email-verification:
+    post:
+      summary: Email me a link that confirms my address (likes, reports and new publishers need it)
+      description:
+        Sends nothing and answers 200 when the address is already confirmed. The link
+        expires in 24 hours and works only while signed in as the account it was sent to.
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: Already confirmed; nothing sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailVerificationSent"
+        "202":
+          description: Sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailVerificationSent"
+        default:
+          $ref: "#/components/responses/Error"
+  /omega-hub/v1/me/email-verification/confirm:
+    post:
+      summary: Confirm my address with the emailed link's token
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: Confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified:
+                    const: true
+        default:
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+  /omega-hub/v1/submissions:
+    get:
+      summary: My submissions
+      tags:
+        - publishing
+      security:
+        - bearerJwt: []
+        - hubToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Submission"
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: mine
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+    post:
+      summary: Submit a bundle for checks and review
+      tags:
+        - publishing
+      security:
+        - bearerJwt: []
+        - hubToken: []
+      responses:
+        "201":
+          description: Received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    const: received
+                  url:
+                    type: string
+        default:
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                bundle:
+                  type: string
+                  format: binary
+                publisher:
+                  type: string
+                channel:
+                  enum:
+                    - cli
+                    - web
+                    - github
+                name:
+                  type: string
+                version:
+                  type: string
+                notes:
+                  type: string
+                  maxLength: 500
+                githubCommit:
+                  type: string
+              required:
+                - bundle
+  /omega-hub/v1/submissions/{submissionId}:
+    get:
+      summary: "One submission: status, timeline, findings, decision and notes"
+      tags:
+        - publishing
+      security:
+        - bearerJwt: []
+        - hubToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Submission"
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/submissionId"
+  /omega-hub/v1/submissions/{submissionId}/bundle:
+    get:
+      summary: The raw upload (submitter or maintainer only)
+      tags:
+        - publishing
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: Bytes
+          content:
+            application/octet-stream: {}
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/submissionId"
+  /omega-hub/v1/submissions/{submissionId}/withdraw:
+    post:
+      summary: Withdraw (received, checking or in_review)
+      tags:
+        - publishing
+      security:
+        - bearerJwt: []
+        - hubToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/submissionId"
+  /omega-hub/v1/entries/{publisher}/{name}/like:
+    post:
+      summary: Like (browser session only)
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  likes:
+                    type: integer
+                  likedByMe:
+                    type: boolean
+        default:
+          $ref: "#/components/responses/Error"
+      description: A Hub token or an org X-Api-Key/X-Secret-Key pair gets 403 OMEGA_HUB_LIKE_NEEDS_SESSION.
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+    delete:
+      summary: Unlike (browser session only)
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  likes:
+                    type: integer
+                  likedByMe:
+                    type: boolean
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+  /omega-hub/v1/entries/{publisher}/{name}/versions/{version}/yank:
+    post:
+      summary: Yank a version (publisher)
+      tags:
+        - publishing
+      security:
+        - bearerJwt: []
+        - hubToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+        - $ref: "#/components/parameters/version"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+              required:
+                - reason
+  /omega-hub/v1/entries/{publisher}/{name}/unlist:
+    post:
+      summary: Unlist an entry (publisher)
+      tags:
+        - publishing
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+  /omega-hub/v1/reports:
+    post:
+      summary: Report an entry privately (one way, to maintainers)
+      tags:
+        - signed-in
+      security:
+        - bearerJwt: []
+      responses:
+        "201":
+          description: Received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    const: received
+        default:
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                entry:
+                  type: string
+                version:
+                  type: string
+                reason:
+                  enum:
+                    - security
+                    - licence
+                    - impersonation
+                    - broken
+                    - spam
+                    - other
+                details:
+                  type: string
+                  minLength: 20
+                  maxLength: 2000
+              required:
+                - entry
+                - reason
+                - details
+  /omega-hub/v1/review/queue:
+    get:
+      summary: The review queue
+      tags: &id003
+        - maintainers
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            enum:
+              - in_review
+              - check_error
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: tier
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: flags
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: update
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: channel
+          in: query
+          required: false
+          schema:
+            type: string
+  /omega-hub/v1/review/submissions/{submissionId}:
+    get:
+      summary: "Everything a reviewer needs: report, manifest, README, files, log, previous version, publisher history"
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/submissionId"
+  /omega-hub/v1/review/submissions/{submissionId}/diff:
+    get:
+      summary: The diff against the previous version
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/submissionId"
+  /omega-hub/v1/review/submissions/{submissionId}/files/{path}:
+    get:
+      summary: A submission file as plain text
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/submissionId"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+  /omega-hub/v1/review/submissions/{submissionId}/start:
+    post:
+      summary: Start review (soft lock, 2 hours)
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/submissionId"
+  /omega-hub/v1/review/submissions/{submissionId}/take-over:
+    post:
+      summary: Take over a locked review (audited)
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/submissionId"
+  /omega-hub/v1/review/submissions/{submissionId}/decision:
+    post:
+      summary: Approve, reject or request changes
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      description:
+        409 OMEGA_HUB_RULES_CHANGED when rulesVersion or the checklist keys are not current. The approver can never
+        be the submitter.
+      parameters:
+        - $ref: "#/components/parameters/submissionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Decision"
+  /omega-hub/v1/review/submissions/{submissionId}/recheck:
+    post:
+      summary: Queue a new check job (in_review or check_error)
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/submissionId"
+  /omega-hub/v1/review/reports:
+    get:
+      summary: Reports
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            enum:
+              - open
+              - actioned
+              - dismissed
+  /omega-hub/v1/review/reports/{reportId}/resolve:
+    post:
+      summary: Resolve a report
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  enum:
+                    - dismiss
+                    - ask_publisher
+                    - unrank_entry
+                    - yank_version
+                    - remove_entry
+                    - suspend_publisher
+                    - restore
+                category:
+                  type: string
+                reason:
+                  type: string
+                version:
+                  type: string
+                note:
+                  type: string
+              required:
+                - action
+                - note
+  /omega-hub/v1/review/entries/{publisher}/{name}/remove:
+    post:
+      summary: Remove an entry (tombstone + blocklist)
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category:
+                  enum:
+                    - security issue
+                    - licence issue
+                    - breaks Hub rules
+                    - publisher's request
+                note:
+                  type: string
+              required:
+                - category
+                - note
+  /omega-hub/v1/review/entries/{publisher}/{name}/restore:
+    post:
+      summary: Restore a removed entry
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+              required:
+                - note
+  /omega-hub/v1/review/entries/{publisher}/{name}/unrank:
+    post:
+      summary: Unrank an entry
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  enum:
+                    - rules change not yet met
+                    - quality
+                    - misleading listing
+                    - under investigation
+                    - other
+                note:
+                  type: string
+              required:
+                - reason
+                - note
+  /omega-hub/v1/review/entries/{publisher}/{name}/rerank:
+    post:
+      summary: Re-rank an entry
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+              required:
+                - note
+  /omega-hub/v1/review/entries/{publisher}/{name}/move:
+    post:
+      summary: Move an entry (rename and/or transfer); old reference redirects forever
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                toPublisher:
+                  type: string
+                toName:
+                  type: string
+                note:
+                  type: string
+              required:
+                - note
+  /omega-hub/v1/review/entries/{publisher}/{name}/likers:
+    get:
+      summary: Who liked an entry (maintainers only)
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+  /omega-hub/v1/review/publishers/{handle}/rename:
+    post:
+      summary: Rename a publisher (moves every entry)
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/handle"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                toHandle:
+                  type: string
+                note:
+                  type: string
+              required:
+                - toHandle
+                - note
+  /omega-hub/v1/review/blocklist:
+    get:
+      summary: Blocklist rows with private notes
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Block a bare digest or bundle hash
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                digest:
+                  type: string
+                bundleSha256:
+                  type: string
+                category:
+                  type: string
+                note:
+                  type: string
+              required:
+                - category
+                - note
+  /omega-hub/v1/review/blocklist/{blockId}/lift:
+    post:
+      summary: Lift a blocklist row
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: blockId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+  /omega-hub/v1/review/appeals:
+    post:
+      summary: Record an emailed appeal's outcome (not by the original decider)
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetType:
+                  enum:
+                    - submission
+                    - entry
+                    - version
+                    - publisher
+                targetId:
+                  type: string
+                outcome:
+                  enum:
+                    - upheld
+                    - granted
+                note:
+                  type: string
+              required:
+                - targetType
+                - targetId
+                - outcome
+                - note
+  /omega-hub/v1/review/versions/{publisher}/{name}/{version}/yank:
+    post:
+      summary: Yank a version as a maintainer
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/name"
+        - $ref: "#/components/parameters/version"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+              required:
+                - reason
+  /omega-hub/v1/review/picks:
+    get:
+      summary: Picks
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Add a pick (at most 6 a week)
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                entry:
+                  type: string
+                week:
+                  type: string
+                  format: date
+                why:
+                  type: string
+                  minLength: 20
+                  maxLength: 140
+              required:
+                - entry
+                - why
+  /omega-hub/v1/review/picks/{pickId}:
+    delete:
+      summary: Remove a pick
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "204":
+          description: Removed
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: pickId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+  /omega-hub/v1/review/publishers:
+    get:
+      summary: Publishers (verification queue with ?verification=requested)
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: verification
+          in: query
+          required: false
+          schema:
+            enum:
+              - requested
+  /omega-hub/v1/review/publishers/{handle}/verify:
+    post:
+      summary: Verify a publisher
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/handle"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+              required:
+                - note
+  /omega-hub/v1/review/publishers/{handle}/unverify:
+    post:
+      summary: Unverify a publisher
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/handle"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+              required:
+                - note
+  /omega-hub/v1/review/publishers/{handle}/suspend:
+    post:
+      summary: Suspend a publisher
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/handle"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+              required:
+                - note
+  /omega-hub/v1/review/publishers/{handle}/unsuspend:
+    post:
+      summary: Unsuspend a publisher
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - $ref: "#/components/parameters/handle"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+              required:
+                - note
+  /omega-hub/v1/review/audit:
+    get:
+      summary: The audit log
+      tags: *id003
+      security:
+        - bearerJwt: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - name: targetType
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: targetId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: "#/components/parameters/page"
+        - $ref: "#/components/parameters/pageSize"
+  /omega-hub/internal/ops/metrics:
+    get:
+      summary: Prometheus operational metrics for the Hub checker
+      tags:
+        - checker
+      security:
+        - metricsToken: []
+      responses:
+        "200":
+          description: Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+  /omega-hub/internal/checker/claim:
+    post:
+      summary: Claim the next check job (204 when idle)
+      tags: &id004
+        - checker
+      security:
+        - checkerToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Claim"
+        "204":
+          description: Idle
+        default:
+          $ref: "#/components/responses/Error"
+  /omega-hub/internal/checker/jobs/{jobId}/bundle:
+    get:
+      summary: The raw upload of the job's submission
+      tags: *id004
+      security:
+        - checkerToken: []
+      responses:
+        "200":
+          description: Bytes
+          content:
+            application/octet-stream: {}
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - &id005
+          name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+  /omega-hub/internal/checker/jobs/{jobId}/previous-bundle:
+    get:
+      summary: The previous approved version's canonical bundle
+      tags: *id004
+      security:
+        - checkerToken: []
+      responses:
+        "200":
+          description: Bytes
+          content:
+            application/octet-stream: {}
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - *id005
+  /omega-hub/internal/checker/jobs/{jobId}/context:
+    post:
+      summary: Registry facts for the manifest the checker read (lane addition)
+      tags: *id004
+      security:
+        - checkerToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      description:
+        "Added by the hub-backend lane: name and version are unknown at claim time for a web upload (SPEC §3.1),
+        so the checker asks for previousVersion, versionTaken, remixTargetOk, remixTargetBlocked, movedTo and codeHashes once
+        it has read the manifest."
+      parameters:
+        - *id005
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                version:
+                  type: string
+                remixOf:
+                  type: string
+  /omega-hub/internal/checker/jobs/{jobId}/heartbeat:
+    post:
+      summary: Extend the 15-minute lease
+      tags: *id004
+      security:
+        - checkerToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - *id005
+  /omega-hub/internal/checker/jobs/{jobId}/result:
+    post:
+      summary: Post the report, the canonical bundle, the run log and the fresh cast
+      tags: *id004
+      security:
+        - checkerToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+      parameters:
+        - *id005
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                report:
+                  type: string
+                  format: binary
+                bundle:
+                  type: string
+                  format: binary
+                log:
+                  type: string
+                  format: binary
+                cast:
+                  type: string
+                  format: binary
+              required:
+                - report
+components:
+  securitySchemes:
+    bearerJwt:
+      type: http
+      scheme: bearer
+      description: The Future AGI app session (accounts APIKeyAuthentication)
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description:
+        "An explicitly person-created personal API key pair (with X-Secret-Key),
+        admitted only while its owner and memberships remain active. A key is not an interactive session:
+        operations requiring a signed-in browser session answer 403 OMEGA_HUB_SESSION_REQUIRED
+        (likes answer OMEGA_HUB_LIKE_NEEDS_SESSION). Public reads do not use keys to personalize results.
+        Retired organization keys are refused with 401, including on public reads."
+    secretKey:
+      type: apiKey
+      in: header
+      name: X-Secret-Key
+      description: "The secret half of the explicitly person-created personal API key pair; see apiKey."
+    hubToken:
+      type: apiKey
+      in: header
+      name: X-Omega-Hub-Token
+      description: ohp_<40 base62>; never as a Bearer value
+    checkerToken:
+      type: apiKey
+      in: header
+      name: X-Omega-Hub-Checker-Token
+    metricsToken:
+      type: apiKey
+      in: header
+      name: X-Omega-Hub-Metrics-Token
+      description: Read-only credential for Prometheus metrics; never use the checker credential.
+  parameters:
+    publisher:
+      name: publisher
+      in: path
+      required: true
+      schema:
+        type: string
+    name:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+    version:
+      name: version
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^\d+\.\d+\.\d+$
+    handle:
+      name: handle
+      in: path
+      required: true
+      schema:
+        type: string
+    submissionId:
+      name: submissionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+    pageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 60
+        default: 24
+  responses:
+    Error:
+      description: Error envelope
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Moved:
+      description: Moved reference
+      headers:
+        Location:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              movedTo:
+                type: string
+            required:
+              - movedTo
+    Gone:
+      description: Removed or unlisted (tombstone)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+              tombstone:
+                type: object
+                properties:
+                  ref:
+                    type: string
+                  category:
+                    type: string
+                  at:
+                    type:
+                      - string
+                      - "null"
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              pattern: ^OMEGA_HUB_
+            message:
+              type: string
+            fix:
+              type: string
+          required:
+            - code
+            - message
+            - fix
+      required:
+        - error
+    Disclosure:
+      type: object
+      properties:
+        summary:
+          type: string
+          minLength: 20
+          maxLength: 200
+        network:
+          type: string
+          minLength: 4
+          maxLength: 1200
+        files:
+          type: string
+          minLength: 4
+          maxLength: 1200
+        shell:
+          type: string
+          minLength: 4
+          maxLength: 300
+        background:
+          type: string
+          minLength: 4
+          maxLength: 300
+        credentials:
+          type: string
+          minLength: 4
+          maxLength: 1200
+      required:
+        - summary
+        - network
+        - files
+        - shell
+        - background
+        - credentials
+    EmailVerificationSent:
+      type: object
+      properties:
+        verified:
+          type: boolean
+        sent:
+          type: boolean
+        sentTo:
+          type: string
+          description: The address the link went to (only when sent)
+    EntryCard: &id006
+      type: object
+      properties:
+        ref:
+          type: string
+        publisher:
+          type: object
+          properties:
+            handle:
+              type: string
+            displayName:
+              type: string
+            tier:
+              enum:
+                - official
+                - verified
+                - community
+        name:
+          type: string
+        kind:
+          type: string
+        title:
+          type: string
+        tagline:
+          type: string
+        cover:
+          type: object
+        tags:
+          type: array
+          items:
+            type: string
+        latestVersion:
+          type: string
+        likes:
+          type: integer
+        installs30d:
+          type: integer
+        noKeyNeeded:
+          type: boolean
+        pick:
+          type:
+            - object
+            - "null"
+        remixOf:
+          type:
+            - string
+            - "null"
+        ranked:
+          type: boolean
+        likedByMe:
+          type: boolean
+    VersionRow:
+      type: object
+      properties:
+        version:
+          type: string
+        status:
+          enum:
+            - approved
+            - yanked
+        publishedAt:
+          type: string
+        notes:
+          type: string
+        yankedReason:
+          type:
+            - string
+            - "null"
+        digest:
+          type: string
+        rulesVersion:
+          type: integer
+    VersionDetail: &id007
+      type: object
+      properties:
+        ref:
+          type: string
+        version:
+          type: string
+        manifest:
+          type: object
+          description: The manifest without the publisher's draft disclosure
+        readme:
+          type: string
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+              bytes:
+                type: integer
+              sha256:
+                type: string
+              lang:
+                type: string
+        digest:
+          type: string
+        bundleSha256:
+          type: string
+        bundleBytes:
+          type: integer
+        capabilities:
+          type: object
+          properties:
+            cli:
+              type: boolean
+            openInStudio:
+              type: boolean
+            deploy:
+              type: boolean
+            consoleTemplate:
+              type: boolean
+        checkSummary:
+          type: object
+        disclosure:
+          $ref: "#/components/schemas/Disclosure"
+        rulesVersion:
+          type: integer
+        sourceCommit:
+          type:
+            - string
+            - "null"
+        status:
+          type: string
+        remixOf:
+          type:
+            - string
+            - "null"
+        approvedAt:
+          type: string
+    EntryDetail:
+      allOf:
+        - *id006
+        - type: object
+          properties:
+            unrankedReason:
+              type:
+                - string
+                - "null"
+            firstPublishedAt:
+              type: string
+            opens30d:
+              type: integer
+            installsDaily30:
+              type: array
+              items:
+                type: integer
+            remixCount:
+              type: integer
+            versionCount:
+              type: integer
+            latest: *id007
+            discord:
+              const: https://discord.com/invite/n2tCUKBkAw
+            appUrl:
+              type: string
+    Publisher:
+      type: object
+      properties:
+        handle:
+          type: string
+        displayName:
+          type: string
+        kind:
+          type: string
+        tier:
+          type: string
+        bio:
+          type: string
+        website:
+          type:
+            - string
+            - "null"
+        githubLogin:
+          type:
+            - string
+            - "null"
+        avatarUrl:
+          type:
+            - string
+            - "null"
+        verifiedAt:
+          type:
+            - string
+            - "null"
+        firstPublishedAt:
+          type:
+            - string
+            - "null"
+        entryCount:
+          type: integer
+        likes:
+          type: integer
+        installs30d:
+          type: integer
+    OwnedPublisher:
+      allOf:
+        - $ref: "#/components/schemas/Publisher"
+        - type: object
+          properties:
+            id:
+              type: string
+            organizationId:
+              type:
+                - string
+                - "null"
+            verificationRequested:
+              type: boolean
+            suspended:
+              type: boolean
+    Submission:
+      type: object
+      properties:
+        id:
+          type: string
+        publisher:
+          type: string
+        channel:
+          type: string
+        status:
+          enum:
+            - received
+            - checking
+            - checks_failed
+            - check_error
+            - in_review
+            - approved
+            - changes_requested
+            - rejected
+            - withdrawn
+            - superseded
+        statusText:
+          type: string
+        name:
+          type:
+            - string
+            - "null"
+        version:
+          type:
+            - string
+            - "null"
+        timeline:
+          type: array
+        report:
+          type:
+            - object
+            - "null"
+        checkSummary:
+          type:
+            - object
+            - "null"
+        decision:
+          type:
+            - object
+            - "null"
+        confirmedDisclosure:
+          type:
+            - object
+            - "null"
+        published:
+          type:
+            - string
+            - "null"
+        url:
+          type: string
+    Decision:
+      type: object
+      properties:
+        decision:
+          enum:
+            - approve
+            - reject
+            - request_changes
+        rulesVersion:
+          type: integer
+        reason:
+          type: string
+          minLength: 20
+          maxLength: 2000
+        checklist:
+          type: object
+          additionalProperties:
+            const: true
+        acknowledgedFlags:
+          type: array
+          items:
+            type: string
+        disclosure:
+          $ref: "#/components/schemas/Disclosure"
+        notes:
+          type: array
+          maxItems: 30
+          items:
+            type: object
+            properties:
+              file:
+                type: string
+              line:
+                type: integer
+              note:
+                type: string
+                maxLength: 500
+            required:
+              - file
+              - note
+      required:
+        - decision
+        - rulesVersion
+    Claim:
+      type: object
+      properties:
+        job:
+          type: string
+        submission:
+          type: string
+        attempt:
+          type: integer
+        publisher:
+          type: string
+        publisherTier:
+          type: string
+        channel:
+          type: string
+        hints:
+          type: object
+          properties:
+            name:
+              type:
+                - string
+                - "null"
+            version:
+              type:
+                - string
+                - "null"
+        previousVersion:
+          type:
+            - object
+            - "null"
+        versionTaken:
+          type: boolean
+        remixTargetOk:
+          type:
+            - boolean
+            - "null"
+        remixTargetBlocked:
+          type:
+            - boolean
+            - "null"
+        movedTo:
+          type:
+            - string
+            - "null"
+        entryRemoved:
+          type: boolean
+        codeHashes:
+          type: object
+        bundleUrl:
+          type: string
+        contextUrl:
+          type: string
+        heartbeatUrl:
+          type: string
+        resultUrl:
+          type: string
+        previousBundleUrl:
+          type: string
+    RegistryExport:
+      type: object
+      description: omega-hub-registry/v1; full JSON Schema in omega_hub/schemas/omega-hub-registry-v1.schema.json
+    Blocklist:
+      type: object
+      description: omega-hub-blocklist/v1; full JSON Schema in omega_hub/schemas/omega-hub-blocklist-v1.schema.json

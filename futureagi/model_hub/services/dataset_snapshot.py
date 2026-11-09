@@ -73,9 +73,9 @@ def create_dataset_snapshot(
     source_dataset, experiment, batch_size=5000, use_raw_sql_cells=False
 ):
     """
-    Create a full snapshot of a dataset for experiment isolation.
+    Create a scoped snapshot of a dataset for experiment isolation.
 
-    Copies all columns, rows, and cells from source_dataset into a new
+    Copies columns and selected rows/cells from source_dataset into a new
     snapshot dataset. The snapshot becomes the single source of truth
     for all experiment data (original data + result columns + eval columns).
 
@@ -94,6 +94,10 @@ def create_dataset_snapshot(
         source_dataset_id=str(source_dataset.id),
         experiment_id=str(experiment.id),
     )
+
+    from model_hub.services.experiment_run_scope import snapshot_source_rows
+
+    source_rows = snapshot_source_rows(source_dataset, experiment)
 
     # 1. Create snapshot Dataset
     snapshot_dataset = Dataset(
@@ -157,13 +161,10 @@ def create_dataset_snapshot(
         )
 
     # 4. Copy Rows — preserve order and metadata
-    source_rows = Row.objects.filter(dataset=source_dataset, deleted=False).order_by(
-        "order"
-    )
     row_mapping = {}  # old_row_id -> new_row
 
     new_rows = []
-    for row in source_rows.iterator(chunk_size=batch_size):
+    for row in source_rows:
         new_row = Row(
             id=uuid.uuid4(),
             dataset=snapshot_dataset,

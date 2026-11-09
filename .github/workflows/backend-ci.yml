@@ -197,6 +197,16 @@ jobs:
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
 
+      # The mock-gateway tests (agentcc/tests/test_openrouter_provisioning.py)
+      # build agentcc-gateway/cmd/agentcc-mockup offline. The runner's own Go
+      # is older than go.mod's go line, so install go.mod's Go; a host with no
+      # Go at all skips those tests.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agentcc-gateway/go.mod
+          cache: true
+          cache-dependency-path: agentcc-gateway/go.sum
+
       - name: Identify exact runner image for the apt cache
         id: image
         run: echo "version=${ImageVersion:?}" >> "$GITHUB_OUTPUT"
@@ -432,6 +442,13 @@ jobs:
             echo "  uv export --frozen --no-dev --no-hashes --no-emit-project --all-extras --no-extra dev -o ee/requirements.txt"
           fi
           exit "$drift"
+
+      - name: Import contracts (lint-imports)
+        # futureagi/.importlinter: webhooks/core is the framework-free seam
+        # (no Django, Temporal, tfc or other app) and sits below every other
+        # webhooks module, whose layers list is exhaustive. import-linter is
+        # pinned and run in its own environment, so the app's lock is untouched.
+        run: uvx --from import-linter==2.15 lint-imports --config .importlinter
 
       - name: Boot Django, load URLconf and temporal registry
         run: |

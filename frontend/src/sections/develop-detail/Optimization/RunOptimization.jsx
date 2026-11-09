@@ -536,10 +536,10 @@ const RunOptimization = () => {
         module="run-optimization"
         id={datasetId}
         open={open}
-        onClose={() => {}}
+        onClose={onCloseClick}
         allColumns={allColumns}
         refreshGrid={refreshGrid}
-        type="persistent"
+        type="temporary"
         listComponent={
           open ? (
             <RunOptimizationForm

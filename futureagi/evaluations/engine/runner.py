@@ -19,9 +19,12 @@ from typing import Any
 
 import structlog
 
-from evaluations.constants import FUTUREAGI_EVAL_TYPES
+from evaluations.constants import (
+    FUTUREAGI_EVAL_TYPES,
+    PARAMS_AS_RUN_KWARGS_EVAL_TYPES,
+)
 from evaluations.engine.formatting import extract_raw_result, format_eval_value
-from evaluations.engine.instance import create_eval_instance
+from evaluations.engine.instance import create_eval_instance, resolve_choice_scores
 from evaluations.engine.params import prepare_run_params
 from evaluations.engine.registry import get_eval_class
 
@@ -93,6 +96,12 @@ def run_eval(request: EvalRequest) -> EvalResult:
         ValueError: If eval_type_id is missing or evaluator class not found
     """
     eval_template = request.eval_template
+    if getattr(eval_template, "eval_type", None) == "external":
+        # External metrics (SRV-5) are scored by the caller; never run them.
+        raise ValueError(
+            f"EvalTemplate '{eval_template.name}' is an external metric: it is "
+            "scored by the caller and is never executed by the server."
+        )
     eval_type_id = eval_template.config.get("eval_type_id")
 
     if not eval_type_id:
@@ -149,7 +158,7 @@ def run_eval(request: EvalRequest) -> EvalResult:
         if "max_tokens" in request.inputs:
             run_params.setdefault("max_tokens", request.inputs["max_tokens"])
 
-    if eval_type_id == "CustomCodeEval" and request.runtime_config:
+    if eval_type_id in PARAMS_AS_RUN_KWARGS_EVAL_TYPES and request.runtime_config:
         _runtime_params = (request.runtime_config or {}).get("params") or {}
         if isinstance(_runtime_params, dict):
             for _k, _v in _runtime_params.items():
@@ -171,7 +180,11 @@ def run_eval(request: EvalRequest) -> EvalResult:
     response["end_time"] = end_time
     response["duration"] = end_time - start_time
 
-    value = format_eval_value(response, eval_template)
+    value = format_eval_value(
+        response,
+        eval_template,
+        choice_scores=resolve_choice_scores(eval_template, request.runtime_config),
+    )
 
     logger.info(
         "eval_executed",

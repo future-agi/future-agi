@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import ApexCharts from "apexcharts";
 import { format } from "date-fns";
@@ -1825,7 +1826,7 @@ function TraceEvidence({
       text: `${summary.latency_ms}ms`,
     },
     tokens != null && { icon: "mdi:text-box-outline", text: `${tokens} tok` },
-    cost != null && { icon: "mdi:currency-usd", text: cost.toFixed(4) },
+    cost != null && { icon: "mdi:currency-usd", text: formatExactMoney(cost) },
   ].filter(Boolean);
 
   return (

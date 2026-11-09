@@ -1,0 +1,73 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "microsoft-teams",
+  "source": "CN15c K2 replay assertions (approved at 2c1163dacc)",
+  "test_account": "cn15-synthetic-unverified",
+  "tools": 11,
+  "vendor_404": "Microsoft graph.microsoft.com 404",
+  "drive_checks": [
+    {
+      "name": "teams_read_only",
+      "jq": ".tools[] | select(.name == \"list_joined_teams\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "joined_teams_no_inputs",
+      "jq": ".tools[] | select(.name == \"list_joined_teams\") | .inputSchema.properties // {} | length",
+      "want": "0"
+    },
+    {
+      "name": "post_open_world",
+      "jq": ".tools[] | select(.name == \"post_channel_message\") | .annotations.openWorldHint",
+      "want": "true"
+    },
+    {
+      "name": "post_not_read_only",
+      "jq": ".tools[] | select(.name == \"post_channel_message\") | .annotations.readOnlyHint",
+      "want": "false"
+    },
+    {
+      "name": "channel_messages",
+      "jq": ".calls[2].result.content[0].text | contains(\"Release 2.4 is tagged\")",
+      "want": "true"
+    },
+    {
+      "name": "replies",
+      "jq": ".calls[3].result.content[0].text | contains(\"Shipping notes\")",
+      "want": "true"
+    },
+    {
+      "name": "message_projected",
+      "jq": ".calls[4].result.content[0].text | (contains(\"reactions\") and (contains(\"channelIdentity\") | not))",
+      "want": "true"
+    },
+    {
+      "name": "post_projected",
+      "jq": ".calls[5].result.content[0].text | (contains(\"cm-3\") and (contains(\"Release 2.4 is out\") | not))",
+      "want": "true"
+    },
+    {
+      "name": "chat_members",
+      "jq": ".calls[9].result.content[0].text | contains(\"Bob\")",
+      "want": "true"
+    },
+    {
+      "name": "chat_sent",
+      "jq": ".calls[10].result.content[0].text | contains(\"cx-2\")",
+      "want": "true"
+    }
+  ],
+  "vendor_request_checks": [
+    {
+      "name": "replies_path",
+      "index": 3,
+      "want": "GET /v1.0/teams/tm-1/channels/ch-1/messages/cm-1/replies?$top=10"
+    }
+  ],
+  "every_vendor_request": [
+    {
+      "name": "graph_v1_paths",
+      "jq": ".path | startswith(\"/v1.0/\")"
+    }
+  ]
+}

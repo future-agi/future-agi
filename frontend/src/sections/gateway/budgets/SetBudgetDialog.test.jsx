@@ -32,13 +32,29 @@ describe("SetBudgetDialog", () => {
 
     await user.click(screen.getByLabelText(/Budget Level/));
     await user.click(screen.getByRole("option", { name: "Organization" }));
-    await user.type(screen.getByLabelText(/Monthly Limit/), "250");
+    await user.type(screen.getByLabelText(/Limit \(\$\)/), "250");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(mockMutate.mock.calls[0][0]).toEqual({
       gatewayId: "default",
       level: "org_limit",
-      config: { limit: 250, alert_threshold: 80, on_exceed: "warn" },
+      config: {
+        limit: 250,
+        alert_threshold: 80,
+        on_exceed: "warn",
+        saved_at: expect.any(String),
+      },
     });
+  });
+});
+
+describe("SetBudgetDialog and the budgets switch", () => {
+  it("says a saved budget is enforced only while budgets are on", () => {
+    render(<SetBudgetDialog open onClose={vi.fn()} gatewayId="gw" />);
+    expect(
+      screen.getByText(
+        /enforced only while budgets are on for your organization/i,
+      ),
+    ).toBeInTheDocument();
   });
 });

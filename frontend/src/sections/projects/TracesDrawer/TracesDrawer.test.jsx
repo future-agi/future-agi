@@ -47,7 +47,9 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
 vi.mock("src/utils/axios", () => ({
   readQuery: (...args) => state.get(...args),
   default: { get: (...args) => state.get(...args) },
-  endpoints: { project: { traceSessionQuery: (id) => `/sessions/${id}/query/` } },
+  endpoints: {
+    project: { traceSessionQuery: (id) => `/sessions/${id}/query/` },
+  },
 }));
 vi.mock("src/contexts/WorkspaceContext", () => ({
   useWorkspace: () => ({ currentWorkspaceId: state.workspace }),
@@ -124,23 +126,28 @@ describe("Session drawer navigation request", () => {
     state.totalCost = undefined;
   });
   it.each([
-    [0.000029999999999999997, "$0.00003"],
-    [3e-8, "< $0.0000001"],
+    [0.000029999999999999997, "$0.000029999999999999997"],
+    [3e-8, "$0.00000003"],
     [2.37e-5, "$0.0000237"],
     [0, "$0.00"],
     [null, "N/A"],
     [undefined, "N/A"],
-  ])("formats session cost %s without float noise or false missing values", (cost, display) => {
-    state.totalCost = cost;
-    render(
-      <TracesDrawer
-        open
-        onClose={vi.fn()}
-        rowData={{ session_id: "session-1" }}
-      />,
-    );
-    expect(screen.getByText(`Total Cost: ${display}`, { exact: true })).toBeVisible();
-  });
+  ])(
+    "formats session cost %s without float noise or false missing values",
+    (cost, display) => {
+      state.totalCost = cost;
+      render(
+        <TracesDrawer
+          open
+          onClose={vi.fn()}
+          rowData={{ session_id: "session-1" }}
+        />,
+      );
+      expect(
+        screen.getByText(`Total Cost: ${display}`, { exact: true }),
+      ).toBeVisible();
+    },
+  );
   it.each(["project-1", null])(
     "loads the same-workspace %s session using the provider contract",
     async (projectId) => {

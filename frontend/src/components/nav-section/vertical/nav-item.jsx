@@ -15,6 +15,16 @@ import Iconify from "../../iconify";
 
 // ----------------------------------------------------------------------
 
+// One visible focus ring per nav item: 2 px in the primary colour on the
+// link (keyboard focus only), drawn inside so the scroll area never clips it.
+const NAV_LINK_FOCUS = {
+  outline: "none",
+  "&:focus-visible": {
+    outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+    outlineOffset: "-2px",
+  },
+};
+
 // eslint-disable-next-line react/display-name
 const NavItem = forwardRef(
   (
@@ -36,11 +46,16 @@ const NavItem = forwardRef(
       currentRole = "admin",
       titleIcon,
       eventTrigger,
+      onClick,
+      "aria-current": ariaCurrent,
       ...other
     },
     ref,
   ) => {
     const subItem = depth !== 1;
+    // A leaf item is wrapped in a link: the link is its one tab stop, so the
+    // inner row is not focusable and has no role of its own (a11y #4).
+    const inLink = !hasChild && !disabled;
 
     const renderContent = (
       <StyledNavItem
@@ -52,7 +67,14 @@ const NavItem = forwardRef(
         disabled={disabled}
         disableRipple
         {...other}
-        onClick={() => {
+        {...(inLink
+          ? { tabIndex: -1, role: "presentation" }
+          : hasChild
+            ? { "aria-expanded": Boolean(open) }
+            : {})}
+        onClick={(event) => {
+          // NavList owns child expansion; preserve its handler for Enter too.
+          onClick?.(event);
           if (eventTrigger) {
             eventTrigger();
           }
@@ -180,6 +202,9 @@ const NavItem = forwardRef(
           sx={{
             height: "32px",
             minHeight: "32px",
+            display: "block",
+            borderRadius: "6px",
+            ...NAV_LINK_FOCUS,
             ...(disabled && {
               cursor: "default",
             }),
@@ -193,11 +218,15 @@ const NavItem = forwardRef(
       <Link
         component={RouterLink}
         href={path}
+        aria-current={ariaCurrent || (active ? "page" : undefined)}
         color="inherit"
         underline="none"
         sx={{
           minHeight: "32px",
           height: "32px",
+          display: "block",
+          borderRadius: "6px",
+          ...NAV_LINK_FOCUS,
           ...(disabled && {
             cursor: "default",
           }),
@@ -210,6 +239,7 @@ const NavItem = forwardRef(
 );
 
 NavItem.propTypes = {
+  "aria-current": PropTypes.string,
   open: PropTypes.bool,
   active: PropTypes.bool,
   path: PropTypes.string,
@@ -226,6 +256,7 @@ NavItem.propTypes = {
   roles: PropTypes.arrayOf(PropTypes.string),
   titleIcon: PropTypes.any,
   eventTrigger: PropTypes.func,
+  onClick: PropTypes.func,
 };
 
 export default NavItem;
@@ -290,6 +321,12 @@ const StyledNavItem = styled(ListItemButton, {
   };
 
   return {
+    // Keyboard focus on a toggle row (items with children) shows the same
+    // 2 px ring as a link item.
+    "&.Mui-focusVisible": {
+      outline: `2px solid ${theme.palette.primary.main}`,
+      outlineOffset: "-2px",
+    },
     // Root item
     ...(!subItem && {
       ...baseStyles.item,

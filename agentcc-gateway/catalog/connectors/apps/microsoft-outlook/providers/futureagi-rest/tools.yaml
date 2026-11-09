@@ -1,0 +1,480 @@
+# The curated overlay for FutureAGI's Outlook connector over Microsoft Graph
+# v1.0 (mail and calendar). Graph's OpenAPI description lists no scopes per
+# operation, so each tool cites the Learn page whose permissions table names
+# the scope (scopeSource): the narrowest one this provider requests (Mail.Read
+# where the page's least privileged is Mail.ReadBasic, which leaves out the
+# body; Calendars.Read where it is Calendars.ReadBasic). The description's
+# operation summaries are not used: several are wrong (GET /me/messages says
+# "Get open extension").
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/graph-v1.0-openapi.yaml.gz
+tools:
+  # ---------------------------------------------------------------- mail
+  - name: list_messages
+    title: List or search messages
+    description: >-
+      List the signed-in user's messages across folders, newest first, or search them. search is a keyword query
+      whose value includes its double quotes, for example "pizza" or "from:alice@example.com" with the quotes;
+      filter takes OData, for example isRead eq false. Keep results small with select (for example
+      subject,from,receivedDateTime,bodyPreview) and top (1-1000, default 10); the response's @odata.nextLink
+      holds the next page.
+    operation: { operationId: me.ListMessages }
+    params:
+      exclude: [includeHiddenMessages, $skip, $count, $expand]
+      rename:
+        {
+          $top: top,
+          $search: search,
+          $filter: filter,
+          $orderby: orderby,
+          $select: select,
+        }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Mail.Read]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/user-list-messages?view=graph-rest-1.0
+    response:
+      maxBytes: 50000
+
+  - name: list_folder_messages
+    title: List a folder's messages
+    description: >-
+      List the messages of one mail folder, newest first. mailFolder-id is a folder id from list_mail_folders or
+      a well-known name: inbox, drafts, sentitems, deleteditems, archive or junkemail. filter, orderby, select and
+      top (1-1000, default 10) work as in list_messages; @odata.nextLink holds the next page.
+    operation: { operationId: me.mailFolders.ListMessages }
+    params:
+      exclude: [$skip, $count, $expand, $search]
+      rename: { $top: top, $filter: filter, $orderby: orderby, $select: select }
+      describe:
+        mailFolder-id: "A folder id from list_mail_folders, or a well-known folder name such as inbox or sentitems."
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Mail.Read]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/mailfolder-list-messages?view=graph-rest-1.0
+    response:
+      maxBytes: 50000
+
+  - name: get_message
+    title: Read a message
+    description: >-
+      Read one message by its id (from list_messages), with its body, sender, recipients and conversationId.
+    operation: { operationId: me.GetMessages }
+    params:
+      exclude: [$expand, $select]
+      describe:
+        message-id: "The message's id, from list_messages or list_folder_messages."
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Mail.Read]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/message-get?view=graph-rest-1.0
+    response:
+      fields:
+        [
+          id,
+          conversationId,
+          subject,
+          from,
+          toRecipients,
+          ccRecipients,
+          receivedDateTime,
+          isRead,
+          hasAttachments,
+          webLink,
+          body,
+        ]
+      maxBytes: 100000
+
+  - name: list_mail_folders
+    title: List mail folders
+    description: >-
+      List the mailbox's top-level folders, such as Inbox, Drafts and Sent Items, with their ids and unread
+      counts.
+    operation: { operationId: me.ListMailFolders }
+    params:
+      exclude:
+        [
+          includeHiddenFolders,
+          $skip,
+          $count,
+          $expand,
+          $search,
+          $filter,
+          $orderby,
+        ]
+      rename: { $top: top, $select: select }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Mail.Read]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/user-list-mailfolders?view=graph-rest-1.0
+    response:
+      maxBytes: 25000
+
+  - name: create_draft
+    title: Create a draft
+    description: >-
+      Save a new message in Drafts without sending it; send_draft sends it later by its id. The input body is the
+      message, for example {"subject": "Q3 numbers", "body": {"contentType": "text", "content": "Hi Bob, ..."},
+      "toRecipients": [{"emailAddress": {"address": "bob@example.com"}}]}.
+    operation: { operationId: me.CreateMessages }
+    body:
+      fields:
+        [subject, body, toRecipients, ccRecipients, bccRecipients, importance]
+      description: The draft to save.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    posture: ask
+    scopes: [Mail.ReadWrite]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/user-post-messages?view=graph-rest-1.0
+    response:
+      fields: [id, conversationId, subject, toRecipients, isDraft, webLink]
+
+  - name: create_reply_draft
+    title: Draft a reply
+    description: >-
+      Create a reply draft to a message, by its id, in the same conversation, without sending it. Comment is the
+      reply text, for example "Thanks, Thursday at 3pm works.". Returns the draft, whose id send_draft takes.
+    operation: { operationId: me.messages.message.createReply }
+    params:
+      describe:
+        message-id: "The id of the message to reply to."
+    body:
+      fields: [Comment]
+      description: The reply text to start the draft with.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    posture: ask
+    scopes: [Mail.ReadWrite]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/message-createreply?view=graph-rest-1.0
+    response:
+      fields: [id, conversationId, subject, toRecipients, isDraft, webLink]
+
+  - name: send_draft
+    title: Send a draft
+    description: >-
+      Send a draft, by its id (from create_draft or create_reply_draft). A copy is saved in Sent Items.
+    operation: { operationId: me.messages.message.send }
+    params:
+      describe:
+        message-id: "The draft's id."
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [Mail.Send]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/message-send?view=graph-rest-1.0
+
+  - name: send_mail
+    title: Send a message
+    description: >-
+      Send a new message in one call; a copy is saved in Sent Items. The input body is {"Message": {...}}, for
+      example {"Message": {"subject": "Lunch", "body": {"contentType": "text", "content": "Friday at 1?"},
+      "toRecipients": [{"emailAddress": {"address": "bob@example.com"}}]}}.
+    operation: { operationId: me.sendMail }
+    body:
+      fields:
+        [
+          Message.subject,
+          Message.body,
+          Message.toRecipients,
+          Message.ccRecipients,
+          Message.bccRecipients,
+        ]
+      required: [Message.toRecipients]
+      description: The message to send.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [Mail.Send]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0
+
+  - name: reply_to_message
+    title: Reply to the sender
+    description: >-
+      Reply to the sender of a message, by its id, in the same conversation, and send it. Comment is the reply
+      text, for example "Thanks, Thursday at 3pm works.".
+    operation: { operationId: me.messages.message.reply }
+    params:
+      describe:
+        message-id: "The id of the message to reply to."
+    body:
+      fields: [Comment]
+      required: [Comment]
+      description: The reply.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [Mail.Send]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/message-reply?view=graph-rest-1.0
+
+  - name: reply_all
+    title: Reply to everyone
+    description: >-
+      Reply to the sender and every recipient of a message, by its id, in the same conversation, and send it.
+      Comment is the reply text.
+    operation: { operationId: me.messages.message.replyAll }
+    params:
+      describe:
+        message-id: "The id of the message to reply to."
+    body:
+      fields: [Comment]
+      required: [Comment]
+      description: The reply.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [Mail.Send]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/message-replyall?view=graph-rest-1.0
+
+  - name: update_message
+    title: Mark or flag a message
+    description: >-
+      Change a message's read state, categories, flag or importance, by its id, for example {"isRead": true} or
+      {"flag": {"flagStatus": "flagged"}}.
+    operation: { operationId: me.UpdateMessages }
+    params:
+      describe:
+        message-id: "The message's id."
+    body:
+      fields: [isRead, categories, flag, importance]
+      description: The fields to change.
+    annotations:
+      { destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    posture: ask
+    scopes: [Mail.ReadWrite]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/message-update?view=graph-rest-1.0
+    response:
+      fields: [id, isRead, categories, flag, importance]
+
+  - name: move_message
+    title: Move a message
+    description: >-
+      Move a message, by its id, to another folder: DestinationId is a folder id or a well-known name such as
+      archive or deleteditems. A move to deleteditems deletes the message, so this tool is destructive.
+    operation: { operationId: me.messages.message.move }
+    params:
+      describe:
+        message-id: "The message's id."
+    body:
+      fields: [DestinationId]
+      required: [DestinationId]
+      description: Where to move the message.
+    annotations:
+      { destructiveHint: true, idempotentHint: false, openWorldHint: false }
+    posture: deny
+    scopes: [Mail.ReadWrite]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/message-move?view=graph-rest-1.0
+    response:
+      fields: [id, parentFolderId, subject]
+
+  # ------------------------------------------------------------ calendar
+  - name: list_calendars
+    title: List calendars
+    description: >-
+      List the user's calendars, with their ids, names, owners and whether the user can edit each one.
+    operation: { operationId: me.ListCalendars }
+    params:
+      exclude: [$skip, $count, $expand, $search, $filter, $orderby]
+      rename: { $top: top, $select: select }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Calendars.Read]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/user-list-calendars?view=graph-rest-1.0
+    response:
+      maxBytes: 25000
+
+  - name: list_calendar_view
+    title: List events in a time window
+    description: >-
+      List the events of the user's default calendar between startDateTime and endDateTime, with recurring
+      occurrences expanded, for example startDateTime=2026-10-21T00:00:00Z and endDateTime=2026-10-28T00:00:00Z.
+      select (for example subject,start,end,location,attendees,organizer) keeps results small; top is 1-1000;
+      @odata.nextLink holds the next page.
+    operation: { operationId: me.ListCalendarView }
+    params:
+      exclude: [$skip, $count, $expand, $search]
+      rename: { $top: top, $filter: filter, $orderby: orderby, $select: select }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Calendars.Read]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/user-list-calendarview?view=graph-rest-1.0
+    response:
+      maxBytes: 50000
+
+  - name: get_event
+    title: Read an event
+    description: >-
+      Read one event by its id (from list_calendar_view), with its time, location, organizer, attendees and
+      their responses, and its online meeting link.
+    operation: { operationId: me.GetEvents }
+    params:
+      exclude: [$expand, $select]
+      describe:
+        event-id: "The event's id, from list_calendar_view."
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Calendars.Read]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/event-get?view=graph-rest-1.0
+    response:
+      fields:
+        [
+          id,
+          subject,
+          bodyPreview,
+          start,
+          end,
+          location,
+          organizer,
+          attendees,
+          isOnlineMeeting,
+          onlineMeeting,
+          responseStatus,
+          webLink,
+        ]
+      maxBytes: 50000
+
+  - name: get_schedule
+    title: Find free and busy times
+    description: >-
+      Return the free/busy availability of people or rooms between StartTime and EndTime, each
+      {"dateTime": "2026-10-22T09:00:00", "timeZone": "Pacific Standard Time"}, for example
+      Schedules=["bob@example.com"]. AvailabilityViewInterval is the slot length in minutes (default 30).
+    operation: { operationId: me.calendar.getSchedule }
+    body:
+      fields: [Schedules, StartTime, EndTime, AvailabilityViewInterval]
+      required: [Schedules, StartTime, EndTime]
+      description: Whose availability to check, and when.
+    annotations: { readOnlyHint: true, openWorldHint: false }
+    posture: auto
+    scopes: [Calendars.Read]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/calendar-getschedule?view=graph-rest-1.0
+
+  - name: create_event
+    title: Create an event
+    description: >-
+      Create an event in the user's default calendar. The input body is the event, for example
+      {"subject": "Design review", "start": {"dateTime": "2026-10-22T15:00:00", "timeZone": "Pacific Standard
+      Time"}, "end": {...}, "location": {"displayName": "Room 4"}, "attendees": [{"emailAddress": {"address":
+      "bob@example.com"}, "type": "required"}]}. Each attendee gets an invitation; isOnlineMeeting true adds an
+      online meeting.
+    operation: { operationId: me.CreateEvents }
+    body:
+      fields:
+        [
+          subject,
+          body,
+          start,
+          end,
+          location.displayName,
+          attendees.emailAddress,
+          attendees.type,
+          isOnlineMeeting,
+        ]
+      required: [subject, start, end]
+      description: The event to create.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [Calendars.ReadWrite]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/user-post-events?view=graph-rest-1.0
+    response:
+      fields:
+        [id, subject, start, end, location, attendees, webLink, onlineMeeting]
+
+  - name: update_event
+    title: Change an event
+    description: >-
+      Change an event, by its id: the input body holds only the fields to change, for example {"start":
+      {"dateTime": "2026-10-22T16:00:00", "timeZone": "Pacific Standard Time"}, "end": {...}} to move it. If the
+      user organizes it and it has attendees, they get the update.
+    operation: { operationId: me.UpdateEvents }
+    params:
+      describe:
+        event-id: "The event's id."
+    body:
+      fields:
+        [
+          subject,
+          body,
+          start,
+          end,
+          location.displayName,
+          attendees.emailAddress,
+          attendees.type,
+          isOnlineMeeting,
+        ]
+      description: The fields to change.
+    annotations:
+      { destructiveHint: false, idempotentHint: true, openWorldHint: true }
+    posture: ask
+    scopes: [Calendars.ReadWrite]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/event-update?view=graph-rest-1.0
+    response:
+      fields: [id, subject, start, end, location, attendees, webLink]
+
+  - name: accept_event
+    title: Accept an invitation
+    description: >-
+      Accept a meeting invitation, by the event's id. Comment is an optional note to the organizer;
+      SendResponse false accepts without telling the organizer (default true).
+    operation: { operationId: me.events.event.accept }
+    params:
+      describe:
+        event-id: "The event's id."
+    body:
+      fields: [Comment, SendResponse]
+      description: The response.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [Calendars.ReadWrite]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/event-accept?view=graph-rest-1.0
+
+  - name: tentatively_accept_event
+    title: Tentatively accept an invitation
+    description: >-
+      Tentatively accept a meeting invitation, by the event's id. Comment is an optional note to the organizer;
+      SendResponse false responds without telling the organizer (default true).
+    operation: { operationId: me.events.event.tentativelyAccept }
+    params:
+      describe:
+        event-id: "The event's id."
+    body:
+      fields: [Comment, SendResponse]
+      description: The response.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [Calendars.ReadWrite]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/event-tentativelyaccept?view=graph-rest-1.0
+
+  - name: decline_event
+    title: Decline an invitation
+    description: >-
+      Decline a meeting invitation, by the event's id. Comment is an optional note to the organizer;
+      SendResponse false declines without telling the organizer (default true).
+    operation: { operationId: me.events.event.decline }
+    params:
+      describe:
+        event-id: "The event's id."
+    body:
+      fields: [Comment, SendResponse]
+      description: The response.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [Calendars.ReadWrite]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/event-decline?view=graph-rest-1.0
+
+  - name: delete_event
+    title: Delete an event
+    description: >-
+      Delete an event by its id. If the user organizes it, the attendees get a cancellation.
+    operation: { operationId: me.DeleteEvents }
+    params:
+      exclude: [If-Match]
+      describe:
+        event-id: "The event's id."
+    annotations: { destructiveHint: true, openWorldHint: true }
+    posture: deny
+    scopes: [Calendars.ReadWrite]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/event-delete?view=graph-rest-1.0

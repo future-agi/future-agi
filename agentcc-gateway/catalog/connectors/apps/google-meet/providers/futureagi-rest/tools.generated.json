@@ -1,0 +1,380 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/meet/v2/meet-api.json",
+    "sha256": "16594cc9e431d62aea45d1d28f70fc477d370db1fbe099e5610d72cba47b098e"
+  },
+  "tools": [
+    {
+      "name": "get_space",
+      "title": "Get space",
+      "description": "Read an app-created meeting space, for example name=\"spaces/space-fixture\".",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/meetings.space.created"],
+      "operation": {
+        "method": "GET",
+        "path": "/v2/{+name}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^spaces/[^/]+$",
+            "description": "Required. Resource name of the space. Format: `spaces/{space}` or `spaces/{meetingCode}`. `{space}` is the resource identifier for the space. It's a unique, server-generated ID and is case sensitive. For example, `jQCFfuBOdN5z`. `{meetingCode}` is an alias for the space. It's a typeable, unique character string and is non-case sensitive. For example, `abc-mnop-xyz`. The maximum length is 128 characters. A `meetingCode` shouldn't be stored long term as it can become dissociated from a meeting space and can be reused for different meeting spaces in the future. Generally, a `meetingCode` expires 365 days after last use. For more information, see [Learn about meeting codes in Google Meet](https://support.google.com/meet/answer/10710509). For more information, see [How Meet identifies a meeting space](https://developers.google.com/workspace/meet/api/guides/meeting-spaces#identify-meeting-space)."
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false,
+        "x-origin": "https://meet.googleapis.com"
+      }
+    },
+    {
+      "name": "create_space",
+      "title": "Create space",
+      "description": "Create a meeting space with vendor defaults. Pass an empty body object.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/meetings.space.created"],
+      "operation": {
+        "method": "POST",
+        "path": "/v2/spaces"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "description": "Empty request object; vendor defaults only.",
+            "properties": {
+              "config": {
+                "type": "object",
+                "description": "Configuration pertaining to the meeting space.",
+                "properties": {
+                  "accessType": {
+                    "type": "string",
+                    "enum": [
+                      "ACCESS_TYPE_UNSPECIFIED",
+                      "OPEN",
+                      "TRUSTED",
+                      "RESTRICTED"
+                    ],
+                    "description": "Access type of the meeting space that determines who can join without knocking. Default: The user's default access settings. Controlled by the user's admin for enterprise users or RESTRICTED."
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://meet.googleapis.com"
+      }
+    },
+    {
+      "name": "end_conference",
+      "title": "End conference",
+      "description": "End the active conference in spaces/space-fixture. This disrupts participants and requires approval.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "deny",
+      "scopes": ["https://www.googleapis.com/auth/meetings.space.created"],
+      "operation": {
+        "method": "POST",
+        "path": "/v2/{+name}:endActiveConference"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^spaces/[^/]+$",
+            "description": "Required. Resource name of the space. Format: `spaces/{space}`. `{space}` is the resource identifier for the space. It's a unique, server-generated ID and is case sensitive. For example, `jQCFfuBOdN5z`. For more information, see [How Meet identifies a meeting space](https://developers.google.com/workspace/meet/api/guides/meeting-spaces#identify-meeting-space)."
+          },
+          "body": {
+            "type": "object",
+            "description": "Empty request object; vendor defaults only.",
+            "properties": {}
+          }
+        },
+        "required": ["name", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://meet.googleapis.com"
+      }
+    },
+    {
+      "name": "list_conferences",
+      "title": "List conferences",
+      "description": "List conference records for app-created spaces, using pageSize and pageToken.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/meetings.space.created"],
+      "operation": {
+        "method": "GET",
+        "path": "/v2/conferenceRecords"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "type": "string",
+            "description": "Optional. User specified filtering condition in [EBNF format](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form). The following are the filterable fields: * `space.meeting_code` * `space.name` * `start_time` * `end_time` For example, consider the following filters: * `space.name = \"spaces/NAME\"` * `space.meeting_code = \"abc-mnop-xyz\"` * `start_time>=\"2024-01-01T00:00:00.000Z\" AND start_time<=\"2024-01-02T00:00:00.000Z\"` * `end_time IS NULL`"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Optional. Maximum number of conference records to return. The service might return fewer than this value. If unspecified, at most 25 conference records are returned. The maximum value is 100; values above 100 are coerced to 100. Maximum might change in the future."
+          },
+          "pageToken": {
+            "type": "string",
+            "description": "Optional. Page token returned from previous List Call."
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://meet.googleapis.com"
+      }
+    },
+    {
+      "name": "get_conference",
+      "title": "Get conference",
+      "description": "Read a conference record, for example conferenceRecords/conf-fixture.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/meetings.space.created"],
+      "operation": {
+        "method": "GET",
+        "path": "/v2/{+name}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^conferenceRecords/[^/]+$",
+            "description": "Required. Resource name of the conference."
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false,
+        "x-origin": "https://meet.googleapis.com"
+      }
+    },
+    {
+      "name": "list_participants",
+      "title": "List participants",
+      "description": "List participants of conferenceRecords/conf-fixture with a bounded pageSize.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/meetings.space.created"],
+      "operation": {
+        "method": "GET",
+        "path": "/v2/{+parent}/participants"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "string",
+            "pattern": "^conferenceRecords/[^/]+$",
+            "description": "Required. Format: `conferenceRecords/{conference_record}`"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Optional. User specified filtering condition in [EBNF format](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form). The following are the filterable fields: * `earliest_start_time` * `latest_end_time` For example, `latest_end_time IS NULL` returns active participants in the conference."
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum number of participants to return. The service might return fewer than this value. If unspecified, at most 100 participants are returned. The maximum value is 250; values above 250 are coerced to 250. Maximum might change in the future."
+          },
+          "pageToken": {
+            "type": "string",
+            "description": "Page token returned from previous List Call."
+          }
+        },
+        "required": ["parent"],
+        "additionalProperties": false,
+        "x-origin": "https://meet.googleapis.com"
+      }
+    },
+    {
+      "name": "get_participant",
+      "title": "Get participant",
+      "description": "Read a participant by its full conferenceRecords/conf-fixture/participants/person-fixture resource name.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/meetings.space.created"],
+      "operation": {
+        "method": "GET",
+        "path": "/v2/{+name}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^conferenceRecords/[^/]+/participants/[^/]+$",
+            "description": "Required. Resource name of the participant."
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false,
+        "x-origin": "https://meet.googleapis.com"
+      }
+    },
+    {
+      "name": "list_recordings",
+      "title": "List recordings",
+      "description": "List recording metadata for conferenceRecords/conf-fixture; this does not download recording files.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/meetings.space.created"],
+      "operation": {
+        "method": "GET",
+        "path": "/v2/{+parent}/recordings"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "string",
+            "pattern": "^conferenceRecords/[^/]+$",
+            "description": "Required. Format: `conferenceRecords/{conference_record}`"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum number of recordings to return. The service might return fewer than this value. If unspecified, at most 10 recordings are returned. The maximum value is 100; values above 100 are coerced to 100. Maximum might change in the future."
+          },
+          "pageToken": {
+            "type": "string",
+            "description": "Page token returned from previous List Call."
+          }
+        },
+        "required": ["parent"],
+        "additionalProperties": false,
+        "x-origin": "https://meet.googleapis.com"
+      }
+    },
+    {
+      "name": "list_transcripts",
+      "title": "List transcripts",
+      "description": "List transcript resources for conferenceRecords/conf-fixture; use list_transcript_entries to read text.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/meetings.space.created"],
+      "operation": {
+        "method": "GET",
+        "path": "/v2/{+parent}/transcripts"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "string",
+            "pattern": "^conferenceRecords/[^/]+$",
+            "description": "Required. Format: `conferenceRecords/{conference_record}`"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum number of transcripts to return. The service might return fewer than this value. If unspecified, at most 10 transcripts are returned. The maximum value is 100; values above 100 are coerced to 100. Maximum might change in the future."
+          },
+          "pageToken": {
+            "type": "string",
+            "description": "Page token returned from previous List Call."
+          }
+        },
+        "required": ["parent"],
+        "additionalProperties": false,
+        "x-origin": "https://meet.googleapis.com"
+      }
+    },
+    {
+      "name": "list_transcript_entries",
+      "title": "List transcript entries",
+      "description": "Read transcript text entries for a full conferenceRecords/conf-fixture/transcripts/transcript-fixture resource name.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/meetings.space.created"],
+      "operation": {
+        "method": "GET",
+        "path": "/v2/{+parent}/entries"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "string",
+            "pattern": "^conferenceRecords/[^/]+/transcripts/[^/]+$",
+            "description": "Required. Format: `conferenceRecords/{conference_record}/transcripts/{transcript}`"
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum number of entries to return. The service might return fewer than this value. If unspecified, at most 10 entries are returned. The maximum value is 100; values above 100 are coerced to 100. Maximum might change in the future."
+          },
+          "pageToken": {
+            "type": "string",
+            "description": "Page token returned from previous List Call."
+          }
+        },
+        "required": ["parent"],
+        "additionalProperties": false,
+        "x-origin": "https://meet.googleapis.com"
+      }
+    }
+  ]
+}

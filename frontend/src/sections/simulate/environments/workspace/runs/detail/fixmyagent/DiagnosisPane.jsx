@@ -84,16 +84,10 @@ function ThinkingLoader() {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-function summaryOf({ summary }, visibleGoalCount) {
+function summaryOf({ summary }) {
   if (!summary) return "No results for this run yet.";
   const { brokenGoals, brokenCalls, measuredCalls, oneOffs } = summary;
   const also = oneOffs ? `, plus ${plural(oneOffs, "one-off issue")}` : "";
-  if (visibleGoalCount < brokenGoals) {
-    const diagnosis = visibleGoalCount
-      ? `Showing findings for ${plural(visibleGoalCount, "broken goal")}`
-      : "No findings for broken goals yet";
-    return `${diagnosis}${also}.`;
-  }
   if (brokenGoals) {
     return `Your agent broke ${plural(brokenGoals, "goal")} on ${brokenCalls} of ${plural(
       measuredCalls,
@@ -138,10 +132,6 @@ export default function DiagnosisPane({
     );
   }
 
-  const goalsWithFindings = analysis.goals.filter(
-    (goal) => goal.ways?.length > 0,
-  );
-
   return (
     <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
       <Box
@@ -166,7 +156,7 @@ export default function DiagnosisPane({
           />
           <Box>
             <Typography sx={{ typography: "s2" }}>
-              {summaryOf(analysis, goalsWithFindings.length)}
+              {summaryOf(analysis)}
             </Typography>
             {analysis.groupingPending && (
               <Typography
@@ -179,9 +169,9 @@ export default function DiagnosisPane({
         </Stack>
       </Box>
 
-      {goalsWithFindings.length > 0 && (
+      {analysis.goals.length > 0 && (
         <Stack spacing={1.25} sx={{ px: 2.5, pt: 2.5 }}>
-          {goalsWithFindings.map((goal) => (
+          {analysis.goals.map((goal) => (
             <GoalCard key={goal.goal} goal={goal} onViewCalls={onViewCalls} />
           ))}
         </Stack>

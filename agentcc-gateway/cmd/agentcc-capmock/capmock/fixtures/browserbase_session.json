@@ -1,0 +1,16 @@
+{
+  "id": "{{id}}",
+  "createdAt": "{{created}}",
+  "updatedAt": "{{now}}",
+  "projectId": "capmock-project",
+  "startedAt": "{{created}}",
+  "endedAt": "{{ended}}",
+  "expiresAt": "{{expires}}",
+  "status": "{{status}}",
+  "proxyBytes": 0,
+  "avgCpuUsage": 0,
+  "memoryUsage": 0,
+  "keepAlive": false,
+  "region": "us-west-2",
+  "connectUrl": "wss://capmock.invalid/browserbase/{{id}}"
+}

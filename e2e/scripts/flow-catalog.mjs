@@ -9,7 +9,27 @@ const E2E_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CATALOG = path.join(E2E_DIR, "FLOWS.md");
 const REQUIRED = ["id", "area", "userGoal", "steps"];
 
-export function extractFlows(entries) {
+function listingEntries(listing) {
+  // Keep the array API for existing pure callers; the reporter emits an envelope.
+  const { entries, errors = [] } = Array.isArray(listing)
+    ? { entries: listing }
+    : listing;
+  if (errors.length) {
+    const messages = errors.map((error) => {
+      const message =
+        error.message || error.value || error.stack || String(error);
+      const loc = error.location;
+      return loc
+        ? `${message} (${loc.file}:${loc.line}:${loc.column})`
+        : message;
+    });
+    throw new Error(`Flow collection failed:\n${messages.join("\n")}`);
+  }
+  return entries;
+}
+
+export function extractFlows(listing) {
+  const entries = listingEntries(listing);
   const flowTests = entries.filter((e) => e.tags.includes("@flow"));
   if (!flowTests.length)
     throw new Error("no @flow tests found — the catalog cannot be empty");
@@ -56,8 +76,8 @@ export function renderCatalog(flows) {
       lines.push(
         `### ${f.id} — ${f.title.replace(`${f.id}: `, "")}`,
         "",
-        `**Goal:** ${f.userGoal}  `,
-        `**Spec:** \`${f.location}\`  `,
+        `**Goal:** ${f.userGoal}\\`,
+        `**Spec:** \`${f.location}\`\\`,
         `**Tags:** ${f.tags.join(" ") || "—"}`,
         "",
         // The blank line before each list keeps the output prettier-clean, so
@@ -88,9 +108,11 @@ export function renderCatalog(flows) {
 
 function main() {
   const listFile = path.join(os.tmpdir(), `flow-list-${process.pid}.json`);
+  let listingFailure;
   try {
     // The catalog documents which flows exist, independent of what a given run
-    // executes — quarantining or live-LLM-gating a flow must not delete it from FLOWS.md.
+    // executes — quarantining, live-LLM-gating or gateway-profile-gating a flow
+    // must not delete it from FLOWS.md.
     execFileSync(
       "npx",
       [
@@ -108,25 +130,34 @@ function main() {
           FLOW_CATALOG_OUT: listFile,
           E2E_INCLUDE_QUARANTINED: "1",
           E2E_LIVE_LLM: "1",
+          E2E_ALL_GATEWAY_PROFILES: "1",
         },
       },
     );
   } catch (err) {
-    // The reporter always writes the list once it runs, so a missing file means
-    // Playwright failed before collection — a real error, not an empty catalog.
-    if (!existsSync(listFile)) {
-      console.error(err.stderr || err.message);
-      process.exit(1);
-    }
+    listingFailure = err;
   }
-  const listed = readFileSync(listFile, "utf8");
-  rmSync(listFile, { force: true });
   let rendered;
   try {
-    rendered = renderCatalog(extractFlows(JSON.parse(listed)));
+    if (!existsSync(listFile)) {
+      throw new Error(
+        listingFailure?.stderr ||
+          listingFailure?.message ||
+          "Playwright produced no flow listing",
+      );
+    }
+    // Report every collected error BEFORE the empty-catalog check. A nonzero
+    // lister is still a failure even if it wrote an apparently valid partial list.
+    const entries = listingEntries(JSON.parse(readFileSync(listFile, "utf8")));
+    if (listingFailure)
+      throw new Error(listingFailure.stderr || listingFailure.message);
+    rendered = renderCatalog(extractFlows(entries));
   } catch (err) {
     console.error(err.message);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
+  } finally {
+    rmSync(listFile, { force: true });
   }
   if (process.argv.includes("--check")) {
     const committed = readFileSync(CATALOG, "utf8");

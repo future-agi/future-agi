@@ -141,6 +141,9 @@ import {
 } from "src/utils/prototypeObserveUtils";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 import { useParams, useNavigate } from "react-router";
+import { openAddData } from "src/sections/common/AddData/addDataStore";
+import TraceCompareDrawer from "src/sections/common/Trace/TraceCompareDrawer";
+import { readR2Params } from "src/sections/common/Analysis/analysisLinks";
 import axios, { endpoints } from "src/utils/axios";
 
 import { PROJECT_SOURCE } from "src/utils/constants";
@@ -206,6 +209,7 @@ import {
 import CustomColumnDialog from "./CustomColumnDialog";
 import SvgColor from "src/components/svg-color";
 import { ObserveIconButton } from "../SharedComponents";
+import ObserveLinkOrigin from "./ObserveLinkOrigin";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import logger from "src/utils/logger";
 import { useTestDetailSideDrawerStoreShallow } from "src/sections/test-detail/states";
@@ -337,9 +341,6 @@ const CallLogsGrid = lazy(
   () => import("src/sections/agents/CallLogs/CallLogsGrid"),
 );
 const LLMFiltersDrawer = lazy(() => import("./LLMFiltersDrawer"));
-const AddDataset = lazy(
-  () => import("src/components/traceDetailDrawer/addToDataset/add-dataset"),
-);
 const AddTagsPopover = lazy(
   () => import("src/components/traceDetail/AddTagsPopover"),
 );
@@ -710,7 +711,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   );
   const [openColumnConfigure, setOpenColumnConfigure] = useState(false);
   const [columnConfigureAnchor, setColumnConfigureAnchor] = useState(null);
-  const [openAddDataset, setOpenAddDataset] = useState(false);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
   const [tagsBulkItems, setTagsBulkItems] = useState([]);
   const [tagsFetching, setTagsFetching] = useState(false);
@@ -981,6 +981,36 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     () => traceIdsFromGridRowIds(selectedTraces),
     [selectedTraces],
   );
+
+  // R2: `compareTraces=<a>,<b>` opens the trace compare drawer (L1);
+  // `Add to dataset` opens the global Add-data sheet (L5a).
+  const [compareTracesParam, setCompareTracesParam, removeCompareTraces] =
+    useUrlState("compareTraces", null);
+  const compareTraceIds = readR2Params({
+    compareTraces:
+      typeof compareTracesParam === "string" ? compareTracesParam : null,
+  }).compareTraces;
+  const closeTraceCompare = () => removeCompareTraces?.();
+  const r2SelectedTraceIds = () => {
+    if (projectSource === PROJECT_SOURCE.SIMULATOR)
+      return (selectedCallIds || []).filter(Boolean);
+    if (selectedTab === "trace") return selectedTraceIds;
+    const nodes =
+      getLiveGridRefApi(primarySpanGridRef)?.getSelectedNodes?.() || [];
+    return [...new Set(nodes.map((n) => n.data?.trace_id).filter(Boolean))];
+  };
+  const openAddDataForSelection = () =>
+    openAddData({
+      source: {
+        kind: "traces",
+        project_id: observeId,
+        trace_ids: r2SelectedTraceIds(),
+        ...(projectSource !== PROJECT_SOURCE.SIMULATOR &&
+          (selectedTab === "trace" ? allTracesSelected : allSpansSelected) && {
+            select_all: true,
+          }),
+      },
+    });
 
   const {
     openReplaySessionDrawer,
@@ -3245,6 +3275,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       <Helmet>
         <title>Observe - LLM Tracing</title>
       </Helmet>
+      <ObserveLinkOrigin />
       {/* Old date/filter/compare controls — hidden, replaced by ObserveToolbar */}
       <Box
         sx={{
@@ -4194,7 +4225,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       },
                       {
                         id: "dataset",
-                        label: "Move to dataset",
+                        label: "Add to dataset",
                         icon: "mdi:folder-move-outline",
                       },
                       {
@@ -4218,10 +4249,18 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     restrictSimulateToEnvironments,
                   );
                 }
+                const traceCount = traceSelectionCount.count;
                 const all = [
                   {
+                    id: "compare_traces",
+                    label: "Compare 2 traces",
+                    icon: "mdi:compare-horizontal",
+                    disabled: traceCount !== 2 || allTracesSelected,
+                    disabledReason: "Select exactly 2 traces",
+                  },
+                  {
                     id: "dataset",
-                    label: "Move to dataset",
+                    label: "Add to dataset",
                     icon: "mdi:folder-move-outline",
                   },
                   {
@@ -4241,10 +4280,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     requiresSingle: true,
                   },
                 ];
-                // Annotate requires a span — hide on trace tab
+                // Annotate requires a span — hide on trace tab; comparing
+                // traces needs the trace tab.
                 return selectedTab === "trace"
                   ? all.filter((a) => a.id !== "annotate")
-                  : all;
+                  : all.filter((a) => a.id !== "compare_traces");
               })()}
               selectedCount={
                 projectSource === PROJECT_SOURCE.SIMULATOR
@@ -4297,7 +4337,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   if (actionId === "annotation-queue") {
                     setQueueAnchorEl(anchor);
                   } else if (actionId === "dataset") {
-                    setOpenAddDataset(true);
+                    openAddDataForSelection();
                   } else if (actionId === REPLAY_ACTION_ID) {
                     // Mirror the standalone "Replay Calls" button flow
                     if (openReplaySessionDrawer[REPLAY_MODULES.TRACES]) {
@@ -4419,8 +4459,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   }
                 }
                 switch (actionId) {
+                  case "compare_traces": {
+                    const ids = selectedTraceIds.slice(0, 2);
+                    // compareTraces=<a>,<b> (push), as compareTracesHref.
+                    if (ids.length === 2)
+                      setCompareTracesParam(ids.join(","), { replace: false });
+                    break;
+                  }
                   case "dataset":
-                    setOpenAddDataset(true);
+                    openAddDataForSelection();
                     break;
                   case "tags": {
                     // Snapshot the selection's current tags from the grid
@@ -4715,7 +4762,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                               height="16px"
                             />
                           }
-                          onClick={() => setOpenAddDataset(true)}
+                          onClick={openAddDataForSelection}
                           disabled={
                             !RolePermission.DATASETS[PERMISSIONS.UPDATE][
                               role
@@ -4741,51 +4788,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     </CustomTooltip>
                   </Box>
                 </Box>
-                <AddDataset
-                  handleClose={() => {
-                    setOpenAddDataset(false);
-                  }}
-                  actionToDataset={openAddDataset}
-                  selectedTraces={(() => {
-                    if (projectSource === PROJECT_SOURCE.SIMULATOR) {
-                      // Simulator calls are traces under the hood
-                      return (selectedCallIds || []).filter(Boolean);
-                    }
-                    return selectedTraceIds;
-                  })()}
-                  selectedSpans={spanSourceSelection.ids}
-                  currentTab={
-                    projectSource === PROJECT_SOURCE.SIMULATOR
-                      ? "trace"
-                      : selectedTab
-                  }
-                  selectAll={
-                    projectSource === PROJECT_SOURCE.SIMULATOR
-                      ? false
-                      : selectedTab === "trace"
-                        ? allTracesSelected
-                        : allSpansSelected
-                  }
-                  onSuccess={() => {
-                    if (projectSource === PROJECT_SOURCE.SIMULATOR) {
-                      primaryCallLogsGridRef.current?.deselectAll?.();
-                      compareCallLogsGridRef.current?.deselectAll?.();
-                      setSelectedCallIds([]);
-                      return;
-                    }
-                    if (selectedTab === "trace") {
-                      deselectGridRef(primaryTraceGridRef);
-                      if (selectedGraph === "compare") {
-                        deselectGridRef(compareTraceGridRef);
-                      }
-                    } else {
-                      deselectGridRef(primarySpanGridRef);
-                      if (selectedGraph === "compare") {
-                        deselectGridRef(compareSpanGridRef);
-                      }
-                    }
-                  }}
-                />
               </Box>
             </Box>
             {/* end hidden old toolbar */}
@@ -5332,6 +5334,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         </Box>
       </Box>
       {/* Old LLMFiltersDrawer removed — replaced by FilterPanel in ObserveToolbar */}
+      <TraceCompareDrawer
+        open={Boolean(compareTraceIds)}
+        onClose={closeTraceCompare}
+        leftTraceId={compareTraceIds?.[0]}
+        rightTraceId={compareTraceIds?.[1]}
+      />
     </Box>
   );
 };

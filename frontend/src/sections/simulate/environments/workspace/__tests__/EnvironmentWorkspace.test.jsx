@@ -264,7 +264,7 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/job-pending");
 
-    expect(await screen.findByText("Preparing for liftoff")).toBeInTheDocument();
+    expect(await screen.findByText("Loading\u2026")).toBeInTheDocument();
     expect(screen.queryByText("Environment not found")).toBeNull();
   });
 

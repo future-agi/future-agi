@@ -4,7 +4,7 @@ import { AGENT_TYPES } from "src/sections/agents/constants";
 // once we know what kind of agent is being connected. Only the two live agent
 // types (voice, chat) keep rosters; coming-soon types cannot be selected, so
 // their rosters would be dead data. `brand` hexes are each vendor's own mark
-// colour, used to tint the platform chip. The five voice logos live in
+// colour, used to tint the platform chip. The voice logos live in
 // components/platformLogos.js — this module stays svg-free so it is runnable
 // on its own.
 export const HOSTED_PLATFORMS_BY_TYPE = {
@@ -38,28 +38,6 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Phone number",
       idPlaceholder: "+1 415 555 1234",
       keyLabel: "API key",
-    },
-    {
-      id: "bland",
-      name: "Bland.ai",
-      icon: "solar:phone-linear",
-      brand: "#F26D5B",
-      idLabel: "Pathway ID",
-      idPlaceholder: "pathway_9f2c…",
-      keyLabel: "Bland API key",
-      // Not a real connector yet (submit would 400) — surfaced but not selectable.
-      comingSoon: true,
-    },
-    {
-      id: "elevenlabs",
-      name: "ElevenLabs",
-      icon: "solar:soundwave-linear",
-      brand: "#111111",
-      idLabel: "Agent ID",
-      idPlaceholder: "agent_9f2c…",
-      keyLabel: "ElevenLabs API key",
-      // Not a real connector yet (submit would 400) — surfaced but not selectable.
-      comingSoon: true,
     },
     {
       id: "livekit",

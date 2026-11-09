@@ -1,0 +1,12 @@
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1f2933;">
+    <p>Your webhook <strong>{{ endpoint_name }}</strong> was turned off at {{ disabled_at|date:"j M Y H:i" }} UTC
+    because {{ reason }}.</p>
+    <p>Endpoint: {{ endpoint_url }}</p>
+    <p>
+      New deliveries are kept, paused, with their sequence numbers (up to 10,000). When an admin turns the endpoint
+      back on, they can be sent or skipped.
+    </p>
+    <p><a href="{{ base_url }}/dashboard/settings/integrations">Open Settings &gt; Integrations</a></p>
+  </body>
+</html>

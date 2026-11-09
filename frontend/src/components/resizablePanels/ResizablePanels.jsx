@@ -56,6 +56,8 @@ const Divider = ({
       }}
       {...listeners}
       {...attributes}
+      // RS-13: the splitter has a name (dnd-kit makes it a button).
+      aria-label="Resize panels"
     >
       <div
         className="divider-line"

@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -15,9 +13,9 @@ from ai_tools.registry import register_tool
 
 
 class ListApiKeysInput(PydanticBaseModel):
-    key_type: Optional[str] = Field(
+    key_type: str | None = Field(
         default=None,
-        description="Filter by key type: 'system', 'user', or 'mcp'",
+        description="Filter by key type: 'user'",
     )
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
 
@@ -26,7 +24,7 @@ class ListApiKeysInput(PydanticBaseModel):
 class ListApiKeysTool(BaseTool):
     name = "list_api_keys"
     description = (
-        "Lists API keys for the current organization. Shows key prefix (masked), "
+        "Lists only your own personal API keys in the current organization. Shows the first eight characters of each personal API key, with the remaining characters masked, "
         "type, associated workspace, creation date, and enabled status."
     )
     category = "users"
@@ -37,14 +35,18 @@ class ListApiKeysTool(BaseTool):
         from accounts.models.user import OrgApiKey
 
         org = context.organization
+        from accounts.api_key_policy import live_membership
+
+        if live_membership(context.user.pk, org.pk) is None:
+            return ToolResult.error(
+                "Active membership is required.", error_code="PERMISSION_DENIED"
+            )
 
         # Sandbox ingest keys belong to the platform, so they are never listed,
         # whatever ``key_type`` asks for.
-        qs = (
-            OrgApiKey.no_workspace_objects.filter(organization=org)
-            .exclude(type="ingest")
-            .order_by("-created_at")
-        )
+        qs = OrgApiKey.no_workspace_objects.filter(
+            organization=org, user=context.user, type="user"
+        ).order_by("-created_at")
 
         if params.key_type:
             qs = qs.filter(type=params.key_type.lower())

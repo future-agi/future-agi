@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/admission"
 	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
@@ -26,7 +26,7 @@ type Provider struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
-	semaphore  chan struct{}
+	slots      *admission.Limiter
 	headers    map[string]string
 }
 
@@ -37,14 +37,12 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		timeout = 120 * time.Second
 	}
 
-	maxConcurrent := cfg.MaxConcurrent
-	if maxConcurrent == 0 {
-		maxConcurrent = 100
-	}
-
+	// max_concurrent, conn_pool_size and queue_timeout come resolved from the
+	// registry (local or remote defaults); admission and these defaults cover
+	// an instance built from a config that left them unset.
 	poolSize := cfg.ConnPoolSize
-	if poolSize == 0 {
-		poolSize = 100
+	if poolSize <= 0 {
+		poolSize = admission.DefaultConnPoolSize
 	}
 
 	transport := &http.Transport{
@@ -63,12 +61,17 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 			Transport: transport,
 			Timeout:   timeout,
 		},
-		semaphore: make(chan struct{}, maxConcurrent),
-		headers:   cfg.Headers,
+		slots:   admission.New(id, cfg.MaxConcurrent, cfg.QueueTimeout),
+		headers: cfg.Headers,
 	}, nil
 }
 
 func (p *Provider) ID() string { return p.id }
+
+// UpstreamModelName is the id the Messages API translation sends the host
+// for model (providers.UpstreamModelNamer). The native pass-through sends
+// the body's model as it is.
+func (p *Provider) UpstreamModelName(model string) string { return resolveModelName(model) }
 
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
@@ -84,23 +87,24 @@ func (p *Provider) endpoint(path string) string {
 	return config.JoinEndpoint(p.baseURL, config.DefaultAPIPathPrefix, path)
 }
 
+// acquireSemaphore takes one of the entry's upstream slots. Its error, a
+// provider_busy 503 once the queue wait ends or a gateway timeout when ctx
+// ends first, is the call's answer: nothing was sent upstream.
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
-	select {
-	case p.semaphore <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return p.slots.Acquire(ctx)
 }
 
 func (p *Provider) releaseSemaphore() {
-	<-p.semaphore
+	p.slots.Release()
 }
+
+// Admission is the instance's upstream slots (providers.SlotHolder).
+func (p *Provider) Admission() *admission.Limiter { return p.slots }
 
 // ChatCompletion sends a non-streaming chat completion request to Anthropic.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("anthropic: concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -158,7 +162,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer close(errs)
 
 		if err := p.acquireSemaphore(ctx); err != nil {
-			errs <- models.ErrGatewayTimeout("anthropic: concurrency limit reached")
+			errs <- err
 			return
 		}
 		defer p.releaseSemaphore()
@@ -207,6 +211,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			return
 		}
 
+		models.MarkStreamAccepted(ctx)
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -230,11 +235,6 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 			chunk, done, err := state.parseSSELine(currentEvent, data)
 			if err != nil {
-				var apiErr *models.APIError
-				if errors.As(err, &apiErr) {
-					errs <- apiErr
-					return
-				}
 				slog.Warn("anthropic: error parsing stream event",
 					"error", err,
 					"provider", p.id,
@@ -274,7 +274,7 @@ func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error)
 // CreateAnthropicMessage sends a raw Anthropic Messages API request (native pass-through).
 func (p *Provider) CreateAnthropicMessage(ctx context.Context, reqBody []byte, headers map[string]string) ([]byte, int, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, 0, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, 0, err
 	}
 	defer p.releaseSemaphore()
 
@@ -305,7 +305,7 @@ func (p *Provider) CreateAnthropicMessage(ctx context.Context, reqBody []byte, h
 // CountAnthropicTokens sends a raw Anthropic count_tokens request.
 func (p *Provider) CountAnthropicTokens(ctx context.Context, reqBody []byte, headers map[string]string) ([]byte, int, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, 0, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, 0, err
 	}
 	defer p.releaseSemaphore()
 
@@ -336,7 +336,7 @@ func (p *Provider) CountAnthropicTokens(ctx context.Context, reqBody []byte, hea
 // StreamAnthropicMessage sends a streaming native Anthropic Messages API request.
 func (p *Provider) StreamAnthropicMessage(ctx context.Context, reqBody []byte, headers map[string]string) (io.ReadCloser, int, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, 0, models.ErrGatewayTimeout("provider concurrency limit reached")
+		return nil, 0, err
 	}
 	// Semaphore released when caller closes the stream.
 
@@ -361,7 +361,7 @@ func (p *Provider) StreamAnthropicMessage(ctx context.Context, reqBody []byte, h
 		defer resp.Body.Close()
 		p.releaseSemaphore()
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-		return nil, resp.StatusCode, models.ErrUpstreamProvider(resp.StatusCode, string(respBody))
+		return nil, resp.StatusCode, common.NativeHTTPError(resp.StatusCode, respBody)
 	}
 
 	return &semaphoreReadCloser{ReadCloser: resp.Body, release: p.releaseSemaphore}, resp.StatusCode, nil
@@ -408,6 +408,7 @@ func (s *semaphoreReadCloser) Close() error {
 
 // Close releases resources.
 func (p *Provider) Close() error {
+	p.slots.Close()
 	p.httpClient.CloseIdleConnections()
 	return nil
 }

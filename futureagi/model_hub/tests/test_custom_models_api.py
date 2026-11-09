@@ -17,7 +17,6 @@ import uuid
 from unittest.mock import patch
 
 import pytest
-import requests
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -36,6 +35,7 @@ from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
+from tfc.utils.ssrf_guard import SsrfResponse
 
 # Base URL prefix for model_hub endpoints
 BASE_URL = "/model-hub"
@@ -705,7 +705,7 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    @patch("model_hub.utils.utils.requests.post")
+    @patch("model_hub.utils.utils.guarded_post")
     def test_create_custom_provider_base_url_404_asks_for_full_endpoint(
         self, mock_post
     ):
@@ -713,13 +713,13 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
 
         The check POSTs to api_base as given, as the model's own calls do, so a
         bare /v1 base 404s; the raw requests error left the user guessing.
+        The message never repeats the URL (tfc.utils.ssrf_guard.guarded_post
+        and model_hub/tests/test_custom_model_ssrf.py cover the transport).
         """
         api_base = "http://mock-llm:8080/v1"
-        not_found = requests.Response()
-        not_found.status_code = 404
-        not_found.reason = "Not Found"
-        not_found.url = api_base
-        mock_post.return_value = not_found
+        mock_post.return_value = SsrfResponse(
+            status_code=404, headers={}, content=b"", final_url=api_base
+        )
 
         # The payload the Configure Custom Model form sends.
         data = {
@@ -741,14 +741,15 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(mock_post.call_args.args[0], api_base)
         message = response.data["message"]
-        self.assertIn(api_base, message)
+        self.assertNotIn(api_base, message)
+        self.assertIn("answered 404 Not Found.", message)
         self.assertIn("full chat-completions URL", message)
         self.assertIn("/v1/chat/completions", message)
         self.assertFalse(
             CustomAIModel.objects.filter(user_model_id="my-custom-model").exists()
         )
 
-    @patch("model_hub.utils.utils.requests.post")
+    @patch("model_hub.utils.utils.guarded_post")
     def test_create_custom_provider_full_url_404_names_the_model(self, mock_post):
         """A 404 from the full URL also points at the model name.
 
@@ -756,12 +757,12 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
         message must not blame only the URL. It never repeats the body.
         """
         api_base = "http://mock-llm:8080/v1/chat/completions"
-        not_found = requests.Response()
-        not_found.status_code = 404
-        not_found.reason = ""  # the server sent no reason phrase
-        not_found._content = b"internal-body-marker"
-        not_found.url = api_base
-        mock_post.return_value = not_found
+        mock_post.return_value = SsrfResponse(
+            status_code=404,
+            headers={},
+            content=b"internal-body-marker",
+            final_url=api_base,
+        )
 
         data = {
             "model_provider": "custom",

@@ -40,6 +40,7 @@ with workflow.unsafe.imports_passed_through():
     from tfc.temporal.agent_playground.types import (
         OutputSinkConfig,
     )
+    from tfc.temporal.experiments.run_control import ControlledRun
     from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Stop experiment types; Error eval cells types; Error agent cells types
         AnalyzeDependenciesInput,
         CheckStatusInput,
@@ -229,7 +230,7 @@ class ProcessPromptWorkflow:
             batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
 
             # Collect results from this batch
-            for row_id, result in zip(batch_row_ids, batch_results):
+            for row_id, result in zip(batch_row_ids, batch_results, strict=False):
                 if isinstance(result, Exception):
                     failed_count += 1
                 else:
@@ -375,12 +376,12 @@ class RunExperimentWorkflow:
 
             # Step 2 & 3: Launch prompt processing AND base evaluations IN PARALLEL
             # This matches the original Celery behavior
-            all_tasks = []
+            _all_tasks = []
 
             # Step 2: Start child workflows for each prompt_config x model combination
             child_workflow_handles = []
             for prompt_idx, prompt_config in enumerate(prompt_configs):
-                prompt_name = prompt_config.get("name", f"prompt-{prompt_idx}")
+                _prompt_name = prompt_config.get("name", f"prompt-{prompt_idx}")
                 models = prompt_config.get("model", [])
 
                 for model_idx, model in enumerate(models):
@@ -465,7 +466,7 @@ class RunExperimentWorkflow:
                 failed_rows=total_failed_rows,
             )
 
-        except Exception as e:
+        except Exception:
             # Cleanup: Mark any remaining running cells as error
             try:
                 await workflow.execute_activity(
@@ -498,7 +499,7 @@ class RunExperimentWorkflow:
 
 
 @workflow.defn
-class ProcessPromptV2Workflow:
+class ProcessPromptV2Workflow(ControlledRun):
     """
     V2 child workflow to process a single ExperimentPromptConfig.
 
@@ -513,6 +514,9 @@ class ProcessPromptV2Workflow:
     async def run(
         self, input: ProcessPromptV2WorkflowInput
     ) -> ProcessPromptV2WorkflowOutput:
+        await self.bind_control(
+            input.experiment_id, input.experiment_prompt_config_id, "prompt"
+        )
         # Step 1: Setup column + cells
         setup_result = await workflow.execute_activity(
             "setup_prompt_v2_activity",
@@ -549,6 +553,7 @@ class ProcessPromptV2Workflow:
         total_rows = len(row_ids)
 
         if total_rows == 0:
+            await self.complete_control()
             return ProcessPromptV2WorkflowOutput(
                 experiment_id=input.experiment_id,
                 experiment_prompt_config_id=input.experiment_prompt_config_id,
@@ -570,6 +575,7 @@ class ProcessPromptV2Workflow:
         eval_handles = []
 
         for batch_start in range(0, total_rows, batch_size):
+            await self.control_checkpoint(eval_handles)
             batch_end = min(batch_start + batch_size, total_rows)
             batch_row_ids = row_ids[batch_start:batch_end]
 
@@ -594,7 +600,7 @@ class ProcessPromptV2Workflow:
             # Schedule evals for each row:
             # - Completed rows: run eval normally
             # - Failed rows: create eval cells in ERROR state with descriptive message
-            for row_id, result in zip(batch_row_ids, batch_results):
+            for row_id, result in zip(batch_row_ids, batch_results, strict=False):
                 if not isinstance(result, Exception) and result == "COMPLETED":
                     completed_count += 1
                     if eval_template_ids:
@@ -632,6 +638,8 @@ class ProcessPromptV2Workflow:
                             )
                         )
 
+        await self.control_checkpoint(eval_handles)
+
         # All prompt rows are done — update prompt column status immediately
         # so the UI reflects completion while evals may still be running
         await workflow.execute_activity(
@@ -657,6 +665,7 @@ class ProcessPromptV2Workflow:
                 retry_policy=STATUS_CHECK_RETRY_POLICY,
             )
 
+        await self.complete_control()
         return ProcessPromptV2WorkflowOutput(
             experiment_id=input.experiment_id,
             experiment_prompt_config_id=input.experiment_prompt_config_id,
@@ -703,7 +712,7 @@ class ProcessPromptV2Workflow:
 
 
 @workflow.defn
-class ProcessAgentWorkflow:
+class ProcessAgentWorkflow(ControlledRun):
     """
     V2 child workflow to process a single ExperimentAgentConfig.
 
@@ -716,6 +725,9 @@ class ProcessAgentWorkflow:
 
     @workflow.run
     async def run(self, input: ProcessAgentWorkflowInput) -> ProcessAgentWorkflowOutput:
+        await self.bind_control(
+            input.experiment_id, input.experiment_agent_config_id, "agent"
+        )
         # Step 1: Setup agent columns + cells
         setup_result = await workflow.execute_activity(
             "setup_agent_activity",
@@ -747,6 +759,7 @@ class ProcessAgentWorkflow:
         total_rows = len(row_ids)
 
         if total_rows == 0:
+            await self.complete_control()
             return ProcessAgentWorkflowOutput(
                 experiment_id=input.experiment_id,
                 experiment_agent_config_id=input.experiment_agent_config_id,
@@ -770,6 +783,7 @@ class ProcessAgentWorkflow:
             terminal_column_ids = [list(node_column_mapping.values())[-1]]
 
         for batch_start in range(0, total_rows, batch_size):
+            await self.control_checkpoint(eval_handles)
             batch_end = min(batch_start + batch_size, total_rows)
             batch_row_ids = row_ids[batch_start:batch_end]
 
@@ -792,7 +806,7 @@ class ProcessAgentWorkflow:
             # Schedule evals for each row:
             # - Completed rows: run eval normally against each terminal column
             # - Failed rows: create eval cells in ERROR state with descriptive message
-            for row_id, result in zip(batch_row_ids, batch_results):
+            for row_id, result in zip(batch_row_ids, batch_results, strict=False):
                 if not isinstance(result, Exception) and result == "COMPLETED":
                     completed_count += 1
                     if eval_template_ids and terminal_column_ids:
@@ -832,6 +846,8 @@ class ProcessAgentWorkflow:
                                 )
                             )
 
+        await self.control_checkpoint(eval_handles)
+
         # All agent rows are done — update agent output column statuses immediately
         # so the UI reflects completion while evals may still be running
         for col_id in node_column_mapping.values():
@@ -858,6 +874,7 @@ class ProcessAgentWorkflow:
                 retry_policy=STATUS_CHECK_RETRY_POLICY,
             )
 
+        await self.complete_control()
         return ProcessAgentWorkflowOutput(
             experiment_id=input.experiment_id,
             experiment_agent_config_id=input.experiment_agent_config_id,
@@ -887,6 +904,7 @@ class ProcessAgentWorkflow:
                 dataset_id=dataset_id,
                 experiment_id=experiment_id,
                 graph_version_id=graph_version_id,
+                experiment_agent_config_id=experiment_agent_config_id,
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=SETUP_RETRY_POLICY,
@@ -1303,7 +1321,7 @@ class RunExperimentV2Workflow:
             num_prompts = len(prompt_handles)
             num_agents = len(agent_handles)
 
-            for i, result in enumerate(all_results[: num_prompts + num_agents]):
+            for _i, result in enumerate(all_results[: num_prompts + num_agents]):
                 if isinstance(result, Exception):
                     total_failed_rows += 1
                 else:
@@ -1356,7 +1374,7 @@ class RunExperimentV2Workflow:
                 failed_rows=total_failed_rows,
             )
 
-        except Exception as e:
+        except Exception:
             # Cleanup: Mark remaining running cells as error
             try:
                 await workflow.execute_activity(

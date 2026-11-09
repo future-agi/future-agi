@@ -1,0 +1,26 @@
+# The description covers what the default provider, FutureAGI's own
+# connector (futureagi-rest), does under the scopes it requests. Google's MCP
+# server (google-mcp) reads and drafts only.
+schema: "connector-manifest/v1#app"
+id: gmail
+version: 1.1.0
+name: Gmail
+description: "Search and read email, draft and send messages, and label threads."
+vendor:
+  name: Google
+  domains: [google.com, googleapis.com]
+eeCategory: communication
+group: google
+categories: [communication, email]
+tags: [email, mail, google-workspace]
+docsUrl: https://developers.google.com/workspace/gmail/api/guides
+archetype: mailbox
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: vendor.domains
+    url: https://developers.google.com/workspace/gmail/api/reference/rest
+    fetchedAt: 2026-10-21

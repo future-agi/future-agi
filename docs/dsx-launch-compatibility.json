@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 3,
+  "status": "SOURCE_PREPARATION_NOT_ACCEPTANCE",
+  "head": "55039ac76f311dc4c4c0f329268fa74e70cdcbae",
+  "heldDsxAdditions": [
+    "list.organize.folders",
+    "dataset.splits",
+    "dataset.settings:description-tags-and-list-edit-details",
+    "exp.new.splitScope",
+    "evals.dag",
+    "dataset.export:non-csv-formats-only",
+    "dataset.evalVersions:new-latest-choice"
+  ],
+  "retainedLegacy": [
+    "upload",
+    "copy",
+    "synthetic-create-edit-configure",
+    "dataset-switcher",
+    "header-rename",
+    "plain-all-rows-csv",
+    "eval-groups",
+    "eval-create-name-output-threshold",
+    "eval-editor-header",
+    "eval-default-and-numbered-versions-read-save-select",
+    "real-assistant-actions",
+    "account-recovery",
+    "mfa",
+    "personal-keys"
+  ],
+  "withdrawnUnits": [
+    "P749-IMPORT",
+    "P749-SYNTHETIC-ROUTES",
+    "P749-SYNTHETIC-SETTINGS"
+  ],
+  "testOptIn": {
+    "env": "VITE_DSX_CENSUS_B_TEST",
+    "value": "true",
+    "appBuildConstant": false,
+    "unitBuildConstant": true,
+    "scope": "Five census holds only; claims and all other gates still apply",
+    "browserProfile": "NOT_IMPLEMENTED_KNOWN_NOT_RUN"
+  },
+  "knownNotRun": [
+    "DATA-E2E-020",
+    "DATA-E2E-004",
+    "DATA-E2E-008",
+    "EXP-E2E-006",
+    "EVAL-E2E-072",
+    "EVAL-E2E-073"
+  ],
+  "qualification": "NOT_RUN; Sol and main row review pending; no commits"
+}

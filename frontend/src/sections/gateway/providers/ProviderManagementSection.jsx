@@ -1,69 +1,134 @@
-import React, { useState, useCallback } from "react";
-import { Box, Stack, Tab, Tabs, Card, Skeleton } from "@mui/material";
+import React, { useCallback, useMemo, useState } from "react";
+import Button from "@mui/material/Button";
+import Skeleton from "@mui/material/Skeleton";
+import Tab from "@mui/material/Tab";
+import Typography from "@mui/material/Typography";
 import { useNavigate, useParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
-import SectionHeader from "../components/SectionHeader";
-import { GATEWAY_ICONS } from "../constants/gatewayIcons";
+
+import { CustomTabs } from "src/components/tabs/tabs";
+import { paths } from "src/routes/paths";
+
+import { GatewayEmptyState, GatewayPageFrame } from "../components/frame";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayContext } from "../context/useGatewayContext";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
+import AddProviderDialog from "./AddProviderDialog";
+import CacheStatusView from "./CacheStatusView";
+import ProviderList from "./ProviderList";
+import RoutingConfigView from "./RoutingConfigView";
 import {
   useGatewayConfig,
   useProviderHealth,
   useReloadConfig,
 } from "./hooks/useGatewayConfig";
 import { useOrgConfig } from "./hooks/useOrgConfig";
-import { useGatewayContext } from "../context/useGatewayContext";
+import { buildProviderRows } from "./provider-rows";
+import CreditBalanceChip from "./ui/CreditBalanceChip";
+import {
+  CACHE_OFF_LINE,
+  providerTabIndex,
+  providerTabsFor,
+} from "./providerTabs";
+import { sectionEnforcement } from "../settings/sectionEnforcement";
+import FaIcon from "./ui/FaIcon";
 
-import { useAuthContext } from "src/auth/hooks";
-import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
-import ProviderHealthTable from "./ProviderHealthTable";
-import ProviderConfigView from "./ProviderConfigView";
-import RoutingConfigView from "./RoutingConfigView";
-import CacheStatusView from "./CacheStatusView";
-import AddProviderDialog from "./AddProviderDialog";
-
-const TAB_SLUGS = ["health", "config", "routing", "cache"];
-
-function tabSlugToIndex(slug) {
-  const idx = TAB_SLUGS.indexOf(slug);
-  return idx >= 0 ? idx : 0;
+// The API's error text (Django answers { result: "..." }) or axios's.
+function readError(error) {
+  if (typeof error?.result === "string") return error.result;
+  return error?.message || "";
 }
 
-const ProviderManagementSection = () => {
-  const { role } = useAuthContext();
-  const canWrite =
-    RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT][role];
+// Providers & keys > Providers: the org's own provider keys (BYOK) and how
+// the gateway reaches each one, on the gateway page frame. Adding, editing
+// and removing a provider, the routing and cache writes, and Reload config
+// (as on Gateway settings) act on the org's gateway config: Owner or Admin
+// only (useGatewayAdmin, the backend's is_gateway_admin). Everyone sees the
+// controls; for a Member or a Viewer they are disabled and say why. Every
+// read stays open.
+export default function ProviderManagementSection() {
+  const { canEdit } = useGatewayAdmin();
   const { tab: tabSlug } = useParams();
   const navigate = useNavigate();
-  const tab = tabSlugToIndex(tabSlug);
+  const [addOpen, setAddOpen] = useState(false);
+
+  const {
+    gatewayId,
+    isLoading: gatewayLoading,
+    managedOffered,
+  } = useGatewayContext();
+  // The page shows its own error state for this read, so no app-wide toast.
+  const configQuery = useGatewayConfig(gatewayId, {
+    meta: { errorHandled: true },
+  });
+  const orgConfigQuery = useOrgConfig();
+  const healthQuery = useProviderHealth(gatewayId);
+  const reload = useReloadConfig();
+
+  const config = configQuery.data;
+  // Cache stays visible; the off-state panel shows one notice.
+  const cacheOff = sectionEnforcement(configQuery, "cache") === "not_enforced";
+  const TABS = providerTabsFor();
+  const tabSlugShown = TABS[providerTabIndex(TABS, tabSlug)].slug;
+  const tab = providerTabIndex(TABS, tabSlug);
+  const rows = useMemo(
+    () =>
+      config || orgConfigQuery.data
+        ? buildProviderRows(config, orgConfigQuery.data, healthQuery.data)
+        : undefined,
+    [config, orgConfigQuery.data, healthQuery.data],
+  );
+  const loading =
+    gatewayLoading || configQuery.isLoading || orgConfigQuery.isLoading;
+  const failed = configQuery.isError && !orgConfigQuery.data;
+
+  // Routing and Cache are forms over the gateway's stored config. Until it
+  // is read they show nothing to edit: a default must never pass for a
+  // stored value, and an edit made early must not be wiped when the read
+  // lands. A failed read says so, with Retry.
+  const configForm = (form) => {
+    if (config) return form;
+    if (configQuery.isError) {
+      const reason = readError(configQuery.error);
+      return (
+        <GatewayEmptyState
+          icon="providers"
+          title="The gateway config could not be loaded"
+          description={`The gateway's config did not load${
+            reason ? `: ${reason}` : ""
+          }. Check that the gateway is reachable, then retry.`}
+          actionLabel="Retry"
+          onAction={() => configQuery.refetch()}
+        />
+      );
+    }
+    return (
+      <Skeleton
+        variant="rounded"
+        height={320}
+        data-testid="provider-config-loading"
+      />
+    );
+  };
 
   const handleTabChange = useCallback(
-    (_, newIndex) => {
-      if (newIndex === 0) {
-        navigate("/dashboard/gateway/providers", { replace: true });
-      } else {
-        navigate(`/dashboard/gateway/providers/${TAB_SLUGS[newIndex]}`, {
-          replace: true,
-        });
-      }
+    (_, index) => {
+      const slug = TABS[index].slug;
+      navigate(
+        slug
+          ? `${paths.dashboard.gateway.providers}/${slug}`
+          : paths.dashboard.gateway.providers,
+        { replace: true },
+      );
     },
-    [navigate],
+    [navigate, TABS],
   );
-  const [addProviderOpen, setAddProviderOpen] = useState(false);
-
-  const { gatewayId, isLoading: gwLoading } = useGatewayContext();
-
-  const { data: config, isLoading: configLoading } =
-    useGatewayConfig(gatewayId);
-  const { data: orgConfig, isLoading: orgConfigLoading } = useOrgConfig();
-  const { data: providerHealth, isLoading: healthLoading } =
-    useProviderHealth(gatewayId);
-  const reloadMutation = useReloadConfig();
-
-  const isLoading =
-    gwLoading || configLoading || healthLoading || orgConfigLoading;
 
   const handleReload = () => {
-    if (!gatewayId) return;
-    reloadMutation.mutate(gatewayId, {
+    if (!canEdit || !gatewayId) return;
+    // A reload the gateway did not apply is reported once, as a warning, by
+    // useGatewayConfigWrite; neither toast here runs for it.
+    reload.mutate(gatewayId, {
       onSuccess: () => {
         enqueueSnackbar("Configuration reloaded", { variant: "success" });
       },
@@ -73,109 +138,98 @@ const ProviderManagementSection = () => {
     });
   };
 
-  if (isLoading) {
-    return (
-      <Box p={3}>
-        <Stack direction="row" justifyContent="space-between" mb={3}>
-          <Skeleton width={220} height={40} />
-          <Stack direction="row" spacing={1}>
-            <Skeleton width={120} height={36} variant="rounded" />
-            <Skeleton width={120} height={36} variant="rounded" />
-          </Stack>
-        </Stack>
-        <Skeleton width="50%" height={40} sx={{ mb: 3 }} />
-        <Card>
-          {[...Array(4)].map((_, i) => (
-            <Stack
-              key={i}
-              direction="row"
-              spacing={2}
-              sx={{
-                px: 2,
-                py: 1.5,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Skeleton width="20%" height={20} />
-              <Skeleton width="15%" height={20} />
-              <Skeleton width="25%" height={20} />
-              <Skeleton width="15%" height={20} />
-              <Skeleton width="15%" height={20} />
-            </Stack>
-          ))}
-        </Card>
-      </Box>
-    );
-  }
-
   return (
-    <Box p={3}>
-      <SectionHeader
-        icon={GATEWAY_ICONS.providers}
-        title="Providers"
-        subtitle="Manage LLM providers, routing rules, and cache settings"
-        actions={[
-          ...(canWrite
-            ? [
-                {
-                  label: "Add Provider",
-                  variant: "contained",
-                  size: "small",
-                  icon: "mdi:plus",
-                  onClick: () => setAddProviderOpen(true),
-                },
-              ]
-            : []),
-          {
-            label: reloadMutation.isPending ? "Reloading..." : "Reload Config",
-            variant: "outlined",
-            size: "small",
-            icon: "mdi:refresh",
-            onClick: handleReload,
-            disabled: reloadMutation.isPending,
-          },
-        ]}
-      />
-
-      <Tabs
+    <GatewayPageFrame
+      title="Providers"
+      description="Your own provider keys, and how the gateway reaches each provider."
+      testId="gateway-providers-page"
+      actions={
+        <>
+          <CreditBalanceChip />
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              variant="outlined"
+              startIcon={<FaIcon name="reload" />}
+              onClick={handleReload}
+              disabled={!canEdit || !gatewayId || reload.isPending}
+            >
+              {reload.isPending ? "Reloading..." : "Reload config"}
+            </Button>
+          </GatewayAdminOnly>
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<FaIcon name="add" />}
+              onClick={() => setAddOpen(true)}
+              disabled={!canEdit}
+            >
+              Add provider
+            </Button>
+          </GatewayAdminOnly>
+        </>
+      }
+    >
+      <CustomTabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        variant="scrollable"
+        allowScrollButtonsMobile
+        sx={{ minHeight: 36, borderBottom: 1, borderColor: "divider" }}
       >
-        <Tab label="Provider Health" />
-        <Tab label="Provider Config" />
-        <Tab label="Routing" />
-        <Tab label="Cache" />
-      </Tabs>
+        {TABS.map((t) => (
+          <Tab
+            key={t.label}
+            label={t.label}
+            sx={{ minHeight: 36, textTransform: "none" }}
+          />
+        ))}
+      </CustomTabs>
 
-      {tab === 0 && (
-        <ProviderHealthTable
-          providerHealth={providerHealth}
-          orgConfig={orgConfig}
-        />
+      {cacheOff && tabSlugShown !== "cache" && (
+        <Typography typography="s2" color="text.secondary">
+          {CACHE_OFF_LINE}
+        </Typography>
       )}
-      {tab === 1 && (
-        <ProviderConfigView
-          config={config}
-          orgConfig={orgConfig}
-          gatewayId={gatewayId}
-        />
-      )}
-      {tab === 2 && <RoutingConfigView config={config} gatewayId={gatewayId} />}
-      {tab === 3 && <CacheStatusView config={config} gatewayId={gatewayId} />}
+
+      {tab === 0 &&
+        (failed ? (
+          <GatewayEmptyState
+            icon="providers"
+            title="Providers could not be loaded"
+            description={`The gateway's provider list did not load${
+              readError(configQuery.error)
+                ? `: ${readError(configQuery.error)}`
+                : ""
+            }. Check that the gateway is reachable, then retry.`}
+            actionLabel="Retry"
+            onAction={() => configQuery.refetch()}
+          />
+        ) : (
+          <ProviderList
+            rows={rows}
+            loading={loading}
+            gatewayId={gatewayId}
+            canWrite={canEdit}
+            onAdd={() => setAddOpen(true)}
+            managedOffered={managedOffered}
+            orgProviders={healthQuery.data?.providers}
+          />
+        ))}
+      {tabSlugShown === "routing" &&
+        configForm(<RoutingConfigView config={config} gatewayId={gatewayId} />)}
+      {tabSlugShown === "cache" &&
+        configForm(<CacheStatusView config={config} gatewayId={gatewayId} />)}
 
       <AddProviderDialog
-        open={addProviderOpen}
-        onClose={() => setAddProviderOpen(false)}
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
         gatewayId={gatewayId}
         existingNames={Object.keys({
-          ...orgConfig?.providers,
+          ...orgConfigQuery.data?.providers,
           ...config?.providers,
         })}
       />
-    </Box>
+    </GatewayPageFrame>
   );
-};
-
-export default ProviderManagementSection;
+}

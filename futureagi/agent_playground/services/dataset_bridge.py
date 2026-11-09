@@ -151,16 +151,27 @@ def commit_draft_prompt_versions(version: GraphVersion) -> int:
     When a graph version is activated, any prompt versions still in draft
     state should be marked as committed (is_draft=False).
 
-    Returns the number of PromptVersions updated.
+    Each draft is committed through the one prompt writer, so graph activation publishes one
+    prompt.version.created webhook event per version (webhooks DESIGN.md section 14.3).
+
+    Returns the number of PromptVersions committed.
     """
     from model_hub.models.run_prompt import PromptVersion
+    from model_hub.services.prompt_label import commit_versions
 
-    return PromptVersion.no_workspace_objects.filter(
-        prompt_template_nodes__node__graph_version=version,
-        prompt_template_nodes__node__deleted=False,
-        prompt_template_nodes__deleted=False,
-        is_draft=True,
-    ).update(is_draft=False)
+    drafts = (
+        PromptVersion.no_workspace_objects.filter(
+            prompt_template_nodes__node__graph_version=version,
+            prompt_template_nodes__node__deleted=False,
+            prompt_template_nodes__deleted=False,
+            is_draft=True,
+        )
+        .distinct()
+        .order_by("created_at", "id")
+    )
+    # The writer locks the drafts by id before it commits each one (its one lock order), so this cannot deadlock
+    # against a prompt delete that locks the same versions.
+    return commit_versions(drafts)
 
 
 def activate_version_and_sync(

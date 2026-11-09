@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 import structlog
 from django.db import transaction
+from django.utils import timezone
 
 from accounts.models.workspace import Workspace
 
@@ -36,7 +37,6 @@ from tracer.models.observation_span import (
 )
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.helper import (
     FieldConfig,
@@ -2180,11 +2180,9 @@ def evaluate_observation_span(
         ) from None
 
     # mark all previous eval_logger as deleted
-    soft_delete_eval_results(
-        EvalLogger.objects.filter(
-            observation_span=observation_span, custom_eval_config=custom_eval_config
-        )
-    )
+    EvalLogger.objects.filter(
+        observation_span=observation_span, custom_eval_config=custom_eval_config
+    ).update(deleted=True, deleted_at=timezone.now())
 
     try:
         run_params = _process_mapping(
@@ -2322,13 +2320,11 @@ def evaluate_observation_span_observe(
         return
 
     # mark all previous eval_logger as deleted
-    soft_delete_eval_results(
-        EvalLogger.objects.filter(
-            observation_span=observation_span,
-            custom_eval_config=custom_eval_config,
-            eval_task_id=eval_task_id,
-        )
-    )
+    EvalLogger.objects.filter(
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        eval_task_id=eval_task_id,
+    ).update(deleted=True, deleted_at=timezone.now())
 
     try:
         run_params = _process_mapping(
@@ -2485,157 +2481,143 @@ def eval_observation_span_runner(observation_span_id, eval_tags):
         observation_span.save()
 
 
+def eval_result_state(eval_log):
+    """Classify lifecycle before inspecting any retained quality output."""
+    status = str(getattr(eval_log, "status", "") or "").strip().lower()
+    if (
+        getattr(eval_log, "error", False)
+        or str(getattr(eval_log, "output_str", "") or "").strip().lower() == "error"
+        or status
+        in {"errored", "error", "failed", "rate_limited", "insufficient_credits"}
+    ):
+        return "error"
+    if getattr(eval_log, "skipped_reason", None) or status == "skipped":
+        return "skipped"
+    if status in {"pending", "running"}:
+        return status
+    return "completed" if status == "completed" else "unknown"
+
+
+def eval_quality_value(eval_log, output_type=None):
+    """Return a valid completed result, preserving zero/False; otherwise None.
+
+    Numeric scores use the existing 0..100 scale. Arbitrary text is not a
+    score; only the historic Passed/Failed spellings are numeric results.
+    An empty choices list is the model default, not evidence of a result.
+    """
+    from math import isfinite
+    from numbers import Real
+
+    if eval_result_state(eval_log) != "completed":
+        return None
+    boolean = getattr(eval_log, "output_bool", None)
+    number = getattr(eval_log, "output_float", None)
+    choices = getattr(eval_log, "output_str_list", None)
+    if output_type in (None, "bool") and isinstance(boolean, bool):
+        return 100 if boolean else 0
+    if (
+        output_type in (None, "float")
+        and isinstance(number, Real)
+        and not isinstance(number, bool)
+        and isfinite(number)
+    ):
+        return min(max(number * 100, 0), 100) if output_type is None else number * 100
+    if (
+        output_type in (None, "str_list")
+        and isinstance(choices, list)
+        and choices
+        and all(isinstance(choice, str) for choice in choices)
+    ):
+        return choices
+    if output_type is None:
+        text = str(getattr(eval_log, "output_str", "") or "").strip().lower()
+        if text in {"passed", "failed"}:
+            return 100 if text == "passed" else 0
+    return None
+
+
+def eval_quality_counts(evals, output_type=None):
+    """Execution errors / terminal attempts, independent of quality failures.
+
+    unscored_count includes every attempt without a valid quality result.
+    completed_count includes completed non-numeric results; pending, running,
+    skipped and unknown states are excluded from the execution error rate.
+    """
+    counts = {
+        "count": len(evals),
+        "scored_count": 0,
+        "unscored_count": 0,
+        "completed_count": 0,
+        "error_count": 0,
+        "pending_count": 0,
+        "running_count": 0,
+        "skipped_count": 0,
+        "failed_count": 0,
+    }
+    for log in evals:
+        state = eval_result_state(log)
+        if state != "unknown":
+            counts[state + "_count"] += 1
+        value = eval_quality_value(log, output_type)
+        if value is not None:
+            counts["scored_count"] += 1
+            if not isinstance(value, list) and value < 30:
+                counts["failed_count"] += 1
+        else:
+            counts["unscored_count"] += 1
+    terminal = counts["error_count"] + counts["completed_count"]
+    counts["error_rate"] = (
+        round(counts["error_count"] * 100 / terminal, 2) if terminal else None
+    )
+    return counts
+
+
 def score_evals(evals: list):
-    """
-    Calculate average score for a list of EvalLogger entries.
+    """Quality-only average (or choices); no valid results is unscored/null."""
+    evals = list(evals)
+    scores, choices, grouped = [], [], {}
+    for log in evals:
+        config = log.custom_eval_config
+        key = str(config.id) if config else None
+        grouped.setdefault(key, []).append(log)
+        value = eval_quality_value(log)
+        if isinstance(value, list):
+            choices.extend(choice for choice in value if choice not in choices)
+        elif value is not None:
+            scores.append(value)
 
-    Args:
-        evals: List of EvalLogger objects
-    Returns:
-        float: Average score (0-100) or 0 if no valid evaluations
-    """
-    if not evals:
-        return {
-            "avg_score": 0,
-            "eval_response_data": {},
+    response = {}
+    for key, logs in grouped.items():
+        config = logs[0].custom_eval_config
+        current = {
+            **eval_quality_counts(logs),
+            "passed_count": 0,
+            "failed_count": 0,
+            "failed_traces_count": 0,
+            "failed_traces_ids": [],
+            "name": "Low " + (config.name if config else "Unknown"),
         }
-
-    total_count = len(evals)
-    valid_scores = []
-    valid_scores_list = []
-    eval_response_data = {}
-
-    for eval_log in evals:
-        # if eval_log.eval_id is None:
-        #     continue
-
-        custom_eval_config = eval_log.custom_eval_config
-
-        if custom_eval_config and custom_eval_config.id not in eval_response_data:
-            eval_response_data[str(custom_eval_config.id)] = {
-                "passed_count": 0,
-                "failed_count": 0,
-                "count": 0,
-                "failed_traces_count": 0,
-                "failed_traces_ids": [],
-                "name": "Low " + custom_eval_config.name,
-            }
-
-        eval_response_data[str(custom_eval_config.id)]["count"] += 1
-        eval_response_data[str(custom_eval_config.id)]["name"] = (
-            "Low " + custom_eval_config.name
-        )
-
-        # Handle boolean outputs (Pass/Fail)
-        if eval_log.output_bool is not None:
-            if eval_log.output_bool:
-                valid_scores.append(100)
-                eval_response_data[str(custom_eval_config.id)]["passed_count"] += 1
+        for log in logs:
+            value = eval_quality_value(log)
+            if value is None or isinstance(value, list):
+                continue
+            if value >= 30:
+                current["passed_count"] += 1
             else:
-                valid_scores.append(0)
-                eval_response_data[str(custom_eval_config.id)]["failed_count"] += 1
+                current["failed_count"] += 1
+                trace_id = getattr(getattr(log, "trace", None), "id", None)
                 if (
-                    eval_log.trace.id
-                    not in eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ]
+                    trace_id is not None
+                    and trace_id not in current["failed_traces_ids"]
                 ):
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_count"
-                    ] += 1
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ].append(eval_log.trace.id)
-            continue
-
-        # Handle float outputs (direct scores)
-        if eval_log.output_float is not None:
-            # Ensure score is between 0-100
-            score = min(max(eval_log.output_float * 100, 0), 100)
-            valid_scores.append(score)
-            if score >= 30:
-                eval_response_data[str(custom_eval_config.id)]["passed_count"] += 1
-            else:
-                eval_response_data[str(custom_eval_config.id)]["failed_count"] += 1
-                if (
-                    eval_log.trace.id
-                    not in eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ]
-                ):
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_count"
-                    ] += 1
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ].append(eval_log.trace.id)
-            continue
-
-        # Handle string outputs ("Passed"/"Failed")
-        if eval_log.output_str:
-            if eval_log.output_str.lower() == "passed":
-                valid_scores.append(100)
-                eval_response_data[str(custom_eval_config.id)]["passed_count"] += 1
-            elif (
-                eval_log.output_str.lower() == "failed"
-                or eval_log.output_str.lower() == "error"
-            ):
-                valid_scores.append(0)
-                eval_response_data[str(custom_eval_config.id)]["failed_count"] += 1
-                if (
-                    eval_log.trace.id
-                    not in eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ]
-                ):
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_count"
-                    ] += 1
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ].append(eval_log.trace.id)
-            else:
-                valid_scores.append(100)
-                eval_response_data[str(custom_eval_config.id)]["passed_count"] += 1
-
-            continue
-
-        if eval_log.output_str_list:
-            unique_values = set()
-            if isinstance(eval_log.output_str_list, list):
-                unique_values.update(eval_log.output_str_list)
-                valid_scores_list.extend(list(unique_values))
-                valid_scores_list = list(set(valid_scores_list))
-                eval_response_data[str(custom_eval_config.id)]["passed_count"] += 1
-            else:
-                eval_response_data[str(custom_eval_config.id)]["failed_count"] += 1
-                if (
-                    eval_log.trace.id
-                    not in eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ]
-                ):
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_count"
-                    ] += 1
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ].append(eval_log.trace.id)
-
-    # Calculate average score
-    if len(valid_scores) > 0:
-        return {
-            "avg_score": round(sum(valid_scores) / total_count, 2),
-            "eval_response_data": eval_response_data,
-        }
-
-    if len(valid_scores_list) > 0:
-        return {
-            "avg_score": valid_scores_list,
-            "eval_response_data": eval_response_data,
-        }
-
-    return {"avg_score": 0, "eval_response_data": eval_response_data}
+                    current["failed_traces_ids"].append(trace_id)
+        current["failed_traces_count"] = len(current["failed_traces_ids"])
+        response[key] = current
+    return {
+        "avg_score": round(sum(scores) / len(scores), 2) if scores else choices or None,
+        "eval_response_data": response,
+        **eval_quality_counts(evals),
+    }
 
 
 def avg_latency(evals: list):
@@ -2694,20 +2676,14 @@ def avg_tokens(evals: list):
 
 
 def score_categorical(evals: list, value):
-    if not evals:
-        return {
-            "avg_score": 0,
-        }
-    passed_count = 0
-
-    total_count = len(evals)
-
-    for eval_log in evals:
-        if eval_log.output_str_list:
-            if value in eval_log.output_str_list:
-                passed_count += 1
-
-    return round(passed_count / total_count, 2) * 100 if total_count > 0 else 0
+    """Percentage within valid completed choice results, or None if unscored."""
+    choices = [eval_quality_value(log, "str_list") for log in evals]
+    choices = [choice for choice in choices if choice is not None]
+    return (
+        round(sum(value in choice for choice in choices) * 100 / len(choices), 2)
+        if choices
+        else None
+    )
 
 
 # ============================================================================

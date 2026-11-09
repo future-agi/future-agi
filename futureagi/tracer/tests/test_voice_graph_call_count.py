@@ -594,7 +594,7 @@ def test_unaffordable_voice_membership_chart_renders_through_the_worker(
     assert enqueue.call_count == 1
     task = enqueue.call_args.kwargs["kwargs"]
     namespaces = {
-        "EVAL": "observe-eval-graph",
+        "EVAL": "observe-eval-graph-nk20-v1",
         "ANNOTATION": "observe-annotation-graph",
     }
     assert task["namespace"] == namespaces[metric_type]

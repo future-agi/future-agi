@@ -1,0 +1,71 @@
+# Linear's MCP server with OAuth from its own authorization server, which
+# registers clients dynamically or by a client ID metadata document. Its
+# clients are not Linear OAuth applications, so it is its own client group.
+schema: "connector-manifest/v1#provider"
+app: linear
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.linear.app/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.linear.app/authorize
+    tokenUrl: https://mcp.linear.app/token
+    scopes: [read, write]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://mcp.linear.app/token
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [cimd, dcr]
+    clientGroup: linear-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+  - fact: transport.variant
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.linear.app/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.linear.app/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://mcp.linear.app/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.pkce
+    url: https://mcp.linear.app/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.revocation.url
+    url: https://mcp.linear.app/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://mcp.linear.app/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+x-omega: { ossId: linear, ee: exclude }

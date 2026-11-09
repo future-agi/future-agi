@@ -97,6 +97,15 @@ func (re *RaceExecutor) Execute(ctx context.Context, targets []RoutingTarget, ca
 
 	// Race: fan out to all eligible targets.
 	raceCtx, raceCancel := context.WithCancel(ctx)
+	// The delayed cancel gives in-flight calls their cleanup grace period.
+	// Once every call has returned, always release the context immediately.
+	defer raceCancel()
+	var cancelTimer *time.Timer
+	defer func() {
+		if cancelTimer != nil {
+			cancelTimer.Stop()
+		}
+	}()
 	resultCh := make(chan raceResult, len(eligible))
 
 	var wg sync.WaitGroup
@@ -135,7 +144,6 @@ func (re *RaceExecutor) Execute(ctx context.Context, targets []RoutingTarget, ca
 				Err:        res.err,
 			})
 			if failures == len(eligible) {
-				raceCancel()
 				return nil, res.err
 			}
 			continue
@@ -145,11 +153,9 @@ func (re *RaceExecutor) Execute(ctx context.Context, targets []RoutingTarget, ca
 			// First success wins.
 			r := res
 			winner = &r
-			// Cancel remaining after a short delay for graceful cleanup.
-			go func() {
-				time.Sleep(re.cancelDelay)
-				raceCancel()
-			}()
+			// Cancel remaining after a short delay for graceful cleanup. Stop
+			// the timer on return if all providers finish before the delay.
+			cancelTimer = time.AfterFunc(re.cancelDelay, raceCancel)
 		} else {
 			// Losers that succeeded.
 			losers = append(losers, raceLossSummary{
@@ -160,7 +166,6 @@ func (re *RaceExecutor) Execute(ctx context.Context, targets []RoutingTarget, ca
 	}
 
 	if winner == nil {
-		raceCancel()
 		return nil, fmt.Errorf("all %d racing providers failed", len(eligible))
 	}
 

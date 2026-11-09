@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   CardContent,
-  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -89,7 +88,6 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
   const { mutate: archiveQueue, isPending: isArchiving } =
     useArchiveAnnotationQueue();
   const isPending = isUpdating || isStatusUpdating;
-
 
   const handleArchive = () => {
     navigate("/dashboard/annotations/queues");
@@ -452,50 +450,6 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                           value="manual"
                           control={<Radio size="small" />}
                           label="Manual"
-                        />
-                        <FormControlLabel
-                          value="round_robin"
-                          disabled
-                          control={<Radio size="small" />}
-                          label={
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              spacing={1}
-                            >
-                              <Typography variant="body2" color="text.disabled">
-                                Round Robin
-                              </Typography>
-                              <Chip
-                                label="Coming soon"
-                                size="small"
-                                variant="outlined"
-                                color="primary"
-                              />
-                            </Stack>
-                          }
-                        />
-                        <FormControlLabel
-                          value="load_balanced"
-                          disabled
-                          control={<Radio size="small" />}
-                          label={
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              spacing={1}
-                            >
-                              <Typography variant="body2" color="text.disabled">
-                                Load Balanced
-                              </Typography>
-                              <Chip
-                                label="Coming soon"
-                                size="small"
-                                variant="outlined"
-                                color="primary"
-                              />
-                            </Stack>
-                          }
                         />
                       </RadioGroup>
                     )}

@@ -102,15 +102,17 @@ def backfill_blank_completed_status(
     return total
 
 
-def backfill_config_hash_and_status(*, batch_size: int = _BATCH) -> BackfillResult:
+def backfill_config_hash_and_status(
+    *, batch_size: int = _BATCH, db_connection=None
+) -> BackfillResult:
     """Run the baseline backfill over all live entries. Returns rows changed."""
     return BackfillResult(
-        status_changed=_backfill_status(batch_size),
-        hashed=_backfill_hashes(batch_size),
+        status_changed=_backfill_status(batch_size, db_connection=db_connection),
+        hashed=_backfill_hashes(batch_size, db_connection=db_connection),
     )
 
 
-def _backfill_status(batch_size: int) -> int:
+def _backfill_status(batch_size: int, *, db_connection=None) -> int:
     """Flip ``error`` rows to ``errored`` and ``skipped_reason`` rows to
     ``skipped`` in one keyset sweep ordered by primary key."""
     errored = EvalEntryStatus.ERRORED.value
@@ -130,7 +132,8 @@ def _backfill_status(batch_size: int) -> int:
     )  # noqa: S608 — table name is a trusted model attribute; values are bound
     last_id = uuid.UUID(int=0)
     total = 0
-    with connection.cursor() as cur:
+    database = db_connection if db_connection is not None else connection
+    with database.cursor() as cur:
         while True:
             cur.execute(sql, [errored, skipped, last_id, errored, skipped, batch_size])
             ids = [row[0] for row in cur.fetchall()]
@@ -141,10 +144,12 @@ def _backfill_status(batch_size: int) -> int:
     return total
 
 
-def _backfill_hashes(batch_size: int) -> int:
+def _backfill_hashes(batch_size: int, *, db_connection=None) -> int:
     """Stamp ``config_hash`` per config — one hash computation each, only on rows
     that don't already have one. Rows whose config is gone are left null."""
-    with connection.cursor() as cur:
+    database = db_connection if db_connection is not None else connection
+    using = db_connection.alias if db_connection is not None else None
+    with database.cursor() as cur:
         cur.execute(
             f"SELECT DISTINCT custom_eval_config_id FROM {_TABLE} "  # noqa: S608
             f"WHERE config_hash IS NULL AND custom_eval_config_id IS NOT NULL "
@@ -162,15 +167,18 @@ def _backfill_hashes(batch_size: int) -> int:
     )  # noqa: S608 — table name is a trusted model attribute; values are bound
 
     total = 0
-    with connection.cursor() as cur:
+    with database.cursor() as cur:
         for config_id in config_ids:
             # no_workspace_objects matches the raw scan's global scope; the
             # default manager would workspace-filter and silently leave configs
             # from other workspaces null if this ever runs in a request context.
-            config = CustomEvalConfig.no_workspace_objects.filter(id=config_id).first()
+            config = (
+                CustomEvalConfig.no_workspace_objects.using(using)
+                .filter(id=config_id).first()
+            )
             if config is None:
                 continue  # eval no longer exists — outside the current eval-set
-            config_hash = resolved_config_hash(config)
+            config_hash = resolved_config_hash(config, using=using)
             while True:
                 cur.execute(update_sql, [config_hash, config_id, batch_size])
                 if cur.rowcount < batch_size:

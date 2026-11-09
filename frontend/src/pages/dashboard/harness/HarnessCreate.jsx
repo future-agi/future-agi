@@ -102,6 +102,11 @@ export const callLimitConfig = (value) =>
     ? { voice_call_timeout_seconds: Number(value) }
     : {};
 
+// A probe the deployment declined to send (Future AGI Cloud never contacts a
+// customer's LiveKit URL) is information: neither a success nor a rejection.
+const probeSeverity = (item) =>
+  item.skipped ? "info" : item.ok ? "success" : "error";
+
 const providerCredentialName = (connector) =>
   connector === "vapi"
     ? "VAPI_API_KEY"
@@ -1168,7 +1173,7 @@ export default function HarnessCreate() {
                     {probeResults.map((item) => (
                       <Alert
                         key={item.provider}
-                        severity={item.ok ? "success" : "error"}
+                        severity={probeSeverity(item)}
                         variant="outlined"
                       >
                         {item.message}

@@ -1,3 +1,4 @@
+import { strict as assertContract } from "node:assert";
 import { execFile as execFileCallback } from "node:child_process";
 import { createRequire } from "node:module";
 import process from "node:process";
@@ -14,34 +15,93 @@ const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
 const execFile = promisify(execFileCallback);
 
-const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
+const APP_BASE = process.env.APP_BASE || "http://localhost:3032";
+const BROWSER = process.env.API_JOURNEY_BROWSER || "chromium";
 const SCREENSHOT_PATH = "/tmp/settings-api-keys-smoke.png";
 const ACTION_MENU_SCREENSHOT_PATH =
   "/tmp/settings-api-keys-smoke-action-menu.png";
 const DISABLED_SCREENSHOT_PATH = "/tmp/settings-api-keys-smoke-disabled.png";
 const FAILURE_SCREENSHOT_PATH = "/tmp/settings-api-keys-smoke-failure.png";
+let stage = "isolated stack prerequisites";
 
 async function main() {
   requireMutations();
+  for (const [name, value] of [
+    ["APP_BASE", APP_BASE],
+    ["API_BASE", process.env.API_BASE],
+  ]) {
+    assert(value, `Set ${name} to the disposable cloud stack.`);
+    const url = new URL(value);
+    assert(
+      url.protocol === "http:" &&
+        url.hostname === "localhost" &&
+        !url.username &&
+        !url.password,
+      `${name} must be an HTTP localhost URL.`,
+    );
+  }
+  for (const name of [
+    "FUTURE_AGI_ACCESS_TOKEN",
+    "FUTURE_AGI_ORGANIZATION_ID",
+    "FUTURE_AGI_WORKSPACE_ID",
+    "API_JOURNEY_DB_CONTAINER",
+    "API_JOURNEY_DB_USER",
+    "API_JOURNEY_DB_NAME",
+  ]) {
+    assert(
+      process.env[name],
+      `Set ${name}; cached sessions and default database targets are not accepted.`,
+    );
+  }
   const auth = await createAuthenticatedContext();
   const keyName = `browser key ${auth.runId}`;
   const apiFailures = [];
   const pageErrors = [];
+  const keyRequests = [];
+  const assertKeyTraffic = (expectedMints) => {
+    assert(
+      !keyRequests.some(({ path }) => path === "/accounts/keys/"),
+      "The page requested the retired key bootstrap.",
+    );
+    assert(
+      keyRequests.filter(
+        ({ path, method }) =>
+          path === "/accounts/key/generate_secret_key/" && method === "POST",
+      ).length === expectedMints,
+      "The page did not mint exactly once on explicit submit.",
+    );
+  };
   let createdKey = null;
   let uiDeleted = false;
   let hardCleanup = null;
   let caughtError = null;
   let cleanupError = null;
 
+  assert(
+    ["chromium", "firefox"].includes(BROWSER),
+    "API_JOURNEY_BROWSER must be chromium or firefox.",
+  );
   const browser = await puppeteer.launch({
+    browser: BROWSER === "firefox" ? "firefox" : "chrome",
     executablePath: browserExecutablePath(),
     headless: process.env.HEADLESS !== "0",
     defaultViewport: { width: 1440, height: 950 },
-    args: ["--no-sandbox"],
+    args: BROWSER === "firefox" ? [] : ["--no-sandbox"],
+    // WebDriver BiDi has no setBypassServiceWorker. Disable registration in
+    // the fresh Firefox profile instead, preserving request confinement.
+    ...(BROWSER === "firefox"
+      ? { extraPrefsFirefox: { "dom.serviceWorkers.enabled": false } }
+      : {}),
   });
 
   const page = await browser.newPage();
   await preparePage(page, auth);
+  page.on("request", (request) => {
+    keyRequests.push({
+      path: new URL(request.url()).pathname,
+      method: request.method(),
+    });
+  });
 
   page.on("response", (response) => {
     const url = response.url();
@@ -64,10 +124,21 @@ async function main() {
         }),
     );
 
-    await waitForVisibleText(page, "Your secret API keys are listed below");
+    // BiDi preloads can retain closures from the pre-navigation realm. Bind
+    // DOM helpers in the actual document before making visibility assertions.
+    await page.evaluate(installDomHelpers);
+    await page.evaluate(installKeyRequestObserver);
+    stage = "personal-key introduction";
+    await assertPersonalKeyIntroduction(page);
+    assertKeyTraffic(0);
     await clickVisibleText(page, "Add API Key");
-    await waitForVisibleText(page, "Key Name", { exact: true });
-    await typeIntoInput(page, "Enter your key name", keyName);
+    await waitForVisibleText(page, "Create a personal key", { exact: true });
+    const previousName = await replaceLabeledInput(page, "Key name", keyName);
+    assert(
+      previousName.startsWith("Personal key "),
+      "Key name was not prefilled.",
+    );
+    assertKeyTraffic(0);
 
     const createResponse = page.waitForResponse(
       (response) =>
@@ -76,10 +147,34 @@ async function main() {
         response.status() < 400,
       { timeout: 60000 },
     );
-    await clickVisibleText(page, "Next", { exact: true });
+    await clickDialogButton(page, "Create a key");
     const createHttpResponse = await createResponse;
     const createBody = await createHttpResponse.json();
     createdKey = createBody?.result || null;
+    // BiDi does not expose HTTPRequest.postData. Observe the native XHR send
+    // argument in Firefox; Chromium also compares it with the wire request.
+    const sentBodies = await page.evaluate(
+      () => window.__apiJourneyPersonalKeyBodies,
+    );
+    assert(sentBodies.length === 1, "Expected one serialized key create body.");
+    const submitted =
+      BROWSER === "firefox"
+        ? JSON.parse(sentBodies[0])
+        : JSON.parse(createHttpResponse.request().postData());
+    if (BROWSER === "chromium") {
+      assert(
+        JSON.stringify(submitted) === JSON.stringify(JSON.parse(sentBodies[0])),
+        "Observed create body differed from the actual wire request.",
+      );
+    }
+    assert(
+      submitted.key_name === keyName,
+      "Create request changed the typed name.",
+    );
+    assert(
+      submitted.workspace_id === null,
+      "Default creation must explicitly request no workspace binding.",
+    );
     assert(
       createdKey?.key_id,
       "Create API key response did not include key_id.",
@@ -89,18 +184,64 @@ async function main() {
     assertMaskedKey(createdKey.masked_api_key, "created masked_api_key");
     assertMaskedKey(createdKey.masked_secret_key, "created masked_secret_key");
 
-    await waitForVisibleText(page, "Generated");
-    await waitForInputValue(page, createdKey.masked_api_key);
-    await waitForInputValue(page, createdKey.masked_secret_key);
+    stage = "one-time pair and export";
+    await waitForVisibleText(page, "Save your personal key", { exact: true });
+    await waitForVisibleText(
+      page,
+      "These values are shown once. Save both before closing.",
+    );
+    await waitForInputValue(page, createdKey.api_key);
+    await waitForInputValue(page, createdKey.secret_key);
+    await waitForInputValue(
+      page,
+      `export FI_API_KEY='${createdKey.api_key}' FI_SECRET_KEY='${createdKey.secret_key}'`,
+    );
+    for (const label of ["Copy API key", "Copy Secret key"]) {
+      await page.waitForSelector(`button[aria-label="${label}"]`, {
+        visible: true,
+      });
+    }
+    await waitForVisibleText(page, "Copy export snippet", { exact: true });
+    assertKeyTraffic(1);
+    await clickDialogButton(page, "I saved it");
+    // The save handler unmounts the show-once dialog synchronously. Assert its
+    // safety contract before a missing close can become a selector timeout.
     await assertRawKeysNotRendered(page, createdKey);
-
-    await clickVisibleText(page, "Done", { exact: true });
+    await page.waitForSelector('[role="dialog"]', { hidden: true });
 
     await waitForVisibleText(page, keyName);
     await waitForVisibleText(page, createdKey.masked_api_key);
     await waitForVisibleText(page, createdKey.masked_secret_key);
     await assertRawKeysNotRendered(page, createdKey);
 
+    stage = "masked list after dismissal";
+    await assertListedKeyState(auth.client, {
+      keyId: createdKey.key_id,
+      keyName,
+      enabled: true,
+      rawApiKey: createdKey.api_key,
+      rawSecretKey: createdKey.secret_key,
+    });
+    await clickVisibleText(page, "Add API Key");
+    await waitForVisibleText(page, "Create a personal key", { exact: true });
+    await assertRawKeysNotRendered(page, createdKey);
+    assertKeyTraffic(1);
+    await clickDialogButton(page, "Cancel");
+    await waitForResponseDuring(
+      page,
+      "API keys reload",
+      (response) =>
+        response.url().includes("/accounts/key/get_secret_keys/") &&
+        response.status() < 400,
+      () => page.reload({ waitUntil: "domcontentloaded" }),
+    );
+    // Rebind after reload as well: the old helper can enumerate detached
+    // nodes (all zero-sized) even when the new document is fully visible.
+    await page.evaluate(installDomHelpers);
+    stage = "post-reload personal-key introduction";
+    await assertPersonalKeyIntroduction(page);
+    await assertRawKeysNotRendered(page, createdKey);
+    assertKeyTraffic(1);
     await filterKeys(page, keyName);
     await waitForVisibleText(page, keyName);
 
@@ -122,6 +263,7 @@ async function main() {
       () => clickDialogButton(page, "Disable Key"),
     );
     await waitForKeyRowState(page, keyName, { disabled: true });
+    await assertRawKeysNotRendered(page, createdKey);
     await page.screenshot({ path: DISABLED_SCREENSHOT_PATH, fullPage: true });
     await assertListedKeyState(auth.client, {
       keyId: createdKey.key_id,
@@ -184,13 +326,45 @@ async function main() {
     );
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
 
+    assertKeyTraffic(1);
     assert(apiFailures.length === 0, `API failures: ${apiFailures.join("; ")}`);
     assert(pageErrors.length === 0, `Page errors: ${pageErrors.join("; ")}`);
   } catch (error) {
     caughtError = error;
-    await page
-      .screenshot({ path: FAILURE_SCREENSHOT_PATH, fullPage: true })
-      .catch(() => null);
+    // Credential-free diagnostics: do not emit DOM text, input values, tokens,
+    // response bodies or full URLs even when a show-once assertion fails.
+    const diagnostic = await page
+      .evaluate(() => {
+        const introduction =
+          "API keys are personal. Secrets are shown only when you create a key.";
+        const helper = window.__apiJourneyVisibleElements;
+        return {
+          path: location.pathname,
+          readyState: document.readyState,
+          visibility: document.visibilityState,
+          helperInstalled: typeof helper === "function",
+          introductionInDocument:
+            document.body.textContent.includes(introduction),
+          introductionVisible:
+            typeof helper === "function" &&
+            helper().some((node) => node.textContent.includes(introduction)),
+          dialogs: document.querySelectorAll('[role="dialog"]').length,
+        };
+      })
+      .catch(() => ({ diagnosticUnavailable: true }));
+    console.error(JSON.stringify({ stage, diagnostic }));
+    // A failing show-once assertion must not put raw values in a screenshot.
+    if (
+      !keyRequests.some(
+        ({ path }) =>
+          path === "/accounts/key/generate_secret_key/" ||
+          path === "/accounts/keys/",
+      )
+    ) {
+      await page
+        .screenshot({ path: FAILURE_SCREENSHOT_PATH, fullPage: true })
+        .catch(() => null);
+    }
   } finally {
     await browser.close();
     if (createdKey?.key_id && !hardCleanup) {
@@ -226,6 +400,7 @@ async function main() {
     JSON.stringify(
       {
         status: "passed",
+        browser: BROWSER,
         app_base: APP_BASE,
         api_base: auth.apiBase,
         organization_id: auth.organizationId,
@@ -233,6 +408,10 @@ async function main() {
         evidence: {
           key_name: keyName,
           key_id: createdKey.key_id,
+          no_bootstrap_request: true,
+          explicit_mint_count: 1,
+          one_time_pair_and_export_shown: true,
+          dismissed_reopened_and_reloaded_values_absent: true,
           list_api_key_masked: true,
           list_secret_key_masked: true,
           ui_disable_chip_visible: true,
@@ -253,66 +432,99 @@ async function main() {
 }
 
 async function preparePage(page, auth) {
-  await page.setBypassServiceWorker(true);
+  if (BROWSER === "chromium") await page.setBypassServiceWorker(true);
   await installRuntimeConfig(page, auth);
-  await page.evaluateOnNewDocument(() => {
-    window.__apiJourneyNormalizeText = (value) => String(value || "").trim();
-    window.__apiJourneyElementText = (element) => {
-      const values = [element.textContent];
-      if ("value" in element) values.push(element.value);
-      values.push(element.getAttribute?.("aria-label"));
-      return values
-        .map((value) => window.__apiJourneyNormalizeText(value))
-        .filter(Boolean)
-        .join(" ");
+}
+
+function seedSession({ tokens, organizationId, workspaceId, user }) {
+  localStorage.setItem("accessToken", tokens.access);
+  localStorage.setItem("refreshToken", tokens.refresh || "");
+  localStorage.setItem("rememberMe", "true");
+  localStorage.setItem("initial-render", "done");
+  if (organizationId) sessionStorage.setItem("organizationId", organizationId);
+  if (workspaceId) sessionStorage.setItem("workspaceId", workspaceId);
+  if (user?.id) sessionStorage.setItem("futureagi-current-user-id", user.id);
+}
+
+function installKeyRequestObserver() {
+  // Observe only the native send argument, without changing dispatch or replies.
+  // Install in the live document before any explicit create action, not a BiDi
+  // preload realm whose wrapped XHR methods can outlive that realm on reload.
+  window.__apiJourneyPersonalKeyBodies = [];
+  const targets = new WeakMap();
+  const open = XMLHttpRequest.prototype.open;
+  const send = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function (method, url, ...args) {
+    targets.set(this, { method, url });
+    return open.call(this, method, url, ...args);
+  };
+  XMLHttpRequest.prototype.send = function (body) {
+    const target = targets.get(this);
+    if (
+      target?.method?.toUpperCase() === "POST" &&
+      new URL(target.url, location.href).pathname ===
+        "/accounts/key/generate_secret_key/"
+    ) {
+      window.__apiJourneyPersonalKeyBodies.push(body);
+    }
+    return send.call(this, body);
+  };
+}
+
+function installDomHelpers() {
+  window.__apiJourneyNormalizeText = (value) => String(value || "").trim();
+  window.__apiJourneyElementText = (element) => {
+    const values = [element.textContent];
+    if ("value" in element) values.push(element.value);
+    values.push(element.getAttribute?.("aria-label"));
+    return values
+      .map((value) => window.__apiJourneyNormalizeText(value))
+      .filter(Boolean)
+      .join(" ");
+  };
+  window.__apiJourneyVisibleElements = () => {
+    const isVisible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
     };
-    window.__apiJourneyVisibleElements = () => {
-      const isVisible = (element) => {
-        const style = window.getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        return (
-          style.visibility !== "hidden" &&
-          style.display !== "none" &&
-          rect.width > 0 &&
-          rect.height > 0
-        );
-      };
-      return Array.from(document.querySelectorAll("body *")).filter(isVisible);
-    };
-  });
-  await page.evaluateOnNewDocument(
-    ({ tokens, organizationId, workspaceId, user }) => {
-      localStorage.setItem("accessToken", tokens.access);
-      localStorage.setItem("refreshToken", tokens.refresh || "");
-      localStorage.setItem("rememberMe", "true");
-      localStorage.setItem("initial-render", "done");
-      if (organizationId)
-        sessionStorage.setItem("organizationId", organizationId);
-      if (workspaceId) sessionStorage.setItem("workspaceId", workspaceId);
-      if (user?.id)
-        sessionStorage.setItem("futureagi-current-user-id", user.id);
-    },
-    {
-      tokens: auth.tokens,
-      organizationId: auth.organizationId,
-      workspaceId: auth.workspaceId,
-      user: auth.user,
-    },
-  );
+    return Array.from(document.querySelectorAll("body *")).filter(isVisible);
+  };
 }
 
 async function installRuntimeConfig(page, auth) {
   await page.setRequestInterception(true);
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname === "/config.js") {
+    if (url.hostname !== "localhost") {
+      request.abort("blockedbyclient");
+      return;
+    }
+    if (
+      url.origin === new URL(APP_BASE).origin &&
+      url.pathname === "/config.js"
+    ) {
+      // The real config script runs before the app in each document. Seed the
+      // same disposable session here instead of retaining BiDi preload closures
+      // across reloads. This response is local, in-memory and never logged.
       request.respond({
         status: 200,
         contentType: "application/javascript",
+        headers: { "cache-control": "no-store" },
         body: `window.__FUTURE_AGI_CONFIG__ = ${JSON.stringify({
           VITE_HOST_API: auth.apiBase,
           VITE_ASSETS_API: APP_BASE,
-        })};`,
+        })};\n(${seedSession.toString()})(${JSON.stringify({
+          tokens: auth.tokens,
+          organizationId: auth.organizationId,
+          workspaceId: auth.workspaceId,
+          user: { id: auth.user?.id },
+        })});`,
       });
       return;
     }
@@ -442,11 +654,33 @@ async function clickDialogButton(page, text) {
   assert(clicked, `Could not click dialog button ${text}.`);
 }
 
-async function typeIntoInput(page, placeholder, value) {
-  const selector = `input[placeholder="${placeholder}"]`;
-  await page.waitForSelector(selector, { timeout: 30000 });
-  await page.click(selector);
-  await page.keyboard.type(value);
+async function replaceLabeledInput(page, label, value) {
+  const handle = await page.waitForFunction(
+    (expected) => {
+      const label = Array.from(
+        document.querySelectorAll('[role="dialog"] label'),
+      ).find(
+        (node) => node.textContent.replace(/\s*\*$/, "").trim() === expected,
+      );
+      return label?.control || false;
+    },
+    { timeout: 30000 },
+    label,
+  );
+  try {
+    const input = handle.asElement();
+    assert(input, "Key name label has no associated input.");
+    const previous = await input.evaluate((node) => node.value);
+    await input.click();
+    // Native selection avoids browser-specific triple-click word selection.
+    // Value changes still go through the real keyboard/input events below.
+    await input.evaluate((node) => node.select());
+    await page.keyboard.press("Backspace");
+    await input.type(value);
+    return previous;
+  } finally {
+    await handle.dispose();
+  }
 }
 
 async function filterKeys(page, search) {
@@ -470,6 +704,33 @@ async function filterKeys(page, search) {
       await page.keyboard.press("Backspace");
       await page.type(selector, search, { delay: 1 });
     },
+  );
+}
+
+async function assertPersonalKeyIntroduction(page) {
+  // Wait for the header's structure, not the copy whose contract we assert.
+  // Both are rendered together, so an old introduction fails immediately once
+  // the header is ready instead of being misreported as a readiness timeout.
+  await page.waitForSelector('[data-testid="api-keys-header"]', {
+    visible: true,
+    timeout: 30000,
+  });
+  const expected =
+    "API keys are personal. Secrets are shown only when you create a key.";
+  const visible = await page.evaluate((text) => {
+    const header = document.querySelector('[data-testid="api-keys-header"]');
+    return window
+      .__apiJourneyVisibleElements()
+      .some(
+        (element) =>
+          header.contains(element) &&
+          window.__apiJourneyNormalizeText(element.textContent) === text,
+      );
+  }, expected);
+  // Emit only static expected copy, never actual DOM text or credential values.
+  assertContract(
+    visible,
+    `Expected visible personal-key introduction: ${expected}`,
   );
 }
 
@@ -579,8 +840,11 @@ async function assertRawKeysNotRendered(page, key) {
       .join("\n");
     return `${document.body.innerText}\n${values}`;
   });
-  assert(!rendered.includes(key.api_key), "Page rendered the raw API key.");
-  assert(
+  assertContract(
+    !rendered.includes(key.api_key),
+    "Page rendered the raw API key.",
+  );
+  assertContract(
     !rendered.includes(key.secret_key),
     "Page rendered the raw secret key.",
   );
@@ -680,6 +944,13 @@ function browserExecutablePath() {
 }
 
 main().catch((error) => {
-  console.error(error);
+  // API errors can embed response bodies; never print those from a key smoke.
+  const message =
+    error.name === "ApiJourneyError"
+      ? `API request failed (${error.status})`
+      : error.message;
+  console.error(
+    `Settings personal-key smoke failed at ${stage}: ${error.name}: ${message}`,
+  );
   process.exit(1);
 });

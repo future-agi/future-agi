@@ -3,6 +3,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { userEvent, render, screen } from "src/utils/test-utils";
 import OrgConfigSection from "./OrgConfigSection";
 
+vi.mock("ag-grid-react", async () => {
+  const { forwardRef } = await import("react");
+  return {
+    AgGridReact: forwardRef(function MockGrid() {
+      return <div data-testid="ag-grid" />;
+    }),
+  };
+});
+
 const mockMutate = vi.fn();
 const NativeDateTimeFormat = Intl.DateTimeFormat;
 
@@ -16,6 +25,13 @@ let mockProviderHealthReturn = {
   data: { providers: [] },
 };
 
+vi.mock("src/auth/hooks", () => ({
+  useAuthContext: () => ({
+    user: { organization_role: "Owner" },
+    role: "Owner",
+  }),
+}));
+
 vi.mock("../providers/hooks/useOrgConfig", () => ({
   useOrgConfig: () => mockOrgConfigReturn,
   useCreateOrgConfig: () => ({ mutate: mockMutate, isPending: false }),
@@ -23,6 +39,7 @@ vi.mock("../providers/hooks/useOrgConfig", () => ({
 
 vi.mock("../providers/hooks/useGatewayConfig", () => ({
   useProviderHealth: () => mockProviderHealthReturn,
+  useGatewayConfig: () => ({ data: undefined, isLoading: false }),
 }));
 
 vi.mock("../context/useGatewayContext", () => ({
@@ -60,8 +77,12 @@ describe("OrgConfigSection", () => {
     mockOrgConfigReturn.data = { created_at: "2025-10-31T00:00:00Z" };
     render(<OrgConfigSection />);
     const updated = screen.getByText("31 Oct 2025, 5:30 AM");
-    expect(screen.getByText(/Last Updated:/)).toContainElement(updated);
-    await userEvent.setup().tab();
+    expect(screen.getByText(/Last updated:/)).toContainElement(updated);
+    // View history and Edit config come first in the panel header.
+    const user = userEvent.setup();
+    await user.tab();
+    await user.tab();
+    await user.tab();
     expect(updated).toHaveFocus();
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip).toHaveTextContent("Asia/Kolkata (UTC+05:30)");
@@ -100,7 +121,7 @@ describe("OrgConfigSection", () => {
 
     render(<OrgConfigSection />);
 
-    expect(screen.getByText(/Last Updated:/)).toBeInTheDocument();
+    expect(screen.getByText(/Last updated:/)).toBeInTheDocument();
     expect(
       screen.getByText(/Update guardrail pii-detector/),
     ).toBeInTheDocument();

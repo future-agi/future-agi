@@ -15,7 +15,7 @@ describe("normalizeProviderStatus", () => {
     expect(row.displayName).toBe("OpenAI");
     expect(row.hasKey).toBe(true);
     expect(row.maskedKey).toBe("sk-p**********dtMA");
-    expect(row.logoUrl).toBe("/logo.svg");
+    expect(row.logoUrl).toBe("/icons/settings/openai.png");
   });
 
   it("preserves existing camelCase fields", () => {
@@ -30,6 +30,6 @@ describe("normalizeProviderStatus", () => {
     expect(row.display_name).toBe("Custom");
     expect(row.hasKey).toBe(false);
     expect(row.maskedKey).toBeNull();
-    expect(row.logoUrl).toBe("/custom.svg");
+    expect(row.logoUrl).toBe("/assets/icons/settings/AIProviders.svg");
   });
 });

@@ -3,6 +3,44 @@ import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { ShowComponent } from "src/components/show";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import CustomTooltip from "src/components/tooltip";
+import { VOCAB } from "src/sections/common/vocab";
+
+/**
+ * v2.1 g8 (dyncol:api-calls): an API call to a host other than this machine
+ * is answered by the prototype standing in for that host; the Test result
+ * says so exactly as the endpoint source's HTTP Test does.
+ */
+const StandInTag = ({ result }) => {
+  if (!result?.simulated) return null;
+  const host = result.host ?? "that host";
+  return (
+    <CustomTooltip
+      show
+      title={`Stands in for ${host} answering. The run fills exactly as a real one would.`}
+      size="small"
+      placement="top"
+    >
+      <Typography
+        component="span"
+        typography="s3"
+        color="text.secondary"
+        data-testid="api-column-test-simulated"
+        sx={{
+          display: "inline-block",
+          mb: 0.5,
+          px: 0.5,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 0.5,
+        }}
+      >
+        {`${VOCAB.SIMULATED} · ${host}`}
+      </Typography>
+    </CustomTooltip>
+  );
+};
+StandInTag.propTypes = { result: PropTypes.object };
 
 const PreviewAddColumn = ({ open, previewData }) => {
   const [selectedTab, setSelectedTab] = useState("markdown");
@@ -32,7 +70,7 @@ const PreviewAddColumn = ({ open, previewData }) => {
           }}
         >
           <Typography fontWeight={700} color="text.secondary">
-            Preview Test
+            Test output
           </Typography>
         </Box>
         <Tabs
@@ -58,23 +96,22 @@ const PreviewAddColumn = ({ open, previewData }) => {
               paddingY: 2,
             }}
           >
-            {previewData?.data?.result?.preview_results?.map(
-              ({ row_id, output }) => (
-                <Box
-                  key={row_id}
-                  sx={{
-                    padding: "10px",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "10px",
-                    wordWrap: "break-word",
-                    whiteSpace: "normal",
-                  }}
-                >
-                  <Typography>{output}</Typography>
-                </Box>
-              ),
-            )}
+            {previewData?.data?.result?.preview_results?.map((r) => (
+              <Box
+                key={r.row_id}
+                sx={{
+                  padding: "10px",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: "10px",
+                  wordWrap: "break-word",
+                  whiteSpace: "normal",
+                }}
+              >
+                <StandInTag result={r} />
+                <Typography>{r.output}</Typography>
+              </Box>
+            ))}
           </Box>
         </ShowComponent>
         <ShowComponent condition={selectedTab === "markdown"}>
@@ -86,23 +123,22 @@ const PreviewAddColumn = ({ open, previewData }) => {
               paddingY: 2,
             }}
           >
-            {previewData?.data?.result?.preview_results?.map(
-              ({ row_id, output }) => (
-                <Box
-                  key={row_id}
-                  sx={{
-                    padding: "10px",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "10px",
-                    wordWrap: "break-word",
-                    whiteSpace: "normal",
-                  }}
-                >
-                  <CellMarkdown spacing={0} text={output} />
-                </Box>
-              ),
-            )}
+            {previewData?.data?.result?.preview_results?.map((r) => (
+              <Box
+                key={r.row_id}
+                sx={{
+                  padding: "10px",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: "10px",
+                  wordWrap: "break-word",
+                  whiteSpace: "normal",
+                }}
+              >
+                <StandInTag result={r} />
+                <CellMarkdown spacing={0} text={r.output} />
+              </Box>
+            ))}
           </Box>
         </ShowComponent>
       </Box>

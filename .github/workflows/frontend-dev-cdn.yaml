@@ -13,6 +13,10 @@ on:
         description: "Branch to deploy"
         required: false
         default: "dev"
+      runtime_config_only:
+        description: "Update public runtime config only (no rebuild or asset upload)"
+        type: boolean
+        default: false
 
 jobs:
   deploy:
@@ -36,9 +40,11 @@ jobs:
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies
-        run: yarn
+        if: inputs.runtime_config_only != true
+        run: yarn --frozen-lockfile
 
       - name: Create .env file from secrets
+        if: inputs.runtime_config_only != true
         run: |
           cat <<EOF > .env
           VITE_ENVIRONMENT=dev
@@ -60,7 +66,13 @@ jobs:
           EOF
 
       - name: Build project
+        if: inputs.runtime_config_only != true
         run: yarn build
+
+      - name: Write public runtime configuration from repository variables
+        env:
+          RUNTIME_CONFIG_VARIABLES_JSON: ${{ toJSON(vars) }}
+        run: node scripts/write-runtime-config.mjs --prefix DEV_ --output dist/config.js
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -70,10 +82,24 @@ jobs:
           aws-region: ${{ secrets.DEV_AWS_REGION }}
 
       - name: Sync dist/ to S3
+        if: inputs.runtime_config_only != true
         run: |
-          aws s3 sync dist/ s3://${{ secrets.DEV_S3_BUCKET_NAME }}/ --delete
+          aws s3 sync dist/ s3://${{ secrets.DEV_S3_BUCKET_NAME }}/ --delete --exclude "config.js"
+
+      # cp replaces metadata even when bytes are unchanged (sync does not).
+      - name: Upload runtime configuration with no-cache
+        run: |
+          aws s3 cp dist/config.js s3://${{ secrets.DEV_S3_BUCKET_NAME }}/config.js \
+            --content-type "application/javascript" --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalidate runtime configuration
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.DEV_CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/config.js"
 
       - name: Invalidate CloudFront cache
+        if: inputs.runtime_config_only != true
         run: |
           aws cloudfront create-invalidation \
             --distribution-id ${{ secrets.DEV_CLOUDFRONT_DISTRIBUTION_ID }} \

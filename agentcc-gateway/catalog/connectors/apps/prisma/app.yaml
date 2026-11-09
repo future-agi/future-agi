@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: prisma
+version: 1.0.0
+name: Prisma
+description: "Prisma Postgres databases, Compute apps and Object Storage."
+vendor:
+  name: Prisma
+  domains: [prisma.io]
+eeCategory: developer
+group: other
+categories: [developer, database]
+tags: [postgres, database]
+docsUrl: https://www.prisma.io/docs/ai/tools/mcp-server
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.prisma.io/docs/ai/tools/mcp-server
+    fetchedAt: 2026-10-21

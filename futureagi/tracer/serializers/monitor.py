@@ -1,7 +1,8 @@
 import json
 
-from accounts.serializers.user import UserSerializer
 from rest_framework import serializers
+
+from accounts.serializers.user import UserSerializer
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -90,6 +91,15 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
         model = UserAlertMonitor
         fields = "__all__"
         read_only_fields = ("last_checked_at", "logs", "deleted", "deleted_at")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from tracer.serializers.relation_scope import scope_relations
+
+        scope_relations(self, {"project": ("organization", "workspace")})
+        self.fields["project"].queryset = self.fields["project"].queryset.filter(
+            trace_type="observe"
+        )
 
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
@@ -621,8 +631,23 @@ _FETCH_GRAPH_POINT_SCHEMA = {
     "required": ["timestamp", "value"],
     "properties": {
         "timestamp": {"type": "string"},
-        "value": {"type": "number"},
+        "value": {"type": "number", "x-nullable": True},
         "primary_traffic": {"type": "number"},
+        "error_rate": {"type": "number", "x-nullable": True},
+        **{
+            key: {"type": "integer", "minimum": 0}
+            for key in (
+                "count",
+                "scored_count",
+                "unscored_count",
+                "completed_count",
+                "error_count",
+                "pending_count",
+                "running_count",
+                "skipped_count",
+                "failed_count",
+            )
+        },
     },
     "additionalProperties": True,
 }

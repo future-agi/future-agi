@@ -1,127 +1,124 @@
-import errorFeedPreview from "src/assets/oss-gate/error_feed_light.png";
-import errorFeedPreviewDark from "src/assets/oss-gate/error_feed_dark.png";
-import optimizationPreview from "src/assets/oss-gate/optimization_light.png";
-import optimizationPreviewDark from "src/assets/oss-gate/optimization_dark.png";
-import falconAIPreview from "src/assets/oss-gate/falcon_ai_light.png";
-import falconAIPreviewDark from "src/assets/oss-gate/falcon_ai_dark.png";
+// What a gated feature is, and what it needs on this deployment.
+//
+// The card states facts only: what the feature does and what this deployment
+// is missing for it. It shows no preview screenshot (sample data reads as the
+// user's own history), no roadmap promise and no setup steps for parts that
+// are not here.
 
 export const CONTACT_URL = "https://futureagi.com/talk-to-human";
 export const DOCS_URL = "https://docs.futureagi.com";
 
 export const LICENSE_CTA = "Manage license";
 export const CONTACT_CTA = "Talk to us";
-export const UPGRADE_CTA = "Upgrade to EE license key";
 export const DOCS_CTA = "Read docs";
+
+export const DEFAULT_EYEBROW = "Enterprise Edition";
 
 export const FEATURES = {
   errorFeed: {
-    eyebrow: "Cloud feature",
-    title: "Upgrade to access Error Feed",
+    name: "Error Feed",
     description:
-      "Auto-clustered error triage and production failure insights, so you can ship with confidence.",
-    image: errorFeedPreview,
-    imageDark: errorFeedPreviewDark,
-    steps: [
-      "Talk to us to enable Error Feed on your workspace.",
-      "Point your SDK or project at Future AGI.",
-      "Errors are clustered and start flowing into this feed automatically.",
-    ],
-    footnote:
-      "Prefer self-hosting? Error Feed is on the open-source roadmap — star the repo to follow along.",
+      "Error Feed groups the errors in your traces into issues you can triage, assign and resolve.",
   },
   knowledgeBase: {
-    eyebrow: "Cloud feature",
-    title: "Upgrade to access Knowledge Base",
+    name: "Knowledge Base",
     description:
-      "Ground your agents in your own documents with managed retrieval when you're ready to scale.",
-    steps: [
-      "Talk to us to enable Knowledge Base on your workspace.",
-      "Upload your documents or connect a source.",
-      "Your agents retrieve grounded answers from your knowledge automatically.",
-    ],
+      "Knowledge Base stores your documents so agents can retrieve grounded answers from them.",
   },
   optimization: {
-    eyebrow: "Cloud feature",
-    title: "Upgrade to run Optimization",
+    name: "Optimization",
     description:
-      "Automatically optimize your prompts and agents against your evals when you're ready to scale.",
-    image: optimizationPreview,
-    imageDark: optimizationPreviewDark,
-    steps: [
-      "Talk to us to enable Optimization on your workspace.",
-      "Pick a dataset or simulation and choose an optimizer.",
-      "We iterate on your prompts and surface the best-performing variant.",
-    ],
+      "Optimization runs your prompts against your evals and keeps the best-scoring variant.",
   },
   falconAI: {
-    eyebrow: "Cloud feature",
-    title: "Upgrade to use Falcon AI",
+    name: "Falcon AI",
     description:
-      "Your AI copilot for Future AGI — ask questions, build evals, and debug traces in natural language.",
-    image: falconAIPreview,
-    imageDark: falconAIPreviewDark,
-    steps: [
-      "Talk to us to enable Falcon AI on your workspace.",
-      "Connect your tools so Falcon AI can act on your data.",
-      "Ask in plain language and Falcon AI does the work for you.",
-    ],
+      "Falcon AI is an assistant that answers questions about your evals, datasets and traces in plain language.",
   },
   usageSummary: {
-    eyebrow: "Cloud feature",
-    title: "Upgrade to see usage & spend",
-    description:
-      "Full visibility into your usage, spend, and credits when you're ready to grow.",
+    name: "Usage summary",
+    description: "Usage summary shows your usage, spend and credits.",
   },
   pricing: {
-    eyebrow: "Cloud feature",
-    title: "Upgrade for flexible plans",
-    description:
-      "Flexible plans that scale with your team when you're ready to grow.",
+    name: "Plans & pricing",
+    description: "Plans & pricing lists the plans you can move to.",
   },
   billing: {
-    eyebrow: "Cloud feature",
-    title: "Upgrade to manage billing",
-    description:
-      "Payment methods, invoices, and budget controls when you're ready to grow.",
+    name: "Billing",
+    description: "Billing holds your payment methods and invoices.",
   },
 };
 
+// What the feature needs, per denial reason from /api/capabilities/
+// (tfc/licensing/types.py DenialReason). `toLicense` sends the primary button
+// to Settings > License instead of the contact page.
 export const REASONS = {
+  EE_CODE_UNAVAILABLE: {
+    needs:
+      "Needs the Enterprise Edition image and a license key. This deployment runs the open-source image, so a license key alone will not enable it. Contact your administrator.",
+    label: CONTACT_CTA,
+  },
+  LICENSE_MISSING: {
+    needs:
+      "Needs an Enterprise license key. None is installed on this deployment.",
+    label: LICENSE_CTA,
+    toLicense: true,
+  },
+  LICENSE_FEATURE_MISSING: {
+    needs:
+      "Needs a license that includes this feature. The installed license does not.",
+    label: LICENSE_CTA,
+    toLicense: true,
+  },
   LICENSE_EXPIRED: {
-    note: "Your license has expired — renew it to restore access.",
+    needs: "Needs a current license. The installed license has expired.",
     label: LICENSE_CTA,
     toLicense: true,
   },
   LICENSE_TRIAL_EXPIRED: {
-    note: "Your trial has ended — add a license key to restore access.",
+    needs: "Needs a license key. The trial has ended.",
     label: LICENSE_CTA,
     toLicense: true,
   },
   LICENSE_INVALID: {
-    note: "Your license key could not be validated.",
+    needs:
+      "Needs a valid license key. The installed key could not be validated.",
     label: LICENSE_CTA,
     toLicense: true,
   },
   FEATURE_NOT_IN_GRACE: {
-    note: "This feature is not available during your license's grace period.",
+    needs:
+      "Needs a current license. This feature is not available during the license's grace period.",
     label: LICENSE_CTA,
     toLicense: true,
   },
   LICENSE_VERSION_UNSUPPORTED: {
-    note: "Your license does not cover this version.",
+    needs:
+      "Needs a license that covers this version. The installed license does not.",
     label: LICENSE_CTA,
     toLicense: true,
   },
-  EE_CODE_UNAVAILABLE: {
-    note: "This deployment is running an image built without the EE package, so a license key alone will not enable this. Contact your administrator.",
+  PLAN_FEATURE_MISSING: {
+    eyebrow: "Plan",
+    needs:
+      "Needs a plan that includes this feature. Your current plan does not.",
     label: CONTACT_CTA,
   },
   RESOLVER_UNAVAILABLE: {
-    note: "Feature access could not be resolved on this deployment. Contact your administrator.",
+    eyebrow: "Access",
+    needs:
+      "Feature access could not be checked on this deployment. Contact your administrator.",
     label: CONTACT_CTA,
   },
   FEATURE_UNKNOWN: {
-    note: "This server does not recognise the feature — it may be running an older version.",
+    eyebrow: "Access",
+    needs:
+      "This server does not recognise the feature. It may be running an older version.",
     label: CONTACT_CTA,
   },
+};
+
+export const DEFAULT_REASON = {
+  needs: "Needs an Enterprise license.",
+  label: CONTACT_CTA,
 };

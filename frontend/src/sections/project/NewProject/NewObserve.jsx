@@ -1,3 +1,6 @@
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import { Box, LinearProgress, useTheme } from "@mui/material";
 import React, { useMemo, useState } from "react";
 import { Events, handleOnDocsClicked, trackEvent } from "src/utils/Mixpanel";
@@ -22,7 +25,7 @@ const NewObserve = () => {
     isLoading,
     error,
   } = useQuery({
-    queryKey: ["keys"],
+    queryKey: ["project-sdk-code", "observe"],
     queryFn: () =>
       axios.get(endpoints.project.getCodeBlockTracer, {
         params: {
@@ -114,11 +117,12 @@ const NewObserve = () => {
         {/* API Keys */}
         <Box sx={{ mt: 1.5 }}>
           <InstructionTitle
-            title="Load API keys"
-            description="load your API keys"
+            title="Use a personal API key"
+            description="Create a key or replace the placeholders with your saved values."
           />
         </Box>
 
+        <PersonalKeyControl />
         <InstructionCodeCopy
           text={getCodeBySection("keys")}
           language={languageTab}
@@ -186,4 +190,10 @@ const NewObserve = () => {
   );
 };
 
-export default NewObserve;
+export default function NewObserveWithKey() {
+  return (
+    <PersonalKeySnippet>
+      <NewObserve />
+    </PersonalKeySnippet>
+  );
+}

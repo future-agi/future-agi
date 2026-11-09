@@ -19,6 +19,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from accounts.authentication import (
+    allows_no_organization,
     decrypt_message,
     generate_encrypted_message,
     get_client_ip,
@@ -48,6 +49,7 @@ from accounts.serializers.contracts import (
 )
 from accounts.serializers.user import UserOnboardingSerializer
 from accounts.services.simulate_access import restrict_simulate_to_environments
+from accounts.services.workspace_landing import resolve_user_workspace
 
 # from accounts.user_onboard import upload_demo_dataset
 from accounts.utils import record_hubspot_login
@@ -514,6 +516,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             )
 
 
+@allows_no_organization
 class CustomTokenRefreshView(APIView):
     _gm = GeneralMethods()
     permission_classes = [AllowAny]
@@ -632,6 +635,7 @@ class CustomTokenRefreshView(APIView):
     method="get",
     responses={200: UserInfoResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
+@allows_no_organization
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_user_info(request):
@@ -748,119 +752,34 @@ def get_user_info(request):
         else:
             return str(RoleMapping.get_workspace_role(org_role))
 
-    # Explicit authenticated workspace selection also applies to API-key clients.
+    # Explicit authenticated choices (including API-key scope) still win.
+    # Only landing/fallback selection consults the shared membership policy.
     selected_workspace = getattr(request, "workspace", None)
-    current_workspace_id = (
-        selected_workspace.id
-        if selected_workspace is not None
-        else user.config.get("currentWorkspaceId")
-        or user.config.get("defaultWorkspaceId")
-    )
+    current_workspace = None
+    if selected_workspace is not None:
+        current_workspace = Workspace.objects.filter(
+            pk=selected_workspace.pk, organization=current_org, is_active=True
+        ).first()
+    if current_workspace is None:
+        current_workspace = resolve_user_workspace(user, current_org)
 
-    if current_workspace_id:
-        try:
-            current_workspace = Workspace.objects.get(
-                id=current_workspace_id, organization=current_org, is_active=True
-            )
-            data["default_workspace_id"] = str(current_workspace.id)
-            data["default_workspace_name"] = current_workspace.name
-            data["default_workspace_display_name"] = (
-                current_workspace.display_name or current_workspace.name
-            )
-
-            # Get user's role in current workspace
-            try:
-                workspace_membership = WorkspaceMembership.no_workspace_objects.get(
-                    workspace=current_workspace, user=user, is_active=True
-                )
-                workspace_role = workspace_membership.role
-            except WorkspaceMembership.DoesNotExist:
-                workspace_role = None
-
-            # Determine effective role based on hierarchy
-            data["default_workspace_role"] = get_effective_workspace_role(
-                current_org_role, workspace_role
-            )
-
-        except Workspace.DoesNotExist:
-            # Fallback to default workspace if current workspace not found
-            try:
-                default_workspace = Workspace.objects.get(
-                    organization=current_org, is_default=True, is_active=True
-                )
-                data["default_workspace_id"] = str(default_workspace.id)
-                data["default_workspace_name"] = default_workspace.name
-                data["default_workspace_display_name"] = (
-                    default_workspace.display_name or default_workspace.name
-                )
-
-                # Get user's role in default workspace
-                try:
-                    workspace_membership = WorkspaceMembership.no_workspace_objects.get(
-                        workspace=default_workspace, user=user, is_active=True
-                    )
-                    workspace_role = workspace_membership.role
-                except WorkspaceMembership.DoesNotExist:
-                    workspace_role = None
-
-                # Determine effective role based on hierarchy
-                data["default_workspace_role"] = get_effective_workspace_role(
-                    current_org_role, workspace_role
-                )
-
-            except Workspace.DoesNotExist:
-                data["default_workspace_id"] = None
-                data["default_workspace_name"] = None
-                data["default_workspace_display_name"] = None
-                data["default_workspace_role"] = None
-    else:
-        # No current workspace set — prefer a workspace the user actually
-        # has membership in, falling back to the org's default workspace.
-        _user_ws_mem = (
-            WorkspaceMembership.no_workspace_objects.filter(
-                user=user,
-                workspace__organization=current_org,
-                workspace__is_active=True,
-                is_active=True,
-            )
-            .select_related("workspace")
-            .first()
+    if current_workspace is not None:
+        data["default_workspace_id"] = str(current_workspace.id)
+        data["default_workspace_name"] = current_workspace.name
+        data["default_workspace_display_name"] = (
+            current_workspace.display_name or current_workspace.name
         )
-        _fallback_ws = _user_ws_mem.workspace if _user_ws_mem else None
-
-        if _fallback_ws is None:
-            # No membership found — try the org's default workspace
-            try:
-                _fallback_ws = Workspace.objects.get(
-                    organization=current_org, is_default=True, is_active=True
-                )
-            except Workspace.DoesNotExist:
-                _fallback_ws = None
-
-        if _fallback_ws:
-            data["default_workspace_id"] = str(_fallback_ws.id)
-            data["default_workspace_name"] = _fallback_ws.name
-            data["default_workspace_display_name"] = (
-                _fallback_ws.display_name or _fallback_ws.name
-            )
-
-            # Get user's role in this workspace
-            try:
-                workspace_membership = WorkspaceMembership.no_workspace_objects.get(
-                    workspace=_fallback_ws, user=user, is_active=True
-                )
-                workspace_role = workspace_membership.role
-            except WorkspaceMembership.DoesNotExist:
-                workspace_role = None
-
-            data["default_workspace_role"] = get_effective_workspace_role(
-                current_org_role, workspace_role
-            )
-        else:
-            data["default_workspace_id"] = None
-            data["default_workspace_name"] = None
-            data["default_workspace_display_name"] = None
-            data["default_workspace_role"] = None
+        membership = WorkspaceMembership.no_workspace_objects.filter(
+            workspace=current_workspace, user=user, is_active=True
+        ).first()
+        data["default_workspace_role"] = get_effective_workspace_role(
+            current_org_role, membership.role if membership else None
+        )
+    else:
+        data["default_workspace_id"] = None
+        data["default_workspace_name"] = None
+        data["default_workspace_display_name"] = None
+        data["default_workspace_role"] = None
 
     # Add integer RBAC levels alongside existing string roles
     try:
@@ -923,7 +842,9 @@ def get_user_info(request):
 
 def _workspace_scope_q(workspace, *, relation_prefix="", organization_id=None):
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     workspace_field = f"{relation_prefix}workspace"
     if not getattr(workspace, "is_default", False):
@@ -1067,6 +988,7 @@ class FirstChecksView(APIView):
     request_body=UserOnboardingSerializer,
     responses={200: UserOnboardingSaveResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
+@allows_no_organization
 @api_view(["POST", "GET"])
 @permission_classes([IsAuthenticated])
 @validated_api_request(

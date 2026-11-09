@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import {
   Accordion,
   AccordionDetails,
@@ -84,7 +85,7 @@ const HelpCreateSyntheticData = ({ open, onClose }) => {
                 width: "100%",
               }}
             >
-              <iframe
+              <ExternalContentFrame
                 src="https://demo.arcade.software/KkkN0EJhy0NnLNTITrQZ?embed&embed_mobile=inline&embed_desktop=inline&show_copy_link=true"
                 title="Arcade Flow (Wed Apr 30 2025)"
                 frameBorder="0"

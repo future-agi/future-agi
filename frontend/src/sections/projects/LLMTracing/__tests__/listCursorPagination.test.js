@@ -1012,23 +1012,33 @@ describe("list cursor pagination", () => {
       metadata: { has_more: true, next_cursor: "checkpoint-1" },
     };
 
+    const nextResponse = vi.fn((_cursor, signal) => {
+      continuationSignal = signal;
+      return new Promise(() => {});
+    });
     const response = await followEmptyListContinuations({
       initialResponse,
       rowsFromResponse: (value) => value.rows,
       metadataFromResponse: (value) => value.metadata,
       maxElapsedMs: 5,
-      nextResponse: (_cursor, signal) => {
-        continuationSignal = signal;
-        return new Promise(() => {});
-      },
+      // Injected clock (tests F5): the wall clock of a loaded host can pass
+      // the 5 ms budget before the first continuation is issued; here only
+      // the deadline timer of the in-flight continuation can end it.
+      now: () => 0,
+      nextResponse,
     });
 
     expect(response).toBe(initialResponse);
+    expect(nextResponse).toHaveBeenCalledOnce();
     expect(continuationSignal.aborted).toBe(true);
   });
 
   it("keeps accumulated rows and the retryable cursor when a fill continuation times out", async () => {
     let continuationSignal;
+    const nextResponse = vi.fn((_cursor, signal) => {
+      continuationSignal = signal;
+      return new Promise(() => {});
+    });
     const initialResponse = {
       rows: [{ key: "one" }],
       metadata: { has_more: true, next_cursor: "checkpoint-1" },
@@ -1041,16 +1051,16 @@ describe("list cursor pagination", () => {
       identityFromRow: ({ key }) => key,
       targetRowCount: 10,
       maxElapsedMs: 5,
-      nextResponse: (_cursor, signal) => {
-        continuationSignal = signal;
-        return new Promise(() => {});
-      },
+      // Injected clock (tests F5), as above.
+      now: () => 0,
+      nextResponse,
     });
 
     expect(result.response).toBe(initialResponse);
     expect(result.rows).toEqual([{ key: "one" }]);
     expect(result.followedCursors).toEqual([]);
     expect(result.response.metadata.next_cursor).toBe("checkpoint-1");
+    expect(nextResponse).toHaveBeenCalledOnce();
     expect(continuationSignal.aborted).toBe(true);
   });
 

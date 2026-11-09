@@ -33,12 +33,12 @@ type MirrorRule struct {
 // ProductionInfo carries production-side data needed to build a ShadowResult.
 // Passed to ExecuteAsync so the goroutine can build the complete comparison.
 type ProductionInfo struct {
-	RequestID    string
-	Model        string
-	Response     string // first 2000 chars of response text
-	LatencyMs    int64
-	Tokens       int // total tokens
-	StatusCode   int
+	RequestID  string
+	Model      string
+	Response   string // first 2000 chars of response text
+	LatencyMs  int64
+	Tokens     int // total tokens
+	StatusCode int
 }
 
 // Mirror manages traffic mirroring for shadow testing.
@@ -106,7 +106,9 @@ func (m *Mirror) ShouldMirror(model string) (*MirrorRule, bool) {
 // ExecuteAsync sends a mirrored request to the target provider asynchronously.
 // This is fire-and-forget — errors are logged but never returned.
 // When Store is non-nil, the shadow response is captured and stored along with
-// the production info for later comparison.
+// the production info for later comparison. It is ShouldMirror followed by
+// ExecuteRuleAsync; a caller that must judge the target first (the gateway
+// never mirrors to a managed provider) calls the two itself.
 func (m *Mirror) ExecuteAsync(req *models.ChatCompletionRequest, sourceProvider, sourceModel string, prod *ProductionInfo) {
 	if m == nil || req == nil {
 		return
@@ -114,6 +116,15 @@ func (m *Mirror) ExecuteAsync(req *models.ChatCompletionRequest, sourceProvider,
 
 	rule, ok := m.ShouldMirror(req.Model)
 	if !ok {
+		return
+	}
+	m.ExecuteRuleAsync(rule, req, sourceProvider, sourceModel, prod)
+}
+
+// ExecuteRuleAsync sends req to rule's target provider asynchronously, as
+// ExecuteAsync does once ShouldMirror has picked rule.
+func (m *Mirror) ExecuteRuleAsync(rule *MirrorRule, req *models.ChatCompletionRequest, sourceProvider, sourceModel string, prod *ProductionInfo) {
+	if m == nil || rule == nil || req == nil {
 		return
 	}
 

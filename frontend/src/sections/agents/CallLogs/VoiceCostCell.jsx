@@ -1,18 +1,27 @@
+import {
+  formatExactMoney,
+  multiplyMoneyValues,
+} from "src/sections/common/format/money";
 import React from "react";
 import PropTypes from "prop-types";
 import { Box, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 function fmt(v) {
-  if (v == null || v === 0) return "$0";
-  const abs = Math.abs(v);
-  if (abs >= 1) return `$${v.toFixed(2)}`;
-  if (abs >= 0.01) return `$${v.toFixed(4)}`;
-  return `$${v.toFixed(6)}`;
+  return formatExactMoney(v, {
+    minimumFractionDigits:
+      Number(v) === 0
+        ? 0
+        : Math.abs(Number(v)) >= 1
+          ? 2
+          : Math.abs(Number(v)) >= 0.01
+            ? 4
+            : 6,
+  });
 }
 
 const BreakdownTooltip = ({ breakdown, totalCents }) => {
-  const total = totalCents ? totalCents / 100 : 0;
+  const total = multiplyMoneyValues(totalCents, "0.01");
   if (!breakdown && !total) return null;
   return (
     <Box sx={{ p: 0.5, minWidth: 180 }}>
@@ -80,7 +89,7 @@ const VoiceCostCell = (params) => {
   const costCents = data?.costCents ?? data?.cost_cents;
   const breakdown = data?.costBreakdown ?? data?.cost_breakdown;
 
-  if (!costCents && !breakdown?.total) {
+  if (costCents == null && breakdown?.total == null) {
     return (
       <Typography
         variant="body2"
@@ -91,7 +100,10 @@ const VoiceCostCell = (params) => {
     );
   }
 
-  const totalDollars = costCents ? costCents / 100 : breakdown?.total ?? 0;
+  const totalDollars =
+    costCents != null
+      ? multiplyMoneyValues(costCents, "0.01")
+      : breakdown?.total;
 
   return (
     <Box
@@ -110,6 +122,7 @@ const VoiceCostCell = (params) => {
         {fmt(totalDollars)}
       </Typography>
       <Tooltip
+        enterTouchDelay={0}
         title={
           <BreakdownTooltip breakdown={breakdown} totalCents={costCents} />
         }
@@ -120,9 +133,18 @@ const VoiceCostCell = (params) => {
         }}
       >
         <Box
+          component="button"
+          type="button"
+          aria-label="Show exact cost breakdown"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           sx={{
+            border: 0,
+            background: "transparent",
+            color: "inherit",
+            p: 0,
+            minWidth: 24,
+            minHeight: 24,
             display: "flex",
             opacity: 0.4,
             "&:hover": { opacity: 1 },

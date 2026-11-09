@@ -168,7 +168,7 @@ def agent_summary(
         keyed.filter(agent_definition=agent).first(),
     )
     credential = next((row for row in candidates if row is not None), None)
-    key_present = credential is not None or bool((agent.api_key or "").strip())
+    key_present = credential is not None or bool(agent.get_api_key().strip())
     missing = tuple(
         word
         for word, value in (
@@ -582,7 +582,7 @@ def _word(value: Any, words: tuple[str, ...]) -> None:
 def _directions(inbound: bool, outbound: bool) -> list[str]:
     return [
         direction
-        for direction, present in zip(_DIRECTIONS, (inbound, outbound))
+        for direction, present in zip(_DIRECTIONS, (inbound, outbound), strict=False)
         if present
     ]
 

@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 import structlog
@@ -57,7 +56,7 @@ class SubmitTraceScoresInput(PydanticBaseModel):
     recommended_priority: str = Field(
         description="Overall priority: HIGH, MEDIUM, or LOW",
     )
-    analysis_id: Optional[UUID] = Field(
+    analysis_id: UUID | None = Field(
         default=None,
         description=(
             "The analysis_id returned by submit_trace_finding. "
@@ -79,7 +78,81 @@ class SubmitTraceScoresTool(BaseTool):
     category = "error_feed"
     input_model = SubmitTraceScoresInput
 
+    def run(self, raw_params, context):
+        if getattr(context, "background_analysis", None) is not None:
+            from ee.agenthub.traceerroragent.background_payload_tools import (
+                run_background_tool,
+            )
+
+            return run_background_tool(self, raw_params, context)
+        return super().run(raw_params, context)
+
     def execute(
+        self, params: SubmitTraceScoresInput, context: ToolContext
+    ) -> ToolResult:
+        from tracer.services.analysis_result_binding import (
+            ResultOwnershipError,
+            current_attempt,
+            legacy_attempt,
+        )
+
+        guard = getattr(context, "background_analysis", None)
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_payload_tools import (
+                require_tool_parameters,
+            )
+
+            require_tool_parameters(params, guard, "submit_trace_scores")
+        if current_attempt() is not None:
+            return self._execute_owned(params, context)
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_tools import reject_chauffeur
+
+            reject_chauffeur(guard)
+        from tracer.models.project import Project
+        from tracer.services.clickhouse.v2 import get_reader
+
+        with get_reader() as reader:
+            root = reader.root_ids_by_trace_ids([str(params.trace_id)]).get(
+                str(params.trace_id)
+            )
+        project = (
+            Project.objects.filter(
+                id=root[1], organization=context.organization
+            ).first()
+            if root
+            else None
+        )
+        if project is None:
+            return ToolResult.not_found("Trace", str(params.trace_id))
+        try:
+            with legacy_attempt(project.pk, params.trace_id):
+                result = self._execute_owned(params, context)
+                if result.is_error:
+                    raise ResultOwnershipError("analysis_failed")
+            result.data.pop("analysis_status", None)
+            # All exports select through the bound-only reader manager.
+            try:
+                from tracer.queries.error_analysis import TraceErrorAnalysisDB
+                from tracer.tasks.error_analysis import cluster_project_errors
+
+                TraceErrorAnalysisDB().ingest_trace_error_embeddings(
+                    str(params.trace_id)
+                )
+                if guard is None:
+                    cluster_project_errors.delay(str(project.id))
+                    result.data["clustering_triggered"] = True
+            except Exception:
+                logger.warning(
+                    "analysis_completed_export_failed", trace_id=str(params.trace_id)
+                )
+            return result
+        except ResultOwnershipError:
+            return ToolResult.validation_error(
+                "A generation-owned analysis task is required."
+            )
+
+    def _execute_owned(
         self, params: SubmitTraceScoresInput, context: ToolContext
     ) -> ToolResult:
         from tracer.models.project import Project
@@ -87,9 +160,36 @@ class SubmitTraceScoresTool(BaseTool):
         from tracer.queries import deep_analysis_state
         from tracer.services.clickhouse.v2 import get_reader
 
+        guard = getattr(context, "background_analysis", None)
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_payload_tools import (
+                require_tool_parameters,
+            )
+
+            require_tool_parameters(params, guard, "submit_trace_scores")
+
+        def checkpoint():
+            if guard is not None:
+                guard.check()
+
+        from tracer.services.analysis_result_binding import current_attempt
+
+        checkpoint()
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_tool_validation import (
+                validate_submission,
+            )
+
+            validate_submission(params, guard, scores=True)
         # Validate priority
         priority = params.recommended_priority.upper()
         if priority not in ("HIGH", "MEDIUM", "LOW"):
+            if guard is not None:
+                from ee.agenthub.traceerroragent.background_tools import (
+                    reject_chauffeur,
+                )
+
+                reject_chauffeur(guard)
             return ToolResult.validation_error(
                 f"Invalid recommended_priority '{params.recommended_priority}'. "
                 "Must be HIGH, MEDIUM, or LOW."
@@ -99,7 +199,9 @@ class SubmitTraceScoresTool(BaseTool):
         # its project from the CH root span and check org access via the PG
         # Project (kept).
         with get_reader() as reader:
+            checkpoint()
             roots = reader.root_ids_by_trace_ids([str(params.trace_id)])
+        checkpoint()
         root = roots.get(str(params.trace_id))
         project_id = root[1] if root else None
         project = (
@@ -109,31 +211,46 @@ class SubmitTraceScoresTool(BaseTool):
             if project_id
             else None
         )
+        checkpoint()
         if project is None:
+            if guard is not None:
+                from ee.agenthub.traceerroragent.background_tools import (
+                    reject_chauffeur,
+                )
+
+                reject_chauffeur(guard)
             return ToolResult.not_found("Trace", str(params.trace_id))
 
         # Find the analysis record
         analysis = None
         if params.analysis_id:
             try:
-                analysis = TraceErrorAnalysis.objects.get(
+                analysis = TraceErrorAnalysis.drafts.get(
                     id=params.analysis_id,
                     trace_id=params.trace_id,
                 )
             except TraceErrorAnalysis.DoesNotExist:
+                if guard is not None:
+                    from ee.agenthub.traceerroragent.background_tools import (
+                        reject_chauffeur,
+                    )
+
+                    reject_chauffeur(guard)
                 analysis = None
 
+        checkpoint()
         # Fallback: get the most recent analysis for this trace
         if analysis is None:
             analysis = (
-                TraceErrorAnalysis.objects.filter(trace_id=params.trace_id)
+                TraceErrorAnalysis.drafts.filter(trace_id=params.trace_id)
                 .order_by("-analysis_date")
                 .first()
             )
 
+        checkpoint()
         # If still no analysis, create one (scores-only, no findings)
         if analysis is None:
-            analysis = TraceErrorAnalysis.objects.create(
+            analysis = TraceErrorAnalysis.drafts.create(
                 trace_id=params.trace_id,
                 project=project,
                 overall_score=params.overall_score,
@@ -155,6 +272,7 @@ class SubmitTraceScoresTool(BaseTool):
         analysis.insights = params.insights
         analysis.recommended_priority = priority
 
+        checkpoint()
         analysis.save(
             update_fields=[
                 "overall_score",
@@ -171,38 +289,24 @@ class SubmitTraceScoresTool(BaseTool):
             ]
         )
 
-        # Done derives from the TraceErrorAnalysis row above; release the marker.
-        deep_analysis_state.clear(str(params.trace_id))
+        checkpoint()
+        # Background jobs own their marker until finalization, not tool return.
+        if guard is None:
+            deep_analysis_state.clear(str(params.trace_id))
 
-        # Trigger embedding ingestion for this trace's errors
-        try:
-            from tracer.queries.error_analysis import TraceErrorAnalysisDB
+        # Drafts are not embedding/clustering input. The owning worker exports
+        # only after publication; standalone legacy admission does so below.
 
-            db = TraceErrorAnalysisDB()
-            db.ingest_trace_error_embeddings(str(params.trace_id))
-        except Exception as e:
-            logger.warning(
-                "embedding_ingestion_failed",
-                trace_id=str(params.trace_id),
-                error=str(e),
-            )
-
-        # Trigger async clustering for the project
-        try:
-            from tracer.tasks.error_analysis import cluster_project_errors
-
-            cluster_project_errors.delay(str(project.id))
-        except Exception as e:
-            logger.warning(
-                "clustering_trigger_failed",
-                project_id=str(project.id),
-                error=str(e),
-            )
-
+        checkpoint()
         # Format response
         info = key_value_block(
             [
-                ("Status", "Scores Saved & Clustering Triggered"),
+                (
+                    "Status",
+                    "Scores Saved; Publication Pending"
+                    if current_attempt()
+                    else "Completed",
+                ),
                 ("Analysis ID", f"`{analysis.id}`"),
                 ("Trace", f"`{params.trace_id}`"),
                 ("Overall Score", format_number(params.overall_score)),
@@ -228,6 +332,7 @@ class SubmitTraceScoresTool(BaseTool):
                 "analysis_id": str(analysis.id),
                 "overall_score": params.overall_score,
                 "total_errors": analysis.total_errors,
-                "clustering_triggered": True,
+                "clustering_triggered": False,
+                "analysis_status": "running",
             },
         )

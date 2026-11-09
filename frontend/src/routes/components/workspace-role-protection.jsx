@@ -1,7 +1,11 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { useParams, Navigate } from "react-router";
+import { useParams } from "react-router";
+import Button from "@mui/material/Button";
+import Stack from "@mui/material/Stack";
+import Typography from "@mui/material/Typography";
 import { LoadingScreen } from "src/components/loading-screen";
+import NoAccessState from "./no-access-state";
 import { useWorkspaceFromList } from "src/api/workspaces/list";
 import { useAuthContext } from "src/auth/hooks";
 
@@ -32,20 +36,64 @@ const WorkspaceRoleProtection = ({ allowedRoles, children }) => {
   const isOrgAdminPlus = orgRole === "Owner" || orgRole === "Admin";
 
   // Fetch workspace list to get user's role for this specific workspace
-  const { workspace, isLoading, isError } = useWorkspaceFromList(workspaceId, {
-    enabled: !isOrgAdminPlus, // Skip query if org admin
-  });
+  const { workspace, isLoading, isError, isOrgUnavailable, refetch } =
+    useWorkspaceFromList(workspaceId, {
+      enabled: !isOrgAdminPlus, // Skip query if org admin
+    });
 
   // Loading state
   if (isLoading && !isOrgAdminPlus) {
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "60vh" }} />;
+  }
+
+  // No organization could be set for this session, so the workspace list is
+  // never requested and no retry of it can help: say so, without a Retry.
+  if (isOrgUnavailable && !isOrgAdminPlus) {
     return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "60vh" }} />
+      <Stack
+        data-testid="workspace-access-no-organization"
+        alignItems="center"
+        justifyContent="center"
+        spacing={2}
+        sx={{ minHeight: "60vh", px: 3, textAlign: "center" }}
+      >
+        <Typography variant="h5" component="h1">
+          No organization for this session
+        </Typography>
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ maxWidth: 480 }}
+        >
+          Workspace access is checked within an organization, and none could be
+          set for your account. Ask an organization Owner or Admin to add you,
+          then sign in again.
+        </Typography>
+      </Stack>
     );
   }
 
-  // Error state - deny access
+  // The workspace list failed to load: that is not a denial, so offer a retry.
   if (isError && !isOrgAdminPlus) {
-    return <Navigate to="/dashboard/develop" replace />;
+    return (
+      <Stack
+        data-testid="workspace-access-load-failed"
+        alignItems="center"
+        justifyContent="center"
+        spacing={2}
+        sx={{ minHeight: "60vh", px: 3, textAlign: "center" }}
+      >
+        <Typography variant="h5" component="h1">
+          Your access to this workspace couldn&apos;t be checked
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          The workspace list failed to load.
+        </Typography>
+        <Button variant="outlined" color="inherit" onClick={() => refetch()}>
+          Retry
+        </Button>
+      </Stack>
+    );
   }
 
   // Organization admins bypass workspace role checks
@@ -55,7 +103,7 @@ const WorkspaceRoleProtection = ({ allowedRoles, children }) => {
 
   if (!workspace) {
     // Workspace not found or user has no access
-    return <Navigate to="/dashboard/develop" replace />;
+    return <NoAccessState allowedRoles={allowedRoles} />;
   }
 
   // Map workspace level to role name
@@ -70,7 +118,12 @@ const WorkspaceRoleProtection = ({ allowedRoles, children }) => {
 
   // Check if user's workspace role is in allowed roles
   if (!workspaceRole || !allowedRoles.includes(workspaceRole)) {
-    return <Navigate to="/dashboard/develop" replace />;
+    return (
+      <NoAccessState
+        allowedRoles={allowedRoles}
+        workspaceRole={workspaceRole}
+      />
+    );
   }
 
   return <>{children}</>;

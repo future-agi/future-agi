@@ -8,6 +8,8 @@ import {
   AccordionSummary,
 } from "../../AccordianElements";
 import PropTypes from "prop-types";
+import RerunScopeField from "../RerunScopeField";
+import { withRerunScope } from "../rerunScope";
 import ConfigureKeys from "../../Common/ConfigureKeys/ConfigureKeys";
 import AddLabelInput from "./AddLabelInput";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -27,6 +29,7 @@ import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import { transformDynamicColumnConfig } from "../common";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { rerunResultToast } from "../rerunResult";
 
 const getDefaultValue = () => {
   return {
@@ -103,21 +106,26 @@ export const ClassificationChild = ({
         endpoints.develop.addColumns.updateDynamicColumn(editId),
         data,
       ),
-    onSuccess: () => {
-      enqueueSnackbar("Classification column updated successfully", {
-        variant: "success",
-      });
+    onSuccess: (res) => {
+      const toast = rerunResultToast("Classification", res);
+      enqueueSnackbar(toast.text, { variant: toast.variant });
       refreshGrid();
       onClose();
     },
   });
 
+  const [rerunScope, setRerunScope] = useState("all");
   const onSubmit = (formValues) => {
     if (editId) {
-      updateColumn({
-        config: formValues,
-        operation_type: "classify",
-      });
+      updateColumn(
+        withRerunScope(
+          {
+            config: formValues,
+            operation_type: "classify",
+          },
+          rerunScope,
+        ),
+      );
       return;
     }
     if (onFormSubmit) {
@@ -162,6 +170,7 @@ export const ClassificationChild = ({
             {editId ? "Edit Classification" : "Classification"}
           </Typography>
           <IconButton
+            aria-label="Close classification"
             onClick={() => {
               reset();
               onClose();
@@ -254,6 +263,9 @@ export const ClassificationChild = ({
             fieldType="number"
           />
         </Box>
+        {editId && (
+          <RerunScopeField value={rerunScope} onChange={setRerunScope} />
+        )}
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
           {!onFormSubmit && (
             <LoadingButton
@@ -316,8 +328,11 @@ const Classification = ({ initialData, onFormSubmit }) => {
       anchor="right"
       open={openClassification}
       onClose={onClose}
-      variant="persistent"
+      variant="temporary"
       PaperProps={{
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": "Classification",
         sx: {
           height: "100vh",
           position: "fixed",

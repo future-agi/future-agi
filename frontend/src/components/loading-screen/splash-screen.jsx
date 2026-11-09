@@ -14,20 +14,12 @@ import { Starfield } from "../rocket-mascot";
 //   * Rotating crosshair ring with tick marks
 //   * Counter-rotating dashed outer orbit
 //   * Segmented progress bar with 16 cells
-//   * Terminal-style boot log ticking through stages
+//   * The product name, then a status line that says "Loading…" (no invented
+//     boot stages and no themed subtitle)
 //   * Optional starfield in dark mode
 // ---------------------------------------------------------------------------
 
-const BOOT_LOG = [
-  "Establishing secure uplink...",
-  "Authenticating mission profile...",
-  "Syncing workspaces...",
-  "Calibrating evaluators...",
-  "Warming up the engines...",
-  "Systems online.",
-];
-
-export default function SplashScreen({ sx, ...other }) {
+export default function SplashScreen({ sx = undefined, ...other }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const primary = theme.palette.primary.main;
@@ -39,19 +31,10 @@ export default function SplashScreen({ sx, ...other }) {
     : alpha(theme.palette.text.primary, 0.2);
 
   const [mounted, setMounted] = useState(false);
-  const [logIndex, setLogIndex] = useState(0);
 
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  useEffect(() => {
-    if (!mounted) return undefined;
-    const id = setInterval(() => {
-      setLogIndex((i) => (i + 1) % BOOT_LOG.length);
-    }, 900);
-    return () => clearInterval(id);
-  }, [mounted]);
 
   // Deterministic particle positions so they don't flicker between renders
   const particles = useMemo(
@@ -182,8 +165,14 @@ export default function SplashScreen({ sx, ...other }) {
               animation: "splash-bracket 2.4s ease-out infinite",
               animationDelay: `${i * 0.12}s`,
               "@keyframes splash-bracket": {
-                "0%": { opacity: 0, transform: `rotate(${c.rot}deg) translate(12px, 12px)` },
-                "40%, 100%": { opacity: 1, transform: `rotate(${c.rot}deg) translate(0, 0)` },
+                "0%": {
+                  opacity: 0,
+                  transform: `rotate(${c.rot}deg) translate(12px, 12px)`,
+                },
+                "40%, 100%": {
+                  opacity: 1,
+                  transform: `rotate(${c.rot}deg) translate(0, 0)`,
+                },
               },
             }}
           />
@@ -232,13 +221,7 @@ export default function SplashScreen({ sx, ...other }) {
           />
 
           {/* Inner static ring */}
-          <circle
-            cx="120"
-            cy="120"
-            r="68"
-            stroke={faintLine}
-            strokeWidth="1"
-          />
+          <circle cx="120" cy="120" r="68" stroke={faintLine} strokeWidth="1" />
 
           {/* Rotating dashed middle ring */}
           <g>
@@ -399,43 +382,12 @@ export default function SplashScreen({ sx, ...other }) {
         >
           Future&nbsp;AGI
         </Typography>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 1.25,
-            mt: 0.75,
-          }}
-        >
-          <Box
-            sx={{
-              width: 24,
-              height: "1px",
-              bgcolor: faintLine,
-            }}
-          />
-          <Typography
-            fontFamily="IBM Plex Mono, ui-monospace, monospace"
-            fontSize="10.5px"
-            color="text.secondary"
-            letterSpacing="0.38em"
-            sx={{ textTransform: "uppercase" }}
-          >
-            Mission&nbsp;Control
-          </Typography>
-          <Box
-            sx={{
-              width: 24,
-              height: "1px",
-              bgcolor: faintLine,
-            }}
-          />
-        </Box>
       </Box>
 
-      {/* ============ Terminal boot log ============ */}
+      {/* ============ Status line ============ */}
       <Box
+        role="status"
+        aria-live="polite"
         sx={{
           zIndex: 2,
           fontFamily: "IBM Plex Mono, ui-monospace, monospace",
@@ -472,19 +424,7 @@ export default function SplashScreen({ sx, ...other }) {
         <Box component="span" sx={{ color: "text.disabled" }}>
           &gt;
         </Box>
-        <Box
-          component="span"
-          key={logIndex}
-          sx={{
-            animation: "splash-type 0.35s ease-out",
-            "@keyframes splash-type": {
-              from: { opacity: 0, transform: "translateX(-4px)" },
-              to: { opacity: 1, transform: "translateX(0)" },
-            },
-          }}
-        >
-          {BOOT_LOG[logIndex]}
-        </Box>
+        <Box component="span">Loading{"\u2026"}</Box>
       </Box>
 
       {/* ============ Segmented progress strip ============ */}

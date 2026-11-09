@@ -1,34 +1,63 @@
 import time
-import traceback as tb_module
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from django.db.models import F, Q
 
+from integrations.models.integration_connection import EXPORT_PLATFORMS
+from integrations.services.export_failures import (
+    describe_export_failure,
+    exception_fields,
+)
 from tfc.temporal.drop_in.decorator import temporal_activity
 from tracer.utils.langfuse_upsert import upsert_langfuse_trace
 
 logger = structlog.get_logger(__name__)
 
-# Platforms that export data FROM Agentcc (push-based).
-# Contrast with pull-based platforms that import data INTO Agentcc.
-EXPORT_PLATFORMS = {"datadog", "posthog", "mixpanel", "cloud_storage", "message_queue"}
+# Datadog's log intake accepts a log dated up to 18 hours in the past and
+# drops older ones while answering 2xx
+# (https://docs.datadoghq.com/api/latest/logs/#send-logs), so an export never
+# sends one older than that and never counts it as exported.
+DATADOG_LOG_MAX_AGE = timedelta(hours=18)
+# The window a Datadog sync sends from, measured back from the sync's own
+# time: the intake's 18 hours less a minute for the request to reach it.
+DATADOG_LOG_WINDOW = DATADOG_LOG_MAX_AGE - timedelta(minutes=1)
 
 
 @temporal_activity(time_limit=120, queue="tasks_s")
 def poll_active_integrations():
-    """Find integration connections due for sync and dispatch sync activities."""
-    from integrations.models import ConnectionStatus, IntegrationConnection, IntegrationPlatform
+    """Dispatch a sync for every connection that is due: an active one once
+    its sync interval has passed, one in Error once its retry delay has passed
+    (integrations/services/sync_retry.py)."""
+    from integrations.models import (
+        ACTION_ONLY_PLATFORMS,
+        ConnectionStatus,
+        IntegrationConnection,
+    )
+    from integrations.services.sync_retry import retry_due
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
-    connections = IntegrationConnection.no_workspace_objects.filter(
-        status=ConnectionStatus.ACTIVE,
-        deleted=False,
-    ).exclude(platform=IntegrationPlatform.SLACK).filter(
+    # Slack and Linear receive alerts and issues; they have nothing to sync.
+    scheduled = IntegrationConnection.no_workspace_objects.filter(
+        deleted=False
+    ).exclude(platform__in=sorted(ACTION_ONLY_PLATFORMS))
+    connections = scheduled.filter(status=ConnectionStatus.ACTIVE).filter(
         Q(last_synced_at__isnull=True)
         | Q(last_synced_at__lte=now - timedelta(seconds=60))
     )
+
+    def dispatch(conn, **kwargs):
+        try:
+            sync_integration_connection.delay(str(conn.id), **kwargs)
+            return 1
+        except Exception as e:
+            logger.warning(
+                "Failed to dispatch sync for connection",
+                connection_id=str(conn.id),
+                **exception_fields(e),
+            )
+            return 0
 
     dispatched = 0
     for conn in connections:
@@ -37,30 +66,30 @@ def poll_active_integrations():
             elapsed = (now - conn.last_synced_at).total_seconds()
             if elapsed < conn.sync_interval_seconds:
                 continue
+        dispatched += dispatch(conn)
 
-        try:
-            sync_integration_connection.delay(str(conn.id))
-            dispatched += 1
-        except Exception as e:
-            logger.warning(
-                "Failed to dispatch sync for connection",
-                connection_id=str(conn.id),
-                error=str(e),
-            )
+    retried = 0
+    for conn in scheduled.filter(status=ConnectionStatus.ERROR):
+        if retry_due(conn, now):
+            retried += dispatch(conn, retry=True)
 
-    logger.info("poll_active_integrations_complete", dispatched=dispatched)
+    logger.info(
+        "poll_active_integrations_complete", dispatched=dispatched, retried=retried
+    )
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l", max_retries=2, retry_delay=60)
-def sync_integration_connection(connection_id: str):
-    """Sync traces from an external platform for a single connection."""
+def sync_integration_connection(connection_id: str, retry: bool = False):
+    """Sync one connection. With `retry`, a connection in Error is synced
+    too: the scheduler's retry and Sync now's Retry; a sync that succeeds makes
+    it active again."""
     # Ensure service/transformer modules are loaded
     import integrations.services.langfuse_service  # noqa: F401
     import integrations.transformers.langfuse_transformer  # noqa: F401
     from integrations.models import (
+        ACTION_ONLY_PLATFORMS,
         ConnectionStatus,
         IntegrationConnection,
-        IntegrationPlatform,
         SyncLog,
         SyncStatus,
     )
@@ -77,11 +106,14 @@ def sync_integration_connection(connection_id: str):
         logger.warning("Connection not found or deleted", connection_id=connection_id)
         return
 
-    if connection.status not in (
+    syncable = {
         ConnectionStatus.ACTIVE,
         ConnectionStatus.SYNCING,
         ConnectionStatus.BACKFILLING,
-    ):
+    }
+    if retry:
+        syncable.add(ConnectionStatus.ERROR)
+    if connection.status not in syncable:
         logger.info(
             "Connection not in syncable state",
             connection_id=connection_id,
@@ -89,9 +121,10 @@ def sync_integration_connection(connection_id: str):
         )
         return
 
-    # Slack is an action-only destination. It has no project to import into and
-    # must remain active for alert delivery instead of entering the sync path.
-    if connection.platform == IntegrationPlatform.SLACK:
+    # Slack and Linear are action-only destinations. They have no project to
+    # import into and stay active for alert and issue delivery instead of
+    # entering the sync path.
+    if connection.platform in ACTION_ONLY_PLATFORMS:
         return
 
     # Route push-based export platforms to their own handler.
@@ -113,13 +146,11 @@ def sync_integration_connection(connection_id: str):
     connection.status = ConnectionStatus.SYNCING
     connection.save(update_fields=["status", "updated_at"])
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # For backfill: use backfill_from date if set, otherwise sync from epoch
     # For incremental: use last_synced_at with overlap buffer
     if not connection.last_synced_at:
-        sync_from = connection.backfill_from or datetime(
-            2020, 1, 1, tzinfo=timezone.utc
-        )
+        sync_from = connection.backfill_from or datetime(2020, 1, 1, tzinfo=UTC)
     else:
         # Overlap buffer: re-scan the last 5 minutes to catch traces that
         # were in-flight during the previous sync (some sources index async,
@@ -179,7 +210,7 @@ def sync_integration_connection(connection_id: str):
                     if total_traces_fetched > 0
                     else SyncStatus.FAILED
                 )
-                sync_log.completed_at = datetime.now(timezone.utc)
+                sync_log.completed_at = datetime.now(UTC)
                 sync_log.traces_fetched = total_traces_fetched
                 sync_log.traces_created = total_traces_created
                 sync_log.traces_updated = total_traces_updated
@@ -242,7 +273,7 @@ def sync_integration_connection(connection_id: str):
                         "Failed to sync individual trace",
                         connection_id=connection_id,
                         trace_id=trace_summary.get("id"),
-                        error=str(e),
+                        **exception_fields(e),
                     )
 
                 # Rate limit courtesy: 500ms between trace detail fetches
@@ -290,7 +321,7 @@ def sync_integration_connection(connection_id: str):
                     logger.warning(
                         "retry_also_failed",
                         trace_id=trace_id,
-                        error=str(e),
+                        **exception_fields(e),
                     )
                 time.sleep(1)  # 1s between retries
 
@@ -351,7 +382,7 @@ def sync_integration_connection(connection_id: str):
                     logger.warning(
                         "Failed to backfill incomplete trace",
                         trace_id=inc_trace.external_id,
-                        error=str(e),
+                        **exception_fields(e),
                     )
 
         # Success: update connection state
@@ -378,7 +409,7 @@ def sync_integration_connection(connection_id: str):
         sync_log.status = (
             SyncStatus.SUCCESS if total_traces_fetched > 0 else SyncStatus.NO_NEW_DATA
         )
-        sync_log.completed_at = datetime.now(timezone.utc)
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.traces_fetched = total_traces_fetched
         sync_log.traces_created = total_traces_created
         sync_log.traces_updated = total_traces_updated
@@ -395,46 +426,20 @@ def sync_integration_connection(connection_id: str):
         )
 
     except Exception as e:
+        failure = describe_export_failure(connection, e)
         logger.warning(
             "sync_failed",
             connection_id=connection_id,
-            error=str(e),
             traces_ingested_before_failure=total_traces_fetched,
-            exc_info=True,
+            **exception_fields(e),
         )
-
-        error_msg = str(e)
-
-        # Determine error type — prefer HTTP status code when available
-        import requests as requests_lib
-
-        http_status = None
-        if isinstance(e, requests_lib.exceptions.HTTPError) and e.response is not None:
-            http_status = e.response.status_code
-
-        if http_status == 401 or (
-            http_status is None and ("401" in error_msg or "Unauthorized" in error_msg)
-        ):
-            connection.status = ConnectionStatus.ERROR
-            connection.status_message = (
-                "Authentication failed. Your API keys may have been rotated or revoked."
-            )
-            sync_log.status = SyncStatus.FAILED
-        elif http_status == 429 or (http_status is None and "429" in error_msg):
-            # Restore to active for rate limits — next cycle will retry
-            connection.status = ConnectionStatus.ACTIVE
-            connection.status_message = ""
-            sync_log.status = SyncStatus.RATE_LIMITED
-        elif http_status == 404 or (http_status is None and "404" in error_msg):
-            connection.status = ConnectionStatus.ERROR
-            connection.status_message = (
-                "Langfuse project not found. It may have been deleted."
-            )
-            sync_log.status = SyncStatus.FAILED
-        else:
-            connection.status = ConnectionStatus.ERROR
-            connection.status_message = f"Sync failed: {error_msg[:500]}"
-            sync_log.status = SyncStatus.FAILED
+        connection.status = (
+            ConnectionStatus.ACTIVE if failure.rate_limited else ConnectionStatus.ERROR
+        )
+        connection.status_message = "" if failure.rate_limited else failure.message
+        sync_log.status = (
+            SyncStatus.RATE_LIMITED if failure.rate_limited else SyncStatus.FAILED
+        )
 
         # Credit traces that were already ingested before the failure.
         # Data was upserted per-trace, so the DB has them even if sync didn't complete.
@@ -442,9 +447,9 @@ def sync_integration_connection(connection_id: str):
             connection.status = ConnectionStatus.ACTIVE
             connection.status_message = (
                 f"Partial sync: {total_traces_fetched} traces ingested before error. "
-                f"{error_msg[:200]}"
+                f"{failure.message}"
             )
-            connection.last_synced_at = datetime.now(timezone.utc)
+            connection.last_synced_at = datetime.now(UTC)
             sync_log.status = SyncStatus.PARTIAL
             IntegrationConnection.no_workspace_objects.filter(id=connection_id).update(
                 total_traces_synced=F("total_traces_synced")
@@ -458,13 +463,9 @@ def sync_integration_connection(connection_id: str):
             update_fields=["status", "status_message", "last_synced_at", "updated_at"]
         )
 
-        sync_log.error_message = error_msg[:1000]
-        sync_log.error_details = {
-            "error": error_msg,
-            "type": type(e).__name__,
-            "traceback": tb_module.format_exc(),
-        }
-        sync_log.completed_at = datetime.now(timezone.utc)
+        sync_log.error_message = failure.message
+        sync_log.error_details = failure.details(e)
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.traces_fetched = total_traces_fetched
         sync_log.traces_created = total_traces_created
         sync_log.traces_updated = total_traces_updated
@@ -477,7 +478,6 @@ def _sync_export_integration(connection):
     """Export Agentcc request logs to a push-based integration (Datadog, PostHog, etc.)."""
     from integrations.models import (
         ConnectionStatus,
-        IntegrationConnection,
         SyncLog,
         SyncStatus,
     )
@@ -492,14 +492,20 @@ def _sync_export_integration(connection):
     connection.status = ConnectionStatus.SYNCING
     connection.save(update_fields=["status", "updated_at"])
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Determine time window for log export.
     if not connection.last_synced_at:
-        # First sync: export logs from the last 24 hours (or backfill_from).
-        sync_from = connection.backfill_from or (now - timedelta(hours=24))
+        # First sync: the last 24 hours (Datadog: its 18-hour intake window),
+        # or from backfill_from.
+        recent = (
+            DATADOG_LOG_WINDOW
+            if connection.platform == "datadog"
+            else timedelta(hours=24)
+        )
+        sync_from = connection.backfill_from or (now - recent)
     else:
-        # Incremental: overlap by 1 minute for safety (target deduplicates).
+        # At-least-once delivery: overlap by 1 minute. Not every target deduplicates.
         sync_from = connection.last_synced_at - timedelta(minutes=1)
     sync_to = now
 
@@ -535,22 +541,39 @@ def _sync_export_integration(connection):
 
         logs_sent = exported.get("logs_sent", 0)
         metrics_sent = exported.get("metrics_sent", 0)
+        # Request logs in the window the destination does not accept (Datadog's
+        # older than 18 hours): not sent, not counted, and said in the sync log.
+        logs_skipped = exported.get("logs_skipped", 0)
+        skipped_note = exported.get("skipped_note", "")
 
-        # Success: update connection state.
-        update_fields = ["status", "last_synced_at", "status_message", "updated_at"]
+        # Success: update connection state. The connection counts every
+        # successful delivery, including overlap repeats; not unique request IDs.
+        update_fields = [
+            "status",
+            "last_synced_at",
+            "status_message",
+            "total_traces_synced",
+            "updated_at",
+        ]
         connection.status = ConnectionStatus.ACTIVE
         connection.last_synced_at = sync_to
         connection.status_message = ""
+        connection.total_traces_synced = F("total_traces_synced") + logs_sent
         if not connection.backfill_completed:
             connection.backfill_completed = True
             update_fields.append("backfill_completed")
         connection.save(update_fields=update_fields)
+        connection.refresh_from_db(fields=["total_traces_synced"])
 
         # Use traces_fetched to store total items exported.
-        sync_log.status = (
-            SyncStatus.SUCCESS if logs_sent > 0 else SyncStatus.NO_NEW_DATA
-        )
-        sync_log.completed_at = datetime.now(timezone.utc)
+        if logs_skipped:
+            sync_log.status = SyncStatus.PARTIAL
+            sync_log.error_message = skipped_note
+        else:
+            sync_log.status = (
+                SyncStatus.SUCCESS if logs_sent > 0 else SyncStatus.NO_NEW_DATA
+            )
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.traces_fetched = logs_sent
         sync_log.traces_created = logs_sent
         sync_log.spans_synced = metrics_sent
@@ -565,58 +588,69 @@ def _sync_export_integration(connection):
         )
 
     except Exception as e:
+        from integrations.services.export_failures import (
+            describe_export_failure,
+            raised_at,
+        )
+
+        failure = describe_export_failure(connection, e)
+        details = failure.details(e)
+        # The exception's text and traceback name the address the export
+        # called, which can carry credentials (userinfo or a token in its
+        # query), so the log line holds what error_details holds and where
+        # the exception was raised, never the exception itself.
         logger.warning(
             "export_failed",
             connection_id=connection_id,
             platform=connection.platform,
-            error=str(e),
-            exc_info=True,
+            kind=details["kind"],
+            error_type=details["type"],
+            http_status=details["http_status"],
+            vendor_code=details["vendor_code"],
+            raised_at=raised_at(e),
         )
 
-        import requests as requests_lib
-
-        error_msg = str(e)
-        http_status = None
-        if isinstance(e, requests_lib.exceptions.HTTPError) and e.response is not None:
-            http_status = e.response.status_code
-
-        if http_status in (401, 403) or (
-            http_status is None and ("401" in error_msg or "403" in error_msg)
-        ):
-            connection.status = ConnectionStatus.ERROR
-            connection.status_message = "Authentication failed. Check your API key."
-            sync_log.status = SyncStatus.FAILED
-        elif http_status == 429 or (http_status is None and "429" in error_msg):
+        if failure.rate_limited:
+            # The connection stays active; the next sync sends this window.
             connection.status = ConnectionStatus.ACTIVE
             connection.status_message = ""
             sync_log.status = SyncStatus.RATE_LIMITED
         else:
             connection.status = ConnectionStatus.ERROR
-            connection.status_message = f"Export failed: {error_msg[:500]}"
+            connection.status_message = failure.message
             sync_log.status = SyncStatus.FAILED
 
         connection.save(update_fields=["status", "status_message", "updated_at"])
-        sync_log.error_message = error_msg[:1000]
-        sync_log.error_details = {
-            "error": error_msg,
-            "type": type(e).__name__,
-            "traceback": tb_module.format_exc(),
-        }
-        sync_log.completed_at = datetime.now(timezone.utc)
+        # The page and Sync History show the sentence. error_details keeps the
+        # failure's kind, type and HTTP status or vendor code, never the
+        # exception's text, which names the address called.
+        sync_log.error_message = failure.message
+        sync_log.error_details = details
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.save()
 
 
 def _export_datadog(connection, credentials, service, sync_from, sync_to):
-    """Export AgentccRequestLog entries to Datadog as logs + metrics."""
+    """Export AgentccRequestLog entries to Datadog as logs + metrics.
+
+    Only request logs inside Datadog's intake window (the last 18 hours) are
+    sent, counted and summed into the series; older ones in the sync window
+    are reported as not sent."""
     from django.db.models import Avg, Count, Sum
 
     from agentcc.models import AgentccRequestLog
 
     BATCH_SIZE = 500
 
+    window_start = max(sync_from, sync_to - DATADOG_LOG_WINDOW)
+    skipped = 0
+    if window_start > sync_from:
+        skipped = _get_export_queryset(connection, sync_from, window_start).count()
+        sync_from = window_start
+
     # Query request logs for this org/workspace in the sync window.
     qs = (
-        AgentccRequestLog.objects.filter(
+        AgentccRequestLog.no_workspace_objects.filter(
             organization=connection.organization,
             deleted=False,
         )
@@ -631,9 +665,7 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
         .order_by("started_at", "created_at")
     )
 
-    # If workspace is set on the connection, scope to that workspace.
-    if connection.workspace_id:
-        qs = qs.filter(workspace=connection.workspace)
+    qs = _scope_to_connection_workspace(qs, connection)
 
     total_logs_sent = 0
     offset = 0
@@ -649,7 +681,6 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
                 f"model:{log.model}",
                 f"provider:{log.provider}",
                 f"status_code:{log.status_code}",
-                f"gateway:{log.gateway_id}",
             ]
             if log.is_error:
                 tags.append("error:true")
@@ -716,14 +747,13 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
 
     # Export aggregated metrics for the window.
     metrics_sent = 0
-    agg = AgentccRequestLog.objects.filter(
+    agg = AgentccRequestLog.no_workspace_objects.filter(
         organization=connection.organization,
         deleted=False,
         started_at__gte=sync_from,
         started_at__lt=sync_to,
     )
-    if connection.workspace_id:
-        agg = agg.filter(workspace=connection.workspace)
+    agg = _scope_to_connection_workspace(agg, connection)
 
     agg = agg.aggregate(
         total_requests=Count("id"),
@@ -797,7 +827,16 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
         result = service.export_metrics(credentials, series)
         metrics_sent = result.get("sent", 0)
 
-    return {"logs_sent": total_logs_sent, "metrics_sent": metrics_sent}
+    exported = {"logs_sent": total_logs_sent, "metrics_sent": metrics_sent}
+    if skipped:
+        exported["logs_skipped"] = skipped
+        many = skipped != 1
+        exported["skipped_note"] = (
+            f"{skipped} request log{'s' if many else ''} from before Datadog's "
+            f"18-hour window {'were' if many else 'was'} not sent: Datadog "
+            "accepts logs from the last 18 hours."
+        )
+    return exported
 
 
 def _get_export_queryset(connection, sync_from, sync_to):
@@ -805,7 +844,7 @@ def _get_export_queryset(connection, sync_from, sync_to):
     from agentcc.models import AgentccRequestLog
 
     qs = (
-        AgentccRequestLog.objects.filter(
+        AgentccRequestLog.no_workspace_objects.filter(
             organization=connection.organization,
             deleted=False,
         )
@@ -819,9 +858,35 @@ def _get_export_queryset(connection, sync_from, sync_to):
         )
         .order_by("started_at", "created_at")
     )
-    if connection.workspace_id:
-        qs = qs.filter(workspace=connection.workspace)
-    return qs
+    return _scope_to_connection_workspace(qs, connection)
+
+
+def _scope_to_connection_workspace(qs, connection):
+    """The request logs Request Logs shows in the connection's workspace.
+
+    The querysets start from no_workspace_objects, so this scope, the
+    connection's, is the only one: never the workspace of whatever context the
+    sync happens to run in.
+
+    Gateway request logs belong to the organization and carry no workspace, so,
+    as on the Request Logs page (tfc.utils.base_viewset.request_workspace_q), a
+    connection in the default workspace exports the logs with no workspace, the
+    default workspace's and its own; one in another workspace exports that
+    workspace's own logs.
+    """
+    workspace = connection.workspace if connection.workspace_id else None
+    if workspace is None:
+        return qs
+    if workspace.is_default:
+        return qs.filter(
+            Q(workspace=workspace)
+            | Q(
+                workspace__is_default=True,
+                workspace__organization_id=connection.organization_id,
+            )
+            | Q(workspace__isnull=True)
+        )
+    return qs.filter(workspace=workspace)
 
 
 def _batch_export(qs, transform_fn, send_fn, batch_size=500):
@@ -925,48 +990,57 @@ def _retry_on_429(fn, *args, max_retries=3, label="api_call", **kwargs):
 
 @temporal_activity(time_limit=120, queue="tasks_s")
 def check_integration_error_alerts():
-    """Send email alerts for connections that have been in error state > 1 hour."""
-    from integrations.models import ConnectionStatus, IntegrationConnection
+    """Send email alerts for connections that have been in error state > 1 hour.
 
-    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
-    twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+    The hour counts from the first failed sync in the connection's current run
+    of failures, so the scheduler's retries never postpone the alert."""
+    from integrations.models import ConnectionStatus, IntegrationConnection
+    from integrations.services.sync_retry import in_error_since
+
+    one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+    twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
 
     connections_in_error = IntegrationConnection.no_workspace_objects.filter(
         status=ConnectionStatus.ERROR,
         deleted=False,
-        updated_at__lte=one_hour_ago,
     ).filter(
         Q(last_error_notified_at__isnull=True)
         | Q(last_error_notified_at__lte=twenty_four_hours_ago)
     )
 
     for conn in connections_in_error:
+        if in_error_since(conn) > one_hour_ago:
+            continue
         try:
             _send_error_notification(conn)
-            conn.last_error_notified_at = datetime.now(timezone.utc)
+            conn.last_error_notified_at = datetime.now(UTC)
             conn.save(update_fields=["last_error_notified_at"])
         except Exception as e:
             logger.warning(
                 "Failed to send error notification",
                 connection_id=str(conn.id),
-                error=str(e),
+                **exception_fields(e),
             )
 
 
 def _send_error_notification(connection):
     """Send email notification for a connection in error state."""
-    from accounts.models.user import User
-    from tfc.constants.roles import OrganizationRoles
+    from accounts.models.organization_membership import OrganizationMembership
+    from integrations.services.diagnostic_projection import public_status_message
+    from tfc.constants.levels import Level
     from tfc.utils.email import email_helper
 
-    # Get org admins and owners
-    admins = User.objects.filter(
+    # The legacy user.organization FK survives membership removal. Notifications
+    # use active membership in this org, including the legacy role fallback.
+    memberships = OrganizationMembership.no_workspace_objects.filter(
         organization=connection.organization,
-        organization_role__in=[OrganizationRoles.OWNER, OrganizationRoles.ADMIN],
         is_active=True,
+        deleted=False,
+        user__is_active=True,
+    ).select_related("user")
+    recipient_emails = sorted(
+        {m.user.email for m in memberships if m.level_or_legacy >= Level.ADMIN}
     )
-
-    recipient_emails = list(admins.values_list("email", flat=True))
     if not recipient_emails:
         return
 
@@ -978,7 +1052,7 @@ def _send_error_notification(connection):
         {
             "connection_name": connection.display_name,
             "platform": connection.get_platform_display(),
-            "error_message": connection.status_message or "Unknown error",
+            "error_message": public_status_message(connection) or "Unknown error",
         },
         recipient_emails,
     )

@@ -1,0 +1,17 @@
+{
+  "query": "{{query}}",
+  "follow_up_questions": null,
+  "answer": null,
+  "images": [],
+  "results": [
+    {
+      "title": "Capmock result",
+      "url": "https://example.com/capmock",
+      "content": "Example content.",
+      "score": 0.87,
+      "raw_content": null
+    }
+  ],
+  "response_time": 0.42,
+  "request_id": "{{id}}"
+}

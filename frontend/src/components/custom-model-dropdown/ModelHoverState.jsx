@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import React from "react";
 import {
   Typography,
@@ -88,7 +89,7 @@ export default function ModelHoverState({ modelName }) {
       <Box sx={{ display: "flex", gap: 1 }}>
         {data?.logoUrl && (
           <Image
-            src={data?.logoUrl}
+            src={localProviderLogo(data)}
             alt=""
             width="24px"
             sx={{ verticalAlign: "middle" }}

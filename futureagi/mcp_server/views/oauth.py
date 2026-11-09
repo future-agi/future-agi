@@ -3,9 +3,10 @@
 from urllib.parse import urlencode
 
 import structlog
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -42,6 +43,7 @@ from mcp_server.throttles import (
     log_token_warning,
     record_invalid_token_attempt,
 )
+from mcp_server.usage_helpers import get_or_create_connection, require_connection_scope
 from tfc.utils.api_contracts import validated_request
 
 logger = structlog.get_logger(__name__)
@@ -190,10 +192,12 @@ class MCPOAuthConsentView(APIView):
     )
     def post(self, request):
         user = request.user
-        organization = getattr(request, "organization", None) or getattr(
-            user, "organization", None
-        )
+        organization = getattr(request, "organization", None)
         workspace = getattr(request, "workspace", None)
+        if workspace is None:
+            raise PermissionDenied(
+                "Workspace context is required", code="workspace_required"
+            )
 
         client_id = request.validated_data["client_id"]
         redirect_uri = request.validated_data["redirect_uri"]
@@ -206,6 +210,7 @@ class MCPOAuthConsentView(APIView):
                 {"status": False, "error": "No organization context"},
                 status=403,
             )
+        require_connection_scope(user, organization, workspace)
 
         client, error_response = _get_active_oauth_client(client_id)
         if error_response is not None:
@@ -384,7 +389,6 @@ class MCPOAuthTokenView(APIView):
         code = data.get("code")
         client_id = data.get("client_id")
         client_secret = data.get("client_secret")
-        redirect_uri = data.get("redirect_uri")
 
         if not all([code, client_id, client_secret]):
             return Response({"error": "invalid_request"}, status=400)
@@ -395,11 +399,23 @@ class MCPOAuthTokenView(APIView):
         if error_response is not None:
             return error_response
 
+        # Preserve protocol errors before opening a transaction. Only a validated
+        # client can reach the locked, scope-checked exchange below.
+        return self._exchange_authorization_code(request, data, client)
+
+    @transaction.atomic
+    def _exchange_authorization_code(self, request, data, client):
+        code = data.get("code")
+        client_id = data.get("client_id")
+        redirect_uri = data.get("redirect_uri")
+
         # Validate authorization code
         try:
-            auth_code = MCPOAuthCode.objects.select_related(
-                "user", "organization", "workspace"
-            ).get(code=code, client=client, used=False)
+            auth_code = (
+                MCPOAuthCode.objects.select_for_update(of=("self",))
+                .select_related("user", "organization", "workspace")
+                .get(code=code, client=client, used=False)
+            )
         except MCPOAuthCode.DoesNotExist:
             return self._invalid_token_response(
                 request,
@@ -426,10 +442,22 @@ class MCPOAuthTokenView(APIView):
                 error_description="Redirect URI mismatch",
             )
 
-        # Mark code as used
-        auth_code.used = True
-        auth_code.save(update_fields=["used"])
-        clear_invalid_token_attempts(request)
+        # The code is the caller's authenticated user/org/workspace binding.
+        # Reject unbound codes and conflicts instead of adopting historical rows.
+        try:
+            connection = get_or_create_connection(
+                auth_code.user,
+                auth_code.organization,
+                auth_code.workspace,
+                connection_mode="remote",
+            )
+        except PermissionDenied:
+            return self._invalid_token_response(
+                request,
+                error="invalid_grant",
+                status=400,
+                reason="authorization_code_scope_mismatch",
+            )
 
         # Generate tokens
         access_token, expires_at = generate_oauth_token(
@@ -445,26 +473,30 @@ class MCPOAuthTokenView(APIView):
             client_id=client_id,
         )
 
-        # Store tokens on MCPConnection
-        connection, created = MCPConnection.no_workspace_objects.get_or_create(
+        # Repeat all binding predicates on the write; never update by pk alone.
+        updated = MCPConnection.no_workspace_objects.filter(
+            pk=connection.pk,
             user=auth_code.user,
+            organization=auth_code.organization,
             workspace=auth_code.workspace,
             deleted=False,
-            defaults={
-                "organization": auth_code.organization,
-                "is_active": True,
-            },
+        ).update(
+            oauth_token_encrypted=access_token,
+            oauth_refresh_token_encrypted=refresh_token,
+            oauth_token_expires_at=expires_at,
         )
-        connection.oauth_token_encrypted = access_token
-        connection.oauth_refresh_token_encrypted = refresh_token
-        connection.oauth_token_expires_at = expires_at
-        connection.save(
-            update_fields=[
-                "oauth_token_encrypted",
-                "oauth_refresh_token_encrypted",
-                "oauth_token_expires_at",
-            ]
-        )
+        if updated != 1:
+            transaction.set_rollback(True)
+            return self._invalid_token_response(
+                request,
+                error="invalid_grant",
+                status=400,
+                reason="connection_scope_changed",
+            )
+
+        auth_code.used = True
+        auth_code.save(update_fields=["used"])
+        clear_invalid_token_attempts(request)
 
         # Set enabled tool groups from consent scope
         config, _ = MCPToolGroupConfig.no_workspace_objects.get_or_create(
@@ -522,17 +554,29 @@ class MCPOAuthTokenView(APIView):
                 reason="refresh_token_client_mismatch",
             )
 
-        user_id = payload["user_id"]
-        org_id = payload["org_id"]
+        user_id = payload.get("user_id")
+        org_id = payload.get("org_id")
+        if not user_id or not org_id:
+            return self._invalid_token_response(
+                request,
+                error="invalid_grant",
+                status=400,
+                reason="refresh_token_missing_owner",
+            )
 
-        # Find the connection to get workspace and scope
+        # Refresh tokens are opaque workspace grants: the exact stored token
+        # association is authoritative (the encrypted payload has user/org only).
+        # Never derive a workspace from the request or a default-manager fallback.
         try:
             connection = MCPConnection.no_workspace_objects.get(
                 user_id=user_id,
+                organization_id=org_id,
+                workspace__isnull=False,
+                workspace__organization_id=org_id,
                 oauth_refresh_token_encrypted=refresh_token,
                 deleted=False,
             )
-        except MCPConnection.DoesNotExist:
+        except (MCPConnection.DoesNotExist, MCPConnection.MultipleObjectsReturned):
             return self._invalid_token_response(
                 request,
                 error="invalid_grant",
@@ -560,12 +604,26 @@ class MCPOAuthTokenView(APIView):
             scope=scope,
         )
 
-        # Update stored token
-        connection.oauth_token_encrypted = access_token
-        connection.oauth_token_expires_at = expires_at
-        connection.save(
-            update_fields=["oauth_token_encrypted", "oauth_token_expires_at"]
+        # Preserve the exact user/org/workspace/token association on the write.
+        updated = MCPConnection.no_workspace_objects.filter(
+            pk=connection.pk,
+            user_id=user_id,
+            organization_id=org_id,
+            workspace_id=connection.workspace_id,
+            workspace__organization_id=org_id,
+            oauth_refresh_token_encrypted=refresh_token,
+            deleted=False,
+        ).update(
+            oauth_token_encrypted=access_token,
+            oauth_token_expires_at=expires_at,
         )
+        if updated != 1:
+            return self._invalid_token_response(
+                request,
+                error="invalid_grant",
+                status=400,
+                reason="refresh_connection_scope_changed",
+            )
 
         logger.info(
             "oauth_token_refreshed",

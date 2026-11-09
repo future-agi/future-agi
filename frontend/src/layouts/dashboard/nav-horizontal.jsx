@@ -13,7 +13,7 @@ import Scrollbar from "src/components/scrollbar";
 import { NavSectionHorizontal } from "src/components/nav-section";
 
 import { HEADER } from "../config-layout";
-import { useNavData } from "./config-navigation";
+import { useShellNavData } from "./useShellNavData";
 import HeaderShadow from "../common/header-shadow";
 
 // ----------------------------------------------------------------------
@@ -23,7 +23,7 @@ function NavHorizontal() {
 
   const { user } = useAuthContext();
 
-  const navData = useNavData();
+  const navData = useShellNavData();
 
   return (
     <AppBar

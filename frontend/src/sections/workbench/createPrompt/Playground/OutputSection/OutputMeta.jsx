@@ -3,6 +3,7 @@ import React from "react";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { ShowComponent } from "src/components/show";
+import { fmtCost } from "src/sections/common/format/fmt";
 
 const OutputMetaItem = ({ icon, value }) => {
   return (
@@ -50,7 +51,7 @@ const OutputMeta = ({ metadata }) => {
       >
         <OutputMetaItem
           icon="dashicons:money-alt"
-          value={metadata?.cost < 0.1 ? `<0.1` : `${metadata?.cost}`}
+          value={fmtCost(metadata?.cost)}
         />
       </ShowComponent>
       <ShowComponent

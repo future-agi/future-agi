@@ -9,7 +9,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
-from accounts.authentication import APIKeyAuthentication
+from accounts.authentication import (
+    APIKeyAuthentication,
+    ServiceEnvelopeEvalAuthentication,
+)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from analytics.utils import (
     MixpanelEvents,
@@ -148,7 +151,7 @@ class GetEvalStructureEvalIdView(APIView):
 
 class StandaloneEvalView(APIView):
     _gm = GeneralMethods()
-    authentication_classes = [APIKeyAuthentication]
+    authentication_classes = [ServiceEnvelopeEvalAuthentication, APIKeyAuthentication]
     permission_classes = [IsAuthenticated]
     parser_classes = (JSONParser,)
 
@@ -391,6 +394,7 @@ class StandaloneEvalView_v2(APIView):
                     model=model,
                     user=request.user,
                     workspace=request.workspace,
+                    organization=organization,
                     eval_config=serializer.validated_data.get("config", {}),
                     error_localizer_enabled=error_localizer_enabled,
                     trace_eval=trace_eval,
@@ -415,6 +419,7 @@ class StandaloneEvalView_v2(APIView):
                     model=model,
                     user=request.user,
                     workspace=request.workspace,
+                    organization=organization,
                     eval_config=serializer.validated_data.get("config", {}),
                     error_localizer_enabled=error_localizer_enabled,
                     trace_eval=trace_eval,

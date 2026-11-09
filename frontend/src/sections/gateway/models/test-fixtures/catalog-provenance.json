@@ -1,0 +1,36 @@
+{
+  "sourceHead": "8fc295dbb99c5300d57c4aee7bb6ed22023b69cc",
+  "endpoint": "GET /-/catalog",
+  "serializer": "agentcc-gateway/internal/server/catalog_admin.go",
+  "captureSource": "capture-catalog.go.txt",
+  "captureCommand": "CAT2_FIXTURE_OUT=<fresh output directory> go test -count=1 -run '^TestCAT2UICapture$' -v ./internal/server",
+  "captureSetup": "Copy capture-catalog.go.txt to agentcc-gateway/internal/server/zz_cat2_ui_capture_test.go on a prepared VM at sourceHead. Run with a refusing logging proxy per 59f. The handler uses httptest and existing loopback provider mocks; no provider calls are made.",
+  "fixtures": {
+    "stock-catalog.json": {
+      "job": "j-20261029t1401-8ca97e",
+      "rawResponseSha256": "b8fff10e263c18e573cc30b823a47320f710ea49dbc3daef4a29653e6955274c",
+      "source": "Full bundled catalogue through cat2OperatorGateway(false)",
+      "modelCount": 463
+    },
+    "inclusive-catalog.json": {
+      "job": "j-20261029t1401-8ca97e",
+      "rawResponseSha256": "9150025ad36c010fd5a636d2a26c84ab18a65cd364c861f5d0d091efcced6786",
+      "source": "Full bundled catalogue through cat2OperatorGateway(true)",
+      "modelCount": 463,
+      "inclusiveCount": 34
+    },
+    "request-catalog.json": {
+      "job": "j-20261029t1405-f68571",
+      "rawResponseSha256": "54ed6f6201e75e0c1179efd1dea8b60064bd64eac5d1940a5b7fbe38396af258",
+      "source": "Existing billabilityModels backend scenarios installed with installBillabilityModels; response captured from the real handler, not authored as frontend JSON"
+    }
+  },
+  "formatting": "The normal commit hook pretty-prints JSON. Raw hashes describe landed VM response bytes before whitespace-only formatting.",
+  "stockRendering": {
+    "job": "j-20261029t1401-8ca97e",
+    "snapshotSha256": "7f47c59f7d4f673197fd1da612568dc26e9af3dbfda7e50d458d07bf4c7ad6d5",
+    "coverage": "All 463 stock models, each full catalogue render and drawer render (926 SHA-256 hashes of SSR markup). Only portal transport and remote icon lookup are mocked. Snapshot captured before any product edit; green runs must not update it.",
+    "repeatCapture": "j-20261029t1405-f68571 reproduced the snapshot byte-for-byte"
+  },
+  "egress": "Both fixture jobs: zero test-phase non-loopback attempts, zero provider grep hits; two preregistered .invalid Node refusals and a successful loopback round trip. Go proxy guard is NOT 59e-certified (interim per 59f)."
+}

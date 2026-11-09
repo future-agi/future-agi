@@ -1,0 +1,57 @@
+; Import contracts, checked with `lint-imports` from futureagi/ (DESIGN.md section 22.1, ruling 50).
+; webhooks/core is the framework-free seam: an embedded build ships it without Django, Temporal or tfc.
+; webhooks/core/tests/test_core_seam.py checks the same rules in every pytest run, without import-linter, and also
+; checks that the first contract below names every first-party top-level package of futureagi/.
+
+[importlinter]
+root_packages =
+    webhooks
+include_external_packages = True
+
+[importlinter:contract:webhooks-core-framework-free]
+name = webhooks.core imports no framework and no other first-party package
+type = forbidden
+source_modules =
+    webhooks.core
+forbidden_modules =
+    django
+    rest_framework
+    temporalio
+    psycopg
+    urllib3
+    requests
+    accounts
+    agent_playground
+    agentic_eval
+    agentcc
+    ai_tools
+    analytics
+    ee
+    evaluations
+    integrations
+    mcp_server
+    model_hub
+    omega_hub
+    omega_rollout
+    saml2_auth
+    sdk
+    simulate
+    sockets
+    tests
+    tfc
+    tracer
+
+; Exhaustive: every module of the app must be placed here, so a new adapter module (webhooks.api, webhooks.views ...)
+; fails this contract until it is listed above core. `audit` sits just above config : models (it needs only the models
+; and core.ids), so the send path (store_settle.turn_off) records webhook.endpoint.auto_disabled. `health_pass` sits
+; above the API group, so the webhooks-health pass runs the offboarding sweep (api_offboarding.reconcile_org);
+; `temporal` sits above both.
+[importlinter:contract:webhooks-core-below-adapters]
+name = webhooks.core sits below every other module of the webhooks app
+type = layers
+containers =
+    webhooks
+layers =
+    tests : migrations : apps : temporal : urls : management : ops_urls : ops_views : health_pass : api_views : views : api_activity : api_offboarding : api_policy : api_test : api_events : api_deliveries : api_endpoint_ops : api_endpoints : api_represent : api_samples : serializers : api_responses : api_validation : api_locks : permissions : api_errors : retention : lifecycle : reencrypt : notices : gauges : beats : queue : publish : store : store_claim : store_settle : health_state : store_rows : transport : crypto : audit : release_gate : config : models
+    core
+exhaustive = true

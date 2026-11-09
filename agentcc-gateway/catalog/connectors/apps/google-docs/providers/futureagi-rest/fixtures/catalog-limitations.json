@@ -1,0 +1,7 @@
+{
+  "synthetic": true,
+  "liveValidated": false,
+  "deployment": "off",
+  "limitations": "Read and edit app-authorized Google documents with typed text, table and formatting requests.",
+  "scopeNotes": "drive.file: non-sensitive, only app-authorized files"
+}

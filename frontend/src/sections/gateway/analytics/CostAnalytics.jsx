@@ -1,92 +1,91 @@
 import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Card,
-  Grid,
-  Typography,
-  Skeleton,
-  Stack,
-  ToggleButton,
-  ToggleButtonGroup,
-} from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsCost } from "./hooks/useAnalyticsCost";
-import { formatCost, formatCostTick } from "../utils/formatters";
+import CostTotal from "../components/CostTotal";
+import {
+  NO_PRICE,
+  costTotal,
+  formatCost,
+  formatCostTick,
+  unpricedNote,
+} from "../utils/formatters";
 import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
+import ChartPanel from "./ChartPanel";
+import GroupByToggle from "./GroupByToggle";
+import { TOP_SERIES, colorsForNames } from "./seriesColors";
+import { barValueOptions } from "./barLabels";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const TOP_N = 10;
+const TOP_N = TOP_SERIES;
 
 function toNumericCost(value) {
   const numericValue = Number(value);
   return Number.isFinite(numericValue) ? numericValue : 0;
 }
 
-// ---------------------------------------------------------------------------
-// Chart color palette
-// ---------------------------------------------------------------------------
+// An unpriced request is stored at cost 0, so a group's cost is unknown when
+// none of its requests had a price and a floor when some had none. The API counts each group's unpriced_requests.
+const groupCost = (value, group, options) =>
+  costTotal(value, {
+    unpriced: group?.unpriced_requests,
+    requests: group?.request_count,
+    ...options,
+  });
 
-function getChartColors(theme) {
-  if (theme.palette.mode === "dark") {
-    return [
-      "#60A5FA",
-      "#F87171",
-      "#34D399",
-      "#FBBF24",
-      "#A78BFA",
-      "#F472B6",
-      "#22D3EE",
-      "#FB7185",
-      "#2DD4BF",
-      "#F59E0B",
-    ];
+function barLabel(value, group) {
+  const { text, unknown } = groupCost(value, group, { cell: true });
+  return unknown ? "No price" : text;
+}
+
+function barTooltip(value, group) {
+  const { text, title, unknown } = groupCost(value, group);
+  if (unknown && title === NO_PRICE) {
+    const requests = Number(group.request_count);
+    return `${NO_PRICE} (${requests.toLocaleString()} ${
+      requests === 1 ? "request" : "requests"
+    })`;
   }
-
-  return [
-    "#2563EB",
-    "#DC2626",
-    "#059669",
-    "#D97706",
-    "#7C3AED",
-    "#DB2777",
-    "#0891B2",
-    "#EA580C",
-    "#0F766E",
-    "#9333EA",
-  ];
+  if (unknown) return title;
+  return title
+    ? `${text} (${unpricedNote(group.unpriced_requests, group.request_count)})`
+    : text;
 }
 
 // ---------------------------------------------------------------------------
 // Chart option builders
 // ---------------------------------------------------------------------------
 
-function buildBarChartOptions(theme, categories) {
+function buildBarChartOptions(theme, categories, colors, groups = []) {
+  // Each value past its bar's end (barLabels.js): a cell's two significant
+  // figures, the tooltip has the exact amount; a group with no priced
+  // request reads "No price", one with some a floor.
+  const values = barValueOptions(theme, (val, opts) =>
+    barLabel(val, groups[opts?.dataPointIndex]),
+  );
   return {
     chart: {
       type: "bar",
+      stacked: values.stacked,
       toolbar: { show: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: getChartColors(theme),
+    colors,
     plotOptions: {
       bar: {
         horizontal: true,
         borderRadius: 4,
         barHeight: "60%",
         distributed: true,
+        dataLabels: { total: values.total },
       },
     },
-    dataLabels: {
-      enabled: true,
-      formatter: (val) => formatCost(val),
-      style: { fontSize: "11px", fontWeight: 600 },
-      offsetX: 5,
-    },
+    dataLabels: values.dataLabels,
     xaxis: {
       categories,
       tickAmount: 5,
@@ -104,7 +103,7 @@ function buildBarChartOptions(theme, categories) {
     tooltip: {
       theme: theme.palette.mode,
       y: {
-        formatter: (val) => formatCost(val),
+        formatter: (val, opts) => barTooltip(val, groups[opts?.dataPointIndex]),
       },
     },
     grid: {
@@ -112,6 +111,7 @@ function buildBarChartOptions(theme, categories) {
       strokeDashArray: 3,
       xaxis: { lines: { show: true } },
       yaxis: { lines: { show: false } },
+      padding: values.gridPadding,
     },
     legend: { show: false },
     responsive: [
@@ -123,7 +123,7 @@ function buildBarChartOptions(theme, categories) {
   };
 }
 
-function buildDonutChartOptions(theme, labels) {
+function buildDonutChartOptions(theme, labels, colors, unpriced = 0) {
   return {
     chart: {
       type: "donut",
@@ -131,7 +131,7 @@ function buildDonutChartOptions(theme, labels) {
       toolbar: { show: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: getChartColors(theme),
+    colors,
     labels,
     dataLabels: {
       enabled: false,
@@ -145,20 +145,25 @@ function buildDonutChartOptions(theme, labels) {
           labels: {
             show: true,
             name: { show: false },
+            // The theme's text colours: ApexCharts' default is a dark grey
+            // that vanishes on the dark theme.
             value: {
               show: true,
               fontSize: "14px",
               fontWeight: 700,
+              color: theme.palette.text.primary,
               formatter: (val) => formatCost(Number(val)),
             },
             total: {
               show: true,
               showAlways: true,
               label: "Total",
+              color: theme.palette.text.secondary,
               fontSize: "13px",
+              // The slices leave out requests with no price: a floor.
               formatter: (w) => {
                 const total = w.globals.seriesTotals.reduce((a, b) => a + b, 0);
-                return formatCost(total);
+                return costTotal(total, { unpriced }).text;
               },
             },
           },
@@ -281,14 +286,41 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
     [donutSlices],
   );
 
-  const barChartOptions = useMemo(
-    () => buildBarChartOptions(theme, barCategories),
+  // The gateway's series hues (seriesColors.js), one per group in the API's
+  // order (highest cost first), "Other" in grey. A group keeps its colour in
+  // the bar and the donut (which drops 0 slices).
+  const barColors = useMemo(
+    () => colorsForNames(theme, barCategories),
     [theme, barCategories],
   );
+  const donutColors = useMemo(
+    () => donutLabels.map((name) => barColors[barCategories.indexOf(name)]),
+    [barColors, barCategories, donutLabels],
+  );
+
+  const barChartOptions = useMemo(
+    () => buildBarChartOptions(theme, barCategories, barColors, breakdown),
+    [theme, barCategories, barColors, breakdown],
+  );
+
+  // The range's requests and how many had no price (each counted 0).
+  const rangeUnpriced = Number(data?.unpriced_requests) || 0;
+  const rangeRequests = breakdown.reduce(
+    (sum, item) => sum + (Number(item.request_count) || 0),
+    0,
+  );
+  // No priced part: every request had no price, or every one that cost
+  // anything (the rest failed or cost 0).
+  const rangeUnknown = costTotal(data?.total_cost, {
+    unpriced: rangeUnpriced,
+    requests: rangeRequests || undefined,
+  }).unknown;
+  const rangeAll = rangeUnpriced >= rangeRequests;
 
   const donutChartOptions = useMemo(
-    () => buildDonutChartOptions(theme, donutLabels),
-    [theme, donutLabels],
+    () =>
+      buildDonutChartOptions(theme, donutLabels, donutColors, rangeUnpriced),
+    [theme, donutLabels, donutColors, rangeUnpriced],
   );
 
   const handleGroupByChange = (_event, newValue) => {
@@ -298,135 +330,91 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
   };
 
   return (
-    <Box>
-      {/* Header with total cost and group-by toggle */}
-      <Stack
-        direction={{ xs: "column", md: "row" }}
-        alignItems={{ xs: "flex-start", md: "center" }}
-        justifyContent="space-between"
-        spacing={2}
-        mb={2}
+    <Stack spacing={1.5}>
+      <Box
+        sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 2 }}
       >
-        <Stack direction="row" alignItems="baseline" spacing={1}>
-          <Typography variant="subtitle1" fontWeight={600}>
-            Total Cost:
+        {rangeUnknown ? (
+          <Typography typography="s1">
+            {rangeAll
+              ? `No price found for the ${rangeRequests.toLocaleString()} ${
+                  rangeRequests === 1 ? "request" : "requests"
+                } in this range`
+              : `No price found for ${rangeUnpriced.toLocaleString()} of ${rangeRequests.toLocaleString()} requests in this range`}
           </Typography>
-          <Typography variant="h5" fontWeight={700} color="primary.main">
-            {formatCost(data?.total_cost)}
-          </Typography>
-        </Stack>
-
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          alignItems={{ xs: "flex-start", sm: "center" }}
-          spacing={1.5}
-          width={{ xs: "100%", md: "auto" }}
-        >
-          <Typography variant="body2" color="text.secondary" fontWeight={500}>
-            Group by:
-          </Typography>
-          <ToggleButtonGroup
-            value={groupBy}
-            exclusive
-            onChange={handleGroupByChange}
-            size="small"
-            sx={{ flexWrap: "wrap" }}
+        ) : (
+          <Typography
+            typography="s1"
+            sx={{ fontVariantNumeric: "tabular-nums" }}
           >
-            {REQUEST_DIMENSION_OPTIONS.map((opt) => (
-              <ToggleButton
-                key={opt.value}
-                value={opt.value}
-                sx={{
-                  px: 1.5,
-                  py: 0.25,
-                  textTransform: "none",
-                  fontSize: "0.8125rem",
-                }}
-              >
-                {opt.label}
-              </ToggleButton>
-            ))}
-          </ToggleButtonGroup>
-        </Stack>
-      </Stack>
-
-      <Grid container spacing={3}>
-        {/* Cost breakdown bar chart */}
-        <Grid item xs={12} md={7}>
-          <Card sx={{ p: 3 }}>
-            <Typography variant="subtitle1" fontWeight={600} mb={2}>
-              Cost by {groupByLabel}
-            </Typography>
-            {isLoading ? (
-              <Skeleton
-                variant="rectangular"
-                height={360}
-                sx={{ borderRadius: 1 }}
-              />
-            ) : breakdown.length > 0 ? (
-              <Chart
-                type="bar"
-                height={Math.max(360, breakdown.length * 40)}
-                options={barChartOptions}
-                series={barSeries}
-              />
-            ) : (
-              <Box
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                height={360}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  No cost data available for this time range.
-                </Typography>
-              </Box>
-            )}
-          </Card>
-        </Grid>
-
-        {/* Cost distribution donut chart */}
-        <Grid item xs={12} md={5}>
-          <Card sx={{ p: 3 }}>
-            <Typography variant="subtitle1" fontWeight={600} mb={2}>
-              Cost Distribution
-            </Typography>
-            {isLoading ? (
-              <Skeleton
-                variant="circular"
-                width={280}
-                height={280}
-                sx={{ mx: "auto" }}
-              />
-            ) : donutSeries.length > 0 ? (
-              <Box sx={{ display: "flex", justifyContent: "center" }}>
-                <Chart
-                  type="donut"
-                  height={380}
-                  options={donutChartOptions}
-                  series={donutSeries}
-                />
-              </Box>
-            ) : (
-              <Box
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                height={360}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  No cost data available.
-                </Typography>
-              </Box>
-            )}
-          </Card>
-        </Grid>
-      </Grid>
-    </Box>
+            <CostTotal
+              value={data?.total_cost}
+              unpriced={rangeUnpriced}
+              requests={rangeRequests || undefined}
+            />
+            <Box component="span" sx={{ color: "text.secondary" }}>
+              {" spent in this range"}
+              {rangeUnpriced > 0 &&
+                `, ${unpricedNote(rangeUnpriced, rangeRequests || undefined)}`}
+            </Box>
+          </Typography>
+        )}
+        <Box sx={{ ml: { sm: "auto" } }}>
+          <GroupByToggle
+            value={groupBy}
+            options={REQUEST_DIMENSION_OPTIONS}
+            onChange={(next) => handleGroupByChange(null, next)}
+          />
+        </Box>
+      </Box>
+      <Box
+        sx={{
+          display: "grid",
+          gap: 1.5,
+          gridTemplateColumns: { xs: "1fr", md: "7fr 5fr" },
+        }}
+      >
+        <ChartPanel
+          title={`Cost by ${groupByLabel}`}
+          loading={isLoading}
+          height={320}
+          empty={breakdown.length === 0}
+          emptyText="No cost data available for this time range."
+        >
+          <Chart
+            type="bar"
+            height={Math.max(320, breakdown.length * 36)}
+            options={barChartOptions}
+            series={barSeries}
+          />
+        </ChartPanel>
+        <ChartPanel
+          title="Cost distribution"
+          loading={isLoading}
+          height={320}
+          empty={donutSeries.length === 0}
+          emptyText={
+            rangeUnpriced > 0
+              ? "No price found for the requests in this range."
+              : "No cost data available."
+          }
+        >
+          <Box sx={{ display: "flex", justifyContent: "center" }}>
+            <Chart
+              type="donut"
+              height={340}
+              options={donutChartOptions}
+              series={donutSeries}
+            />
+          </Box>
+        </ChartPanel>
+      </Box>
+    </Stack>
   );
 };
 
 CostAnalytics.propTypes = {
+  granularity: PropTypes.string,
   start: PropTypes.string,
   end: PropTypes.string,
   gatewayId: PropTypes.string,

@@ -3,12 +3,17 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // OCR handles POST /v1/ocr.
@@ -19,6 +24,7 @@ func (h *Handlers) OCR(w http.ResponseWriter, r *http.Request) {
 	rc.RequestID = models.GetRequestID(r.Context())
 	rc.TraceID = w.Header().Get("x-agentcc-trace-id")
 	rc.EndpointType = "ocr"
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
 	if err != nil {
@@ -37,7 +43,15 @@ func (h *Handlers) OCR(w http.ResponseWriter, r *http.Request) {
 
 	var req models.OCRRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON in request body: "+err.Error()))
+		// A field sent twice or in another case has its own 400
+		// (duplicate_field): the gateway and the upstream would read it
+		// differently.
+		var apiErr *models.APIError
+		if errors.As(err, &apiErr) {
+			models.WriteError(w, apiErr)
+			return
+		}
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON in request body: "+models.DescribeJSONError(err)))
 		return
 	}
 
@@ -48,10 +62,18 @@ func (h *Handlers) OCR(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = req.Model
 	rc.OCRRequest = &req
+	// What the model reads is the document, which no check on the request
+	// can read (rc.PassThrough says so): a check that would block or
+	// rewrite the request refuses it before the provider
+	// (request_unavailable). X-Guardrail-Policy applies here as on chat.
+	rc.PassThrough = requestview.OCR(&req)
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
+	readGuardrailPolicyHeader(rc, r)
+	// The processed-page count is the cost plugin's to record.
+	delete(rc.Metadata, models.OCRPagesMetadataKey)
 
 	// Resolve timeout (longer default for OCR).
 	timeout := h.resolveTimeout(rc, r)
@@ -67,15 +89,19 @@ func (h *Handlers) OCR(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["org_id"] = orgID
 	}
 	h.applyOrgModelMapOverrides(orgCfg, rc)
+	h.resolveContentMode(rc, orgCfg)
+	req.KeepText = rc.Privacy.ContentMode == models.ContentModeFull && orgOptedIntoFullContent(orgCfg)
 
 	// Resolve provider from model.
 	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
+			if orgP, providerID, upstream := h.resolveOrgProvider(rc, orgID, orgCfg, req.Model); orgP != nil {
 				provider = orgP
 				rc.Provider = providerID
 				rc.Metadata["org_provider"] = "true"
+				rc.Metadata["billing_mode"] = billingBYOK // the org's own key
+				req.Model = upstream
 				err = nil
 			}
 		}
@@ -88,6 +114,10 @@ func (h *Handlers) OCR(w http.ResponseWriter, r *http.Request) {
 		if shouldApplyOrgProviderOverride(rc) {
 			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 		}
+	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		models.WriteError(w, apiErr)
+		return
 	}
 
 	// Type-assert to OCRProvider.
@@ -108,11 +138,15 @@ func (h *Handlers) OCR(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		rc.OCRResponse = resp
+		// The model sent, which a route may have put in place of the
+		// requested one (C10): x-agentcc-model-used, the request log and the
+		// cost plugin's price (implicitAttempt) all read it.
+		rc.ResolvedModel = rc.OCRRequest.Model
 		return nil
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
-		models.WriteErrorFromError(w, err)
+		models.WriteErrorFromError(w, providerFailure(rc, err))
 		return
 	}
 
@@ -124,5 +158,24 @@ func (h *Handlers) OCR(w http.ResponseWriter, r *http.Request) {
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	// Same-shape upstreams (Mistral direct, Azure- and Vertex-hosted
+	// Mistral) get their own body back: the gateway decoded it only to meter
+	// it, and re-encoding would drop every field it does not model.
+	if raw := rc.OCRResponse.Raw(); len(raw) > 0 {
+		w.Write(raw)
+		return
+	}
 	json.NewEncoder(w).Encode(rc.OCRResponse)
+}
+
+// orgOptedIntoFullContent reports whether the org itself set
+// privacy.content_mode to full (and keeps bodies), rather than inheriting the
+// default: the opt-in an OCR request needs before its payloads may carry the
+// document's extracted text.
+func orgOptedIntoFullContent(orgCfg *tenant.OrgConfig) bool {
+	if orgCfg == nil || orgCfg.Privacy == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(orgCfg.Privacy.ContentMode), string(models.ContentModeFull)) &&
+		orgCfg.ContentMode() == string(models.ContentModeFull)
 }

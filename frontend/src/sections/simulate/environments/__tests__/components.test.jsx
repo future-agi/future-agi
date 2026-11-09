@@ -6,11 +6,9 @@ import ContinueRow from "../components/ContinueRow";
 import PlatformLogo from "../components/PlatformLogo";
 import Field from "../components/Field";
 
-const PROVIDER_OPTIONS = [
-  { id: "github", name: "GitHub", icon: "eva:github-fill" },
-  { id: "gitlab", name: "GitLab", icon: "logos:gitlab", comingSoon: true },
-  { id: "bitbucket", name: "Bitbucket", icon: "logos:bitbucket", comingSoon: true },
-];
+// Use the real owner: it registers the provider icons before ProviderRow renders
+// and avoids a stale fixture glyph (logos:gitlab is now mdi:gitlab).
+import { REPO_PROVIDERS as PROVIDER_OPTIONS } from "../repoProviders";
 
 describe("ChipCard", () => {
   it("coming soon: labelled and inert", () => {
@@ -48,7 +46,14 @@ describe("ChipCard", () => {
 describe("ProviderRow", () => {
   it("gates coming-soon providers and forwards the live pick", () => {
     const onChange = vi.fn();
-    render(<ProviderRow options={PROVIDER_OPTIONS} value="github" onChange={onChange} />);
+    const { container } = render(
+      <ProviderRow
+        options={PROVIDER_OPTIONS}
+        value="github"
+        onChange={onChange}
+      />,
+    );
+    expect(container.querySelector("[data-missing-icon]")).toBeNull();
     expect(screen.getAllByLabelText("Coming soon")).toHaveLength(2);
     fireEvent.click(screen.getByText("GitLab"));
     expect(onChange).not.toHaveBeenCalled();
@@ -62,13 +67,17 @@ describe("ContinueRow", () => {
     const onClick = vi.fn();
     render(<ContinueRow disabled hint="Add a repository" onClick={onClick} />);
     expect(screen.getByText("Add a repository")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Build environment/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Build environment/ }),
+    ).toBeDisabled();
   });
 
   it("disabled explains the hint in a tooltip on the button", async () => {
     render(<ContinueRow disabled hint="Add a repository" onClick={vi.fn()} />);
     fireEvent.mouseOver(screen.getByTestId("continue-row-action"));
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Add a repository");
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Add a repository",
+    );
   });
 
   it("enabled hides the hint and fires on click", () => {
@@ -98,7 +107,9 @@ describe("Field", () => {
     const onChange = vi.fn();
     render(<Field label="Repository" required value="" onChange={onChange} />);
     expect(screen.getByText("*")).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "owner/repo" } });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "owner/repo" },
+    });
     expect(onChange).toHaveBeenCalledWith("owner/repo");
   });
 });

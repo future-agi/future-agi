@@ -15,6 +15,15 @@ import pytest
 from simulate.utils import session_comparison
 
 
+def _call_in_tenant(call_id):
+    return SimpleNamespace(
+        id=call_id,
+        test_execution=SimpleNamespace(
+            run_test=SimpleNamespace(organization=object(), workspace=object())
+        ),
+    )
+
+
 @pytest.mark.unit
 class TestFetchComparisonMetrics:
     def test_raises_when_missing_inputs(self):
@@ -24,7 +33,7 @@ class TestFetchComparisonMetrics:
             session_comparison.fetch_comparison_metrics(object(), "")
 
     def test_calculates_percentage_change_when_base_non_zero(self):
-        fake_call_exec = SimpleNamespace(id="call-exec-1")
+        fake_call_exec = _call_in_tenant("call-exec-1")
 
         with (
             patch.object(session_comparison, "fetch_base_session_metrics") as mock_base,
@@ -49,6 +58,15 @@ class TestFetchComparisonMetrics:
                 fake_call_exec, "session-123"
             )
 
+        run = fake_call_exec.test_execution.run_test
+        mock_base.assert_called_once_with(
+            "session-123",
+            organization=run.organization,
+            project_id=None,
+            workspace=run.workspace,
+        )
+        mock_call.assert_called_once_with(fake_call_exec)
+
         # duration: (5-10)/10*100 = -50%
         duration = next(item for item in result if item["metric"] == "duration")
         assert duration["value"] == 5.0
@@ -60,7 +78,7 @@ class TestFetchComparisonMetrics:
         assert tools["percentage_change"] == pytest.approx(100.0)
 
     def test_sets_percentage_change_none_when_base_zero(self):
-        fake_call_exec = SimpleNamespace(id="call-exec-2")
+        fake_call_exec = _call_in_tenant("call-exec-2")
 
         with (
             patch.object(session_comparison, "fetch_base_session_metrics") as mock_base,
@@ -85,6 +103,15 @@ class TestFetchComparisonMetrics:
                 fake_call_exec, "session-123"
             )
 
+        run = fake_call_exec.test_execution.run_test
+        mock_base.assert_called_once_with(
+            "session-123",
+            organization=run.organization,
+            project_id=None,
+            workspace=run.workspace,
+        )
+        mock_call.assert_called_once_with(fake_call_exec)
+
         assert all(item["percentage_change"] is None for item in result)
         # change should still be computed.
         tokens = next(item for item in result if item["metric"] == "tokens")
@@ -100,7 +127,7 @@ class TestFetchComparisonTranscripts:
             session_comparison.fetch_comparison_transcripts(object(), None)
 
     def test_returns_expected_shape(self):
-        fake_call_exec = SimpleNamespace(id="call-exec-3")
+        fake_call_exec = _call_in_tenant("call-exec-3")
 
         with (
             patch.object(
@@ -116,6 +143,15 @@ class TestFetchComparisonTranscripts:
             result = session_comparison.fetch_comparison_transcripts(
                 fake_call_exec, "session-123"
             )
+
+        run = fake_call_exec.test_execution.run_test
+        mock_base.assert_called_once_with(
+            "session-123",
+            organization=run.organization,
+            project_id=None,
+            workspace=run.workspace,
+        )
+        mock_call.assert_called_once_with(fake_call_exec)
 
         assert result == {
             "base_session_transcripts": [{"role": "user", "messages": ["hi"]}],
@@ -135,9 +171,7 @@ class TestNonVapiProviderComparison:
     @staticmethod
     def _patch_call_transcript(rows):
         # rows: list of (speaker_role, content)
-        transcript_rows = [
-            SimpleNamespace(speaker_role=r, content=c) for r, c in rows
-        ]
+        transcript_rows = [SimpleNamespace(speaker_role=r, content=c) for r, c in rows]
 
         class _SpeakerRole:
             ASSISTANT = "assistant"
@@ -167,9 +201,7 @@ class TestNonVapiProviderComparison:
         with self._patch_call_transcript(
             [("assistant", "Hello"), ("user", "Hi there")]
         ):
-            out = session_comparison._extract_transcripts_from_provider_call_data(
-                call
-            )
+            out = session_comparison._extract_transcripts_from_provider_call_data(call)
         assert out == [
             {"role": "assistant", "messages": ["Hello"]},
             {"role": "user", "messages": ["Hi there"]},
@@ -187,9 +219,7 @@ class TestNonVapiProviderComparison:
         with self._patch_call_transcript(
             [("assistant", "a"), ("user", "b"), ("assistant", "c")]
         ):
-            metrics = session_comparison._extract_metrics_from_provider_call_data(
-                call
-            )
+            metrics = session_comparison._extract_metrics_from_provider_call_data(call)
         assert metrics["duration"] == 66
         assert metrics["total_turns"] == 3
         # None per-turn metrics degrade to 0 for a provider with no timing.
@@ -294,8 +324,14 @@ class TestFetchSimulatedCallRecordings:
             stereo_recording_url="https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-stereo.mp3",
         )
         result = session_comparison.fetch_simulated_call_recordings(call_exec)
-        assert result["mono_combined"] == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-mono.mp3"
-        assert result["stereo"] == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-stereo.mp3"
+        assert (
+            result["mono_combined"]
+            == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-mono.mp3"
+        )
+        assert (
+            result["stereo"]
+            == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-stereo.mp3"
+        )
 
 
 @pytest.mark.unit

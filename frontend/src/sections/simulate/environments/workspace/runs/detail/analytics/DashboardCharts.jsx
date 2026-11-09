@@ -1,3 +1,7 @@
+import {
+  formatExactMoney,
+  multiplyMoneyValues,
+} from "src/sections/common/format/money";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -58,7 +62,10 @@ export const number = (value, digits = 1) =>
       }).format(value);
 export const format = (value, unit = "number") => {
   if (value == null) return "-";
-  if (unit === "cents") return `$${number(value / 100, 3)}`;
+  if (unit === "cents")
+    return formatExactMoney(multiplyMoneyValues(value, "0.01"), {
+      missing: "-",
+    });
   if (unit === "ratio") return `${number(value, 0)}/${number(100 - value, 0)}`;
   return `${number(value)}${{ ms: "ms", seconds: "s", percent: "%" }[unit] || ""}`;
 };

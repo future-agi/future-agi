@@ -1,0 +1,17 @@
+{
+  "name": "omega-hub-checker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Omega Hub's sandboxed checker: pulls check jobs from the registry, judges each upload with a vendored @omega/hub and runs it keyless in Docker with the network off.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/main.mjs",
+    "test": "node --test test/*.test.mjs",
+    "vendor": "node scripts/vendor-omega-hub.mjs"
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,28 @@
+# Flow-local external-system STANDIN. No app endpoint is replaced.
+services:
+  backend:
+    image: futureagi/hf-e2e:local
+    environment:
+      HF_ENDPOINT: http://hf-standin:8080
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_HUB_DISABLE_XET: "1"
+  worker:
+    image: futureagi/hf-e2e:local
+    environment:
+      HF_ENDPOINT: http://hf-standin:8080
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_HUB_DISABLE_XET: "1"
+  hf-standin:
+    image: futureagi/hf-e2e:local
+    entrypoint: ["python", "/opt/hf-standin/server.py"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12

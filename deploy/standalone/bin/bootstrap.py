@@ -308,13 +308,25 @@ def telemetry_summary() -> str:
     (https://docs.futureagi.com/docs/self-hosting/configuration/telemetry)."""
     config = telemetry_config()
     if config.telemetry_is_disabled():
-        return (
-            "off: one registration ping (instance id, version, deployment type, "
-            "timestamp) only"
-        )
+        return "off: sends nothing to Future AGI"
     host = config.get_telemetry_url().split("://", 1)[-1].split("/", 1)[0]
+    if config.telemetry_shares_admin_emails():
+        registration = (
+            "for install counts and release-test planning; registration once the first owner/admin account exists "
+            "(schema_version, instance_id, version, deployment_type, timestamp, "
+            "telemetry_disabled=false, plus the emails and domains of owner, "
+            "admin and staff/superuser accounts; "
+            "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true)"
+        )
+    else:
+        registration = (
+            "for install counts and release-test planning; registration once the first owner/admin account exists "
+            "(schema_version, instance_id, version, deployment_type, timestamp, "
+            "telemetry_disabled=false; no emails unless "
+            "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true)"
+        )
     return (
-        "on: owner, admin and staff emails once, then usage counts every "
+        f"on: {registration}, then usage counts every "
         f"{config.get_telemetry_interval_hours()} h, never content, to {host}. "
         "FUTURE_AGI_TELEMETRY_DISABLED=true turns it off"
     )

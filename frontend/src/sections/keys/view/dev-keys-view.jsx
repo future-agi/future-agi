@@ -6,14 +6,22 @@ import ApiKeyBar from "./ApiKeyBar";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import Image from "src/components/image";
+import KeysEmptyState from "./KeysEmptyState";
+import { personalKeyRows } from "./personalKeys";
 import CreateApiKey from "./CreateApiKey";
 import ActionMenu from "./ActionMenu";
 import SecretKeyRenderer from "./SecretKeyRenderer";
+import { keyAccessLabel, keyScopesShown } from "./keyScopes";
 import stringAvatar from "src/utils/stringAvatar";
+import { useAuthContext } from "src/auth/hooks";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 export default function DevKeysView() {
   const queryClient = useQueryClient();
+  const { user } = useAuthContext();
+  const { currentOrganizationId } = useOrganization();
+  const { currentWorkspaceId } = useWorkspace();
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -27,6 +35,9 @@ export default function DevKeysView() {
   const { data, isLoading } = useQuery({
     queryKey: [
       "dev-keys",
+      user?.id,
+      currentOrganizationId,
+      currentWorkspaceId,
       page,
       pageSize,
       debouncedSearchQuery,
@@ -44,11 +55,12 @@ export default function DevKeysView() {
         },
       }),
     select: (d) => d.data,
-    keepPreviousData: true,
+    // An inline create elsewhere must be visible on the next Keys visit.
+    staleTime: 0,
   });
 
   const rows = useMemo(
-    () => (data?.status ? data?.result?.table : []) ?? [],
+    () => personalKeyRows((data?.status ? data?.result?.table : []) ?? []),
     [data],
   );
   const total =
@@ -117,6 +129,23 @@ export default function DevKeysView() {
         enableSorting: false,
         cell: ({ getValue }) => <SecretKeyRenderer value={getValue()} />,
       },
+      // H-8 (HO S3): what the key may do (prototype mode only).
+      ...(keyScopesShown()
+        ? [
+            {
+              id: "scopes",
+              accessorKey: "scopes",
+              header: "Access",
+              meta: { flex: 1 },
+              enableSorting: false,
+              cell: ({ getValue }) => (
+                <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+                  {keyAccessLabel(getValue())}
+                </Typography>
+              ),
+            },
+          ]
+        : []),
       {
         id: "created_by",
         accessorKey: "created_by",
@@ -201,7 +230,7 @@ export default function DevKeysView() {
           color="text.primary"
           fontWeight="fontWeightRegular"
         >
-          Your secret API keys are listed below. These keys are encrypted
+          API keys are personal. Secrets are shown only when you create a key.
         </Typography>
       </Box>
       <ApiKeyBar
@@ -234,40 +263,7 @@ export default function DevKeysView() {
           />
         </>
       ) : (
-        <Box
-          display="flex"
-          flexDirection="column"
-          justifyContent="center"
-          alignItems="center"
-          gap={2}
-          height="100%"
-        >
-          <Image
-            src="/assets/icons/blank_table_icon.png"
-            sx={{ width: 68, height: 68 }}
-          />
-          <Box
-            display="flex"
-            flexDirection="column"
-            gap="2px"
-            textAlign="center"
-          >
-            <Typography
-              typography="m3"
-              fontWeight="fontWeightMedium"
-              color="text.primary"
-            >
-              No keys has been added yet
-            </Typography>
-            <Typography
-              typography="s1"
-              fontWeight="fontWeightRegular"
-              color="text.primary"
-            >
-              Click on + Add API Key to create and manage your API key
-            </Typography>
-          </Box>
-        </Box>
+        <KeysEmptyState onCreate={() => setOpenCreateApiKey(true)} />
       )}
       <CreateApiKey
         open={openCreateApiKey}

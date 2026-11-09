@@ -1,0 +1,93 @@
+name: Connector live smoke
+
+# L4 of the connector catalog (CONNECTORS-PLAN CN13; scaling.md §5).
+# - tests: the runner's offline tests, on every change to it. No secrets, no
+#   network beyond 127.0.0.1.
+# - smoke: the live smoke, only on the schedule or by hand, and only once an
+#   operator sets the repository variable CONNECTOR_SMOKE_ENABLED to true and
+#   stores the test-account keys document in the secret CONNECTOR_SMOKE_KEYS
+#   (OA-T; scripts/connector-smoke/README.md). Without keys it skips cleanly.
+#   It is read-only, keeps its drift report as an artifact, and never pushes
+#   or opens a PR. It never runs on a pull request, so no change under review
+#   ever sees the keys.
+# - The smoke job runs only from main (a dispatch from another branch is
+#   skipped) and in the GitHub environment connector-smoke. The `if` stops an
+#   accidental run from a branch; a writer can edit it on their own branch, so
+#   the control is the environment: store CONNECTOR_SMOKE_KEYS there, not at
+#   repository level, and limit its deployment branches to main.
+# - Actions are pinned by commit SHA (the tags they were at are in comments).
+
+on:
+  pull_request:
+    paths:
+      - "scripts/connector-smoke/**"
+      - ".github/workflows/connector-smoke.yml"
+  push:
+    branches: [main, develop, dev]
+    paths:
+      - "scripts/connector-smoke/**"
+      - ".github/workflows/connector-smoke.yml"
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Live-smoke runner tests (offline)
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the test dependencies
+        run: python3 -m pip install pytest==9.0.2 PyYAML==6.0.3
+
+      - name: Run the runner's tests
+        run: python3 -m pytest scripts/connector-smoke/tests -q
+
+  smoke:
+    name: Live smoke (key-gated)
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && vars.CONNECTOR_SMOKE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: connector-smoke
+    timeout-minutes: 30
+    concurrency:
+      group: connector-smoke-live
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the runner's dependency
+        run: python3 -m pip install PyYAML==6.0.3
+
+      - name: Smoke the catalog against its test accounts (read-only)
+        working-directory: scripts/connector-smoke
+        env:
+          CONNECTOR_SMOKE_LIVE: "1"
+          CONNECTOR_SMOKE_KEYS: ${{ secrets.CONNECTOR_SMOKE_KEYS }}
+        run: python3 -m connector_smoke --out "$RUNNER_TEMP/connector-smoke"
+
+      - name: Keep the drift report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: connector-smoke-report
+          path: ${{ runner.temp }}/connector-smoke/drift-report.json
+          if-no-files-found: ignore
+          retention-days: 30

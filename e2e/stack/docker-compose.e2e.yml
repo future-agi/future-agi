@@ -1,4 +1,18 @@
 # Overlay on docker-compose.distributed.yml (the distributed topology) for the futureagi-e2e stack.
+# The public-classified `e2e-public` network (e2e/lib/public-network.ts): internal,
+# 11.88.0.0/24, so the product's SSRF guards save and call a webhook or an org
+# provider there with their defaults on. The gateway, backend and worker join it;
+# mock-llm (llm.e2e-public.test, scoped routes, host port 28082 for reads),
+# webhook-sink (hooks.e2e-public.test, host port 28083 for reads) and smtp-sink
+# (smtp.e2e-public.test, host port 28025 for reads) sit on it at fixed
+# addresses, with those aliases defined there only. A service that names its
+# networks must list `default` too.
+# The integration export flows (e2e/lib/export-sinks.ts): backend and worker
+# carry the export services' endpoint overrides
+# (futureagi/integrations/services/endpoints.py), which point the vendor hosts
+# fixed in code at local sinks: Datadog, Mixpanel and Linear at webhook-sink
+# channels answering as those vendors, Amazon S3 at storage-sink. The managed-mock
+# inspector requires exactly these values and refuses any other.
 services:
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
@@ -13,8 +27,15 @@ services:
       SQL_MAX_IDLE_CONNS: "2"
       SQL_VIS_MAX_CONNS: "2"
       SQL_VIS_MAX_IDLE_CONNS: "1"
+  agentcc-gateway:
+    networks:
+      - default
+      - e2e-public
   backend:
     restart: "no"
+    networks:
+      - default
+      - e2e-public
     # The managed-mock attestation requires application containers to have no
     # mounts. Telemetry is disabled for E2E, so remove the production outbox
     # volume inherited from docker-compose.distributed.yml.
@@ -27,25 +48,57 @@ services:
       # webhook rejects every batch the gateway sends.
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
+      # The new-org default (agentcc/services/managed_models_default.py): off
+      # unless the run declares E2E_MANAGED_MODELS_ON_FOR_NEW_ORGS=1, the stack
+      # the @new-org-default flows run on (lib/quarantine.ts, lib/managed-mock.ts).
+      AGENTCC_MANAGED_MODELS_ON_FOR_NEW_ORGS: ${E2E_MANAGED_MODELS_ON_FOR_NEW_ORGS:-}
       # The app and worker must share one key to decrypt OAuth credentials.
-      INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?Run bin/e2e to set INTEGRATION_ENCRYPTION_KEY}
       SLACK_CLIENT_ID: e2e-client
       SLACK_CLIENT_SECRET: e2e-secret
       SLACK_OAUTH_AUTHORIZE_URL: http://localhost:28081/oauth/v2/authorize
       SLACK_REDIRECT_URI: http://localhost:8100/integrations/slack/callback/
       SLACK_API_URL: http://mock-slack:8080/api
+      INTEGRATIONS_DATADOG_URL: http://hooks.e2e-public.test:8080/r/datadog-export/as/datadog
+      INTEGRATIONS_MIXPANEL_URL: http://hooks.e2e-public.test:8080/r/mixpanel-export/as/mixpanel
+      INTEGRATIONS_S3_ENDPOINT_URL: http://storage-sink:9000
+      INTEGRATIONS_LINEAR_URL: http://hooks.e2e-public.test:8080/r/linear-export/as/linear
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
+      <<: &webhooks-e2e-env
+        # Webhooks (flows/settings/webhooks-*.spec.ts): a test-only key shared by
+        # the API and the worker, and the one private destination the flows use,
+        # the Playwright process's receiver on the Docker host (lib/webhook-receiver.ts).
+        # No FI_WEBHOOKS_TEST_PLAN: section 18's release gate is passed
+        # (futureagi/webhooks/release_gate.py), so this stack is the release configuration.
+        WEBHOOKS_ENCRYPTION_KEYS: ${WEBHOOKS_ENCRYPTION_KEYS:?Run bin/e2e to set WEBHOOKS_ENCRYPTION_KEYS}
+        FI_WEBHOOKS_ALLOW_HTTP: "true"
+        FI_WEBHOOKS_ALLOWED_PRIVATE_HOSTS: host.docker.internal
+        FI_WEBHOOKS_PRIVATE_CIDRS: 172.16.0.0/12
+        FI_WEBHOOKS_PRIVATE_PORTS: 28400,28401,28402,28403,28404,28405
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
   worker:
     restart: "no"
+    networks:
+      - default
+      - e2e-public
     # Keep the worker mount-free for the managed-mock attestation as well.
     volumes: !reset []
     environment:
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
-      INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      AGENTCC_MANAGED_MODELS_ON_FOR_NEW_ORGS: ${E2E_MANAGED_MODELS_ON_FOR_NEW_ORGS:-}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?Run bin/e2e to set INTEGRATION_ENCRYPTION_KEY}
       SLACK_API_URL: http://mock-slack:8080/api
+      INTEGRATIONS_DATADOG_URL: http://hooks.e2e-public.test:8080/r/datadog-export/as/datadog
+      INTEGRATIONS_MIXPANEL_URL: http://hooks.e2e-public.test:8080/r/mixpanel-export/as/mixpanel
+      INTEGRATIONS_S3_ENDPOINT_URL: http://storage-sink:9000
+      INTEGRATIONS_LINEAR_URL: http://hooks.e2e-public.test:8080/r/linear-export/as/linear
+      <<: *webhooks-e2e-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
   fi-collector:
     # Collector and consumer must run the same checked-out transport protocol.
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
@@ -57,12 +110,88 @@ services:
       # attempts the retired tracer_observation_span mirror.
       CH25_DROP_LEGACY_CDC_CHAIN: "true"
   mock-llm:
+    depends_on: [mcp-mock, k2-mock, otlp-sink, siem-sink]
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]
     volumes:
       # Compose resolves paths in an override file against the project
       # directory (the first -f file's dir = repo root), not this file's dir.
       - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
+      - ./e2e/stack/mock-llm/wire.mjs:/srv/wire.mjs:ro
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.11
+        aliases: [llm.e2e-public.test]
+    ports:
+      - "127.0.0.1:28082:8080"
+    restart: "no"
+  webhook-sink:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/webhook-sink/server.mjs:/srv/server.mjs:ro
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.10
+        aliases: [hooks.e2e-public.test]
+    ports:
+      - "127.0.0.1:28083:8080"
+    restart: "no"
+  smtp-sink:
+    # H3 (e2e/lib/sinks.ts MailSink): the console saves SMTP alerts with use_tls
+    # true, so the product always STARTTLSes; mailpit generates a self-signed
+    # certificate for smtp-sink at start (smtplib's default STARTTLS context does
+    # not verify it). The product checks an SMTP host as it checks a provider
+    # base URL (agentcc url_safety: no private address with the opt-in off), so
+    # alerts save smtp.e2e-public.test:1025, the public-classified address,
+    # defined on e2e-public only; HTTP API on host 127.0.0.1:28025 for reads.
+    image: axllent/mailpit:v1.31.4
+    environment:
+      MP_SMTP_TLS_CERT: sans:smtp-sink
+      MP_SMTP_TLS_KEY: sans:smtp-sink
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.12
+        aliases: [smtp.e2e-public.test]
+    ports:
+      - "127.0.0.1:28025:8025"
+    restart: "no"
+  storage-sink:
+    # e2e/lib/export-sinks.ts StorageSink: the S3-compatible endpoint the
+    # Cloud Storage export writes to (INTEGRATIONS_S3_ENDPOINT_URL above). The
+    # stack's own pinned MinIO build, with its own root user (what a flow enters
+    # as the AWS keys) and the bucket e2e-exports made at start; the `sink` alias
+    # set here is what the harness reads with (`mc` inside the container). On
+    # `default` only, with no published port: the export reaches it only
+    # through the operator-set INTEGRATIONS_S3_ENDPOINT_URL.
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
+    environment:
+      MINIO_ROOT_USER: e2e-storage-sink
+      MINIO_ROOT_PASSWORD: e2e-storage-sink-password
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        minio server /data --address :9000 &
+        server_pid=$$!
+        trap 'kill "$${server_pid}"; wait "$${server_pid}"' TERM INT
+        attempt=0
+        until mc alias set sink http://localhost:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null; do
+          kill -0 "$${server_pid}"
+          attempt=$$((attempt + 1))
+          [ "$${attempt}" -lt 60 ] || exit 1
+          sleep 1
+        done
+        mc mb --ignore-existing sink/e2e-exports
+        wait "$${server_pid}"
+    healthcheck:
+      test:
+        ["CMD-SHELL", "mc ready sink && mc stat sink/e2e-exports >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     restart: "no"
   mock-slack:
     image: node:22-alpine
@@ -72,3 +201,31 @@ services:
     ports:
       - "127.0.0.1:28081:8080"
     restart: "no"
+  mock-certs:
+    extends:
+      file: ./e2e/stack/docker-compose.walk-mocks.yml
+      service: mock-certs
+  mcp-mock:
+    extends:
+      file: ./e2e/stack/docker-compose.walk-mocks.yml
+      service: mcp-mock
+  k2-mock:
+    extends:
+      file: ./e2e/stack/docker-compose.walk-mocks.yml
+      service: k2-mock
+  otlp-sink:
+    extends:
+      file: ./e2e/stack/docker-compose.walk-mocks.yml
+      service: otlp-sink
+  siem-sink:
+    extends:
+      file: ./e2e/stack/docker-compose.walk-mocks.yml
+      service: siem-sink
+volumes:
+  walk-mock-certs:
+networks:
+  e2e-public:
+    internal: false
+    ipam:
+      config:
+        - subnet: 11.88.0.0/24

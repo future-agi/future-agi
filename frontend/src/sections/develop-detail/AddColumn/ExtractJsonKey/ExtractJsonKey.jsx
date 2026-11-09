@@ -1,8 +1,10 @@
 import { Box, Drawer, IconButton, Typography } from "@mui/material";
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
+import RerunScopeField from "../RerunScopeField";
+import { withRerunScope } from "../rerunScope";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useParams } from "react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -22,6 +24,7 @@ import {
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
 import { isJsonColumn } from "./columnFilterUtils";
+import { rerunResultToast } from "../rerunResult";
 
 const getDefaultValue = () => {
   return {
@@ -113,21 +116,26 @@ export const ExtractJsonKeyChild = ({
         endpoints.develop.addColumns.updateDynamicColumn(editId),
         data,
       ),
-    onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
-        variant: "success",
-      });
+    onSuccess: (res) => {
+      const toast = rerunResultToast("Extract a JSON Key", res);
+      enqueueSnackbar(toast.text, { variant: toast.variant });
       refreshGrid();
       onClose();
     },
   });
 
+  const [rerunScope, setRerunScope] = useState("all");
   const onSubmit = (formValues) => {
     if (editId) {
-      updateColumn({
-        config: formValues,
-        operation_type: "extract_json",
-      });
+      updateColumn(
+        withRerunScope(
+          {
+            config: formValues,
+            operation_type: "extract_json",
+          },
+          rerunScope,
+        ),
+      );
       return;
     }
     if (onFormSubmit) {
@@ -226,6 +234,9 @@ export const ExtractJsonKeyChild = ({
             fieldType="number"
           />
         </Box>
+        {editId && (
+          <RerunScopeField value={rerunScope} onChange={setRerunScope} />
+        )}
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
           {!onFormSubmit && (
             <LoadingButton

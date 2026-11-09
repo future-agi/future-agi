@@ -55,7 +55,6 @@ def _ensure_engines() -> bool:
     try:
         from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
         from presidio_anonymizer import AnonymizerEngine
-        from presidio_anonymizer.entities import OperatorConfig
 
         # Custom recognizer for API keys (sk-live-..., pk_test-..., etc.)
         api_key_recognizer = PatternRecognizer(
@@ -78,6 +77,22 @@ def _ensure_engines() -> bool:
         }
         nlp_engine = NlpEngineProvider(nlp_configuration=nlp_config).create_engine()
         analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
+
+        from presidio_analyzer.predefined_recognizers import EmailRecognizer
+        from tldextract import TLDExtract
+
+        # Presidio 2.2's EmailRecognizer has no extractor injection option.
+        # Keep its patterns, context and fqdn validation, but use tldextract's
+        # bundled PSL snapshot without network fetches or a shared disk cache.
+        # Replace only this analyzer's recognizer, never the global extractor.
+        offline_extract = TLDExtract(suffix_list_urls=(), cache_dir=None)
+
+        class OfflineEmailRecognizer(EmailRecognizer):
+            def validate_result(self, pattern_text: str) -> bool:
+                return offline_extract(pattern_text).fqdn != ""
+
+        analyzer.registry.remove_recognizer("EmailRecognizer", language="en")
+        analyzer.registry.add_recognizer(OfflineEmailRecognizer(name="EmailRecognizer"))
         analyzer.registry.add_recognizer(api_key_recognizer)
         anonymizer = AnonymizerEngine()
     except Exception as exc:

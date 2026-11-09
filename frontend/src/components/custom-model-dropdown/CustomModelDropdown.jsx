@@ -1,5 +1,5 @@
 import { Box } from "@mui/material";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import React, { useMemo, useRef, useState } from "react";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
@@ -41,6 +41,7 @@ const CustomModelDropdown = ({
 }) => {
   const btnRef = useRef(null);
   const inputRef = useRef(null);
+  const queryClient = useQueryClient();
   const [isFocus, setIsFocus] = useState(false);
   const [openDropdown, setOpenDropdown] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -191,6 +192,7 @@ const CustomModelDropdown = ({
               size="small"
               sx={inputSx}
               logoUrl={modelDetail?.logoUrl}
+              provider={modelDetail?.providers ?? modelDetail?.provider}
               InputLabelProps={{
                 shrink: true,
                 style: {
@@ -297,6 +299,11 @@ const CustomModelDropdown = ({
         }}
         data={null}
         edit={false}
+        // options-truth L3 G8 P4: a stored custom model shows up in the
+        // model list right away (models_list returns it with its prices).
+        onRefresh={() =>
+          queryClient.invalidateQueries({ queryKey: ["model-list"] })
+        }
       />
     </>
   );
@@ -312,8 +319,10 @@ CustomModelDropdown.propTypes = {
   disabledClick: PropTypes.bool,
   disabledHover: PropTypes.bool,
   onChange: PropTypes.func,
-  value: PropTypes.string,
-  modelDetail: PropTypes.object,
+  // A model name, or the selected models when `multiple` is set.
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.array]),
+  // Multi-select fields (TTS / STT / image models) pass one detail per model.
+  modelDetail: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
   hoverPlacement: PropTypes.string,
   openSelectModel: PropTypes.bool,
   setOpenSelectModel: PropTypes.func,

@@ -44,6 +44,7 @@ import time
 
 import structlog
 from django.core.management.base import BaseCommand
+from django.db import DatabaseError
 
 logger = structlog.get_logger(__name__)
 
@@ -52,12 +53,13 @@ CH_SOURCE_TYPES = ("trace", "observation_span", "trace_session")
 
 
 def backfill_queue_item_source_previews(
-    *, chunk_size=200, sleep=0.0, queue_id=None, write=None
+    *, chunk_size=200, sleep=0.0, queue_id=None, write=None, using=None
 ):
     """Stamp ``source_preview`` on CH-backed items that lack one.
 
-    Returns ``(stamped, skipped, failed)``. Never raises — see the module
-    docstring on why a cache warm-up must not break a deploy.
+    Returns ``(stamped, skipped, failed)``. Live calls retain fail-open behavior.
+    With a migration ``using`` alias, PostgreSQL/routing failures propagate;
+    ClickHouse outages still leave the cache empty for a later retry.
     """
     from model_hub.models.annotation_queues import QueueItem
     from model_hub.utils.annotation_queue_helpers import (
@@ -71,7 +73,7 @@ def backfill_queue_item_source_previews(
     stamped = skipped = failed = 0
 
     try:
-        base = QueueItem.all_objects.filter(
+        base = QueueItem.all_objects.using(using).filter(
             deleted=False,
             source_preview__isnull=True,
             source_type__in=CH_SOURCE_TYPES,
@@ -118,7 +120,8 @@ def backfill_queue_item_source_previews(
                 # of escaping to the outer handler and killing every remaining
                 # group.
                 try:
-                    cache = CollectorSourceCache.for_items(chunk)
+                    routing = {"using": using} if using is not None else {}
+                    cache = CollectorSourceCache.for_items(chunk, **routing)
 
                     to_update = []
                     chunk_skipped = 0
@@ -138,11 +141,13 @@ def backfill_queue_item_source_previews(
                         to_update.append(item)
 
                     if to_update:
-                        QueueItem.all_objects.bulk_update(
+                        QueueItem.all_objects.using(using).bulk_update(
                             to_update, ["source_preview"], batch_size=chunk_size
                         )
                         stamped += len(to_update)
                 except Exception as exc:
+                    if using is not None and isinstance(exc, (DatabaseError, AssertionError)):
+                        raise
                     failed += len(chunk)
                     logger.warning(
                         "queue_item_preview_backfill_chunk_failed",
@@ -163,7 +168,11 @@ def backfill_queue_item_source_previews(
                 f"stamped={stamped} skipped={skipped} failed={failed}"
             )
     except Exception as exc:
-        # Fail open: a cache warm-up must never break a deploy.
+        # An explicit migration alias is a correctness boundary, not a cache
+        # availability hint. Never record a failed PG read/write as applied.
+        if using is not None:
+            raise
+        # The live command retains its existing fail-open behavior.
         logger.warning("queue_item_preview_backfill_aborted", error=str(exc))
 
     return stamped, skipped, failed

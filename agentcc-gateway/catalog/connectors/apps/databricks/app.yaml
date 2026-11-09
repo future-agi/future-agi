@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: databricks
+version: 1.0.0
+name: Databricks
+description: "Natural-language analytics over a Databricks workspace with Genie One."
+vendor:
+  name: Databricks
+  domains: [databricks.com]
+eeCategory: data
+group: other
+categories: [data, analytics]
+tags: [lakehouse, sql, genie]
+docsUrl: https://docs.databricks.com/aws/en/agents/mcp-tools/built-in-mcp-services
+archetype: data-warehouse
+defaultProvider: genie-one-pat
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.databricks.com/aws/en/agents/mcp-tools/built-in-mcp-services
+    fetchedAt: 2026-10-21

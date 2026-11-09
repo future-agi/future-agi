@@ -6,6 +6,7 @@ from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentVersion
 from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.agent_setup import agent_summary
+from simulate.utils.snapshot_projection import scrub_snapshot_secrets
 from tracer.services.observability_switch import snapshot_as_shown
 
 logger = structlog.get_logger(__name__)
@@ -55,7 +56,7 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         """Ensure configuration_snapshot is JSON-safe by stringifying UUIDs."""
         data = super().to_representation(instance)
-        snapshot = data.get("configuration_snapshot")
+        snapshot = scrub_snapshot_secrets(data.get("configuration_snapshot"))
         if isinstance(snapshot, dict):
             for key in ["organization", "knowledge_base", "workspace", "id"]:
                 if key in snapshot and snapshot[key] is not None:

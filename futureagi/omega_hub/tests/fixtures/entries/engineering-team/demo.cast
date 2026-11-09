@@ -1,0 +1,3 @@
+{"version":2,"width":100,"height":7,"title":"engineering-team (keyless)","env":{"TERM":"xterm-256color"}}
+[1,"o","run 1: killed with SIGKILL while the third engineer waited for its model\r\n"]
+[1,"o","verified on disk after the kill: 2 of 3 helpers\r\nrun 2: CI slugify: pass\r\nrun 2: CI truncate: pass\r\nrun 2: CI readingTime: pass\r\nrun 2: CI all helpers together: pass\r\nrun 2: feature verified: true; model calls: 1 (only the unfinished helper)\r\n"]

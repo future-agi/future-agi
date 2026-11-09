@@ -11,6 +11,9 @@
 # Optional services in this file:
 #   --profile ml        `serving`: embedding-based evals and knowledge bases
 #   --profile sandbox   privileged nsjail `code-executor` for code evals
+#   COMPOSE_PROFILES=hub the Omega Hub: its checker and the checker's privileged
+#                       gVisor runner daemon (deploy/hub-runner); the profile
+#                       must also reach the app for upload readiness (see below)
 #
 #   ./bin/install        or        docker compose up -d
 #
@@ -41,6 +44,10 @@ services:
       DEBUG: ${DEBUG:-false}
       EE_LICENSE_KEY: ${EE_LICENSE_KEY:-}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
+      # API, worker and collector in this container share both peppers. Rotation
+      # keeps the old value retired so existing API keys still verify.
+      FI_API_SECRET_PEPPER: ${FI_API_SECRET_PEPPER:-local-dev-only-api-secret-pepper-replace-me}
+      FI_API_SECRET_PEPPERS_RETIRED: ${FI_API_SECRET_PEPPERS_RETIRED:-}
       DJANGO_SETTINGS_MODULE: tfc.settings.settings
       # Only the bootstrap process (deploy/standalone/bin/bootstrap.py) changes
       # schema; the API and `docker compose exec` sessions never do.
@@ -53,6 +60,8 @@ services:
       FUTURE_AGI_VERSION: ${FUTURE_AGI_VERSION:-unknown}
       FUTURE_AGI_DEPLOYMENT_TYPE: ${FUTURE_AGI_DEPLOYMENT_TYPE:-docker}
       FUTURE_AGI_TELEMETRY_DISABLED: ${FUTURE_AGI_TELEMETRY_DISABLED:-false}
+      # Opt-in: add the owner/admin/staff emails and domains to the registration.
+      FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS: ${FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS:-false}
       FUTURE_AGI_TELEMETRY_JITTER_SECONDS: ${FUTURE_AGI_TELEMETRY_JITTER_SECONDS:-1800}
       # Root-only (bin/start); /tmp is writable by the code-evals sandbox.
       FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/data/telemetry}
@@ -229,9 +238,23 @@ services:
       # APIs read it:
       # https://docs.futureagi.com/docs/self-hosting/configuration/reference#application-behaviour
       AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: ${AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS:-false}
+      AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED: ${AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED:-false}
+      AGENTCC_MCP_CLIENT_OAUTH_ENABLED: ${AGENTCC_MCP_CLIENT_OAUTH_ENABLED:-false}
+      AGENTCC_MCP_K2_APPS_ENABLED: ${AGENTCC_MCP_K2_APPS_ENABLED:-false}
+      AGENTCC_MCP_CLIENT_INSTALLS_ENABLED: ${AGENTCC_MCP_CLIENT_INSTALLS_ENABLED:-false}
+      AGENTCC_MCP_TOOL_CALL_EXPLORER_ENABLED: ${AGENTCC_MCP_TOOL_CALL_EXPLORER_ENABLED:-false}
+      AGENTCC_MCP_TOOL_CALL_DOWNLOAD_ENABLED: ${AGENTCC_MCP_TOOL_CALL_DOWNLOAD_ENABLED:-false}
       AGENTCC_HARNESS_API_KEY: ${AGENTCC_HARNESS_API_KEY:-}
       AGENTCC_BASE_URL: ${AGENTCC_BASE_URL:-}
       AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
+      # The gateway refuses to start on the default above (or any token anyone
+      # could guess), and the API's admin endpoints refuse it too. Left on the
+      # default or empty, bin/start makes a random one for this start (the
+      # gateway and the API both run in this container); set one in .env to
+      # call the admin API from outside. 1 keeps the token as it is and accepts
+      # it, for local development and the E2E stack only. Which gateways read it:
+      # https://docs.futureagi.com/docs/self-hosting/configuration/reference#application-behaviour
+      AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN: ${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}
       RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
       RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
       MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
@@ -305,14 +328,38 @@ services:
       LIVEKIT_OUTBOUND_TRUNK_ID: ${LIVEKIT_OUTBOUND_TRUNK_ID:-}
       PSTN_CALLER_NUMBER: ${PSTN_CALLER_NUMBER:-}
 
+      # --- Omega Hub ---------------------------------------------------------
+      # The registry runs in this container; the hub-checker service below
+      # checks every upload and shares its token. Bundles go to the object
+      # storage above, in their own private bucket. The maintainer
+      # organisation's id is set once that organisation exists
+      # (deploy/README.md, "Omega Hub").
+      OMEGA_HUB_CHECKER_TOKEN: ${OMEGA_HUB_CHECKER_TOKEN:-}
+      # Always pass the marker, even empty: a generated token must not make
+      # uploads ready when this profile's checker service is not configured.
+      # Set COMPOSE_PROFILES=hub (or include hub in its comma list); a CLI-only
+      # --profile flag does not propagate to the app's environment.
+      OMEGA_HUB_COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
+      OMEGA_HUB_MAINTAINER_ORG_ID: ${OMEGA_HUB_MAINTAINER_ORG_ID:-}
+      OMEGA_HUB_STORAGE: object
+      OMEGA_HUB_BUCKET: ${OMEGA_HUB_BUCKET:-omega-hub}
+      OMEGA_HUB_APP_URL: ${OMEGA_HUB_APP_URL:-http://localhost:${FRONTEND_PORT:-3000}/dashboard/hub}
+      OMEGA_HUB_PUBLIC_API_URL: ${OMEGA_HUB_PUBLIC_API_URL:-http://localhost:${BACKEND_PORT:-8000}/omega-hub/v1}
+      OMEGA_HUB_TRUSTED_PROXY_DEPTH: ${OMEGA_HUB_TRUSTED_PROXY_DEPTH:-}
+      OMEGA_HUB_CLIENT_IP_HEADER: ${OMEGA_HUB_CLIENT_IP_HEADER:-}
+
       # --- UI runtime config (config.js, written at container start) --------
       # Empty -> the SPA calls http://localhost:<BACKEND_PORT> (default set in
       # deploy/standalone/bin/start). Set the public API URL when the UI is
       # reached through another host name.
       VITE_HOST_API: ${VITE_HOST_API:-}
       VITE_HELP_LINK: ${VITE_HELP_LINK:-}
-    extra_hosts:
-      - "code-executor:127.0.0.1"
+      # 1 shows the Omega products (the Hub among them) to the organisations
+      # their rollout admits (manage.py omega_rollout); empty: none, unless
+      # COMPOSE_PROFILES has `hub` (bin/start).
+      VITE_OMEGA_CONSOLE: ${VITE_OMEGA_CONSOLE:-}
+      # The npm package the Studio tab's install step names (ruling 711).
+      VITE_OMEGA_CLI_PACKAGE: ${VITE_OMEGA_CLI_PACKAGE:-@future-agi/omega}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
       - "${BACKEND_PORT:-8000}:8000"
@@ -434,16 +481,25 @@ services:
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
     restart: unless-stopped
 
-  # --profile sandbox: nsjail-isolated code evals for installs whose users
-  # must not trust one another. Needs privileged: true (Linux namespaces), so
-  # not every platform allows it. Enable it with COMPOSE_PROFILES=sandbox in
-  # .env: bin/start then routes code evals to code-executor-nsjail (the app's
-  # own `code-executor` name points at its built-in sandbox). nsjail allows
-  # network access, as in the distributed stack.
+  # Default service (no profile): nsjail-isolated code evals, not privileged.
+  # Runs as uid 65534 with only the network-admin capability below during init.
+  # Requires unprivileged user namespaces on the host.
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
-    profiles: ["sandbox"]
-    privileged: true
+    # Network administration is available only during policy initialization.
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    user: "65534:65534"
+    read_only: true
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,mode=1777
+      - /sandbox/scripts:rw,nosuid,nodev,noexec,uid=65534,gid=65534,mode=0700
+    environment:
+      CODE_EXECUTOR_EGRESS_PORTS: ${CODE_EXECUTOR_EGRESS_PORTS:-80,443}
+      CODE_EXECUTOR_INTERNAL_CIDRS: ${CODE_EXECUTOR_INTERNAL_CIDRS:-}
     networks:
       default:
         aliases: [code-executor-nsjail]
@@ -454,7 +510,78 @@ services:
           cpus: "2"
     restart: unless-stopped
 
+  # --profile hub: the Omega Hub checker (services/omega-hub-checker). It
+  # claims each upload from the app, judges it and runs its keyless test and
+  # demo with the network off. It holds no database or storage credential,
+  # only the shared OMEGA_HUB_CHECKER_TOKEN, and never this host's Docker: it
+  # reaches the hub-runner daemon below over mutual TLS. Its entrypoint
+  # (bin/start.sh) refuses a daemon that does not run containers on gVisor.
+  # Enable it with COMPOSE_PROFILES=hub in .env (bin/start then also turns on
+  # the UI's Omega products, VITE_OMEGA_CONSOLE).
+  hub-checker:
+    image: futureagi/omega-hub-checker:${OMEGA_HUB_CHECKER_VERSION:-local}
+    profiles: ["hub"]
+    build:
+      context: ./services/omega-hub-checker
+    environment:
+      OMEGA_HUB_URL: http://app:8000
+      OMEGA_HUB_CHECKER_TOKEN: ${OMEGA_HUB_CHECKER_TOKEN:-}
+      # The image every upload runs in (the release manifest's
+      # runtimes.hubRunner). Pulled onto hub-runner when it is not there; a
+      # locally built one: docker save <image> | docker compose exec -T
+      # hub-runner docker load.
+      OMEGA_HUB_RUNNER_IMAGE: ${OMEGA_HUB_RUNNER_IMAGE:-omega-hub-runner:881b05b}
+      OMEGA_HUB_RUNNER_RUNTIME: runsc
+      # Without the runner image the checker says why every minute and the
+      # app still starts (uploads wait).
+      OMEGA_HUB_RUNNER_WAIT: "1"
+      DOCKER_HOST: tcp://hub-runner:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+      HOME: /tmp
+    volumes:
+      # The client certificate only: never the CA's or the server's key.
+      - hub-runner-client:/certs/client:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      hub-runner:
+        condition: service_healthy
+      app:
+        condition: service_started
+    restart: unless-stopped
+
+  # --profile hub: the checker's runner daemon (deploy/hub-runner), Docker
+  # in Docker whose only container runtime is gVisor. Privileged because
+  # gVisor needs it; nothing publishes its port, and only a holder of the
+  # client certificate (hub-checker) can use it.
+  hub-runner:
+    image: futureagi/omega-hub-runner-host:${OMEGA_HUB_RUNNER_HOST_VERSION:-local}
+    profiles: ["hub"]
+    build:
+      context: ./deploy/hub-runner
+    privileged: true
+    # Docker refuses a privileged container in a remapped user namespace.
+    userns_mode: host
+    environment:
+      DOCKER_TLS_SAN: DNS:hub-runner
+    volumes:
+      - hub-runner-ca:/certs/ca
+      - hub-runner-server:/certs/server
+      - hub-runner-client:/certs/client
+      - hub-runner-data:/var/lib/docker
+    restart: unless-stopped
+
 volumes:
   app-data:
   postgres-data:
   clickhouse-data:
+  # The Hub runner daemon's certificates (its CA, its server certificate,
+  # the client certificate hub-checker mounts) and its image store.
+  hub-runner-ca:
+  hub-runner-server:
+  hub-runner-client:
+  hub-runner-data:

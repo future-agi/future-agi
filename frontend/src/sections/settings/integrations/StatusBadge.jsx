@@ -30,8 +30,15 @@ const STATUS_CONFIG = {
   },
 };
 
-export default function StatusBadge({ status }) {
-  const config = STATUS_CONFIG[status] || {
+// An export's first sync sends request logs out; it imports nothing.
+const EXPORT_LABELS = { backfilling: "First export" };
+
+export default function StatusBadge({ status, isExport = false }) {
+  const known = STATUS_CONFIG[status];
+  const config = (known && {
+    ...known,
+    label: (isExport && EXPORT_LABELS[status]) || known.label,
+  }) || {
     color: "default",
     label: status || "Unknown",
     icon: "solar:question-circle-bold",
@@ -48,4 +55,5 @@ export default function StatusBadge({ status }) {
 
 StatusBadge.propTypes = {
   status: PropTypes.string,
+  isExport: PropTypes.bool,
 };

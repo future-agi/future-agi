@@ -1,6 +1,7 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "src/utils/test-utils";
+import { HelmetProvider } from "react-helmet-async";
 import SessionDetailDrawer from "./SessionDetailDrawer";
 
 vi.mock("./hooks/useSessions", () => ({
@@ -32,6 +33,26 @@ vi.mock("./hooks/useSessions", () => ({
         total_tokens: 42,
         started_at: "2026-05-21T10:01:00Z",
       },
+      {
+        id: "managed-row-id",
+        model: "deepseek/deepseek-v4.1-flash",
+        provider: "openrouter",
+        billing_mode: "managed",
+        status_code: 200,
+        latency_ms: 80,
+        total_tokens: 7,
+        started_at: "2026-05-21T10:02:00Z",
+      },
+      {
+        id: "own-row-id",
+        model: "mistralai/ministral-8b",
+        provider: "openrouter",
+        billing_mode: "byok",
+        status_code: 200,
+        latency_ms: 90,
+        total_tokens: 9,
+        started_at: "2026-05-21T10:03:00Z",
+      },
     ],
     isLoading: false,
   }),
@@ -40,16 +61,46 @@ vi.mock("./hooks/useSessions", () => ({
 describe("SessionDetailDrawer", () => {
   it("renders request rows using canonical snake_case API fields", () => {
     render(
-      <SessionDetailDrawer open sessionId="session-row-id" onClose={vi.fn()} />,
+      <HelmetProvider>
+        <SessionDetailDrawer
+          open
+          sessionId="session-row-id"
+          onClose={vi.fn()}
+        />
+      </HelmetProvider>,
     );
-    const table = within(screen.getByRole("table"));
+    const list = within(
+      screen.getByRole("list", { name: "Requests in this session" }),
+    );
 
-    expect(screen.getByText("Session Detail")).toBeInTheDocument();
-    expect(screen.getByText("Gateway Session")).toBeInTheDocument();
-    expect(table.getByText("gpt-4o-mini")).toBeInTheDocument();
-    expect(table.getByText("502")).toBeInTheDocument();
-    expect(table.getByText("321ms")).toBeInTheDocument();
-    expect(table.getByText("42")).toBeInTheDocument();
-    expect(table.getByText(/May 21, 2026/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Gateway Session" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("gateway-session-1")).toBeInTheDocument();
+    expect(list.getByText("gpt-4o-mini")).toBeInTheDocument();
+    expect(list.getByText("502")).toBeInTheDocument();
+    expect(list.getByText(/321 ms/)).toBeInTheDocument();
+    expect(list.getByText(/42 tokens/)).toBeInTheDocument();
+    expect(screen.getByText("source")).toBeInTheDocument();
+  });
+
+  // A managed request names Future AGI
+  // as its provider; an own OpenRouter key keeps its name.
+  it("names a managed request's provider Future AGI", () => {
+    render(
+      <HelmetProvider>
+        <SessionDetailDrawer
+          open
+          sessionId="session-row-id"
+          onClose={vi.fn()}
+        />
+      </HelmetProvider>,
+    );
+    const [, managed, own] = within(
+      screen.getByRole("list", { name: "Requests in this session" }),
+    ).getAllByRole("listitem");
+    expect(managed).toHaveTextContent("· Future AGI");
+    expect(managed).not.toHaveTextContent("openrouter");
+    expect(own).toHaveTextContent("· openrouter");
   });
 });

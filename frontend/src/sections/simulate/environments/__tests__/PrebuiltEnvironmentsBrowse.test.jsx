@@ -8,7 +8,9 @@ import { render } from "src/utils/test-utils";
 const enqueueSnackbar = vi.fn();
 const navigate = vi.fn();
 
-vi.mock("notistack", () => ({ enqueueSnackbar: (...a) => enqueueSnackbar(...a) }));
+vi.mock("notistack", () => ({
+  enqueueSnackbar: (...a) => enqueueSnackbar(...a),
+}));
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -45,7 +47,9 @@ describe("PrebuiltEnvironmentsBrowse", () => {
   it("renders agent-type category headers and tiles from the fixture", async () => {
     renderBrowse();
 
-    expect(await screen.findByText("Customer Support Line")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Customer Support Line"),
+    ).toBeInTheDocument();
     ["Voice & chat", "Computer use", "Code"].forEach((group) => {
       expect(screen.getByText(group)).toBeInTheDocument();
     });
@@ -71,7 +75,9 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     );
 
     await waitFor(() =>
-      expect(screen.queryByText("Customer Support Line")).not.toBeInTheDocument(),
+      expect(
+        screen.queryByText("Customer Support Line"),
+      ).not.toBeInTheDocument(),
     );
     expect(screen.getByText("Verilog")).toBeInTheDocument();
     expect(screen.queryByText("Voice & chat")).not.toBeInTheDocument();
@@ -82,7 +88,9 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     renderBrowse();
     await screen.findByText("Customer Support Line");
 
-    expect(screen.queryByRole("tab", { name: /Build here/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /Preview here/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens the inline build panel for the clicked row without navigating", async () => {
@@ -92,11 +100,13 @@ describe("PrebuiltEnvironmentsBrowse", () => {
 
     await user.click(tile("Customer Support Line"));
 
-    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
-    expect(screen.getByText("Build in the cloud")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Build environment/ }),
+      screen.getByRole("tab", { name: /Preview here/ }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Preview a template draft")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Open local draft/ }),
+    ).toBeEnabled();
     expect(navigate).not.toHaveBeenCalled();
     expect(enqueueSnackbar).not.toHaveBeenCalled();
   });
@@ -109,7 +119,9 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     expect(target).toHaveAttribute("tabindex", "0");
     fireEvent.keyDown(target, { key: "Enter" });
 
-    expect(await screen.findByRole("tab", { name: /Build here/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("tab", { name: /Preview here/ }),
+    ).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
   });
 
@@ -119,7 +131,9 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     await screen.findByText("Customer Support Line");
 
     await user.click(tile("Customer Support Line"));
-    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /Preview here/ }),
+    ).toBeInTheDocument();
 
     await user.type(
       screen.getByPlaceholderText("Search templates…"),
@@ -127,7 +141,9 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     );
 
     await waitFor(() =>
-      expect(screen.queryByRole("tab", { name: /Build here/ })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("tab", { name: /Preview here/ }),
+      ).not.toBeInTheDocument(),
     );
   });
 
@@ -140,8 +156,6 @@ describe("PrebuiltEnvironmentsBrowse", () => {
       screen.getByRole("button", { name: /Back to how you want to start/ }),
     );
 
-    expect(navigate).toHaveBeenCalledWith(
-      "/dashboard/simulate/environments",
-    );
+    expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments");
   });
 });

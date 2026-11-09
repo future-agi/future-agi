@@ -1,3 +1,8 @@
+import {
+  isMoneyValue,
+  multiplyMoneyValues,
+  sumMoneyValues,
+} from "src/sections/common/format/money";
 /**
  * Usage Summary V2 — World-class usage dashboard
  *
@@ -7,7 +12,7 @@
  * - Daily time-series charts + workspace drill-down
  */
 
-import { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import PropTypes from "prop-types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -27,6 +32,7 @@ import {
   IconButton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import LoadFailedState from "src/components/load-failed-state";
 import axios, { endpoints } from "src/utils/axios";
 import { fCurrency, fUsage } from "src/utils/format-number";
 import UsageChart from "./UsageChart";
@@ -71,10 +77,11 @@ function getSingularUnit(unit) {
 }
 
 function formatTierRate(rateStr) {
-  if (rateStr == null) return "$0";
-  const num = parseFloat(String(rateStr).replace(/[^0-9.-]/g, ""));
-  if (!Number.isFinite(num) || num === 0) return "$0";
-  return fCurrency(num, true);
+  if (rateStr == null) return "—";
+  const decimal = String(rateStr)
+    .split("/")[0]
+    .replace(/[$,\s]/g, "");
+  return fCurrency(decimal, true);
 }
 
 const DISCRETE_UNITS = new Set(["events", "requests", "hits", "tokens"]);
@@ -115,8 +122,7 @@ function parseTierRate(rate) {
   const rateText = String(rate || "")
     .split("/")[0]
     .replace(/[$,\s]/g, "");
-  const parsedRate = Number(rateText);
-  return Number.isFinite(parsedRate) ? parsedRate : 0;
+  return isMoneyValue(rateText) ? rateText : null;
 }
 
 function getFirstPaidTierRate(tierBreakdown = []) {
@@ -770,7 +776,13 @@ export default function UsageSummaryV2() {
     setIsRefreshing(false);
   }, [queryClient]);
 
-  const { data: overview, isLoading } = useQuery({
+  const {
+    data: overview,
+    isLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ["v2-usage-overview", periodParams],
     queryFn: () =>
       axios.get(endpoints.settings.v2.usageOverview, {
@@ -818,7 +830,9 @@ export default function UsageSummaryV2() {
         dim.current_usage || 0,
         getPeriodAllowance(dim.free_allowance, periodMonthCount),
       );
-      return freeUsed > 0 ? sum + freeUsed * paidTierRate : sum;
+      return freeUsed > 0
+        ? sumMoneyValues([sum, multiplyMoneyValues(freeUsed, paidTierRate)])
+        : sum;
     }, 0);
   }, [overview, periodMonthCount]);
 
@@ -828,16 +842,28 @@ export default function UsageSummaryV2() {
   }, [overview]);
 
   if (isLoading) {
+    // At phone width the two header columns wrap onto their own lines and
+    // each bar is capped at its column: a 280 px bar beside a 120 px one in a
+    // row that did not wrap reached 26 px past a 390 px screen.
+    const column = { minWidth: 0, maxWidth: "100%" };
+    const bar = { maxWidth: "100%" };
     return (
       <Box>
-        <Stack direction="row" justifyContent="space-between" mb={4}>
-          <Box>
-            <Skeleton variant="text" width={200} height={32} />
-            <Skeleton variant="text" width={280} height={20} />
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          spacing={2}
+          useFlexGap
+          flexWrap="wrap"
+          mb={4}
+        >
+          <Box sx={column}>
+            <Skeleton variant="text" width={200} height={32} sx={bar} />
+            <Skeleton variant="text" width={280} height={20} sx={bar} />
           </Box>
-          <Box sx={{ textAlign: "right" }}>
-            <Skeleton variant="text" width={80} height={56} />
-            <Skeleton variant="text" width={120} height={20} />
+          <Box sx={{ ...column, textAlign: "right" }}>
+            <Skeleton variant="text" width={80} height={56} sx={bar} />
+            <Skeleton variant="text" width={120} height={20} sx={bar} />
           </Box>
         </Stack>
         <Stack direction="row" spacing={2} mb={4}>
@@ -849,6 +875,19 @@ export default function UsageSummaryV2() {
           <Skeleton key={i} variant="rounded" height={110} sx={{ mb: 2 }} />
         ))}
       </Box>
+    );
+  }
+
+  // Every figure on this page comes from the overview request. When it
+  // fails, say so instead of rendering $0 and "0 of 0" as fact.
+  if (isError && !overview) {
+    return (
+      <LoadFailedState
+        title="Usage couldn't be loaded"
+        detail="Your usage, spend and allowances are not shown until it loads."
+        onRetry={refetch}
+        retrying={isRefetching}
+      />
     );
   }
 
@@ -949,7 +988,7 @@ export default function UsageSummaryV2() {
               WebkitTextFillColor: "transparent",
             }}
           >
-            {fCurrency(overview?.total_with_platform || 0)}
+            {fCurrency(overview?.total_with_platform) || "—"}
           </Typography>
           {overview?.platform_fee > 0 && (
             <Typography
@@ -1029,7 +1068,7 @@ export default function UsageSummaryV2() {
         <StatCard
           icon="mdi:receipt-text-outline"
           label="Usage charges"
-          value={fCurrency(overview?.total_estimated_cost || 0)}
+          value={fCurrency(overview?.total_estimated_cost) || "—"}
           subtitle="this billing period"
           color="#3b82f6"
           tooltip="Total charges from metered usage across all dimensions"
@@ -1101,7 +1140,7 @@ export default function UsageSummaryV2() {
             sx={{ color: "text.disabled", mb: 1.5 }}
           />
           <Typography variant="h6" color="text.secondary" gutterBottom>
-            No usage data yet
+            No usage data
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Start using FutureAGI features and your usage will appear here.

@@ -8,6 +8,13 @@ import { useAgentPlaygroundStore, useAgentListGridStore } from "../../store";
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
+// L7c merge: the real app's Create Agent (a prototype build has none, its
+// create is not mocked); one case below pins the prototype's absent door.
+const protoMock = vi.hoisted(() => ({ prototype: false }));
+vi.mock("src/utils/prototype", () => ({
+  isPrototypeMode: () => protoMock.prototype,
+}));
+
 const mockNavigate = vi.fn();
 vi.mock("react-router", () => ({
   useNavigate: () => mockNavigate,
@@ -305,5 +312,17 @@ describe("Actions — edge cases", () => {
         mockDeleteMutate._onSuccess?.();
       });
     }).not.toThrow();
+  });
+});
+
+describe("Actions in the prototype build (L7c merge)", () => {
+  it("offers no Create Agent (its create is not mocked)", () => {
+    protoMock.prototype = true;
+    try {
+      renderActions();
+      expect(screen.queryByText("Create Agent")).toBeNull();
+    } finally {
+      protoMock.prototype = false;
+    }
   });
 });

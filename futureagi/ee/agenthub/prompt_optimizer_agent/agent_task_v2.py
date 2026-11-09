@@ -43,13 +43,6 @@ futureagi_eval_types = [
     "DeterministicEvaluator",
 ]
 
-client = LLM(
-    model_name=ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.model_name,
-    temperature=ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.temperature,
-    max_tokens=ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.max_tokens,
-    provider=ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.provider,
-)
-
 
 def get_improvements(improvement_str):
     try:

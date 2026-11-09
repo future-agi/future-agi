@@ -3,8 +3,18 @@ import PropTypes from "prop-types";
 import React, { useRef } from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import ResultGroupHeader from "../results/headers/ResultGroupHeader";
 
-const CustomExperimentGroupHeader = ({
+// Results grid groups (PRODUCT-SPEC §3.10.7) pass `resultGroup`; the
+// dataset compare grid and the legacy experiment grid pass `group`.
+const CustomExperimentGroupHeader = (props) =>
+  props.resultGroup ? (
+    <ResultGroupHeader group={props.resultGroup} />
+  ) : (
+    <LegacyGroupHeader {...props} />
+  );
+
+const LegacyGroupHeader = ({
   group,
   displayName,
   api: _api,
@@ -131,6 +141,10 @@ const CustomExperimentGroupHeader = ({
 };
 
 CustomExperimentGroupHeader.propTypes = {
+  resultGroup: PropTypes.object,
+};
+
+LegacyGroupHeader.propTypes = {
   displayName: PropTypes.string,
   group: PropTypes.object,
   api: PropTypes.object,

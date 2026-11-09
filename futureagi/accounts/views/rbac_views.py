@@ -7,7 +7,6 @@ Old endpoints remain untouched until Phase 4 cutover.
 
 import structlog
 from django.db import IntegrityError, transaction
-from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -35,6 +34,8 @@ from accounts.serializers.rbac import (
     WorkspaceMemberRoleUpdateSerializer,
 )
 from accounts.services import member_role_service
+from accounts.services.hard_erase_issuance_entry import request_issuance_entry
+from accounts.services.identity_issuance import issue_membership
 from accounts.services.workspace_members import list_workspace_members
 from accounts.utils import (
     build_invite_links,
@@ -101,6 +102,7 @@ class InviteCreateAPIView(APIView):
         responses={200: InviteCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @request_issuance_entry
     def post(self, request):
         gm = GeneralMethods()
 
@@ -298,7 +300,9 @@ class InviteCreateAPIView(APIView):
                 membership_active = (
                     True if existing_membership is not None else existing_user.is_active
                 )
-                OrganizationMembership.all_objects.update_or_create(
+                issue_membership(
+                    OrganizationMembership.all_objects,
+                    "update_or_create",
                     user=existing_user,
                     organization=organization,
                     defaults={
@@ -322,8 +326,10 @@ class InviteCreateAPIView(APIView):
                 is_active=False,
                 organization=organization,
             )
-            target_user.invited_organizations.add(organization)
-            OrganizationMembership.all_objects.update_or_create(
+            # The through-row below is the invited_organizations membership.
+            issue_membership(
+                OrganizationMembership.all_objects,
+                "update_or_create",
                 user=target_user,
                 organization=organization,
                 defaults={
@@ -478,16 +484,9 @@ class InviteCancelAPIView(APIView):
         try:
             user = User.objects.get(email__iexact=invite.target_email)
             if not user.is_active:
-                now = timezone.now()
-                # Use _base_manager to bypass soft-delete and workspace filtering
-                OrganizationMembership._base_manager.filter(
-                    user=user,
-                    organization=organization,
-                ).update(is_active=False, deleted=True, deleted_at=now)
-                WorkspaceMembership._base_manager.filter(
-                    user=user,
-                    workspace__organization=organization,
-                ).update(is_active=False, deleted=True, deleted_at=now)
+                from accounts.services.offboarding import offboard_organization_member
+
+                offboard_organization_member(user, organization, actor=request.user)
         except User.DoesNotExist:
             pass
 
@@ -534,9 +533,7 @@ class MemberListAPIView(APIView):
         # workspace_id is NOT used here (it's only for workspace-scoped endpoints).
 
         viewer_membership = get_org_membership(request.user)
-        viewer_org_level = (
-            viewer_membership.level_or_legacy if viewer_membership else 0
-        )
+        viewer_org_level = viewer_membership.level_or_legacy if viewer_membership else 0
 
         # Build pending/expired invites
         invites = self._get_invites(organization, viewer_org_level)
@@ -895,8 +892,8 @@ class MemberRemoveAPIView(APIView):
     """
     DELETE /accounts/organization/members/remove/
 
-    Soft-deactivates OrganizationMembership and cascades to workspace
-    memberships.  Signals handle Redis clear + audit log.
+    Soft-deactivates this organization's grants. The shared offboarding
+    service handles scoped credentials, session cache eviction and audit.
     """
 
     permission_classes = [
@@ -932,68 +929,20 @@ class MemberRemoveAPIView(APIView):
             return gm.bad_request(get_error_message("MEMBER_NOT_IN_ORG"))
 
         with transaction.atomic():
-            # Last owner guard (B4 fix: race-safe with select_for_update)
+            from accounts.services.offboarding import offboard_organization_member
+            from accounts.services.team_members import active_owner_count
+
+            # Lock an actual row: SELECT COUNT does not acquire row locks.
+            # This also serializes with the sibling deactivation route.
+            type(organization).objects.select_for_update().get(pk=organization.pk)
+            target_membership.refresh_from_db()
             if target_membership.level_or_legacy >= Level.OWNER:
-                owner_count = (
-                    OrganizationMembership.objects.select_for_update()
-                    .filter(
-                        organization=organization,
-                        is_active=True,
-                        level__gte=Level.OWNER,
-                    )
-                    .count()
-                )
-                # Also count legacy owners without level set
-                legacy_owner_count = (
-                    OrganizationMembership.objects.select_for_update()
-                    .filter(
-                        organization=organization,
-                        is_active=True,
-                        level__isnull=True,
-                        role="Owner",
-                    )
-                    .count()
-                )
-                if (owner_count + legacy_owner_count) <= 1:
+                if active_owner_count(organization) <= 1:
                     return gm.bad_request(get_error_message("LAST_OWNER_REMOVE"))
 
-            # Soft-deactivate org membership (row preserved for audit trail
-            # and future re-invite via update_or_create).
-            target_membership.is_active = False
-            target_membership.save(update_fields=["is_active"])
-
-            # Soft-deactivate workspace memberships linked via org_membership FK
-            WorkspaceMembership.objects.filter(
-                organization_membership=target_membership,
-                is_active=True,
-            ).update(is_active=False)
-
-            # Also deactivate ws memberships not linked via org_membership FK
-            # (covers legacy rows where organization_membership was never set)
-            target_user = User.objects.filter(id=user_id).first()
-            if target_user:
-                WorkspaceMembership.objects.filter(
-                    user=target_user,
-                    workspace__organization=organization,
-                    is_active=True,
-                ).update(is_active=False)
-
-                # Invalidate session cache
-                from accounts.views.workspace_management import clear_user_redis_cache
-
-                clear_user_redis_cache(target_user.id)
-
-        # Audit log (inline, since delete signals won't fire for soft-deactivate)
-        log_audit(
-            organization=organization,
-            action="member.removed",
-            scope="organization",
-            target_id=user_id,
-            changes={
-                "role": target_membership.role,
-                "level": target_membership.level,
-            },
-        )
+            offboard_organization_member(
+                target_membership.user, organization, actor=request.user
+            )
 
         return gm.success_response(
             {
@@ -1057,61 +1006,10 @@ class MemberReactivateAPIView(APIView):
                 get_error_message("REACTIVATE_LEVEL_FORBIDDEN")
             )
 
-        # D1: Wrap DB operations in transaction.atomic()
-        with transaction.atomic():
-            # Re-activate org membership
-            target_membership.is_active = True
-            target_membership.save(update_fields=["is_active"])
+        from accounts.services.offboarding import reactivate_organization_member
 
-            # Re-activate workspace memberships that were soft-deactivated during removal.
-            ws_restored = WorkspaceMembership._base_manager.filter(
-                user_id=user_id,
-                workspace__organization=organization,
-                is_active=False,
-            ).update(is_active=True)
-
-            if ws_restored == 0:
-                default_ws = Workspace.objects.filter(
-                    organization=organization, is_default=True
-                ).first()
-                if default_ws:
-                    ws_level = Level.get_default_ws_level(
-                        target_membership.level_or_legacy
-                    )
-                    WorkspaceMembership._base_manager.update_or_create(
-                        workspace=default_ws,
-                        user_id=user_id,
-                        defaults={
-                            "role": Level.to_ws_role(ws_level),
-                            "level": ws_level,
-                            "organization_membership": target_membership,
-                            "is_active": True,
-                            "deleted": False,
-                            "deleted_at": None,
-                        },
-                    )
-
-            # Reactivate user if they were globally deactivated
-            target_user = User.objects.filter(id=user_id).first()
-            if target_user:
-                if not target_user.is_active:
-                    target_user.is_active = True
-                    target_user.save(update_fields=["is_active"])
-
-                # Invalidate session cache
-                from accounts.views.workspace_management import clear_user_redis_cache
-
-                clear_user_redis_cache(target_user.id)
-
-        log_audit(
-            organization=organization,
-            action="member.reactivated",
-            scope="organization",
-            target_id=user_id,
-            changes={
-                "role": target_membership.role,
-                "level": target_membership.level,
-            },
+        reactivate_organization_member(
+            target_membership.user, organization, actor=request.user
         )
 
         return gm.success_response(

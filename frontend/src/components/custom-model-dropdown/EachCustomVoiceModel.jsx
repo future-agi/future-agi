@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 /* eslint-disable react/prop-types */
 import {
   Box,
@@ -132,7 +133,7 @@ const EachCustomVoiceModel = forwardRef((props, ref) => {
         }}
       >
         <Image
-          src={selectedModel?.logoUrl}
+          src={localProviderLogo(selectedModel)}
           alt={selectedModel?.model_name}
           width={20}
         />
@@ -230,7 +231,11 @@ EachCustomVoiceModel.propTypes = {
     logoUrl: PropTypes.string,
     modelName: PropTypes.string,
     voices: PropTypes.arrayOf(PropTypes.string),
-    providers: PropTypes.arrayOf(PropTypes.string),
+    // models_list sends one provider name per model.
+    providers: PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.arrayOf(PropTypes.string),
+    ]),
   }),
   onCustomAudioDialogOpen: PropTypes.func,
 };

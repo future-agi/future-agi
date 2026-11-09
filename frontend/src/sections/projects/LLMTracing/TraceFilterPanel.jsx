@@ -4340,6 +4340,7 @@ function FilterRow({
       <Select
         size="small"
         value={safeOperator}
+        inputProps={{ "aria-label": `Condition ${index + 1} operator` }}
         onChange={handleOperatorChange}
         sx={{
           flex: "0 1 128px",
@@ -4361,6 +4362,7 @@ function FilterRow({
       <IconButton
         size="small"
         onClick={() => onRemove(index)}
+        aria-label={`Remove condition ${index + 1}`}
         sx={{ p: 0.25, flexShrink: 0, ml: "auto" }}
       >
         <Iconify icon="mdi:close" width={14} />
@@ -4396,6 +4398,8 @@ const TraceFilterPanel = ({
   ValuePickerOverride,
   showAi = true,
   showQueryTab = true,
+  aiPlaceholder = "Ask AI — e.g. 'show traces with errors on gpt-4'",
+  closeOnApply = false,
   categories: categoriesOverride,
   propertyFilter,
   operatorFilter,
@@ -5154,6 +5158,11 @@ const TraceFilterPanel = ({
   const onApplyRef = useRef(onApply);
   onApplyRef.current = onApply;
   // Apply only when the resulting filter set differs from the last one sent.
+  // Optional: close the panel once a changed filter set is applied.
+  const closeOnApplyRef = useRef(closeOnApply);
+  closeOnApplyRef.current = closeOnApply;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const applyIfChanged = useCallback((sourceRows) => {
     // Hold while a typed editor is incomplete so partial values do not
     // auto-fire or drop the last valid, already-applied filter.
@@ -5164,6 +5173,7 @@ const TraceFilterPanel = ({
     if (serialized === lastAppliedRef.current) return;
     lastAppliedRef.current = serialized;
     onApplyRef.current(next);
+    if (closeOnApplyRef.current) onCloseRef.current();
   }, []);
 
   const handleChange = useCallback(
@@ -5323,11 +5333,7 @@ const TraceFilterPanel = ({
             <TextField
               size="small"
               fullWidth
-              placeholder={
-                aiLoading
-                  ? "Parsing with AI..."
-                  : "Ask AI — e.g. 'show traces with errors on gpt-4'"
-              }
+              placeholder={aiLoading ? "Parsing with AI..." : aiPlaceholder}
               value={aiQuery}
               onChange={(e) => {
                 setAiQuery(e.target.value);
@@ -5698,6 +5704,8 @@ TraceFilterPanel.propTypes = {
   ValuePickerOverride: PropTypes.elementType,
   showAi: PropTypes.bool,
   showQueryTab: PropTypes.bool,
+  aiPlaceholder: PropTypes.string,
+  closeOnApply: PropTypes.bool,
   categories: PropTypes.array,
   propertyFilter: PropTypes.func,
   operatorFilter: PropTypes.func,

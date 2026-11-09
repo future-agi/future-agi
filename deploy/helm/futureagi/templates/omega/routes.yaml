@@ -1,0 +1,144 @@
+{{- /*
+Routes to the Omega gateway: `/omega/api` on the UI host (the browser calls it
+same-origin) and, with omega.gateway.console.enabled, the Console's own host.
+An Ingress of its own, so event streams and uploads get their annotations
+(omega.ingress.annotations) without changing them for the rest of the app;
+or HTTPRoutes on the Gateway the app's routes use. EE is never routed.
+*/ -}}
+{{- if include "futureagi.omega.enabled" . }}
+{{- $o := .Values.omega -}}
+{{- $g := $o.gateway -}}
+{{- $gateway := include "futureagi.component" (dict "root" . "component" "omega-gateway") -}}
+{{- $ctx := dict "root" . "component" "omega-ingress" -}}
+{{- if .Values.ingress.enabled }}
+{{- $i := .Values.ingress -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "omega") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- with merge (dict) ($o.ingress.annotations | default dict) ($i.annotations | default dict) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $i.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with $i.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    # The gateway's API, on the UI's own origin.
+    - host: {{ $i.app.host | quote }}
+      http:
+        paths:
+          - path: /omega/api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $gateway }}
+                port:
+                  name: http
+    {{- if $g.console.enabled }}
+    # The Console origin (its build and the same API, pre-minted keys only).
+    - host: {{ $g.console.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $gateway }}
+                port:
+                  name: console
+    {{- end }}
+{{- end }}
+{{- if .Values.gatewayApi.enabled }}
+{{- $ga := .Values.gatewayApi -}}
+{{- $appHost := include "futureagi.gatewayApi.host" (dict "root" . "route" "app") -}}
+{{- if .Values.ingress.enabled }}
+---
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "omega") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" (dict "root" . "component" "gateway-api") | nindent 4 }}
+  {{- with $ga.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs: {{- toYaml $ga.parentRefs | nindent 4 }}
+  hostnames: [{{ $appHost | quote }}]
+  rules:
+    # The gateway's API, on the UI's own origin; event streams stay open.
+    - matches:
+        - path: {type: PathPrefix, value: /omega/api}
+      backendRefs:
+        - name: {{ $gateway }}
+          port: {{ $g.service.port }}
+      {{- with $o.ingress.timeout }}
+      timeouts:
+        request: {{ . | quote }}
+      {{- end }}
+{{- if $g.console.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "omega-console") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" (dict "root" . "component" "gateway-api") | nindent 4 }}
+  {{- with $ga.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs: {{- toYaml $ga.parentRefs | nindent 4 }}
+  hostnames: [{{ $g.console.host | quote }}]
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      backendRefs:
+        - name: {{ $gateway }}
+          port: {{ $g.service.consolePort }}
+      {{- with $o.ingress.timeout }}
+      timeouts:
+        request: {{ . | quote }}
+      {{- end }}
+{{- end }}
+{{- if $ga.gke.healthChecks.enabled }}
+---
+# GKE's load balancer health-checks endpoints itself (it ignores readiness
+# probes): the gateway's /readyz, which is ready only while EE and the session
+# exchange answer.
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: {{ $gateway }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" (dict "root" . "component" "gateway-api") | nindent 4 }}
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        portSpecification: USE_FIXED_PORT
+        port: 8080
+        requestPath: /readyz
+  targetRef:
+    group: ""
+    kind: Service
+    name: {{ $gateway }}
+{{- end }}
+{{- end }}
+{{- end }}

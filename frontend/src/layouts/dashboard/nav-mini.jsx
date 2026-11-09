@@ -12,32 +12,38 @@ import { NavSectionMini } from "src/components/nav-section";
 import { NAV } from "../config-layout";
 import {
   useNavDashBoardData,
-  useNavData,
+  useNavGatewayData,
   useNavSettingsData,
   useNavUpgradeData,
   useWorkspaceSettingsNav,
 } from "./config-navigation";
+import { useShellNavData } from "./useShellNavData";
 import { Divider, IconButton, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
 import { useSettingsContext } from "src/components/settings";
 import WorkspaceSwitcher from "./WorkspaceSwitcher/WorkspaceSwitcher";
-import { useSettingsOpen } from "./states";
+import { useSettingsOpen, syncSettingsOpen } from "./states";
 import { useNavigate } from "react-router";
+import ProductSwitcher from "src/sections/omega/shell/ProductSwitcher";
+import { isGatewayPath } from "src/sections/omega/shell/products";
+import GatewayRail from "src/sections/gateway/shell/GatewayRail";
 
 // ----------------------------------------------------------------------
 
 export default function NavMini() {
   const { user } = useAuthContext();
   const settings = useSettingsContext();
-  const navData = useNavData();
+  const navData = useShellNavData();
   const navUpgradeData = useNavUpgradeData();
 
   const navDashboardData = useNavDashBoardData();
 
   const navSettingsData = useNavSettingsData();
+  const navGatewayData = useNavGatewayData();
   const { settingOpen, setSettingOpen } = useSettingsOpen();
   const navigate = useNavigate();
   const pathname = usePathname();
+  const onGateway = isGatewayPath(pathname);
 
   // Detect workspace-specific settings route
   const wsMatch = pathname.match(
@@ -46,10 +52,12 @@ export default function NavMini() {
   const activeWorkspaceId = wsMatch ? wsMatch[1] : null;
   const workspaceNav = useWorkspaceSettingsNav(activeWorkspaceId);
 
-  // Sync settings sidebar visibility with URL on page reload
+  // Keep the gateway rail; elsewhere the settings panel follows the URL both ways.
   useEffect(() => {
-    if (pathname.includes("/settings/")) {
-      setSettingOpen(true);
+    if (isGatewayPath(pathname)) {
+      setSettingOpen(false);
+    } else {
+      syncSettingsOpen(pathname, setSettingOpen);
     }
   }, [pathname, setSettingOpen]);
 
@@ -61,7 +69,7 @@ export default function NavMini() {
         backgroundColor: "background.paper",
         paddingBottom: "16px",
         position: "relative", // important for settings panel overlay
-        height: "100vh",
+        height: "calc(100vh - var(--fa-proto-label-h, 0px))",
         overflow: "hidden",
         borderRight: (theme) => `solid 1px ${theme.palette.divider}`,
       }}
@@ -88,6 +96,8 @@ export default function NavMini() {
             alignItems={"center"}
           >
             <IconButton
+              aria-label="Expand sidebar"
+              aria-expanded={settings.themeLayout !== "mini"}
               onClick={() =>
                 settings.onUpdate(
                   "themeLayout",
@@ -101,14 +111,17 @@ export default function NavMini() {
                 src="/assets/icons/navbar/ic_nav_close_toggle.svg"
               />
             </IconButton>
+            <ProductSwitcher collapsed />
             <WorkspaceSwitcher collapsed />
-            <NavSectionMini
-              data={navDashboardData}
-              slotProps={{
-                currentRole: user?.role,
-                gap: 2,
-              }}
-            />
+            {!onGateway && (
+              <NavSectionMini
+                data={navDashboardData}
+                slotProps={{
+                  currentRole: user?.role,
+                  gap: 2,
+                }}
+              />
+            )}
           </Stack>
           <Divider
             orientation="horizontal"
@@ -124,13 +137,17 @@ export default function NavMini() {
           />
         </Box>
 
-        <NavSectionMini
-          data={navData}
-          slotProps={{
-            currentRole: user?.role,
-            gap: 2,
-          }}
-        />
+        {onGateway ? (
+          <GatewayRail groups={navGatewayData} collapsed />
+        ) : (
+          <NavSectionMini
+            data={navData}
+            slotProps={{
+              currentRole: user?.role,
+              gap: 2,
+            }}
+          />
+        )}
         <Box sx={{ flexGrow: 1 }} />
 
         <Stack marginTop={3} direction={"column"} alignItems={"center"}>
@@ -186,6 +203,7 @@ export default function NavMini() {
                 }}
               >
                 <IconButton
+                  aria-label="Back to Settings"
                   onClick={() =>
                     navigate("/dashboard/settings/profile-settings")
                   }
@@ -239,6 +257,7 @@ export default function NavMini() {
                 }}
               >
                 <IconButton
+                  aria-label="Back to app"
                   onClick={() => {
                     const appRedirectUrl = localStorage.getItem(
                       "redirect-url-from-settings",

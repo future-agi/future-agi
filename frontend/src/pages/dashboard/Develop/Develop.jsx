@@ -3,12 +3,13 @@ import { Box, Tooltip, Typography } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import DevelopView from "src/sections/develop/DevelopView";
 import Iconify from "src/components/iconify";
+import { DATASETS_TITLE } from "src/sections/develop-detail/datasetTitle";
 
 const Develop = () => {
   return (
     <>
       <Helmet>
-        <title>Datasets</title>
+        <title>{DATASETS_TITLE}</title>
       </Helmet>
       <Box
         sx={{
@@ -22,7 +23,7 @@ const Develop = () => {
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <Typography variant="h6" fontWeight={600}>
+          <Typography variant="h6" component="h1" fontWeight={600}>
             Datasets
           </Typography>
           <Tooltip

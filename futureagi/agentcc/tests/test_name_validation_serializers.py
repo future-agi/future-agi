@@ -1,7 +1,5 @@
 import pytest
 
-from agentcc.models.custom_property import AgentccCustomPropertySchema
-from agentcc.models.webhook import AgentccWebhook
 from agentcc.serializers.api_key import (
     AgentccAPIKeyCreateSerializer,
     AgentccAPIKeyUpdateSerializer,
@@ -28,7 +26,8 @@ class TestAgentccSafeNameValidationSerializers:
         assert not serializer.is_valid()
         assert serializer.errors["name"][0] == NAME_ERROR
 
-    def test_webhook_serializer_rejects_xss_name(self, user):
+    def test_webhook_serializer_rejects_xss_name(self, user, provider_dns):
+        dns = provider_dns({"example.com": ["93.184.215.14"]})
         serializer = AgentccWebhookSerializer(
             data={
                 "name": INVALID_NAME,
@@ -39,8 +38,11 @@ class TestAgentccSafeNameValidationSerializers:
 
         assert not serializer.is_valid()
         assert serializer.errors["name"][0] == NAME_ERROR
+        # The URL check resolved it, answered by the stub.
+        assert "example.com" in [c.args[0] for c in dns.call_args_list]
 
-    def test_webhook_serializer_allows_safe_name(self):
+    def test_webhook_serializer_allows_safe_name(self, provider_dns):
+        dns = provider_dns({"example.com": ["93.184.215.14"]})
         serializer = AgentccWebhookSerializer(
             data={
                 "name": VALID_NAME,
@@ -50,6 +52,8 @@ class TestAgentccSafeNameValidationSerializers:
         )
 
         assert serializer.is_valid(), serializer.errors
+        # The URL check resolved it, answered by the stub.
+        assert "example.com" in [c.args[0] for c in dns.call_args_list]
 
     def test_custom_property_serializer_rejects_xss_name(self):
         serializer = AgentccCustomPropertySchemaSerializer(

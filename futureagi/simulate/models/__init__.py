@@ -1,5 +1,4 @@
 from .agent_definition import AgentDefinition, ProviderCredentials
-from .agent_fix import AgentFixCandidate, AgentFixRun
 from .agent_optimiser import AgentOptimiser
 from .agent_optimiser_run import AgentOptimiserRun
 from .agent_prompt_optimiser_run import AgentPromptOptimiserRun
@@ -15,11 +14,11 @@ from .call_log_entry import CallLogEntry
 from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
 from .component_evaluation import ComponentEvaluation
+from .eval_config import SimulateEvalConfig
 from .harness_environment_credentials import (
     HarnessCredentialFile,
     HarnessEnvironmentCredentials,
 )
-from .eval_config import SimulateEvalConfig
 from .harness_versioning import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
@@ -39,9 +38,9 @@ from .hosted_harness import (
     HostedHarnessConversationMessage,
     HostedHarnessConversationTranscript,
     HostedHarnessEvent,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessManifest,
-    HostedHarnessExecution,
     HostedHarnessReceipt,
     HostedHarnessScenario,
     HostedHarnessSecret,
@@ -50,6 +49,7 @@ from .hosted_harness import (
 from .persona import Persona
 from .prompt_trial import PromptTrial
 from .run_test import RunTest
+from .sandbox_harness_job import SandboxHarnessJob
 from .scenario_graph import NodeType, ScenarioGraph
 from .scenarios import Scenarios
 from .simulation_phone_number import SimulationPhoneNumber
@@ -63,8 +63,6 @@ from .test_execution import (
 from .trial_item_result import TrialItemResult
 
 __all__ = [
-    "AgentFixCandidate",
-    "AgentFixRun",
     "Scenarios",
     "AgentDefinition",
     "ProviderCredentials",
@@ -90,6 +88,7 @@ __all__ = [
     "PromptTrial",
     "SimulatorAgent",
     "RunTest",
+    "SandboxHarnessJob",
     "SimulateEvalConfig",
     "TestExecution",
     "CallExecution",

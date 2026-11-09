@@ -1,11 +1,12 @@
 import logging
 import os
 import tempfile
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
 from integrations.services.base import BaseIntegrationService, register_service
+from integrations.services.export_failures import validation_failure
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,8 @@ class LangfuseService(BaseIntegrationService):
         host_url: str,
         path: str,
         credentials: dict,
-        ca_certificate: Optional[str] = None,
-        params: Optional[dict] = None,
+        ca_certificate: str | None = None,
+        params: dict | None = None,
     ) -> requests.Response:
         url = f"{host_url.rstrip('/')}{path}"
         verify: Any = True
@@ -68,7 +69,7 @@ class LangfuseService(BaseIntegrationService):
         self,
         host_url: str,
         credentials: dict,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         try:
             # Step 1: Validate by fetching project info
@@ -116,8 +117,7 @@ class LangfuseService(BaseIntegrationService):
                     total_traces = meta.get("totalItems", 0)
             except Exception:
                 logger.warning(
-                    "Failed to fetch trace count during validation for %s",
-                    host_url,
+                    "Failed to fetch trace count during validation",
                 )
 
             return {
@@ -129,7 +129,7 @@ class LangfuseService(BaseIntegrationService):
         except requests.exceptions.ConnectionError:
             return {
                 "valid": False,
-                "error": f"Could not reach Langfuse at {host_url}. Verify the host URL.",
+                "error": "Could not reach Langfuse. Verify the host URL.",
             }
         except requests.exceptions.Timeout:
             return {
@@ -137,21 +137,17 @@ class LangfuseService(BaseIntegrationService):
                 "error": "Connection timed out. Please try again.",
             }
         except Exception as e:
-            logger.exception("Unexpected error validating Langfuse credentials")
-            return {
-                "valid": False,
-                "error": f"Validation failed: {str(e)}",
-            }
+            return validation_failure("langfuse", e, logger)
 
     def fetch_traces(
         self,
         host_url: str,
         credentials: dict,
-        from_timestamp: Optional[str] = None,
-        to_timestamp: Optional[str] = None,
+        from_timestamp: str | None = None,
+        to_timestamp: str | None = None,
         page: int = 1,
         limit: int = 100,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         params: dict[str, Any] = {"page": page, "limit": limit}
         if from_timestamp:
@@ -188,7 +184,7 @@ class LangfuseService(BaseIntegrationService):
         host_url: str,
         credentials: dict,
         trace_id: str,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict[str, Any]:
         resp = self._make_request(
             "GET",

@@ -1,0 +1,5 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+# The REST generator's curated overlay (CN4's input format). The manifest
+# loader does not parse it; it scans it for secret-shaped values.
+operations: [gmail.users.threads.list, gmail.users.messages.send]

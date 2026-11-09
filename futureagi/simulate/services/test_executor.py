@@ -133,7 +133,6 @@ from simulate.models.run_test import CreateCallExecution
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
-from simulate.selectors.runs import user_executions
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
@@ -163,10 +162,7 @@ from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
     set_processing_skip_metadata,
 )
-from simulate.utils.test_execution_utils import (
-    eval_source,
-    generate_simulator_agent_prompt,
-)
+from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
@@ -894,6 +890,8 @@ class TestExecutor:
         base_prompt: str,
         agent_version: AgentVersion | None,
         call_type: str | None = None,
+        *,
+        organization_id=None,
     ) -> dict[str, Any]:
         """
         Get row data from dataset and generate dynamic prompt
@@ -901,13 +899,21 @@ class TestExecutor:
         Args:
             row_id: ID of the Row from dataset
             base_prompt: The base prompt template from simulator agent
+            organization_id: When given, read the row only from a dataset of
+                this organization (the execution's). Callers that run with no
+                workspace bound, such as the runner's /batch ingest, pass it:
+                Row has no workspace of its own, so no manager filters it
+                (T6 #7e). A row of another organization reads as missing.
 
         Returns:
             Dict containing row data and dynamic prompt
         """
         try:
             # Get the row
-            row = Row.objects.get(id=row_id)
+            rows = Row.objects.filter(id=row_id)
+            if organization_id is not None:
+                rows = rows.filter(dataset__organization_id=organization_id)
+            row = rows.get()
 
             # Get all cells for this row
             cells = Cell.objects.filter(row=row)
@@ -2744,8 +2750,7 @@ class TestExecutor:
             # Check database for completed/failed test executions
             try:
                 test_execution = (
-                    user_executions()
-                    .filter(run_test_id=run_test_id)
+                    TestExecution.objects.filter(run_test_id=run_test_id)
                     .order_by("-created_at")
                     .first()
                 )
@@ -5152,8 +5157,19 @@ class TestExecutor:
             #     else []
             # )
             scenario_ids = call_execution.test_execution.scenario_ids
+            # Grading runs with no workspace bound, so the manager adds no tenant
+            # filter. Every scenario, column and dataset read here is limited to
+            # the execution's own organization. An id of another organization's
+            # scenario, stored before execute checked scenario_ids (T6 #7e), then
+            # adds none of its columns to the cell-read gate below and no name
+            # to the mismatch message.
+            organization_id = call_execution.test_execution.run_test.organization_id
             scenario_column_order_qs = (
-                Scenarios.objects.filter(id__in=scenario_ids, deleted=False)
+                Scenarios.objects.filter(
+                    id__in=scenario_ids,
+                    organization_id=organization_id,
+                    deleted=False,
+                )
                 .select_related("dataset")
                 .values_list("dataset__column_order", flat=True)
             )
@@ -5265,14 +5281,17 @@ class TestExecutor:
                         column_scenario_name = None
                         try:
                             column = Column.objects.select_related("dataset").get(
-                                id=value, deleted=False
+                                id=value,
+                                dataset__organization_id=organization_id,
+                                deleted=False,
                             )
                             column_name = column.name
                             if column.dataset:
                                 column_dataset_name = column.dataset.name
                                 # Find which scenario uses this dataset
                                 column_scenario = Scenarios.objects.get(
-                                    dataset=column.dataset
+                                    dataset=column.dataset,
+                                    organization_id=organization_id,
                                 )
                                 if column_scenario:
                                     column_scenario_name = column_scenario.name
@@ -5282,7 +5301,9 @@ class TestExecutor:
                         # Get test scenario names for context
                         test_scenarios = list(
                             Scenarios.objects.filter(
-                                id__in=scenario_ids, deleted=False
+                                id__in=scenario_ids,
+                                organization_id=organization_id,
+                                deleted=False,
                             ).values_list("name", flat=True)
                         )
                         test_scenarios_str = (
@@ -5403,7 +5424,7 @@ class TestExecutor:
                 kb_id=eval_config.kb_id,
                 error_localizer=eval_config.error_localizer,
                 workspace=call_execution.test_execution.run_test.workspace,
-                source=eval_source(call_execution.test_execution_id),
+                source="simulate",
                 call_context=_call_context,
             )
 
@@ -5987,9 +6008,7 @@ class TestExecutor:
                         organization=organization,
                         api_call_type=api_call_type,
                         config=source_config,
-                        source=eval_source(
-                            test_execution.id, "simulate_tool_evaluation"
-                        ),
+                        source="simulate_tool_evaluation",
                         source_id=str(test_execution.id),
                         workspace=workspace,
                     )

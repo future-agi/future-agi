@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import React from "react";
 import { Avatar, Box, IconButton, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
@@ -86,14 +87,14 @@ export const CustomCellRender = ({ value, data, column }) => {
               {modelDetail?.logo_url ? (
                 <Box
                   component="img"
-                  src={modelDetail?.logo_url}
+                  src={localProviderLogo(modelDetail)}
                   alt={modelDetail?.model_name}
                   sx={{
                     width: theme.spacing(2),
                     height: theme.spacing(2),
                     objectFit: "cover",
                     ...(theme.palette.mode === "dark" &&
-                      isBlackBackgroundLogo(modelDetail?.logo_url) && {
+                      isBlackBackgroundLogo(localProviderLogo(modelDetail)) && {
                         filter: "invert(1) brightness(2)",
                       }),
                   }}

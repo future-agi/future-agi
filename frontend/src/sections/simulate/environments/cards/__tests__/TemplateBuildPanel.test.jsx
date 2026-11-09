@@ -7,7 +7,7 @@ import { render } from "src/utils/test-utils";
 import { packStats } from "../../helpers/packStats";
 
 const navigate = vi.fn();
-const adoptMutate = vi.fn((id, opts) => opts?.onSuccess?.({ envId: "env-x" }));
+const adoptMutate = vi.fn();
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -45,7 +45,10 @@ const TEMPLATE = {
     { name: "issue_refund", desc: "x" },
     { name: "escalate", desc: "x" },
   ],
-  rules: ["Refunds above $200 need approval", "Never confirm identity by phone"],
+  rules: [
+    "Refunds above $200 need approval",
+    "Never confirm identity by phone",
+  ],
   evalPreset: ["task_success", "tone"],
 };
 
@@ -73,20 +76,24 @@ describe("TemplateBuildPanel", () => {
 
   it("renders both build-mode tabs", () => {
     renderPanel();
-    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Build locally/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /Preview here/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /Build locally/ }),
+    ).toBeInTheDocument();
   });
 
-  it("shows the three cloud bullets on the Build-here tab", () => {
+  it("explains what the local draft does and how to start a real build", () => {
     renderPanel();
     expect(
-      screen.getByText(/seeded world, tools and hard rules/i),
+      screen.getByText(/template's data, tools and hard rules/i),
     ).toBeInTheDocument();
+    expect(screen.getByText(/no agent is connected/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/baseline agent is wired in/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Add your own agent version afterwards/i),
+      screen.getByText(
+        "To build a cloud environment, open the Build environment tab in Simulate and connect your own agent or source.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -94,48 +101,42 @@ describe("TemplateBuildPanel", () => {
     renderPanel();
     const rows = TEMPLATE.seed.tables.reduce((a, t) => a + t.rows, 0);
     expect(
-      screen.getByText(`${rows.toLocaleString()} seeded rows`),
+      screen.getByText(`${rows.toLocaleString()} sample rows`),
     ).toBeInTheDocument();
-    expect(screen.getByText("3 the world answers")).toBeInTheDocument();
-    expect(screen.getByText("2 graded on every run")).toBeInTheDocument();
+    expect(screen.getByText("3 tool definitions")).toBeInTheDocument();
+    expect(screen.getByText("2 rule definitions")).toBeInTheDocument();
     expect(
-      screen.getByText(`${packStats(TEMPLATE).scenarios} ready to run`),
+      screen.getByText(`${packStats(TEMPLATE).scenarios} draft scenarios`),
     ).toBeInTheDocument();
     expect(screen.getByText("2 suggested")).toBeInTheDocument();
     expect(
-      screen.getByText("Seeded baseline (swap in yours after)"),
+      screen.getByText("Sample baseline (not connected)"),
     ).toBeInTheDocument();
   });
 
-  it("shows the nothing-touches-production note", () => {
+  it("shows the local-only notice before the action", () => {
     renderPanel();
-    expect(screen.getByText(/Nothing touches production/i)).toBeInTheDocument();
+    expect(screen.getByText(/Local preview only/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Opening a draft creates no cloud environment, sandbox or simulation run.",
+      ),
+    ).toBeInTheDocument();
   });
 
-  it("seeds the workspace and navigates to it on Build environment", async () => {
+  it("opens the template draft without registering or navigating to a server environment", async () => {
     const user = userEvent.setup();
     renderPanel();
 
-    await user.click(screen.getByRole("button", { name: /Build environment/ }));
+    const button = screen.getByRole("button", { name: /Open local draft/ });
+    expect(button).toBeEnabled();
+    await user.click(button);
 
-    expect(adoptMutate).toHaveBeenCalledWith(
-      "env-voice-support",
-      expect.objectContaining({ onSuccess: expect.any(Function) }),
-    );
-
-    // The env record is registered and its per-env state seeded from the
-    // template — locked until forked.
+    expect(adoptMutate).toHaveBeenCalledWith(TEMPLATE);
     const { workspaceEnvs, byEnv } = useEnvironmentsStore.getState();
-    expect(workspaceEnvs["env-x"]).toMatchObject({
-      id: "env-x",
-      templateId: "env-voice-support",
-    });
-    expect(byEnv["env-x"].seededFromTemplate).toBe(true);
-    expect(byEnv["env-x"].scenarios.length).toBeGreaterThan(0);
-
-    expect(navigate).toHaveBeenCalledWith(
-      "/dashboard/simulate/environments/env-x",
-    );
+    expect(workspaceEnvs).toEqual({});
+    expect(byEnv).toEqual({});
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("shows the three CLI steps on the Build-locally tab", async () => {

@@ -1,0 +1,178 @@
+# Fixture for the REST generator's tests, not catalog data (see ../../../gmail/app.yaml).
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/calendar-v3.discovery.json.gz
+tools:
+  - name: list_calendars
+    title: List calendars
+    description: >-
+      List the calendars on the user's calendar list with their ids and access roles. The user's own calendar
+      is also reachable as the id primary; a shared calendar's id looks like team@group.calendar.google.com.
+    operation: { id: calendar.calendarList.list }
+    params:
+      exclude: [syncToken, showDeleted, showHidden]
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [https://www.googleapis.com/auth/calendar.readonly]
+    response:
+      fields:
+        [
+          items.id,
+          items.summary,
+          items.primary,
+          items.accessRole,
+          items.timeZone,
+          nextPageToken,
+        ]
+
+  - name: list_events
+    title: List events
+    description: >-
+      List the events of one calendar between two times, for example calendarId=primary,
+      timeMin=2026-10-21T00:00:00Z, timeMax=2026-10-28T00:00:00Z, singleEvents=true, orderBy=startTime.
+      Times are RFC 3339 with an offset. Pass nextPageToken back as pageToken for the next page.
+    operation: { id: calendar.events.list }
+    params:
+      exclude:
+        [
+          syncToken,
+          privateExtendedProperty,
+          sharedExtendedProperty,
+          iCalUID,
+          showHiddenInvitations,
+          alwaysIncludeEmail,
+          eventTypes,
+          updatedMin,
+          maxAttendees,
+        ]
+      describe:
+        calendarId: "Calendar id from list_calendars, or primary for the user's own calendar."
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [https://www.googleapis.com/auth/calendar.readonly]
+    response:
+      fields:
+        [
+          items.id,
+          items.summary,
+          items.start,
+          items.end,
+          items.location,
+          items.attendees,
+          items.status,
+          items.htmlLink,
+          nextPageToken,
+        ]
+      maxBytes: 50000
+
+  - name: get_event
+    title: Read an event
+    description: >-
+      Read one event by calendar id (or primary) and event id, with its attendees and their responses.
+    operation: { id: calendar.events.get }
+    params:
+      exclude: [alwaysIncludeEmail, maxAttendees]
+      describe:
+        calendarId: "Calendar id from list_calendars, or primary for the user's own calendar."
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [https://www.googleapis.com/auth/calendar.readonly]
+
+  - name: find_free_busy
+    title: Find free and busy times
+    description: >-
+      Return the busy intervals of one or more calendars between timeMin and timeMax (RFC 3339), for example
+      items=[{"id": "primary"}, {"id": "bob@example.com"}]. Use it to find a time that suits everyone.
+    operation: { id: calendar.freebusy.query }
+    body:
+      fields: [timeMin, timeMax, timeZone, items]
+      required: [timeMin, timeMax, items]
+      description: The calendars and the window to check.
+    annotations: { readOnlyHint: true, openWorldHint: false }
+    posture: auto
+    scopes: [https://www.googleapis.com/auth/calendar.readonly]
+
+  - name: create_event
+    title: Create an event
+    description: >-
+      Create an event. start and end each take dateTime (RFC 3339, for example 2026-10-22T15:00:00-07:00) or,
+      for an all-day event, date (2026-10-22). Attendees are [{"email": "bob@example.com"}]; set sendUpdates=all
+      to email them an invitation.
+    operation: { id: calendar.events.insert }
+    params:
+      exclude:
+        [
+          conferenceDataVersion,
+          eventLabelVersion,
+          maxAttendees,
+          sendNotifications,
+          supportsAttachments,
+        ]
+      describe:
+        calendarId: "Calendar id from list_calendars, or primary for the user's own calendar."
+    body:
+      fields:
+        [summary, description, location, start, end, attendees, recurrence]
+      required: [start, end]
+      description: The event to create.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [https://www.googleapis.com/auth/calendar.events]
+    response:
+      fields: [id, htmlLink, status, start, end]
+
+  - name: update_event
+    title: Change an event
+    description: >-
+      Change some fields of an event and keep the rest, for example a new start and end, or another summary.
+      Set sendUpdates=all to tell the attendees.
+    operation: { id: calendar.events.patch }
+    params:
+      exclude:
+        [
+          alwaysIncludeEmail,
+          conferenceDataVersion,
+          eventLabelVersion,
+          maxAttendees,
+          sendNotifications,
+          supportsAttachments,
+        ]
+      describe:
+        calendarId: "Calendar id from list_calendars, or primary for the user's own calendar."
+    body:
+      fields: [summary, description, location, start, end, attendees]
+      description: The fields to change.
+    annotations: { destructiveHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [https://www.googleapis.com/auth/calendar.events]
+    response:
+      fields: [id, htmlLink, status, start, end]
+
+  - name: quick_add_event
+    title: Create an event from text
+    description: >-
+      Create an event from one line of text that Google parses, for example "Lunch with Bob tomorrow 12:30-13:30".
+    operation: { id: calendar.events.quickAdd }
+    params:
+      exclude: [sendNotifications]
+      describe:
+        calendarId: "Calendar id from list_calendars, or primary for the user's own calendar."
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [https://www.googleapis.com/auth/calendar.events]
+    response:
+      fields: [id, htmlLink, summary, start, end]
+
+  - name: delete_event
+    title: Delete an event
+    description: >-
+      Delete an event by calendar id and event id. Set sendUpdates=all to tell the attendees it is cancelled.
+    operation: { id: calendar.events.delete }
+    params:
+      exclude: [sendNotifications]
+      describe:
+        calendarId: "Calendar id from list_calendars, or primary for the user's own calendar."
+    annotations: { destructiveHint: true, openWorldHint: true }
+    posture: deny
+    scopes: [https://www.googleapis.com/auth/calendar.events]

@@ -1,0 +1,18 @@
+[
+  { "tool": "get_profile", "arguments": {} },
+  {
+    "tool": "search_threads",
+    "arguments": { "q": "from:alice is:unread", "maxResults": 2 }
+  },
+  { "tool": "get_thread", "arguments": { "id": "t-1" } },
+  { "tool": "list_labels", "arguments": {} },
+  {
+    "tool": "send_message",
+    "arguments": {
+      "body": {
+        "raw": "VG86IHRlYW0NClN1YmplY3Q6IFdlZWtseSBub3Rlcw0KDQpOb3RlcyBhdHRhY2hlZC4"
+      }
+    }
+  },
+  { "tool": "get_thread", "arguments": { "id": "missing" } }
+]

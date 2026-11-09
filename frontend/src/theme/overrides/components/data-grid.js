@@ -18,6 +18,13 @@ export function dataGrid(theme) {
         root: {
           borderRadius: 0,
           borderWidth: 0,
+          fontSize: 13,
+          color: theme.palette.text.secondary,
+          "& .MuiDataGrid-columnHeaderTitle": {
+            fontSize: 12,
+            fontWeight: 500,
+            color: theme.palette.text.subtitle,
+          },
           [`& .${tablePaginationClasses.root}`]: {
             borderTop: 0,
           },
@@ -26,7 +33,7 @@ export function dataGrid(theme) {
           },
         },
         cell: {
-          borderBottom: `1px dashed ${theme.palette.divider}`,
+          borderBottom: `1px solid ${theme.palette.border.subtle}`,
         },
         selectedRowCount: {
           whiteSpace: "nowrap",
@@ -36,7 +43,7 @@ export function dataGrid(theme) {
         },
         toolbarContainer: {
           padding: theme.spacing(2),
-          borderBottom: `1px dashed ${theme.palette.divider}`,
+          borderBottom: `1px solid ${theme.palette.divider}`,
           backgroundColor: theme.palette.background.neutral,
         },
         paper: {
@@ -65,7 +72,7 @@ export function dataGrid(theme) {
         panelFooter: {
           padding: theme.spacing(2),
           justifyContent: "flex-end",
-          borderTop: `dashed 1px ${theme.palette.divider}`,
+          borderTop: `1px solid ${theme.palette.divider}`,
           [`& .${buttonClasses.root}`]: {
             "&:first-of-type": {
               border: `solid 1px ${alpha(theme.palette.grey[500], 0.24)}`,

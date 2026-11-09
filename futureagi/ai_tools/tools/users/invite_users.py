@@ -1,17 +1,18 @@
 import re
-from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
+from accounts.services.hard_erase_issuance_entry import tool_issuance_entry
+from accounts.services.identity_issuance import issue_membership
 from ai_tools.base import BaseTool, ToolContext, ToolResult
-from ai_tools.formatting import key_value_block, markdown_table, section
+from ai_tools.formatting import markdown_table, section
 from ai_tools.registry import register_tool
 
 
 class InviteUsersInput(PydanticBaseModel):
-    emails: List[str] = Field(description="List of email addresses to invite")
+    emails: list[str] = Field(description="List of email addresses to invite")
     role: str = Field(
         default="workspace_member",
         description=(
@@ -19,7 +20,7 @@ class InviteUsersInput(PydanticBaseModel):
             "Workspace-level: workspace_admin, workspace_member, workspace_viewer."
         ),
     )
-    workspace_ids: Optional[List[UUID]] = Field(
+    workspace_ids: list[UUID] | None = Field(
         default=None,
         description=(
             "List of workspace UUIDs to add users to. "
@@ -39,6 +40,7 @@ class InviteUsersTool(BaseTool):
     category = "users"
     input_model = InviteUsersInput
 
+    @tool_issuance_entry
     def execute(self, params: InviteUsersInput, context: ToolContext) -> ToolResult:
         from django.db import transaction
 
@@ -49,7 +51,7 @@ class InviteUsersTool(BaseTool):
             WorkspaceMembership,
         )
         from accounts.utils import generate_password
-        from tfc.constants.roles import RoleMapping, RolePermissions
+        from tfc.constants.roles import RoleMapping
 
         org = context.organization
         inviter = context.user
@@ -173,16 +175,16 @@ class InviteUsersTool(BaseTool):
                             existing_deleted.invited_by = inviter
                             existing_deleted.save()
                         else:
-                            membership, created = (
-                                WorkspaceMembership.no_workspace_objects.get_or_create(
-                                    workspace=workspace,
-                                    user=target_user,
-                                    defaults={
-                                        "role": workspace_role,
-                                        "invited_by": inviter,
-                                        "is_active": True,
-                                    },
-                                )
+                            membership, created = issue_membership(
+                                WorkspaceMembership.no_workspace_objects,
+                                "get_or_create",
+                                workspace=workspace,
+                                user=target_user,
+                                defaults={
+                                    "role": workspace_role,
+                                    "invited_by": inviter,
+                                    "is_active": True,
+                                },
                             )
                             if not created:
                                 membership.role = workspace_role

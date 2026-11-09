@@ -2,16 +2,31 @@ import { Box, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { useMemo } from "react";
+import { useWatch } from "react-hook-form";
 import { useApiKeysStatus } from "src/api/model/api-keys";
 import ConfigureKeys from "../../Common/ConfigureKeys/ConfigureKeys";
 import _ from "lodash";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
+import { APPROVED_HUGGINGFACE_EMBEDDING_MODELS } from "./validation";
+
+// What model serving loads for each Hugging Face-backed type, shown before
+// submit (validation.js refuses any other ID with the server's message).
+const MODEL_HINTS = {
+  huggingface: `Approved models: ${APPROVED_HUGGINGFACE_EMBEDDING_MODELS.join(", ")}`,
+  // Model serving has no sentence_transformers model (it answers 404).
+  sentence_transformers:
+    "Sentence Transformers embeddings are not available on this server. Use Hugging Face instead.",
+};
 
 const EmbeddingConfigField = ({ control }) => {
   const [isApiConfigurationOpen, setApiConfigurationOpen] = useState(false);
 
   const { data } = useApiKeysStatus({});
+  const embeddingType = useWatch({ control, name: "embeddingConfig.type" });
+  const modelHint = Object.hasOwn(MODEL_HINTS, embeddingType ?? "")
+    ? MODEL_HINTS[embeddingType]
+    : null;
 
   const EmbeddingType = useMemo(() => {
     const defaultOptions = [
@@ -73,6 +88,15 @@ const EmbeddingConfigField = ({ control }) => {
           fullWidth
         />
       </Box>
+      {modelHint && (
+        <Typography
+          data-testid="embedding-model-hint"
+          fontSize="12px"
+          color="text.secondary"
+        >
+          {modelHint}
+        </Typography>
+      )}
     </Box>
   );
 };

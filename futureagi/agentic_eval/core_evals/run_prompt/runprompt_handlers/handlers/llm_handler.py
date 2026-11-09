@@ -14,6 +14,10 @@ Features:
 - Custom model delegation
 """
 
+# Pre-existing lint debt, exempted file-wide so a security fix can touch this
+# module behaviour-neutrally (import pruning/reordering and typing rewrites).
+# ruff: noqa: F401, I001, UP006, UP035
+
 import json
 import time
 from typing import Any, Dict, List, Optional
@@ -22,6 +26,13 @@ import litellm
 import structlog
 from asgiref.sync import sync_to_async
 
+from model_hub.utils.model_endpoints import (
+    calls_endpoint_url,
+    endpoint_call_error,
+    guarded_acompletion,
+    guarded_completion,
+    is_endpoint_error,
+)
 from model_hub.utils.websocket_manager import WebSocketManager
 from agentic_eval.core_evals.run_prompt.error_handler import (
     ErrorContext,
@@ -138,7 +149,7 @@ class LLMHandler(BaseModelHandler):
 
         response = None
         with litellm_try_except():
-            response = litellm.completion(**payload, drop_params=True)
+            response = guarded_completion(**payload, drop_params=True)
 
         # Validate response is not None
         self._validate_response_not_empty(response, response_type="LLM")
@@ -195,7 +206,7 @@ class LLMHandler(BaseModelHandler):
         # Note: litellm_try_except is a sync context manager, but we wrap just the call
         # since acompletion is atomic. For proper error handling, catch litellm exceptions.
         with litellm_try_except():
-            response = await litellm.acompletion(**payload, drop_params=True)
+            response = await guarded_acompletion(**payload, drop_params=True)
 
         # Validate response is not None
         self._validate_response_not_empty(response, response_type="LLM")
@@ -274,10 +285,11 @@ class LLMHandler(BaseModelHandler):
         thinking_started = False
         thinking_finished = False
 
+        stream_error = None
         try:
             response = None
             with litellm_try_except():
-                response = litellm.completion(**payload, drop_params=True)
+                response = guarded_completion(**payload, drop_params=True)
 
             for i, chunk in enumerate(response):
                 # Check for stop signal
@@ -339,10 +351,14 @@ class LLMHandler(BaseModelHandler):
                         )
 
         except Exception as e:
+            stream_error = e
+        if stream_error is not None:
+            # Handled outside the except block, so what it raises has no
+            # implicit context (a tenant endpoint's error text).
             response_content = "".join(response_chunks)
             return self._handle_streaming_error(
                 ws_manager,
-                e,
+                stream_error,
                 response_content,
                 chunk_buffer,
                 last_sent_chunk_pos,
@@ -421,8 +437,9 @@ class LLMHandler(BaseModelHandler):
         thinking_started = False
         thinking_finished = False
 
+        stream_error = None
         try:
-            response = await litellm.acompletion(**payload, drop_params=True)
+            response = await guarded_acompletion(**payload, drop_params=True)
 
             async for chunk in response:
                 i += 1
@@ -494,10 +511,14 @@ class LLMHandler(BaseModelHandler):
                         )
 
         except Exception as e:
+            stream_error = e
+        if stream_error is not None:
+            # Handled outside the except block, so what it raises has no
+            # implicit context (a tenant endpoint's error text).
             response_content = "".join(response_chunks)
             return await self._handle_streaming_error_async(
                 ws_manager,
-                e,
+                stream_error,
                 response_content,
                 chunk_buffer,
                 last_sent_chunk_pos,
@@ -683,11 +704,17 @@ class LLMHandler(BaseModelHandler):
         start_time: float,
     ) -> HandlerResponse:
         """Handle streaming error."""
-        self.logger.exception(f"Streaming error: {error}")
+        # A call to a tenant's endpoint: categorised before anything is
+        # logged, sent or cached, and raised without the chain.
+        endpoint_error = self._endpoint_error(error)
+        if endpoint_error is not None:
+            self._log_endpoint_streaming_error(endpoint_error)
+        else:
+            self.logger.exception(f"Streaming error: {error}")
 
-        # Re-raise specific errors
-        if "value must be a string" in str(error):
-            raise Exception(str(error))
+            # Re-raise specific errors
+            if "value must be a string" in str(error):
+                raise Exception(str(error))
 
         # Send remaining buffer
         if chunk_buffer:
@@ -698,8 +725,11 @@ class LLMHandler(BaseModelHandler):
                     f"Failed to send remaining buffer: {buffer_error}"
                 )
 
-        context = self._error_context()
-        concise_error = handle_api_error(error, self.logger, context)
+        if endpoint_error is not None:
+            concise_error = str(endpoint_error)
+        else:
+            context = self._error_context()
+            concise_error = handle_api_error(error, self.logger, context)
 
         # Send error message
         self._ws_send_error(ws_manager, concise_error)
@@ -715,6 +745,8 @@ class LLMHandler(BaseModelHandler):
         except Exception as cache_error:
             self.logger.exception(f"Failed to cache error response: {cache_error}")
 
+        if endpoint_error is not None:
+            raise endpoint_error from None
         raise Exception(concise_error) from error
 
     async def _handle_streaming_error_async(
@@ -727,11 +759,17 @@ class LLMHandler(BaseModelHandler):
         start_time: float,
     ) -> HandlerResponse:
         """Handle streaming error (async)."""
-        self.logger.exception(f"Streaming error: {error}")
+        # A call to a tenant's endpoint: categorised before anything is
+        # logged, sent or cached, and raised without the chain.
+        endpoint_error = self._endpoint_error(error)
+        if endpoint_error is not None:
+            self._log_endpoint_streaming_error(endpoint_error)
+        else:
+            self.logger.exception(f"Streaming error: {error}")
 
-        # Re-raise specific errors
-        if "value must be a string" in str(error):
-            raise Exception(str(error))
+            # Re-raise specific errors
+            if "value must be a string" in str(error):
+                raise Exception(str(error))
 
         # Send remaining buffer
         if chunk_buffer:
@@ -744,8 +782,11 @@ class LLMHandler(BaseModelHandler):
                     f"Failed to send remaining buffer: {buffer_error}"
                 )
 
-        context = self._error_context()
-        concise_error = handle_api_error(error, self.logger, context)
+        if endpoint_error is not None:
+            concise_error = str(endpoint_error)
+        else:
+            context = self._error_context()
+            concise_error = handle_api_error(error, self.logger, context)
 
         # Send error message
         await self._ws_send_error_async(ws_manager, concise_error)
@@ -761,7 +802,25 @@ class LLMHandler(BaseModelHandler):
         except Exception as cache_error:
             self.logger.exception(f"Failed to cache error response: {cache_error}")
 
+        if endpoint_error is not None:
+            raise endpoint_error from None
         raise Exception(concise_error) from error
+
+    def _endpoint_error(self, error: Exception):
+        """For a call that names a tenant base URL (an openai/azure custom
+        model), the generic EndpointCallError that replaces ``error``; None
+        for any other call."""
+        if is_endpoint_error(error) or calls_endpoint_url(self.context.api_key):
+            return endpoint_call_error(error)
+        return None
+
+    def _log_endpoint_streaming_error(self, error) -> None:
+        self.logger.warning(
+            "Streaming error",
+            error_type=type(error).__name__,
+            category=getattr(error, "category", None),
+            cause_type=getattr(error, "cause_type", None),
+        )
 
     def _error_context(self) -> ErrorContext:
         return ErrorContext(

@@ -46,6 +46,9 @@ export interface SendTraceConfig {
   /** Absent/empty preserves the original two-span payload byte for byte. Extra
    * spans have no inherited attributes and default to the trace's time range. */
   additionalSpans?: readonly AdditionalSpan[];
+  /** Extra request headers, e.g. the X-FI-Expected-* target an EE relay asserts.
+   *  The key pair and content type stay the harness's own. */
+  headers?: Readonly<Record<string, string>>;
 }
 
 type AnyValue = { stringValue: string } | { doubleValue: number } | { boolValue: boolean }
@@ -83,7 +86,14 @@ function timestamp(value: bigint | string): bigint {
   return nanos;
 }
 
-export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): Promise<SeededTrace> {
+export interface TraceHttpResult extends SeededTrace { status: number; elapsedMs: number }
+
+/** Non-throwing HTTP status, including refusal; never return/log response bodies or headers.
+ * Preassigned IDs use the same validation/encoding as the successful seeder.
+ * No redirects: a collector response cannot send credential headers elsewhere. */
+export async function sendTraceResult(req: APIRequestContext, cfg: SendTraceConfig,
+  timeoutMs = 5_000): Promise<TraceHttpResult> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('OTLP timeout must be positive');
   const suppliedTraceId = cfg.traceId ?? randomUUID();
   const wireTraceId = hexId(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(suppliedTraceId)
     ? suppliedTraceId.replaceAll('-', '') : suppliedTraceId, 32);
@@ -148,10 +158,23 @@ export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): P
     }],
   };
 
-  const res = await req.post(`${cfg.collectorUrl}/v1/traces`, {
-    headers: { 'X-Api-Key': cfg.apiKey, 'X-Secret-Key': cfg.secretKey, 'Content-Type': 'application/json' },
-    data: payload,
-  });
-  if (res.status() >= 300) throw new Error(`collector ${res.status()}: ${await res.text()}`);
-  return { traceId, spanIds: [rootId, childId, ...extras.map((item) => item.spanId)], projectName: cfg.projectName };
+  const started = performance.now();
+  try {
+    const res = await req.post(`${cfg.collectorUrl}/v1/traces`, {
+      headers: { ...cfg.headers, 'X-Api-Key': cfg.apiKey, 'X-Secret-Key': cfg.secretKey, 'Content-Type': 'application/json' },
+      data: payload, timeout: timeoutMs, maxRedirects: 0,
+    });
+    const status = res.status();
+    return { traceId, spanIds: [rootId, childId, ...extras.map((item) => item.spanId)],
+      projectName: cfg.projectName, status, elapsedMs: performance.now() - started };
+  } catch {
+    // Playwright transport errors can carry a request log containing credentials.
+    throw new Error('Collector transport failed (request details withheld)');
+  }
+}
+
+export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): Promise<SeededTrace> {
+  const { status, elapsedMs: _elapsedMs, ...seeded } = await sendTraceResult(req, cfg, 30_000);
+  if (status < 200 || status >= 300) throw new Error(`collector ${status}`);
+  return seeded;
 }

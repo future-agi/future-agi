@@ -11,8 +11,6 @@ from django.db.models import Q
 
 from accounts.models.organization import Organization
 from accounts.models.user import User
-
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import (
     CellStatus,
     DatasetSourceChoices,
@@ -23,6 +21,8 @@ from model_hub.models.choices import (
     StatusType,
 )
 from tfc.utils.base_model import BaseModel
+
+logger = structlog.get_logger(__name__)
 
 
 # Pydantic schema for eval reasons
@@ -98,6 +98,15 @@ class Dataset(BaseModel):
         default=DatasetSourceChoices.BUILD.value,
     )
     name = models.CharField(max_length=2000)
+    description = models.TextField(max_length=500, blank=True, default="")
+    tags = models.JSONField(blank=True, default=list)
+    folder = models.ForeignKey(
+        "model_hub.DatasetFolder",
+        on_delete=models.SET_NULL,
+        related_name="datasets",
+        null=True,
+        blank=True,
+    )
     column_order = ArrayField(
         models.CharField(max_length=100),  # Specify the max length for each tag
         blank=True,  # Allows an empty list as a default

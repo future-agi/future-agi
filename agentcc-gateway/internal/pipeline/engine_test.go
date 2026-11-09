@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -328,3 +329,46 @@ func TestRunPostPluginsSkipOnCacheHitTimings(t *testing.T) {
 type skipOnCacheHitPostPlugin struct{ readOnlyPostPlugin }
 
 func (skipOnCacheHitPostPlugin) ShouldSkipOnCacheHit() bool { return true }
+
+// RunRequestPlugins runs only the plugins named, in priority order, stops at
+// the first error and records it on rc, and runs no post-plugin.
+func TestRunRequestPluginsRunsOnlyThePluginsNamed(t *testing.T) {
+	var order []string
+	track := func(name string, result PluginResult) *mockPlugin {
+		return &mockPlugin{name: name, priority: map[string]int{"auth": 20, "budget": 40, "guardrails": 50, "logging": 900}[name],
+			onReq: func(context.Context, *models.RequestContext) PluginResult {
+				order = append(order, name)
+				return result
+			},
+			onResp: func(context.Context, *models.RequestContext) PluginResult {
+				order = append(order, "post "+name)
+				return ResultContinue()
+			}}
+	}
+	e := NewEngine(track("logging", ResultContinue()), track("guardrails", ResultContinue()),
+		track("budget", ResultContinue()), track("auth", ResultContinue()))
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	if err := e.RunRequestPlugins(context.Background(), rc, "guardrails", "auth"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(order, ","); got != "auth,guardrails" {
+		t.Errorf("ran %s, want auth,guardrails", got)
+	}
+
+	order = nil
+	refusal := models.ErrForbidden("no")
+	e = NewEngine(track("auth", ResultError(refusal)), track("guardrails", ResultContinue()))
+	rc2 := models.AcquireRequestContext()
+	defer rc2.Release()
+	if err := e.RunRequestPlugins(context.Background(), rc2, "auth", "guardrails"); err != refusal {
+		t.Errorf("error %v, want the auth plugin's", err)
+	}
+	if got := strings.Join(order, ","); got != "auth" || len(rc2.Errors) != 1 {
+		t.Errorf("ran %s with %d errors recorded, want auth alone and its error", got, len(rc2.Errors))
+	}
+	var none *Engine
+	if err := none.RunRequestPlugins(context.Background(), rc2, "auth"); err != nil {
+		t.Errorf("a nil engine: %v", err)
+	}
+}

@@ -38,12 +38,12 @@ from simulate.services.hosted_harness_gateway import (
     _SIMULATOR_SECRETS_PATH,
     HostedHarnessGateway,
     HostedSourceAcquirer,
-    _add_scoped_guest_pin_policy,
     _authoring_archive_for,
     _authoring_ttl_seconds,
     _connector_egress_domains,
     _execution_ttl_seconds,
     _known_simulator_egress_inputs,
+    _add_scoped_guest_pin_policy,
     _normalize_egress_domains,
     _platform_simulator_material,
     _provider_egress_domains,
@@ -1216,14 +1216,7 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     assert all(
         "installation-secret-token" not in " ".join(cmd) for cmd in observed_commands
     )
-    # GitHub takes an installation token as Basic x-access-token, not Bearer.
-    assert (
-        observed_token
-        == [
-            "Authorization: Basic eC1hY2Nlc3MtdG9rZW46aW5zdGFsbGF0aW9uLXNlY3JldC10b2tlbg=="
-        ]
-        * 4
-    )
+    assert observed_token == ["Authorization: Bearer installation-secret-token"] * 4
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
         names = set(tar.getnames())
     assert "source/agent.py" in names
@@ -1890,9 +1883,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
-    assert job.conversation.messages.get().content.startswith(
-        "Build the test environment"
-    )
+    assert job.conversation.messages.get().content.startswith("Build the test environment")
     assert "; fi &&" in client.sandbox.process.session_request.command
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
     # former rather than using only the 10-minute call-runtime budget plus two minutes.
@@ -1923,9 +1914,7 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
         "endpoint": "https://agent.example.com",
         "visibility": "public",
     }
-    job, _ = create_hosted_job(
-        organization, payload, idempotency_key="launch-gateway-staged"
-    )
+    job, _ = create_hosted_job(organization, payload, idempotency_key="launch-gateway-staged")
     client = _Daytona()
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
@@ -1957,9 +1946,8 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     command = client.sandbox.process.session_request.command
     assert "--await-harness" not in command and "--adjustments" in command
-    assert not job.conversation.messages.filter(
-        content__startswith="Build the test environment"
-    ).exists()
+    assert not job.conversation.messages.filter(content__startswith="Build the test environment").exists()
+
 
 
 def _launch_and_read_job_json(
@@ -2185,9 +2173,7 @@ def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp
         "endpoint": "https://agent.example.com",
         "visibility": "public",
     }
-    job, _ = create_hosted_job(
-        organization, payload, idempotency_key="adjust-named-stage"
-    )
+    job, _ = create_hosted_job(organization, payload, idempotency_key="adjust-named-stage")
     client = _Daytona()
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
@@ -2213,9 +2199,7 @@ def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp
         },
     )
 
-    assert (
-        adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
-    )
+    assert adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
 
 
 @pytest.mark.django_db
@@ -3452,8 +3436,14 @@ class _ExportWorld:
             sys.modules, "simulate.services.agent_setup", summary_module
         )
 
+        # These historical tests exercise the dormant export planner with a
+        # synthetic credential provider, not today's production OFF policy.
+        # The real OFF launch is covered separately below; no deployment flag
+        # or real key issuer is enabled by this fixture.
         ingest_module = ModuleType("tracer.services.collector_ingest")
         ingest_module.ExportCredentials = _ExportCredentials
+        ingest_module.SANDBOX_EXPORT_STATE = "ON"
+        ingest_module.DISABLED_REASON = "run_token_unavailable"
 
         # Keyword-only, like the real one, so a positional call fails here too.
         def get_or_create_export_credentials(
@@ -3594,6 +3584,43 @@ def _assert_launched_without_export(world, declared_secrets=None):
     assert "collector.example.com" not in world.domains
     assert _EXPORT_API_KEY.encode() not in world.uploads["/work/job.json"]
     assert _LEAK_SENTINEL not in world.logs.text()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("instrumentation", ["opentelemetry", "traceai"])
+def test_real_platform_export_is_off_and_launches_with_zero_keys(
+    organization, workspace, user, settings, monkeypatch, instrumentation
+):
+    from importlib import import_module
+    from unittest.mock import Mock
+
+    from accounts.models import OrgApiKey
+    from tracer.models.project import Project
+
+    real_ingest = import_module("tracer.services.collector_ingest")
+    assert real_ingest.SANDBOX_EXPORT_STATE == "OFF"
+    world = _ExportWorld(
+        organization, workspace, user, settings, monkeypatch,
+        instrumentation=instrumentation,
+    )
+    # Restore the production OFF provider instead of the dormant planner stub.
+    monkeypatch.setitem(sys.modules, "tracer.services.collector_ingest", real_ingest)
+    log = Mock()
+    monkeypatch.setattr(real_ingest, "logger", log)
+    keys_before = OrgApiKey._base_manager.count()
+    projects_before = set(Project.with_simulation.values_list("id", flat=True))
+    world.launch()
+
+    _assert_launched_without_export(world)
+    assert OrgApiKey._base_manager.count() == keys_before == 0
+    assert set(Project.with_simulation.values_list("id", flat=True)) == projects_before
+    assert world.credential_calls == []
+    assert world.hidden_calls == []
+    assert world.summary_calls == []
+    log.info.assert_called_once_with(
+        "sandbox_span_export_off", state="OFF", reason="run_token_unavailable"
+    )
+    assert world.export_log() == []
 
 
 @pytest.mark.django_db
@@ -4627,6 +4654,12 @@ def test_diagnostics_redaction_fallback_holds_every_ingest_key_switched_off_dele
         type="ingest",
     )
     before = OrgApiKey._base_manager.filter(type="ingest").count()
+    # READINESS L03 (integration round 7): the stored rows keep no plaintext, so the
+    # fallback reads each ingest secret back from its encrypted copy.
+    for key in (ingest, switched_off, deleted):
+        stored = OrgApiKey._base_manager.get(pk=key.pk)
+        assert stored.secret_key == "" and stored.secret_key_ciphertext
+        assert stored.reveal_secret() == key.secret_key
     seen = {}
 
     def poll(_attempt, _sandbox, **kwargs):
@@ -4646,6 +4679,56 @@ def test_diagnostics_redaction_fallback_holds_every_ingest_key_switched_off_dele
     assert not {stranger.api_key, stranger.secret_key} & values
     # Read, never created.
     assert OrgApiKey._base_manager.filter(type="ingest").count() == before
+
+
+@pytest.mark.django_db
+def test_diagnostics_redaction_fallback_keeps_no_logs_when_an_ingest_copy_cannot_be_opened(
+    organization, workspace, monkeypatch
+):
+    # Round 7 (L03 x dev's ingest keys): a secret the fallback cannot read back cannot be
+    # redacted, so no diagnostics are kept; a hash-only row (never handed out) holds its
+    # api_key only and does not stop the capture.
+    from accounts.models.user import OrgApiKey
+    from simulate.services.hosted_harness_diagnostics import (
+        forget_attempt_redaction_values,
+    )
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"redact-{uuid.uuid4().hex[:8]}"
+    )
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example"
+    ).attempt
+    forget_attempt_redaction_values(attempt.id)
+    hash_only = OrgApiKey.no_workspace_objects.create(
+        organization=organization, workspace=workspace, name="hash only", type="ingest"
+    )
+    OrgApiKey._base_manager.filter(pk=hash_only.pk).update(secret_key_ciphertext="")
+    polls = []
+    monkeypatch.setattr(
+        f"{_GATEWAY}.poll_sandbox_diagnostics",
+        lambda _attempt, _sandbox, **kwargs: polls.append(kwargs),
+    )
+
+    HostedHarnessGateway._capture_diagnostics(attempt, object(), final=True)
+
+    values = set(polls[0]["secret_values"])
+    assert hash_only.api_key in values and hash_only.secret_key not in values
+
+    sealed = OrgApiKey.no_workspace_objects.create(
+        organization=organization, workspace=workspace, name="sealed", type="ingest"
+    )
+    OrgApiKey._base_manager.filter(pk=sealed.pk).update(
+        secret_key_ciphertext="gAAAAAB-not-a-fernet-token"
+    )
+
+    result = HostedHarnessGateway._capture_diagnostics(attempt, object(), final=True)
+
+    assert result is None
+    assert len(polls) == 1
+    attempt.refresh_from_db()
+    assert attempt.diagnostics_error == "redaction:ApiSecretNotRecoverable"
+    assert cached_attempt_redaction_values(attempt.id) is None
 
 
 class _StoredObject(io.BytesIO):

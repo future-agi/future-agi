@@ -26,9 +26,9 @@ from simulate.models import (
     HostedHarnessScenario,
     HostedHarnessStageOutput,
     RunTest,
+    SandboxHarnessJob,
     TestExecution,
 )
-from simulate.selectors.runs import user_runs
 from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
 
@@ -621,16 +621,75 @@ def _validate_required_credential_files(organization, payload):
     return analysis
 
 
+# Release-lead ruling #7: on hosted the preflight says LiveKit is not verified, never
+# that it is, and the run proceeds; problems surface when the run connects.
+_LIVEKIT_NOT_VERIFIED = (
+    "not verified on Future AGI Cloud: preflight does not contact customer LiveKit "
+    "URLs; connection problems will show when the run connects."
+)
+
+
+def _refused_livekit_probes(values, connector, mode, agent_name) -> list[dict]:
+    """The LiveKit probes Future AGI Cloud declines to send, each reported as not
+    verified on hosted.
+
+    Both LiveKit probes POST from this backend to the customer's own URL, which on
+    a hosted deployment reaches private ranges, cloud metadata and redirect
+    targets. ``skipped`` keeps them out of pass/fail (see ``_probe_check``) and
+    tells the UI to show "not verified on hosted" rather than "verified"; ``ok``
+    stays true so the keys are not reported rejected and the run is not blocked.
+    Only probes that would have run are listed.
+    """
+    from simulate.services.harness_credential_probes import (
+        LIVEKIT_ALIASES,
+        PROVIDER_PROBES,
+    )
+
+    if not PROVIDER_PROBES["livekit"].applies(values):
+        return []
+    refused = [
+        {
+            "provider": "livekit",
+            "label": "LiveKit",
+            "aliases": list(LIVEKIT_ALIASES),
+            "ok": True,
+            "skipped": True,
+            "message": "LiveKit " + _LIVEKIT_NOT_VERIFIED,
+        }
+    ]
+    agent_name = str(agent_name or "").strip()
+    if connector == "livekit" and mode == "connect_only" and agent_name:
+        refused.append(
+            {
+                "provider": "livekit_target",
+                "label": "LiveKit agent",
+                "aliases": list(LIVEKIT_ALIASES),
+                "ok": True,
+                "skipped": True,
+                "message": f"LiveKit agent '{agent_name}' " + _LIVEKIT_NOT_VERIFIED,
+            }
+        )
+    return refused
+
+
 def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
     """Exercise every credential the form submitted against its provider, live.
 
     Values arrive only through the write-only ``credential_values`` preflight field; a
     LiveKit URL entered as public config counts toward that family. Nothing is stored.
+
+    On Future AGI Cloud (``CLOUD_DEPLOYMENT`` US, EU or DEV) the LiveKit probes are
+    not sent: their URL is the customer's, so the backend would be making requests
+    to wherever it points. They are reported skipped instead. A self-hosted install
+    (any other ``CLOUD_DEPLOYMENT``) still probes its own LiveKit server.
+    ``.env.example`` sets ``CLOUD_DEPLOYMENT=DEV``, so a local stack built from it
+    skips them too.
     """
     from simulate.services.harness_credential_probes import (
         probe_all,
         probe_provider_target,
     )
+    from tfc.ee_loader import is_cloud_env
 
     if secret_payload["source"]["kind"] == "remote":
         return []
@@ -643,10 +702,17 @@ def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
     livekit_url = config.get("livekit_url") or config.get("LIVEKIT_URL")
     if livekit_url and not secret_values.get("LIVEKIT_URL"):
         secret_values["LIVEKIT_URL"] = str(livekit_url)
-    results = list(probe_all(secret_values))
     agent = secret_payload["agent"]
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "").strip().lower()
+    refused = []
+    if is_cloud_env(getattr(settings, "CLOUD_DEPLOYMENT", "") or ""):
+        refused = _refused_livekit_probes(
+            secret_values, connector, mode, config.get("agent_name")
+        )
+        # Without a URL neither LiveKit probe applies, so nothing reaches it.
+        secret_values.pop("LIVEKIT_URL", None)
+    results = list(probe_all(secret_values))
     if connector in {"vapi", "retell", "retell_chat"} and mode in {
         "connect_only",
         "provider_import",
@@ -665,7 +731,7 @@ def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
         )
         if target is not None:
             results.append(target)
-    return [result.as_dict() for result in results]
+    return [result.as_dict() for result in results] + refused
 
 
 _SOURCE_FIX_HINTS = {
@@ -708,11 +774,15 @@ def _check(check_id, label, status, detail, *, missing=(), fix=None):
 
 
 def _probe_check(check_id, label, results, skipped_detail, fix_template):
+    # A probe the deployment declined to send neither passes nor fails; its
+    # message says why it was skipped.
+    notes = [str(item.get("message") or "") for item in results if item.get("skipped")]
+    results = [item for item in results if not item.get("skipped")]
     if not results:
-        return _check(check_id, label, "skipped", skipped_detail)
+        return _check(check_id, label, "skipped", "; ".join(notes) or skipped_detail)
     failed = [item for item in results if not item.get("ok")]
     if not failed:
-        detail = "; ".join(str(item.get("message") or "") for item in results)
+        detail = "; ".join([str(item.get("message") or "") for item in results] + notes)
         return _check(check_id, label, "passed", detail)
     aliases = sorted({alias for item in failed for alias in item.get("aliases") or []})
     return _check(
@@ -1446,9 +1516,7 @@ class HostedHarnessProvider:
     def list(self, request) -> Response:
         organization = request_organization(request)
         jobs = scope_jobs(
-            HostedHarnessJob.no_workspace_objects.filter(
-                user_runs(), organization=organization
-            ),
+            HostedHarnessJob.no_workspace_objects.filter(organization=organization),
             request,
         ).order_by("-created_at")[:100]
         return Response([serialize_job(job) for job in jobs])
@@ -2857,6 +2925,62 @@ class SandboxHarnessProvider:
 
     name = "sandbox"
 
+    @staticmethod
+    def _owned_jobs(request):
+        """Only server-written sandbox bindings authorize installation transport."""
+        organization = request_organization(request)
+        if organization is None:
+            return SandboxHarnessJob.objects.none()
+        return scope_jobs(
+            SandboxHarnessJob.objects.filter(organization=organization, deleted=False),
+            request,
+        )
+
+    def _owns_job(self, request, pk):
+        # Opaque provider IDs (including job-1) are not hosted execution UUIDs.
+        return self._owned_jobs(request).filter(job_id=str(pk)).exists()
+
+    @staticmethod
+    def _record_job(result, *, organization, workspace):
+        from simulate.services.harness_sandbox import HarnessSandboxUnavailable
+
+        job = result.get("job") if isinstance(result, dict) else None
+        job_id = job.get("job_id") if isinstance(job, dict) else None
+        if not isinstance(job_id, str) or not job_id.strip():
+            raise HarnessSandboxUnavailable("Sandbox returned no job identifier")
+        if organization is None or (
+            workspace is not None and workspace.organization_id != organization.pk
+        ):
+            raise HarnessSandboxUnavailable(
+                "Sandbox job ownership could not be recorded"
+            )
+        # Global save receivers fill NULL workspace even on plain models.
+        # Insert without save signals: NULL is an exact authorized scope, not a
+        # request to inherit the ambient/default workspace. ON CONFLICT DO NOTHING
+        # lets the primary key serialize concurrent registrations without ever
+        # changing an existing owner (including a deleted binding).
+        SandboxHarnessJob.objects.bulk_create(
+            [
+                SandboxHarnessJob(
+                    job_id=job_id, organization=organization, workspace=workspace
+                )
+            ],
+            ignore_conflicts=True,
+        )
+        binding = SandboxHarnessJob.objects.get(job_id=job_id)
+        if (
+            binding.organization_id != organization.pk
+            or binding.workspace_id != (workspace.pk if workspace is not None else None)
+            or binding.deleted
+        ):
+            raise HarnessSandboxUnavailable(
+                "Sandbox job ownership could not be recorded"
+            )
+
+    @staticmethod
+    def _job_not_found():
+        return Response({"detail": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
+
     def _client(self):
         from simulate.services.harness_sandbox import HarnessSandboxClient
 
@@ -2871,7 +2995,18 @@ class SandboxHarnessProvider:
         environment_values: dict[str, str],
     ) -> dict[str, Any]:
         from simulate.services.harness_credentials import credentials_for_rerun
+        from simulate.services.harness_sandbox import HarnessSandboxRejected
 
+        if (
+            organization is None
+            or not SandboxHarnessJob.objects.filter(
+                job_id=str(job_id),
+                organization=organization,
+                workspace=workspace,
+                deleted=False,
+            ).exists()
+        ):
+            raise HarnessSandboxRejected(404, "Job not found")
         client = self._client()
         saved_environment, secret_refs = credentials_for_rerun(
             job_id,
@@ -2879,7 +3014,7 @@ class SandboxHarnessProvider:
             client=client,
             environment_overrides=environment_values,
         )
-        return client.rerun(
+        result = client.rerun(
             job_id,
             {
                 "environment_values": saved_environment,
@@ -2887,6 +3022,8 @@ class SandboxHarnessProvider:
                 "only": [],
             },
         )
+        self._record_job(result, organization=organization, workspace=workspace)
+        return result
 
     def run(self, request, pk) -> Response:
         return Response(
@@ -2973,12 +3110,19 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                {"detail": "Organization not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        workspace = request_workspace(request)
         refused = _mint_sandbox_values(request)
         if refused is not None:
             return refused
         try:
             payload = self._flatten_source(request.validated_data)
             result = self._client().submit(payload)
+            self._record_job(result, organization=organization, workspace=workspace)
         except _SandboxMappingError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except HarnessSandboxRejected as exc:
@@ -2995,8 +3139,18 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
+        # Resolve the allowlist before even constructing the installation client.
+        owned_ids = set(self._owned_jobs(request).values_list("job_id", flat=True))
+        if not owned_ids:
+            return Response([])
         try:
-            return Response(self._client().list_jobs())
+            return Response(
+                [
+                    item
+                    for item in self._client().list_jobs()
+                    if str((item.get("job") or {}).get("job_id")) in owned_ids
+                ]
+            )
         except HarnessSandboxRejected as exc:
             return Response({"detail": str(exc)}, status=exc.status_code)
         except HarnessSandboxUnavailable as exc:
@@ -3032,6 +3186,8 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
+        if not self._owns_job(request, pk):
+            return self._job_not_found()
         try:
             return Response(self._client().get(str(pk)))
         except HarnessSandboxRejected as exc:
@@ -3047,6 +3203,8 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
+        if not self._owns_job(request, pk):
+            return self._job_not_found()
         try:
             return Response(self._client().cancel(str(pk)))
         except HarnessSandboxRejected as exc:
@@ -3062,6 +3220,8 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
+        if not self._owns_job(request, pk):
+            return self._job_not_found()
         try:
             return Response(self._client().adjust(str(pk), request.validated_data))
         except HarnessSandboxRejected as exc:

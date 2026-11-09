@@ -1,29 +1,36 @@
 import ast
+import inspect
 import json
 import re
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import wraps
 
 import numpy as np
-import requests
 import structlog
 from django.db import close_old_connections, transaction
 from django.db.models import Q
 from drf_yasg.utils import swagger_auto_schema
+from requests.exceptions import HTTPError
+from requests.exceptions import JSONDecodeError as ResponseJSONDecodeError
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.models.workspace import Workspace
 from agentic_eval.core.embeddings.embedding_manager import (
     model_manager,
 )
 from agentic_eval.core.embeddings.serving_client import (
     SERVING_UNAVAILABLE_MESSAGE,
+    ServingRequestRefusedError,
     require_serving,
     serving_available,
 )
+from agentic_eval.core.utils.functions import is_uuid
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
-from model_hub.models.api_key import ApiKey, SecretModel
+from model_hub.models.api_key import SecretModel
 from model_hub.models.choices import (
     CellStatus,
     DataTypeChoices,
@@ -49,23 +56,48 @@ from model_hub.serializers.contracts import (
     RerunOperationRequestSerializer,
     RerunOperationResponseSerializer,
     VectorDBColumnRequestSerializer,
+    huggingface_embedding_model_refusal,
 )
 from model_hub.serializers.develop_dataset_contracts import (
     DynamicColumnCreateResponseSerializer,
     DynamicColumnMessageResponseSerializer,
     PreviewDatasetOperationResponseSerializer,
 )
+from model_hub.services.selective_rerun import selected_rows, track_generation_inputs
 from model_hub.utils.json_path_resolver import parse_json_safely, resolve_json_path
+from model_hub.utils.secret_scope import (
+    SCOPE_DENIED,
+    authorized_dataset,
+    live_authority,
+    request_authority,
+    scoped_embedding_key,
+    scoped_secret,
+    validate_conditional_config,
+    validate_operation_config,
+    validate_vector_config,
+)
 from model_hub.utils.utils import (
     contains_sql,
     remove_empty_text_from_messages,
 )
 from model_hub.views.run_prompt import populate_placeholders
+from model_hub.views.utils.disabled_code import (
+    code_execution_disabled_message,
+    conditional_config_uses_code,
+    operation_uses_code,
+    refuse_disabled_code_task,
+)
+from model_hub.views.utils.rerun_cells import (
+    ROW_PROCESSING_ERROR,
+    give_every_rerun_row_a_cell,
+    prepare_source_rerun_cells,
+)
 
 # Define a Celery task for running the evaluation
 # Define a Celery task for running the evaluation
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
+from tfc.utils import outbound_destination
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -94,7 +126,9 @@ def _request_workspace(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = _request_workspace(request)
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -127,28 +161,61 @@ def _request_dataset(request, dataset_id):
     return _request_dataset_queryset(request).filter(id=dataset_id).first()
 
 
+def _api_config_secret_ids(config):
+    """The secret ids an API-call config names in its params and headers."""
+    secret_ids = []
+    if not isinstance(config, dict):
+        return secret_ids
+    for section in ("params", "headers"):
+        entries = config.get(section) or {}
+        if not isinstance(entries, dict):
+            continue
+        for entry in entries.values():
+            if isinstance(entry, dict) and entry.get("type") == "Secret":
+                secret_ids.append(entry.get("value"))
+    return secret_ids
+
+
+def _unknown_secret_ids(secret_ids, organization_id):
+    """The non-empty ids among ``secret_ids`` that name no secret of
+    ``organization_id``."""
+    wanted = {str(secret_id) for secret_id in secret_ids if secret_id}
+    valid = [secret_id for secret_id in wanted if is_uuid(secret_id)]
+    found = {
+        str(secret_id)
+        for secret_id in SecretModel.objects.filter(
+            id__in=valid, organization_id=organization_id
+        ).values_list("id", flat=True)
+    }
+    return wanted - found
+
+
 class AddVectorDBColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     organization_id = None
 
-    def _get_api_key_for_provider(self, organization_id, workspace_id, provider):
-        """Get API key for a provider, filtering by workspace"""
-        api_key_entry = ApiKey.objects.filter(
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-            provider=provider,
-        ).first()
-        if not api_key_entry:
-            raise ValueError(
-                f"API key not configured for {provider}. Please add your API key in settings."
-            )
-        return api_key_entry.actual_key
+    def _get_api_key_for_provider(
+        self, organization_id, workspace_id, provider, *, authority=None
+    ):
+        live_authority(authority, organization_id, workspace_id)
+        return scoped_embedding_key(provider, authority).actual_key
 
-    def _query_vector_db(self, text_input, config, organization_id, workspace_id=None):
-        """Query vector database using text input"""
-        # Every embedding type goes through model serving. Raised outside the
-        # try below so the row is recorded as an error with this message.
+    def _query_vector_db(
+        self, text_input, config, organization_id, workspace_id=None, *, authority=None
+    ):
+        """Query only after both credential references and the dataset are authorized."""
+        live_authority(authority, organization_id, workspace_id)
+        validate_vector_config(config, authority)
+        # A saved config (column metadata, a conditional branch) can name a
+        # Hugging Face model that is now off the allowlist. Refuse it before
+        # model serving, with the message add_vector_db_column gives. Raised
+        # outside the try below, like require_serving(), so the row is
+        # recorded as an error with this message.
+        refusal = huggingface_embedding_model_refusal(config.get("embedding_config"))
+        if refusal:
+            raise ValueError(refusal)
+        # Every embedding type goes through model serving.
         require_serving()
         try:
             # 1. Set up the embedding model based on config
@@ -156,7 +223,7 @@ class AddVectorDBColumnView(APIView):
             embedding_type = embedding_config.get("type", "")
             if embedding_type == "openai":
                 api_key = self._get_api_key_for_provider(
-                    organization_id, workspace_id, "openai"
+                    organization_id, workspace_id, "openai", authority=authority
                 )
                 embedding_vector = model_manager.get_embeddings(
                     text_input,
@@ -166,7 +233,7 @@ class AddVectorDBColumnView(APIView):
                 )
             elif embedding_type == "huggingface":
                 api_key = self._get_api_key_for_provider(
-                    organization_id, workspace_id, "huggingface"
+                    organization_id, workspace_id, "huggingface", authority=authority
                 )
                 embedding_vector = model_manager.get_embeddings(
                     text_input,
@@ -176,7 +243,7 @@ class AddVectorDBColumnView(APIView):
                 )
             elif embedding_type == "sentence_transformers":
                 api_key = self._get_api_key_for_provider(
-                    organization_id, workspace_id, "huggingface"
+                    organization_id, workspace_id, "huggingface", authority=authority
                 )
                 embedding_vector = model_manager.get_embeddings(
                     text_input,
@@ -208,24 +275,49 @@ class AddVectorDBColumnView(APIView):
             sub_type = config.get("sub_type")
 
             if sub_type == "pinecone":
-                return self._query_pinecone(embedding_vector, config)
+                return self._query_pinecone(
+                    embedding_vector,
+                    config,
+                    organization_id,
+                    workspace_id,
+                    authority=authority,
+                )
 
             elif sub_type == "qdrant":
-                return self._query_qdrant(embedding_vector, config)
+                return self._query_qdrant(
+                    embedding_vector,
+                    config,
+                    organization_id,
+                    workspace_id,
+                    authority=authority,
+                )
 
             elif sub_type == "weaviate":
                 return self._query_weaviate(
-                    embedding_vector, text_input, config, organization_id, workspace_id
+                    embedding_vector,
+                    text_input,
+                    config,
+                    organization_id,
+                    workspace_id,
+                    authority=authority,
                 )
 
             else:
                 raise ValueError(f"Unsupported vector database type: {sub_type}")
 
+        except PermissionDenied:
+            raise
+        except ServingRequestRefusedError:
+            # Model serving refused this config and said why: fail the row
+            # with that reason instead of a passing cell holding the text.
+            raise
         except Exception as e:
             logger.exception(f"Error in vector embedding database: {str(e)}")
             return str(e)
 
-    def _query_pinecone(self, query, config):
+    def _query_pinecone(
+        self, query, config, organization_id=None, workspace_id=None, *, authority=None
+    ):
         """
                 {
             "indexName": "apicall2",
@@ -244,9 +336,15 @@ class AddVectorDBColumnView(APIView):
         """
         from tfc.utils.lazy_extras import load_extra
 
+        live_authority(authority, organization_id, workspace_id)
+        validate_vector_config(config, authority)
         Pinecone = load_extra("pinecone", "vectordb").Pinecone
 
-        pc = Pinecone(api_key=SecretModel.objects.get(id=config["api_key"]).actual_key)
+        pc = Pinecone(
+            api_key=scoped_secret(
+                config["api_key"], organization_id, workspace_id, authority=authority
+            ).actual_key
+        )
         index = pc.Index(config["index_name"])
         query_object = {}
 
@@ -283,7 +381,9 @@ class AddVectorDBColumnView(APIView):
 
         return metadata_list
 
-    def _query_qdrant(self, query, config):
+    def _query_qdrant(
+        self, query, config, organization_id=None, workspace_id=None, *, authority=None
+    ):
         """Query Qdrant vector database
 
                 {
@@ -315,6 +415,8 @@ class AddVectorDBColumnView(APIView):
                 Returns:
                     Dictionary containing search results and metadata
         """
+        live_authority(authority, organization_id, workspace_id)
+        validate_vector_config(config, authority)
         try:
             # Validate required config parameters
             required_params = ["api_key", "url", "collection_name"]
@@ -331,7 +433,12 @@ class AddVectorDBColumnView(APIView):
 
             client = QdrantClient(
                 url=config["url"],
-                api_key=SecretModel.objects.get(id=config["api_key"]).actual_key,
+                api_key=scoped_secret(
+                    config["api_key"],
+                    organization_id,
+                    workspace_id,
+                    authority=authority,
+                ).actual_key,
             )
             # query=[0.2, 0.1, 0.9, 0.7]
 
@@ -358,26 +465,45 @@ class AddVectorDBColumnView(APIView):
                 metadata_list.append(metadata)
             return metadata_list
 
+        except PermissionDenied:
+            raise
         except Exception as e:
             logger.error(f"Error querying Qdrant: {str(e)}")
             raise ValueError(f"Failed to query Qdrant: {str(e)}")  # noqa: B904
 
-    def get_client(self, config, organization_id, workspace_id=None, use_hybrid=False):
+    def get_client(
+        self,
+        config,
+        organization_id,
+        workspace_id=None,
+        use_hybrid=False,
+        *,
+        authority=None,
+    ):
         from tfc.utils.lazy_extras import load_extra
 
         weaviate = load_extra("weaviate", "vectordb")
         AuthApiKey = weaviate.AuthApiKey
 
+        live_authority(authority, organization_id, workspace_id)
+        validate_vector_config(config, authority)
         embedding_config = config.get("embedding_config", {})
         embedding_type = embedding_config.get("type", "")
         key = None
         if embedding_type:
             key = self._get_api_key_for_provider(
-                organization_id, workspace_id, embedding_type
+                organization_id,
+                workspace_id,
+                "huggingface"
+                if embedding_type == "sentence_transformers"
+                else embedding_type,
+                authority=authority,
             )
 
         auth = AuthApiKey(
-            api_key=SecretModel.objects.get(id=config["api_key"]).actual_key
+            api_key=scoped_secret(
+                config["api_key"], organization_id, workspace_id, authority=authority
+            ).actual_key
         )
         connect_kwargs = {"auth_client_secret": auth}
         if key and use_hybrid:
@@ -390,7 +516,14 @@ class AddVectorDBColumnView(APIView):
         )
 
     def _query_weaviate(
-        self, query, text_input, config, organization_id, workspace_id=None
+        self,
+        query,
+        text_input,
+        config,
+        organization_id,
+        workspace_id=None,
+        *,
+        authority=None,
     ):
         try:
             client = self.get_client(
@@ -398,6 +531,7 @@ class AddVectorDBColumnView(APIView):
                 organization_id,
                 workspace_id,
                 config.get("search_type") == "hybrid",
+                authority=authority,
             )
 
             search_type = config.get("search_type", "semantic_search")
@@ -440,18 +574,32 @@ class AddVectorDBColumnView(APIView):
             ]
             return results
 
+        except PermissionDenied:
+            raise
         except Exception as e:
             logger.error("Error in _query_weaviate", exc_info=True)
             raise ValueError(f"Failed to query Weaviate: {e}")  # noqa: B904
 
-    def _process_row(self, row, column, config, organization_id, workspace_id=None):
+    def _process_row(
+        self, row, column, config, organization_id, workspace_id=None, *, authority=None
+    ):
+        live_authority(authority, organization_id, workspace_id)
+        if column is None or str(config.get("column_id")) != str(column.pk):
+            raise PermissionDenied(SCOPE_DENIED)
+        authorized_dataset(
+            authority, row.dataset_id, source_id=column.pk, row_id=row.pk
+        )
         try:
-            input_cell = Cell.objects.get(row=row, column=column)
+            input_cell = Cell.objects.get(
+                row=row, column=column, dataset_id=row.dataset_id
+            )
             query = input_cell.value
             result_info = self._query_vector_db(
-                query, config, organization_id, workspace_id
+                query, config, organization_id, workspace_id, authority=authority
             )
             return result_info, {}
+        except PermissionDenied:
+            raise
         except Exception as e:
             # One structured call: a positional arg with no %s in the event
             # made the logger itself raise and replace this row's reason.
@@ -494,6 +642,9 @@ class AddVectorDBColumnView(APIView):
             )
             if not input_column:
                 return self._gm.not_found(get_error_message("COLUMN_NOT_FOUND"))
+
+            authority = request_authority(request, dataset.id)
+            validate_vector_config(config, authority)
 
             if Column.objects.filter(
                 name=new_column_name, dataset=dataset, deleted=False
@@ -547,9 +698,8 @@ class AddVectorDBColumnView(APIView):
                 str(input_column.id),
                 organization_id,
                 new_column.id,
-                str(_request_workspace(request).id)
-                if _request_workspace(request)
-                else None,
+                authority["workspace_id"],
+                authority={**authority, "destination_id": str(new_column.id)},
             )
 
             return self._gm.success_response(
@@ -560,6 +710,8 @@ class AddVectorDBColumnView(APIView):
                 }
             )
 
+        except PermissionDenied:
+            return self._gm.bad_request(SCOPE_DENIED)
         except Exception as e:
             try:
                 if "new_column" in locals():
@@ -1086,18 +1238,51 @@ class AddApiColumnView(APIView):
                     logger.error(f"Error replacing variable: {str(e)}")
         return value
 
-    def _make_api_call(self, cell, config):
-        """Make API call for a single cell and return the result"""
+    @staticmethod
+    def _stored_secret(secret_id, dataset):
+        if dataset is None or dataset.organization_id is None:
+            raise outbound_destination.DestinationError("secret_scope_missing")
+        # Background threads have no reliable middleware workspace context.
+        scope = Q(workspace_id=dataset.workspace_id)
+        if (
+            dataset.workspace_id is None
+            or Workspace.no_workspace_objects.filter(
+                id=dataset.workspace_id,
+                organization_id=dataset.organization_id,
+                is_default=True,
+            ).exists()
+        ):
+            # Match the default-workspace visibility rule, including legacy rows.
+            scope |= Q(workspace__isnull=True) | Q(
+                workspace__is_default=True,
+                workspace__organization_id=dataset.organization_id,
+            )
+        return (
+            SecretModel.no_workspace_objects.filter(scope)
+            .get(
+                id=secret_id,
+                organization_id=dataset.organization_id,
+                deleted=False,
+            )
+            .actual_key
+        )
+
+    def _make_api_call(self, cell, config, *, dataset=None):
+        """Make a bounded API call within the authorized dataset's tenant scope."""
         try:
+            # Workers do not necessarily inherit authentication's thread context.
+            # Derive authority from the trusted row, never from caller config.
+            if cell is not None and cell.row is not None:
+                dataset = cell.row.dataset
             # Process parameters
             processed_params = {}
             for param_name, param_config in config.get("params", {}).items():
                 if param_config["type"] == "PlainText":
                     processed_params[param_name] = param_config["value"]
                 elif param_config["type"] == "Secret":
-                    processed_params[param_name] = SecretModel.objects.get(
-                        id=param_config["value"]
-                    ).actual_key
+                    processed_params[param_name] = self._stored_secret(
+                        param_config["value"], dataset
+                    )
                 elif param_config["type"] == "Variable":
                     try:
                         raw_val = param_config["value"]
@@ -1118,10 +1303,9 @@ class AddApiColumnView(APIView):
                 if header_config["type"] == "PlainText":
                     processed_headers[header_name] = header_config["value"]
                 elif header_config["type"] == "Secret":
-                    # secret = get_object_or_404(Secret, id=header_config['value'])
-                    processed_headers[header_name] = SecretModel.objects.get(
-                        id=header_config["value"]
-                    ).actual_key
+                    processed_headers[header_name] = self._stored_secret(
+                        header_config["value"], dataset
+                    )
                 elif header_config["type"] == "Variable":
                     try:
                         raw_val = header_config["value"]
@@ -1160,7 +1344,7 @@ class AddApiColumnView(APIView):
                 url = self._replace_variables(url, cell.row)
 
             # Make the API call
-            response = requests.request(
+            response = outbound_destination.request(
                 method=config["method"],
                 url=url,
                 params=processed_params,
@@ -1186,8 +1370,20 @@ class AddApiColumnView(APIView):
                 return response.text, {"response_status": response.status_code}
 
         except Exception as e:
-            logger.exception(f"API call error: {str(e)}")
-            return str(e), {"response_status": 400}
+            # Codes only: exception messages may contain stored header/URL secrets.
+            reason = (
+                str(e)
+                if isinstance(e, outbound_destination.DestinationError)
+                else type(e).__name__
+            )
+            logger.warning("API column request refused or failed", reason=reason)
+            if isinstance(e, HTTPError):
+                return "upstream request failed", {"response_status": 400}
+            if isinstance(e, ResponseJSONDecodeError):
+                return "upstream response could not be decoded", {
+                    "response_status": 400
+                }
+            return outbound_destination.PUBLIC_ERROR, {"response_status": 400}
 
     @validated_request(
         request_serializer=AddApiColumnRequestSerializer,
@@ -1219,6 +1415,11 @@ class AddApiColumnView(APIView):
             dataset = _request_dataset(request, dataset_id)
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
+            if _unknown_secret_ids(
+                _api_config_secret_ids(config), dataset.organization_id
+            ):
+                return self._gm.bad_request("Secret not found")
 
             if Column.objects.filter(
                 name=column_name, dataset=dataset, deleted=False
@@ -1531,11 +1732,14 @@ class ConditionalColumnView(APIView):
 
         except Exception as e:
             logger.error(f"Error evaluating condition: {str(e)}")
-            logger.error("traceback : ", traceback.format_exc())
+            logger.error("conditional_row_traceback", traceback=traceback.format_exc())
             return False
 
-    def _process_branch(self, row, branch_config, org_id=None):
-        """Process a single branch configuration"""
+    def _process_branch(self, row, branch_config, org_id=None, *, authority=None):
+        """Process a branch without borrowing an owner or ambient workspace."""
+        live_authority(authority, org_id)
+        authorized_dataset(authority, row.dataset_id, row_id=row.pk)
+        validate_conditional_config([branch_config], authority)
         try:
             node_config = branch_config.get("branch_node_config", {})
             output_type = node_config.get("type")
@@ -1595,11 +1799,14 @@ class ConditionalColumnView(APIView):
                 executor = AddApiColumnView()
                 if not source_column:
                     return executor._make_api_call(
-                        cell=None, config=config.get("config")
+                        cell=None,
+                        config=config.get("config"),
+                        dataset=row.dataset,
                     )
                 return executor._make_api_call(
                     cell=Cell.objects.get(column=source_column, row=row),
                     config=config.get("config"),
+                    dataset=row.dataset,
                 )
 
             elif output_type == "run_prompt":
@@ -1643,18 +1850,30 @@ class ConditionalColumnView(APIView):
 
             elif output_type == "retrieval":
                 executor = AddVectorDBColumnView()
-                return executor._process_row(row, source_column, config, org_id)
+                return executor._process_row(
+                    row,
+                    source_column,
+                    config,
+                    org_id,
+                    authority["workspace_id"],
+                    authority=authority,
+                )
 
             else:
                 return None, None
 
+        except PermissionDenied:
+            raise
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error processing branch: {str(e)}")
             return None, None
 
-    def _process_row(self, row, config, org_id=None):
-        """Process a single row through all conditions"""
+    def _process_row(self, row, config, org_id=None, *, authority=None):
+        """Process a row only with explicit current execution authority."""
+        live_authority(authority, org_id)
+        authorized_dataset(authority, row.dataset_id, row_id=row.pk)
+        validate_conditional_config(config, authority)
         try:
             final_value = None
             final_value_infos = None
@@ -1690,7 +1909,7 @@ class ConditionalColumnView(APIView):
 
                 if should_execute:
                     value, value_infos = self._process_branch(
-                        row, branch, org_id=org_id
+                        row, branch, org_id=org_id, authority=authority
                     )
                     if value is not None:
                         final_value = value
@@ -1699,8 +1918,10 @@ class ConditionalColumnView(APIView):
 
             return final_value, final_value_infos
 
+        except PermissionDenied:
+            raise
         except Exception as e:
-            logger.error("traceback : ", traceback.format_exc())
+            logger.error("conditional_row_traceback", traceback=traceback.format_exc())
             logger.error(f"Error processing row: {str(e)}")
             return str(e), {"reason": str(e)}
 
@@ -1731,6 +1952,13 @@ class ConditionalColumnView(APIView):
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
+            # Capability contract: a branch that runs custom code is refused before
+            # any column is created or task queued.
+            if conditional_config_uses_code(config):
+                return self._gm.bad_request(code_execution_disabled_message())
+
+            authority = request_authority(request, dataset.id)
+            validate_conditional_config(config, authority)
             if Column.objects.filter(
                 name=new_column_name, dataset=dataset, deleted=False
             ).exists():
@@ -1760,7 +1988,11 @@ class ConditionalColumnView(APIView):
             )
 
             conditional_column_async.delay(
-                config, dataset.id, concurrency, new_column.id
+                config,
+                dataset.id,
+                concurrency,
+                new_column.id,
+                authority={**authority, "destination_id": str(new_column.id)},
             )
 
             return self._gm.success_response(
@@ -1771,6 +2003,8 @@ class ConditionalColumnView(APIView):
                 }
             )
 
+        except PermissionDenied:
+            return self._gm.bad_request(SCOPE_DENIED)
         except Exception as e:
             try:
                 if "new_column" in locals():
@@ -1807,6 +2041,12 @@ class GetOperationConfigView(APIView):
             if not operation_column:
                 return self._gm.bad_request(get_error_message("COLUMN_NOT_FOUND"))
 
+            authority = request_authority(
+                request, operation_column.dataset_id, require_write=False
+            )
+            validate_operation_config(
+                operation_column.metadata, authority, source=operation_column.source
+            )
             return self._gm.success_response(
                 {
                     "column_id": str(operation_column.id),
@@ -1814,8 +2054,11 @@ class GetOperationConfigView(APIView):
                 }
             )
 
-        except Exception as e:
-            logger.exception(f"Error in getting operation configurations: {str(e)}")
+        except PermissionDenied:
+            return self._gm.bad_request(SCOPE_DENIED)
+        except Exception:
+            # Neither exception text nor traceback locals may contain saved refs.
+            logger.error("Error in getting operation configurations")
             return self._gm.internal_server_error_response(
                 get_error_message("FAILED_TO_GET_OPERATION_CONFIGURATIONS")
             )
@@ -1839,6 +2082,7 @@ class RerunOperationView(APIView):
         responses={200: RerunOperationResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @transaction.atomic
     def post(self, request, column_id, *args, **kwargs):
         """Rerun a specific operation with its stored configuration"""
         try:
@@ -1855,6 +2099,7 @@ class RerunOperationView(APIView):
             # Get the column with its metadata
             column = (
                 _request_column_queryset(request)
+                .select_for_update(of=("self",))
                 .filter(
                     id=column_id,
                     deleted=False,
@@ -1863,6 +2108,12 @@ class RerunOperationView(APIView):
             )
             if not column:
                 return self._gm.not_found(get_error_message("COLUMN_NOT_FOUND"))
+
+            # The stored source is authoritative: choosing a non-code operation
+            # must not repurpose a disabled Python column or clear its cells.
+            # Keep authentication, validation and scoped not-found answers first.
+            if column.source == SourceChoices.PYTHON_CODE.value:
+                return self._gm.bad_request(code_execution_disabled_message())
 
             effective_metadata = dict(column.metadata or {})
 
@@ -1923,7 +2174,9 @@ class RerunOperationView(APIView):
                 elif operation_type == "execute_code":
                     effective_metadata.update(
                         {
-                            "code": metadata.get("code", effective_metadata.get("code")),
+                            "code": metadata.get(
+                                "code", effective_metadata.get("code")
+                            ),
                             "concurrency": metadata.get(
                                 "concurrency", effective_metadata.get("concurrency", 5)
                             ),
@@ -1992,9 +2245,7 @@ class RerunOperationView(APIView):
                     api_config = metadata.get("config") or metadata
                     effective_metadata.update(
                         {
-                            "url": api_config.get(
-                                "url", effective_metadata.get("url")
-                            ),
+                            "url": api_config.get("url", effective_metadata.get("url")),
                             "method": api_config.get(
                                 "method", effective_metadata.get("method")
                             ),
@@ -2017,18 +2268,73 @@ class RerunOperationView(APIView):
                         }
                     )
 
+            # Capability contract: custom code (execute_code, or a conditional whose
+            # effective config, sent or stored, has a code branch) is refused
+            # before the metadata, status and cell writes below and before
+            # any task is queued.
+            if operation_uses_code(operation_type, effective_metadata.get("config")):
+                return self._gm.bad_request(code_execution_disabled_message())
+
             config_error = self._rerun_config_error(operation_type, effective_metadata)
             if config_error:
                 return self._gm.bad_request(get_error_message(config_error))
+            authority = None
+            if operation_type in {"conditional", "vector_db"}:
+                authority = {
+                    **request_authority(request, column.dataset_id),
+                    "destination_id": str(column.pk),
+                }
+            reference_error = self._rerun_reference_error(
+                operation_type, effective_metadata, column, authority=authority
+            )
+            if reference_error:
+                return self._gm.bad_request(reference_error)
+
+            if column.status == StatusType.RUNNING.value:
+                return self._gm.bad_request("Wait for the current generation to finish")
 
             if metadata:
                 column.metadata = effective_metadata
                 column.save(update_fields=["metadata"])
 
-            # Clear existing cell values but keep the cells
-            Cell.objects.filter(column_id=column.id, deleted=False).update(
-                value=None, value_infos=json.dumps({}), status=CellStatus.RUNNING.value
+            self.row_ids = selected_rows(column, data.get("scope", "all"))
+            if not self.row_ids:
+                return self._gm.success_response(
+                    {
+                        "message": "No rows need rerunning",
+                        "column_id": str(column.id),
+                        "status": "completed",
+                    }
+                )
+            existing_rows = set(
+                map(
+                    str,
+                    Cell.objects.filter(
+                        column=column,
+                        dataset_id=column.dataset_id,
+                        deleted=False,
+                        row_id__in=self.row_ids,
+                    ).values_list("row_id", flat=True),
+                )
             )
+            Cell.objects.bulk_create(
+                [
+                    Cell(
+                        column=column,
+                        dataset_id=column.dataset_id,
+                        row_id=row_id,
+                        status=CellStatus.RUNNING.value,
+                    )
+                    for row_id in self.row_ids
+                    if row_id not in existing_rows
+                ]
+            )
+            Cell.objects.filter(
+                column=column,
+                dataset_id=column.dataset_id,
+                row_id__in=self.row_ids,
+                deleted=False,
+            ).update(status=CellStatus.RUNNING.value, value_infos=json.dumps({}))
 
             # Reset column status
             column.status = StatusType.RUNNING.value
@@ -2052,15 +2358,19 @@ class RerunOperationView(APIView):
                 )
             elif operation_type == "conditional":
                 return self._rerun_conditional(
-                    column, effective_metadata, column.dataset.id
+                    column, effective_metadata, column.dataset.id, authority=authority
                 )
             elif operation_type == "vector_db":
                 return self._rerun_vector_db(
-                    column, effective_metadata, column.dataset.id
+                    column, effective_metadata, column.dataset.id, authority=authority
                 )
             elif operation_type == "api_call":
-                return self._rerun_api_call(column, effective_metadata, column.dataset.id)
+                return self._rerun_api_call(
+                    column, effective_metadata, column.dataset.id
+                )
 
+        except PermissionDenied:
+            return self._gm.bad_request(SCOPE_DENIED)
         except Exception as e:
             logger.exception(f"Error in rerunning operation: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -2098,6 +2408,42 @@ class RerunOperationView(APIView):
                 return "INVALID_API_CALL_CONFIGURATION"
         return None
 
+    def _rerun_reference_error(
+        self, operation_type, metadata, column, *, authority=None
+    ):
+        """Validate effective references before metadata/status/cell mutation."""
+        if operation_type in {"conditional", "vector_db"}:
+            authorized_dataset(authority, column.dataset_id, destination_id=column.pk)
+            if operation_type == "conditional":
+                validate_conditional_config(metadata.get("config"), authority)
+            else:
+                validate_vector_config(metadata, authority)
+            return None
+        if operation_type in {
+            "classify",
+            "extract_entities",
+            "extract_json",
+            "vector_db",
+        }:
+            source_column_id = str(metadata.get("column_id"))
+            if not (
+                is_uuid(source_column_id)
+                and Column.objects.filter(
+                    id=source_column_id, dataset_id=column.dataset_id, deleted=False
+                ).exists()
+            ):
+                return get_error_message("COLUMN_NOT_FOUND")
+        organization_id = column.dataset.organization_id
+        if operation_type == "vector_db" and _unknown_secret_ids(
+            [metadata.get("api_key")], organization_id
+        ):
+            return "Secret not found"
+        if operation_type == "api_call" and _unknown_secret_ids(
+            _api_config_secret_ids(self._api_call_config(metadata)), organization_id
+        ):
+            return "Secret not found"
+        return None
+
     def _api_call_config(self, metadata):
         return metadata.get("config") or {
             "url": metadata.get("url"),
@@ -2123,14 +2469,17 @@ class RerunOperationView(APIView):
                 )
 
             # Trigger the async task
-            classify_column_async.delay(
-                source_column_id,
-                labels,
-                model,
-                concurrency,
-                dataset_id,
-                str(column.id),
-                True,
+            transaction.on_commit(
+                lambda: classify_column_async.delay(
+                    source_column_id,
+                    labels,
+                    model,
+                    concurrency,
+                    dataset_id,
+                    str(column.id),
+                    True,
+                    row_ids=self.row_ids,
+                )
             )
 
             return self._gm.success_response(
@@ -2161,14 +2510,17 @@ class RerunOperationView(APIView):
                 )
 
             # Trigger the async task
-            extract_async.delay(
-                source_column_id,
-                instruction,
-                model,
-                concurrency,
-                dataset_id,
-                str(column.id),
-                True,
+            transaction.on_commit(
+                lambda: extract_async.delay(
+                    source_column_id,
+                    instruction,
+                    model,
+                    concurrency,
+                    dataset_id,
+                    str(column.id),
+                    True,
+                    row_ids=self.row_ids,
+                )
             )
 
             return self._gm.success_response(
@@ -2199,13 +2551,16 @@ class RerunOperationView(APIView):
                 )
 
             # Trigger the async task
-            extract_json_async.delay(
-                source_column_id,
-                json_key,
-                concurrency,
-                dataset_id,
-                str(column.id),
-                True,
+            transaction.on_commit(
+                lambda: extract_json_async.delay(
+                    source_column_id,
+                    json_key,
+                    concurrency,
+                    dataset_id,
+                    str(column.id),
+                    True,
+                    row_ids=self.row_ids,
+                )
             )
 
             return self._gm.success_response(
@@ -2253,8 +2608,10 @@ class RerunOperationView(APIView):
                 get_error_message("FAILED_TO_RERUN_PYTHON_CODE")
             )
 
-    def _rerun_conditional(self, column, metadata, dataset_id):
-        """Rerun conditional operation"""
+    def _rerun_conditional(self, column, metadata, dataset_id, *, authority=None):
+        """Rerun conditional operation with the newly admitted selected scope."""
+        authorized_dataset(authority, dataset_id, destination_id=column.pk)
+        validate_conditional_config(metadata.get("config"), authority)
         try:
             # Extract configuration from metadata
             conditional_config = metadata.get("config")
@@ -2266,8 +2623,16 @@ class RerunOperationView(APIView):
                 )
 
             # Trigger the async task
-            conditional_column_async.delay(
-                conditional_config, dataset_id, concurrency, str(column.id), True
+            transaction.on_commit(
+                lambda: conditional_column_async.delay(
+                    conditional_config,
+                    dataset_id,
+                    concurrency,
+                    str(column.id),
+                    True,
+                    row_ids=self.row_ids,
+                    authority=authority,
+                )
             )
 
             return self._gm.success_response(
@@ -2284,8 +2649,10 @@ class RerunOperationView(APIView):
                 get_error_message("FAILED_TO_RERUN_CONDITIONAL")
             )
 
-    def _rerun_vector_db(self, column, metadata, dataset_id):
-        """Rerun vector database operation"""
+    def _rerun_vector_db(self, column, metadata, dataset_id, *, authority=None):
+        """Rerun vector database operation without deriving authority from its row."""
+        authorized_dataset(authority, dataset_id, destination_id=column.pk)
+        validate_vector_config(metadata, authority)
         try:
             # Extract configuration from metadata
             vector_db_config = metadata
@@ -2299,17 +2666,19 @@ class RerunOperationView(APIView):
                 )
 
             # Trigger the async task
-            add_vector_db_column_async.delay(
-                vector_db_config,
-                dataset_id,
-                concurrency,
-                source_column_id,
-                organization_id,
-                str(column.id),
-                str(column.dataset.workspace_id)
-                if column.dataset.workspace_id
-                else None,
-                True,
+            transaction.on_commit(
+                lambda: add_vector_db_column_async.delay(
+                    vector_db_config,
+                    dataset_id,
+                    concurrency,
+                    source_column_id,
+                    organization_id,
+                    str(column.id),
+                    authority["workspace_id"],
+                    True,
+                    row_ids=self.row_ids,
+                    authority=authority,
+                )
             )
 
             return self._gm.success_response(
@@ -2345,8 +2714,15 @@ class RerunOperationView(APIView):
                 )
 
             # Trigger the async task
-            add_api_column_async.delay(
-                api_config, dataset_id, concurrency, str(column.id), True
+            transaction.on_commit(
+                lambda: add_api_column_async.delay(
+                    api_config,
+                    dataset_id,
+                    concurrency,
+                    str(column.id),
+                    True,
+                    row_ids=self.row_ids,
+                )
             )
 
             return self._gm.success_response(
@@ -2365,8 +2741,16 @@ class RerunOperationView(APIView):
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
+@track_generation_inputs
 def classify_column_async(
-    column_id, labels, model, concurrency, dataset_id, new_column_id, is_rerun=False
+    column_id,
+    labels,
+    model,
+    concurrency,
+    dataset_id,
+    new_column_id,
+    is_rerun=False,
+    row_ids=None,
 ):
     view = ClassifyColumnView()
     # Process cells concurrently with select_related for optimization
@@ -2375,11 +2759,25 @@ def classify_column_async(
             "row", "column"
         )
     )
+    eligible = Row.objects.filter(dataset_id=dataset_id, deleted=False)
+    if row_ids is not None:
+        eligible = eligible.filter(id__in=row_ids)
+    selected = set(map(str, eligible.values_list("id", flat=True)))
+    source_cells = [cell for cell in source_cells if str(cell.row_id) in selected]
     total_processed = 0
     failed_cells = 0
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
 
     if is_rerun:
+        # Every row this rerun processes gets a cell to refill first, so each
+        # row is stored by the rule below: never a PASS cell with value None.
+        # Finalize missing sources within the same live-row scope as execution.
+        prepare_source_rerun_cells(
+            [cell.row_id for cell in source_cells],
+            dataset_id,
+            new_column_id,
+            selected_row_ids=selected,
+        )
         # Update existing cells with select_related
         existing_cells = list(
             Cell.objects.filter(column_id=new_column_id, deleted=False).select_related(
@@ -2388,7 +2786,6 @@ def classify_column_async(
         )
         existing_cells_map = {str(cell.row_id): cell for cell in existing_cells}
         cells_to_update = []
-        cells_to_create = []
 
         # Wrap function with OTel context propagation for thread safety
         wrapped_classify_cell = wrap_for_thread(view._classify_cell)
@@ -2403,53 +2800,43 @@ def classify_column_async(
                 cell = future_to_cell[future]
                 try:
                     classification, value_infos = future.result()
-                    existing_cell = existing_cells_map.get(str(cell.row_id))
+                    existing_cell = existing_cells_map[str(cell.row_id)]
 
-                    if existing_cell:
-                        if value_infos and "reason" in value_infos:
-                            failed_cells += 1
-                            existing_cell.value = None
-                            existing_cell.value_infos = json.dumps(value_infos)
-                            existing_cell.status = CellStatus.ERROR.value
-                        else:
-                            existing_cell.value = classification
-                            existing_cell.value_infos = json.dumps(
-                                value_infos if value_infos else {}
-                            )
-                            existing_cell.status = CellStatus.PASS.value
-                            total_processed += 1
-                        cells_to_update.append(existing_cell)
+                    if value_infos and "reason" in value_infos:
+                        failed_cells += 1
+                        existing_cell.value = None
+                        existing_cell.value_infos = json.dumps(value_infos)
+                        existing_cell.status = CellStatus.ERROR.value
                     else:
-                        # Create new cell if it doesn't exist during rerun
-                        cells_to_create.append(
-                            Cell(
-                                dataset_id=dataset_id,
-                                column_id=new_column_id,
-                                row=cell.row,
-                                value=None,
-                                value_infos=json.dumps(
-                                    value_infos if value_infos else {}
-                                ),
-                                status=CellStatus.PASS.value,
-                            )
+                        existing_cell.value = classification
+                        existing_cell.value_infos = json.dumps(
+                            value_infos if value_infos else {}
                         )
-                        logger.warning(
-                            f"Created new cell for row {cell.row_id} in column {new_column_id} during rerun"
-                        )
+                        existing_cell.status = CellStatus.PASS.value
+                        total_processed += 1
+                    cells_to_update.append(existing_cell)
 
                 except Exception as e:
                     failed_cells += 1
                     logger.error(f"Error processing cell: {str(e)}")
+                    # A row that raised gets a controlled public reason; raw
+                    # exception details belong only in the server log above.
+                    existing_cell = existing_cells_map.get(str(cell.row_id))
+                    if existing_cell is not None:
+                        existing_cell.value = None
+                        existing_cell.value_infos = json.dumps(
+                            {"reason": ROW_PROCESSING_ERROR}
+                        )
+                        existing_cell.status = CellStatus.ERROR.value
+                        cells_to_update.append(existing_cell)
 
-        # Bulk update and create (optimization)
+        # Bulk update (optimization)
         if cells_to_update:
             Cell.objects.bulk_update(
                 cells_to_update,
                 ["value", "value_infos", "status"],
                 batch_size=BATCH_SIZE,
             )
-        if cells_to_create:
-            Cell.objects.bulk_create(cells_to_create, batch_size=BATCH_SIZE)
     else:
         # Create new cells (original behavior) with rate limiting
         new_cells = []
@@ -2499,10 +2886,9 @@ def classify_column_async(
         if new_cells:
             Cell.objects.bulk_create(new_cells, batch_size=BATCH_SIZE)
 
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
-
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
+@track_generation_inputs
 def extract_async(
     source_column_id,
     instruction,
@@ -2511,6 +2897,7 @@ def extract_async(
     dataset_id,
     new_column_id,
     is_rerun=False,
+    row_ids=None,
 ):
     # Process cells concurrently with select_related (optimization)
     source_cells = list(
@@ -2518,12 +2905,26 @@ def extract_async(
             "row", "column"
         )
     )
+    eligible = Row.objects.filter(dataset_id=dataset_id, deleted=False)
+    if row_ids is not None:
+        eligible = eligible.filter(id__in=row_ids)
+    selected = set(map(str, eligible.values_list("id", flat=True)))
+    source_cells = [cell for cell in source_cells if str(cell.row_id) in selected]
     total_processed = 0
     failed_cells = 0
     view = ExtractEntitiesView()
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
 
     if is_rerun:
+        # Every row this rerun processes gets a cell to refill first, so each
+        # row is stored by the rule below: never a PASS cell with value None.
+        # Finalize missing sources within the same live-row scope as execution.
+        prepare_source_rerun_cells(
+            [cell.row_id for cell in source_cells],
+            dataset_id,
+            new_column_id,
+            selected_row_ids=selected,
+        )
         # Update existing cells with select_related
         existing_cells = list(
             Cell.objects.filter(column_id=new_column_id, deleted=False).select_related(
@@ -2532,7 +2933,6 @@ def extract_async(
         )
         existing_cells_map = {str(cell.row_id): cell for cell in existing_cells}
         cells_to_update = []
-        cells_to_create = []
 
         # Wrap function with OTel context propagation for thread safety
         wrapped_extract_entities = wrap_for_thread(view._extract_entities)
@@ -2549,54 +2949,44 @@ def extract_async(
                 cell = future_to_cell[future]
                 try:
                     entities, value_infos = future.result()
-                    existing_cell = existing_cells_map.get(str(cell.row_id))
+                    existing_cell = existing_cells_map[str(cell.row_id)]
 
-                    if existing_cell:
-                        if value_infos and "reason" in value_infos:
-                            failed_cells += 1
-                            existing_cell.value = None
-                            existing_cell.value_infos = json.dumps(value_infos)
-                            existing_cell.status = CellStatus.ERROR.value
-                        else:
-                            existing_cell.value = entities
-                            existing_cell.value_infos = json.dumps(
-                                value_infos if value_infos else {}
-                            )
-                            existing_cell.status = CellStatus.PASS.value
-                            total_processed += 1
-                        cells_to_update.append(existing_cell)
+                    if value_infos and "reason" in value_infos:
+                        failed_cells += 1
+                        existing_cell.value = None
+                        existing_cell.value_infos = json.dumps(value_infos)
+                        existing_cell.status = CellStatus.ERROR.value
                     else:
-                        # Create new cell if it doesn't exist during rerun
-                        cells_to_create.append(
-                            Cell(
-                                dataset_id=dataset_id,
-                                column_id=new_column_id,
-                                row=cell.row,
-                                value=None,
-                                value_infos=json.dumps(
-                                    value_infos if value_infos else {}
-                                ),
-                                status=CellStatus.PASS.value,
-                            )
+                        existing_cell.value = entities
+                        existing_cell.value_infos = json.dumps(
+                            value_infos if value_infos else {}
                         )
-                        logger.warning(
-                            f"Created new cell for row {cell.row_id} in column {new_column_id} during rerun"
-                        )
+                        existing_cell.status = CellStatus.PASS.value
+                        total_processed += 1
+                    cells_to_update.append(existing_cell)
 
                 except Exception as e:
                     traceback.print_exc()
                     logger.error(f"Failed to process cell: {str(e)}")
                     failed_cells += 1
+                    # A row that raised gets a controlled public reason; raw
+                    # exception details belong only in the server log above.
+                    existing_cell = existing_cells_map.get(str(cell.row_id))
+                    if existing_cell is not None:
+                        existing_cell.value = None
+                        existing_cell.value_infos = json.dumps(
+                            {"reason": ROW_PROCESSING_ERROR}
+                        )
+                        existing_cell.status = CellStatus.ERROR.value
+                        cells_to_update.append(existing_cell)
 
-        # Bulk update and create (optimization)
+        # Bulk update (optimization)
         if cells_to_update:
             Cell.objects.bulk_update(
                 cells_to_update,
                 ["value", "value_infos", "status"],
                 batch_size=BATCH_SIZE,
             )
-        if cells_to_create:
-            Cell.objects.bulk_create(cells_to_create, batch_size=BATCH_SIZE)
     else:
         # Create new cells (original behavior) with rate limiting
         new_cells = []
@@ -2649,21 +3039,42 @@ def extract_async(
         if new_cells:
             Cell.objects.bulk_create(new_cells, batch_size=BATCH_SIZE)
 
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
-
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
+@track_generation_inputs
 def extract_json_async(
-    column_id, json_key, concurrency, dataset_id, new_column_id, is_rerun=False
+    column_id,
+    json_key,
+    concurrency,
+    dataset_id,
+    new_column_id,
+    is_rerun=False,
+    row_ids=None,
 ):
     view = ExtractJsonColumnView()
     # Process cells concurrently
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
     source_cells = Cell.objects.filter(column_id=column_id, deleted=False)
+    eligible = Row.objects.filter(dataset_id=dataset_id, deleted=False)
+    if row_ids is not None:
+        eligible = eligible.filter(id__in=row_ids)
+    selected = set(map(str, eligible.values_list("id", flat=True)))
+    source_cells = [cell for cell in source_cells if str(cell.row_id) in selected]
     total_processed = 0
     failed_cells = 0
 
     if is_rerun:
+        # Every row this rerun processes gets a cell to refill first, so each
+        # row is stored by the rule below: its value as a PASS cell, or None as
+        # an ERROR cell with the reason; never a PASS cell with value None.
+        source_cells = list(source_cells)
+        # Finalize missing sources within the same live-row scope as execution.
+        prepare_source_rerun_cells(
+            [cell.row_id for cell in source_cells],
+            dataset_id,
+            new_column_id,
+            selected_row_ids=selected,
+        )
         # Update existing cells
         existing_cells = Cell.objects.filter(column_id=new_column_id, deleted=False)
         existing_cells_map = {str(cell.row_id): cell for cell in existing_cells}
@@ -2683,35 +3094,22 @@ def extract_json_async(
                 cell = future_to_cell[future]
                 try:
                     value = future.result()
-                    existing_cell = existing_cells_map.get(str(cell.row_id))
-
-                    if existing_cell:
-                        existing_cell.value = value
-                        existing_cell.status = CellStatus.PASS.value
-                        existing_cell.save()
-                        total_processed += 1
-                    else:
-                        # Create new cell if it doesn't exist during rerun
-                        new_cell = Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=cell.row,
-                            value=None,
-                            value_infos={},
-                            status=CellStatus.PASS.value,
-                        )
-                        new_cell.save()
-                        logger.error(
-                            f"Created new cell for row {cell.row_id} in column {new_column_id} during rerun"
-                        )
+                    existing_cell = existing_cells_map[str(cell.row_id)]
+                    existing_cell.value = value
+                    existing_cell.value_infos = json.dumps({})
+                    existing_cell.status = CellStatus.PASS.value
+                    existing_cell.save()
+                    total_processed += 1
 
                 except Exception as e:
                     failed_cells += 1
                     logger.error(f"Error processing cell: {str(e)}")
                     existing_cell = existing_cells_map.get(str(cell.row_id))
-                    if existing_cell:
+                    if existing_cell is not None:
                         existing_cell.value = None
-                        existing_cell.value_infos = json.dumps({"reason": str(e)})
+                        existing_cell.value_infos = json.dumps(
+                            {"reason": ROW_PROCESSING_ERROR}
+                        )
                         existing_cell.status = CellStatus.ERROR.value
                         existing_cell.save()
     else:
@@ -2752,7 +3150,7 @@ def extract_json_async(
                             column_id=new_column_id,
                             row=cell.row,
                             value=None,
-                            value_infos=json.dumps({"reason": str(e)}),
+                            value_infos=json.dumps({"reason": ROW_PROCESSING_ERROR}),
                             status=CellStatus.ERROR.value,
                         )
                     )
@@ -2761,7 +3159,6 @@ def extract_json_async(
         if new_cells:
             Cell.objects.bulk_create(new_cells)
 
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
     # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
 
 
@@ -2769,6 +3166,9 @@ def extract_json_async(
 def execute_python_code_async(
     code, dataset_id, concurrency, new_column_id, is_rerun=False
 ):
+    # Capability contract: refuse before the first read or the RUNNING status write;
+    # stored cells, status and metadata stay as they are.
+    refuse_disabled_code_task()
     view = ExecutePythonCodeView()
     # Process rows concurrently
     rows = Row.objects.filter(dataset_id=dataset_id, deleted=False)
@@ -2777,6 +3177,10 @@ def execute_python_code_async(
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
 
     if is_rerun:
+        # Every row this rerun processes gets a cell to refill first, so each
+        # row is stored by the rule below: never a PASS cell with value None.
+        rows = list(rows)
+        give_every_rerun_row_a_cell([row.id for row in rows], dataset_id, new_column_id)
         # Update existing cells
         existing_cells = Cell.objects.filter(column_id=new_column_id, deleted=False)
         existing_cells_map = {str(cell.row_id): cell for cell in existing_cells}
@@ -2794,45 +3198,32 @@ def execute_python_code_async(
                 row = future_to_row[future]
                 try:
                     value, value_infos = future.result()
-                    existing_cell = existing_cells_map.get(str(row.id))
+                    existing_cell = existing_cells_map[str(row.id)]
 
-                    if existing_cell:
-                        if value_infos and "reason" in value_infos:
-                            # Handle case where function returned error
-                            existing_cell.value = None
-                            existing_cell.value_infos = json.dumps(value_infos)
-                            existing_cell.status = CellStatus.ERROR.value
-                            failed_cells += 1
-                        else:
-                            existing_cell.value = value
-                            existing_cell.value_infos = json.dumps(
-                                value_infos if value_infos else {}
-                            )
-                            existing_cell.status = CellStatus.PASS.value
-                            total_processed += 1
-                        existing_cell.save()
+                    if value_infos and "reason" in value_infos:
+                        # Handle case where function returned error
+                        existing_cell.value = None
+                        existing_cell.value_infos = json.dumps(value_infos)
+                        existing_cell.status = CellStatus.ERROR.value
+                        failed_cells += 1
                     else:
-                        # Create new cell if it doesn't exist during rerun
-                        new_cell = Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=row,
-                            value=None,
-                            value_infos=json.dumps(value_infos if value_infos else {}),
-                            status=CellStatus.PASS.value,
+                        existing_cell.value = value
+                        existing_cell.value_infos = json.dumps(
+                            value_infos if value_infos else {}
                         )
-                        new_cell.save()
-                        logger.error(
-                            f"Created new cell for row {row.id} in column {new_column_id} during rerun"
-                        )
+                        existing_cell.status = CellStatus.PASS.value
+                        total_processed += 1
+                    existing_cell.save()
 
                 except Exception as e:
                     logger.exception(f"Failed to process row: {str(e)}")
                     failed_cells += 1
                     existing_cell = existing_cells_map.get(str(row.id))
-                    if existing_cell:
+                    if existing_cell is not None:
                         existing_cell.value = None
-                        existing_cell.value_infos = json.dumps({"reason": str(e)})
+                        existing_cell.value_infos = json.dumps(
+                            {"reason": ROW_PROCESSING_ERROR}
+                        )
                         existing_cell.status = CellStatus.ERROR.value
                         existing_cell.save()
     else:
@@ -2888,7 +3279,7 @@ def execute_python_code_async(
                             column_id=new_column_id,
                             row=row,
                             value=None,
-                            value_infos=json.dumps({"reason": str(e)}),
+                            value_infos=json.dumps({"reason": ROW_PROCESSING_ERROR}),
                             status=CellStatus.ERROR.value,
                         )
                     )
@@ -2901,14 +3292,73 @@ def execute_python_code_async(
     # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
 
 
+def _track_authorized_generation_inputs(function):
+    """Keep fingerprint reads and finalization inside the worker's authority checks."""
+    signature = inspect.signature(function)
+
+    def check_authority(args, kwargs):
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        values = bound.arguments
+        authority = values["authority"]
+        dataset_id = values["dataset_id"]
+        config = values["config"]
+        if function.__name__ == "conditional_column_async":
+            # Disabled code must still fail before any fingerprint or dataset read.
+            if conditional_config_uses_code(config):
+                refuse_disabled_code_task()
+            authorized_dataset(
+                authority, dataset_id, destination_id=values["new_column_id"]
+            )
+            validate_conditional_config(config, authority)
+        else:
+            live_authority(authority, values["org_id"], values["workspace_id"])
+            authorized_dataset(
+                authority, dataset_id, destination_id=values["new_column_id"]
+            )
+            if isinstance(config, str):
+                config = json.loads(config)
+            validate_vector_config(config, authority)
+            authorized_dataset(
+                authority, dataset_id, source_id=values["input_column_id"]
+            )
+
+    @wraps(function)
+    def checked(*args, **kwargs):
+        result = function(*args, **kwargs)
+        # Recheck after execution, before tracking writes outputs and snapshots.
+        check_authority(args, kwargs)
+        return result
+
+    tracked = track_generation_inputs(checked)
+
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        # The tracking decorator reads inputs before calling the worker body.
+        check_authority(args, kwargs)
+        return tracked(*args, **kwargs)
+
+    return guarded
+
+
 @temporal_activity(time_limit=3600, queue="tasks_l")
+@_track_authorized_generation_inputs
 def conditional_column_async(
-    config, dataset_id, concurrency, new_column_id, is_rerun=False
+    config, dataset_id, concurrency, new_column_id, is_rerun=False, row_ids=None, *, authority=None
 ):
+    # Capability contract: a config with a code branch is refused before the first
+    # read or the RUNNING status write.
+    if conditional_config_uses_code(config):
+        refuse_disabled_code_task()
+    authorized_dataset(authority, dataset_id, destination_id=new_column_id)
+    validate_conditional_config(config, authority)
     view = ConditionalColumnView()
-    # Process rows
+    # Actor/org/selected-workspace authority is independent of resource ownership.
     rows = Row.objects.filter(dataset_id=dataset_id, deleted=False)
-    organization_id = Dataset.objects.get(id=dataset_id).organization.id
+    if row_ids is not None:
+        selected = set(map(str, row_ids))
+        rows = [row for row in rows if str(row.id) in selected]
+    organization_id = authority["organization_id"]
     total_processed = 0
     failed_cells = 0
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
@@ -2923,12 +3373,22 @@ def conditional_column_async(
 
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             future_to_row = {
-                executor.submit(wrapped_process_row, row, config, organization_id): row
+                executor.submit(
+                    wrapped_process_row,
+                    row,
+                    config,
+                    organization_id,
+                    authority=authority,
+                ): row
                 for row in rows
             }
 
             for future in as_completed(future_to_row):
                 row = future_to_row[future]
+                authorized_dataset(
+                    authority, dataset_id, destination_id=new_column_id, row_id=row.pk
+                )
+                validate_conditional_config(config, authority)
                 try:
                     value, value_infos = future.result()
                     existing_cell = existing_cells_map.get(str(row.id))
@@ -2947,30 +3407,47 @@ def conditional_column_async(
                             total_processed += 1
                         existing_cell.save()
                     else:
-                        # Create new cell if it doesn't exist during rerun
+                        # Create new cell if it doesn't exist during rerun,
+                        # with the same status rule as an existing cell: a
+                        # row that failed (a refused embedding model, say)
+                        # is an ERROR cell carrying its reason.
+                        failed = bool(value_infos and "reason" in value_infos)
                         new_cell = Cell(
                             dataset_id=dataset_id,
                             column_id=new_column_id,
                             row=row,
-                            value=None,
+                            value=None if failed else value,
                             value_infos=json.dumps(value_infos if value_infos else {}),
-                            status=CellStatus.PASS.value,
+                            status=(
+                                CellStatus.ERROR.value
+                                if failed
+                                else CellStatus.PASS.value
+                            ),
                         )
                         new_cell.save()
+                        if not failed:
+                            total_processed += 1
                         logger.error(
                             f"Created new cell for row {row.id} in column {new_column_id} during rerun"
                         )
 
+                except PermissionDenied:
+                    raise
                 except Exception as e:
-                    logger.error("traceback : ", traceback.format_exc())
+                    logger.error(
+                        "conditional_row_traceback", traceback=traceback.format_exc()
+                    )
                     logger.error(f"Error processing row: {str(e)}")
                     failed_cells += 1
                     existing_cell = existing_cells_map.get(str(row.id))
-                    if existing_cell:
-                        existing_cell.value = None
-                        existing_cell.value_infos = json.dumps({"reason": str(e)})
-                        existing_cell.status = CellStatus.ERROR.value
-                        existing_cell.save()
+                    if existing_cell is None:
+                        existing_cell = Cell(
+                            dataset_id=dataset_id, column_id=new_column_id, row=row
+                        )
+                    existing_cell.value = None
+                    existing_cell.value_infos = json.dumps({"reason": str(e)})
+                    existing_cell.status = CellStatus.ERROR.value
+                    existing_cell.save()
     else:
         # Create new cells (original behavior)
         new_cells = []
@@ -2980,12 +3457,22 @@ def conditional_column_async(
 
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             future_to_row = {
-                executor.submit(wrapped_process_row, row, config, organization_id): row
+                executor.submit(
+                    wrapped_process_row,
+                    row,
+                    config,
+                    organization_id,
+                    authority=authority,
+                ): row
                 for row in rows
             }
 
             for future in as_completed(future_to_row):
                 row = future_to_row[future]
+                authorized_dataset(
+                    authority, dataset_id, destination_id=new_column_id, row_id=row.pk
+                )
+                validate_conditional_config(config, authority)
                 try:
                     value, value_infos = future.result()
                     if value_infos and "reason" in value_infos:
@@ -3012,8 +3499,12 @@ def conditional_column_async(
                             )
                         )
                         total_processed += 1
+                except PermissionDenied:
+                    raise
                 except Exception as e:
-                    logger.error("traceback : ", traceback.format_exc())
+                    logger.error(
+                        "conditional_row_traceback", traceback=traceback.format_exc()
+                    )
                     logger.error(f"Error processing row: {str(e)}")
                     failed_cells += 1
                     # Create a failed cell with error information
@@ -3029,13 +3520,18 @@ def conditional_column_async(
                     )
 
         if new_cells:
+            authorized_dataset(authority, dataset_id, destination_id=new_column_id)
+            validate_conditional_config(config, authority)
+            for cell in new_cells:
+                authorized_dataset(authority, dataset_id, row_id=cell.row_id)
             Cell.objects.bulk_create(new_cells)
 
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
+    authorized_dataset(authority, dataset_id, destination_id=new_column_id)
     # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
+@_track_authorized_generation_inputs
 def add_vector_db_column_async(
     config,
     dataset_id,
@@ -3045,13 +3541,26 @@ def add_vector_db_column_async(
     new_column_id,
     workspace_id=None,
     is_rerun=False,
+    row_ids=None,
+    *,
+    authority=None,
 ):
+    # Missing authority in old serialized jobs is an intentional typed refusal.
+    live_authority(authority, org_id, workspace_id)
+    authorized_dataset(authority, dataset_id, destination_id=new_column_id)
     # Ensure config is properly deserialized if needed
     if isinstance(config, str):
         config = json.loads(config)
+    validate_vector_config(config, authority)
+    if str(config.get("column_id")) != str(input_column_id):
+        raise PermissionDenied(SCOPE_DENIED)
+    authorized_dataset(authority, dataset_id, source_id=input_column_id)
     view = AddVectorDBColumnView()
-    input_column = Column.objects.get(id=input_column_id)
+    input_column = Column.objects.get(id=input_column_id, dataset_id=dataset_id)
     rows = Row.objects.filter(dataset_id=dataset_id, deleted=False)
+    if row_ids is not None:
+        selected = set(map(str, row_ids))
+        rows = [row for row in rows if str(row.id) in selected]
     total_processed = 0
     failed_cells = 0
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
@@ -3067,13 +3576,29 @@ def add_vector_db_column_async(
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             future_to_row = {
                 executor.submit(
-                    wrapped_process_row, row, input_column, config, org_id, workspace_id
+                    wrapped_process_row,
+                    row,
+                    input_column,
+                    config,
+                    org_id,
+                    workspace_id,
+                    authority=authority,
                 ): row
                 for row in rows
             }
 
             for future in as_completed(future_to_row):
                 row = future_to_row[future]
+                authorized_dataset(
+                    authority,
+                    dataset_id,
+                    destination_id=new_column_id,
+                    source_id=input_column_id,
+                    row_id=row.pk,
+                )
+                validate_vector_config(config, authority)
+                if isinstance(future.exception(), PermissionDenied):
+                    raise future.exception()
                 try:
                     value, value_infos = future.result()
                     existing_cell = existing_cells_map.get(str(row.id))
@@ -3094,16 +3619,28 @@ def add_vector_db_column_async(
                             total_processed += 1
                         existing_cell.save()
                     else:
-                        # Create new cell if it doesn't exist during rerun
+                        # Create new cell if it doesn't exist during rerun,
+                        # with the same status rule as an existing cell: a
+                        # row that failed (a refused embedding model, say)
+                        # is an ERROR cell carrying its reason.
+                        failed = bool(value_infos and "reason" in value_infos)
                         new_cell = Cell(
                             dataset_id=dataset_id,
                             column_id=new_column_id,
                             row=row,
-                            value=None,
+                            value=None if failed else value,
                             value_infos=json.dumps(value_infos if value_infos else {}),
-                            status=CellStatus.PASS.value,
+                            status=(
+                                CellStatus.ERROR.value
+                                if failed
+                                else CellStatus.PASS.value
+                            ),
                         )
                         new_cell.save()
+                        if failed:
+                            failed_cells += 1
+                        else:
+                            total_processed += 1
                         logger.error(
                             f"Created new cell for row {row.id} in column {new_column_id} during rerun"
                         )
@@ -3127,13 +3664,29 @@ def add_vector_db_column_async(
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             future_to_row = {
                 executor.submit(
-                    wrapped_process_row, row, input_column, config, org_id, workspace_id
+                    wrapped_process_row,
+                    row,
+                    input_column,
+                    config,
+                    org_id,
+                    workspace_id,
+                    authority=authority,
                 ): row
                 for row in rows
             }
 
             for future in as_completed(future_to_row):
                 row = future_to_row[future]
+                authorized_dataset(
+                    authority,
+                    dataset_id,
+                    destination_id=new_column_id,
+                    source_id=input_column_id,
+                    row_id=row.pk,
+                )
+                validate_vector_config(config, authority)
+                if isinstance(future.exception(), PermissionDenied):
+                    raise future.exception()
                 try:
                     value, value_infos = future.result()
                     if value_infos and "reason" in value_infos:
@@ -3178,21 +3731,30 @@ def add_vector_db_column_async(
                     )
 
         if new_cells:
+            authorized_dataset(authority, dataset_id, destination_id=new_column_id)
+            validate_vector_config(config, authority)
+            for cell in new_cells:
+                authorized_dataset(authority, dataset_id, row_id=cell.row_id)
             Cell.objects.bulk_create(new_cells)
 
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
+    authorized_dataset(authority, dataset_id, destination_id=new_column_id)
     # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
+@track_generation_inputs
 def add_api_column_async(
-    config, dataset_id, concurrency, new_column_id, is_rerun=False
+    config, dataset_id, concurrency, new_column_id, is_rerun=False, row_ids=None
 ):
     view = AddApiColumnView()
+    dataset = Dataset.no_workspace_objects.get(id=dataset_id)
     # Process all rows ordered by row order
     rows = list(
         Row.objects.filter(dataset_id=dataset_id, deleted=False).order_by("order")
     )
+    if row_ids is not None:
+        selected = set(map(str, row_ids))
+        rows = [row for row in rows if str(row.id) in selected]
     total_processed = 0
     failed_cells = 0
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
@@ -3223,9 +3785,11 @@ def add_api_column_async(
                         value=None,
                     )
                 )
-                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = (
-                    row
-                )
+                future_to_row[
+                    executor.submit(
+                        wrapped_make_api_call, cell, config, dataset=dataset
+                    )
+                ] = row
 
             # Flush buffers to DB in batches as results complete
             cells_to_update = []
@@ -3249,13 +3813,19 @@ def add_api_column_async(
                 try:
                     value, value_infos = future.result()
                     existing_cell = existing_cells_map.get(str(row.id))
+                    result_status = (
+                        CellStatus.ERROR.value
+                        if value_infos
+                        and value_infos.get("response_status", 200) >= 400
+                        else CellStatus.PASS.value
+                    )
 
                     if existing_cell:
                         existing_cell.value = value
                         existing_cell.value_infos = (
                             json.dumps(value_infos) if value_infos else None
                         )
-                        existing_cell.status = CellStatus.PASS.value
+                        existing_cell.status = result_status
                         cells_to_update.append(existing_cell)
                         total_processed += 1
                     else:
@@ -3268,7 +3838,7 @@ def add_api_column_async(
                                 value_infos=json.dumps(
                                     value_infos if value_infos else {}
                                 ),
-                                status=CellStatus.PASS.value,
+                                status=result_status,
                             )
                         )
                         total_processed += 1
@@ -3314,9 +3884,11 @@ def add_api_column_async(
                 cell = Cell(
                     dataset_id=dataset_id, column_id=new_column_id, row=row, value=None
                 )
-                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = (
-                    row
-                )
+                future_to_row[
+                    executor.submit(
+                        wrapped_make_api_call, cell, config, dataset=dataset
+                    )
+                ] = row
 
             # Flush buffer to DB in batches as results complete
             cells_to_create = []
@@ -3334,6 +3906,12 @@ def add_api_column_async(
                             value_infos=json.dumps(value_infos)
                             if value_infos
                             else None,
+                            status=(
+                                CellStatus.ERROR.value
+                                if value_infos
+                                and value_infos.get("response_status", 200) >= 400
+                                else CellStatus.PASS.value
+                            ),
                         )
                     )
                     total_processed += 1
@@ -3360,8 +3938,6 @@ def add_api_column_async(
             if cells_to_create:
                 Cell.objects.bulk_create(cells_to_create, batch_size=concurrency)
 
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
-
 
 class PreviewDatasetOperationView(APIView):
     _gm = GeneralMethods()
@@ -3387,7 +3963,23 @@ class PreviewDatasetOperationView(APIView):
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
-            # Get sample rows
+            # Capability contract: no code preview (execute_code, or a conditional with
+            # a code branch) reads a row or reaches the executor.
+            if operation_uses_code(
+                operation_type, request.validated_data.get("config")
+            ):
+                return self._gm.bad_request(code_execution_disabled_message())
+
+            authority = None
+            if operation_type in {"conditional", "vector_db"}:
+                authority = request_authority(request, dataset.id)
+                if operation_type == "conditional":
+                    validate_conditional_config(
+                        request.validated_data.get("config"), authority
+                    )
+                else:
+                    validate_vector_config(request.validated_data, authority)
+            # Get sample rows only after all credential/source references pass.
             sample_rows = self._get_sample_rows(dataset)
             organization_id = _request_organization_id(request)
 
@@ -3408,7 +4000,11 @@ class PreviewDatasetOperationView(APIView):
 
             # Execute preview
             preview_results = handler(
-                request.validated_data, sample_rows, organization_id, dataset
+                request.validated_data,
+                sample_rows,
+                organization_id,
+                dataset,
+                **({"authority": authority} if authority is not None else {}),
             )
 
             return self._gm.success_response(
@@ -3419,6 +4015,8 @@ class PreviewDatasetOperationView(APIView):
                 }
             )
 
+        except PermissionDenied:
+            return self._gm.bad_request(SCOPE_DENIED)
         except Exception as e:
             traceback.print_exc()
             logger.exception(f"Error in preview the datasets operations: {str(e)}")
@@ -3512,7 +4110,9 @@ class PreviewDatasetOperationView(APIView):
             if "column_id" not in config:
                 # Create a temporary cell with the row so variable substitution works
                 cell = Cell(row=row, value=None)
-                value = api_caller._make_api_call(cell=cell, config=api_config)
+                value = api_caller._make_api_call(
+                    cell=cell, config=api_config, dataset=dataset
+                )
                 results.append({"row_id": str(row.id), "output": json.dumps(value)})
             else:
                 cell = Cell.objects.get(
@@ -3521,7 +4121,7 @@ class PreviewDatasetOperationView(APIView):
                     column__dataset=dataset,
                     deleted=False,
                 )
-                value = api_caller._make_api_call(cell, api_config)
+                value = api_caller._make_api_call(cell, api_config, dataset=dataset)
                 results.append(
                     {
                         "row_id": str(row.id),
@@ -3549,14 +4149,18 @@ class PreviewDatasetOperationView(APIView):
 
         return results
 
-    def _preview_conditional(self, config, sample_rows, organization_id, dataset):
-        """Preview conditional operation"""
+    def _preview_conditional(
+        self, config, sample_rows, organization_id, dataset, *, authority=None
+    ):
+        """Preview conditional operation under explicit selected authority."""
+        authorized_dataset(authority, dataset.pk)
+        validate_conditional_config(config.get("config"), authority)
         conditional = ConditionalColumnView()
         results = []
 
         for row in sample_rows:
             value, value_infos = conditional._process_row(
-                row, config["config"], organization_id
+                row, config["config"], organization_id, authority=authority
             )
             results.append(
                 {
@@ -3568,8 +4172,12 @@ class PreviewDatasetOperationView(APIView):
 
         return results
 
-    def _preview_vector_db(self, config, sample_rows, organization_id, dataset):
-        """Preview vector database operation"""
+    def _preview_vector_db(
+        self, config, sample_rows, organization_id, dataset, *, authority=None
+    ):
+        """Preview vector database operation with no ambient/owner grant."""
+        authorized_dataset(authority, dataset.pk)
+        validate_vector_config(config, authority)
         vector_db = AddVectorDBColumnView()
         results = []
 
@@ -3578,7 +4186,12 @@ class PreviewDatasetOperationView(APIView):
                 id=config["column_id"], dataset=dataset, deleted=False
             )
             value, value_infos = vector_db._process_row(
-                row, column, config, organization_id
+                row,
+                column,
+                config,
+                organization_id,
+                authority["workspace_id"],
+                authority=authority,
             )
             results.append(
                 {

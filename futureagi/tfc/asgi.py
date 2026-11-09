@@ -36,14 +36,17 @@ from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
 # Import necessary modules AFTER setting up Django
 from django.core.asgi import get_asgi_application  # noqa: E402
 
+from mcp_server.oauth_body_limit import OAuthBodyLimit  # noqa: E402
+from omega_hub.body_limit import HubBodyLimit  # noqa: E402
 from sockets.routing import websocket_urlpatterns  # noqa: E402
 from tfc.asgi_startup import warm_http_urlconf  # noqa: E402
 from tfc.middleware.jwt_auth import JWTAuthMiddleware  # noqa: E402
 from tfc.temporal.embedded import get_embedded_worker  # noqa: E402
 from tfc.utils.api_errors import build_error_envelope  # noqa: E402
 
-# Django ASGI app for standard HTTP requests
-_django_app = get_asgi_application()
+# Django ASGI app for standard HTTP requests. HubBodyLimit answers 413 to an oversized Hub request
+# from its headers, before Django spools the body (omega_hub/body_limit.py); other paths pass through.
+_django_app = HubBodyLimit(get_asgi_application())
 # Granian constructs the middleware stack while importing this module, but
 # Django leaves ROOT_URLCONF lazy until the first HTTP request. Materialize the
 # complete route graph now so a newly spawned worker cannot charge broad view
@@ -94,6 +97,14 @@ _OAUTH_PATHS = {
     "/revoke",
 }
 
+# The gateway MCP authorization server (agentcc.mcp_oauth, issuer
+# /agentcc/mcp-oauth) publishes its metadata path-inserted under /.well-known/;
+# those two documents are Django's, not the platform MCP server's.
+_DJANGO_WELL_KNOWN_PREFIXES = (
+    "/.well-known/oauth-authorization-server/agentcc/",
+    "/.well-known/openid-configuration/agentcc/",
+)
+
 _oauth_app = None
 
 
@@ -103,12 +114,15 @@ def _get_oauth_app():
         try:
             from mcp_server.mcp_app import get_mcp_oauth_app
 
-            _oauth_app = get_mcp_oauth_app()
+            oauth_app = get_mcp_oauth_app()
         except ImportError:
             import logging
 
             logging.getLogger(__name__).warning("MCP OAuth routes not available")
-            _oauth_app = _django_app  # Fallback to Django
+            oauth_app = _django_app  # Fallback to Django
+        # GHSA-82w8-qh3p-5jfq: these root paths are unauthenticated, so a body over
+        # MCP_OAUTH_MAX_BODY_BYTES gets 413 before Starlette parses it.
+        _oauth_app = OAuthBodyLimit(oauth_app)
     return _oauth_app
 
 
@@ -160,10 +174,12 @@ async def http_router(scope, receive, send):
     if normalized_path == "/health" and await _send_unhealthy_embedded_worker(send):
         return
 
+    if path.startswith(_DJANGO_WELL_KNOWN_PREFIXES):
+        await _django_app(scope, receive, send)
     # OAuth routes -> MCP OAuth Starlette app
     # Note: MCP clients use RFC 8414 path-aware discovery, e.g.
     # /.well-known/oauth-authorization-server/mcp
-    if (
+    elif (
         normalized_path in _OAUTH_PATHS
         or path.startswith("/.well-known/oauth-authorization-server")
         or path.startswith("/.well-known/oauth-protected-resource")

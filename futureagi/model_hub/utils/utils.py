@@ -23,6 +23,12 @@ from model_hub.models.choices import DataTypeChoices
 from model_hub.models.conversations import Message, Node
 from model_hub.models.metric import Metric
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
+from model_hub.utils.model_endpoints import (
+    calls_endpoint_url,
+    endpoint_call_error_message,
+    guarded_completion,
+    normalize_custom_model_config,
+)
 from tfc.settings.settings import (
     HUGGINGFACE_API_TOKEN,
     HUGGINGFACE_API_TOKEN_1,
@@ -30,6 +36,11 @@ from tfc.settings.settings import (
 )
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
+from tfc.utils.ssrf_guard import (
+    SsrfBlocked,
+    endpoint_status_message,
+    guarded_post,
+)
 from tfc.utils.types import ClickhouseDatatypes
 
 logger = structlog.get_logger(__name__)
@@ -359,6 +370,9 @@ def validate_model_working(model_name, api_key, provider):
         {"role": "system", "content": "Be a helpful Assistant."},
         {"role": "user", "content": "What is the weather like today?"},
     ]
+    # Set when litellm is given a tenant base URL: its errors then reach the
+    # tenant as generic categorised text (endpoint_call_error_message).
+    endpoint_call = False
     try:
         payload = {
             "messages": msg,
@@ -378,20 +392,23 @@ def validate_model_working(model_name, api_key, provider):
                     aws_region_name=api_key["aws_region_name"],
                 )
             elif provider == "azure":
+                # The tenant's endpoint, called through a guarded client
+                # (checked, pinned connection; no redirects).
                 normalized = normalize_azure_custom_model_config(api_key)
+                endpoint_call = True
                 if normalized.get("azure_endpoint_type") == "foundry":
                     if isinstance(payload.get("model"), str) and not payload[
                         "model"
                     ].startswith("azure_ai/"):
                         payload["model"] = f"azure_ai/{payload['model']}"
-                    response = litellm.completion(
+                    response = guarded_completion(
                         **payload,
                         custom_llm_provider="azure_ai",
                         api_base=normalized["api_base"],
                         api_key=normalized["api_key"],
                     )
                 else:
-                    response = litellm.completion(
+                    response = guarded_completion(
                         **payload,
                         custom_llm_provider=provider,
                         api_base=normalized["api_base"],
@@ -411,50 +428,84 @@ def validate_model_working(model_name, api_key, provider):
                     completion_kwargs["vertex_location"] = vertex_location
                 response = litellm.completion(**completion_kwargs)
             elif provider == "openai":
+                # Only the arguments an OpenAI-compatible model needs: the
+                # rest of a config (extra_headers, ...) would reach litellm.
                 payload["model"] = "openai/" + payload["model"]
-                payload.update(api_key)
-                response = litellm.completion(**payload)
+                payload.update(
+                    {
+                        name: api_key[name]
+                        for name in ("api_key", "api_base", "organization")
+                        if api_key.get(name)
+                    }
+                )
+                endpoint_call = calls_endpoint_url(payload)
+                response = guarded_completion(**payload)
             else:
                 try:
-                    url = api_key["config_json"].pop("api_base")
-                    if not url:
-                        raise Exception("Please provide the API Base.")
-                    headers = api_key["config_json"].pop("headers")
-                    response = requests.post(
-                        url,
-                        headers=headers,
+                    # One endpoint, the one that is saved, POSTed through the
+                    # address-checked guard (no redirects, capped body,
+                    # generic errors).
+                    config = normalize_custom_model_config(api_key["config_json"])
+                    response = guarded_post(
+                        config["api_base"],
                         json=payload,
-                        timeout=30,  # 30 seconds timeout
+                        headers=config["headers"],
+                        timeout=30,
                     )
                     # The model's own calls POST to this URL as given too, so
                     # a bare base such as .../v1 is wrong, not just this check.
                     # OpenAI-compatible servers also 404 an unknown model.
-                    # Never repeat response.text: it could be an internal page.
+                    # Never repeat the URL, the server's reason text or the
+                    # body: they could describe an internal service.
                     if response.status_code in (404, 405):
-                        reason = (
-                            response.reason or HTTPStatus(response.status_code).phrase
-                        )
                         raise Exception(
-                            f"{url} answered {response.status_code} "
-                            f"{reason}. API Base URL must be the full "
-                            "chat-completions URL, such as "
-                            "https://your-host/v1/chat/completions, and the "
-                            f"server must serve model '{model_name}'."
+                            f"The endpoint answered {response.status_code} "
+                            f"{HTTPStatus(response.status_code).phrase}. API "
+                            "Base URL must be the full chat-completions URL, "
+                            "such as https://your-host/v1/chat/completions, "
+                            f"and the server must serve model '{model_name}'."
                         )
-                    response.raise_for_status()
+                    if response.status_code >= 400:
+                        raise Exception(endpoint_status_message(response.status_code))
                     return response.text
                 except Exception as e:
+                    logger.warning(
+                        "custom model validation failed",
+                        provider=provider,
+                        error_type=type(e).__name__,
+                        category=getattr(e, "category", None),
+                    )
                     return Exception(e)
             return response.choices[0].message.content
 
+    except SsrfBlocked as e:
+        # A base URL the address policy refuses: generic text, no host.
+        logger.warning(
+            "model validation refused an endpoint",
+            provider=provider,
+            category=getattr(e, "category", None),
+        )
+        return Exception(str(e))
     except Exception as e:
+        if endpoint_call:
+            # Provider text can carry the endpoint's body (a redirect target's
+            # answer included) or its URL: categorised generic text only.
+            logger.warning(
+                "model validation failed",
+                provider=provider,
+                error_type=type(e).__name__,
+            )
+            return Exception(endpoint_call_error_message(e))
         # Expected user-input/connectivity validation failure (e.g. a bad
         # Vertex/Bedrock credential or an invalid private key). This function
         # only validates user-supplied model credentials and always returns the
         # error to the caller as an Exception (-> clean 400), so log at WARNING
         # to keep it out of Sentry (event_level=ERROR) while preserving a
-        # breadcrumb. See CORE-BACKEND-119X.
-        logger.warning(f"An error occurred: {str(e)}")
+        # breadcrumb. See CORE-BACKEND-119X. Value-free: provider errors can
+        # carry the base URL or an upstream body.
+        logger.warning(
+            "model validation failed", provider=provider, error_type=type(e).__name__
+        )
         status = False
         try:
             error_message = str(e).split("litellm.")[1].split("Traceback")[0]
@@ -484,17 +535,27 @@ async def send_message_to_channel_async(organization_id, message):
         # raise e
 
 
+def _uuid_group(uuid, organization_id):
+    """The group of stream ``uuid`` in ``organization_id``; None without an
+    organization: a stream message is only ever delivered inside its
+    organization."""
+    if organization_id is None:
+        logger.warning("websocket_uuid_message_without_organization", uuid=str(uuid))
+        return None
+    return f"uuid_org_{organization_id}_{uuid}"
+
+
 async def send_message_to_uuid_async(uuid, message, organization_id=None):
     if not isinstance(message, dict):
         logger.exception(f"Message is not a dictionary: {message}")
         return
-    channel_name = f"uuid_{uuid}"
+    channel_name = _uuid_group(uuid, organization_id)
+    if channel_name is None:
+        return
     channel_layer = get_channel_layer()
     try:
         event = {"type": "send_data", "data": message}
         await channel_layer.group_send(channel_name, event)
-        if organization_id is not None:
-            await channel_layer.group_send(f"uuid_org_{organization_id}_{uuid}", event)
     except Exception as e:
         logger.exception(
             f"websocket: Error sending message to channel {channel_name}: {str(e)}"
@@ -627,16 +688,14 @@ def send_message_to_uuid(uuid, message, organization_id=None):
             if not isinstance(message, dict):
                 logger.exception(f"Message is not a dictionary: {message}")
                 return
-            channel_name = f"uuid_{uuid}"
+            channel_name = _uuid_group(uuid, organization_id)
+            if channel_name is None:
+                return
             # Get a fresh channel layer in this loop's context
             channel_layer = get_channel_layer()
             try:
                 event = {"type": "send_data", "data": message}
                 await channel_layer.group_send(channel_name, event)
-                if organization_id is not None:
-                    await channel_layer.group_send(
-                        f"uuid_org_{organization_id}_{uuid}", event
-                    )
             except Exception as e:
                 logger.exception(
                     f"websocket: Error sending message to channel {channel_name}: {str(e)}"
@@ -699,18 +758,45 @@ def broadcast_to_uuid(uuid, data, organization_id=None):
 
 # Function to load huggingface dataset with token rotation
 def load_hf_dataset_with_retries(
-    dataset_name, config_name, split, organization_id, max_reties=3, streaming=True
+    dataset_name,
+    config_name,
+    split,
+    organization_id,
+    max_reties=3,
+    streaming=True,
+    revision=None,
 ):
     auth_token = ApiKey.objects.filter(
         organization_id=organization_id, provider="huggingface"
     ).first()
+    # The org's own token when it has one: one this deployment cannot decrypt
+    # raises (KeyUnreadable) rather than being swapped for the platform token.
     hf_token = (
-        auth_token._actual_key
-        if auth_token and auth_token._actual_key
-        else HUGGINGFACE_API_TOKEN
-    )
+        auth_token.actual_key if auth_token and auth_token.key else None
+    ) or HUGGINGFACE_API_TOKEN
     for attempt in range(max_reties):
         try:
+            if revision:
+                from tfc.utils.lazy_extras import load_extra
+
+                snapshot = load_extra("datasets", "ml").load_dataset(
+                    dataset_name,
+                    name=config_name,
+                    split=split,
+                    streaming=True,
+                    token=hf_token,
+                    revision=revision,
+                )
+                if streaming:
+                    return snapshot
+                if snapshot.features is None:
+                    raise ValueError("The selected revision has no declared schema")
+                return {
+                    "features": [
+                        {"name": name, "type": feature}
+                        for name, feature in snapshot.features.to_dict().items()
+                    ]
+                }
             if not streaming:
                 headers = {"Authorization": f"Bearer {hf_token}"}
                 API_URL = f"https://datasets-server.huggingface.co/first-rows?dataset={dataset_name}&config={config_name}&split={split}"

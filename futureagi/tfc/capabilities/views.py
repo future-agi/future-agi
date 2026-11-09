@@ -27,6 +27,9 @@ class CapabilitiesView(APIView):
     def get(self, request):
         org = getattr(request, "organization", None)
         org_id = str(org.id) if org else None
+        workspace = getattr(request, "workspace", None)
+        workspace_id = str(workspace.id) if workspace else None
+        rollout = self._rollout_admissions(org_id, workspace_id)
 
         flavor = service.get_deployment_flavor()
         location = service.get_deployment_location()
@@ -35,7 +38,19 @@ class CapabilitiesView(APIView):
 
         features = {}
         for feature_id, feature_def in FEATURE_REGISTRY.items():
-            decision = service.check(feature_id, org_id=org_id)
+            if feature_def.rollout_product is not None:
+                decision = service.check_rollout(
+                    feature_def,
+                    org_id=org_id,
+                    workspace_id=workspace_id,
+                    admission=(
+                        rollout.get(feature_def.rollout_product)
+                        if rollout is not None
+                        else service.ROLLOUT_UNREADABLE
+                    ),
+                )
+            else:
+                decision = service.check(feature_id, org_id=org_id)
             features[feature_id] = {
                 "display_name": feature_def.display_name,
                 "allowed": decision.allowed,
@@ -69,6 +84,18 @@ class CapabilitiesView(APIView):
             data.pop("license", None)
             data.pop("instance_id", None)
         return Response(data)
+
+    def _rollout_admissions(self, org_id, workspace_id):
+        """One read of the rollout store for all five products; None when it cannot be read, so
+        each product then answers RESOLVER_UNAVAILABLE (fail closed)."""
+        from omega_rollout import service as rollout
+        from omega_rollout.store import RolloutUnavailable
+
+        try:
+            return rollout.admissions(org_id, workspace_id)
+        except RolloutUnavailable:
+            logger.warning("capabilities_view_rollout_unavailable")
+            return None
 
     def _get_license_state(self) -> LicenseState:
         snapshot = service.get_license_snapshot()

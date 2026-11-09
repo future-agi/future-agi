@@ -20,6 +20,7 @@ import structlog
 from tfc.deployment_telemetry.config import (
     get_telemetry_timeout_seconds,
     get_telemetry_url,
+    telemetry_is_disabled,
 )
 from tfc.deployment_telemetry.schema import MAX_PAYLOAD_BYTES
 
@@ -32,6 +33,13 @@ SIGNATURE_HEADER = "X-FAGI-Telemetry-Signature"
 
 _MAX_ATTEMPTS = 3
 _RETRY_DELAYS_SECONDS = (0.2, 0.5)
+# A 4xx means the receiver rejected this request; sending it again gets the
+# same answer. Only a timeout (408) or a rate limit (429) is worth retrying.
+_RETRYABLE_CLIENT_ERRORS = frozenset({408, 429})
+
+
+def _is_final_rejection(status_code: int) -> bool:
+    return 400 <= status_code < 500 and status_code not in _RETRYABLE_CLIENT_ERRORS
 
 
 def compute_signature(secret: str, body: bytes) -> str:
@@ -72,8 +80,14 @@ class TelemetryClient:
 
         Returns ``TelemetryResponse(ok=...)``; ``data`` is the parsed JSON
         response body on success (used to read the issued instance secret
-        off a registration response).
+        off a registration response). A 4xx other than 408/429 is one
+        attempt; a 5xx, 408, 429 or unreachable receiver gets up to three.
         """
+        # Final egress boundary for registration, buffered heartbeats and events.
+        # Check at send time, not construction: clients can outlive an opt-out.
+        if telemetry_is_disabled():
+            return TelemetryResponse(ok=False)
+
         body = _encode(payload)
         if len(body) > MAX_PAYLOAD_BYTES:
             logger.warning("deployment_telemetry_payload_too_large", endpoint=path)
@@ -85,6 +99,9 @@ class TelemetryClient:
 
         url = f"{self._base_url}{path}"
         for attempt in range(_MAX_ATTEMPTS):
+            # An opt-out during a failed request/backoff stops subsequent retries.
+            if telemetry_is_disabled():
+                return TelemetryResponse(ok=False)
             try:
                 response = requests.post(
                     url, data=body, headers=headers, timeout=self._timeout
@@ -106,6 +123,8 @@ class TelemetryClient:
                     status_code=response.status_code,
                     attempt=attempt + 1,
                 )
+                if _is_final_rejection(response.status_code):
+                    return TelemetryResponse(ok=False, status_code=response.status_code)
             except requests.RequestException:
                 logger.warning(
                     "deployment_telemetry_request_unreachable",

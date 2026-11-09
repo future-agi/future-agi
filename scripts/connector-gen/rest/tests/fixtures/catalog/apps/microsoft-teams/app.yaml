@@ -1,0 +1,20 @@
+# Fixture for the REST generator's tests, not catalog data (see ../gmail/app.yaml).
+schema: "connector-manifest/v1#app"
+id: microsoft-teams
+version: 1.0.0
+name: Microsoft Teams
+description: "Read teams, channels and chats, and post messages, over Microsoft Graph."
+vendor: { name: Microsoft, domains: [microsoft.com] }
+eeCategory: communication
+group: microsoft
+categories: [communication, chat]
+tags: [chat, messaging]
+docsUrl: https://learn.microsoft.com/en-us/graph/teams-concept-overview
+archetype: team-messaging
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://learn.microsoft.com/en-us/graph/teams-concept-overview
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

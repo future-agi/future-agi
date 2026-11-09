@@ -99,8 +99,8 @@ func TestNew_DefaultConcurrency(t *testing.T) {
 	}
 	defer p.Close()
 
-	if cap(p.semaphore) != 100 {
-		t.Errorf("semaphore capacity = %d, want 100", cap(p.semaphore))
+	if p.slots.Cap() != 1024 {
+		t.Errorf("semaphore capacity = %d, want 1024", p.slots.Cap())
 	}
 }
 
@@ -117,8 +117,8 @@ func TestNew_CustomConcurrency(t *testing.T) {
 	}
 	defer p.Close()
 
-	if cap(p.semaphore) != 10 {
-		t.Errorf("semaphore capacity = %d, want 10", cap(p.semaphore))
+	if p.slots.Cap() != 10 {
+		t.Errorf("semaphore capacity = %d, want 10", p.slots.Cap())
 	}
 }
 
@@ -274,9 +274,9 @@ func TestIntegration_NonStreamingRoundtrip(t *testing.T) {
 				{Type: "text", Text: "Hello from mock Bedrock!"},
 			},
 			StopReason: "end_turn",
-			Usage: bedrockUsage{
-				InputTokens:  15,
-				OutputTokens: 7,
+			Usage: &bedrockUsage{
+				InputTokens:  usageCount(15),
+				OutputTokens: usageCount(7),
 			},
 		}
 
@@ -358,7 +358,7 @@ func TestIntegration_SystemMessageInRequest(t *testing.T) {
 				{Type: "text", Text: "Acknowledged."},
 			},
 			StopReason: "end_turn",
-			Usage:      bedrockUsage{InputTokens: 20, OutputTokens: 3},
+			Usage:      &bedrockUsage{InputTokens: usageCount(20), OutputTokens: usageCount(3)},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -413,7 +413,7 @@ func TestIntegration_ToolUseRoundtrip(t *testing.T) {
 				},
 			},
 			StopReason: "tool_use",
-			Usage:      bedrockUsage{InputTokens: 30, OutputTokens: 20},
+			Usage:      &bedrockUsage{InputTokens: usageCount(30), OutputTokens: usageCount(20)},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -719,7 +719,7 @@ func TestIntegration_RequestBodyFormat(t *testing.T) {
 				{Type: "text", Text: "OK"},
 			},
 			StopReason: "end_turn",
-			Usage:      bedrockUsage{InputTokens: 5, OutputTokens: 1},
+			Usage:      &bedrockUsage{InputTokens: usageCount(5), OutputTokens: usageCount(1)},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)

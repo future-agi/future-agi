@@ -2,6 +2,9 @@
 
 from rest_framework import serializers
 
+from model_hub.serializers.pagination import PageSizeField
+from tfc.utils.pagination import MAX_PAGE_SIZE
+
 
 class DatasetEvaluationsQuerySerializer(serializers.Serializer):
     eval_type = serializers.CharField(
@@ -22,10 +25,8 @@ class EvalGroupQuerySerializer(serializers.Serializer):
 
 
 class EvalGroupListQuerySerializer(EvalGroupQuerySerializer):
-    # Documents the pre-existing query semantics only: the list endpoint has
-    # never capped page_size, so the contract must not start rejecting values.
     page_number = serializers.IntegerField(min_value=0, default=0)
-    page_size = serializers.IntegerField(min_value=1, default=10)
+    page_size = PageSizeField(min_value=1, default=10, max_value=MAX_PAGE_SIZE)
 
 
 class OptimizationListQuerySerializer(serializers.Serializer):
@@ -33,6 +34,5 @@ class OptimizationListQuerySerializer(serializers.Serializer):
     column_id = serializers.UUIDField(required=False)
     develop_id = serializers.UUIDField(required=False)
     page = serializers.IntegerField(min_value=1, required=False)
-    # Documents the pre-existing query semantics only: the paginator already
-    # silently caps at 100. Documenting `limit` must not start rejecting 200.
-    limit = serializers.IntegerField(min_value=1, required=False)
+    # Keep the existing paginator behavior through the shared security ceiling.
+    limit = PageSizeField(min_value=1, required=False, max_value=MAX_PAGE_SIZE)

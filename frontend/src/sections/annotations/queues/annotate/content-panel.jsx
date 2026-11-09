@@ -42,6 +42,9 @@ import TraceDisplayPanel, {
   DEFAULT_VIEW_CONFIG,
 } from "src/components/traceDetail/TraceDisplayPanel";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
+import ReviewCandidates from "./ReviewCandidates";
+// W4 C1: the expected answer with Correct (queues with corrections on).
+import CorrectExpectedField from "./CorrectExpectedField";
 import {
   useGetSavedViews,
   useDeleteSavedView,
@@ -84,7 +87,7 @@ function neutralChipSx(theme, height = 22) {
   };
 }
 
-export default function ContentPanel({ item }) {
+export default function ContentPanel({ item, reviewContext = null }) {
   if (!item) return null;
 
   const content = item.source_content;
@@ -152,7 +155,20 @@ export default function ContentPanel({ item }) {
         sx={(theme) => ({ ...neutralChipSx(theme), mb: 2 })}
       />
 
-      {sourceType === "dataset_row" && <DatasetRowContent content={content} />}
+      {sourceType === "dataset_row" && reviewContext ? (
+        <ReviewCandidates
+          context={reviewContext}
+          datasetName={content?.dataset_name}
+        />
+      ) : null}
+      {sourceType === "dataset_row" && reviewContext ? (
+        <Box sx={{ mt: 2 }}>
+          <CorrectExpectedField context={reviewContext} />
+        </Box>
+      ) : null}
+      {sourceType === "dataset_row" && !reviewContext && (
+        <DatasetRowContent content={content} />
+      )}
       {sourceType === "trace" && <TraceContent content={content} />}
       {sourceType === "observation_span" && <SpanContent content={content} />}
       {sourceType === "prototype_run" && <PrototypeContent content={content} />}
@@ -163,6 +179,8 @@ export default function ContentPanel({ item }) {
 
 ContentPanel.propTypes = {
   item: PropTypes.object,
+  // annotate-detail `review_context` (experiment review items, §3.12)
+  reviewContext: PropTypes.object,
 };
 
 // ---------------------------------------------------------------------------

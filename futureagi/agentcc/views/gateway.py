@@ -2,7 +2,7 @@ import datetime
 import json
 import os
 import re
-import uuid
+from functools import partial
 
 import structlog
 from cryptography.exceptions import UnsupportedAlgorithm
@@ -10,13 +10,17 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Avg, Count, Max, Q
+from django.db.models import Avg, Count, Q
 from django.utils import timezone
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.status import HTTP_404_NOT_FOUND, HTTP_502_BAD_GATEWAY
 from rest_framework.viewsets import ViewSet
 
+from agentcc import mcp_features
+from agentcc.gateway_configuration import hosted_gateway_public_url_missing
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.models.request_log import AgentccRequestLog
@@ -24,10 +28,12 @@ from agentcc.org_config_defaults import (
     default_cost_tracking_config,
     normalize_cost_tracking_config,
 )
+from agentcc.permissions import GatewayAdminActionsMixin, is_gateway_admin
 from agentcc.serializers.contracts import (
     AgentccEmptyRequestSerializer,
     AgentccErrorResponseSerializer,
     AgentccListResultResponseSerializer,
+    CapPolicyRevisionConflictSerializer,
     GatewayBatchCancelResponseSerializer,
     GatewayBatchDetailResponseSerializer,
     GatewayBatchRequestSerializer,
@@ -35,6 +41,7 @@ from agentcc.serializers.contracts import (
     GatewayBatchSubmitResponseSerializer,
     GatewayBudgetRemoveRequestSerializer,
     GatewayBudgetSetRequestSerializer,
+    GatewayConfigMutationResponseSerializer,
     GatewayConfigPatchRequestSerializer,
     GatewayConfigResponseSerializer,
     GatewayDetailResponseSerializer,
@@ -55,26 +62,73 @@ from agentcc.serializers.contracts import (
     GatewayProviderUpdateRequestSerializer,
     GatewayToggleGuardrailRequestSerializer,
 )
+from agentcc.serializers.mcp_served import (
+    MCPServedQuerySerializer,
+    MCPServedResponseSerializer,
+)
+from agentcc.serializers.provider_credential import (
+    unsupported_credential_keys,
+    unsupported_credential_keys_message,
+)
+from agentcc.services import mcp_admin, mcp_credentials
+from agentcc.services.cap_revision import (
+    CAP_FIELDS,
+    CAP_LEVEL_REJECTION,
+    CapPolicyRevisionConflict,
+)
 from agentcc.services.config_push import (
     _RULE_TO_REGISTRY,
+    MCPCredentialPlacementRefused,
+    OrgConfigRejected,
     push_all_org_configs,
     push_org_config,
-    validate_org_config,
 )
+from agentcc.services.delegated_availability import (
+    delegated_enabled,
+    unavailable_response,
+)
+from agentcc.services.delegated_calls import for_chat
 from agentcc.services.gateway_client import (
     AGENTCC_GATEWAY_URL,
+    PLAYGROUND_PARAMS,
     GatewayClientError,
     get_gateway_client,
 )
+from agentcc.services.guardrail_credentials import (
+    _encrypt_new_guardrail_credentials,
+    _prepare_guardrails,
+    _reject_unowned_guardrail_policies,
+    log_config_rejected,
+)
+from agentcc.services.guardrail_env_refs import reject_rule_env_references
+from agentcc.services.guardrail_names import unique_check_index
+from agentcc.services.guardrail_policy_checks import (
+    edit_in_checks_list,
+    switch_in_checks_list,
+)
+from agentcc.services.managed_models_default import initial_managed_models
+from agentcc.services.org_config_writer import (
+    GATEWAY_SYNC_FAILED,
+    GATEWAY_SYNC_FAILED_MESSAGE,
+    MERGE,
+    is_gateway_synced,
+    lock_org,
+    write_config_version,
+    write_config_version_with,
+)
+from agentcc.services.playground_outcome import playground_outcome
+from agentcc.services.playground_stream import playground_events
+from agentcc.services.provider_label import MANAGED
+from agentcc.services.provider_validation import ensure_provider_configuration
+from agentcc.services.routing_key_rules import with_rejection_param
 from agentcc.services.url_safety import ensure_provider_base_url_allowed
+from agentcc.views.event_stream import EventStreamResponse
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
-_GATEWAY_SYNC_WARNING = (
-    "Config saved but gateway sync failed. Changes will apply on next gateway restart."
-)
+_GATEWAY_SYNC_WARNING = GATEWAY_SYNC_FAILED_MESSAGE
 
 
 def _prepare_vertex_provider_config(provider_config):
@@ -97,7 +151,9 @@ def _prepare_vertex_provider_config(provider_config):
             )
             or key.get("token_uri") != "https://oauth2.googleapis.com/token"
         ):
-            raise ValueError("The JSON must be a Google service-account key with a project ID.")
+            raise ValueError(
+                "The JSON must be a Google service-account key with a project ID."
+            )
         try:
             private_key = serialization.load_pem_private_key(
                 key["private_key"].encode(), password=None
@@ -126,15 +182,24 @@ def _prepare_vertex_provider_config(provider_config):
     config.pop("api_key", None)
     return config
 
+
 # Public-facing URL shown to users in the dashboard (e.g. https://gateway.futureagi.com).
-# Falls back to AGENTCC_GATEWAY_URL if not set.
+# Only local/self-hosted installations retain the legacy fallback when unset.
 AGENTCC_GATEWAY_PUBLIC_URL = (
-    os.environ.get("AGENTCC_GATEWAY_PUBLIC_URL", "") or AGENTCC_GATEWAY_URL
+    ""
+    if hosted_gateway_public_url_missing()
+    else os.environ.get("AGENTCC_GATEWAY_PUBLIC_URL", "") or AGENTCC_GATEWAY_URL
 )
 
 GATEWAY_BAD_REQUEST_RESPONSES = {
     400: AgentccErrorResponseSerializer,
 }
+# test-playground-stream answers text/event-stream (services/playground_stream.py
+# lists the events); the schema says only that the body is text.
+PLAYGROUND_STREAM_RESPONSE = openapi.Response(
+    "Server-sent events: meta, delta..., done; or one result (a refusal); or error.",
+    schema=openapi.Schema(type=openapi.TYPE_STRING),
+)
 GATEWAY_NOT_FOUND_RESPONSES = {
     404: AgentccErrorResponseSerializer,
 }
@@ -144,6 +209,9 @@ GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES = {
 }
 
 _BUDGET_LEVEL_KEY_ALIASES = {
+    "admissionCapsEnabled": "admission_caps_enabled",
+    "keyIds": "key_ids",
+    "policyRevision": "policy_revision",
     "orgLimit": "org_limit",
     "hardLimit": "hard_limit",
     "perKey": "per_key",
@@ -182,40 +250,57 @@ def _remove_budget_level_config(budgets, level):
     return updated
 
 
-def _guardrail_checks_map(guardrails):
-    """
-    Return the checks{} map when guardrails use the Settings editor's shape.
+# The keys the gateway contract takes on a check of a checks map
+# (agentcc/contracts/gateway_admin.py GuardrailCheck, extra="forbid").
+_CHECK_KEYS = ("enabled", "action", "confidence_threshold", "config")
 
-    The gateway contract has no rules[] next to a non-empty checks{} map (see
-    config_push._transform_guardrails), so edits must go into the map.
-    """
-    checks = guardrails.get("checks")
-    if isinstance(checks, dict) and checks:
-        return checks
+
+def _stored_checks_map(guardrails):
+    """The section's checks map when the section is stored as a non-empty
+    one, else None. The config push forwards such a map to the gateway as
+    stored, so the gateway contract refuses any `rules` beside it: a toggle
+    or an edit of such a section writes the map."""
+    checks = guardrails.get("checks") if isinstance(guardrails, dict) else None
+    return checks if isinstance(checks, dict) and checks else None
+
+
+def _checks_map_key(checks, name):
+    """The key of the map's check that `name` names: the key itself, the
+    catalog name a rule name maps to, a rule name that maps to the key, or a
+    key whose check keeps `name` as its `_originalName`. None when the map
+    has no such check."""
+    if name in checks:
+        return name
+    registry = _RULE_TO_REGISTRY.get(name)
+    if registry in checks:
+        return registry
+    for key, check in checks.items():
+        if _RULE_TO_REGISTRY.get(key) == name or (
+            isinstance(check, dict) and check.get("_originalName") == name
+        ):
+            return key
     return None
 
 
-def _guardrail_check_key(checks, name):
-    """
-    The checks{} key that `name` refers to. A rule name and its registry name
-    (pii-detector / pii-detection) are the same check at the gateway, so an
-    existing entry under either is reused instead of adding a duplicate.
-    """
-    aliases = [name, _RULE_TO_REGISTRY.get(name, name)]
-    aliases += [rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name]
-    return next((alias for alias in aliases if alias in checks), name)
-
-
-def _guardrail_check_fields(guardrail_config):
-    """Map a rules-style guardrail config onto the fields a checks{} entry has."""
-    fields = {
-        key: guardrail_config[key]
-        for key in ("enabled", "action", "confidence_threshold", "config")
-        if key in guardrail_config
-    }
-    if "threshold" in guardrail_config:
-        fields["confidence_threshold"] = guardrail_config["threshold"]
-    return fields
+def _as_checks_map_entry(stored, sent):
+    """A check of a checks map after an edit: the stored check, with every key
+    it is stored with kept, and the contract's keys the edit sent. A rule's
+    `threshold` is the map's `confidence_threshold`, and it wins over a
+    `confidence_threshold` sent beside it: the rules-style edit dialog sends
+    the check as listed, stored threshold included, with its edit as
+    `threshold`. A camelCase `confidenceThreshold` counts only when neither is
+    sent. A rule's other keys (its name, stage or execution mode) are not the
+    contract's and are dropped."""
+    entry = dict(stored) if isinstance(stored, dict) else {}
+    sent = dict(sent)
+    for alias in ("threshold", "confidence_threshold", "confidenceThreshold"):
+        if alias in sent:
+            sent["confidence_threshold"] = sent[alias]
+            break
+    for key in _CHECK_KEYS:
+        if key in sent:
+            entry[key] = sent[key]
+    return entry
 
 
 def _build_virtual_gateway(status="healthy", health=None):
@@ -230,10 +315,166 @@ def _build_virtual_gateway(status="healthy", health=None):
         # Don't let the gateway's raw status (e.g. "ok") overwrite ours
         health.pop("status", None)
         data.update(health)
+    if hosted_gateway_public_url_missing():
+        # Internal reachability cannot supply or substitute a public endpoint.
+        data["base_url"] = ""
+        data["status"] = "unconfigured"
     return data
 
 
-class AgentccGatewayViewSet(ViewSet):
+# NG-30: when the org last ran a health check, and what it found. Kept per org:
+# the check is an org member's click, and another org's clicks are not theirs.
+_LAST_HEALTH_CHECK_KEY = "agentcc:gateway_last_health_check:{org_id}"
+# The health check's fleet re-push (every org's config) runs at most once
+# per 5 minutes, and only for an Owner or Admin of the org.
+_REPUSH_THROTTLE_KEY = "agentcc:gateway_config_synced"
+_REPUSH_THROTTLE_SECONDS = 300
+
+
+def _record_health_check(org, outcome):
+    if org is None:
+        return
+    cache.set(
+        _LAST_HEALTH_CHECK_KEY.format(org_id=org.id),
+        {"at": timezone.now().isoformat(), "status": outcome},
+        timeout=None,
+    )
+
+
+def _with_last_health_check(data, org):
+    """Adds last_health_check (ISO 8601, or None when no check is recorded)
+    and last_health_check_status (healthy or unreachable) to `data`."""
+    record = cache.get(_LAST_HEALTH_CHECK_KEY.format(org_id=org.id)) if org else None
+    if not isinstance(record, dict):
+        record = {}
+    data["last_health_check"] = record.get("at")
+    data["last_health_check_status"] = record.get("status")
+    return data
+
+
+# NG-30 (K8) and K2: the blocks of the gateway's GET /-/config the console
+# shows, passed through as the gateway reports them. Anything else /-/config
+# returns stays out; a block the gateway does not report stays absent, so the
+# console says "not reported" rather than showing a default.
+_GATEWAY_CONFIG_BLOCKS = {
+    "server": lambda v: isinstance(v, dict),
+    "logging": lambda v: isinstance(v, dict),
+    "batch": lambda v: isinstance(v, dict),
+    "org_sections_enforced": lambda v: (
+        isinstance(v, list) and all(isinstance(s, str) for s in v)
+    ),
+    # How the node runs an org's guardrail checks (enabled, fail_open, mode);
+    # the console shows it in place of an org's own Fail Open and Mode.
+    "guardrail_pipeline": lambda v: (
+        isinstance(v, dict)
+        and isinstance(v.get("enabled"), bool)
+        and isinstance(v.get("fail_open"), bool)
+        and isinstance(v.get("mode"), str)
+    ),
+    # section -> why this node does not enforce it (ip_acl without a trusted
+    # proxy: "client IP unknown (trusted_proxies not set)").
+    "org_sections_not_enforced": lambda v: (
+        isinstance(v, dict)
+        and all(isinstance(k, str) and isinstance(r, str) for k, r in v.items())
+    ),
+}
+
+
+def _gateway_config_blocks(client):
+    try:
+        reported = client.get_config()
+    except (GatewayClientError, ValueError) as e:
+        logger.warning("gateway_config_read_failed", error=str(e))
+        return {}
+    if not isinstance(reported, dict):
+        return {}
+    return {
+        key: reported[key]
+        for key, valid in _GATEWAY_CONFIG_BLOCKS.items()
+        if key in reported and valid(reported[key])
+    }
+
+
+# NG-31 (contract K6): an org provider's health, from the org's own request
+# logs of the last 24 hours. The gateway's /-/health/providers is the
+# operator's monitor, keyed by the bare provider id, so it is never read for
+# an org provider.
+_HEALTH_WINDOW = datetime.timedelta(hours=24)
+_HEALTH_MIN_REQUESTS = 5
+_UNHEALTHY_ERROR_RATE = 50.0
+_DEGRADED_ERROR_RATE = 10.0
+
+
+def _org_provider_stats(org):
+    """Per provider name: requests, average latency and errors in the org's
+    logs of the last 24 h. Neither counts, in any of the three: a row the
+    operator's managed models served (not the org's provider), and a
+    guardrail block (403 with a triggered check: the org's own policy, which
+    says nothing of the provider). A managed row is left out by its
+    credential type and by its billing mode, so a managed call on a provider
+    id the org also holds a key for (an own OpenRouter key) never counts on
+    the key's row. Excluded rather than byok required: a call recorded
+    before billing modes has none and stays on its row."""
+    rows = (
+        AgentccRequestLog.no_workspace_objects.filter(
+            organization=org,
+            started_at__gte=timezone.now() - _HEALTH_WINDOW,
+        )
+        .exclude(credential_type="managed")
+        .exclude(billing_mode=MANAGED)
+        .exclude(guardrail_triggered=True, status_code=403)
+        .values("provider")
+        .annotate(
+            request_count=Count("id"),
+            avg_latency_ms=Avg("latency_ms"),
+            error_count=Count("id", filter=Q(is_error=True)),
+        )
+    )
+    return {
+        row["provider"]: {
+            "request_count": row["request_count"],
+            "error_count": row["error_count"],
+            "avg_latency_ms": round(row["avg_latency_ms"] or 0, 2),
+        }
+        for row in rows
+    }
+
+
+def _health_from_logs(request_count, error_count):
+    """(status, status_reason) by K6's thresholds."""
+    if request_count < _HEALTH_MIN_REQUESTS:
+        return "healthy", f"fewer than {_HEALTH_MIN_REQUESTS} requests in 24 h"
+    rate = error_count / request_count * 100
+    failed = f"{rate:.1f}% of {request_count} requests failed in 24 h"
+    if rate >= _UNHEALTHY_ERROR_RATE:
+        return "unhealthy", f"{failed} (unhealthy at 50% or more)"
+    if rate >= _DEGRADED_ERROR_RATE:
+        return "degraded", f"{failed} (degraded at 10% or more)"
+    return "healthy", f"{failed} (healthy under 10%)"
+
+
+def _not_pushed_reason(credential):
+    """Why the config push leaves this provider out (NG-58), or None. The
+    push skips a credential it cannot decrypt or one with a key outside the
+    provider contract (config_push._assemble_providers)."""
+    from integrations.services.credentials import CredentialManager
+
+    try:
+        decrypted = CredentialManager.decrypt(bytes(credential.encrypted_credentials))
+    except Exception:
+        return "not pushed: the stored credential cannot be decrypted"
+    if not isinstance(decrypted, dict):
+        return "not pushed: the stored credential cannot be decrypted"
+    keys = unsupported_credential_keys(
+        credential.provider_name, decrypted, for_save=False
+    )
+    if keys:
+        noun = "key" if len(keys) == 1 else "keys"
+        return f"not pushed: unsupported credential {noun} {', '.join(keys)}"
+    return None
+
+
+class AgentccGatewayViewSet(GatewayAdminActionsMixin, ViewSet):
     """
     Stateless proxy to the Go gateway (configured via env vars).
     No DB model — returns a virtual singleton gateway with live health.
@@ -243,6 +484,29 @@ class AgentccGatewayViewSet(ViewSet):
     # while shared error serializers live at module level. If this file grows
     # further, split by gateway surface instead of hiding contracts in factories.
     permission_classes = [IsAuthenticated]
+    # Every action that changes what the gateway routes, spends or enforces.
+    # A console batch spends the org's credits on its providers, so submitting
+    # or cancelling one is an admin's; reading a batch stays open to members.
+    gateway_admin_actions = frozenset(
+        {
+            "reload",
+            "update_config",
+            "update_provider",
+            "remove_provider",
+            "toggle_guardrail",
+            "update_guardrail",
+            "test_playground",
+            "test_playground_stream",
+            "set_budget",
+            "remove_budget",
+            "update_mcp_server",
+            "remove_mcp_server",
+            "update_mcp_guardrails",
+            "test_mcp_tool",
+            "mcp_served_tools",
+            "submit_batch",
+        }
+    )
     _gm = GeneralMethods()
 
     def _current_org(self, request):
@@ -269,7 +533,13 @@ class AgentccGatewayViewSet(ViewSet):
             try:
                 client = get_gateway_client()
                 health = client.health_check()
-            except GatewayClientError:
+            except GatewayClientError as e:
+                if e.status_code is not None:
+                    # An HTTP response is not an outage. Keep its body private
+                    # when passing it to this endpoint's existing error path.
+                    raise GatewayClientError(
+                        f"Gateway returned {e.status_code}", status_code=e.status_code
+                    ) from None
                 status = "unreachable"
 
             data = _build_virtual_gateway(status=status, health=health)
@@ -277,6 +547,7 @@ class AgentccGatewayViewSet(ViewSet):
             org = self._current_org(request)
             if org:
                 self._enrich_with_org_provider_counts(data, org)
+            _with_last_health_check(data, org)
             return self._gm.success_response([data])
         except Exception as e:
             logger.exception("gateway_list_error", error=str(e))
@@ -296,7 +567,13 @@ class AgentccGatewayViewSet(ViewSet):
             try:
                 client = get_gateway_client()
                 health = client.health_check()
-            except GatewayClientError:
+            except GatewayClientError as e:
+                if e.status_code is not None:
+                    # An HTTP response is not an outage. Keep its body private
+                    # when passing it to this endpoint's existing error path.
+                    raise GatewayClientError(
+                        f"Gateway returned {e.status_code}", status_code=e.status_code
+                    ) from None
                 status = "unreachable"
 
             data = _build_virtual_gateway(status=status, health=health)
@@ -304,6 +581,7 @@ class AgentccGatewayViewSet(ViewSet):
             org = self._current_org(request)
             if org:
                 self._enrich_with_org_provider_counts(data, org)
+            _with_last_health_check(data, org)
             return self._gm.success_response(data)
         except Exception as e:
             logger.exception("gateway_retrieve_error", error=str(e))
@@ -368,16 +646,13 @@ class AgentccGatewayViewSet(ViewSet):
                     len(p.get("models", [])) for p in providers if isinstance(p, dict)
                 )
 
-                # Auto-sync org configs to gateway on first successful health check
-                # (e.g. after gateway container restart). Throttled to once per 5 min.
-                cache_key = "agentcc:gateway_config_synced"
-                if not cache.get(cache_key):
-                    try:
-                        push_all_org_configs()
-                        cache.set(cache_key, True, 300)
-                        logger.info("gateway_auto_sync", reason="first_health_check")
-                    except Exception:
-                        logger.warning("gateway_auto_sync_failed", exc_info=True)
+                # Every member may check health; only an Owner or Admin's
+                # check re-pushes every org's config (e.g. after a gateway
+                # restart), at most once per 5 minutes.
+                org_configs_pushed = (
+                    self._repush_org_configs() if is_gateway_admin(request) else False
+                )
+                _record_health_check(org, "healthy")
 
                 data = {
                     "status": "healthy",
@@ -385,9 +660,12 @@ class AgentccGatewayViewSet(ViewSet):
                     "providers": provider_health,
                     "provider_count": p_count,
                     "model_count": m_count,
+                    "org_configs_pushed": org_configs_pushed,
                 }
+                _with_last_health_check(data, org)
                 return self._gm.success_response(data)
             except GatewayClientError as e:
+                _record_health_check(org, "unreachable")
                 return self._gm.bad_request(
                     {
                         "status": "unreachable",
@@ -397,6 +675,20 @@ class AgentccGatewayViewSet(ViewSet):
         except Exception as e:
             logger.exception("health_check_error", error=str(e))
             return self._gm.bad_request(str(e))
+
+    def _repush_org_configs(self):
+        """Push every org's active config to the gateway, unless that ran in
+        the last 5 minutes. True when this call pushed."""
+        if cache.get(_REPUSH_THROTTLE_KEY):
+            return False
+        try:
+            push_all_org_configs()
+        except Exception:
+            logger.warning("gateway_auto_sync_failed", exc_info=True)
+            return False
+        cache.set(_REPUSH_THROTTLE_KEY, True, _REPUSH_THROTTLE_SECONDS)
+        logger.info("gateway_auto_sync", reason="health_check")
+        return True
 
     # ------------------------------------------------------------------
     # config / reload / update-config
@@ -460,16 +752,22 @@ class AgentccGatewayViewSet(ViewSet):
                 }
 
             gateway_status = "unreachable"
+            gateway_blocks = {}
             try:
                 client = get_gateway_client()
                 client.health_check()
                 gateway_status = "healthy"
-            except GatewayClientError:
-                pass
+                gateway_blocks = _gateway_config_blocks(client)
+            except GatewayClientError as e:
+                if e.status_code is not None:
+                    raise GatewayClientError(
+                        f"Gateway returned {e.status_code}", status_code=e.status_code
+                    ) from None
 
-            result = {**org_data}
+            result = {**org_data, **gateway_blocks}
             result["providers"] = providers_map
             result["gateway"] = {"status": gateway_status}
+            _with_last_health_check(result, org)
             return self._gm.success_response(result)
         except Exception as e:
             logger.exception("config_error", error=str(e))
@@ -500,73 +798,73 @@ class AgentccGatewayViewSet(ViewSet):
     @validated_request(
         request_serializer=GatewayConfigPatchRequestSerializer,
         responses={
-            200: GatewayMutationResponseSerializer,
+            200: GatewayConfigMutationResponseSerializer,
+            409: CapPolicyRevisionConflictSerializer,
             **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="update-config")
     def update_config(self, request, pk=None):
-        """Patch one or more JSON fields on the org's active config and push."""
+        """Patch the org's active config and push it.
+
+        Cap edits require budgets.policy_revision from the last config read.
+        Omit it or send 0 only when no policy has ever been saved. Disabling
+        keeps a positive revision; it does not reset the precondition. Cap
+        maps, admission_caps_enabled and an enabled policy's prerequisites
+        are checked atomically under the org lock before changing any config.
+        A stale revision (including on enable) returns 409 with only code
+        cap_policy_revision_conflict and the current policy_revision. Refresh
+        the policy before retrying; do not blindly overwrite the winning edit.
+        A current enable still requires budgets.enabled=true, fail_mode=closed
+        and no_max_tokens=clamp, plus a valid complete cap envelope (400).
+        While any cap policy exists (even disabled), routing.agents.key_bindings
+        and routing.agents.max_run_usd edits or clears also require the revision.
+        Unrelated patches need no revision, but every config write after the
+        first policy advances it. The 200 result.policy_revision is the saved
+        revision (0 before any policy), ready for the next edit without a read.
+        Rollbacks advance the revision without resetting activation or spend.
+        """
         try:
             org = self._current_org(request)
             config_patch = request.validated_data
             if not config_patch or not isinstance(config_patch, dict):
                 return self._gm.bad_request("Config patch must be a JSON object")
 
-            allowed_fields = {
-                "guardrails",
-                "routing",
-                "cache",
-                "rate_limiting",
-                "budgets",
-                "cost_tracking",
-                "ip_acl",
-                "alerting",
-                "privacy",
-                "tool_policy",
-                "mcp",
-                "a2a",
-                "audit",
-                "model_database",
-                "model_map",
-            }
-            invalid = set(config_patch.keys()) - allowed_fields
-            if invalid:
-                return self._gm.bad_request(
-                    f"Unknown config fields: {', '.join(sorted(invalid))}"
-                )
-
-            def _deep_merge(base, patch):
-                """Recursively merge patch into base. None values = delete."""
-                result = {**base}
-                for k, v in patch.items():
-                    if v is None:
-                        result.pop(k, None)
-                    elif isinstance(result.get(k), dict) and isinstance(v, dict):
-                        result[k] = _deep_merge(result[k], v)
-                    else:
-                        result[k] = v
-                return result
-
-            def updater(cfg):
-                for field, value in config_patch.items():
-                    existing = getattr(cfg, field, None)
-                    if isinstance(existing, dict) and isinstance(value, dict):
-                        setattr(cfg, field, _deep_merge(existing, value))
-                    else:
-                        setattr(cfg, field, value)
-
-            new_config, synced = self._update_org_config(
+            prepare = None
+            if "guardrails" in config_patch:
+                prepare = partial(_prepare_guardrails, org, config_patch["guardrails"])
+            new_config, warnings = write_config_version(
                 org,
-                updater,
+                config_patch,
+                mode=MERGE,
+                description="Config update",
                 user=request.user,
-                desc="Config update",
+                push=partial(self._push_current_config, org),
+                prepare=prepare,
             )
-            data = {"version": new_config.version, "gateway_synced": synced}
+            synced = is_gateway_synced(warnings)
+            data = {
+                "version": new_config.version,
+                "policy_revision": new_config.budgets.get("policy_revision", 0),
+                "gateway_synced": synced,
+                # The writer's warnings (managed-models change, routing keys
+                # the gateway does not run); a failed sync is reported in
+                # gateway_synced and gateway_warning instead.
+                "warnings": [
+                    w for w in warnings if w.get("code") != GATEWAY_SYNC_FAILED
+                ],
+            }
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except CapPolicyRevisionConflict as e:
+            return e.response()
+        except OrgConfigRejected as e:
+            # The exception's own code (e.g. secret_in_config) goes back to
+            # the client; a rejection without one keeps the generic 400 code.
+            log_config_rejected("update_config_rejected", org, e)
+            return with_rejection_param(self._gm.bad_request(e), e)
         except Exception as e:
             logger.exception("update_config_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -606,6 +904,11 @@ class AgentccGatewayViewSet(ViewSet):
                 .first()
             )
             try:
+                ensure_provider_configuration(
+                    provider_name,
+                    provider_config.get("api_format", "openai"),
+                    provider_config.get("base_url", ""),
+                )
                 ensure_provider_base_url_allowed(
                     provider_config.get("base_url", ""), saved_base_url=saved_base_url
                 )
@@ -633,6 +936,13 @@ class AgentccGatewayViewSet(ViewSet):
             }
             if api_key is not None:
                 new_cred_values["api_key"] = api_key
+            # NG-58: a key the provider contract does not take would make the
+            # config push leave the provider out; refuse it, naming the key.
+            unsupported = unsupported_credential_keys(provider_name, new_cred_values)
+            if unsupported:
+                return self._gm.bad_request(
+                    unsupported_credential_keys_message(provider_name, unsupported)
+                )
 
             defaults = {
                 "base_url": provider_config.get("base_url", ""),
@@ -779,29 +1089,41 @@ class AgentccGatewayViewSet(ViewSet):
                 return self._gm.bad_request("name and enabled are required")
 
             def updater(cfg):
+                # A section stored as a checks list (a policy sync writes one)
+                # is switched where the next sync reads the check: in its
+                # policy (release round 6B, fix (b)).
+                if switch_in_checks_list(org, cfg, guardrail_name, enabled):
+                    return
                 guardrails = cfg.guardrails or {}
-                checks = _guardrail_checks_map(guardrails)
+                checks = _stored_checks_map(guardrails)
                 if checks is not None:
-                    # Same upsert defaults as a new rule below
-                    check = checks.setdefault(
-                        _guardrail_check_key(checks, guardrail_name),
-                        {"action": "block", "confidence_threshold": 0.8, "config": {}},
-                    )
-                    check["enabled"] = enabled
+                    # A section stored as a checks map is toggled in the map.
+                    # A check the map lacks is added with the defaults a new
+                    # rule gets below (block, 0.8), written out: the gateway
+                    # runs a map check without them as log, at 0.
+                    key = _checks_map_key(checks, guardrail_name)
+                    if key is None:
+                        checks[guardrail_name] = {
+                            "enabled": enabled,
+                            "action": "block",
+                            "confidence_threshold": 0.8,
+                            "config": {},
+                        }
+                    else:
+                        stored = checks[key] if isinstance(checks[key], dict) else {}
+                        checks[key] = {**stored, "enabled": enabled}
                     cfg.guardrails = guardrails
                     return
-
                 rules = guardrails.get("rules", [])
 
-                # Find existing rule or create one with defaults
-                found = False
-                for rule in rules:
-                    if rule.get("name") == guardrail_name:
-                        rule["enabled"] = enabled
-                        found = True
-                        break
-
-                if not found:
+                index = unique_check_index(
+                    rules,
+                    guardrail_name,
+                    repair="Replace the rules list via update-config to resolve duplicates.",
+                )
+                if index is not None:
+                    rules[index]["enabled"] = enabled
+                else:
                     # Upsert: create the rule with sensible defaults
                     rules.append(
                         {
@@ -839,6 +1161,11 @@ class AgentccGatewayViewSet(ViewSet):
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except OrgConfigRejected as e:
+            # Switching on a check whose stored setting holds "${" where the
+            # gateway expands it (guardrail_env_reference), among others.
+            log_config_rejected("toggle_guardrail_rejected", org, e)
+            return with_rejection_param(self._gm.bad_request(e), e)
         except Exception as e:
             logger.exception("toggle_guardrail_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -905,31 +1232,54 @@ class AgentccGatewayViewSet(ViewSet):
                 return self._gm.bad_request("name and config are required")
 
             def updater(cfg):
-                guardrails = cfg.guardrails or {}
-                checks = _guardrail_checks_map(guardrails)
-                if checks is not None:
-                    # Merge, so _policy and fields the payload leaves out stay.
-                    # A new check is enabled unless the payload says otherwise,
-                    # as a new rule is (rules default enabled when pushed).
-                    key = _guardrail_check_key(checks, guardrail_name)
-                    checks[key] = {
-                        **checks.get(key, {"enabled": True}),
-                        **_guardrail_check_fields(guardrail_config),
-                    }
-                    cfg.guardrails = guardrails
+                # A section stored as a checks list (a policy sync writes one)
+                # is edited where the next sync reads the check: in its policy
+                # (release round 6B, fix (b)).
+                if edit_in_checks_list(org, cfg, guardrail_name, guardrail_config):
                     return
-
+                guardrails = cfg.guardrails or {}
+                checks = _stored_checks_map(guardrails)
+                if checks is not None:
+                    # A section stored as a checks map is edited in the map:
+                    # the check's entry takes the contract's keys the edit
+                    # sent, and keeps the rest of what it is stored with. As
+                    # for a rule, a `_policy` it names must be the org's, and a
+                    # clear-text credential is moved into the console policy.
+                    # A check the map lacks is added enabled unless the edit
+                    # says otherwise, as a new rule is (the push runs a rule
+                    # without `enabled` as enabled).
+                    key = _checks_map_key(checks, guardrail_name)
+                    stored = {"enabled": True} if key is None else checks[key]
+                    key = guardrail_name if key is None else key
+                    entry = _as_checks_map_entry(stored, guardrail_config)
+                    _reject_unowned_guardrail_policies(org, {"checks": {key: entry}})
+                    checks[key] = entry
+                    cfg.guardrails = guardrails
+                    _encrypt_new_guardrail_credentials(org, cfg)
+                    return
+                # The rule is stored as sent, so it may name only a policy the
+                # org may name, may hold no "${" in a string the gateway could
+                # expand (named as the request's field, config.config.<key>),
+                # and a clear-text credential in it is moved into the console
+                # policy before the version is validated or saved. The "${"
+                # check runs on the raw rule, before any credential becomes the
+                # sentinel.
+                updated = {**guardrail_config, "name": guardrail_name}
+                reject_rule_env_references(guardrail_name, guardrail_config)
+                _reject_unowned_guardrail_policies(org, {"rules": [updated]})
                 rules = guardrails.get("rules", [])
-                found = False
-                for i, rule in enumerate(rules):
-                    if rule.get("name") == guardrail_name:
-                        rules[i] = {**guardrail_config, "name": guardrail_name}
-                        found = True
-                        break
-                if not found:
-                    rules.append({**guardrail_config, "name": guardrail_name})
+                index = unique_check_index(
+                    rules,
+                    guardrail_name,
+                    repair="Replace the rules list via update-config to resolve duplicates.",
+                )
+                if index is None:
+                    rules.append(updated)
+                else:
+                    rules[index] = updated
                 guardrails["rules"] = rules
                 cfg.guardrails = guardrails
+                _encrypt_new_guardrail_credentials(org, cfg)
 
             new_config, synced = self._update_org_config(
                 org,
@@ -946,6 +1296,11 @@ class AgentccGatewayViewSet(ViewSet):
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except OrgConfigRejected as e:
+            # Names the field for a rejection that carries one, e.g. a
+            # malformed callback URL (guardrail_bad_url, RF13).
+            log_config_rejected("update_guardrail_rejected", org, e)
+            return with_rejection_param(self._gm.bad_request(e), e)
         except Exception as e:
             logger.exception("update_guardrail_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -954,10 +1309,76 @@ class AgentccGatewayViewSet(ViewSet):
     # test-playground
     # ------------------------------------------------------------------
 
+    def _playground_request(self, request):
+        """What a playground test sends: the prompt, the model (may be empty),
+        an optional system prompt and the sampling parameters given."""
+        data = request.validated_data
+        return {
+            "prompt": data.get("prompt", "").strip(),
+            "model": data.get("model", ""),
+            "system_prompt": data.get("system_prompt", "") or None,
+            "params": {
+                name: data[name]
+                for name in PLAYGROUND_PARAMS
+                if data.get(name) is not None
+            },
+        }
+
+    def _playground_open(self, request, client, test, *, streaming=False):
+        """Bind a live session principal, sync config, and select the model."""
+        from accounts.api_key_policy import live_membership
+        from tfc.service_envelope import EnvelopeRejected
+
+        if not test["prompt"]:
+            return None, None, self._gm.bad_request("prompt is required")
+        org = self._current_org(request)
+        if org is None or live_membership(request.user.pk, org.pk) is None:
+            return (
+                None,
+                None,
+                self._gm.bad_request("An active organization membership is required"),
+            )
+        request.organization = org
+        try:
+            kind = request.headers.get(
+                "X-FA-Console-Surface", "tryit" if streaming else "playground"
+            )
+            if kind not in {"playground", "tryit", "guardrail-test"}:
+                raise EnvelopeRejected()
+            delegation = for_chat(request, kind=kind, streaming=streaming)
+        except EnvelopeRejected:
+            return (
+                None,
+                None,
+                self._gm.bad_request(
+                    "Delegated calls require an active person and workspace"
+                ),
+            )
+        if not self._ensure_org_config_pushed(client, str(org.pk)):
+            return (
+                None,
+                None,
+                self._gm.bad_request(
+                    "Could not sync the active organization config to the gateway"
+                ),
+            )
+        model = test["model"] or self._pick_default_model(client, org_id=str(org.pk))
+        if not model:
+            return (
+                None,
+                None,
+                self._gm.bad_request(
+                    "No model specified and no providers configured. Please specify a model or configure a provider first."
+                ),
+            )
+        test["delegation"] = delegation
+        return delegation, model, None
+
     @validated_request(
         request_serializer=GatewayPlaygroundTestRequestSerializer,
         responses={
             200: GatewayPlaygroundTestResponseSerializer,
+            409: AgentccErrorResponseSerializer,
             **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
@@ -965,60 +1386,29 @@ class AgentccGatewayViewSet(ViewSet):
     @action(detail=True, methods=["post"], url_path="test-playground")
     def test_playground(self, request, pk=None):
         """Send a real chat completion through the gateway to test guardrails."""
-        playground_key_id = None
+        if not delegated_enabled():
+            return unavailable_response()
         try:
             client = get_gateway_client()
+            test = self._playground_request(request)
+            delegation, model, error = self._playground_open(request, client, test)
+            if error is not None:
+                return error
 
-            prompt = request.validated_data.get("prompt", "").strip()
-            model = request.validated_data.get("model", "")
-            system_prompt = request.validated_data.get("system_prompt", "")
-            if not prompt:
-                return self._gm.bad_request("prompt is required")
-
-            # Ensure the org's active config is pushed to the gateway
-            org_id = self._current_org_id(request)
-            if not org_id:
-                return self._gm.bad_request(
-                    "An active organization is required for playground testing"
-                )
-            if not self._ensure_org_config_pushed(client, org_id):
-                return self._gm.bad_request(
-                    "Could not sync the active organization config to the gateway"
-                )
-
-            playground_key_id, api_key = self._create_playground_api_key(client, org_id)
-            if not api_key:
-                return self._gm.bad_request(
-                    "Could not obtain an API key for playground testing"
-                )
-
-            # If no model specified, try to pick the first available one
-            if not model:
-                model = self._pick_default_model(client, org_id=org_id)
-                if not model:
-                    return self._gm.bad_request(
-                        "No model specified and no providers configured. "
-                        "Please specify a model or configure a provider first."
-                    )
-
-            status_code, body, headers = client.send_chat_completion(
-                prompt=prompt,
+            status_code, body, headers = client.send_delegated_chat_completion(
+                delegation,
+                prompt=test["prompt"],
                 model=model,
-                api_key=api_key,
-                system_prompt=system_prompt or None,
-                cache_control="no-store",
+                system_prompt=test["system_prompt"],
+                params=test["params"],
             )
 
             # Extract guardrail info from response
             guardrail_info = {}
-            triggered = False
             for key, val in headers.items():
                 lk = key.lower()
                 if "guardrail" in lk or "x-agentcc" in lk:
                     guardrail_info[key] = val
-                if lk == "x-agentcc-guardrail-triggered":
-                    triggered = str(val).lower() == "true"
-            blocked = status_code in (403, 446)
 
             return self._gm.success_response(
                 {
@@ -1026,11 +1416,7 @@ class AgentccGatewayViewSet(ViewSet):
                     "body": body,
                     "guardrail_headers": guardrail_info,
                     "model": model,
-                    "blocked": blocked,
-                    # A warn or log hit goes through and is marked by the
-                    # guardrail-triggered header; 246 is the legacy warn code.
-                    "warned": status_code == 246
-                    or (triggered and not blocked and status_code < 400),
+                    **playground_outcome(status_code, body, headers),
                 }
             )
         except GatewayClientError as e:
@@ -1038,16 +1424,37 @@ class AgentccGatewayViewSet(ViewSet):
         except Exception as e:
             logger.exception("test_playground_error", error=str(e))
             return self._gm.bad_request(str(e))
-        finally:
-            if playground_key_id:
-                try:
-                    client.revoke_key(playground_key_id)
-                except GatewayClientError as e:
-                    logger.warning(
-                        "playground_key_revoke_failed",
-                        key_id=playground_key_id,
-                        error=str(e),
-                    )
+
+    @validated_request(
+        request_serializer=GatewayPlaygroundTestRequestSerializer,
+        responses={
+            200: PLAYGROUND_STREAM_RESPONSE,
+            409: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="test-playground-stream")
+    def test_playground_stream(self, request, pk=None):
+        """The test-playground request with the answer streamed as server-sent
+        events while it arrives (services/playground_stream.py lists them).
+        Errors before the stream starts are 400s, as on test-playground."""
+        if not delegated_enabled():
+            return unavailable_response()
+        try:
+            client = get_gateway_client()
+            test = self._playground_request(request)
+            _, model, error = self._playground_open(
+                request, client, test, streaming=True
+            )
+            if error is not None:
+                return error
+        except GatewayClientError as e:
+            return self._gm.bad_request(f"Gateway error: {e}")
+        except Exception:
+            logger.exception("test_playground_stream_error")
+            return self._gm.bad_request("Delegated stream unavailable")
+        return EventStreamResponse(playground_events(client, model=model, request=test))
 
     def _ensure_org_config_pushed(self, client, org_id):
         """Push the org's active config to the gateway (idempotent)."""
@@ -1067,23 +1474,6 @@ class AgentccGatewayViewSet(ViewSet):
         except Exception as e:
             logger.warning("playground_config_push_failed", org_id=org_id, error=str(e))
             return False
-
-    def _create_playground_api_key(self, client, org_id):
-        playground_key_name = f"__playground_{org_id[:8]}_{uuid.uuid4().hex[:8]}__"
-        try:
-            result = client.create_key(
-                name=playground_key_name,
-                owner="playground",
-                metadata={
-                    "org_id": str(org_id),
-                    "purpose": "playground-testing",
-                    "allow_policy_override": "true",
-                },
-            )
-            return result.get("id", ""), result.get("key", "")
-        except GatewayClientError as e:
-            logger.warning("playground_key_create_failed", org_id=org_id, error=str(e))
-            return None, None
 
     def _pick_default_model(self, client, org_id=None):
         if not org_id:
@@ -1118,6 +1508,8 @@ class AgentccGatewayViewSet(ViewSet):
         try:
             org = self._current_org(request)
             level = request.validated_data.get("level")
+            if _normalize_budget_level_key(level) in CAP_FIELDS:
+                return self._gm.bad_request(CAP_LEVEL_REJECTION)
             budget_config = request.validated_data.get("config")
             if not level or not budget_config:
                 return self._gm.bad_request("level and config are required")
@@ -1161,6 +1553,8 @@ class AgentccGatewayViewSet(ViewSet):
         try:
             org = self._current_org(request)
             level = request.validated_data.get("level")
+            if _normalize_budget_level_key(level) in CAP_FIELDS:
+                return self._gm.bad_request(CAP_LEVEL_REJECTION)
             if not level:
                 return self._gm.bad_request("level is required")
 
@@ -1192,29 +1586,42 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayBatchSubmitRequestSerializer,
         responses={
             200: GatewayBatchSubmitResponseSerializer,
+            409: AgentccErrorResponseSerializer,
             **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="submit-batch")
     def submit_batch(self, request, pk=None):
+        """Submit as the session person, using a registered delegation."""
+        if not delegated_enabled(batch=True):
+            return unavailable_response(batch=True)
+        from agentcc.services import delegated_batches
+        from tfc.service_envelope import EnvelopeRejected
+
         try:
-            client = get_gateway_client()
             requests_list = request.validated_data.get("requests", [])
-            max_concurrency = request.validated_data.get("max_concurrency", 5)
             if not requests_list:
                 return self._gm.bad_request("requests array is required")
-            result = client.submit_batch(requests_list, max_concurrency)
-            batch_id = result.get("batch_id") or result.get("id")
-            if batch_id:
-                org_id = self._current_org_id(request)
-                cache.set(f"agentcc_batch:{batch_id}", org_id, timeout=86400)
+            organization = self._current_org(request)
+            if organization is None:
+                return self._gm.bad_request(
+                    "An active organization is required to submit a batch"
+                )
+            result = delegated_batches.submit(
+                get_gateway_client(),
+                organization=organization,
+                user=request.user,
+                workspace=getattr(request, "workspace", None),
+                requests=requests_list,
+                max_concurrency=request.validated_data.get("max_concurrency", 5),
+            )
             return self._gm.success_response(result)
-        except GatewayClientError as e:
-            return self._gm.bad_request(f"Gateway error: {e}")
-        except Exception as e:
-            logger.exception("submit_batch_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        except (GatewayClientError, EnvelopeRejected):
+            return self._gm.bad_request("Delegated batch submission unavailable")
+        except Exception:
+            logger.exception("submit_batch_error")
+            return self._gm.bad_request("Batch submission unavailable")
 
     @swagger_auto_schema(
         responses={
@@ -1224,15 +1631,34 @@ class AgentccGatewayViewSet(ViewSet):
     )
     @action(detail=True, methods=["get"], url_path="get-batch")
     def get_batch(self, request, pk=None):
+        from agentcc.services import batch_jobs
+        from agentcc.services.batch_access import authorized_job
+
         try:
             client = get_gateway_client()
             batch_id = request.query_params.get("batch_id")
             if not batch_id:
                 return self._gm.bad_request("batch_id query param is required")
-            owner = cache.get(f"agentcc_batch:{batch_id}")
-            if owner is None or owner != self._current_org_id(request):
+            job = authorized_job(request, batch_id)
+            if job is None:
                 return self._gm.not_found("Batch not found")
-            result = client.get_batch(batch_id)
+            try:
+                result = client.get_batch(batch_id, org_id=str(job.organization_id))
+            except GatewayClientError as e:
+                # A missing open batch is immediately failed with an unknown
+                # outcome. A finished one answers its recorded status. Other
+                # gateway errors keep their existing error response.
+                recorded = batch_jobs.answer_for_missing_batch(job, e, client=client)
+                if recorded is None:
+                    raise
+                return self._gm.success_response(recorded)
+            try:
+                # The first terminal status sends batch.completed and revokes
+                # the batch's key (NG-20); a failure there never hides the
+                # batch's status from the console.
+                batch_jobs.record_status(job, result, client=client)
+            except Exception:
+                logger.exception("batch_status_record_failed", batch_id=batch_id)
             return self._gm.success_response(result)
         except GatewayClientError as e:
             return self._gm.bad_request(f"Gateway error: {e}")
@@ -1250,15 +1676,17 @@ class AgentccGatewayViewSet(ViewSet):
     )
     @action(detail=True, methods=["post"], url_path="cancel-batch")
     def cancel_batch(self, request, pk=None):
+        from agentcc.services.batch_access import authorized_job
+
         try:
             client = get_gateway_client()
             batch_id = request.validated_data.get("batch_id")
             if not batch_id:
                 return self._gm.bad_request("batch_id is required")
-            owner = cache.get(f"agentcc_batch:{batch_id}")
-            if owner is None or owner != self._current_org_id(request):
+            job = authorized_job(request, batch_id, cancel=True)
+            if job is None:
                 return self._gm.not_found("Batch not found")
-            result = client.cancel_batch(batch_id)
+            result = client.cancel_batch(batch_id, org_id=str(job.organization_id))
             return self._gm.success_response(result)
         except GatewayClientError as e:
             return self._gm.bad_request(f"Gateway error: {e}")
@@ -1274,102 +1702,55 @@ class AgentccGatewayViewSet(ViewSet):
     )
     @action(detail=True, methods=["get"])
     def providers(self, request, pk=None):
+        """The org's providers, each with its health from the org's own
+        request logs of the last 24 h (contract K6), and whether the config
+        push sends it to the gateway at all (NG-58)."""
         try:
-            client = get_gateway_client()
-
             org = getattr(request, "organization", None)
-            db_credentials = {}
+            credentials = {}
             if org:
                 for cred in AgentccProviderCredential.no_workspace_objects.filter(
                     organization=org, is_active=True, deleted=False
                 ):
-                    db_credentials[cred.provider_name] = {
-                        "id": str(cred.id),
-                        "display_name": cred.display_name,
-                        "base_url": cred.base_url,
-                        "api_format": cred.api_format,
-                        "models": cred.models_list,
-                    }
-
-            gateway_health = {}
-            try:
-                provider_health = client.provider_health()
-                gw_providers = provider_health.get("providers", [])
-                if isinstance(gw_providers, list):
-                    for p in gw_providers:
-                        pid = p.get("id") or p.get("name") or p.get("provider_name")
-                        if pid:
-                            gateway_health[pid] = p
-                elif isinstance(gw_providers, dict):
-                    gateway_health = gw_providers
-            except Exception:
-                pass
-
-            # Per-org provider stats from request logs (last 24h)
-            provider_stats = {}
-            if org:
-                since = timezone.now() - datetime.timedelta(hours=24)
-                stats_qs = (
-                    AgentccRequestLog.no_workspace_objects.filter(
-                        organization=org,
-                        started_at__gte=since,
-                    )
-                    .values("provider")
-                    .annotate(
-                        request_count=Count("id"),
-                        avg_latency_ms=Avg("latency_ms"),
-                        error_count=Count("id", filter=Q(is_error=True)),
-                    )
-                )
-                for row in stats_qs:
-                    pname = row["provider"]
-                    req_count = row["request_count"]
-                    provider_stats[pname] = {
-                        "request_count": req_count,
-                        "avg_latency_ms": round(row["avg_latency_ms"] or 0, 2),
-                        "error_rate": round(
-                            (
-                                (row["error_count"] / req_count * 100)
-                                if req_count > 0
-                                else 0.0
-                            ),
-                            2,
-                        ),
-                    }
+                    credentials[cred.provider_name] = cred
+            provider_stats = _org_provider_stats(org) if org else {}
 
             merged = []
-            for pid, creds in db_credentials.items():
-                gw_data = gateway_health.get(pid, {})
+            for pid, cred in credentials.items():
                 pstats = provider_stats.get(pid, {})
-                healthy = gw_data.get("healthy", True)
-                circuit_state = (gw_data.get("circuit_state") or "n/a").lower()
-                if not healthy or circuit_state == "open":
-                    status = "unhealthy"
-                elif circuit_state == "half_open":
-                    status = "degraded"
+                request_count = pstats.get("request_count", 0)
+                error_count = pstats.get("error_count", 0)
+                not_pushed = _not_pushed_reason(cred)
+                if not_pushed:
+                    status, status_reason = "unhealthy", not_pushed
                 else:
-                    status = "healthy"
+                    status, status_reason = _health_from_logs(
+                        request_count, error_count
+                    )
                 merged.append(
                     {
                         "id": pid,
                         "name": pid,
                         "status": status,
-                        "healthy": healthy,
-                        "circuit_state": circuit_state,
-                        "display_name": creds.get("display_name", ""),
-                        "base_url": creds.get("base_url", ""),
-                        "api_format": creds.get("api_format", ""),
-                        "models": creds.get("models", []),
-                        "request_count": pstats.get("request_count", 0),
+                        "status_reason": status_reason,
+                        "healthy": status != "unhealthy",
+                        # The operator's breaker is never an org provider's.
+                        "circuit_state": "n/a",
+                        "pushed": not_pushed is None,
+                        "display_name": cred.display_name,
+                        "base_url": cred.base_url,
+                        "api_format": cred.api_format,
+                        "models": cred.models_list or [],
+                        "request_count": request_count,
                         "avg_latency": pstats.get("avg_latency_ms", 0),
-                        "error_rate": pstats.get("error_rate", 0),
+                        "error_rate": round(
+                            error_count / request_count * 100 if request_count else 0.0,
+                            2,
+                        ),
                     }
                 )
 
             return self._gm.success_response({"providers": merged})
-        except GatewayClientError as e:
-            logger.exception("providers_gateway_error", error=str(e))
-            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception("providers_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -1384,55 +1765,12 @@ class AgentccGatewayViewSet(ViewSet):
     )
     @action(detail=True, methods=["get"], url_path="mcp-status")
     def mcp_status(self, request, pk=None):
-        try:
-            org = self._current_org(request)
-            org_config = AgentccOrgConfig.no_workspace_objects.filter(
-                organization=org, is_active=True, deleted=False
-            ).first()
-            mcp_cfg = (org_config.mcp or {}) if org_config else {}
-            servers = mcp_cfg.get("servers", {})
-
-            if not servers:
-                return self._gm.success_response(
-                    {
-                        "enabled": False,
-                        "sessions": 0,
-                        "tools": 0,
-                        "resources": 0,
-                        "prompts": 0,
-                        "servers": [],
-                    }
-                )
-
-            try:
-                client = get_gateway_client()
-                result = client.mcp_status()
-                gw_servers = result.get("servers", [])
-                if isinstance(gw_servers, list):
-                    result["servers"] = [
-                        s
-                        for s in gw_servers
-                        if isinstance(s, dict) and s.get("id", s.get("name")) in servers
-                    ]
-                return self._gm.success_response(result)
-            except (GatewayClientError, Exception) as e:
-                logger.debug("mcp_status unavailable: %s", e)
-                return self._gm.success_response(
-                    {
-                        "enabled": True,
-                        "sessions": 0,
-                        "tools": 0,
-                        "resources": 0,
-                        "prompts": 0,
-                        "servers": [
-                            {"id": server_id, "status": "configured"}
-                            for server_id in servers.keys()
-                        ],
-                    }
-                )
-        except Exception as e:
-            logger.exception("mcp_status_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        return self._gm.success_response(
+            {
+                **mcp_admin.org_status(self._current_org(request)),
+                "features": mcp_features.capabilities(),
+            }
+        )
 
     @swagger_auto_schema(
         responses={
@@ -1441,30 +1779,49 @@ class AgentccGatewayViewSet(ViewSet):
     )
     @action(detail=True, methods=["get"], url_path="mcp-tools")
     def mcp_tools(self, request, pk=None):
+        return self._mcp_list_response(mcp_admin.org_tools, request)
+
+    @validated_request(
+        query_serializer=MCPServedQuerySerializer,
+        responses={
+            200: MCPServedResponseSerializer,
+            400: AgentccErrorResponseSerializer,
+            403: AgentccErrorResponseSerializer,
+            404: AgentccErrorResponseSerializer,
+            502: AgentccErrorResponseSerializer,
+        },
+    )
+    @action(detail=True, methods=["get"], url_path="mcp-served-tools")
+    def mcp_served_tools(self, request, pk=None):
+        """Org-admin-only runtime inventory; an optional key narrows the view."""
+        vs = request.validated_query_data.get("vs", "")
+        key_id = request.validated_query_data.get("key_id", "")
+        server_id = request.validated_query_data.get("server_id", "")
         try:
-            org = self._current_org(request)
-            org_config = AgentccOrgConfig.no_workspace_objects.filter(
-                organization=org, is_active=True, deleted=False
-            ).first()
-            mcp_cfg = (org_config.mcp or {}) if org_config else {}
-            org_servers = set(mcp_cfg.get("servers", {}).keys())
-
-            if not org_servers:
-                return self._gm.success_response([])
-
-            client = get_gateway_client()
-            result = client.mcp_tools()
-            if isinstance(result, list):
-                result = [
-                    t
-                    for t in result
-                    if isinstance(t, dict)
-                    and t.get("server", t.get("server_id")) in org_servers
-                ]
-            return self._gm.success_response(result)
-        except (GatewayClientError, Exception) as e:
-            logger.debug("mcp_tools unavailable: %s", e)
-            return self._gm.success_response([])
+            return self._gm.success_response(
+                mcp_admin.org_served_tools(
+                    self._current_org(request), vs, key_id, server_id
+                )
+            )
+        except mcp_admin.MCPDisabled as e:
+            return self._mcp_disabled_response(e)
+        except GatewayClientError as e:
+            if e.status_code == 404 and e.error_code in {
+                "org_not_found",
+                "virtual_server_not_found",
+                "key_not_found",
+                "server_not_found",
+            }:
+                return self._gm.custom_error_response(
+                    HTTP_404_NOT_FOUND,
+                    "The requested MCP context was not found.",
+                    code=e.error_code,
+                )
+            return self._gm.custom_error_response(
+                HTTP_502_BAD_GATEWAY,
+                mcp_admin.GATEWAY_UNREACHABLE_MESSAGE,
+                code=mcp_admin.GATEWAY_UNREACHABLE,
+            )
 
     @validated_request(
         request_serializer=GatewayMCPServerUpdateRequestSerializer,
@@ -1476,6 +1833,11 @@ class AgentccGatewayViewSet(ViewSet):
     )
     @action(detail=True, methods=["post"], url_path="update-mcp-server")
     def update_mcp_server(self, request, pk=None):
+        """Add or replace one MCP server. A new ``auth.token`` or ``auth.key``
+        goes into the MCP credential vault and only its reference is written
+        to the config (M14); with no new value the stored reference and
+        transport are kept."""
+        org = None
         try:
             org = self._current_org(request)
             server_id = request.validated_data.get("server_id")
@@ -1486,16 +1848,27 @@ class AgentccGatewayViewSet(ViewSet):
             def updater(cfg):
                 mcp_cfg = cfg.mcp or {}
                 servers = mcp_cfg.get("servers", {})
-                servers[server_id] = server_config
+                # The credential row is written inside this config write, so
+                # a rejected version rolls it back too.
+                servers[server_id] = mcp_credentials.console_server_entry(
+                    org,
+                    server_id,
+                    server_config,
+                    servers.get(server_id),
+                    actor=request.user,
+                )
                 mcp_cfg["servers"] = servers
                 cfg.mcp = mcp_cfg
 
-            new_config, synced = self._update_org_config(
-                org,
-                updater,
-                user=request.user,
-                desc=f"Update MCP server {server_id}",
-            )
+            # The vault writes this server's credential reference; a client
+            # credential_id or state is refused by console_server_entry.
+            with mcp_credentials.vault_write():
+                new_config, synced = self._update_org_config(
+                    org,
+                    updater,
+                    user=request.user,
+                    desc=f"Update MCP server {server_id}",
+                )
             data = {
                 "server": server_id,
                 "action": "updated",
@@ -1505,9 +1878,15 @@ class AgentccGatewayViewSet(ViewSet):
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except mcp_credentials.MCPCredentialError as e:
+            # The message names the field, never the secret.
+            return self._gm.bad_request(e)
+        except OrgConfigRejected as e:
+            log_config_rejected("update_mcp_server_rejected", org, e)
+            return with_rejection_param(self._gm.bad_request(e), e)
         except Exception as e:
-            logger.exception("update_mcp_server_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            logger.exception("update_mcp_server_error", error_type=type(e).__name__)
+            return self._gm.bad_request("The MCP server could not be saved.")
 
     @validated_request(
         request_serializer=GatewayMCPServerRemoveRequestSerializer,
@@ -1533,6 +1912,9 @@ class AgentccGatewayViewSet(ViewSet):
                 del servers[server_id]
                 mcp_cfg["servers"] = servers
                 cfg.mcp = mcp_cfg
+                # A removed server's credentials go with it (M14), in the
+                # same transaction as the config write.
+                mcp_credentials.revoke_server_credentials(org, server_id)
 
             try:
                 new_config, synced = self._update_org_config(
@@ -1599,33 +1981,29 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayMCPToolTestRequestSerializer,
         responses={
             200: GatewayMCPToolTestResponseSerializer,
-            **GATEWAY_BAD_REQUEST_RESPONSES,
+            **GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES,
         },
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="test-mcp-tool")
     def test_mcp_tool(self, request, pk=None):
         try:
-            org = self._current_org(request)
-            org_config = AgentccOrgConfig.no_workspace_objects.filter(
-                organization=org, is_active=True, deleted=False
-            ).first()
-            mcp_cfg = (org_config.mcp or {}) if org_config else {}
-            if not mcp_cfg.get("servers"):
-                return self._gm.bad_request("No MCP servers configured for this org")
-
-            client = get_gateway_client()
-            name = request.validated_data.get("name")
-            arguments = request.validated_data.get("arguments", {})
-            if not name:
-                return self._gm.bad_request("tool name is required")
-            result = client.mcp_test_tool(name, arguments)
-            return self._gm.success_response(result)
+            result = mcp_admin.run_tool_test(
+                self._current_org(request),
+                request.validated_data["name"],
+                request.validated_data.get("arguments", {}),
+            )
+        except mcp_admin.NoMCPServers as e:
+            return self._gm.bad_request(str(e))
+        except mcp_admin.MCPToolNotFound as e:
+            return self._gm.custom_error_response(
+                HTTP_404_NOT_FOUND, str(e), code=mcp_admin.MCP_TOOL_NOT_FOUND
+            )
+        except mcp_admin.MCPDisabled as e:
+            return self._mcp_disabled_response(e)
         except GatewayClientError as e:
             return self._gm.bad_request(f"Gateway error: {e}")
-        except Exception as e:
-            logger.exception("test_mcp_tool_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        return self._gm.success_response(result)
 
     @swagger_auto_schema(
         responses={
@@ -1634,30 +2012,7 @@ class AgentccGatewayViewSet(ViewSet):
     )
     @action(detail=True, methods=["get"], url_path="mcp-resources")
     def mcp_resources(self, request, pk=None):
-        try:
-            org = self._current_org(request)
-            org_config = AgentccOrgConfig.no_workspace_objects.filter(
-                organization=org, is_active=True, deleted=False
-            ).first()
-            mcp_cfg = (org_config.mcp or {}) if org_config else {}
-            org_servers = set(mcp_cfg.get("servers", {}).keys())
-
-            if not org_servers:
-                return self._gm.success_response([])
-
-            client = get_gateway_client()
-            result = client.mcp_resources()
-            if isinstance(result, list):
-                result = [
-                    r
-                    for r in result
-                    if isinstance(r, dict)
-                    and r.get("server", r.get("server_id")) in org_servers
-                ]
-            return self._gm.success_response(result)
-        except (GatewayClientError, Exception) as e:
-            logger.debug("mcp_resources unavailable: %s", e)
-            return self._gm.success_response([])
+        return self._mcp_list_response(mcp_admin.org_resources, request)
 
     @swagger_auto_schema(
         responses={
@@ -1666,35 +2021,35 @@ class AgentccGatewayViewSet(ViewSet):
     )
     @action(detail=True, methods=["get"], url_path="mcp-prompts")
     def mcp_prompts(self, request, pk=None):
+        return self._mcp_list_response(mcp_admin.org_prompts, request)
+
+    def _mcp_list_response(self, read, request):
+        """An MCP list read: 404 ``gateway_mcp_disabled`` when the deployment
+        runs with MCP off, 502 ``gateway_unreachable`` when the gateway fails."""
         try:
-            org = self._current_org(request)
-            org_config = AgentccOrgConfig.no_workspace_objects.filter(
-                organization=org, is_active=True, deleted=False
-            ).first()
-            mcp_cfg = (org_config.mcp or {}) if org_config else {}
-            org_servers = set(mcp_cfg.get("servers", {}).keys())
+            return self._gm.success_response(read(self._current_org(request)))
+        except mcp_admin.MCPDisabled as e:
+            return self._mcp_disabled_response(e)
+        except GatewayClientError as e:
+            logger.warning("mcp_list_gateway_error", read=read.__name__, error=str(e))
+            return self._gm.custom_error_response(
+                HTTP_502_BAD_GATEWAY,
+                mcp_admin.GATEWAY_UNREACHABLE_MESSAGE,
+                code=mcp_admin.GATEWAY_UNREACHABLE,
+            )
 
-            if not org_servers:
-                return self._gm.success_response([])
-
-            client = get_gateway_client()
-            result = client.mcp_prompts()
-            if isinstance(result, list):
-                result = [
-                    p
-                    for p in result
-                    if isinstance(p, dict)
-                    and p.get("server", p.get("server_id")) in org_servers
-                ]
-            return self._gm.success_response(result)
-        except (GatewayClientError, Exception) as e:
-            logger.debug("mcp_prompts unavailable: %s", e)
-            return self._gm.success_response([])
+    def _mcp_disabled_response(self, error):
+        return self._gm.custom_error_response(
+            HTTP_404_NOT_FOUND, str(error), code=mcp_admin.GATEWAY_MCP_DISABLED
+        )
 
     # --- Per-org config helpers ---
 
     def _get_or_create_org_config(self, org):
         with transaction.atomic():
+            # Org lock first, as every config write: this may create version 1
+            # or rewrite the active row.
+            lock_org(org.pk)
             config = (
                 AgentccOrgConfig.no_workspace_objects.select_for_update()
                 .filter(
@@ -1710,12 +2065,18 @@ class AgentccGatewayViewSet(ViewSet):
                     config.cost_tracking = normalized
                     config.save(update_fields=["cost_tracking", "updated_at"])
                 return config
+            # A new org's first version: Future AGI models on where the
+            # deployment offers them, as every first version
+            # (managed_models_default).
             config, _ = AgentccOrgConfig.no_workspace_objects.get_or_create(
                 organization=org,
                 version=1,
                 is_active=True,
                 deleted=False,
-                defaults={"cost_tracking": default_cost_tracking_config()},
+                defaults={
+                    "cost_tracking": default_cost_tracking_config(),
+                    "managed_models": initial_managed_models(org),
+                },
             )
             normalized = normalize_cost_tracking_config(config.cost_tracking)
             if normalized != config.cost_tracking:
@@ -1724,81 +2085,34 @@ class AgentccGatewayViewSet(ViewSet):
             return config
 
     def _update_org_config(self, org, updater_fn, user=None, desc=""):
-        with transaction.atomic():
-            active_config = (
-                AgentccOrgConfig.no_workspace_objects.select_for_update()
-                .filter(
-                    organization=org,
-                    is_active=True,
-                    deleted=False,
-                )
-                .first()
-            )
-            if not active_config:
-                new_config = AgentccOrgConfig(
-                    organization=org,
-                    version=1,
-                    is_active=True,
-                    cost_tracking=default_cost_tracking_config(),
-                    created_by=user,
-                    change_description=desc or "Config update v1",
-                )
-            else:
-                # The active version is not always the highest: after a rollback
-                # an older version is active. The lock on the active row
-                # serializes savers, so the max is stable here.
-                next_version = (
-                    AgentccOrgConfig.no_workspace_objects.filter(
-                        organization=org, deleted=False
-                    ).aggregate(Max("version"))["version__max"]
-                    + 1
-                )
-
-                AgentccOrgConfig.no_workspace_objects.filter(
-                    organization=org,
-                    is_active=True,
-                    deleted=False,
-                ).update(is_active=False)
-
-                new_config = AgentccOrgConfig(
-                    organization=org,
-                    version=next_version,
-                    guardrails=active_config.guardrails,
-                    routing=active_config.routing,
-                    cache=active_config.cache,
-                    rate_limiting=active_config.rate_limiting,
-                    budgets=active_config.budgets,
-                    cost_tracking=normalize_cost_tracking_config(
-                        active_config.cost_tracking
-                    ),
-                    ip_acl=active_config.ip_acl,
-                    alerting=active_config.alerting,
-                    privacy=active_config.privacy,
-                    tool_policy=active_config.tool_policy,
-                    mcp=active_config.mcp,
-                    a2a=active_config.a2a,
-                    audit=active_config.audit,
-                    model_database=active_config.model_database,
-                    model_map=active_config.model_map,
-                    is_active=True,
-                    created_by=user,
-                    change_description=desc or f"Config update v{next_version}",
-                )
-            updater_fn(new_config)
-            # Fail closed: a version the gateway contract rejects must not
-            # become active. Raising here rolls the whole save back.
-            validate_org_config(new_config)
-            new_config.save()
-
-        synced = self._push_current_config(org, new_config)
-        return new_config, synced
+        new_config, warnings = write_config_version_with(
+            org,
+            updater_fn,
+            description=desc,
+            user=user,
+            push=partial(self._push_current_config, org),
+        )
+        return new_config, is_gateway_synced(warnings)
 
     def _push_current_config(self, org, config=None):
-        """Returns True if gateway was updated, False if push failed."""
+        """Returns True if gateway was updated, False if push failed.
+
+        A config passed in comes from the writer, which already holds the
+        org lock. Without one, the active config is read and pushed under
+        the org lock, so a writer cannot push a newer version in between.
+        """
         try:
-            if config is None:
+            if config is not None:
+                return push_org_config(str(org.id), config)
+            with transaction.atomic():
+                # _get_or_create_org_config takes the org lock in a savepoint;
+                # the lock is held until this outer transaction ends.
                 config = self._get_or_create_org_config(org)
-            return push_org_config(str(org.id), config)
+                return push_org_config(str(org.id), config)
+        except MCPCredentialPlacementRefused:
+            # A refusal, not a failed push (AM-C20): the write that pushes an
+            # MCP secret the gateway cannot apply answers 400 (update-mcp-server).
+            raise
         except Exception as e:
             logger.warning("config_push_failed", org_id=str(org.id), error=str(e))
             return False

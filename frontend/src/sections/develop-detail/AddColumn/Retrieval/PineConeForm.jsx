@@ -123,7 +123,7 @@ const PineConeForm = ({ allColumns, control }) => {
             fieldName="key"
             fullWidth
             helperText={
-              <HelperText text="The key to extract from the Weaviate collection" />
+              <HelperText text="The metadata key to read from each Pinecone match" />
             }
           />
         </RetrievalFormItemWrapper>

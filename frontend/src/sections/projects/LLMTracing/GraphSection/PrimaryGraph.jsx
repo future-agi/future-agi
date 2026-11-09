@@ -1,3 +1,8 @@
+import { formatExactMoney } from "src/sections/common/format/money";
+import {
+  evalQualitySummary,
+  isValidEvalQualityPoint,
+} from "src/utils/evalQualityMetrics";
 /* eslint-disable react/prop-types */
 /**
  * PrimaryGraph
@@ -916,6 +921,7 @@ const PrimaryGraph = ({
       if (item.timestamp == null) continue;
       const ts = item.timestamp.replace(/\+00:00$/, "");
       mData.push({
+        ...item,
         x: new Date(ts).getTime(),
         y: item.value == null ? null : Number(item.value),
       });
@@ -1092,9 +1098,21 @@ const PrimaryGraph = ({
         theme: theme.palette.mode,
         x: { format: "dd MMM yyyy" },
         y: {
-          formatter: (v, { seriesIndex }) => {
-            if (v == null) return "-";
+          // Preserve the reviewed NK20 exact-source tooltip contract.
+          // prettier-ignore
+          formatter: (v, { seriesIndex, dataPointIndex }) => {
+            const isEvalMetric = metricDef.apiType === "EVAL" && seriesIndex === 0;
+            const point = isEvalMetric ? metricData[dataPointIndex] : null;
+            if (isEvalMetric && !isValidEvalQualityPoint(point)) return "-";
+            if (v == null) {
+              if (!isEvalMetric) return "-";
+              if (point.count === 0) return "No data";
+              return point.count > 0 && point.scored_count === 0
+                ? "Unscored"
+                : "-";
+            }
             if (seriesIndex === 0) {
+              if (["$", "USD", "usd"].includes(metricDef.unit)) return formatExactMoney(v);
               return metricDef.unit
                 ? `${v.toFixed(2)} ${metricDef.unit}`
                 : v.toFixed(2);
@@ -1107,6 +1125,7 @@ const PrimaryGraph = ({
     }),
     [
       metricDef,
+      metricData,
       lineSeriesName,
       lineColor,
       barColor,
@@ -1442,6 +1461,14 @@ const PrimaryGraph = ({
         </Box>
       </Box>
 
+      {displaySnapshot && metricDef.apiType === "EVAL" && (
+        <Typography
+          role="status"
+          sx={{ px: 1, fontSize: 11, color: "text.secondary" }}
+        >
+          {evalQualitySummary(metricData, true)}
+        </Typography>
+      )}
       {/* Chart */}
       {graphStatusMessage && displaySnapshot ? (
         <Typography

@@ -40,7 +40,15 @@ class AgentccEmailAlert(BaseModel):
     encrypted_config = models.BinaryField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     cooldown_minutes = models.IntegerField(default=5)
+    # The last real send (agentcc.services.alert_dispatcher); Send test never sets it.
     last_triggered_at = models.DateTimeField(null=True, blank=True)
+    # Dispatcher state, never shown: the events waiting for the next send
+    # ({"pending": {event: {count, first_at, last_at, context}}}) and the
+    # budget.exceeded keys already recorded ({"budget_keys": {key: expires_at}}).
+    dispatch_state = models.JSONField(default=dict, blank=True, db_default={})
+    # The last failed delivery (provider error), cleared by the next send.
+    last_error = models.TextField(blank=True, default="", db_default="")
+    last_error_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "agentcc_email_alert"

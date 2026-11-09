@@ -9,33 +9,28 @@ import asyncio
 import os
 import signal
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from django.core.management.base import BaseCommand
-
-from tfc.temporal.common.activity_thread import OwnThreadActivityInterceptor
 
 # Queues in this set have their own workload-level concurrency boundary. A
 # generic local ``--all-queues`` worker must not also poll them, otherwise its
 # much higher concurrency silently defeats that admission control.
 _DEDICATED_TASK_QUEUES = frozenset({"exact_aggregation"})
 
+# On hosted, these run only on their own deployment (webhooks: egress policy and NAT).
+_HOSTED_DEDICATED_TASK_QUEUES = frozenset({"webhooks"})
 
-# Blocking provider calls share these queues with the short polls that must keep running.
-_OWN_THREAD_ACTIVITY_QUEUES = frozenset({"simulation_runner"})
 
-
-def _generic_all_queues(registered_queues: list[str]) -> list[str]:
+def _generic_all_queues(
+    registered_queues: list[str], *, hosted: bool = False
+) -> list[str]:
     """Return queues safe for the generic all-queues worker to poll."""
 
-    return [queue for queue in registered_queues if queue not in _DEDICATED_TASK_QUEUES]
-
-
-def _activity_thread_kwargs(queue_name: str) -> dict[str, list]:
-    """Return the interceptors that give a queue's activities their own thread."""
-
-    if queue_name in _OWN_THREAD_ACTIVITY_QUEUES:
-        return {"interceptors": [OwnThreadActivityInterceptor()]}
-    return {}
+    dedicated = _DEDICATED_TASK_QUEUES | (
+        _HOSTED_DEDICATED_TASK_QUEUES if hosted else set()
+    )
+    return [queue for queue in registered_queues if queue not in dedicated]
 
 
 def _workflow_cache_kwargs(queue_name: str) -> dict[str, int]:
@@ -187,6 +182,10 @@ class Command(BaseCommand):
             get_all_queues,
             get_all_workflows,
         )
+        from webhooks.temporal.boot import (
+            is_hosted_install,
+            start_dispatchers_if_polled,
+        )
 
         # Configure structured logging for Temporal workers
         configure_temporal_logging()
@@ -218,7 +217,9 @@ class Command(BaseCommand):
             }
             queues_to_poll = [
                 queue
-                for queue in _generic_all_queues(get_all_queues())
+                for queue in _generic_all_queues(
+                    get_all_queues(), hosted=is_hosted_install()
+                )
                 if queue not in excluded_queues
             ]
             # Get all unique workflows and activities across all queues
@@ -346,6 +347,8 @@ class Command(BaseCommand):
                         hint="Dispatcher may not be running yet, will pick up new code on next start",
                     )
 
+            await start_dispatchers_if_polled(client, queues_to_poll)
+
             def create_worker_kwargs(queue_name: str) -> dict:
                 """Create worker configuration for a specific queue."""
                 kwargs = {
@@ -353,12 +356,19 @@ class Command(BaseCommand):
                     "task_queue": queue_name,
                     "workflows": workflows,
                     "activities": activities,
+                    # temporalio refuses a sync ``def`` activity (the webhooks dispatch loop, health and
+                    # retention passes) without a thread pool to run it on. One pool per queue, sized to the
+                    # queue's activity slots as run_worker does; --all-queues registers every activity on
+                    # every queue, so every Worker needs one.
+                    "activity_executor": ThreadPoolExecutor(
+                        max_workers=max_concurrent_activities,
+                        thread_name_prefix=f"temporal-{queue_name}",
+                    ),
                     "workflow_runner": UnsandboxedWorkflowRunner(),
                     "graceful_shutdown_timeout": timedelta(seconds=graceful_timeout),
                     "max_heartbeat_throttle_interval": timedelta(seconds=5),
                 }
                 kwargs.update(_workflow_cache_kwargs(queue_name))
-                kwargs.update(_activity_thread_kwargs(queue_name))
 
                 # Resource-based tuning is disabled by default due to a known
                 # bug where workers stop polling queues.

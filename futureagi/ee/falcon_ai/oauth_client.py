@@ -11,11 +11,19 @@ import base64
 import hashlib
 import secrets
 from datetime import timedelta
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode
 
 import httpx
 import structlog
 from django.utils import timezone
+
+from ee.falcon_ai.credentials import (
+    FalconCredentialError,
+    decrypt_falcon_token,
+    encrypt_falcon_token,
+    require_persistent_key,
+)
+from ee.falcon_ai.oauth_registration import registration_operation, save_registration
 
 logger = structlog.get_logger(__name__)
 
@@ -23,21 +31,13 @@ HTTP_TIMEOUT = 15.0
 
 
 def _encode_token(value: str) -> str:
-    """Encode a token value using simple base64 for storage."""
-    if not value:
-        return ""
-    return base64.b64encode(value.encode("utf-8")).decode("utf-8")
+    """Encrypt a provider token for storage using the existing Fernet key."""
+    return encrypt_falcon_token(value)
 
 
 def _decode_token(value: str) -> str:
-    """Decode a base64-encoded token value."""
-    if not value:
-        return ""
-    try:
-        return base64.b64decode(value.encode("utf-8")).decode("utf-8")
-    except Exception:
-        # If it's not base64-encoded, return as-is (backward compat)
-        return value
+    """Read encrypted storage only; legacy rows must be migrated first."""
+    return decrypt_falcon_token(value)
 
 
 def discover_oauth_metadata(server_url: str) -> dict:
@@ -61,7 +61,6 @@ def discover_oauth_metadata(server_url: str) -> dict:
         "/.well-known/openid-configuration",
     ]
 
-    last_error = None
     for path in well_known_paths:
         url = origin + path
         try:
@@ -74,14 +73,11 @@ def discover_oauth_metadata(server_url: str) -> dict:
                     issuer=metadata.get("issuer"),
                 )
                 return metadata
-        except Exception as e:
-            last_error = e
-            logger.debug("oauth_metadata_attempt_failed", url=url, error=str(e))
+        except Exception:
+            logger.debug("oauth_metadata_attempt_failed")
             continue
 
-    raise RuntimeError(
-        f"Could not discover OAuth metadata from {origin}. " f"Last error: {last_error}"
-    )
+    raise RuntimeError("Could not discover OAuth metadata")
 
 
 def register_client(metadata: dict, redirect_uri: str) -> dict:
@@ -142,25 +138,42 @@ def generate_pkce() -> dict:
 
 
 def build_authorization_url(connector, redirect_uri: str) -> str:
-    """Build the full OAuth authorization URL with PKCE.
+    """Read fresh registration, perform HTTP unlocked, then generation-CAS save."""
+    require_persistent_key()
+    with registration_operation(connector) as current:
+        return _build_authorization_url(current, redirect_uri)
 
-    Discovers metadata if needed, registers client if needed, generates
-    PKCE parameters, and saves state to the connector.
 
-    Returns the authorization URL to redirect the user to.
-    """
+def _build_authorization_url(connector, redirect_uri: str) -> str:
+    """Prepare registration/PKCE; a superseding writer makes persistence fail."""
+    needs_registration = not connector.oauth_client_id
+    if connector.oauth_client_secret:
+        try:
+            _decode_token(connector.oauth_client_secret)
+        except FalconCredentialError:
+            needs_registration = True
+
     # Step 1: Discover metadata if not cached
     metadata = connector.oauth_server_metadata
     if not metadata or not metadata.get("authorization_endpoint"):
         metadata = discover_oauth_metadata(connector.server_url)
         connector.oauth_server_metadata = metadata
 
-    # Step 2: Register client if no client_id
-    if not connector.oauth_client_id:
+    # Step 2: Replace an unreadable confidential registration, not just its
+    # authorization grant. A public replacement must also clear the old secret.
+    if needs_registration:
         reg_result = register_client(metadata, redirect_uri)
-        connector.oauth_client_id = reg_result.get("client_id", "")
-        if reg_result.get("client_secret"):
-            connector.oauth_client_secret = _encode_token(reg_result["client_secret"])
+        client_id = reg_result.get("client_id")
+        if not isinstance(client_id, str) or not client_id:
+            raise RuntimeError("OAuth registration failed")
+        client_secret = _encode_token(reg_result.get("client_secret", ""))
+        connector.oauth_client_id = client_id
+        connector.oauth_client_secret = client_secret
+        # Never pair a replacement identity with the superseded grant.
+        connector.oauth_access_token = ""
+        connector.oauth_refresh_token = ""
+        connector.oauth_token_expires_at = None
+        connector.is_verified = False
 
     # Step 3: Generate PKCE
     pkce = generate_pkce()
@@ -171,7 +184,8 @@ def build_authorization_url(connector, redirect_uri: str) -> str:
     connector.oauth_state = state
 
     # Step 5: Save connector
-    connector.save(
+    save_registration(
+        connector,
         update_fields=[
             "oauth_server_metadata",
             "oauth_client_id",
@@ -180,6 +194,16 @@ def build_authorization_url(connector, redirect_uri: str) -> str:
             "oauth_state",
             "updated_at",
         ]
+        + (
+            [
+                "oauth_access_token",
+                "oauth_refresh_token",
+                "oauth_token_expires_at",
+                "is_verified",
+            ]
+            if needs_registration
+            else []
+        ),
     )
 
     # Step 6: Build the URL
@@ -204,11 +228,13 @@ def build_authorization_url(connector, redirect_uri: str) -> str:
 
 
 def exchange_code_for_tokens(connector, code: str, redirect_uri: str) -> dict:
-    """Exchange an authorization code for access and refresh tokens.
+    """Validate before provider exchange and again at guarded persistence."""
+    with registration_operation(connector, match_registration=True) as current:
+        return _exchange_code_for_tokens(current, code, redirect_uri)
 
-    Posts to the token endpoint with the code and PKCE verifier.
-    Saves the tokens to the connector and returns the token response.
-    """
+
+def _exchange_code_for_tokens(connector, code: str, redirect_uri: str) -> dict:
+    """Exchange without a row lock; discard responses to superseded attempts."""
     metadata = connector.oauth_server_metadata
     token_endpoint = metadata.get("token_endpoint")
     if not token_endpoint:
@@ -254,7 +280,8 @@ def exchange_code_for_tokens(connector, code: str, redirect_uri: str) -> dict:
     connector.is_verified = True
     connector.last_error = ""
 
-    connector.save(
+    save_registration(
+        connector,
         update_fields=[
             "oauth_access_token",
             "oauth_refresh_token",
@@ -264,7 +291,7 @@ def exchange_code_for_tokens(connector, code: str, redirect_uri: str) -> dict:
             "is_verified",
             "last_error",
             "updated_at",
-        ]
+        ],
     )
 
     logger.info(
@@ -276,10 +303,13 @@ def exchange_code_for_tokens(connector, code: str, redirect_uri: str) -> dict:
 
 
 def refresh_access_token(connector) -> dict:
-    """Refresh an expired access token using the refresh token.
+    """Validate a live generation before HTTP and CAS before saving rotation."""
+    with registration_operation(connector, match_registration=True) as current:
+        return _refresh_access_token(current)
 
-    Returns the new token response dict.
-    """
+
+def _refresh_access_token(connector) -> dict:
+    """No retries after a conflict: a provider may have consumed the old token."""
     metadata = connector.oauth_server_metadata
     token_endpoint = metadata.get("token_endpoint")
     if not token_endpoint:
@@ -324,14 +354,15 @@ def refresh_access_token(connector) -> dict:
         connector.oauth_token_expires_at = None
 
     connector.last_error = ""
-    connector.save(
+    save_registration(
+        connector,
         update_fields=[
             "oauth_access_token",
             "oauth_refresh_token",
             "oauth_token_expires_at",
             "last_error",
             "updated_at",
-        ]
+        ],
     )
 
     logger.info("oauth_token_refreshed", connector=connector.name)
@@ -356,14 +387,10 @@ def get_valid_access_token(connector) -> str:
             try:
                 refresh_access_token(connector)
                 access_token = _decode_token(connector.oauth_access_token)
-            except Exception as e:
-                logger.error(
-                    "oauth_refresh_failed",
-                    connector=connector.name,
-                    error=str(e),
-                )
-                raise RuntimeError(
-                    f"OAuth token expired and refresh failed: {e}"
-                ) from e
+            except FalconCredentialError:
+                raise
+            except Exception:
+                logger.error("oauth_refresh_failed", connector_id=str(connector.pk))
+                raise RuntimeError("OAuth token expired and refresh failed") from None
 
     return access_token

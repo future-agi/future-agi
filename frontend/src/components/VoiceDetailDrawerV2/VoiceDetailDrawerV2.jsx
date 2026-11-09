@@ -12,8 +12,7 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { ShareDialog } from "src/components/share-dialog";
 import AddTagsPopover from "src/components/traceDetail/AddTagsPopover";
 import AddToQueueDialog from "src/sections/annotations/queues/components/add-to-queue-dialog";
-import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
-import { LLM_TABS } from "src/sections/projects/LLMTracing/common";
+import { openAddData } from "src/sections/common/AddData/addDataStore";
 import useImagineStore from "src/components/imagine/useImagineStore";
 import {
   useGetSavedViews,
@@ -89,7 +88,6 @@ const VoiceDetailDrawerV2 = ({
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
-  const [datasetDrawerOpen, setDatasetDrawerOpen] = useState(false);
   const [deleteTabId, setDeleteTabId] = useState(null); // for confirm dialog
   // Outer drawer width (vw). Matches trace drawer default and is draggable.
   const [drawerWidth, setDrawerWidth] = useState(60);
@@ -265,9 +263,19 @@ const VoiceDetailDrawerV2 = ({
           setQueueAnchorEl(el);
           break;
         }
-        case "dataset":
-          setDatasetDrawerOpen(true);
+        case "dataset": {
+          // R2 (P5): one way in; the global Add-data sheet.
+          const id = data?.trace_id || data?.id;
+          if (id)
+            openAddData({
+              source: {
+                kind: "traces",
+                trace_ids: [id],
+                project_id: projectId,
+              },
+            });
           break;
+        }
         default:
           break;
       }
@@ -572,19 +580,6 @@ const VoiceDetailDrawerV2 = ({
         sourceType={data?.trace_id ? "trace" : "call_execution"}
         sourceIds={data?.trace_id ? [data.trace_id] : data?.id ? [data.id] : []}
         itemName={data?.customer_name || "Voice call"}
-      />
-
-      {/* Move to dataset — a voice call is a trace-level entity, so we send
-          `trace_ids` and the TRACE tab. The backend derives `project` from
-          those trace(s) when the client doesn't pass one, so there's no
-          need to thread a projectId through here. The action itself is
-          gated on `data.trace_id` in CallDetailsBar — if it's null we never
-          open this drawer. */}
-      <AddDataset
-        handleClose={() => setDatasetDrawerOpen(false)}
-        actionToDataset={datasetDrawerOpen}
-        currentTab={LLM_TABS.TRACE}
-        selectedTraces={data?.trace_id ? [data.trace_id] : []}
       />
 
       {/* Delete tab confirmation dialog */}

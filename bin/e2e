@@ -10,8 +10,20 @@ say() { printf '%s\n' "$*"; }
 ok() { printf '  %s\n' "$*"; }
 log_only() { :; }
 die() { printf '%s\n' "$*" >&2; exit 1; }
+# Raw Compose rendering would expand the persistent runtime credentials. Refuse
+# before loading them, including aliases and flags after Compose global options.
+if [[ "${1:-}" == compose ]]; then
+  for compose_arg in "$@"; do
+    case "$compose_arg" in
+      config|convert|--environment|--environment=*|--dry-run|--dry-run=*)
+        die 'Raw Compose rendering is disabled for runtime credentials; use bin/e2e ps for value-free status' ;;
+    esac
+  done
+fi
 # shellcheck source=lib/build-local.sh
 . "$ROOT/bin/lib/build-local.sh"
+# shellcheck source=lib/e2e-runtime-credentials.sh
+. "$ROOT/bin/lib/e2e-runtime-credentials.sh"
 ENV_FILE="$ROOT/e2e/stack/e2e.env"
 COMPOSE=(docker compose --env-file "$ENV_FILE"
   -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
@@ -22,25 +34,125 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
 # the harness never recreates failed jobs.
 SERVICES=(frontend backend worker worker-exact-aggregation
   postgres clickhouse redis minio
-  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack
-  peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
+  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack webhook-sink smtp-sink
+  storage-sink peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
 # E2E_STACK=standalone: the same suite against the Standalone setup
 # (docker-compose.yml: one `app` container plus Postgres and ClickHouse) on the
 # same host ports. See e2e/stack/docker-compose.standalone-e2e.yml.
+# E2E_GATEWAY_PROFILE (e2e/lib/profile.ts): which gateway config the stack
+# mounts. stock (the default) is e2e/stack/gateway.e2e.yaml; every other profile
+# runs on the Standalone stack only. e2e/stack/gateway-profiles.json is the table:
+# the file each profile mounts, the overlays and mock services it adds, and what it
+# needs from this checkout (gateway config keys, overlay files). A profile this
+# head cannot run is refused here, before anything starts, naming the head that
+# has it (e2e/scripts/gateway-profile.mjs, Node built-ins only). Exported for every
+# subcommand, so up, compose config/exec/ps and down all interpolate the same
+# mount (shell env wins over --env-file in Compose interpolation; the app's
+# env_file is reset, so it never reaches the container's environment).
+# Contract 713 is an attach profile. The loader consumes only public profile
+# metadata and refuses it until main accepts it; no signing file is ever read.
+if [[ "${E2E_PROFILE:-}" == cloud-mode ]]; then export E2E_GATEWAY_PROFILE=cloud-mode; fi
+# Every invocation, including config/inspect/down, uses the same declaration.
+# Without a selection, pin production OFF even if a profile overlay defaults ON.
+subfeature_env=$(node "$ROOT/e2e/stack/mcp-subfeature-selection.mjs" --compose) || exit $?
+while IFS='=' read -r key value; do export "$key=$value"; done <<<"$subfeature_env"
+PROFILE_OVERLAYS=(); PROFILE_SERVICES=()
+# Keep legacy commands usable without Node and preserve r7alt's exact refusal.
+case "${E2E_GATEWAY_PROFILE:-stock}" in
+  stock) export AGENTCC_CONFIG_PATH=e2e/stack/gateway.e2e.yaml ;;
+  r7alt)
+    [[ "${E2E_STACK:-distributed}" == standalone ]] \
+      || die "E2E_GATEWAY_PROFILE=r7alt runs on the Standalone stack only (E2E_STACK=standalone)"
+    export AGENTCC_CONFIG_PATH=e2e/stack/gateway.r7alt.yaml ;;
+  *)
+    profile_rc=0
+    profile_out=$(node "$ROOT/e2e/scripts/gateway-profile.mjs" "$E2E_GATEWAY_PROFILE" "${E2E_STACK:-distributed}") || profile_rc=$?
+    ((profile_rc == 0)) || exit "$profile_rc"
+    while IFS='=' read -r kind value; do
+      case "$kind" in
+        file) export AGENTCC_CONFIG_PATH="$value" ;;
+        overlay) PROFILE_OVERLAYS+=(-f "$ROOT/$value") ;;
+        service) PROFILE_SERVICES+=("$value") ;;
+        *) die "gateway profile table printed an unknown line: $kind" ;;
+      esac
+    done <<<"$profile_out" ;;
+esac
 if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   ENV_FILE="$ROOT/e2e/stack/standalone-e2e.env"
   COMPOSE=(docker compose --env-file "$ENV_FILE"
     -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml"
     -p futureagi-e2e-standalone)
-  SERVICES=(app postgres clickhouse mock-llm)
-fi
+  SERVICES=(app postgres clickhouse mock-llm webhook-sink smtp-sink)
 
-BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app"
+fi
+# ${a[@]+"${a[@]}"}: an empty array under set -u, on bash 3.2 as well.
+COMPOSE+=(${PROFILE_OVERLAYS[@]+"${PROFILE_OVERLAYS[@]}"})
+SERVICES+=(${PROFILE_SERVICES[@]+"${PROFILE_SERVICES[@]}"})
+# Walk runs (e2e/walks/README.md). E2E_WALK_PINS=1 adds the walk environment
+# pins and binds every published port on loopback (H12,
+# e2e/stack/docker-compose.walk-pins.yml; Distributed: walk-pins.distributed.yml).
+# E2E_GATEWAY_REPLICAS=2 adds a second gateway process sharing the app's Redis
+# (H8, e2e/stack/docker-compose.mcp-replica.yml; Standalone, MCP profiles only).
+# Both managed overlays extend the common walk-mock definitions and mock-llm
+# depends on them. E2E_WALK_MOCKS=1 declares mock-browser cases and optionally
+# selects extra service names; never load the extends source as a root overlay.
+if [[ "${E2E_WALK_PINS:-}" == 1 ]]; then
+  if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
+    COMPOSE+=(-f "$ROOT/e2e/stack/docker-compose.walk-pins.yml")
+  else
+    COMPOSE+=(-f "$ROOT/e2e/stack/docker-compose.walk-pins.distributed.yml")
+  fi
+fi
+case "${E2E_GATEWAY_REPLICAS:-1}" in
+  1) ;;
+  2)
+    [[ "${E2E_STACK:-distributed}" == standalone && "${E2E_GATEWAY_PROFILE:-stock}" == mcp* ]] \
+      || die "E2E_GATEWAY_REPLICAS=2 runs on the Standalone stack with an MCP profile only"
+    COMPOSE+=(-f "$ROOT/e2e/stack/docker-compose.mcp-replica.yml")
+    SERVICES+=(agentcc-gateway-2) ;;
+  *) die "E2E_GATEWAY_REPLICAS=${E2E_GATEWAY_REPLICAS} is not 1 or 2" ;;
+esac
+if [[ "${E2E_WALK_MOCKS:-}" == 1 ]]; then
+  [[ -f "$ROOT/e2e/stack/docker-compose.walk-mocks.yml" ]] \
+    || die "E2E_WALK_MOCKS=1 needs e2e/stack/docker-compose.walk-mocks.yml from gw/E2E-WALK-MOCKS-1 (not on this head)"
+  # Its relative paths are rebased by Compose extends in the managed overlays.
+  # Passing it again with -f resolves them against ROOT and breaks every mock.
+  read -r -a WALK_MOCK_SERVICES <<<"${E2E_WALK_MOCK_SERVICES:-}"
+  SERVICES+=(${WALK_MOCK_SERVICES[@]+"${WALK_MOCK_SERVICES[@]}"})
+fi
+# A file named twice (a profile overlay that is also a walk overlay) is added once.
+dedupe_compose() {
+  local out=() seen=" " i=0
+  while ((i < ${#COMPOSE[@]})); do
+    if [[ "${COMPOSE[i]}" == -f ]]; then
+      if [[ "$seen" != *" ${COMPOSE[i+1]} "* ]]; then out+=(-f "${COMPOSE[i+1]}"); seen+="${COMPOSE[i+1]} "; fi
+      i=$((i + 2))
+    else
+      out+=("${COMPOSE[i]}"); i=$((i + 1))
+    fi
+  done
+  COMPOSE=("${out[@]}")
+  local services=() s
+  for s in "${SERVICES[@]}"; do [[ " ${services[*]} " == *" $s "* ]] || services+=("$s"); done
+  SERVICES=("${services[@]}")
+}
+dedupe_compose
+
+# Every command (including test/config/exec/down) shares this project's keys.
+credential_project="${E2E_COMPOSE_PROJECT:-futureagi-e2e}"
+if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
+  credential_project=futureagi-e2e-standalone
+fi
+prepare_runtime_credentials "$credential_project" || die "Cannot prepare E2E runtime credentials"
+
+BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app|mcpmock"
 
 backend_port() { grep '^BACKEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
 ch_port() { grep '^CH_HTTP_PORT=' "$ENV_FILE" | cut -d= -f2; }
 # As Compose resolves it: exported in the shell, else from the env file.
 ch_password() { printf '%s' "${CH_PASSWORD:-$(grep '^CH_PASSWORD=' "$ENV_FILE" | cut -d= -f2)}"; }
+# curl --user value for the local ClickHouse HTTP endpoint (user:password, both from the env).
+ch_auth() { printf '%s:%s' "${CH_USER:-default}" "$(ch_password)"; }
 frontend_port() { grep '^FRONTEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
 standalone_tag() { grep '^FUTURE_AGI_VERSION=' "$ROOT/e2e/stack/standalone-e2e.env" | cut -d= -f2; }
 
@@ -56,11 +168,11 @@ wait_ready() {
   # The bootstrap graph has already qualified schema. Keep an independent
   # storage witness here; HTTP health by itself is not catalog readiness.
   echo "Checking ClickHouse schema ..."
-  curl -fsS -G "http://localhost:$(ch_port)/" -u "default:$(ch_password)" \
+  curl -fsS -G "http://localhost:$(ch_port)/" -u "$(ch_auth)" \
     --data-urlencode "query=SELECT count() FROM spans LIMIT 0" >/dev/null \
     || { echo "CH spans table missing — check clickhouse-native-bootstrap logs"; exit 1; }
   echo "Checking observed attribute indexes ..."
-  curl -fsS -G "http://localhost:$(ch_port)/" -u "default:$(ch_password)" --data-urlencode \
+  curl -fsS -G "http://localhost:$(ch_port)/" -u "$(ch_auth)" --data-urlencode \
     "query=SELECT throwIf(count() != 2, 'observed indexes missing') FROM system.tables WHERE database={database:String} AND name IN ('observed_attribute_keys', 'observed_attribute_values')" \
     --data-urlencode "param_database=${PROPERTY_CATALOG_DATABASE:-property_catalog}" >/dev/null \
     || { echo "Observed attribute indexes missing"; exit 1; }
@@ -97,6 +209,10 @@ build_target() {
       local tag; tag=$(standalone_tag)
       (cd "$ROOT" && build_local_standalone_app "$tag")
       echo "built futureagi/standalone:$tag. run with: E2E_STACK=standalone bin/e2e up" ;;
+    # H-MCP: agentcc-mcpmock, the mcp profile's MCP upstream (e2e/stack/mcp-mock;
+    # its Dockerfile.dockerignore sends only the mock's source and fixtures).
+    mcpmock)   bash "$ROOT/e2e/stack/mcp-mock/build.sh"
+               echo "built. run with: E2E_STACK=standalone E2E_GATEWAY_PROFILE=mcp bin/e2e up" ;;
     *) echo "usage: bin/e2e build $BUILD_TARGETS"; exit 2 ;;
   esac
 }

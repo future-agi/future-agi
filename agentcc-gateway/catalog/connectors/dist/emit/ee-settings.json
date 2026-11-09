@@ -1,0 +1,145 @@
+{
+  "schema": "connector-ee-settings/v1",
+  "bundle": {
+    "version": "2026.10.28.0",
+    "sha256": "72dcd1cbc1dac9c8756eb011687158d5e451d765829915f751e548aa5243d136"
+  },
+  "apps": [
+    {
+      "id": "airtable",
+      "name": "Airtable",
+      "description": "Bases, tables and records.",
+      "category": "data",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://airtable.com/oauth2/v1/authorize",
+        "tokenUrl": "https://airtable.com/oauth2/v1/token",
+        "scopes": "data.records:read data.records:write schema.bases:read schema.bases:write data.recordComments:read data.recordComments:write workspacesAndBases:read",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "basic"
+      },
+      "mcpUrl": "https://mcp.airtable.com/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_AIRTABLE"
+    },
+    {
+      "id": "asana",
+      "name": "Asana",
+      "description": "Tasks, projects and work in Asana.",
+      "category": "productivity",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://app.asana.com/-/oauth_authorize",
+        "tokenUrl": "https://app.asana.com/-/oauth_token",
+        "scopes": "",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.asana.com/v2/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_ASANA"
+    },
+    {
+      "id": "close",
+      "name": "Close",
+      "description": "Sales CRM: leads, contacts, opportunities and activities.",
+      "category": "data",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://app.close.com/oauth2/authorize/",
+        "tokenUrl": "https://api.close.com/oauth2/token/",
+        "scopes": "mcp.read mcp.write_safe mcp.write_destructive offline_access",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.close.com/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_CLOSE"
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "Issues, pull requests and code in your repositories.",
+      "category": "developer",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://github.com/login/oauth/authorize",
+        "tokenUrl": "https://github.com/login/oauth/access_token",
+        "scopes": "offline_access",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://api.githubcopilot.com/mcp/",
+      "envPrefix": "OMEGA_INTEGRATION_GITHUB"
+    },
+    {
+      "id": "hubspot",
+      "name": "HubSpot",
+      "description": "CRM records, activities, marketing content and analytics.",
+      "category": "data",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://mcp.hubspot.com/oauth/authorize/user",
+        "tokenUrl": "https://mcp.hubspot.com/oauth/v3/token",
+        "scopes": "",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.hubspot.com",
+      "envPrefix": "OMEGA_INTEGRATION_HUBSPOT"
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "description": "Issues, projects and cycles.",
+      "category": "developer",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://linear.app/oauth/authorize",
+        "tokenUrl": "https://api.linear.app/oauth/token",
+        "scopes": "read write",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.linear.app/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_LINEAR"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "description": "Read channels and post messages.",
+      "category": "communication",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://slack.com/oauth/v2_user/authorize",
+        "tokenUrl": "https://slack.com/api/oauth.v2.user.access",
+        "scopes": "search:read.public channels:history channels:read chat:write users:read",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.slack.com/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_SLACK"
+    },
+    {
+      "id": "supabase",
+      "name": "Supabase",
+      "description": "Projects, databases, SQL, edge functions and branches.",
+      "category": "developer",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://api.supabase.com/v1/oauth/authorize",
+        "tokenUrl": "https://api.supabase.com/v1/oauth/token",
+        "scopes": "organizations:read projects:read projects:write database:write database:read analytics:read secrets:read edge_functions:read edge_functions:write environment:read environment:write storage:read storage:write",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.supabase.com/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_SUPABASE"
+    }
+  ]
+}

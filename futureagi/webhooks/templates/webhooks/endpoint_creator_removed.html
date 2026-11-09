@@ -1,0 +1,15 @@
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1f2933;">
+    <p>{{ member_name }} left {{ scope_name }}; their {{ count }} webhook{{ count|pluralize }}
+    {{ count|pluralize:"is,are" }} off until an admin reviews {{ count|pluralize:"it,them" }}.</p>
+    <p>They left the workspace, or their role there no longer lets them manage webhooks.</p>
+    <ul>
+      {% for ep in endpoints %}<li>{{ ep.name }}: {{ ep.url }}</li>{% endfor %}
+    </ul>
+    <p>
+      New deliveries are kept, paused, with their sequence numbers (up to 10,000). An admin who turns a webhook back
+      on becomes its owner, and can send or skip what is waiting.
+    </p>
+    <p><a href="{{ base_url }}/dashboard/settings/integrations">Open Settings &gt; Integrations</a></p>
+  </body>
+</html>

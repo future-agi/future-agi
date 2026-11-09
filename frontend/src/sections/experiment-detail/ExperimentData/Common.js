@@ -154,23 +154,40 @@ export function toExcelLetters(num) {
 }
 
 export const shouldShowDiffModeButton = (experimentData) => {
-  // Defensive: validate input
+  // Defensive: validate input. The detail API (ExperimentDetailV2Serializer)
+  // is snake_case; camelCase stays as a fallback for older callers.
   if (!experimentData) return false;
-  if (!experimentData?.columnId) return false;
+  if (!(experimentData?.column_id ?? experimentData?.columnId)) return false;
 
-  const isLLMType =
-    experimentData.experimentType?.toLowerCase() === MODEL_TYPES.LLM;
+  const experimentType =
+    experimentData.experiment_type ?? experimentData.experimentType;
+  const isLLMType = experimentType?.toLowerCase() === MODEL_TYPES.LLM;
   if (!isLLMType) return false;
 
   // Check for valid configurations
+  const agentConfigs =
+    experimentData?.agent_configs ?? experimentData?.agentConfigs;
+  const promptConfigs =
+    experimentData?.prompt_configs ?? experimentData?.promptConfigs;
   const hasAgentConfigs =
-    Array.isArray(experimentData?.agentConfigs) &&
-    experimentData?.agentConfigs?.length > 0;
+    Array.isArray(agentConfigs) && agentConfigs.length > 0;
 
   const hasValidPromptConfigs =
-    Array.isArray(experimentData?.promptConfigs) &&
-    experimentData?.promptConfigs?.length > 0 &&
-    experimentData?.promptConfigs[0]?.outputFormat === "string";
+    Array.isArray(promptConfigs) &&
+    promptConfigs.length > 0 &&
+    (promptConfigs[0]?.output_format ?? promptConfigs[0]?.outputFormat) ===
+      "string";
 
   return hasAgentConfigs || hasValidPromptConfigs;
 };
+
+// Experiment statuses after which the grid stops polling for updates.
+const TERMINAL_EXPERIMENT_STATUSES = new Set([
+  "Completed",
+  "PartialCompleted",
+  "Cancelled",
+  "Failed",
+  "Error",
+]);
+export const isTerminalExperimentStatus = (status) =>
+  TERMINAL_EXPERIMENT_STATUSES.has(status);

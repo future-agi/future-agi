@@ -1,7 +1,6 @@
 import { Box, Typography } from "@mui/material";
 import React, { useEffect, useMemo, useState } from "react";
 import Iconify from "src/components/iconify";
-import CreateNewProperties from "./CreateNewProperties";
 import PropTypes from "prop-types";
 import CategoricalFields from "./CategoricalFields";
 import { useFieldArray, useFormContext } from "react-hook-form";
@@ -20,7 +19,7 @@ const menus = [
   { label: "Value", value: "value" },
 ];
 
-const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
+const PropertyFields = ({ control, nestIndex, newProps = [] }) => {
   const [options, setOptions] = useState([...menus]);
 
   useEffect(() => {
@@ -31,7 +30,10 @@ const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
 
   const [isDistributionUniform, setIsDistributionUniform] = useState(false);
 
-  const [createNew, setCreateNew] = useState(undefined);
+  // v2.1 g8 (create:synthetic): "Add New Property" is gone — a free-form
+  // property reached the generator as a category value and changed nothing
+  // it named. Min / Max length and Value (Dynamic / Categorical) are the
+  // properties the rows follow.
   const { fields, append, remove, update, move } = useFieldArray({
     name: `columns.${nestIndex}.property`,
     control,
@@ -168,8 +170,6 @@ const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
                   size="small"
                   label="Property"
                   options={selectedOption}
-                  createLabel="Add New Property"
-                  handleCreateLabel={() => setCreateNew(index)}
                   sx={typeValue ? {} : { width: "200px" }}
                 />
               )}
@@ -266,13 +266,6 @@ const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
       >
         Add more properties
       </LoadingButton>
-      <CreateNewProperties
-        open={Boolean(createNew === 0 ? true : createNew)}
-        onClose={() => setCreateNew(undefined)}
-        data={createNew}
-        setOptions={addNProps}
-        update={update}
-      />
     </React.Fragment>
   );
 };
@@ -283,5 +276,4 @@ PropertyFields.propTypes = {
   control: PropTypes.any,
   nestIndex: PropTypes.number,
   newProps: PropTypes.array,
-  addNProps: PropTypes.func,
 };

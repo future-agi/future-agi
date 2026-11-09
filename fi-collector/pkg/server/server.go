@@ -16,6 +16,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -349,7 +350,9 @@ func (s *Server) Run(ctx context.Context) error {
 		//   application/json        (browser SDKs, lightweight clients)
 		// Any other method or content-type is rejected with 415 / 405 per
 		// the spec.
+		mux.HandleFunc("/v1/traces/target", s.handleHTTPTraceTarget)
 		mux.HandleFunc("/v1/traces", s.handleHTTPTraces)
+		mux.HandleFunc("/tracer/v1/traces/target", s.handleHTTPTraceTarget)
 		mux.HandleFunc("/tracer/v1/traces", s.handleHTTPTraces)
 		var handler http.Handler = mux
 		if s.auth != nil {
@@ -390,6 +393,46 @@ func (s *Server) Run(ctx context.Context) error {
 		// it's a genuine listener crash.
 		return err
 	}
+}
+
+// handleHTTPTraceTarget is the authenticated, read-only preflight used by scoped
+// exporters before POSTing spans. It intentionally sits beside the OTLP endpoint
+// so old collectors that ignore expected headers cannot receive delegated exports.
+func (s *Server) handleHTTPTraceTarget(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	expected, err := auth.ParseExpectedHTTPHeaders(r.Header)
+	if err != nil || expected == nil {
+		http.Error(w, auth.ErrExpectedTargetMismatch.Error(), http.StatusForbidden)
+		return
+	}
+	values, ok := r.URL.Query()["project_name"]
+	if !ok || len(values) != 1 || values[0] == "" || len(values[0]) > 512 || strings.TrimSpace(values[0]) != values[0] {
+		http.Error(w, "project_name is required", http.StatusBadRequest)
+		return
+	}
+	result := auth.FromContext(r.Context())
+	if err := expected.CheckScope(result); err != nil {
+		http.Error(w, auth.ErrExpectedTargetMismatch.Error(), http.StatusForbidden)
+		return
+	}
+	if err := s.auth.ResolveProjectsForExpectedTarget(r.Context(), auth.CacheKeyFromContext(r.Context()), result, []string{values[0]}, expected.ProjectID); err != nil {
+		if errors.Is(err, auth.ErrExpectedTargetMismatch) {
+			http.Error(w, auth.ErrExpectedTargetMismatch.Error(), http.StatusForbidden)
+			return
+		}
+		http.Error(w, "expected target lookup unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"protocol": "fi-expected-target/v1", "organization_id": expected.OrganizationID,
+		"workspace_id": expected.WorkspaceID, "project_id": expected.ProjectID,
+	})
 }
 
 // shutdown stops both listeners, waits for the flusher to exit, drains the
@@ -485,6 +528,14 @@ func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, h
 	ctx, cancel := ingestContext(ctx)
 	defer cancel()
 	md, _ := metadata.FromIncomingContext(ctx)
+	// An exporter's expected-target assertion (auth.ExpectedTarget) is checked
+	// against the authenticated scope before any decoding, and again by the
+	// stamp, which refuses an unknown project instead of creating it.
+	expected, err := auth.ParseExpectedMetadata(md)
+	if err != nil || expected.CheckScope(auth.FromContext(ctx)) != nil {
+		return ptraceotlp.NewExportResponse(), false, status.Error(codes.PermissionDenied, auth.ErrExpectedTargetMismatch.Error())
+	}
+	ctx = withExpectedTarget(ctx, expected)
 	prepared, rej := h.s.prepareExport(ctx, decode, auth.ProjectNameMetadataValues(md), held)
 	if rej != nil {
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rej)
@@ -534,6 +585,12 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		s.rejectHTTP(w, "", &rejection{reason: "method", status: http.StatusMethodNotAllowed, msg: "method not allowed"})
 		return
 	}
+	expected, err := auth.ParseExpectedHTTPHeaders(r.Header)
+	if err != nil || expected.CheckScope(auth.FromContext(r.Context())) != nil {
+		http.Error(w, auth.ErrExpectedTargetMismatch.Error(), http.StatusForbidden)
+		return
+	}
+	r = r.WithContext(withExpectedTarget(r.Context(), expected))
 
 	ct := r.Header.Get("Content-Type")
 	// Strip any `;charset=...` suffix. The spec only mentions the two base
@@ -685,7 +742,7 @@ const dropNoRouter = "no_router"
 // of it has been stored or changed.
 func (s *Server) routeSimulation(ctx context.Context, result *auth.ResolveResult, traces ptrace.Traces) (auth.RouteOutcome, error) {
 	if s.router == nil {
-		if result.KeyType != auth.KeyTypeIngest {
+		if result.Principal != auth.PrincipalSandbox {
 			return auth.RouteOutcome{}, nil
 		}
 		// Storing the spans under their own project name would put a

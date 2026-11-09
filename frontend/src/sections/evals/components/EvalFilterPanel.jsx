@@ -25,6 +25,8 @@ import React, {
 } from "react";
 import Iconify from "src/components/iconify";
 import { useAIFilter } from "src/hooks/use-ai-filter";
+import { TYPED_EVAL_TYPES } from "src/sections/common/EvalTypes/typedEvalTypes";
+import { typedTabsOf } from "../types/typedViews";
 
 // ---------------------------------------------------------------------------
 // Filter field definitions — shared across all modes
@@ -35,7 +37,13 @@ const FILTER_FIELDS = [
     value: "eval_type",
     label: "Eval Type",
     type: "enum",
-    choices: ["llm", "code", "agent"],
+    // W7: a typed type is a filter choice once it can be created.
+    choices: [
+      "llm",
+      "code",
+      "agent",
+      ...typedTabsOf(TYPED_EVAL_TYPES).map((t) => t.value),
+    ],
   },
   {
     value: "output_type",

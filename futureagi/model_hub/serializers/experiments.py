@@ -1,27 +1,162 @@
 # serializers.py
+from django.core.exceptions import ValidationError as ModelValidationError
 from rest_framework import serializers
-from tfc.utils.serializer_fields import (
-    JsonValueField,
-    StringOrArrayField,
-    StringOrObjectField,
-)
 
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from model_hub.models.choices import ProviderLogoUrls
+from model_hub.models.dataset_versions import DatasetVersion
 from model_hub.models.develop_dataset import Column, Dataset
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.experiments import (
     ExperimentAgentConfig,
     ExperimentDatasetTable,
     ExperimentPromptConfig,
+    ExperimentRun,
+    ExperimentRunItem,
     ExperimentsTable,
+)
+from model_hub.serializers.experiment_run_scope import (
+    ExperimentLimitsSerializer,
+    ExperimentMetadataField,
+    ExperimentSampleSerializer,
+    ExperimentSplitRunScopeSerializer,
+)
+from model_hub.services.experiment_scope_gate import (
+    scope_enabled,
+    without_scope_fields,
 )
 from model_hub.utils.workspace_scope import (
     scoped_column_queryset,
     scoped_dataset_queryset,
+    scoped_dataset_version_queryset,
     scoped_user_eval_metric_queryset,
 )
 from tfc.middleware.workspace_context import get_current_organization
+from tfc.utils.serializer_fields import (
+    JsonValueField,
+    StringOrArrayField,
+    StringOrObjectField,
+)
+
+
+class ExperimentRunSerializer(serializers.ModelSerializer):
+    """Stable write/read contract for an experiment execution.
+
+    Dataset versions are represented by their stable primary key and validated
+    through the DatasetVersion relation.
+    """
+
+    experiment_id = serializers.PrimaryKeyRelatedField(
+        source="experiment",
+        queryset=ExperimentsTable.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    dataset_version_id = serializers.PrimaryKeyRelatedField(
+        source="dataset_version",
+        queryset=DatasetVersion.objects.all(),
+    )
+    metadata = serializers.DictField(required=False)
+    model_config = serializers.DictField(required=False)
+    evaluator_versions = serializers.ListField(
+        child=serializers.JSONField(), required=False
+    )
+
+    class Meta:
+        model = ExperimentRun
+        fields = [
+            "id",
+            "experiment_id",
+            "dataset_version_id",
+            "task_kind",
+            "status",
+            "started_at",
+            "completed_at",
+            "metadata",
+            "model_config",
+            "prompt_version_id",
+            "agent_version_id",
+            "evaluator_versions",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request") if self.context else None
+        dataset_versions = scoped_dataset_version_queryset(request)
+        self.fields["dataset_version_id"].queryset = dataset_versions
+        self.fields["experiment_id"].queryset = ExperimentsTable.objects.filter(
+            dataset__in=scoped_dataset_queryset(request),
+            deleted=False,
+        )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        candidate = ExperimentRun(
+            **{
+                field: attrs.get(field, getattr(self.instance, field, None))
+                for field in (
+                    "experiment",
+                    "dataset_version",
+                    "started_at",
+                    "completed_at",
+                )
+            }
+        )
+        try:
+            candidate.clean()
+        except ModelValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict) from exc
+        return attrs
+
+
+class ExperimentRunItemSerializer(serializers.ModelSerializer):
+    """Stable write/read contract for one example/trial result."""
+
+    run_id = serializers.PrimaryKeyRelatedField(
+        source="run",
+        queryset=ExperimentRun.objects.all(),
+    )
+    trial_number = serializers.IntegerField(required=False, min_value=1)
+    latency_ms = serializers.FloatField(required=False, allow_null=True, min_value=0)
+    cost = serializers.FloatField(required=False, allow_null=True, min_value=0)
+    metadata = serializers.DictField(required=False)
+    score_refs = serializers.ListField(child=serializers.JSONField(), required=False)
+
+    class Meta:
+        model = ExperimentRunItem
+        fields = [
+            "id",
+            "run_id",
+            "example_id",
+            "trial_number",
+            "status",
+            "input",
+            "expected",
+            "output",
+            "error",
+            "trace_id",
+            "root_span_id",
+            "latency_ms",
+            "token_usage",
+            "cost",
+            "score_refs",
+            "metadata",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request") if self.context else None
+        runs = ExperimentRun.objects.filter(
+            dataset_version__in=scoped_dataset_version_queryset(request),
+            deleted=False,
+        )
+        self.fields["run_id"].queryset = runs
 
 
 class ExperimentsTableSerializer(serializers.ModelSerializer):
@@ -410,6 +545,41 @@ class EvalMetricEntrySerializer(serializers.Serializer):
     composite_weight_overrides = serializers.JSONField(
         required=False, allow_null=True, default=None
     )
+    # The eval template version this eval runs (an EvalTemplateVersion id).
+    # config.version_pin ("v3", "latest") is honoured too. An entry naming
+    # neither runs the template default, on update too (the entry's config
+    # replaces the stored one); see model_hub/services/experiment_eval_pins.py.
+    pinned_version_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate_template_id(self, value):
+        # External metrics (SRV-5) are scored by the caller and never run on
+        # the server; refuse them here, before the experiment or any metric
+        # is created. With a caller (the request's organization and workspace,
+        # else the bound context authentication sets), only a template the
+        # caller may use is refused here: any other id, another organization's
+        # or workspace's external template included, passes and the view
+        # answers it like an id that does not exist. Without one (validated
+        # outside a request; a request that resolves no organization is
+        # refused by authentication first), every external template is.
+        from model_hub.models.evals_metric import EXTERNAL_EVAL_TYPE, EvalTemplate
+        from model_hub.services.eval_group import _accessible_eval_template_filter
+        from model_hub.services.external_metrics import EXTERNAL_TEMPLATE_REFUSAL
+        from tfc.utils.tenant_scope import caller_organization, caller_workspace
+
+        request = (self.context or {}).get("request")
+        templates = EvalTemplate.no_workspace_objects.filter(
+            id=value, eval_type=EXTERNAL_EVAL_TYPE
+        )
+        organization = caller_organization(request)
+        if organization is not None:
+            templates = templates.filter(
+                _accessible_eval_template_filter(
+                    organization, caller_workspace(request)
+                )
+            )
+        if templates.exists():
+            raise serializers.ValidationError(EXTERNAL_TEMPLATE_REFUSAL)
+        return value
 
 
 class _ExtraFieldsMixin:
@@ -484,6 +654,18 @@ class PromptModelParamsSerializer(_ExtraFieldsMixin, serializers.Serializer):
     frequency_penalty = serializers.FloatField(required=False)
     presence_penalty = serializers.FloatField(required=False)
     response_format = StringOrObjectField(required=False)
+
+    def to_internal_value(self, data):
+        from model_hub.services.experiment_config_resolver import (
+            normalize_prompt_params,
+        )
+
+        # Old forms send camelCase keys and null slider defaults. Normalize
+        # before typed validation: null is unset, but non-null aliases must
+        # obey the same integer/float/schema contract as canonical keys.
+        if isinstance(data, dict):
+            data = normalize_prompt_params(data)
+        return super().to_internal_value(data)
 
     class Meta:
         swagger_schema_fields = {"additionalProperties": True}
@@ -595,6 +777,70 @@ class ExperimentCreateV2Serializer(serializers.Serializer):
     )
     prompt_config = PromptConfigEntrySerializer(many=True)
     user_eval_metrics = EvalMetricEntrySerializer(many=True)
+    row_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        allow_empty=False,
+        max_length=100000,
+        help_text=(
+            "Experiment scoping is disabled by default. When disabled on the server, "
+            "this field is rejected as an unknown field (HTTP 400) in create requests."
+        ),
+    )
+    split_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        allow_empty=False,
+        max_length=100,
+        help_text="Union of live dataset splits, intersected with row_ids before sampling.",
+    )
+    sample = ExperimentSampleSerializer(
+        required=False,
+        help_text=(
+            "Experiment scoping is disabled by default. When disabled on the server, "
+            "this field is rejected as an unknown field (HTTP 400) in create requests "
+            "and omitted from experiment detail responses."
+        ),
+    )
+    metadata = ExperimentMetadataField(
+        required=False,
+        help_text=(
+            "Experiment scoping is disabled by default. When disabled on the server, "
+            "only {} is accepted for this field as a no-op; any other value is rejected "
+            "as an unknown field (HTTP 400) in create requests."
+        ),
+    )
+    error_policy = serializers.ChoiceField(
+        choices=["zero", "exclude"],
+        required=False,
+        help_text=(
+            "Experiment scoping is disabled by default. When disabled on the server, "
+            "this field is rejected as an unknown field (HTTP 400) in create requests."
+        ),
+    )
+    limits = ExperimentLimitsSerializer(
+        required=False,
+        help_text=(
+            "Experiment scoping is disabled by default. When disabled on the server, "
+            "this field is rejected as an unknown field (HTTP 400) in create requests "
+            "and omitted from experiment detail responses."
+        ),
+    )
+
+    def get_fields(self):
+        fields = without_scope_fields(super().get_fields())
+        if not scope_enabled():
+            fields["split_ids"].help_text = "Union of live dataset splits."
+        return fields
+
+    def allows_unknown_field(self, field):
+        # Older basic wizard bodies include metadata={}. Accept only that
+        # no-op without advertising the removed feature field.
+        return (
+            not scope_enabled()
+            and field == "metadata"
+            and getattr(self, "initial_data", {}).get(field) == {}
+        )
 
     def validate_user_eval_metrics(self, value):
         if not value:
@@ -611,7 +857,16 @@ class ExperimentCreateV2Serializer(serializers.Serializer):
         return value
 
     def validate(self, data):
+        if self.allows_unknown_field("metadata"):
+            # Submission identity hashes validated_data. Keep an explicit legacy
+            # metadata={} identical across ON -> OFF, but leave omission alone.
+            data["metadata"] = {}
+
         experiment_type = data.get("experiment_type", "llm")
+        if data.get("limits") and experiment_type != "llm":
+            raise serializers.ValidationError(
+                {"limits": "Per-row limits require an LLM experiment."}
+            )
 
         for i, entry in enumerate(data.get("prompt_config", [])):
             is_agent = bool(entry.get("agent_id")) and bool(entry.get("agent_version"))
@@ -800,6 +1055,22 @@ class ExperimentDetailV2Serializer(serializers.ModelSerializer):
     dataset_id = serializers.UUIDField(read_only=True)
     column_id = serializers.UUIDField(read_only=True, allow_null=True)
     snapshot_dataset_id = serializers.UUIDField(read_only=True, allow_null=True)
+    run_scope = serializers.JSONField(read_only=True)
+    row_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        source="run_scope.row_ids",
+        read_only=True,
+        allow_null=True,
+        default=None,
+    )
+    sample = ExperimentSampleSerializer(
+        source="run_scope.sample", read_only=True, allow_null=True, default=None
+    )
+    metadata = ExperimentMetadataField(source="run_metadata", read_only=True)
+    error_policy = serializers.ChoiceField(
+        choices=["zero", "exclude"], source="run_policy.error_policy", read_only=True
+    )
+    limits = ExperimentLimitsSerializer(source="run_policy.limits", read_only=True)
 
     class Meta:
         model = ExperimentsTable
@@ -811,11 +1082,34 @@ class ExperimentDetailV2Serializer(serializers.ModelSerializer):
             "experiment_type",
             "status",
             "snapshot_dataset_id",
+            "run_scope",
+            "row_ids",
+            "sample",
+            "metadata",
+            "error_policy",
+            "limits",
             "prompt_configs",
             "agent_configs",
             "user_eval_metrics",
             "created_at",
         ]
+
+    def get_fields(self):
+        fields = without_scope_fields(super().get_fields())
+        if not scope_enabled():
+            # Preserve F50 readback without exposing F05 through the JSON blob.
+            fields["run_scope"] = ExperimentSplitRunScopeSerializer(read_only=True)
+        return fields
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Optional selection settings are absent for full-dataset runs.
+        for field in ("row_ids", "sample"):
+            if data.get(field) is None:
+                data.pop(field, None)
+        if not scope_enabled() and not data.get("run_scope", {}).get("split_ids"):
+            data.pop("run_scope", None)
+        return data
 
     def get_prompt_configs(self, obj):
         # Collect EPCs from prefetched experiment_datasets
@@ -849,7 +1143,9 @@ class ExperimentDetailV2Serializer(serializers.ModelSerializer):
 
     def get_user_eval_metrics(self, obj):
         # Single query: M2M JOIN + select_related for template FK
-        metrics = obj.user_eval_template_ids.select_related("template").all()
+        metrics = obj.user_eval_template_ids.select_related(
+            "template", "pinned_version"
+        ).all()
         return [
             {
                 "id": str(m.id),
@@ -875,6 +1171,14 @@ class ExperimentDetailV2Serializer(serializers.ModelSerializer):
                 "model": m.model,
                 "error_localizer": m.error_localizer,
                 "kb_id": str(m.kb_id) if m.kb_id else None,
+                # The version the eval runs when pinned (null: the template's
+                # default version at run time).
+                "pinned_version_id": (
+                    str(m.pinned_version_id) if m.pinned_version_id else None
+                ),
+                "pinned_version_number": (
+                    m.pinned_version.version_number if m.pinned_version else None
+                ),
             }
             for m in metrics
         ]
@@ -929,3 +1233,13 @@ class ExperimentUpdateV2Serializer(serializers.Serializer):
     column_id = serializers.UUIDField(required=False, allow_null=True)
     prompt_config = PromptConfigEntrySerializer(many=True, required=False)
     user_eval_metrics = EvalMetricEntrySerializer(many=True, required=False)
+    append_only = serializers.BooleanField(required=False)
+
+    def validate(self, data):
+        from model_hub.services.experiment_append_variant import validate_append_payload
+
+        try:
+            validate_append_payload(data)
+        except ValueError as error:
+            raise serializers.ValidationError(str(error)) from error
+        return data

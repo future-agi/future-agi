@@ -14,14 +14,12 @@ paths = [
     '''/test_[^/]+\.py$''',               # test_foo.py at any depth
     '''/test_mcp_server/''',              # MCP server test scaffolding directory
     '''(?i)/templates/.*\.html$''',       # email templates (figmeta + Mailgun placeholders)
-    '''(?i)\.bru$''',                     # Bruno API collection — uses {{env}} vars
     '''docs/.*\.md$''',                   # documentation examples
     '''\.env\.example$''',
 ]
 
 # Specific stopwords that are clearly placeholder values anywhere they appear.
 stopwords = [
-    "YOUR_API_KEY",
     "YOUR-API-KEY",
     "your-api-key",
     "your-qdrant-api-key",
@@ -42,3 +40,354 @@ regexes = [
     '''sk_live_ABCDEFGHIJKLMNOPQRSTuvwx''',
     '''FwoGZXIvYXdzEBYaDHqa0AP''',        # AWS session token format test fixture
 ]
+
+# Reviewed synthetic findings in the product-port revision only.
+# Keep upstream allowances above unchanged. Each added allowance requires
+# BOTH the exact revision and the exact path within the named rule.
+# Fingerprints document every adjudicated finding covered by that pair;
+# no subsequent commit or other rule is exempted by these entries.
+
+[[rules]]
+id = "curl-auth-header"
+
+[[rules.allowlists]]
+description = "Reviewed API template with literal YOUR_API_KEY; exact matched construct only"
+condition = "AND"
+paths = ['''^futureagi/model_hub/constants\.py$''']
+regexTarget = "match"
+regexes = ['''\A\Qcurl --location '{api_url}' \\
+--header 'X-Api-Key: YOUR_API_KEY'\E\z''']
+# Reviewed construct SHA256: 0690de4d214ba0d4365fe03dc8185289be331b8504e4e971eb5904ac464e35dc
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/00_baseline\.sh$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/00_baseline.sh:curl-auth-header:114
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["358f95afe07aeb1a726f000e5899a60ec1d4244f"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/00_baseline\.sh$''']
+# Fingerprint: 358f95afe07aeb1a726f000e5899a60ec1d4244f:agentcc-gateway/scripts/scenarios/00_baseline.sh:curl-auth-header:110
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Reviewed Django migration dependency; exact tuple line only"
+condition = "AND"
+paths = ['''^futureagi/saml2_auth/migrations/0003_login_state\.py$''']
+regexTarget = "line"
+regexes = ['''(?m)^\Q        ("saml2_auth", "0002_idp_generation"),\E$''']
+# Reviewed construct SHA256: d652cfe581c98292b184488003068e9ae4f0d7ff8fd5f041e08edbd04b44579f
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["d4c3ac41cdcc08eb36b7b82cd40ab20ae4238b74"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/63_m5_stdio\.sh$''']
+# Fingerprint: d4c3ac41cdcc08eb36b7b82cd40ab20ae4238b74:agentcc-gateway/scripts/scenarios/63_m5_stdio.sh:generic-api-key:31
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["332d5e5679aadeddea8ce5ab11e234ec33a235fc"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/28_g18_signals\.sh$''']
+# Fingerprint: 332d5e5679aadeddea8ce5ab11e234ec33a235fc:agentcc-gateway/scripts/scenarios/28_g18_signals.sh:generic-api-key:188
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["a18056b10ba12a4459f45df596cfdb698512455b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/gates/fixtures/W1/gateway\-adaptive\.yaml$''']
+# Fingerprint: a18056b10ba12a4459f45df596cfdb698512455b:agentcc-gateway/scripts/scenarios/gates/fixtures/W1/gateway-adaptive.yaml:generic-api-key:15
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["a18056b10ba12a4459f45df596cfdb698512455b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/gates/fixtures/W1/gateway\.yaml$''']
+# Fingerprint: a18056b10ba12a4459f45df596cfdb698512455b:agentcc-gateway/scripts/scenarios/gates/fixtures/W1/gateway.yaml:generic-api-key:23
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["a18056b10ba12a4459f45df596cfdb698512455b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/gates/lib/w1_common\.sh$''']
+# Fingerprint: a18056b10ba12a4459f45df596cfdb698512455b:agentcc-gateway/scripts/scenarios/gates/lib/w1_common.sh:generic-api-key:25
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["061267a8f615aa04a79347bb48ff5d0bf0b0e1f5"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/fixtures/G5/gateway\.yaml$''']
+# Fingerprint: 061267a8f615aa04a79347bb48ff5d0bf0b0e1f5:agentcc-gateway/scripts/scenarios/fixtures/G5/gateway.yaml:generic-api-key:26
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["061267a8f615aa04a79347bb48ff5d0bf0b0e1f5"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/18_g5_breaker\.sh$''']
+# Fingerprint: 061267a8f615aa04a79347bb48ff5d0bf0b0e1f5:agentcc-gateway/scripts/scenarios/18_g5_breaker.sh:generic-api-key:25
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["c7f441b731e701c42d4f9f184513c287375bfcb4"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/fixtures/G1/gateway\.yaml$''']
+# Fingerprint: c7f441b731e701c42d4f9f184513c287375bfcb4:agentcc-gateway/scripts/scenarios/fixtures/G1/gateway.yaml:generic-api-key:29
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["c7f441b731e701c42d4f9f184513c287375bfcb4"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/11_g1_attempts\.sh$''']
+# Fingerprint: c7f441b731e701c42d4f9f184513c287375bfcb4:agentcc-gateway/scripts/scenarios/11_g1_attempts.sh:generic-api-key:21
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/11_g1_attempts\.sh$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/11_g1_attempts.sh:generic-api-key:21
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/18_g5_breaker\.sh$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/18_g5_breaker.sh:generic-api-key:25
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/28_g18_signals\.sh$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/28_g18_signals.sh:generic-api-key:188
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/63_m5_stdio\.sh$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/63_m5_stdio.sh:generic-api-key:32
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/64_m8_identity\.sh$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/64_m8_identity.sh:generic-api-key:34
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/66_m10_vservers\.sh$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/66_m10_vservers.sh:generic-api-key:219
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/fixtures/G1/gateway\.yaml$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/fixtures/G1/gateway.yaml:generic-api-key:29
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/fixtures/G5/gateway\.yaml$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/fixtures/G5/gateway.yaml:generic-api-key:26
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/fixtures/M10/gateway\.yaml$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/fixtures/M10/gateway.yaml:generic-api-key:28
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/fixtures/M8/gateway\-no\-static\-org\.yaml$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/fixtures/M8/gateway-no-static-org.yaml:generic-api-key:29
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/fixtures/M8/gateway\.yaml$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/fixtures/M8/gateway.yaml:generic-api-key:33
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/fixtures/omega\-ee\-attach/protocol/402\-agent\-key\-budget\-exhausted\.json$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/fixtures/omega-ee-attach/protocol/402-agent-key-budget-exhausted.json:generic-api-key:18
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/fixtures/omega\-ee\-attach/results/tool_rate_limited\.json$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/fixtures/omega-ee-attach/results/tool_rate_limited.json:generic-api-key:26
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/gates/fixtures/W1/gateway\-adaptive\.yaml$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/gates/fixtures/W1/gateway-adaptive.yaml:generic-api-key:15
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/gates/fixtures/W1/gateway\.yaml$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/gates/fixtures/W1/gateway.yaml:generic-api-key:23
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^agentcc\-gateway/scripts/scenarios/gates/lib/w1_common\.sh$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:agentcc-gateway/scripts/scenarios/gates/lib/w1_common.sh:generic-api-key:25
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^frontend/src/sections/omega/deployments/__tests__/no\-token\-in\-urls\.test\.jsx$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:frontend/src/sections/omega/deployments/__tests__/no-token-in-urls.test.jsx:generic-api-key:51
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^futureagi/webhooks/core/conformance/b8/delivered/run\-completed\.json$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/b8/delivered/run-completed.json:generic-api-key:4
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^futureagi/webhooks/core/conformance/payloads\.json$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/payloads.json:generic-api-key:109
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^futureagi/webhooks/core/conformance/signing\-v1\.json$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing-v1.json:generic-api-key:10
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing-v1.json:generic-api-key:6
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing-v1.json:generic-api-key:8
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^futureagi/webhooks/core/conformance/signing\.json$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:293
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:306
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:319
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:32
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:332
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:345
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:358
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:371
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:384
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:39
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:397
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:410
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:423
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:436
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:449
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:462
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:475
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:488
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:49
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:501
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:513
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:526
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:53
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:539
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:65
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/signing.json:generic-api-key:77
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^futureagi/webhooks/core/conformance/tools/whconf/cases_b8_notices\.py$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/tools/whconf/cases_b8_notices.py:generic-api-key:101
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^futureagi/webhooks/core/conformance/tools/whconf/cases_payloads_run\.py$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/tools/whconf/cases_payloads_run.py:generic-api-key:48
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^futureagi/webhooks/core/conformance/tools/whconf/common\.py$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/tools/whconf/common.py:generic-api-key:14
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/tools/whconf/common.py:generic-api-key:16
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:futureagi/webhooks/core/conformance/tools/whconf/common.py:generic-api-key:18
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^services/omega\-hub\-checker/test/rules\.test\.mjs$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:services/omega-hub-checker/test/rules.test.mjs:generic-api-key:79
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^services/omega\-hub\-checker/test/sandbox\.test\.mjs$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:services/omega-hub-checker/test/sandbox.test.mjs:generic-api-key:131
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["1b8730b4702e4384cbfdf54b1ad97a355e13b43e"]
+paths = ['''^frontend/src/sections/common/RunSources/__tests__/snippets\.test\.js$''']
+# Fingerprint: 1b8730b4702e4384cbfdf54b1ad97a355e13b43e:frontend/src/sections/common/RunSources/__tests__/snippets.test.js:generic-api-key:20
+# Fingerprint: 1b8730b4702e4384cbfdf54b1ad97a355e13b43e:frontend/src/sections/common/RunSources/__tests__/snippets.test.js:generic-api-key:252
+# Fingerprint: 1b8730b4702e4384cbfdf54b1ad97a355e13b43e:frontend/src/sections/common/RunSources/__tests__/snippets.test.js:generic-api-key:253
+# Fingerprint: 1b8730b4702e4384cbfdf54b1ad97a355e13b43e:frontend/src/sections/common/RunSources/__tests__/snippets.test.js:generic-api-key:357
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["1b8730b4702e4384cbfdf54b1ad97a355e13b43e"]
+paths = ['''^frontend/src/sections/common/RunSources/recipe/__tests__/recipeModel\.test\.js$''']
+# Fingerprint: 1b8730b4702e4384cbfdf54b1ad97a355e13b43e:frontend/src/sections/common/RunSources/recipe/__tests__/recipeModel.test.js:generic-api-key:202
+
+[[rules]]
+id = "new-relic-browser-api-token"
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^frontend/src/sections/omega/embed/e2e/serve\-harness\.cjs$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:frontend/src/sections/omega/embed/e2e/serve-harness.cjs:new-relic-browser-api-token:45
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixture at a fixed revision"
+condition = "AND"
+commits = ["340a022c908ff130d2344bf3e2aac286146c474b"]
+paths = ['''^frontend/src/sections/omega/studio/e2e/serve\-harness\.cjs$''']
+# Fingerprint: 340a022c908ff130d2344bf3e2aac286146c474b:frontend/src/sections/omega/studio/e2e/serve-harness.cjs:new-relic-browser-api-token:35

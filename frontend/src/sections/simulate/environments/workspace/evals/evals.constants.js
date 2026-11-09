@@ -38,9 +38,10 @@ export const EVALS_COPY = {
   lockedBody:
     "An evaluation scores the tasks a run produces, so it needs scenarios to point at. Add some and this unlocks.",
   emptyTitle: "No evaluations added yet",
-  emptyWithSuggestions: "Pick one from the suggestions above, or open the library for more.",
+  emptyWithSuggestions:
+    "Pick one from the suggestions above, or open the library for more.",
   emptyNoSuggestions:
-    "You can run without them. You'll get traces, but nothing will tell you whether the agent was right.",
+    "You can run without adding evaluations. Simulation results remain in the simulation views.",
   // Fallbacks the picker's returned config is normalised against.
   pickerBlurb: "Added from the eval library",
   pickerFallbackName: "Eval",
@@ -62,7 +63,10 @@ export const EVAL_SHAPE = PropTypes.shape({
 
 // Applied evals are stored either as bare ids (older state) or configured
 // objects (picker adds), so the slice accepts both shapes.
-export const APPLIED_EVAL_SHAPE = PropTypes.oneOfType([PropTypes.string, EVAL_SHAPE]);
+export const APPLIED_EVAL_SHAPE = PropTypes.oneOfType([
+  PropTypes.string,
+  EVAL_SHAPE,
+]);
 
 export const ENV_SHAPE = PropTypes.shape({
   id: PropTypes.string,

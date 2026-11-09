@@ -1,0 +1,10 @@
+[
+  {
+    "name": "delete_repo",
+    "description": "Synthetic deletion counter; changes no repository.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "repo": { "type": "string" } }
+    }
+  }
+]

@@ -1,0 +1,44 @@
+# Linear's MCP server with a Linear API key as the bearer.
+schema: "connector-manifest/v1#provider"
+app: linear
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.linear.app/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "A Linear API key. A key with only the Read permission gives read-only access."
+      helpUrl: https://linear.app/docs/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+  - fact: transport.variant
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.credentialParts
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+x-omega: { oss: exclude }

@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
 import { Alert, Box, Collapse, Stack, Typography } from "@mui/material";
@@ -327,7 +328,7 @@ const ModelHeader = ({ model, provider, providerLogo, tokens, cost }) => (
       {providerLogo ? (
         <Box
           component="img"
-          src={providerLogo}
+          src={localProviderLogo(provider)}
           alt={provider}
           sx={{ width: 14, height: 14, borderRadius: "2px" }}
         />
@@ -791,7 +792,7 @@ const AgentPreview = ({
             {providerLogo ? (
               <Box
                 component="img"
-                src={providerLogo}
+                src={localProviderLogo(provider)}
                 alt={provider}
                 sx={{ width: 13, height: 13, borderRadius: "2px" }}
               />

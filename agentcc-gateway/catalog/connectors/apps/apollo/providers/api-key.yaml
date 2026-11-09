@@ -1,0 +1,48 @@
+# Apollo's MCP server with an Apollo master API key in the X-Api-Key header,
+# Apollo's documented path for headless clients. The key is workspace-wide:
+# calls act as the workspace's longest-standing active admin and spend
+# workspace credits.
+schema: "connector-manifest/v1#provider"
+app: apollo
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.apollo.io/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: X-Api-Key
+      secret: true
+      label: Master API key
+      help: "An Apollo API key created with Set as master key on. Calls act as your workspace's longest-standing active admin and spend workspace credits."
+      helpUrl: https://docs.apollo.io/docs/apollo-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://docs.apollo.io/docs/apollo-mcp
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.apollo.io/docs/apollo-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.apollo.io/docs/apollo-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.apollo.io/docs/apollo-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.apollo.io/docs/apollo-mcp
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

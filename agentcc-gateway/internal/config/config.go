@@ -8,9 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"math"
 	"net"
 	"net/url"
 	"os"
+	"path"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +25,16 @@ import (
 
 // Config is the top-level gateway configuration.
 type Config struct {
+	deploymentProfile      string
+	internalBackendKey     string
+	hostedOneKeyActivation bool
+	// internalAPIKey is AGENTCC_INTERNAL_API_KEY as the environment gives it,
+	// for validateInternalAPIKey (internalBackendKey is read under hosted only).
+	// internalAPIKeySet says whether the variable is in the environment at
+	// all: set to "" is refused, unset is not.
+	internalAPIKey    string
+	internalAPIKeySet bool
+
 	Server        ServerConfig              `yaml:"server" json:"server"`
 	Providers     map[string]ProviderConfig `yaml:"providers" json:"providers"`
 	ModelMap      map[string]string         `yaml:"model_map" json:"model_map"`
@@ -52,7 +67,340 @@ type Config struct {
 	MCP           MCPConfig                 `yaml:"mcp" json:"mcp"`
 	A2A           A2AConfig                 `yaml:"a2a" json:"a2a"`
 	Redis         RedisStateConfig          `yaml:"redis" json:"redis"`
+	Managed       ManagedConfig             `yaml:"managed" json:"managed"`
+	Catalog       CatalogConfig             `yaml:"catalog" json:"catalog"`
+	Generations   GenerationsConfig         `yaml:"generations" json:"generations"`
+	Idempotency   IdempotencyConfig         `yaml:"idempotency" json:"idempotency"`
+	Capabilities  CapabilitiesConfig        `yaml:"capabilities" json:"capabilities"`
+	RuntimeTokens RuntimeTokensConfig       `yaml:"runtime_tokens" json:"runtime_tokens"`
+	Tools         ToolsConfig               `yaml:"tools" json:"tools"`
+	Connectors    ConnectorsConfig          `yaml:"connectors" json:"connectors"`
+	Runs          RunsConfig                `yaml:"runs" json:"runs"`
+	Identity      IdentityConfig            `yaml:"identity" json:"identity"`
+	Security      SecurityConfig            `yaml:"security" json:"security"`
+	Responses     ResponsesConfig           `yaml:"responses" json:"responses"`
+	Telemetry     TelemetryConfig           `yaml:"telemetry" json:"telemetry"`
+	Async         AsyncConfig               `yaml:"async" json:"async"`
+
+	PublicPriceFeed PublicPriceFeedConfig `yaml:"public_price_feed" json:"public_price_feed"`
+
+	// ProviderDefaults applies to every provider entry that leaves the
+	// setting unset, an org's own instances included.
+	ProviderDefaults ProviderDefaultsConfig `yaml:"provider_defaults" json:"provider_defaults"`
 }
+
+// PublicPriceFeedConfig is an operator-only, startup publication setting.
+// The zero value is disabled with no allowed sources. It neither enables
+// providers nor changes account entitlements. Source reuse approval (including
+// OpenRouter IDs/endpoint fields) must precede any public enablement.
+// Reloading routing does not change this publication allowlist: restart to apply.
+// The authenticated GET /-/config reports the startup values in effect.
+type PublicPriceFeedConfig struct {
+	Enabled bool                `yaml:"enabled" json:"enabled"`
+	Sources []PublicPriceSource `yaml:"sources" json:"sources"`
+}
+
+// PublicPriceSource allows one exact global provider/source pair, not a glob,
+// tenant provider, org price override or credential-bearing provider config.
+type PublicPriceSource struct {
+	ProviderID    string `yaml:"provider_id" json:"provider_id"`
+	CatalogSource string `yaml:"catalog_source" json:"catalog_source"`
+}
+
+// ProviderDefaultsConfig holds the gateway-wide defaults of provider entries.
+type ProviderDefaultsConfig struct {
+	// QueueTimeout is the queue wait of every provider entry whose own
+	// queue_timeout is unset: the longest a call waits for a free upstream
+	// slot before it is refused with 503 provider_busy. Unset (0): 5s.
+	QueueTimeout time.Duration `yaml:"queue_timeout" json:"queue_timeout"`
+}
+
+// AsyncConfig bounds async inference (x-agentcc-async: true). Every org's
+// jobs share one pool of workers; these limits keep one org from holding
+// it. A zero field takes its default.
+type AsyncConfig struct {
+	// MaxWorkers is how many jobs run at once, across all orgs. Default 10.
+	MaxWorkers int `yaml:"max_workers" json:"max_workers"`
+	// MaxWorkersPerOrg is how many of them one org's jobs may hold at once.
+	// Default half of max_workers (at least 1). A single-tenant gateway can
+	// set it to max_workers to let its one org use every worker.
+	MaxWorkersPerOrg int `yaml:"max_workers_per_org" json:"max_workers_per_org"`
+	// MaxJobTimeout is the longest one job may run. A request's timeout
+	// header and its org's config can shorten a job, never lengthen it past
+	// this. Default: the longest timeout this config gives a request or a
+	// provider (server.default_request_timeout, routing.model_timeouts,
+	// providers.*.default_timeout), read at startup.
+	MaxJobTimeout time.Duration `yaml:"max_job_timeout" json:"max_job_timeout"`
+}
+
+// ManagedConfig governs the providers FutureAGI supplies the credentials for
+// (providers with managed: true). An org opts in through its org config; the
+// requests those providers serve are billed to the org at upstream cost plus
+// MarkupPercent.
+type ManagedConfig struct {
+	// CatalogueFamilies is a restart-only operator opt-in. Empty keeps CAT-2
+	// off; [cat2] enables its exact catalogue families, never mixed token chains.
+	CatalogueFamilies []string `yaml:"catalogue_families" json:"catalogue_families"`
+	// MarkupPercent is added to the upstream cost of every managed request:
+	// 5 bills $1.05 for $1.00 of upstream spend. BYOK requests carry none.
+	MarkupPercent float64 `yaml:"markup_percent" json:"markup_percent"`
+	// ToolMarkupPercent is the markup on FutureAGI-supplied managed tool
+	// calls (decision 27). -1, the default, inherits MarkupPercent; read it
+	// through ToolMarkupBps.
+	ToolMarkupPercent float64 `yaml:"tool_markup_percent" json:"tool_markup_percent"`
+
+	// RequireCredits refuses a managed request with 402 unless the org has a
+	// positive managed-credit balance, so nobody spends FutureAGI's upstream
+	// credit without having paid for it first.
+	RequireCredits bool `yaml:"require_credits" json:"require_credits"`
+	// GrantOnlyCredits defaults false so hosted deployments retain Settings >
+	// Billing guidance when this setting is omitted. Bundled Standalone configs
+	// explicitly set true: without cloud checkout, an operator grants credit.
+	GrantOnlyCredits bool `yaml:"grant_only_credits" json:"grant_only_credits"`
+
+	// MixedBillingChains lets one request's attempts change billing mode: a
+	// model fallback, auto runner-up, models[] or Messages fallbacks[] entry,
+	// failover or retry that moves a request from Future AGI credits
+	// (managed) to the org's own key (byok), or back. Off by default: such a
+	// hop is skipped before it is priced, held or sent (counted in the
+	// request's skipped-hop record with its billing mode, apart from its
+	// attempts, so it never displaces the attempt that serves) and the chain
+	// goes on with its next candidate in the first attempt's mode. The
+	// traffic mirror follows the same rule and never targets a managed
+	// provider, whatever this says. Managed-to-managed and byok-to-byok
+	// chains are unaffected. Read at startup. Hosted one-key activation
+	// (AGENTCC_HOSTED_ONEKEY_ACTIVATION, validateHosted) refuses true.
+	MixedBillingChains bool `yaml:"mixed_billing_chains" json:"mixed_billing_chains"`
+
+	// CatalogRefresh is how often each managed provider's live model catalog
+	// is re-fetched. 0 keeps the snapshot bundled with the gateway.
+	CatalogRefresh time.Duration `yaml:"catalog_refresh" json:"catalog_refresh"`
+
+	// RequireRedis makes managed billing fail closed: managed traffic gets
+	// 503 managed_billing_unavailable whenever Redis is unavailable
+	// (decision 6). Only tests turn it off, for the in-memory ledger.
+	RequireRedis bool `yaml:"require_redis" json:"require_redis"`
+	// HoldTTL is how long a credit hold lives before RESERVE sweeps it.
+	HoldTTL time.Duration `yaml:"hold_ttl" json:"hold_ttl"`
+	// ReserveDefaultOutputTokens is the output a hold assumes when the
+	// request sets no max_tokens.
+	ReserveDefaultOutputTokens int `yaml:"reserve_default_output_tokens" json:"reserve_default_output_tokens"`
+	// UnpricedReserveUSD is held for a managed model with no price.
+	UnpricedReserveUSD float64 `yaml:"unpriced_reserve_usd" json:"unpriced_reserve_usd"`
+	// MaxOverdraftUSD is how far below zero settlement may take a balance.
+	MaxOverdraftUSD float64 `yaml:"max_overdraft_usd" json:"max_overdraft_usd"`
+	// SpendGuard is the gateway-wide spend guard; an org's own
+	// managed_models.spend_guard can only tighten it (the stricter non-zero
+	// value of each cap wins). DefaultConfig caps it, so one stolen card
+	// cannot run up unbounded managed spend.
+	SpendGuard SpendGuardConfig `yaml:"spend_guard" json:"spend_guard"`
+
+	// UpstreamKeyMode chooses the upstream credential for managed traffic:
+	// "shared" (the provider's own key), "per_org" (the org's pushed key; a
+	// missing one is 503 managed_upstream_key_missing) or
+	// "per_org_with_shared_fallback" (decision 19).
+	UpstreamKeyMode string `yaml:"upstream_key_mode" json:"upstream_key_mode"`
+	// UpstreamUserHashKey keys the HMAC of the org id sent upstream as
+	// `user` on managed attempts (env AGENTCC_MANAGED_USER_HASH_KEY).
+	UpstreamUserHashKey string `yaml:"upstream_user_hash_key" json:"-"`
+	// AccountMissingRetryAfter is the Retry-After of the 503 an opted-in org
+	// gets while its credit account has not been pushed yet.
+	AccountMissingRetryAfter time.Duration `yaml:"account_missing_retry_after" json:"account_missing_retry_after"`
+	// ProcessingFeeBps estimates card processing as a share of billed
+	// revenue, for landed cost (decision 18): 2.9% + $0.30 on a $105 top-up
+	// is about 3.19%.
+	ProcessingFeeBps int `yaml:"processing_fee_bps" json:"processing_fee_bps"`
+}
+
+// Managed upstream key modes (ManagedConfig.UpstreamKeyMode).
+const (
+	UpstreamKeyModeShared                   = "shared"
+	UpstreamKeyModePerOrg                   = "per_org"
+	UpstreamKeyModePerOrgWithSharedFallback = "per_org_with_shared_fallback"
+)
+
+// SpendGuardConfig caps managed spend velocity. A zero cap is unset; the
+// defaults are DefaultSpendGuard.
+type SpendGuardConfig struct {
+	MaxUSDPerMinute   float64 `yaml:"max_usd_per_minute" json:"max_usd_per_minute"`
+	MaxUSDPerHour     float64 `yaml:"max_usd_per_hour" json:"max_usd_per_hour"`
+	AlertUSDPerHour   float64 `yaml:"alert_usd_per_hour" json:"alert_usd_per_hour"`
+	NewOrgDailyCapUSD float64 `yaml:"new_org_daily_cap_usd" json:"new_org_daily_cap_usd"`
+	AutoPause         bool    `yaml:"auto_pause" json:"auto_pause"`
+}
+
+// DefaultSpendGuard is the gateway-wide spend guard a config gets unless it
+// sets its own: $5 a minute and $100 an hour of managed spend per org, $25 a
+// day for an org in its first seven days (the minimum top-up), and an alert
+// over $25 an hour, without auto-pause. They bound what one stolen card can
+// spend; they apply to managed requests only, never to BYOK.
+func DefaultSpendGuard() SpendGuardConfig {
+	return SpendGuardConfig{MaxUSDPerMinute: 5, MaxUSDPerHour: 100, AlertUSDPerHour: 25, NewOrgDailyCapUSD: 25}
+}
+
+// CatalogConfig governs the managed catalog: its snapshots, history,
+// blocked models and the per-model endpoint refresh.
+type CatalogConfig struct {
+	// SnapshotDir keeps catalog snapshots across restarts; empty keeps them
+	// in memory only.
+	SnapshotDir   string   `yaml:"snapshot_dir" json:"snapshot_dir"`
+	HistorySize   int      `yaml:"history_size" json:"history_size"`
+	KeepSnapshots int      `yaml:"keep_snapshots" json:"keep_snapshots"`
+	BlockedModels []string `yaml:"blocked_models" json:"blocked_models"`
+	// EndpointsRefresh is how often per-model endpoints are re-fetched, at
+	// most EndpointsRPS requests a second.
+	EndpointsRefresh time.Duration `yaml:"endpoints_refresh" json:"endpoints_refresh"`
+	EndpointsRPS     float64       `yaml:"endpoints_rps" json:"endpoints_rps"`
+	// ThoughtSignatureModels are the model globs whose tool history needs a
+	// thought signature (tool_history_incompatible). Unset (the default)
+	// leaves the engine's rule, every Gemini model of generation 3 or later
+	// (eligibility.ThoughtSignatureFromGeneration); a list replaces it.
+	ThoughtSignatureModels []string `yaml:"thought_signature_models" json:"thought_signature_models"`
+}
+
+// GenerationsConfig governs the records GET /v1/generation reads.
+type GenerationsConfig struct {
+	TTL time.Duration `yaml:"ttl" json:"ttl"`
+}
+
+// IdempotencyConfig bounds Idempotency-Key records.
+type IdempotencyConfig struct {
+	TTL          time.Duration `yaml:"ttl" json:"ttl"`
+	MaxBodyBytes int           `yaml:"max_body_bytes" json:"max_body_bytes"`
+}
+
+// CapabilitiesConfig points at the imported live qualification run that
+// /-/capabilities marks endpoints qualified from, and holds the per-capability
+// settings of the REST capabilities (capabilities.<cap>, beside
+// qualification_file).
+type CapabilitiesConfig struct {
+	QualificationFile string `yaml:"qualification_file" json:"qualification_file"`
+	// PerCapability is every other key of the capabilities block, by
+	// capability name (search, fetch, documents.parse...).
+	PerCapability map[string]CapabilityConfig `yaml:",inline" json:"per_capability,omitempty"`
+}
+
+// CapabilityConfig is one capability's operator settings.
+type CapabilityConfig struct {
+	// TimeoutMS bounds one call of the capability; 0 takes
+	// DefaultCapabilityTimeout.
+	TimeoutMS int `yaml:"timeout_ms" json:"timeout_ms"`
+	// Defaults are the capability's request defaults; the org's pinned
+	// options and the request override them.
+	Defaults map[string]interface{} `yaml:"defaults" json:"defaults,omitempty"`
+}
+
+// DefaultCapabilityTimeout bounds a capability call whose timeout_ms is
+// unset.
+const DefaultCapabilityTimeout = 30 * time.Second
+
+// Timeout is the call timeout of capability: its timeout_ms, else
+// DefaultCapabilityTimeout.
+func (c CapabilitiesConfig) Timeout(capability string) time.Duration {
+	if ms := c.PerCapability[capability].TimeoutMS; ms > 0 {
+		return time.Duration(ms) * time.Millisecond
+	}
+	return DefaultCapabilityTimeout
+}
+
+// ToolsConfig governs the REST capabilities and their tool price cards.
+type ToolsConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// CatalogDir is the directory of tool price cards
+	// (<capability>/<vendor>.json) the tool catalog loads; empty means the
+	// catalog's own default.
+	CatalogDir string `yaml:"catalog_dir" json:"catalog_dir"`
+	// ReserveDefaultUSD is held for a managed capability call with no price.
+	ReserveDefaultUSD float64 `yaml:"reserve_default_usd" json:"reserve_default_usd"`
+	// CacheTTLSeconds is how long a cacheable capability result may be
+	// reused; 0, the default, reuses none. A card's cacheable terms flag
+	// still applies.
+	CacheTTLSeconds int `yaml:"cache_ttl_seconds" json:"cache_ttl_seconds"`
+}
+
+// ConnectorsConfig governs the connector catalog the gateway reads
+// (CONNECTORS-PLAN 2.6 item 1).
+type ConnectorsConfig struct {
+	// CatalogDir is a connector catalog directory, in the layout of
+	// agentcc-gateway/catalog/connectors (apps/<app-id>/app.yaml and
+	// apps/<app-id>/providers/<provider-id>.yaml), that replaces the catalog
+	// the gateway embeds; empty means the embedded one. Its records pass the
+	// catalog's own checks at startup (connector-manifest/v1, L0, L1), or the
+	// gateway does not start. A server added from the catalog (its
+	// catalog_ref) is placed by the credential parts its provider declares
+	// there.
+	CatalogDir string `yaml:"catalog_dir" json:"catalog_dir"`
+}
+
+// RunsConfig bounds agent runs.
+type RunsConfig struct {
+	Envelopes RunEnvelopesConfig `yaml:"envelopes" json:"envelopes"`
+}
+
+// RunEnvelopesConfig is the run-shape guard: tree depth, tool-call loops and
+// fan-out.
+type RunEnvelopesConfig struct {
+	MaxTreeDepth  int `yaml:"max_tree_depth" json:"max_tree_depth"`
+	LoopWindow    int `yaml:"loop_window" json:"loop_window"`
+	LoopThreshold int `yaml:"loop_threshold" json:"loop_threshold"`
+	FanoutWindowS int `yaml:"fanout_window_s" json:"fanout_window_s"`
+}
+
+// IdentityConfig bounds delegated identity chains.
+type IdentityConfig struct {
+	ChainMaxHops  int           `yaml:"chain_max_hops" json:"chain_max_hops"`
+	GrantCacheTTL time.Duration `yaml:"grant_cache_ttl" json:"grant_cache_ttl"`
+}
+
+// SecurityConfig holds the gateway's request and response hardening.
+type SecurityConfig struct {
+	// AdminListenAddr moves the admin routes to their own host:port; empty
+	// keeps them on the main listener.
+	AdminListenAddr      string   `yaml:"admin_listen_addr" json:"admin_listen_addr"`
+	TrustedHosts         []string `yaml:"trusted_hosts" json:"trusted_hosts"`
+	ScrubResponseHeaders bool     `yaml:"scrub_response_headers" json:"scrub_response_headers"`
+	RequestShield        bool     `yaml:"request_shield" json:"request_shield"`
+}
+
+// ResponsesConfig governs model responses.
+type ResponsesConfig struct {
+	Hollow HollowConfig `yaml:"hollow" json:"hollow"`
+}
+
+// HollowConfig governs hollow responses (decision 8). Mode stays shadow
+// until owner decision O-P1.
+type HollowConfig struct {
+	Mode                  string  `yaml:"mode" json:"mode"` // off, shadow, retry or fail
+	MaxHollowRetries      int     `yaml:"max_hollow_retries" json:"max_hollow_retries"`
+	BYOK                  string  `yaml:"byok" json:"byok"` // flag or retry
+	AbsorbCapUSDPerOrgDay float64 `yaml:"absorb_cap_usd_per_org_day" json:"absorb_cap_usd_per_org_day"`
+}
+
+// TelemetryConfig governs telemetry the gateway returns to callers.
+type TelemetryConfig struct {
+	// OverheadHeader returns the gateway's own overhead on each response.
+	OverheadHeader bool `yaml:"overhead_header" json:"overhead_header"`
+}
+
+// RuntimeTokensConfig lets the gateway accept signed short-lived tokens from
+// the Future AGI managed runtime in place of a virtual key (decision 22).
+type RuntimeTokensConfig struct {
+	Enabled    bool              `yaml:"enabled" json:"enabled"`
+	Issuer     string            `yaml:"issuer" json:"issuer"`
+	Audience   string            `yaml:"audience" json:"audience"`
+	PublicKeys []RuntimeTokenKey `yaml:"public_keys" json:"public_keys"`
+	MaxTTL     time.Duration     `yaml:"max_ttl" json:"max_ttl"`
+	ClockSkew  time.Duration     `yaml:"clock_skew" json:"clock_skew"`
+}
+
+// RuntimeTokenKey is one verification key, by its JWT kid.
+type RuntimeTokenKey struct {
+	Kid       string `yaml:"kid" json:"kid"`
+	PublicKey string `yaml:"public_key" json:"public_key"`
+}
+
+// MaxRuntimeTokenTTL is the longest a runtime token may live (decision 22).
+const MaxRuntimeTokenTTL = 15 * time.Minute
 
 // RedisStateConfig configures Redis for shared state across replicas.
 // When enabled, rate limiting, budget counters, credit balances, and cluster
@@ -121,6 +469,230 @@ type MCPConfig struct {
 	Servers         map[string]MCPServerConfig   `yaml:"servers" json:"servers"`
 	Guardrails      MCPGuardrailConfig           `yaml:"guardrails" json:"guardrails"`
 	ToolVersions    map[string]ToolVersionConfig `yaml:"tool_versions" json:"tool_versions"`
+
+	// MaxBodyBytes caps an MCP request body.
+	MaxBodyBytes int64 `yaml:"max_body_bytes" json:"max_body_bytes"`
+	// MaxResultBytes is the transport ceiling on an upstream result: a
+	// larger one fails the call with upstream_error. Every shaping limit
+	// stays at or below it.
+	MaxResultBytes int64 `yaml:"max_result_bytes" json:"max_result_bytes"`
+	// AllowedOrigins are the browser Origin values the MCP endpoint accepts.
+	AllowedOrigins []string          `yaml:"allowed_origins" json:"allowed_origins"`
+	Protocol       MCPProtocolConfig `yaml:"protocol" json:"protocol"`
+	// SessionStore keeps legacy sessions: "memory" or "redis". Load resolves
+	// an empty value to redis when Redis is configured, else memory.
+	SessionStore string `yaml:"session_store" json:"session_store"`
+	// StateKeys seal session ids, cursors, request state, cached tokens,
+	// approvals and connect bindings: current first, then the previous ones
+	// still accepted during a rotation, each at least MinMCPStateKeyBytes.
+	// EnvMCPStateKeys replaces them.
+	StateKeys []string `yaml:"state_keys" json:"-"`
+	// DevInsecureState lets MCP start with no state key, sealing with a
+	// random per-process key. Tests only.
+	DevInsecureState bool `yaml:"dev_insecure_state" json:"dev_insecure_state"`
+
+	Stdio   MCPStdioConfig   `yaml:"stdio" json:"stdio"`
+	Egress  MCPEgressConfig  `yaml:"egress" json:"egress"`
+	FairUse MCPFairUseConfig `yaml:"fair_use" json:"fair_use"`
+	// ManagedServers are the FutureAGI-supplied tool servers, served to orgs
+	// as fagi.<id> (decision 27).
+	ManagedServers map[string]ManagedMCPServerConfig `yaml:"managed_servers" json:"managed_servers"`
+
+	// Deployment-only sub-feature gates. Default OFF; never accepted in org config.
+	UpstreamOAuthEnabled bool `yaml:"upstream_oauth_enabled" json:"upstream_oauth_enabled"`
+	ClientOAuthEnabled   bool `yaml:"client_oauth_enabled" json:"client_oauth_enabled"`
+	K2AppsEnabled        bool `yaml:"k2_apps_enabled" json:"k2_apps_enabled"`
+
+	OAuth         MCPOAuthConfig         `yaml:"oauth" json:"oauth"`
+	OAuthAdapters MCPOAuthAdaptersConfig `yaml:"oauth_adapters" json:"oauth_adapters"`
+	Django        MCPDjangoConfig        `yaml:"django" json:"django"`
+	Approvals     MCPApprovalsConfig     `yaml:"approvals" json:"approvals"`
+	Metrics       MCPMetricsConfig       `yaml:"metrics" json:"metrics"`
+	// AllowAnonymousDev serves MCP without a principal. Tests only.
+	AllowAnonymousDev bool               `yaml:"allow_anonymous_dev" json:"allow_anonymous_dev"`
+	Static            MCPStaticConfig    `yaml:"static" json:"static"`
+	RateLimit         MCPRateLimitConfig `yaml:"ratelimit" json:"ratelimit"`
+	// InstanceID names this gateway process, for state bound to one instance.
+	InstanceID string `yaml:"instance_id" json:"instance_id"`
+	// PublicURL is the gateway's address as upstream model providers reach it.
+	PublicURL string `yaml:"public_url" json:"public_url"`
+	// CallbackMaxCalls caps the tool calls one callback token allows.
+	CallbackMaxCalls     int                           `yaml:"callback_max_calls" json:"callback_max_calls"`
+	ResponsesPassthrough MCPResponsesPassthroughConfig `yaml:"responses_passthrough" json:"responses_passthrough"`
+	Shaping              MCPShapingConfig              `yaml:"shaping" json:"shaping"`
+	Vendors              MCPVendorsConfig              `yaml:"vendors" json:"vendors"`
+}
+
+// MCPVendorsConfig wires the W4b per-user vendor adapters (G14b). Off by
+// default: with K2RuntimeURL empty the vendors step installs nothing.
+type MCPVendorsConfig struct {
+	// K2RuntimeURL is the base URL at which this gateway reaches the
+	// deployment's agentcc-connectors runtime. When set, an org's server added
+	// from FutureAGI's own Gmail, Google Calendar, Outlook or Teams provider
+	// gets a person's token only at <K2RuntimeURL>/<app>/mcp, through the
+	// vendor admission checks; every other server keeps its credential path.
+	K2RuntimeURL string `yaml:"k2_runtime_url" json:"k2_runtime_url"`
+}
+
+// Env vars and limits the MCP keys read.
+const (
+	// EnvMCPStateKeys holds mcp.state_keys, comma-separated, current first.
+	EnvMCPStateKeys = "AGENTCC_MCP_STATE_KEYS"
+	// EnvMCPDjangoSecret holds mcp.django.internal_token_secret.
+	EnvMCPDjangoSecret = "AGENTCC_MCP_DJANGO_SECRET"
+	// EnvMCPEgressPrivateAllow adds entries to mcp.egress.private_allow,
+	// comma-separated, after the config file's. The Standalone install sets
+	// it for its own loopback backend (deploy/standalone/supervisord.conf):
+	// its gateway reads a config file the operator mounts.
+	EnvMCPEgressPrivateAllow = "AGENTCC_MCP_EGRESS_PRIVATE_ALLOW"
+	// MinMCPStateKeyBytes is the shortest state key accepted.
+	MinMCPStateKeyBytes = 32
+)
+
+// MCP session stores (MCPConfig.SessionStore).
+const (
+	MCPSessionStoreMemory = "memory"
+	MCPSessionStoreRedis  = "redis"
+)
+
+// MCPProtocolVersions are the MCP revisions the gateway serves, newest first
+// (decision 31).
+func MCPProtocolVersions() []string {
+	return []string{"2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
+}
+
+// MCPProtocolConfig selects the MCP revisions and transports served.
+type MCPProtocolConfig struct {
+	Versions       []string `yaml:"versions" json:"versions"`
+	LegacySessions bool     `yaml:"legacy_sessions" json:"legacy_sessions"`
+	HTTPSSE        bool     `yaml:"http_sse" json:"http_sse"`
+}
+
+// MCPStdioConfig governs the stdio upstreams operator YAML defines.
+type MCPStdioConfig struct {
+	Enabled  bool   `yaml:"enabled" json:"enabled"`
+	Launcher string `yaml:"launcher" json:"launcher"` // local or sandbox
+	// BaseEnv names the gateway variables every child receives; anything
+	// else comes only from the server's env and env_from_host.
+	BaseEnv            []string      `yaml:"base_env" json:"base_env"`
+	Grace              time.Duration `yaml:"grace" json:"grace"`
+	MaxMessageBytes    int64         `yaml:"max_message_bytes" json:"max_message_bytes"`
+	StderrMaxLineBytes int           `yaml:"stderr_max_line_bytes" json:"stderr_max_line_bytes"`
+}
+
+// MCPEgressConfig is the operator's exception list for the SSRF guard
+// (decision 39).
+type MCPEgressConfig struct {
+	// PrivateAllow lists CIDRs or host[:port] that upstream fetches may reach
+	// although they are private. Cloud-metadata ranges and hostnames are
+	// refused at load even if listed.
+	PrivateAllow []string `yaml:"private_allow" json:"private_allow"`
+}
+
+// MCPFairUseConfig caps a free gateway so it is not an open proxy. Orgs may
+// lower these limits in their own rules but never raise them.
+type MCPFairUseConfig struct {
+	OrgRPM        int `yaml:"org_rpm" json:"org_rpm"`
+	KeyRPM        int `yaml:"key_rpm" json:"key_rpm"`
+	MaxConcurrent int `yaml:"max_concurrent" json:"max_concurrent"`
+}
+
+// Managed tool server kinds and billing (ManagedMCPServerConfig).
+const (
+	ManagedServerKindRemote       = "remote"
+	ManagedServerKindBuiltin      = "builtin"
+	ManagedServerBillingReserve   = "reserve"
+	ManagedServerBillingDelegated = "delegated"
+)
+
+// ManagedMCPServerConfig is one FutureAGI-supplied tool server. A remote
+// server is dialled at URL with the credential in CredentialEnv; a builtin
+// one runs in the gateway and has neither. A reserve server is held and
+// settled per call at its price card; a delegated one is billed by the
+// capability it calls.
+type ManagedMCPServerConfig struct {
+	Kind          string           `yaml:"kind" json:"kind"`       // remote (default) or builtin
+	Billing       string           `yaml:"billing" json:"billing"` // reserve (default) or delegated
+	URL           string           `yaml:"url" json:"url"`
+	Transport     string           `yaml:"transport" json:"transport"` // http or sse
+	Era           string           `yaml:"era" json:"era"`
+	CredentialEnv string           `yaml:"credential_env" json:"credential_env"` // the variable's name, not its value
+	Header        string           `yaml:"header" json:"header"`
+	PriceCard     ToolPriceCardRef `yaml:"price_card" json:"price_card"`
+	Title         string           `yaml:"title" json:"title"`
+	Description   string           `yaml:"description" json:"description"`
+}
+
+// ToolPriceCardRef names one SKU of a tool-price-card-v1 card.
+type ToolPriceCardRef struct {
+	Capability string `yaml:"capability" json:"capability"`
+	Vendor     string `yaml:"vendor" json:"vendor"`
+	SKU        string `yaml:"sku" json:"sku"`
+}
+
+// IsZero reports whether the reference names nothing.
+func (r ToolPriceCardRef) IsZero() bool {
+	return r.Capability == "" && r.Vendor == "" && r.SKU == ""
+}
+
+// MCPOAuthConfig makes the gateway an OAuth resource server (decision 37).
+type MCPOAuthConfig struct {
+	Enabled            bool   `yaml:"enabled" json:"enabled"`
+	Issuer             string `yaml:"issuer" json:"issuer"`
+	CallbackIssuer     string `yaml:"callback_issuer" json:"callback_issuer"`
+	CallbackSigningKey string `yaml:"callback_signing_key" json:"-"`
+}
+
+// MCPOAuthAdaptersConfig governs per-user upstream OAuth tokens.
+type MCPOAuthAdaptersConfig struct {
+	RefreshSkew    time.Duration `yaml:"refresh_skew" json:"refresh_skew"`
+	RetryOnceOn401 bool          `yaml:"retry_once_on_401" json:"retry_once_on_401"`
+}
+
+// MCPDjangoConfig is the gateway's channel to Django for per-user upstream
+// tokens. Its secret is not the admin token.
+type MCPDjangoConfig struct {
+	BaseURL             string `yaml:"base_url" json:"base_url"`
+	InternalTokenSecret string `yaml:"internal_token_secret" json:"-"`
+}
+
+// MCPApprovalsConfig governs tool-call approvals.
+type MCPApprovalsConfig struct {
+	DefaultTTL time.Duration `yaml:"default_ttl" json:"default_ttl"`
+}
+
+// MCPMetricsConfig governs MCP Prometheus labels.
+type MCPMetricsConfig struct {
+	// ToolLabels adds a tool label, which is unbounded; off by default.
+	ToolLabels bool `yaml:"tool_labels" json:"tool_labels"`
+}
+
+// MCPStaticConfig binds the YAML servers to one org.
+type MCPStaticConfig struct {
+	// OrgID is the org the YAML servers serve; empty serves none.
+	OrgID string `yaml:"org_id" json:"org_id"`
+}
+
+// MCPRateLimitConfig governs tool rate limits without Redis.
+type MCPRateLimitConfig struct {
+	// Replicas divides each limit when it is kept per process.
+	Replicas int `yaml:"replicas" json:"replicas"`
+}
+
+// MCPResponsesPassthroughConfig says whether a /v1/responses request may
+// name an MCP server the gateway does not govern: "allow" or "deny", per
+// billing mode.
+type MCPResponsesPassthroughConfig struct {
+	Managed string `yaml:"managed" json:"managed"`
+	BYOK    string `yaml:"byok" json:"byok"`
+}
+
+// MCPShapingConfig shapes tool results below MCPConfig.MaxResultBytes.
+type MCPShapingConfig struct {
+	DefaultBudgetBytes int64         `yaml:"default_budget_bytes" json:"default_budget_bytes"`
+	PreviewBytes       int64         `yaml:"preview_bytes" json:"preview_bytes"`
+	SpillTTL           time.Duration `yaml:"spill_ttl" json:"spill_ttl"`
+	SpillMaxBytes      int64         `yaml:"spill_max_bytes" json:"spill_max_bytes"`
 }
 
 // ToolVersionConfig holds version and deprecation info for an MCP tool.
@@ -150,14 +722,51 @@ type MCPServerConfig struct {
 	Transport     string        `yaml:"transport" json:"transport"` // "http" or "stdio"
 	Auth          MCPAuthConfig `yaml:"auth" json:"auth"`
 	ToolsCacheTTL time.Duration `yaml:"tools_cache_ttl" json:"tools_cache_ttl"`
+
+	// Env is a stdio child's declared environment. Values may be secrets, so
+	// the map is never JSON-encoded; EnvFromHost names the gateway variables
+	// copied in.
+	Env         map[string]string `yaml:"env" json:"-"`
+	EnvFromHost []string          `yaml:"env_from_host" json:"env_from_host"`
+	// Era pins the upstream's MCP revision; empty or "auto" detects it.
+	Era string `yaml:"era" json:"era"`
+	// TimeoutMS bounds one call; 0 takes mcp.tool_call_timeout.
+	TimeoutMS          int  `yaml:"timeout_ms" json:"timeout_ms"`
+	TrustedAnnotations bool `yaml:"trusted_annotations" json:"trusted_annotations"`
+	// ForwardHeaders are inbound request headers copied to the upstream;
+	// ForwardHeaderRefused names the ones that never are.
+	ForwardHeaders []string `yaml:"forward_headers" json:"forward_headers"`
+	// PropagateDepth sends the agent depth header to this upstream.
+	PropagateDepth bool `yaml:"propagate_depth" json:"propagate_depth"`
 }
 
 // MCPAuthConfig holds auth settings for an upstream MCP server.
 type MCPAuthConfig struct {
 	Type   string `yaml:"type" json:"type"`     // "bearer", "api_key", "none"
-	Token  string `yaml:"token" json:"token"`   // for bearer
+	Token  string `yaml:"token" json:"-"`       // for bearer
 	Header string `yaml:"header" json:"header"` // for api_key
-	Key    string `yaml:"key" json:"key"`       // for api_key
+	Key    string `yaml:"key" json:"-"`         // for api_key
+}
+
+// refusedForwardHeaders may never be forwarded to an MCP upstream: inbound
+// credentials (decision 30) and the MCP session and version headers, which
+// belong to the gateway's own hop.
+var refusedForwardHeaders = map[string]bool{
+	"authorization":        true,
+	"cookie":               true,
+	"x-api-key":            true,
+	"proxy-authorization":  true,
+	"mcp-session-id":       true,
+	"mcp-protocol-version": true,
+}
+
+// ForwardHeaderRefused reports whether an MCP server may never forward the
+// inbound header name upstream: the refused list above, and every x-agentcc-*
+// and x-omega-* header. Names match case-insensitively. The org-config check
+// applies the same rule.
+func ForwardHeaderRefused(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return refusedForwardHeaders[n] || strings.HasPrefix(n, "x-agentcc-") || strings.HasPrefix(n, "x-omega-")
 }
 
 // PrivacyConfig controls message redaction in logs.
@@ -165,6 +774,10 @@ type PrivacyConfig struct {
 	Enabled  bool                  `yaml:"enabled" json:"enabled"`
 	Mode     string                `yaml:"mode" json:"mode"` // "full", "patterns", "none"
 	Patterns []RedactPatternConfig `yaml:"redact_patterns" json:"redact_patterns"`
+	// DefaultContentMode is how much request content is logged when neither
+	// the org, the key nor the request says: "full", "metadata" or "none"
+	// (decision 21). It is the least restrictive source.
+	DefaultContentMode string `yaml:"default_content_mode" json:"default_content_mode"`
 }
 
 // RedactPatternConfig defines a named regex pattern for redaction.
@@ -244,10 +857,6 @@ type PricingOverrideConfig struct {
 	BatchOutputPerToken *float64 `yaml:"batch_output_per_token" json:"batch_output_per_token"`
 	InputPerSecond      *float64 `yaml:"input_per_second" json:"input_per_second"`
 	InputPerCharacter   *float64 `yaml:"input_per_character" json:"input_per_character"`
-	InputPerQuery       *float64 `yaml:"input_per_query" json:"input_per_query"`
-	PerPage             *float64 `yaml:"per_page" json:"per_page"`
-	OutputPerImage      *float64 `yaml:"output_per_image" json:"output_per_image"`
-	OutputPerSecond     *float64 `yaml:"output_per_second" json:"output_per_second"`
 }
 
 // CapOverrideConfig allows overriding individual capability flags.
@@ -306,6 +915,9 @@ type AuthKeyConfig struct {
 	AllowedTools  []string                  `yaml:"allowed_tools" json:"allowed_tools,omitempty"`
 	DeniedTools   []string                  `yaml:"denied_tools" json:"denied_tools,omitempty"`
 	Guardrails    *KeyGuardrailPolicyConfig `yaml:"guardrails" json:"guardrails,omitempty"`
+	// MCPAllowedTools and MCPDeniedTools filter the MCP tools the key sees.
+	MCPAllowedTools []string `yaml:"mcp_allowed_tools" json:"mcp_allowed_tools,omitempty"`
+	MCPDeniedTools  []string `yaml:"mcp_denied_tools" json:"mcp_denied_tools,omitempty"`
 }
 
 // KeyGuardrailPolicyConfig defines per-key guardrail policy overrides.
@@ -337,8 +949,22 @@ type ServerConfig struct {
 	// becomes WriteTimeout, which is the bound a request used to get anyway.
 	// It may be set above WriteTimeout: the middleware holds the response
 	// write deadline at this ceiling, so WriteTimeout no longer decides when
-	// a request the gateway resolved a deadline for can still answer.
+	// a request the gateway resolved a deadline for can still answer. An
+	// async job writes no response, so Async.MaxJobTimeout bounds it instead.
 	MaxRequestTimeout time.Duration `yaml:"max_request_timeout" json:"max_request_timeout"`
+
+	// TrustedProxies are the addresses or CIDRs of the proxies in front of
+	// the gateway (load balancer, ingress). Only a request whose TCP peer is
+	// one of them has its X-Forwarded-For read, right to left past every
+	// trusted entry. Empty, with TrustedHops 0: every IP rule uses the TCP
+	// peer address and ignores X-Forwarded-For and X-Real-IP. Read at start-up.
+	TrustedProxies []string `yaml:"trusted_proxies" json:"trusted_proxies"`
+	// TrustedHops, instead of TrustedProxies, for proxies whose addresses are
+	// not known: the client is the TrustedHops-th X-Forwarded-For entry from
+	// the right, i.e. the number of entries the proxies append, the client's
+	// included. Only safe when every path to the gateway passes through those
+	// proxies. Read at start-up.
+	TrustedHops int `yaml:"trusted_hops" json:"trusted_hops"`
 }
 
 type ProviderConfig struct {
@@ -353,14 +979,47 @@ type ProviderConfig struct {
 	//
 	// nil takes the preset's value, or "/v1". A pointer because "" is a
 	// meaningful setting distinct from unset. openai-format providers only.
-	APIPathPrefix  *string           `yaml:"api_path_prefix" json:"api_path_prefix"`
-	DefaultTimeout time.Duration     `yaml:"default_timeout" json:"default_timeout"`
-	MaxConcurrent  int               `yaml:"max_concurrent" json:"max_concurrent"`
-	ConnPoolSize   int               `yaml:"conn_pool_size" json:"conn_pool_size"`
-	Headers        map[string]string `yaml:"headers" json:"headers"`
-	Models         []string          `yaml:"models" json:"models"`
-	Priority       int               `yaml:"priority" json:"priority"`
-	Weight         int               `yaml:"weight" json:"weight"`
+	APIPathPrefix  *string       `yaml:"api_path_prefix" json:"api_path_prefix"`
+	DefaultTimeout time.Duration `yaml:"default_timeout" json:"default_timeout"`
+	// MaxConcurrent is how many upstream calls one instance of this provider
+	// has in flight at once; a streamed call holds its slot until the stream
+	// ends. Unset (0): 1024 for a remote provider, 10 for a local or
+	// self-hosted one (IsLocalProvider). A value set here always wins.
+	MaxConcurrent int `yaml:"max_concurrent" json:"max_concurrent"`
+	// ConnPoolSize is how many idle upstream connections the instance keeps
+	// per host. Unset (0): 1024 remote, 10 local. A value set here wins.
+	ConnPoolSize int `yaml:"conn_pool_size" json:"conn_pool_size"`
+	// QueueTimeout is the longest a call waits for one of the MaxConcurrent
+	// slots. Past it the call is refused before it is sent upstream: 503
+	// provider_busy with Retry-After, charged nothing. Unset (0):
+	// provider_defaults.queue_timeout, else 5s.
+	QueueTimeout time.Duration     `yaml:"queue_timeout" json:"queue_timeout"`
+	Headers      map[string]string `yaml:"headers" json:"headers"`
+	Models       []string          `yaml:"models" json:"models"`
+	Priority     int               `yaml:"priority" json:"priority"`
+	Weight       int               `yaml:"weight" json:"weight"`
+
+	// Managed marks a provider whose credentials FutureAGI supplies. Orgs that
+	// opt in to managed models may use it; it is billed with the managed
+	// markup. Any other global provider stays reserved for internal keys.
+	Managed bool `yaml:"managed" json:"managed"`
+
+	// UpstreamFeeBps is what the upstream adds on top of model prices, for
+	// landed cost (decision 18). Unset means 550 for an openrouter catalog
+	// source and 0 otherwise; read it through EffectiveUpstreamFeeBps.
+	UpstreamFeeBps *int `yaml:"upstream_fee_bps" json:"upstream_fee_bps"`
+	// UpstreamSlug is the provider's name in OpenRouter's upstream naming,
+	// which provider.only, ignore and order match on.
+	UpstreamSlug string `yaml:"upstream_slug" json:"upstream_slug"`
+	// CatalogSource is where the managed catalog for this provider comes
+	// from: "openrouter", "openai_compatible" or "price_card".
+	CatalogSource string `yaml:"catalog_source" json:"catalog_source"`
+	// PriceCardFile prices a price_card source's models.
+	PriceCardFile string `yaml:"price_card_file" json:"price_card_file"`
+	// ResaleTermsRef names the resale agreement that clears this managed
+	// provider for launch. Empty means not cleared; traffic is never blocked
+	// by it (decision 25).
+	ResaleTermsRef string `yaml:"resale_terms_ref" json:"resale_terms_ref"`
 
 	// Key rotation.
 	Rotation RotationConfig `yaml:"rotation" json:"rotation"`
@@ -646,7 +1305,11 @@ type AccessGroupConfig struct {
 	Aliases     map[string]string `yaml:"aliases" json:"aliases"`
 }
 
-// MirrorConfig controls traffic mirroring for shadow testing.
+// MirrorConfig controls traffic mirroring for shadow testing. A copy is
+// sent unbilled on the target provider's own credentials, the operator's,
+// so the gateway mirrors only the operator's own traffic (internal keys and
+// license-authorized requests), never a customer key's request, and never
+// to a managed provider (validateMirror; the server's mirror guard).
 type MirrorConfig struct {
 	Enabled          bool         `yaml:"enabled" json:"enabled"`
 	CaptureResults   bool         `yaml:"capture_results" json:"capture_results"`
@@ -760,6 +1423,23 @@ type BudgetsConfig struct {
 	Users         map[string]BudgetLevelConfig `yaml:"users" json:"users,omitempty"`
 	Keys          map[string]BudgetLevelConfig `yaml:"keys" json:"keys,omitempty"`
 	Tags          map[string]BudgetLevelConfig `yaml:"tags" json:"tags,omitempty"`
+	Hold          BudgetHoldConfig             `yaml:"hold" json:"hold"`
+}
+
+// Budget hold policies for an unpriced call (BudgetHoldConfig.Unpriced).
+const (
+	BudgetUnpricedReserveDefault = "reserve_default"
+	BudgetUnpricedRefuse         = "refuse"
+)
+
+// BudgetHoldConfig makes customer budgets hold before a call. A budget is a
+// limit, not a charge (decision 42).
+type BudgetHoldConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Unpriced is what an unpriced call does: hold UnpricedReserveUSD
+	// (reserve_default) or refuse.
+	Unpriced           string  `yaml:"unpriced" json:"unpriced"`
+	UnpricedReserveUSD float64 `yaml:"unpriced_reserve_usd" json:"unpriced_reserve_usd"`
 }
 
 // BudgetLevelConfig defines a single budget at any level.
@@ -820,11 +1500,12 @@ type OTelConfig struct {
 	// to the same destination as this gateway.
 	TracePropagation bool `yaml:"trace_propagation" json:"trace_propagation"`
 
-	// IncludeBodies attaches the prompt and completion to each span. Off by
-	// default: it sends user content to the collector, and it is a separate
-	// decision from logging.request_logging.include_bodies because the two
-	// go to different places and are signed off separately. Content is
-	// redacted with the org's privacy config exactly as the request log is.
+	// IncludeBodies is off by default, separate from request-log body capture.
+	// For MCP, full-content capture exports tool inputs and outputs to the
+	// organization's collector and masks known credential formats. Other sensitive
+	// content may still be exported. An org admin must also opt in through
+	// privacy.trace_content; content mode and retention can further restrict it.
+	// Model prompts/completions use the organization's configured privacy redactor.
 	IncludeBodies bool `yaml:"include_bodies" json:"include_bodies"`
 
 	// MetadataAttributes additionally emits every caller-supplied metadata key
@@ -844,6 +1525,10 @@ type OTelConfig struct {
 	// wider than a log does. A blocklist is a list you can only be wrong about
 	// once. Credential headers stay denied even when a wildcard matches them.
 	CaptureHeaders []string `yaml:"capture_headers" json:"capture_headers"`
+
+	// PropagateForAgents carries the W3C trace context through agent calls
+	// (G20). On by default.
+	PropagateForAgents bool `yaml:"propagate_for_agents" json:"propagate_for_agents"`
 
 	// BodyAttributes emits the request body's unknown top-level fields as
 	// `agentcc.body.<key>` — an SDK's extra_body, and every OpenAI parameter
@@ -892,6 +1577,13 @@ type AlertChannelConfig struct {
 
 type AdminConfig struct {
 	Token string `yaml:"token" json:"-"`
+	// AllowInsecureToken lets the gateway start with an empty, short, default
+	// or placeholder admin token. Set only from AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN,
+	// never from a config file. Local development only.
+	AllowInsecureToken bool `yaml:"-" json:"-"`
+	// tokenSet records that admin auth was configured even if the token is
+	// empty: the file has an admin.token key, or AGENTCC_ADMIN_TOKEN is present.
+	tokenSet bool
 }
 
 // RotationConfig controls key rotation for a provider.
@@ -932,7 +1624,46 @@ type ControlPlaneConfig struct {
 	AdminToken    string        `yaml:"admin_token" json:"-"`                   // shared secret for gateway ↔ Django auth
 	WebhookSecret string        `yaml:"webhook_secret" json:"-"`                // shared secret sent as X-Webhook-Secret header
 	SyncOnStartup bool          `yaml:"sync_on_startup" json:"sync_on_startup"` // pull all org configs on boot
-	SyncInterval  time.Duration `yaml:"sync_interval" json:"sync_interval"`     // periodic re-sync (0 = disabled)
+	SyncInterval  time.Duration `yaml:"sync_interval" json:"sync_interval"`     // periodic re-sync; with a URL, clamped to (0, 60s]
+
+	// KeySyncGrace is how long after a key is created through the admin API
+	// (POST /-/keys) a key sync whose list lacks it still keeps it. The app
+	// creates a key on the gateway first and stores its own row when its
+	// request ends, about a second later, so a sync whose list was fetched in
+	// between misses the new key. The window only has to cover that store
+	// latency; it does not depend on SyncInterval. Raise it only if the app's
+	// key-create request can take longer than this after the gateway answers.
+	// A longer window also keeps a key the app deleted before any sync listed
+	// it for longer. 0 means DefaultKeySyncGrace.
+	KeySyncGrace time.Duration `yaml:"key_sync_grace" json:"key_sync_grace"`
+}
+
+// SyncsKeys reports whether the gateway has a control plane. In that mode
+// periodic key sync cannot be disabled: it carries membership revocations.
+func (c ControlPlaneConfig) SyncsKeys() bool {
+	return c.URL != ""
+}
+
+// BoundKeySyncInterval enforces the maximum revocation propagation interval.
+func (c *ControlPlaneConfig) BoundKeySyncInterval() {
+	if c.URL != "" && (c.SyncInterval <= 0 || c.SyncInterval > time.Minute) {
+		slog.Warn("control plane sync_interval clamped to 60s", "configured", c.SyncInterval.String())
+		c.SyncInterval = time.Minute
+	}
+}
+
+// DefaultKeySyncGrace is the key sync grace window when none is configured:
+// many times the app's usual store latency, short enough that a key deleted in
+// the app right after it was created does not outlive it by much.
+const DefaultKeySyncGrace = 30 * time.Second
+
+// EffectiveKeySyncGrace returns KeySyncGrace when set, else
+// DefaultKeySyncGrace.
+func (c ControlPlaneConfig) EffectiveKeySyncGrace() time.Duration {
+	if c.KeySyncGrace > 0 {
+		return c.KeySyncGrace
+	}
+	return DefaultKeySyncGrace
 }
 
 // EnvAllowPrivateProviderURLs names the env var behind
@@ -980,7 +1711,7 @@ type CORSConfig struct {
 // IPACLConfig controls IP-based access control lists.
 type IPACLConfig struct {
 	Enabled        bool     `yaml:"enabled" json:"enabled"`
-	TrustedProxies int      `yaml:"trusted_proxies" json:"trusted_proxies"` // number of trusted proxy hops for X-Forwarded-For
+	TrustedProxies int      `yaml:"trusted_proxies" json:"trusted_proxies"` // never read: server.trusted_proxies or trusted_hops replace it (start-up warning)
 	Allow          []string `yaml:"allow" json:"allow"`                     // allowed IPs/CIDRs (empty = all allowed)
 	Deny           []string `yaml:"deny" json:"deny"`                       // denied IPs/CIDRs (takes precedence over allow)
 }
@@ -1011,6 +1742,40 @@ func DefaultConfig() *Config {
 			RuntimeStateRequired: true,
 		},
 		CostTracking: CostTrackingConfig{Enabled: true},
+		Managed: ManagedConfig{
+			MarkupPercent:              5,
+			ToolMarkupPercent:          -1,
+			RequireCredits:             true,
+			GrantOnlyCredits:           false,
+			CatalogRefresh:             6 * time.Hour,
+			RequireRedis:               true,
+			HoldTTL:                    15 * time.Minute,
+			ReserveDefaultOutputTokens: 4096,
+			UnpricedReserveUSD:         0.10,
+			UpstreamKeyMode:            UpstreamKeyModeShared,
+			AccountMissingRetryAfter:   30 * time.Second,
+			ProcessingFeeBps:           320,
+			SpendGuard:                 DefaultSpendGuard(),
+		},
+		Catalog: CatalogConfig{
+			HistorySize:      50,
+			KeepSnapshots:    10,
+			BlockedModels:    []string{},
+			EndpointsRefresh: 6 * time.Hour,
+			EndpointsRPS:     5,
+			// ThoughtSignatureModels is unset (nil) by default, which leaves
+			// the eligibility engine's own rule: every Gemini model of
+			// generation 3 or later (W2 ruling 61(f), IC-5).
+		},
+		Generations: GenerationsConfig{TTL: 72 * time.Hour},
+		Idempotency: IdempotencyConfig{TTL: 24 * time.Hour, MaxBodyBytes: 1 << 20},
+		RuntimeTokens: RuntimeTokensConfig{
+			Audience:  "futureagi-agentcc-gateway",
+			MaxTTL:    MaxRuntimeTokenTTL,
+			ClockSkew: 60 * time.Second,
+		},
+		Privacy:      PrivacyConfig{DefaultContentMode: "full"},
+		OTel:         OTelConfig{PropagateForAgents: true},
 		RateLimiting: RateLimitConfig{Enabled: true},
 		Cache: CacheConfig{
 			Enabled:    false,
@@ -1041,7 +1806,47 @@ func DefaultConfig() *Config {
 			ToolCallTimeout: 30 * time.Second,
 			SessionTTL:      30 * time.Minute,
 			Separator:       "_",
+			MaxBodyBytes:    4 << 20,
+			MaxResultBytes:  8 << 20,
+			Protocol: MCPProtocolConfig{
+				Versions:       MCPProtocolVersions(),
+				LegacySessions: true,
+				HTTPSSE:        true,
+			},
+			Stdio: MCPStdioConfig{
+				Enabled:            true,
+				Launcher:           "local",
+				BaseEnv:            []string{"PATH", "HOME", "LANG", "TMPDIR"},
+				Grace:              5 * time.Second,
+				MaxMessageBytes:    16 << 20,
+				StderrMaxLineBytes: 1024,
+			},
+			FairUse:              MCPFairUseConfig{OrgRPM: 600, KeyRPM: 300, MaxConcurrent: 32},
+			OAuthAdapters:        MCPOAuthAdaptersConfig{RefreshSkew: 120 * time.Second, RetryOnceOn401: true},
+			Approvals:            MCPApprovalsConfig{DefaultTTL: 15 * time.Minute},
+			RateLimit:            MCPRateLimitConfig{Replicas: 1},
+			CallbackMaxCalls:     20,
+			ResponsesPassthrough: MCPResponsesPassthroughConfig{Managed: "deny", BYOK: "allow"},
+			Shaping: MCPShapingConfig{
+				DefaultBudgetBytes: 65536,
+				PreviewBytes:       2048,
+				SpillTTL:           24 * time.Hour,
+				SpillMaxBytes:      8 << 20,
+			},
 		},
+		Budgets: BudgetsConfig{
+			Hold: BudgetHoldConfig{Enabled: true, Unpriced: BudgetUnpricedReserveDefault, UnpricedReserveUSD: 0.10},
+		},
+		Tools: ToolsConfig{ReserveDefaultUSD: 0.10},
+		Runs: RunsConfig{
+			Envelopes: RunEnvelopesConfig{MaxTreeDepth: 8, LoopWindow: 50, LoopThreshold: 5, FanoutWindowS: 60},
+		},
+		Identity: IdentityConfig{ChainMaxHops: 8, GrantCacheTTL: 60 * time.Second},
+		Security: SecurityConfig{TrustedHosts: []string{}, ScrubResponseHeaders: true, RequestShield: true},
+		Responses: ResponsesConfig{
+			Hollow: HollowConfig{Mode: "shadow", MaxHollowRetries: 1, BYOK: "flag", AbsorbCapUSDPerOrgDay: 1.00},
+		},
+		Telemetry: TelemetryConfig{OverheadHeader: true},
 		A2A: A2AConfig{
 			Enabled: false,
 			Card: A2ACardConfig{
@@ -1056,14 +1861,21 @@ func DefaultConfig() *Config {
 // Load reads config from a YAML/JSON file and overrides with env vars.
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
+	if err := cfg.loadDeploymentProfile(); err != nil {
+		return nil, err
+	}
 
 	if path != "" {
 		if err := loadFromFile(cfg, path); err != nil {
+			if cfg.IsHosted() {
+				return nil, fmt.Errorf("hosted configuration file is invalid or unavailable")
+			}
 			return nil, fmt.Errorf("loading config file: %w", err)
 		}
 	}
 
 	loadFromEnv(cfg)
+	cfg.ControlPlane.BoundKeySyncInterval()
 
 	// The control plane checks the gateway's calls against the same shared
 	// admin token (Django's AGENTCC_ADMIN_TOKEN), so a gateway told only the
@@ -1072,10 +1884,15 @@ func Load(path string) (*Config, error) {
 		cfg.ControlPlane.AdminToken = cfg.Admin.Token
 	}
 
+	cfg.resolveDependentDefaults()
+
 	// Unset, the ceiling is write_timeout, the bound a request got anyway. A
 	// ceiling above it is kept: middleware.Timeout holds the response write
 	// deadline at the ceiling, so write_timeout is a default for a client that
 	// reads slowly, not a limit on how long a request may take.
+	if cfg.IsHosted() && cfg.Server.MaxRequestTimeout < 0 {
+		return nil, fmt.Errorf("hosted profile refuses negative server.max_request_timeout")
+	}
 	if cfg.Server.MaxRequestTimeout <= 0 {
 		cfg.Server.MaxRequestTimeout = cfg.Server.WriteTimeout
 	}
@@ -1205,6 +2022,17 @@ func envInt(name string, dst *int) {
 }
 
 func loadFromEnv(cfg *Config) {
+	// A present empty/invalid value is OFF, never a fallback to YAML true.
+	for name, dst := range map[string]*bool{
+		"AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED": &cfg.MCP.UpstreamOAuthEnabled,
+		"AGENTCC_MCP_CLIENT_OAUTH_ENABLED":   &cfg.MCP.ClientOAuthEnabled,
+		"AGENTCC_MCP_K2_APPS_ENABLED":        &cfg.MCP.K2AppsEnabled,
+	} {
+		if value, present := os.LookupEnv(name); present {
+			value = strings.ToLower(strings.TrimSpace(value))
+			*dst = value == "true" || value == "1"
+		}
+	}
 	envInt("AGENTCC_PORT", &cfg.Server.Port)
 	if v := os.Getenv("AGENTCC_HOST"); v != "" {
 		cfg.Server.Host = v
@@ -1212,8 +2040,19 @@ func loadFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTCC_LOG_LEVEL"); v != "" {
 		cfg.Logging.Level = v
 	}
-	if v := os.Getenv("AGENTCC_ADMIN_TOKEN"); v != "" {
-		cfg.Admin.Token = v
+	if v, ok := os.LookupEnv("AGENTCC_ADMIN_TOKEN"); ok {
+		cfg.Admin.tokenSet = true
+		if v != "" {
+			cfg.Admin.Token = v
+		}
+	}
+	if v := os.Getenv(EnvAllowInsecureAdminToken); v != "" {
+		if allow, err := strconv.ParseBool(strings.ToLower(strings.TrimSpace(v))); err == nil {
+			cfg.Admin.AllowInsecureToken = allow
+		} else {
+			slog.Warn("ignoring unrecognised value; expected true or false",
+				"env", EnvAllowInsecureAdminToken, "value", v)
+		}
 	}
 	envDuration("AGENTCC_DEFAULT_REQUEST_TIMEOUT", &cfg.Server.DefaultRequestTimeout)
 	envDuration("AGENTCC_MAX_REQUEST_TIMEOUT", &cfg.Server.MaxRequestTimeout)
@@ -1230,6 +2069,11 @@ func loadFromEnv(cfg *Config) {
 		cfg.ControlPlane.SyncOnStartup = v == "true" || v == "1"
 	}
 	envDuration("AGENTCC_SYNC_INTERVAL", &cfg.ControlPlane.SyncInterval)
+	if v := os.Getenv("AGENTCC_KEY_SYNC_GRACE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.ControlPlane.KeySyncGrace = d
+		}
+	}
 	if v := os.Getenv("AGENTCC_WEBHOOK_SECRET"); v != "" {
 		cfg.ControlPlane.WebhookSecret = v
 	}
@@ -1255,7 +2099,8 @@ func loadFromEnv(cfg *Config) {
 				"env", "AGENTCC_AUTH_ENABLED", "value", v)
 		}
 	}
-	if v := os.Getenv("AGENTCC_INTERNAL_API_KEY"); v != "" {
+	cfg.internalAPIKey, cfg.internalAPIKeySet = os.LookupEnv(EnvInternalAPIKey)
+	if v := cfg.internalAPIKey; v != "" {
 		cfg.Auth.Enabled = true
 		// Seed as an "internal" key: byok (the keystore's default type) is barred
 		// from the global, FutureAGI-credentialed providers, so a mistyped seed
@@ -1284,10 +2129,93 @@ func loadFromEnv(cfg *Config) {
 		cfg.Redis.Password = v
 	}
 	envInt("AGENTCC_REDIS_DB", &cfg.Redis.DB)
+
+	loadCatalogueFamiliesEnv(cfg)
+	if v := os.Getenv("AGENTCC_MANAGED_USER_HASH_KEY"); v != "" {
+		cfg.Managed.UpstreamUserHashKey = v
+	}
+
+	if v := os.Getenv(EnvMCPStateKeys); v != "" {
+		cfg.MCP.StateKeys = splitStateKeys(v)
+	}
+	if v := os.Getenv(EnvMCPDjangoSecret); v != "" {
+		cfg.MCP.Django.InternalTokenSecret = v
+	}
+	// Added to the file's entries, never replacing them; validateMCPKeys
+	// checks every entry as it checks the file's.
+	if v := os.Getenv(EnvMCPEgressPrivateAllow); v != "" {
+		cfg.MCP.Egress.PrivateAllow = append(cfg.MCP.Egress.PrivateAllow, splitStateKeys(v)...)
+	}
 }
 
-// Validate checks that the config is valid.
+// splitStateKeys reads EnvMCPStateKeys: comma-separated keys, current first,
+// surrounding spaces and empty entries dropped. EnvMCPEgressPrivateAllow is
+// read the same way.
+func splitStateKeys(v string) []string {
+	var keys []string
+	for _, k := range strings.Split(v, ",") {
+		if k = strings.TrimSpace(k); k != "" {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// resolveDependentDefaults fills the defaults that depend on other keys or
+// sit inside map entries, which DefaultConfig cannot set: the MCP session
+// store (redis when Redis is configured) and each managed tool server's kind
+// and billing. Validate also accepts the empty values, for a Config built in
+// code.
+func (c *Config) resolveDependentDefaults() {
+	if c.MCP.SessionStore == "" {
+		c.MCP.SessionStore = MCPSessionStoreMemory
+		if c.redisConfigured() {
+			c.MCP.SessionStore = MCPSessionStoreRedis
+		}
+	}
+	for id, s := range c.MCP.ManagedServers {
+		if s.Kind == "" {
+			s.Kind = ManagedServerKindRemote
+		}
+		if s.Billing == "" {
+			s.Billing = ManagedServerBillingReserve
+		}
+		c.MCP.ManagedServers[id] = s
+	}
+}
+
+func (c *Config) redisConfigured() bool {
+	return c.Redis.Enabled && c.Redis.Address != ""
+}
+
+// managedAPIFormats are the api_formats whose adapters the usage-presence
+// matrices verify for managed (credit-funded) settlement (main addendum 13):
+// the OpenAI wire (openai, azure) and the native Anthropic, Gemini ("google"
+// builds the same adapter), Cohere and Bedrock (invoke and converse)
+// adapters. A managed provider on any other adapter would settle org credits
+// on usage accounting nothing verifies. internal/server's
+// TestUsagePresenceAdapterCoverage fails when this set and the matrices drift.
+var managedAPIFormats = map[string]bool{
+	"openai": true, "azure": true, "anthropic": true, "gemini": true, "google": true, "cohere": true, "bedrock": true,
+}
+
+// Validate resolves provider preset defaults and checks that the config is valid.
 func (c *Config) Validate() error {
+	// Resolve presets before any check, so the hosted transport policy and the
+	// required-field checks below both see the endpoint the gateway will dial.
+	c.applyProviderPresets()
+	if err := c.validateHosted(); err != nil {
+		return err
+	}
+	// Delegated batch membership/revocation snapshots must refresh within
+	// the 733 addendum 4 bound, including a configured "disabled" interval.
+	if c.ControlPlane.URL != "" && (c.ControlPlane.SyncInterval <= 0 || c.ControlPlane.SyncInterval > time.Minute) {
+		slog.Warn("control-plane sync_interval clamped to 60s for revocation freshness")
+		c.ControlPlane.SyncInterval = time.Minute
+	}
+	if err := validateCatalogueFamilies(c.Managed.CatalogueFamilies); err != nil {
+		return err
+	}
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port must be between 1 and 65535, got %d", c.Server.Port)
 	}
@@ -1303,6 +2231,9 @@ func (c *Config) Validate() error {
 	if c.Server.DefaultRequestTimeout <= 0 {
 		return fmt.Errorf("server.default_request_timeout must be positive")
 	}
+	if c.Async.MaxWorkers < 0 || c.Async.MaxWorkersPerOrg < 0 || c.Async.MaxJobTimeout < 0 {
+		return fmt.Errorf("async.max_workers, async.max_workers_per_org and async.max_job_timeout must not be negative")
+	}
 	// A default above the ceiling is a request the gateway would clamp on every
 	// call, so it is a configuration mistake rather than something to normalize.
 	if c.Server.MaxRequestTimeout > 0 && c.Server.MaxRequestTimeout < c.Server.DefaultRequestTimeout {
@@ -1311,15 +2242,77 @@ func (c *Config) Validate() error {
 	}
 
 	for name, p := range c.Providers {
+		label := fmt.Sprintf("provider %q", name)
+		if p.Type != "" {
+			label += fmt.Sprintf(" (type %q)", p.Type)
+		}
 		if p.BaseURL == "" {
-			return fmt.Errorf("provider %q: base_url is required", name)
+			return fmt.Errorf("%s: base_url is required", label)
 		}
 		if p.APIFormat == "" {
-			return fmt.Errorf("provider %q: api_format is required", name)
+			return fmt.Errorf("%s: api_format is required", label)
 		}
+		if p.Managed && !managedAPIFormats[p.APIFormat] {
+			return fmt.Errorf("provider %q: managed: true needs an api_format whose adapter the usage-presence matrices verify (%s); %q is not one",
+				name, strings.Join(slices.Sorted(maps.Keys(managedAPIFormats)), ", "), p.APIFormat)
+		}
+		if p.MaxConcurrent < 0 || p.ConnPoolSize < 0 || p.QueueTimeout < 0 {
+			return fmt.Errorf("provider %q: max_concurrent, conn_pool_size and queue_timeout must not be negative (0 takes the default)", name)
+		}
+	}
+	if c.ProviderDefaults.QueueTimeout < 0 {
+		return fmt.Errorf("provider_defaults.queue_timeout must not be negative (0 takes the 5s default)")
 	}
 
 	if err := c.validateLicenseAuth(); err != nil {
+		return err
+	}
+	if err := c.validateMirror(); err != nil {
+		return err
+	}
+	if err := c.validateModelFallbacks(); err != nil {
+		return err
+	}
+
+	// A NaN passes the range checks (every comparison with it is false), and
+	// the managed and tool prices are computed from these percentages (W2c
+	// integration, IC-7).
+	if math.IsNaN(c.Managed.MarkupPercent) || math.IsInf(c.Managed.MarkupPercent, 0) {
+		return fmt.Errorf("managed.markup_percent must be a finite number, got %v", c.Managed.MarkupPercent)
+	}
+	if math.IsNaN(c.Managed.ToolMarkupPercent) || math.IsInf(c.Managed.ToolMarkupPercent, 0) {
+		return fmt.Errorf("managed.tool_markup_percent must be a finite number, got %v", c.Managed.ToolMarkupPercent)
+	}
+	if c.Managed.MarkupPercent < 0 || c.Managed.MarkupPercent > 100 {
+		return fmt.Errorf("managed.markup_percent must be between 0 and 100, got %v", c.Managed.MarkupPercent)
+	}
+	if c.Managed.CatalogRefresh < 0 {
+		return fmt.Errorf("managed.catalog_refresh must not be negative")
+	}
+	if tm := c.Managed.ToolMarkupPercent; tm != -1 && (tm < 0 || tm > 100) {
+		return fmt.Errorf("managed.tool_markup_percent must be -1 (inherit managed.markup_percent) or between 0 and 100, got %v", tm)
+	}
+	if err := c.validateV2Keys(); err != nil {
+		return err
+	}
+	if err := c.validateMCPKeys(); err != nil {
+		return err
+	}
+	if err := c.validateRunAndToolKeys(); err != nil {
+		return err
+	}
+	if err := c.validateShippedShellRefusals(); err != nil {
+		return err
+	}
+
+	if err := c.validateAdminTokens(); err != nil {
+		return err
+	}
+	if err := c.validateInternalAPIKey(); err != nil {
+		return err
+	}
+
+	if _, err := ParseTrustedProxies(c.Server.TrustedProxies, c.Server.TrustedHops); err != nil {
 		return err
 	}
 
@@ -1333,6 +2326,556 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// validateMirror refuses a traffic mirror rule whose target is a managed
+// provider (managed: true): the mirror's copy of a request is never held or
+// billed, so it may not spend Future AGI credits (MIXED-HOP-GUARD-1). It
+// checks every rule, enabled or not, so turning the mirror on cannot bring
+// one in.
+func (c *Config) validateMirror() error {
+	for i, r := range c.Routing.Mirror.Rules {
+		if p, ok := c.Providers[r.TargetProvider]; ok && p.Managed {
+			return fmt.Errorf("routing.mirror.rules[%d]: target_provider %q is a managed provider; mirrored traffic is never billed, so it may not be sent on Future AGI credits", i, r.TargetProvider)
+		}
+	}
+	return nil
+}
+
+// MaxModelFallbacks is the most models one model fallback chain may name,
+// in routing.model_fallbacks here and in an org's routing.model_fallbacks
+// (tenant.MaxModelFallbacks, the same bound). It is one less than the
+// attempts a request records (models.MaxAttempts, 16), so a request can try
+// its model and every fallback once within its attempt record. Retries and
+// provider failover may send more attempts than that: the record then gives
+// a new attempt the slot of one that carries no charge, and stops the chain
+// only when every slot holds an attempt that served or may be charged, so a
+// request never sends an attempt it cannot bill.
+const MaxModelFallbacks = 15
+
+// validateModelFallbacks refuses a model fallback chain that names more
+// than MaxModelFallbacks models.
+func (c *Config) validateModelFallbacks() error {
+	for _, model := range slices.Sorted(maps.Keys(c.Routing.ModelFallbacks)) {
+		if n := len(c.Routing.ModelFallbacks[model]); n > MaxModelFallbacks {
+			return fmt.Errorf("routing.model_fallbacks[%q] names %d models; a chain may name at most %d", model, n, MaxModelFallbacks)
+		}
+	}
+	return nil
+}
+
+// validateV2Keys checks the keys the gateway program added (plan G0b contract
+// h): enum values, signs, and a runtime-token setup that can verify a token.
+func (c *Config) validateV2Keys() error {
+	// An empty enum is the default (a Config built without DefaultConfig).
+	switch c.Managed.UpstreamKeyMode {
+	case "", UpstreamKeyModeShared, UpstreamKeyModePerOrg, UpstreamKeyModePerOrgWithSharedFallback:
+	default:
+		return fmt.Errorf("managed.upstream_key_mode must be shared, per_org or per_org_with_shared_fallback; got %q", c.Managed.UpstreamKeyMode)
+	}
+	switch c.Privacy.DefaultContentMode {
+	case "", "full", "metadata", "none":
+	default:
+		return fmt.Errorf("privacy.default_content_mode must be full, metadata or none; got %q", c.Privacy.DefaultContentMode)
+	}
+	if c.Managed.HoldTTL < 0 || c.Managed.AccountMissingRetryAfter < 0 || c.Managed.ReserveDefaultOutputTokens < 0 ||
+		c.Managed.UnpricedReserveUSD < 0 || c.Managed.MaxOverdraftUSD < 0 || c.Managed.ProcessingFeeBps < 0 {
+		return fmt.Errorf("managed: hold_ttl, account_missing_retry_after, reserve_default_output_tokens, unpriced_reserve_usd, max_overdraft_usd and processing_fee_bps must not be negative")
+	}
+	if sg := c.Managed.SpendGuard; !(sg.MaxUSDPerMinute >= 0) || !(sg.MaxUSDPerHour >= 0) || !(sg.AlertUSDPerHour >= 0) || !(sg.NewOrgDailyCapUSD >= 0) {
+		return fmt.Errorf("managed.spend_guard: max_usd_per_minute, max_usd_per_hour, alert_usd_per_hour and new_org_daily_cap_usd must be nonnegative and not NaN (0 is no cap)")
+	}
+	for name, p := range c.Providers {
+		if p.UpstreamFeeBps != nil && *p.UpstreamFeeBps < 0 {
+			return fmt.Errorf("provider %q: upstream_fee_bps must not be negative", name)
+		}
+		switch p.CatalogSource {
+		case "", "openrouter", "openai_compatible", "price_card":
+		default:
+			return fmt.Errorf("provider %q: catalog_source must be openrouter, openai_compatible or price_card; got %q", name, p.CatalogSource)
+		}
+	}
+	if c.Catalog.HistorySize < 0 || c.Catalog.KeepSnapshots < 0 || c.Catalog.EndpointsRefresh < 0 || c.Catalog.EndpointsRPS < 0 {
+		return fmt.Errorf("catalog: history_size, keep_snapshots, endpoints_refresh and endpoints_rps must not be negative")
+	}
+	if c.Generations.TTL < 0 || c.Idempotency.TTL < 0 || c.Idempotency.MaxBodyBytes < 0 {
+		return fmt.Errorf("generations.ttl, idempotency.ttl and idempotency.max_body_bytes must not be negative")
+	}
+	rt := c.RuntimeTokens
+	if rt.MaxTTL < 0 || rt.MaxTTL > MaxRuntimeTokenTTL {
+		return fmt.Errorf("runtime_tokens.max_ttl must be at most %s; got %s", MaxRuntimeTokenTTL, rt.MaxTTL)
+	}
+	if rt.ClockSkew < 0 {
+		return fmt.Errorf("runtime_tokens.clock_skew must not be negative")
+	}
+	if rt.Enabled {
+		if rt.Issuer == "" || rt.Audience == "" || rt.MaxTTL == 0 {
+			return fmt.Errorf("runtime_tokens.issuer, audience and max_ttl are required when runtime tokens are enabled")
+		}
+		if len(rt.PublicKeys) == 0 {
+			return fmt.Errorf("runtime_tokens.public_keys needs at least one key when runtime tokens are enabled")
+		}
+		for i, k := range rt.PublicKeys {
+			if k.Kid == "" || k.PublicKey == "" {
+				return fmt.Errorf("runtime_tokens.public_keys[%d] needs a kid and a public_key", i)
+			}
+		}
+	}
+	return nil
+}
+
+// EffectiveUpstreamFeeBps is the provider's upstream fee: upstream_fee_bps
+// when set, else 550 (OpenRouter Standard) for an openrouter catalog source
+// and 0 for any other source.
+func (c *ProviderConfig) EffectiveUpstreamFeeBps() int {
+	if c.UpstreamFeeBps != nil {
+		return *c.UpstreamFeeBps
+	}
+	if c.CatalogSource == "openrouter" {
+		return 550
+	}
+	return 0
+}
+
+// ToolMarkupBps is the markup on managed tool calls in basis points:
+// tool_markup_percent, or markup_percent when it is -1 (decision 27). 5% is
+// 500.
+func (m ManagedConfig) ToolMarkupBps() int {
+	pct := m.ToolMarkupPercent
+	if pct < 0 {
+		pct = m.MarkupPercent
+	}
+	if !(pct > 0) {
+		return 0
+	}
+	return int(math.Round(pct * 100))
+}
+
+// mcpServerIDPattern is an MCP server id, as org config writes it.
+var mcpServerIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,47}$`)
+
+// validMCPEra reports whether era pins a known MCP revision or is empty or
+// "auto" (detected).
+func validMCPEra(era string) bool {
+	return era == "" || era == "auto" || slices.Contains(MCPProtocolVersions(), era)
+}
+
+func isHTTPURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// validateMCPKeys checks the MCP keys (plan M1x): a state key whenever MCP is
+// on, so no session id, cursor or approval can be forged; then enums, limits,
+// server and managed-server shapes, and the egress exceptions. Error messages
+// never print a key or secret.
+// APIRouteRoots are the first path segments of the gateway's own routes.
+// The MCP endpoint is a KeyAuth gated root since the authpath port, so an
+// endpoint of "/" or one under any of these roots would put the API routes
+// under the MCP endpoint's gate and handlers (W2c integration, IC-7). The
+// server's TestAPIRouteRootsCoverEveryRoute keeps this list equal to the
+// router's routes. "/deepgram" and "/cartesia" are the speech relays' roots
+// (providers/speech.Endpoints).
+var APIRouteRoots = []string{"/v1", "/v1beta", "/-", "/a2a", "/.well-known", "/healthz", "/livez", "/readyz", "/deepgram", "/cartesia", "/public"}
+
+// mcpEndpointCollision reports why endpoint cannot be the MCP endpoint, ""
+// when it can. An empty endpoint takes the default, /mcp.
+func mcpEndpointCollision(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	if !strings.HasPrefix(endpoint, "/") {
+		return "it must be an absolute path such as /mcp"
+	}
+	clean := path.Clean(endpoint)
+	if clean == "/" {
+		return "it would cover every route"
+	}
+	root := "/" + strings.SplitN(strings.TrimPrefix(clean, "/"), "/", 2)[0]
+	if slices.Contains(APIRouteRoots, root) {
+		return fmt.Sprintf("it is under the gateway's own %s routes", root)
+	}
+	return ""
+}
+
+func (c *Config) validateMCPKeys() error {
+	m := &c.MCP
+	if why := mcpEndpointCollision(m.Endpoint); why != "" {
+		return fmt.Errorf("mcp.endpoint %q is refused: %s", m.Endpoint, why)
+	}
+	for i, k := range m.StateKeys {
+		if len(k) < MinMCPStateKeyBytes {
+			return fmt.Errorf("mcp.state_keys[%d] is %d bytes; each state key must be at least %d bytes", i, len(k), MinMCPStateKeyBytes)
+		}
+	}
+	if m.Enabled && len(m.StateKeys) == 0 && !m.DevInsecureState {
+		return fmt.Errorf("mcp.enabled needs a state key: set %s (comma-separated, current key first, each at least %d bytes) or mcp.state_keys", EnvMCPStateKeys, MinMCPStateKeyBytes)
+	}
+	if m.MaxBodyBytes <= 0 || m.MaxResultBytes <= 0 || m.Stdio.MaxMessageBytes <= 0 || m.Stdio.StderrMaxLineBytes <= 0 {
+		return fmt.Errorf("mcp.max_body_bytes, mcp.max_result_bytes, mcp.stdio.max_message_bytes and mcp.stdio.stderr_max_line_bytes must be positive")
+	}
+	// Approvals are sealed with the state codec, which refuses a TTL of 0;
+	// refuse it at load rather than on every approval-gated call (W2b
+	// integration, M1x review P3).
+	if m.Enabled && m.Approvals.DefaultTTL == 0 {
+		return fmt.Errorf("mcp.approvals.default_ttl must be positive when mcp.enabled is true")
+	}
+	if m.Enabled && len(m.Protocol.Versions) == 0 {
+		return fmt.Errorf("mcp.protocol.versions needs at least one version when mcp is enabled")
+	}
+	for _, v := range m.Protocol.Versions {
+		if !slices.Contains(MCPProtocolVersions(), v) {
+			return fmt.Errorf("mcp.protocol.versions: %q is not one of %s", v, strings.Join(MCPProtocolVersions(), ", "))
+		}
+	}
+	switch m.SessionStore {
+	case "", MCPSessionStoreMemory:
+	case MCPSessionStoreRedis:
+		if !c.redisConfigured() {
+			return fmt.Errorf("mcp.session_store is redis, but Redis is not configured (redis.enabled and redis.address)")
+		}
+	default:
+		return fmt.Errorf("mcp.session_store must be memory or redis; got %q", m.SessionStore)
+	}
+	switch m.Stdio.Launcher {
+	case "", "local", "sandbox":
+	default:
+		return fmt.Errorf("mcp.stdio.launcher must be local or sandbox; got %q", m.Stdio.Launcher)
+	}
+	if slices.Contains(m.Stdio.BaseEnv, "") {
+		return fmt.Errorf("mcp.stdio.base_env has an empty name")
+	}
+	if m.Stdio.Grace < 0 || m.Approvals.DefaultTTL < 0 || m.OAuthAdapters.RefreshSkew < 0 || m.CallbackMaxCalls < 0 ||
+		m.FairUse.OrgRPM < 0 || m.FairUse.KeyRPM < 0 || m.FairUse.MaxConcurrent < 0 {
+		return fmt.Errorf("mcp: stdio.grace, approvals.default_ttl, oauth_adapters.refresh_skew, callback_max_calls and fair_use limits must not be negative")
+	}
+	if m.RateLimit.Replicas < 1 {
+		return fmt.Errorf("mcp.ratelimit.replicas must be at least 1; got %d", m.RateLimit.Replicas)
+	}
+	for _, p := range [][2]string{{"managed", m.ResponsesPassthrough.Managed}, {"byok", m.ResponsesPassthrough.BYOK}} {
+		if p[1] != "" && p[1] != "allow" && p[1] != "deny" {
+			return fmt.Errorf("mcp.responses_passthrough.%s must be allow or deny; got %q", p[0], p[1])
+		}
+	}
+	for _, u := range [][2]string{{"mcp.public_url", m.PublicURL}, {"mcp.django.base_url", m.Django.BaseURL}, {"mcp.vendors.k2_runtime_url", m.Vendors.K2RuntimeURL}} {
+		if u[1] != "" && !isHTTPURL(u[1]) {
+			return fmt.Errorf("%s must be an absolute http(s) URL", u[0])
+		}
+	}
+	sh := m.Shaping
+	if sh.DefaultBudgetBytes < 0 || sh.PreviewBytes < 0 || sh.SpillTTL < 0 || sh.SpillMaxBytes < 0 {
+		return fmt.Errorf("mcp.shaping limits must not be negative")
+	}
+	if sh.DefaultBudgetBytes > m.MaxResultBytes || sh.SpillMaxBytes > m.MaxResultBytes {
+		return fmt.Errorf("mcp.shaping.default_budget_bytes (%d) and spill_max_bytes (%d) must not exceed mcp.max_result_bytes (%d), the transport ceiling",
+			sh.DefaultBudgetBytes, sh.SpillMaxBytes, m.MaxResultBytes)
+	}
+	if err := m.validateServers(); err != nil {
+		return err
+	}
+	if err := m.validateManagedServers(); err != nil {
+		return err
+	}
+	for i, entry := range m.Egress.PrivateAllow {
+		if err := checkPrivateAllowEntry(entry); err != nil {
+			return fmt.Errorf("mcp.egress.private_allow[%d] %q (the config file's entries, then %s's): %w",
+				i, entry, EnvMCPEgressPrivateAllow, err)
+		}
+	}
+	return nil
+}
+
+// validateServers checks the operator's YAML MCP servers.
+func (m *MCPConfig) validateServers() error {
+	for _, id := range slices.Sorted(maps.Keys(m.Servers)) {
+		s := m.Servers[id]
+		if !validMCPEra(s.Era) {
+			return fmt.Errorf("mcp.servers.%s.era must be auto or one of %s; got %q", id, strings.Join(MCPProtocolVersions(), ", "), s.Era)
+		}
+		if s.TimeoutMS < 0 {
+			return fmt.Errorf("mcp.servers.%s.timeout_ms must not be negative", id)
+		}
+		if _, ok := s.Env[""]; ok || slices.Contains(s.EnvFromHost, "") {
+			return fmt.Errorf("mcp.servers.%s: env and env_from_host need non-empty names", id)
+		}
+		for _, h := range s.ForwardHeaders {
+			if strings.TrimSpace(h) == "" {
+				return fmt.Errorf("mcp.servers.%s.forward_headers has an empty name", id)
+			}
+			if ForwardHeaderRefused(h) {
+				return fmt.Errorf("mcp.servers.%s.forward_headers names %q, which is never forwarded upstream (credentials, MCP session and version headers, x-agentcc-* and x-omega-*)", id, h)
+			}
+		}
+	}
+	return nil
+}
+
+// validateManagedServers checks each managed tool server's kind, billing and
+// price-card reference. Ids are one namespace, written with or without the
+// fagi. prefix, so "web" and "fagi.web" are the same server. The card itself
+// is resolved later, by the tool catalog.
+func (m *MCPConfig) validateManagedServers() error {
+	seen := make(map[string]string, len(m.ManagedServers))
+	for _, key := range slices.Sorted(maps.Keys(m.ManagedServers)) {
+		s := m.ManagedServers[key]
+		id := strings.TrimPrefix(key, "fagi.")
+		if !mcpServerIDPattern.MatchString(id) {
+			return fmt.Errorf("mcp.managed_servers.%s: the id must match %s, with or without the fagi. prefix", key, mcpServerIDPattern)
+		}
+		if other, dup := seen[id]; dup {
+			return fmt.Errorf("mcp.managed_servers.%s and mcp.managed_servers.%s are both fagi.%s; managed server ids are one namespace", other, key, id)
+		}
+		seen[id] = key
+		switch s.Kind {
+		case "", ManagedServerKindRemote:
+			if !isHTTPURL(s.URL) {
+				return fmt.Errorf("mcp.managed_servers.%s: a remote server needs an absolute http(s) url", key)
+			}
+		case ManagedServerKindBuiltin:
+			if s.URL != "" || s.CredentialEnv != "" {
+				return fmt.Errorf("mcp.managed_servers.%s: a builtin server has no url and no credential_env", key)
+			}
+		default:
+			return fmt.Errorf("mcp.managed_servers.%s.kind must be remote or builtin; got %q", key, s.Kind)
+		}
+		billing := s.Billing
+		switch billing {
+		case "", ManagedServerBillingReserve:
+			billing = ManagedServerBillingReserve
+		case ManagedServerBillingDelegated:
+		default:
+			return fmt.Errorf("mcp.managed_servers.%s.billing must be reserve or delegated; got %q", key, s.Billing)
+		}
+		if !validMCPEra(s.Era) {
+			return fmt.Errorf("mcp.managed_servers.%s.era must be auto or one of %s; got %q", key, strings.Join(MCPProtocolVersions(), ", "), s.Era)
+		}
+		switch s.Transport {
+		case "", "http", "sse":
+		default:
+			return fmt.Errorf("mcp.managed_servers.%s.transport must be http or sse; got %q", key, s.Transport)
+		}
+		// A reserve server is held at its card's price, so it needs one; a
+		// delegated server may name one, and then all of it.
+		if billing == ManagedServerBillingReserve || !s.PriceCard.IsZero() {
+			for _, f := range [][2]string{{"capability", s.PriceCard.Capability}, {"vendor", s.PriceCard.Vendor}, {"sku", s.PriceCard.SKU}} {
+				if strings.TrimSpace(f[1]) == "" {
+					return fmt.Errorf("mcp.managed_servers.%s.price_card needs capability, vendor and sku; %s is missing", key, f[0])
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// Cloud metadata services, which mcp.egress.private_allow can never open
+// (decision 39). The dial-time guard (netguard) refuses them as well.
+var (
+	metadataNets = mustParseCIDRs(
+		"169.254.0.0/16",     // link-local: AWS, GCP, Azure, OCI, DigitalOcean metadata at 169.254.169.254
+		"fd00:ec2::254/128",  // AWS IMDS over IPv6
+		"fd20:ce::254/128",   // GCP metadata over IPv6 (IPv6-only instances)
+		"100.100.100.200/32", // Alibaba Cloud
+		"168.63.129.16/32",   // Azure WireServer
+	)
+	linkLocalNet      = metadataNets[0]
+	metadataHostnames = map[string]bool{
+		"metadata.google.internal":   true,
+		"metadata.goog":              true,
+		"metadata":                   true,
+		"instance-data":              true,
+		"instance-data.ec2.internal": true,
+	}
+)
+
+func mustParseCIDRs(cidrs ...string) []*net.IPNet {
+	nets := make([]*net.IPNet, len(cidrs))
+	for i, s := range cidrs {
+		_, n, err := net.ParseCIDR(s)
+		if err != nil {
+			panic(err)
+		}
+		nets[i] = n
+	}
+	return nets
+}
+
+// cidrCovers reports whether n contains ip. Unlike net.IPNet.Contains it
+// compares 16-byte forms for an IPv6 range, so a range that spans the
+// IPv4-mapped block (::/0, ::/1 ...) covers the IPv4 addresses mapped into it.
+func cidrCovers(n *net.IPNet, ip net.IP) bool {
+	if n.Contains(ip) {
+		return true
+	}
+	ip16, base := ip.To16(), n.IP.To16()
+	if len(n.Mask) != net.IPv6len || ip16 == nil || base == nil {
+		return false
+	}
+	for i := range ip16 {
+		if ip16[i]&n.Mask[i] != base[i]&n.Mask[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// checkPrivateAllowEntry checks one mcp.egress.private_allow entry: a CIDR or
+// host[:port]. It refuses an entry inside a metadata range, a metadata
+// hostname, and any range that covers part of the link-local block (so
+// 0.0.0.0/0 too). A wider private range that only contains a single metadata
+// address (100.64.0.0/10 holds 100.100.100.200, fc00::/7 holds fd00:ec2::254
+// and fd20:ce::254)
+// is accepted: the dial-time guard still refuses that address.
+func checkPrivateAllowEntry(entry string) error {
+	e := strings.TrimSpace(entry)
+	if e == "" {
+		return errors.New("is empty")
+	}
+	errMetadata := errors.New("is a cloud-metadata address, which is never reachable")
+	if strings.Contains(e, "/") {
+		_, n, err := net.ParseCIDR(e)
+		if err != nil {
+			return errors.New("is not a valid CIDR")
+		}
+		if cidrCovers(n, linkLocalNet.IP) {
+			return errMetadata
+		}
+		for _, mn := range metadataNets {
+			if mn.Contains(n.IP) {
+				return errMetadata
+			}
+		}
+		return nil
+	}
+	host := e
+	if h, port, err := net.SplitHostPort(e); err == nil {
+		if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+			return errors.New("has an invalid port")
+		}
+		host = h
+	}
+	host = strings.TrimSuffix(strings.ToLower(strings.Trim(host, "[]")), ".")
+	if host == "" {
+		return errors.New("has no host")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		for _, mn := range metadataNets {
+			if mn.Contains(ip) {
+				return errMetadata
+			}
+		}
+		return nil
+	}
+	if metadataHostnames[host] {
+		return errMetadata
+	}
+	return nil
+}
+
+// validateRunAndToolKeys checks the global run, identity, security, response,
+// telemetry and tool keys the splice added (plan §6.29, §6.36).
+func (c *Config) validateRunAndToolKeys() error {
+	h := c.Budgets.Hold
+	switch h.Unpriced {
+	case "", BudgetUnpricedReserveDefault, BudgetUnpricedRefuse:
+	default:
+		return fmt.Errorf("budgets.hold.unpriced must be reserve_default or refuse; got %q", h.Unpriced)
+	}
+	e := c.Runs.Envelopes
+	if h.UnpricedReserveUSD < 0 || e.MaxTreeDepth < 0 || e.LoopWindow < 0 || e.LoopThreshold < 0 || e.FanoutWindowS < 0 ||
+		c.Identity.ChainMaxHops < 0 || c.Identity.GrantCacheTTL < 0 {
+		return fmt.Errorf("budgets.hold.unpriced_reserve_usd, runs.envelopes and identity limits must not be negative")
+	}
+	if a := c.Security.AdminListenAddr; a != "" {
+		if _, _, err := net.SplitHostPort(a); err != nil {
+			return fmt.Errorf("security.admin_listen_addr must be host:port; got %q", a)
+		}
+	}
+	hl := c.Responses.Hollow
+	switch hl.Mode {
+	case "", "off", "shadow", "retry", "fail":
+	default:
+		return fmt.Errorf("responses.hollow.mode must be off, shadow, retry or fail; got %q", hl.Mode)
+	}
+	switch hl.BYOK {
+	case "", "flag", "retry":
+	default:
+		return fmt.Errorf("responses.hollow.byok must be flag or retry; got %q", hl.BYOK)
+	}
+	if hl.MaxHollowRetries < 0 || hl.AbsorbCapUSDPerOrgDay < 0 || c.Tools.ReserveDefaultUSD < 0 || c.Tools.CacheTTLSeconds < 0 {
+		return fmt.Errorf("responses.hollow limits, tools.reserve_default_usd and tools.cache_ttl_seconds must not be negative")
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Capabilities.PerCapability)) {
+		if c.Capabilities.PerCapability[name].TimeoutMS < 0 {
+			return fmt.Errorf("capabilities.%s.timeout_ms must not be negative", name)
+		}
+	}
+	return nil
+}
+
+// validateShippedShellRefusals refuses two shipped behaviours that are unsafe
+// in this build (plan V1): scheduled jobs, which carry no org, billing or
+// attribution, and a FutureAGI guardrail rule that cannot run, which the
+// guardrail would otherwise register and let every request through.
+func (c *Config) validateShippedShellRefusals() error {
+	if c.Routing.Scheduled.Enabled {
+		return fmt.Errorf("routing.scheduled.enabled must be false: scheduled jobs are not org-scoped, not billed and not attributed in this build")
+	}
+	for i, rule := range c.Guardrails.Rules {
+		if err := validateFutureAGIAuth(rule.Config); err != nil {
+			return fmt.Errorf("guardrails.rules[%d] %q: %w", i, rule.Name, err)
+		}
+		if field := missingFutureAGIField(rule.Config); field != "" {
+			return fmt.Errorf("guardrails.rules[%d] %q (provider futureagi) is missing %s; a ${VAR} that is not set counts as missing", i, rule.Name, field)
+		}
+	}
+	return nil
+}
+
+// missingFutureAGIField names the field a provider: futureagi rule lacks, or
+// "" when cfg is complete or another provider's. It reads the keys the
+// guardrail reads (guardrails/futureagi, which imports this package): api_key
+// and secret_key after the guardrail's own ${VAR} expansion, and an eval id
+// from eval_ids or else eval_id. The guardrail's FI_API_KEY and FI_SECRET_KEY
+// fallbacks do not count: a pair-mode rule must name its own credentials.
+// gateway_service needs no pair; validateFutureAGIAuth checks its signer and
+// operator destination separately.
+func missingFutureAGIField(cfg map[string]interface{}) string {
+	if provider, _ := cfg["provider"].(string); provider != "futureagi" {
+		return ""
+	}
+	if cfg["auth"] != "gateway_service" {
+		for _, key := range []string{"api_key", "secret_key"} {
+			v, _ := cfg[key].(string)
+			if expandWholeEnvRef(v) == "" {
+				return key
+			}
+		}
+	}
+	switch ids := cfg["eval_ids"].(type) {
+	case []interface{}:
+		for _, id := range ids {
+			if s, ok := id.(string); ok && s != "" {
+				return ""
+			}
+		}
+	case []string:
+		if slices.ContainsFunc(ids, func(s string) bool { return s != "" }) {
+			return ""
+		}
+	}
+	if id, _ := cfg["eval_id"].(string); id != "" {
+		return ""
+	}
+	return "eval_id or eval_ids"
+}
+
+// expandWholeEnvRef expands s when it is exactly ${NAME}, as the FutureAGI
+// guardrail does.
+func expandWholeEnvRef(s string) string {
+	if strings.HasPrefix(s, "${") && strings.HasSuffix(s, "}") {
+		return os.Getenv(s[2 : len(s)-1])
+	}
+	return s
 }
 
 // validateOTel checks the OTLP exporter settings. Misconfiguration here is

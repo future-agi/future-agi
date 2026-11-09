@@ -1,18 +1,28 @@
+from json import loads
+
 import requests as http_requests
 import structlog
+from django.db import transaction
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
+from requests.exceptions import HTTPError, InvalidHeader
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
+from agentcc.permissions import GatewayAdminActionsMixin
 from agentcc.serializers.provider_credential import (
     AgentccProviderCredentialCreateSerializer,
     AgentccProviderCredentialSerializer,
     AgentccProviderCredentialUpdateSerializer,
+    unsupported_credential_keys,
+    unsupported_credential_keys_message,
 )
 from agentcc.services.config_push import push_org_config
+from agentcc.services.managed_models_default import initial_managed_models
+from agentcc.services.org_config_writer import lock_org
 from agentcc.services.url_safety import (
     PROVIDER_PRIVATE_URL_ERROR,
     PROVIDER_URL_ERROR,
@@ -21,6 +31,7 @@ from agentcc.services.url_safety import (
     ensure_public_http_url,
     private_provider_urls_allowed,
 )
+from agentcc.views._errors import ProviderAuthenticationRejected, exception_response
 from integrations.services.credentials import CredentialManager
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
@@ -32,6 +43,97 @@ _GATEWAY_SYNC_WARNING = (
 )
 
 _DEFAULT_API_PATH_PREFIX = "/v1"
+
+# fetch_models answers any org member. A key that cannot go in a header makes
+# requests (InvalidHeader) or http.client (ValueError) fail with a message that
+# quotes the whole header value, key included, so such a key is refused with
+# one of these, which never carry it.
+_MALFORMED_SAVED_KEY = (
+    "The saved provider credential is malformed (it has surrounding whitespace "
+    "or a line break); rotate it."
+)
+_MALFORMED_REQUEST_KEY = (
+    "The API key is malformed (it has surrounding whitespace or a line break)."
+)
+
+
+def _malformed_key(api_key):
+    """Whether api_key would be refused as (part of) an HTTP header value."""
+    return api_key != api_key.strip() or not api_key.isprintable()
+
+
+_GOOGLE_ERROR_MAX_BYTES = 8192
+_GOOGLE_ERROR_MAX_DEPTH = 8
+_GOOGLE_ERROR_MAX_CONTAINERS = 128
+_GOOGLE_ERROR_MAX_DETAILS = 16
+
+
+def _bounded_google_error(response):
+    """Best-effort, bounded inspection of an already-received error document."""
+    # Requests' public content/text/json accessors may consume a pending stream
+    # or sniff/replace encodings. Only inspect bytes already buffered by get().
+    body = response._content
+    if not isinstance(body, bytes) or not body or len(body) > _GOOGLE_ERROR_MAX_BYTES:
+        return None
+    encoding = response.encoding
+    if encoding is not None and (
+        not isinstance(encoding, str) or encoding.lower() not in ("utf-8", "utf8")
+    ):
+        return None
+
+    # Bound decoder work before decoding, including ignored fields. JSON's
+    # delimiters are ASCII; escaped quotes and delimiters inside strings do not
+    # count. Full syntax validation is still the JSON decoder's responsibility.
+    depth = containers = 0
+    quoted = escaped = False
+    for byte in body:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif byte == 92:  # backslash
+                escaped = True
+            elif byte == 34:  # quote
+                quoted = False
+        elif byte == 34:
+            quoted = True
+        elif byte in (123, 91):  # object or array
+            depth += 1
+            containers += 1
+            if (
+                depth > _GOOGLE_ERROR_MAX_DEPTH
+                or containers > _GOOGLE_ERROR_MAX_CONTAINERS
+            ):
+                return None
+        elif byte in (125, 93):
+            depth -= 1
+            if depth < 0:
+                return None
+    if quoted or depth:
+        return None
+    try:
+        return loads(body.decode("utf-8"))
+    except (ValueError, RecursionError):
+        # Includes strict UTF-8 decoding errors. Never attach parser details or
+        # catch fatal/process-control exceptions; refusal keeps the HTTPError.
+        return None
+
+
+def _google_key_rejected(response):
+    """Recognize only the audited Google HTTP400 ErrorInfo credential code."""
+    if response.status_code != 400:
+        return False
+    payload = _bounded_google_error(response)
+    error = payload.get("error") if isinstance(payload, dict) else None
+    details = error.get("details") if isinstance(error, dict) else None
+    if not isinstance(details, list) or len(details) > _GOOGLE_ERROR_MAX_DETAILS:
+        return False
+    return any(
+        isinstance(detail, dict)
+        and detail.get("@type") == "type.googleapis.com/google.rpc.ErrorInfo"
+        and detail.get("domain") == "googleapis.com"
+        and detail.get("reason") == "API_KEY_INVALID"
+        for detail in details
+    )
 
 
 def _join_api_endpoint(base_url, api_path_prefix, path):
@@ -53,11 +155,26 @@ def _join_api_endpoint(base_url, api_path_prefix, path):
     return base + prefix + path
 
 
-class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
+class AgentccProviderCredentialViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
     permission_classes = [IsAuthenticated]
+    # fetch_models only reads through the saved key, so members keep it.
+    gateway_admin_actions = frozenset(
+        {"create", "update", "partial_update", "destroy", "rotate"}
+    )
     serializer_class = AgentccProviderCredentialSerializer
     queryset = AgentccProviderCredential.no_workspace_objects.all()
     _gm = GeneralMethods()
+
+    def get_serializer_class(self):
+        # DRF and schema generation use the same input serializer. Read paths
+        # keep the masked model representation rather than the write payload.
+        if self.action == "create":
+            return AgentccProviderCredentialCreateSerializer
+        if self.action in {"update", "partial_update"}:
+            return AgentccProviderCredentialUpdateSerializer
+        return AgentccProviderCredentialSerializer
 
     def get_queryset(self):
         organization = getattr(self.request, "organization", None)
@@ -77,8 +194,9 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             serializer = AgentccProviderCredentialSerializer(queryset, many=True)
             return self._gm.success_response(serializer.data)
         except Exception as e:
-            logger.exception("provider_credential_list_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            return exception_response(
+                self._gm, e, logger=logger, event="provider_credential_list_error"
+            )
 
     def retrieve(self, request, *args, **kwargs):
         try:
@@ -90,9 +208,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             logger.exception("provider_credential_retrieve_error", error=str(e))
             return self._gm.not_found("Provider credential not found")
 
+    @swagger_auto_schema(responses={201: AgentccProviderCredentialSerializer})
     def create(self, request, *args, **kwargs):
         try:
-            serializer = AgentccProviderCredentialCreateSerializer(data=request.data)
+            serializer = self.get_serializer(data=request.data)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
 
@@ -140,21 +259,24 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.create_response(data)
         except Exception as e:
-            logger.exception("provider_credential_create_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            return exception_response(
+                self._gm, e, logger=logger, event="provider_credential_create_error"
+            )
 
+    @swagger_auto_schema(responses={200: AgentccProviderCredentialSerializer})
     def update(self, request, *args, **kwargs):
         return self.partial_update(request, *args, **kwargs)
 
+    @swagger_auto_schema(responses={200: AgentccProviderCredentialSerializer})
     def partial_update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
+            serializer = self.get_serializer(instance, data=request.data, partial=True)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
             try:
                 ensure_provider_base_url_allowed(
-                    serializer.validated_data.get("base_url"),
+                    serializer.validated_data.get("base_url", instance.base_url),
                     saved_base_url=instance.base_url,
                 )
             except ValueError as e:
@@ -186,8 +308,9 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
         except Exception as e:
-            logger.exception("provider_credential_update_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            return exception_response(
+                self._gm, e, logger=logger, event="provider_credential_update_error"
+            )
 
     def destroy(self, request, *args, **kwargs):
         try:
@@ -201,8 +324,9 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
         except Exception as e:
-            logger.exception("provider_credential_delete_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            return exception_response(
+                self._gm, e, logger=logger, event="provider_credential_delete_error"
+            )
 
     @action(detail=True, methods=["post"])
     def rotate(self, request, pk=None):
@@ -216,6 +340,24 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 )
             if "api_key" not in credentials:
                 return self._gm.bad_request("credentials must contain 'api_key'")
+            # Trimmed as create's serializer field (CharField) trims them: a
+            # key saved with a trailing newline fails in every header it goes in.
+            credentials = {
+                name: value.strip() if isinstance(value, str) else value
+                for name, value in credentials.items()
+            }
+            # NG-58: the new credentials replace the stored ones, so a key the
+            # provider contract does not take would drop the provider from
+            # every push; refuse it and keep the stored credentials.
+            unsupported = unsupported_credential_keys(
+                instance.provider_name, credentials
+            )
+            if unsupported:
+                return self._gm.bad_request(
+                    unsupported_credential_keys_message(
+                        instance.provider_name, unsupported
+                    )
+                )
 
             instance.encrypted_credentials = CredentialManager.encrypt(credentials)
             instance.last_rotated_at = timezone.now()
@@ -235,8 +377,9 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
         except Exception as e:
-            logger.exception("provider_credential_rotate_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            return exception_response(
+                self._gm, e, logger=logger, event="provider_credential_rotate_error"
+            )
 
     @action(detail=False, methods=["post"])
     def fetch_models(self, request):
@@ -320,27 +463,47 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             )
             return self._gm.bad_request(msg)
 
+        malformed = _MALFORMED_SAVED_KEY if uses_saved_key else _MALFORMED_REQUEST_KEY
+        if isinstance(api_key, str) and _malformed_key(api_key):
+            return self._gm.bad_request(malformed)
+
         try:
             models = self._fetch_models_from_provider(
                 provider_name, base_url, api_key, api_format, api_path_prefix
             )
             return self._gm.success_response({"models": models})
-        except ValueError as e:
-            return self._gm.bad_request(str(e))
-        except ConnectionError as e:
-            return self._gm.bad_request(str(e))
+        except InvalidHeader:
+            # A ValueError too, whose message quotes the header value: never
+            # answer with it.
+            return self._gm.bad_request(malformed)
         except Exception as e:
-            logger.warning(
-                "fetch_models_error",
-                provider_name=provider_name,
-                api_format=api_format,
-                base_url=base_url,
-                error=str(e),
+            # InvalidURL/MissingSchema/JSONDecodeError are ValueErrors too.
+            # Only these exact validator messages are public; transport text
+            # and tracebacks can contain the saved Google key in ?key=.
+            response = exception_response(
+                self._gm,
+                e,
+                logger=logger,
+                event="fetch_models_error",
+                safe_messages=(
+                    PROVIDER_URL_ERROR,
+                    PROVIDER_PRIVATE_URL_ERROR,
+                    "Connection to private address blocked",
+                ),
+                log_detail=False,
             )
-            # Never expose raw exception message — may contain credentials/URLs
-            return self._gm.success_response(
-                {"models": [], "error": "Failed to fetch models from provider"}
-            )
+            if response.data["code"] == "provider_authentication_failed":
+                # A definitive key refusal is a discovery verdict, not a failed
+                # probe. Keep the dialog's rejected-key Save guard and manual
+                # model override. Transport/5xx failures remain no-verdict errors.
+                return self._gm.success_response(
+                    {
+                        "models": [],
+                        "error": response.data["result"],
+                        "code": response.data["code"],
+                    }
+                )
+            return response
 
     def _fetch_models_from_provider(
         self, provider_name, base_url, api_key, api_format, api_path_prefix=None
@@ -355,8 +518,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         """
         timeout = 15
 
-        # Validate user-supplied base_url and use safe session to prevent SSRF
-        # (including DNS rebinding).
+        # Validate a user-supplied base_url, then call it through the safe
+        # session: it checks every address the host resolves to and connects
+        # to the address it checked, on every redirect hop, so a DNS answer
+        # that changes after the check (rebinding) is never dialed.
         if base_url:
             allow_private = private_provider_urls_allowed()
             ensure_public_http_url(
@@ -418,7 +583,14 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 params={"key": api_key},
                 timeout=timeout,
             )
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except HTTPError:
+                # Only the Google protocol's structured credential refusal is
+                # a key verdict. Unknown/malformed 400s keep their HTTPError.
+                if _google_key_rejected(resp):
+                    raise ProviderAuthenticationRejected from None
+                raise
             data = resp.json()
             models = []
             for m in data.get("models", []):
@@ -470,14 +642,27 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
     def _push_config_to_gateway(self, org):
         """Returns True if gateway was updated, False if push failed."""
         try:
-            config = AgentccOrgConfig.no_workspace_objects.filter(
-                organization=org, is_active=True, deleted=False
-            ).first()
-            if not config:
-                config = AgentccOrgConfig.no_workspace_objects.create(
-                    organization=org, version=1, is_active=True
-                )
-            return push_org_config(str(org.id), config)
+            with transaction.atomic():
+                # Org lock first, as every config write: an org without a
+                # config gets version 1 here. The push runs under the lock,
+                # as write_config_version's does, so a writer cannot push a
+                # newer version between this read and this push.
+                lock_org(org.pk)
+                config = AgentccOrgConfig.no_workspace_objects.filter(
+                    organization=org, is_active=True, deleted=False
+                ).first()
+                if not config:
+                    # A new org's first version gets Future AGI models on where
+                    # the deployment offers them, as every first version does
+                    # (managed_models_default), so adding a provider first does
+                    # not leave them off for its first key.
+                    config = AgentccOrgConfig.no_workspace_objects.create(
+                        organization=org,
+                        version=1,
+                        is_active=True,
+                        managed_models=initial_managed_models(org),
+                    )
+                return push_org_config(str(org.id), config)
         except Exception as e:
             logger.warning("config_push_failed", org_id=str(org.id), error=str(e))
             return False

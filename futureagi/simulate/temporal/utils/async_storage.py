@@ -6,7 +6,6 @@ in high-concurrency scenarios.
 
 Uses httpx for async HTTP operations (already available in the project).
 """
-from typing import Optional
 
 import httpx
 import requests
@@ -45,8 +44,8 @@ _REHOST_AUDIO_EXTENSIONS = tuple(dict.fromkeys(_AUDIO_FORMAT_TO_EXTENSION.values
 def _rehost_object_key_base(
     call_id: str,
     url_type: str,
-    project_id: Optional[str],
-    provider: Optional[str],
+    project_id: str | None,
+    provider: str | None,
 ) -> str:
     """Return the deterministic extension-less key for a recording artifact."""
     # Callers in the observability path always provide these values. Keeping a
@@ -54,10 +53,7 @@ def _rehost_object_key_base(
     # while still preventing an omitted value from masquerading as Vapi data.
     project_segment = str(project_id) if project_id else "unknown-project"
     provider_segment = str(provider).lower() if provider else "unknown-provider"
-    return (
-        f"call-recordings/{project_segment}/{provider_segment}/"
-        f"{call_id}/{url_type}"
-    )
+    return f"call-recordings/{project_segment}/{provider_segment}/{call_id}/{url_type}"
 
 
 def _rehost_object_key(object_key_base: str, extension: str) -> str:
@@ -66,7 +62,7 @@ def _rehost_object_key(object_key_base: str, extension: str) -> str:
 
 def _existing_rehosted_audio(
     object_key_base: str,
-) -> Optional[tuple[str, int]]:
+) -> tuple[str, int] | None:
     """Return a pre-existing durable recording URL and its stored byte size.
 
     The source URL on a later poll does not reliably retain an extension, so
@@ -91,7 +87,7 @@ def _existing_rehosted_audio(
     return None
 
 
-def _is_fagi_storage_url(url: Optional[str]) -> bool:
+def _is_fagi_storage_url(url: str | None) -> bool:
     """Use the canonical own-storage validation rather than hostname guesses."""
     from tracer.utils.vapi_recording import VapiRecordingService
 
@@ -112,14 +108,14 @@ def _detected_audio_extension(audio_bytes: bytes) -> str:
 
 
 async def download_audio_from_url_async(
-    audio_url: Optional[str],
+    audio_url: str | None,
     max_retries: int = 5,
     timeout: float = DOWNLOAD_TIMEOUT,
     *,
-    provider: Optional[str] = None,
-    api_key: Optional[str] = None,
-    call_id: Optional[str] = None,
-    artifact_type: Optional[str] = None,
+    provider: str | None = None,
+    api_key: str | None = None,
+    call_id: str | None = None,
+    artifact_type: str | None = None,
 ) -> bytes:
     """
     Async version of download_audio_from_url using httpx.
@@ -141,7 +137,9 @@ async def download_audio_from_url_async(
     """
     from tracer.utils.vapi_recording import VapiRecordingService
 
-    if VapiRecordingService.is_authenticated_download(provider, api_key, call_id, artifact_type):
+    if VapiRecordingService.is_authenticated_download(
+        provider, api_key, call_id, artifact_type
+    ):
         return await VapiRecordingService.download_artifact_async(
             call_id=call_id,
             artifact_type=artifact_type,
@@ -196,14 +194,14 @@ async def download_audio_from_url_async(
 
 async def _convert_audio_url_to_s3_async_with_size(
     call_id: str,
-    audio_url: Optional[str],
+    audio_url: str | None,
     url_type: str = "audio",
     *,
-    provider: Optional[str] = None,
-    api_key: Optional[str] = None,
-    vapi_call_id: Optional[str] = None,
-    artifact_type: Optional[str] = None,
-    project_id: Optional[str] = None,
+    provider: str | None = None,
+    api_key: str | None = None,
+    vapi_call_id: str | None = None,
+    artifact_type: str | None = None,
+    project_id: str | None = None,
 ) -> tuple[str, int]:
     """Internal worker that does the download + upload and reports size.
 
@@ -229,14 +227,31 @@ async def _convert_audio_url_to_s3_async_with_size(
     if _is_fagi_storage_url(audio_url):
         return audio_url, 0
 
-    object_key_base = _rehost_object_key_base(
-        call_id, url_type, project_id, provider
-    )
-    existing = _existing_rehosted_audio(object_key_base)
-    if existing:
-        return existing
-
     try:
+        import asyncio
+
+        from simulate.temporal.utils.rehost_admission import (
+            require_recording_rehost_admission,
+        )
+
+        admission = require_recording_rehost_admission
+        if not project_id:
+            from functools import partial
+
+            # Async simulation callers pass the canonical CallExecution ID as
+            # call_id even when their optional observability project is absent.
+            admission = partial(admission, call_execution_id=call_id)
+        loop = asyncio.get_running_loop()
+        # Resolve the tenant and check the pause before any recording IO. Run
+        # synchronous DB/Redis admission off the activity event-loop thread.
+        await loop.run_in_executor(None, admission, project_id)
+        object_key_base = _rehost_object_key_base(
+            call_id, url_type, project_id, provider
+        )
+        existing = _existing_rehosted_audio(object_key_base)
+        if existing:
+            return existing
+
         # SSRF guard: a recording URL arrives inside a provider's API response,
         # so validate its host resolves to a public address before we fetch it —
         # a tampered/unexpected value must not reach an internal or cloud-metadata
@@ -277,6 +292,9 @@ async def _convert_audio_url_to_s3_async_with_size(
         def do_upload():
             from tfc.utils.storage import upload_audio_to_s3
 
+            # A download may outlive a cap change. Recheck with the byte count
+            # immediately before storage, not merely before its ledger event.
+            admission(project_id, amount=len(audio_bytes))
             # Deterministic key per (call_id, url_type) so retries overwrite
             # the same object instead of creating orphans. Required for
             # idempotent rehost.
@@ -293,6 +311,7 @@ async def _convert_audio_url_to_s3_async_with_size(
             "recording_rehost_failed",
             artifact_type=url_type,
             error_type=type(e).__name__,
+            error_code=getattr(e, "error_code", "RECORDING_REHOST_FAILED"),
         )
         # Return original URL on failure
         return audio_url, 0
@@ -300,14 +319,14 @@ async def _convert_audio_url_to_s3_async_with_size(
 
 async def convert_audio_url_to_s3_async(
     call_id: str,
-    audio_url: Optional[str],
+    audio_url: str | None,
     url_type: str = "audio",
     *,
-    provider: Optional[str] = None,
-    api_key: Optional[str] = None,
-    vapi_call_id: Optional[str] = None,
-    artifact_type: Optional[str] = None,
-    project_id: Optional[str] = None,
+    provider: str | None = None,
+    api_key: str | None = None,
+    vapi_call_id: str | None = None,
+    artifact_type: str | None = None,
+    project_id: str | None = None,
 ) -> str:
     """
     Async version of convert_audio_url_to_s3.
@@ -340,14 +359,14 @@ async def convert_audio_url_to_s3_async(
 
 async def convert_audio_url_to_s3_async_with_size(
     call_id: str,
-    audio_url: Optional[str],
+    audio_url: str | None,
     url_type: str = "audio",
     *,
-    provider: Optional[str] = None,
-    api_key: Optional[str] = None,
-    vapi_call_id: Optional[str] = None,
-    artifact_type: Optional[str] = None,
-    project_id: Optional[str] = None,
+    provider: str | None = None,
+    api_key: str | None = None,
+    vapi_call_id: str | None = None,
+    artifact_type: str | None = None,
+    project_id: str | None = None,
 ) -> tuple[str, int]:
     """Like `convert_audio_url_to_s3_async` but also reports uploaded bytes.
 
@@ -368,14 +387,14 @@ async def convert_audio_url_to_s3_async_with_size(
 
 def convert_audio_url_to_s3_sync(
     call_id: str,
-    audio_url: Optional[str],
+    audio_url: str | None,
     url_type: str = "audio",
     *,
-    provider: Optional[str] = None,
-    api_key: Optional[str] = None,
-    vapi_call_id: Optional[str] = None,
-    artifact_type: Optional[str] = None,
-    project_id: Optional[str] = None,
+    provider: str | None = None,
+    api_key: str | None = None,
+    vapi_call_id: str | None = None,
+    artifact_type: str | None = None,
+    project_id: str | None = None,
 ) -> tuple[str, int]:
     """Sync mirror of ``_convert_audio_url_to_s3_async_with_size``.
 
@@ -398,14 +417,19 @@ def convert_audio_url_to_s3_sync(
     if _is_fagi_storage_url(audio_url):
         return audio_url, 0
 
-    object_key_base = _rehost_object_key_base(
-        call_id, url_type, project_id, provider
-    )
-    existing = _existing_rehosted_audio(object_key_base)
-    if existing:
-        return existing
-
     try:
+        from simulate.temporal.utils.rehost_admission import (
+            require_recording_rehost_admission,
+        )
+
+        require_recording_rehost_admission(project_id)
+        object_key_base = _rehost_object_key_base(
+            call_id, url_type, project_id, provider
+        )
+        existing = _existing_rehosted_audio(object_key_base)
+        if existing:
+            return existing
+
         if vapi_authenticated:
             audio_bytes = VapiRecordingService.download_artifact_sync(
                 call_id=auth_call_id,
@@ -414,9 +438,7 @@ def convert_audio_url_to_s3_sync(
             )
         else:
             # Unauthenticated sync download via requests with size guard
-            response = requests.get(
-                audio_url, stream=True, timeout=DOWNLOAD_TIMEOUT
-            )
+            response = requests.get(audio_url, stream=True, timeout=DOWNLOAD_TIMEOUT)
             response.raise_for_status()
 
             chunks = []
@@ -439,6 +461,7 @@ def convert_audio_url_to_s3_sync(
         # Upload to S3
         from tfc.utils.storage import upload_audio_to_s3
 
+        require_recording_rehost_admission(project_id, amount=len(audio_bytes))
         s3_url = upload_audio_to_s3({"bytes": audio_bytes}, object_key=object_key)
 
         return s3_url, len(audio_bytes)
@@ -448,5 +471,6 @@ def convert_audio_url_to_s3_sync(
             "recording_rehost_failed",
             artifact_type=url_type,
             error_type=type(e).__name__,
+            error_code=getattr(e, "error_code", "RECORDING_REHOST_FAILED"),
         )
         return audio_url, 0

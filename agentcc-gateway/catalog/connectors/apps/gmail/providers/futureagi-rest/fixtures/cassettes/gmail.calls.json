@@ -1,0 +1,90 @@
+[
+  {
+    "tool": "get_profile",
+    "arguments": {}
+  },
+  {
+    "tool": "search_threads",
+    "arguments": {
+      "q": "from:alice is:unread newer_than:7d",
+      "maxResults": 2
+    }
+  },
+  {
+    "tool": "get_thread",
+    "arguments": {
+      "id": "t-1",
+      "format": "metadata",
+      "metadataHeaders": ["From", "Subject"]
+    }
+  },
+  {
+    "tool": "get_message",
+    "arguments": {
+      "id": "m-1",
+      "format": "metadata",
+      "metadataHeaders": ["Message-ID", "References", "Subject"]
+    }
+  },
+  {
+    "tool": "list_labels",
+    "arguments": {}
+  },
+  {
+    "tool": "list_drafts",
+    "arguments": {
+      "maxResults": 5
+    }
+  },
+  {
+    "tool": "create_draft",
+    "arguments": {
+      "body": {
+        "message": {
+          "raw": "VG86IEFsaWNlDQpTdWJqZWN0OiBSZTogUXVhcnRlcmx5IG51bWJlcnMNCkluLVJlcGx5LVRvOiA8Y24xNC1tMUBtYWlsaG9zdD4NClJlZmVyZW5jZXM6IDxjbjE0LW0wQG1haWxob3N0PiA8Y24xNC1tMUBtYWlsaG9zdD4NCg0KVGhhbmtzLCB0aGUgbnVtYmVycyBsb29rIHJpZ2h0Lg",
+          "threadId": "t-1"
+        }
+      }
+    }
+  },
+  {
+    "tool": "send_draft",
+    "arguments": {
+      "body": {
+        "id": "r-1"
+      }
+    }
+  },
+  {
+    "tool": "send_message",
+    "arguments": {
+      "body": {
+        "raw": "VG86IEFsaWNlDQpTdWJqZWN0OiBSZTogUXVhcnRlcmx5IG51bWJlcnMNCkluLVJlcGx5LVRvOiA8Y24xNC1tMUBtYWlsaG9zdD4NClJlZmVyZW5jZXM6IDxjbjE0LW0wQG1haWxob3N0PiA8Y24xNC1tMUBtYWlsaG9zdD4NCg0KU2VudCB0aGUgZGVjayBhcyB3ZWxsLg",
+        "threadId": "t-1"
+      }
+    }
+  },
+  {
+    "tool": "label_thread",
+    "arguments": {
+      "id": "t-1",
+      "body": {
+        "addLabelIds": ["INBOX"]
+      }
+    }
+  },
+  {
+    "tool": "create_label",
+    "arguments": {
+      "body": {
+        "name": "Clients"
+      }
+    }
+  },
+  {
+    "tool": "get_thread",
+    "arguments": {
+      "id": "missing"
+    }
+  }
+]

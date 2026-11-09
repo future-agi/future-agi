@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import {
   Box,
   Button,
@@ -84,14 +85,14 @@ const SimulatorAgentCellRenderer = (params) => {
             {data?.logoUrl ? (
               <Box
                 component="img"
-                src={data?.logoUrl}
+                src={localProviderLogo(data)}
                 alt={data?.model_name}
                 sx={{
                   width: theme.spacing(2),
                   height: theme.spacing(2),
                   objectFit: "cover",
                   ...(theme.palette.mode === "dark" &&
-                    isBlackBackgroundLogo(data?.logoUrl) && {
+                    isBlackBackgroundLogo(localProviderLogo(data)) && {
                       filter: "invert(1) brightness(2)",
                     }),
                 }}

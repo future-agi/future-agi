@@ -112,13 +112,39 @@ class CompositeEvaluationRunner:
         )
         self.workspace = self.dataset.workspace if self.dataset else None
 
-        self.children = list(
-            CompositeEvalChild.objects.filter(parent=self.template, deleted=False)
-            .select_related("child", "pinned_version")
-            .order_by("order")
+        from model_hub.services.jury_versions import resolve_jury_runtime
+
+        self.template, saved_links, self.jury_version = resolve_jury_runtime(
+            self.user_eval_metric, self.organization, self.workspace
+        )
+        self.jury_run = None
+        self.children = (
+            saved_links
+            if saved_links is not None
+            else list(
+                CompositeEvalChild.objects.filter(parent=self.template, deleted=False)
+                .select_related("child", "pinned_version")
+                .order_by("order")
+            )
         )
         if not self.children:
             raise ValueError(f"Composite template {self.template.id} has no children.")
+        from model_hub.services.external_metrics import (
+            ExternalMetricExecutionError,
+            is_external_template,
+        )
+
+        external = [
+            child.child.name
+            for child in self.children
+            if is_external_template(child.child)
+        ]
+        if is_external_template(self.template) or external:
+            raise ExternalMetricExecutionError(
+                f"Composite template {self.template.id} includes an external "
+                f"metric ({', '.join(external) or self.template.name}); external "
+                "metrics are scored by the caller and never executed by the server."
+            )
 
     # ------------------------------------------------------------------
     # Column plumbing
@@ -132,6 +158,7 @@ class CompositeEvaluationRunner:
         experiment_dataset=None,
         column: Column | None = None,
         optimize=None,
+        template: EvalTemplate | None = None,
     ) -> dict:
         """Build the result-column config for a composite metric.
 
@@ -143,7 +170,12 @@ class CompositeEvaluationRunner:
         (the cell carries the summary string; individual child values
         live on the child Evaluation rows linked via `parent_evaluation`).
         """
-        template = user_eval_metric.template
+        if template is None:
+            from model_hub.services.jury_versions import resolve_jury_runtime
+
+            template, _, _ = resolve_jury_runtime(
+                user_eval_metric, dataset.organization, dataset.workspace
+            )
         source = SourceChoices.EVALUATION.value
         source_id = str(user_eval_metric.id)
         name = user_eval_metric.name
@@ -151,8 +183,7 @@ class CompositeEvaluationRunner:
         if experiment_dataset and column:
             source = SourceChoices.EXPERIMENT_EVALUATION.value
             source_id = (
-                f"{experiment_dataset.id}-{column.id}"
-                f"-sourceid-{user_eval_metric.id}"
+                f"{experiment_dataset.id}-{column.id}-sourceid-{user_eval_metric.id}"
             )
             name = f"{user_eval_metric.name}-{column.name}"
         elif optimize and column:
@@ -177,37 +208,24 @@ class CompositeEvaluationRunner:
             experiment_dataset=self.experiment_dataset,
             column=self.column,
             optimize=self.optimize,
+            template=self.template,
         )
 
-    def _get_or_create_column(self) -> Column:
-        column_config = self._get_column_config()
-        with transaction.atomic():
-            dataset_obj = Dataset.no_workspace_objects.select_for_update().get(
-                id=self.dataset.id
-            )
-            try:
-                column, created = Column.objects.get_or_create(**column_config)
-            except Exception:
-                column = Column.objects.get(
-                    dataset=column_config["dataset"],
-                    source=column_config["source"],
-                    source_id=column_config["source_id"],
-                    deleted=False,
-                )
-                created = False
+    def _get_or_create_column(self, row_ids: list[str] | None = None) -> Column:
+        # Identity is dataset/source/source_id; a saved-version switch retypes
+        # the existing column instead of creating a second one. The retype
+        # resets only the rows this run evaluates (row_ids when row-scoped);
+        # in an experiment it keeps each settled failed-row outcome.
+        from model_hub.services.composite_result_columns import (
+            get_or_create_result_column,
+        )
 
-            if created:
-                if self.experiment_dataset:
-                    column.status = StatusType.RUNNING.value
-                    column.save(update_fields=["status"])
-                    self.experiment_dataset.columns.add(column)
-                else:
-                    order = dataset_obj.column_order or []
-                    order.append(str(column.id))
-                    dataset_obj.column_order = order
-                    dataset_obj.save(update_fields=["column_order"])
-
-        return column
+        return get_or_create_result_column(
+            self._get_column_config(),
+            experiment_dataset=self.experiment_dataset,
+            upstream_column=self.column,
+            row_ids=row_ids,
+        )
 
     # ------------------------------------------------------------------
     # Row mapping resolution
@@ -239,7 +257,14 @@ class CompositeEvaluationRunner:
             eval_template_name=self.template.name,
         )
 
-        return dict(zip(required_field, mapping_values, strict=False))
+        from model_hub.services.jury_dataset_reports import decode_jury_mapping
+
+        mapping = dict(zip(required_field, mapping_values, strict=False))
+        return (
+            decode_jury_mapping(mapping)
+            if (self.template.config or {}).get("jury")
+            else mapping
+        )
 
     # ------------------------------------------------------------------
     # Persistence
@@ -298,16 +323,33 @@ class CompositeEvaluationRunner:
         if is_user_eval_stopped(self.user_eval_metric_id):
             return
 
-        Cell.objects.update_or_create(
-            dataset=self.dataset,
-            column=column,
-            row=row,
-            defaults={
-                "value_infos": json.dumps(value_infos),
-                "value": cell_value,
-                "status": cell_status,
-            },
+        from tfc.temporal.experiments.run_policy import (
+            experiment_write_lock,
+            holds_failed_row_outcome,
         )
+
+        experiment_id = (
+            self.experiment_dataset.experiment_id
+            if self.experiment_dataset is not None
+            else None
+        )
+        with experiment_write_lock(experiment_id):
+            # A settled failed-row outcome is not replaced by a later pass.
+            if experiment_id and holds_failed_row_outcome(
+                self.dataset, column, row, self.column
+            ):
+                return
+
+            Cell.objects.update_or_create(
+                dataset=self.dataset,
+                column=column,
+                row=row,
+                defaults={
+                    "value_infos": json.dumps(value_infos),
+                    "value": cell_value,
+                    "status": cell_status,
+                },
+            )
 
         # Mirror the composite outcome onto the paired reason cell so its
         # column is never left empty / stuck in a loading state.
@@ -317,15 +359,12 @@ class CompositeEvaluationRunner:
 
         reason_text = outcome.summary or ""
         if not reason_text:
-            failed = [
-                cr for cr in outcome.child_results if cr.status != "completed"
-            ]
+            failed = [cr for cr in outcome.child_results if cr.status != "completed"]
             if failed and len(failed) == len(outcome.child_results):
                 # Every child failed — surface a concise rollup instead of a
                 # blank cell.
                 reason_text = (
-                    "All child evaluations failed. "
-                    "See child evals for details."
+                    "All child evaluations failed. See child evals for details."
                 )
         if not reason_text:
             reason_text = "No reasoning available."
@@ -373,6 +412,7 @@ class CompositeEvaluationRunner:
             status=StatusChoices.COMPLETED,
             input_data={"row_id": str(row.id)},
             eval_config={
+                **({"jury_run_id": str(self.jury_run.id)} if self.jury_run else {}),
                 "composite": True,
                 "aggregation_enabled": self.template.aggregation_enabled,
                 "aggregation_function": self.template.aggregation_function,
@@ -381,6 +421,11 @@ class CompositeEvaluationRunner:
                 "aggregate_score": outcome.aggregate_score,
                 "aggregate_pass": outcome.aggregate_pass,
                 "summary": outcome.summary,
+                **(
+                    {"jury": outcome.jury_report}
+                    if outcome.jury_report is not None
+                    else {}
+                ),
             },
             reason=outcome.summary or "",
             value=(
@@ -447,45 +492,73 @@ class CompositeEvaluationRunner:
             self.user_eval_metric.status = StatusType.RUNNING.value
             self.user_eval_metric.save(update_fields=["status"])
 
-            column = self._get_or_create_column()
+            column = self._get_or_create_column(row_ids)
 
             rows_qs = Row.objects.filter(
                 dataset_id=self.dataset.id, deleted=False
             ).select_related("dataset")
             if row_ids:
                 rows_qs = rows_qs.filter(id__in=row_ids)
-            rows = list(rows_qs.order_by("order"))
+            from tfc.temporal.experiments.run_policy import (
+                experiment_write_lock,
+                rows_holding_failed_row_outcomes,
+            )
 
-            # Mark any missing cells as running so the UI has something
-            # to show while we work through the rows. Prime both the
-            # aggregate column and its paired reason column (if any) so
-            # neither side is left in a phantom loading state when the
-            # run finishes.
-            try:
-                from model_hub.views.eval_runner import bulk_update_or_create_cells
-
-                row_ids_list = [r.id for r in rows]
-                running_defaults = {
-                    "value_infos": json.dumps({}),
-                    "value": "",
-                    "status": CellStatus.RUNNING.value,
-                }
-                bulk_update_or_create_cells(
-                    row_ids_list,
-                    column.id,
-                    self.dataset.id,
-                    running_defaults,
-                )
-                reason_column = self._get_reason_column(column)
-                if reason_column is not None:
-                    bulk_update_or_create_cells(
-                        row_ids_list,
-                        reason_column.id,
-                        self.dataset.id,
-                        running_defaults,
+            experiment_id = (
+                self.experiment_dataset.experiment_id
+                if self.experiment_dataset is not None
+                else None
+            )
+            with experiment_write_lock(experiment_id):
+                if experiment_id:
+                    # A row whose failed-row outcome stands is neither reset
+                    # nor re-evaluated while its output is still failed.
+                    rows_qs = rows_qs.exclude(
+                        id__in=rows_holding_failed_row_outcomes(
+                            self.dataset, column, self.column, row_ids=row_ids
+                        )
                     )
-            except Exception:
-                logger.exception("bulk_update_or_create_cells failed — continuing")
+                rows = list(rows_qs.order_by("order"))
+
+                # Mark any missing cells as running so the UI has something
+                # to show while we work through the rows. Prime both the
+                # aggregate column and its paired reason column (if any) so
+                # neither side is left in a phantom loading state when the
+                # run finishes.
+                try:
+                    from model_hub.views.eval_runner import (
+                        bulk_update_or_create_cells,
+                    )
+
+                    row_ids_list = [r.id for r in rows]
+                    running_defaults = {
+                        "value_infos": json.dumps({}),
+                        "value": "",
+                        "status": CellStatus.RUNNING.value,
+                    }
+                    with transaction.atomic():
+                        bulk_update_or_create_cells(
+                            row_ids_list,
+                            column.id,
+                            self.dataset.id,
+                            running_defaults,
+                        )
+                        reason_column = self._get_reason_column(column)
+                        if reason_column is not None:
+                            bulk_update_or_create_cells(
+                                row_ids_list,
+                                reason_column.id,
+                                self.dataset.id,
+                                running_defaults,
+                            )
+                except Exception:
+                    logger.exception("bulk_update_or_create_cells failed — continuing")
+
+            # shared-edit(F68): open the jury run header for the eligible rows
+            # this run evaluates, after the 3e run-policy lock and cell priming.
+            from model_hub.services.jury_dataset_reports import begin_run
+
+            self.jury_run = begin_run(self, rows)
 
             weight_overrides = self.user_eval_metric.composite_weight_overrides or None
 
@@ -496,6 +569,9 @@ class CompositeEvaluationRunner:
                 column.status = StatusType.COMPLETED.value
                 column.save(update_fields=["status"])
 
+            if self.jury_run:
+                self.jury_run.status = StatusChoices.COMPLETED
+                self.jury_run.save(update_fields=["status"])
             self.user_eval_metric.status = StatusType.COMPLETED.value
             self.user_eval_metric.save(update_fields=["status"])
         except Exception as e:
@@ -566,28 +642,44 @@ class CompositeEvaluationRunner:
                         ),
                     }
                 )
-                Cell.objects.filter(
-                    column=column, row=row, dataset=self.dataset, deleted=False
-                ).update(
-                    status=CellStatus.ERROR.value,
-                    value=error_payload,
+                from tfc.temporal.experiments.run_policy import (
+                    experiment_write_lock,
+                    holds_failed_row_outcome,
                 )
-                # Mirror the failure onto any paired EVALUATION_REASON cell
-                # for this row so the UI doesn't leave a loading skeleton
-                # next to the failed aggregate cell. Reason columns use
-                # source_id = "{eval_column_id}-sourceid-{user_eval_metric_id}".
-                Cell.objects.filter(
-                    row=row,
-                    dataset=self.dataset,
-                    deleted=False,
-                    column__source=SourceChoices.EVALUATION_REASON.value,
-                    column__source_id__endswith=(
-                        f"-sourceid-{self.user_eval_metric.id}"
-                    ),
-                ).update(
-                    status=CellStatus.ERROR.value,
-                    value="Evaluation failed",
-                    value_infos=error_payload,
+
+                experiment_id = (
+                    self.experiment_dataset.experiment_id
+                    if self.experiment_dataset is not None
+                    else None
                 )
+                with experiment_write_lock(experiment_id):
+                    # A settled failed-row outcome is not replaced by this error.
+                    if experiment_id and holds_failed_row_outcome(
+                        self.dataset, column, row, self.column
+                    ):
+                        return
+                    Cell.objects.filter(
+                        column=column, row=row, dataset=self.dataset, deleted=False
+                    ).update(
+                        status=CellStatus.ERROR.value,
+                        value=error_payload,
+                    )
+                    # Mirror the failure onto any paired EVALUATION_REASON cell
+                    # for this row so the UI doesn't leave a loading skeleton
+                    # next to the failed aggregate cell. Reason columns use
+                    # source_id = "{eval_column_id}-sourceid-{user_eval_metric_id}".
+                    Cell.objects.filter(
+                        row=row,
+                        dataset=self.dataset,
+                        deleted=False,
+                        column__source=SourceChoices.EVALUATION_REASON.value,
+                        column__source_id__endswith=(
+                            f"-sourceid-{self.user_eval_metric.id}"
+                        ),
+                    ).update(
+                        status=CellStatus.ERROR.value,
+                        value="Evaluation failed",
+                        value_infos=error_payload,
+                    )
             except Exception:
                 logger.exception("Failed to mark composite cell as ERROR")

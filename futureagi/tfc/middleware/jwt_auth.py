@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.db import close_old_connections, connection
 
 from accounts.authentication import decode_token
+from tfc.middleware.ws_session_guard import SessionGuard, session_token_id
 
 logger = structlog.get_logger(__name__)
 
@@ -54,7 +55,15 @@ class JWTAuthMiddleware:
             await self.close_connection(send, 4003, "Invalid token provided")
             return
 
-        return await self.inner(scope, receive, send)
+        # READINESS lane 3.22: the token is checked at connect only, so the socket gets a guard
+        # that ends it when the session ends (user deactivated or token revoked) while it is open.
+        token_id = session_token_id(token)
+        if token_id is None:
+            await self.close_connection(send, 4003, "Invalid token provided")
+            return
+        return await SessionGuard(token_id, user.id).run(
+            self.inner, scope, receive, send
+        )
 
     @database_sync_to_async
     def get_user_from_token(self, token):

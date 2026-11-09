@@ -1,4 +1,8 @@
 import { getRandomId } from "src/utils/utils";
+import {
+  EXPRESSION_COLUMN_OPTION,
+  expressionColumnOffered,
+} from "./Expression/expressionColumnModel";
 
 export const StaticColumns = [
   {
@@ -69,6 +73,17 @@ export const StaticColumns = [
   },
 ];
 
+// Owner the capability contract-10-22: Execute Custom Code stays out of the Add column
+// menu (and the Conditional Node branches) until its backend test is green.
+export const EXECUTE_CODE_COLUMN_OFFERED = false;
+
+/** How a Save re-runs an edited dynamic column. */
+export const RERUN_SCOPES = [
+  { value: "all", label: "Re-run all rows" },
+  { value: "changed", label: "Only rows whose inputs changed" },
+  { value: "failed", label: "Only failed cells" },
+];
+
 export const DynamicColumns = [
   {
     label: "Run Prompt",
@@ -99,17 +114,34 @@ export const DynamicColumns = [
     icon: "mdi:code-json",
     value: "extractJsonKey",
     color: "text.primary",
+    // IT-R2 G5 P5: opens the path picker (sample values, rows with a value).
     helpingText:
-      "Extract specific keys from JSON using JSONPath syntax, allowing for target retreival of nested information within JSON objects.",
+      "Add a nested value as its own column, e.g. metadata.customer.tier: pick the path, see sample values and how many rows have it.",
+    keywords: [
+      "path",
+      "nested",
+      "extract",
+      "json",
+      "key",
+      "field",
+      "column from path",
+      "jsonpath",
+    ],
   },
-  // {
-  //   icon: "mdi:code",
-  //   label: "Execute Custom Code",
-  //   value: "executeCustomCode",
-  //   color: "text.primary",
-  //   helpingText:
-  //     "Execute custom Python code to perform data transformations or complex operations.",
-  // },
+  // Execute Custom Code (L5 G4): built (sandboxed Python, network off,
+  // 5 s / 256 MB limits) and offered only once its backend test is green.
+  ...(EXECUTE_CODE_COLUMN_OFFERED
+    ? [
+        {
+          icon: "mdi:code",
+          label: "Execute Custom Code",
+          value: "executeCustomCode",
+          color: "text.primary",
+          helpingText:
+            "Run a Python main(row) on every row in a sandbox: network off, 5 s and 256 MB per cell.",
+        },
+      ]
+    : []),
   {
     label: "Classification",
     icon: "mingcute:classify-2-line",
@@ -134,6 +166,8 @@ export const DynamicColumns = [
     helpingText:
       "Apply different actions to your data based on specified conditions, allowing for branching logic.",
   },
+  // HO D7 (the interface contract): Expression, where add_expression_column is served.
+  ...(expressionColumnOffered() ? [EXPRESSION_COLUMN_OPTION] : []),
 ];
 
 export const replaceColumnIdWithName = (text, allColumns) => {

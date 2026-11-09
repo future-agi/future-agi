@@ -35,6 +35,34 @@ const SessionCellRenderer = (params) => {
   const colId = column?.colId;
 
   const renderValue = (fromCell) => {
+    // R2D-04: Pass/Fail eval columns (Resolution): 100 → Pass, 0 → Fail.
+    if (params.passFail && value != null && value !== "") {
+      const n = Number(value);
+      const label =
+        n >= 100 ? "Pass" : n <= 0 ? "Fail" : `${Math.round(n)}% pass`;
+      const pass = n >= 100;
+      return (
+        <Box
+          component="span"
+          sx={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 0.5,
+            typography: "s2",
+            fontWeight: 500,
+            color: pass ? "green.600" : n <= 0 ? "red.600" : "text.primary",
+          }}
+        >
+          <Iconify
+            icon={
+              pass ? "mdi:check-circle-outline" : "mdi:close-circle-outline"
+            }
+            width={14}
+          />
+          {label}
+        </Box>
+      );
+    }
     // session_id column — prefer user-defined name (TraceSession.name) over UUID
     if (colId === "session_id") {
       const displayValue = data?.session_name || value;

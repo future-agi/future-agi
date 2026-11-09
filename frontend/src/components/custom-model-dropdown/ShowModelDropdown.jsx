@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import {
   Box,
   Button,
@@ -533,9 +534,9 @@ const ShowModelDropdown = forwardRef(
                             }}
                           />
                         )}
-                        <ShowComponent condition={logoUrl}>
+                        <ShowComponent condition={Boolean(logoUrl)}>
                           <Image
-                            src={logoUrl}
+                            src={localProviderLogo(option)}
                             alt=""
                             width="16px"
                             disableThemeFilter={
@@ -704,7 +705,8 @@ ShowModelDropdown.propTypes = {
   setSearchQuery: PropTypes.func,
   onChange: PropTypes.func,
   options: PropTypes.array,
-  value: PropTypes.string,
+  // A model name, or the selected models when `multiple` is set.
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.array]),
   isLoadingModelList: PropTypes.bool,
   fetchNextPage: PropTypes.func,
   isFetchingNextPage: PropTypes.bool,

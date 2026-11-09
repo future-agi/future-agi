@@ -13,6 +13,7 @@ from .annotation_queues import (
 )
 from .column_config import ColumnConfig
 from .conversations import Conversation, Message, Node
+from .dataset_folders import DatasetFolder
 from .dataset_insight_meta import DatasetInsightMeta
 from .dataset_optimization_step import DatasetOptimizationStep
 from .dataset_optimization_trial import DatasetOptimizationTrial
@@ -21,9 +22,16 @@ from .dataset_optimization_trial_item import (
     DatasetOptimizationTrialItem,
 )
 from .dataset_properties import DatasetProperties
+from .dataset_splits import DatasetSplit, DatasetSplitMembership
+from .dataset_stars import DatasetStar
+from .dataset_versions import DatasetVersion, DatasetVersionItem
+from .dataset_views import DatasetSavedView
 from .develop import DevelopAI
 from .eval_summary_template import EvalSummaryTemplate
 from .evaluation import Evaluation
+from .experiment_row_budget import ExperimentRowBudget
+from .experiment_run_control import ExperimentRunControl
+from .generated_input_snapshot import GeneratedInputSnapshot
 from .insight import Insight
 from .insight_status import InsightStatus
 from .kb import KnowledgeBase
@@ -33,5 +41,6 @@ from .monitors import Monitor
 from .optimize_dataset import OptimizeDataset
 from .performance_report import PerformanceReport
 from .prompt import Prompt
+from .row_sources import RowSource
 from .score import Score
 from .tts_voices import TTSVoice

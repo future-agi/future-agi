@@ -193,6 +193,7 @@ def turing_oss_gate_for_template(
     model_name: object,
     template_id: object = None,
     eval_type: object = None,
+    organization: object = None,
 ) -> Response | None:
     """Variant of `turing_oss_gate_response` that skips the gate for code
     eval templates. Code evals execute Python/JS — the model field is
@@ -200,16 +201,29 @@ def turing_oss_gate_for_template(
     model defaulted to a Turing value.
 
     Pass `eval_type` directly when the caller already knows it (avoids a
-    DB lookup); otherwise we resolve it from `template_id`."""
+    DB lookup); otherwise we resolve it from `template_id`, among the system
+    templates and those of `organization` (by default the request's bound
+    organization), so another organization's template id is gated like an
+    unknown one."""
     if eval_type and str(eval_type).lower() == "code":
         return None
 
     if template_id:
         try:
-            from model_hub.models.evals_metric import EvalTemplate
+            from django.db.models import Q
 
+            from model_hub.models.evals_metric import EvalTemplate
+            from tfc.middleware.workspace_context import get_current_organization
+
+            if organization is None:
+                organization = get_current_organization()
+            visible = Q(organization__isnull=True)
+            if organization is not None:
+                visible |= Q(organization=organization)
             tpl = (
-                EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False)
+                EvalTemplate.no_workspace_objects.filter(
+                    visible, id=template_id, deleted=False
+                )
                 .only("eval_type")
                 .first()
             )

@@ -21,6 +21,9 @@
 *_creds.json
 *_credentials.json
 **/credentials/*.json
+# E2E runtime cache files belong outside the checkout; never stage accidents.
+fernet-keys
+.fernet-keys.*
 Vertex_AI_Creds.json
 Vertex.json
 vertex.json
@@ -70,6 +73,9 @@ __pycache__/
 *.egg
 build/
 dist/
+# The connector catalog's generated bundle is committed: Omega pins dist/catalog.json and dist/emit/* by version
+# and sha256 (CONNECTORS-PLAN.md section 2.5), so the Python dist/ rule above must not hide it.
+!agentcc-gateway/catalog/connectors/dist/
 wheels/
 pip-wheel-metadata/
 

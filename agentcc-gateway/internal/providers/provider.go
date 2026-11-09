@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/admission"
 	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 )
 
@@ -38,21 +39,20 @@ type ClientTimeoutReporter interface {
 	ClientTimeout() time.Duration
 }
 
-// PriceTableNamer is implemented by providers whose models the price table
-// keys under a name the provider's ID need not match: the table lists new
-// Gemini models only as "vertex_ai/gemini-4-argon" and "gemini/gemini-4-argon",
-// so a Gemini provider named "vertex_ai_global" states "vertex_ai".
-type PriceTableNamer interface {
-	PriceTableName() string
+// SlotHolder is implemented by the adapters that bound their upstream calls
+// (every HTTP adapter): Admission is the instance's slots, max_concurrent of
+// them with its queue wait.
+type SlotHolder interface {
+	Admission() *admission.Limiter
 }
 
-// PriceTableName returns the name the price table keys p's models under, or
-// "" when p states none.
-func PriceTableName(p Provider) string {
-	if n, ok := p.(PriceTableNamer); ok {
-		return n.PriceTableName()
-	}
-	return ""
+// UpstreamModelNamer is implemented by adapters that do not send a request's
+// model to their host as they get it: they drop a leading "<prefix>/" segment
+// (the Anthropic, Bedrock, Gemini, Cohere and Azure adapters). UpstreamModelName
+// is the id the adapter sends for model, through the same function its calls
+// use. An adapter without it (the OpenAI adapter) sends the model as it is.
+type UpstreamModelNamer interface {
+	UpstreamModelName(model string) string
 }
 
 // EmbeddingProvider is implemented by providers that support embedding generation.
@@ -90,17 +90,6 @@ type ResponsesProvider interface {
 	// StreamResponse sends a streaming Responses API request.
 	// Returns a reader for the SSE stream and the response status.
 	StreamResponse(ctx context.Context, reqBody []byte) (io.ReadCloser, int, error)
-}
-
-// ChatViaResponsesProvider is implemented by providers that can carry a chat
-// request over the Responses API, for a model that refuses it on chat
-// completions. Routes that translate their own dialect into a chat request use
-// it; /v1/chat/completions forwards the caller's request as sent.
-type ChatViaResponsesProvider interface {
-	// ChatNeedsResponses reports whether req must go to the Responses API.
-	ChatNeedsResponses(req *models.ChatCompletionRequest) bool
-	ChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
-	StreamChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error)
 }
 
 // TranslationProvider is implemented by providers that support audio translation.

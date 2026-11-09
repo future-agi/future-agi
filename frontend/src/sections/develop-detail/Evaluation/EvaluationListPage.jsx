@@ -51,10 +51,15 @@ const EvaluationListPage = ({
     useMutation({
       mutationFn: (d) =>
         axios.post(endpoints.develop.eval.runEvals(datasetId), d),
-      onSuccess: () => {
-        enqueueSnackbar("Evaluations started successfully", {
-          variant: "success",
-        });
+      onSuccess: (res) => {
+        // L7c g7 (dsdrawer:run): unchanged evals keep their stored results.
+        const said = res?.data?.result;
+        enqueueSnackbar(
+          typeof said === "string" && said.startsWith("Nothing changed")
+            ? said
+            : "Evaluations started successfully",
+          { variant: "success" },
+        );
         refreshGrid();
         onClose();
       },

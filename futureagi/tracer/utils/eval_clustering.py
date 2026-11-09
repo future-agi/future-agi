@@ -84,8 +84,8 @@ def cluster_eval_results(project_id: str) -> EvalClusteringSummary:
                     distance=round(distance, 4),
                 )
             else:
-                if create_cluster(project_id, result, embedding) is not None:
-                    summary.new_clusters += 1
+                create_cluster(project_id, result, embedding)
+                summary.new_clusters += 1
         except Exception:
             logger.exception(
                 "cluster_eval_result_failed",

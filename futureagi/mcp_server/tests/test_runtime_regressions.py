@@ -96,14 +96,17 @@ def test_minimal_dataset_request_has_a_valid_model_type():
 
 
 @pytest.mark.django_db
-def test_unknown_dataset_columns_reject_row_creation(user, workspace):
+def test_unknown_dataset_columns_do_not_block_row_creation(user, workspace):
     dataset = Dataset.objects.create(
         name="MCP columns",
         organization=user.organization,
         workspace=workspace,
         user=user,
     )
-    with pytest.raises(APIExecutionError, match="missing") as error:
+    with patch(
+        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        None,
+    ):
         executor.execute_sync(
             registry.get("add_dataset_rows"),
             {
@@ -114,8 +117,7 @@ def test_unknown_dataset_columns_reject_row_creation(user, workspace):
             },
             MCPRequestContext(user, user.organization, workspace),
         )
-    assert error.value.status_code == 400
-    assert not Row.objects.filter(dataset=dataset).exists()
+    assert Row.objects.filter(dataset=dataset).exists()
 
 
 @pytest.mark.django_db
@@ -130,7 +132,9 @@ def test_urlconf_loading_refuses_to_run_inside_a_bound_workspace(user, workspace
 
 
 @pytest.mark.django_db
-def test_urlconf_loading_clears_bound_workspace_for_in_process_callers(user, workspace):
+def test_urlconf_loading_clears_bound_workspace_for_in_process_callers(
+    user, workspace
+):
     with workspace_context(workspace, organization=user.organization, user=user):
         assert get_current_workspace() == workspace
         load_urlconf_outside_workspace()
@@ -290,9 +294,9 @@ def test_revoked_organization_membership_fails_closed(user, workspace):
     org_membership.save(update_fields=["is_active"])
 
     _assert_denied_without_side_effects(context, "after leaving org")
-    assert not Dataset.no_workspace_objects.filter(organization=other_org).exists(), (
-        "tool must not run in the user's other organization"
-    )
+    assert not Dataset.no_workspace_objects.filter(
+        organization=other_org
+    ).exists(), "tool must not run in the user's other organization"
     assert not Dataset.no_workspace_objects.filter(workspace=other_workspace).exists()
 
 
@@ -335,16 +339,15 @@ def test_resolved_tenant_drift_is_denied_even_if_membership_checks_pass(
 def test_api_key_context_resolves_tenant_from_the_key(user, workspace):
     """With the OrgApiKey on the context, Django resolves the org from the key
     (as the REST API does) and the key's workspace is honoured."""
-    from accounts.models import OrgApiKey
+    from accounts.tests.personal_keys import personal_key_for
 
     member, own_workspace, _, _ = _org_member_with_own_workspace(
         user.organization, "keyed-member"
     )
-    org_api_key = OrgApiKey.no_workspace_objects.create(
-        organization=user.organization,
+    org_api_key = personal_key_for(
+        member,
+        user.organization,
         workspace=own_workspace,
-        user=member,
-        type="user",
         enabled=True,
         api_key=f"fi-{uuid.uuid4().hex}",
         secret_key=f"sk-{uuid.uuid4().hex}",

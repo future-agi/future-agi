@@ -36,7 +36,7 @@ Both root Compose files at `future-agi/` run `fi-collector` next to Django,
 Postgres and ClickHouse: the default `docker-compose.yml` runs it inside the
 `app` container, and `docker-compose.distributed.yml` runs it as its own service. One
 `docker compose up` brings everything live; SDKs point at the collector
-instead of Django's `/v1/traces` endpoint.
+rather than the Django API; the collector serves `/v1/traces` and `/tracer/v1/traces` on port 4318.
 
 ### 2. Standalone (just collector + ClickHouse)
 
@@ -155,6 +155,41 @@ these four TLS variables; mount certificate files read-only at their configured
 container paths using a deployment override. Other deployments must explicitly
 pass the variables and mounts to the collector process/container.
 
+## Billing admission and Redis TLS
+
+The collector uses the backend's deployment configuration signals: a nonempty
+`EE_LICENSE_KEY`, or `CLOUD_DEPLOYMENT` naming `US`, `EU` or `DEV` (case-insensitive).
+Configured EE/cloud billing checks budget pauses on every admission and refuses
+with `BUDGET_CHECK_UNAVAILABLE` when Redis is missing or unreadable. Cloud intent
+stays fail-closed even during cloud-secret repair; no cloud secret is needed by
+the collector. `USAGE_EVENTS_ENABLED=false` stops emission, **not** enforcement.
+
+Without those signals, OSS/self-hosted ingestion has no billing gate, even when
+Redis is absent. Startup logs WARN with `admission_mode=non-billable` and names
+the missing signals, or INFO with `admission_mode=billable` when enforcing. This
+mode log is emitted once, not per request. PostgreSQL authentication and primary
+credential revalidation remain required. Deployment changes require a collector
+restart. Hosted rollout go-check: the collector must report billable mode.
+
+Helm derives `FI_BILLING_ENFORCEMENT_ENABLED` from the backend's license and cloud
+configuration without copying its license into the collector. The chart's
+`billing.enforcement` defaults to `auto`; an explicit `true` or `false` overrides
+the derived flag. Hosted installs using opaque envFrom/external secrets must set
+`billing.enforcement=true`. Custom deployments
+must pass the same deployment signals to both services, or explicitly enable
+`FI_BILLING_ENFORCEMENT_ENABLED=true` on the collector. A false value cannot turn
+off an EE/cloud signal; a malformed nonempty value fails closed. Distributed
+Compose forwards the backend's license and cloud-region settings automatically.
+
+Set `FI_AUTH_REDIS_ADDR` and, when required, `FI_AUTH_REDIS_PASSWORD`. For TLS Redis,
+set `FI_AUTH_REDIS_TLS=true` (YAML: `auth.redis_tls`). TLS requires version 1.2 or
+newer and verifies the server certificate and hostname; it never falls back to
+plaintext. `FI_AUTH_REDIS_TLS_SERVER_NAME` optionally overrides the hostname for
+SNI and verification (YAML: `auth.redis_tls_server_name`). Private CAs can use
+`SSL_CERT_FILE`; Helm's `global.caBundle` mounts and sets it for the collector.
+Invalid TLS boolean values refuse startup. The Helm chart passes the address and
+password reference in both TLS and plain modes, including the AKS example.
+
 ## Pricing Configuration
 
 ### FI_PRICING_JSON
@@ -272,14 +307,14 @@ reduce further when needed. GOMEMLIMIT is soft, not a hard RSS bound. The
 512MiB setting was measured on the collector alone; whole-container load at
 minimum Standalone resources has not been measured, so leave headroom.
 
-| Setting | Default | What |
-|---|---|---|
-| `FI_INGEST_BUDGET_MIB` (`server.ingest_budget_mib`) | about half of the Go memory limit, less a fixed allowance | the budget. Without GOMEMLIMIT the collector sets the Go memory limit to 90% of its container's memory limit; with neither, the budget is 256 MiB. |
-| `FI_OTLP_MAX_BODY_MIB` (`server.otlp_max_body_mib`) | 16 | largest OTLP/HTTP body, as sent and after gzip decompression; lowered to fit a sixth of the budget |
-| `FI_GRPC_MAX_RECV_MIB` (`server.grpc_max_recv_mib`) | the body cap | largest OTLP/gRPC message |
-| `FI_OTLP_MAX_CONNECTIONS` (`server.otlp_max_connections`) | 0 (no cap) | open connections per listener |
-| `FI_INGEST_MAX_WAIT` (`server.ingest_max_wait`) | 2s | longest a request waits, both leases together, before 503 + Retry-After: 1 / UNAVAILABLE. A Go duration (`1500ms`, `3s`); keep it well under your exporters' export timeout |
-| `FI_INSERT_CONCURRENCY` (`server.insert_concurrency`) | 3 from a 512 MiB Go memory limit up (and with none), 2 from 384 MiB, else 1 | ClickHouse inserts of pending rows that run at once. Each takes two insert buffers out of the budget's fixed allowance |
+| Setting                                                   | Default                                                                     | What                                                                                                                                                                        |
+| --------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FI_INGEST_BUDGET_MIB` (`server.ingest_budget_mib`)       | about half of the Go memory limit, less a fixed allowance                   | the budget. Without GOMEMLIMIT the collector sets the Go memory limit to 90% of its container's memory limit; with neither, the budget is 256 MiB.                          |
+| `FI_OTLP_MAX_BODY_MIB` (`server.otlp_max_body_mib`)       | 16                                                                          | largest OTLP/HTTP body, as sent and after gzip decompression; lowered to fit a sixth of the budget                                                                          |
+| `FI_GRPC_MAX_RECV_MIB` (`server.grpc_max_recv_mib`)       | the body cap                                                                | largest OTLP/gRPC message                                                                                                                                                   |
+| `FI_OTLP_MAX_CONNECTIONS` (`server.otlp_max_connections`) | 0 (no cap)                                                                  | open connections per listener                                                                                                                                               |
+| `FI_INGEST_MAX_WAIT` (`server.ingest_max_wait`)           | 2s                                                                          | longest a request waits, both leases together, before 503 + Retry-After: 1 / UNAVAILABLE. A Go duration (`1500ms`, `3s`); keep it well under your exporters' export timeout |
+| `FI_INSERT_CONCURRENCY` (`server.insert_concurrency`)     | 3 from a 512 MiB Go memory limit up (and with none), 2 from 384 MiB, else 1 | ClickHouse inserts of pending rows that run at once. Each takes two insert buffers out of the budget's fixed allowance                                                      |
 
 Per request, a body may also hold at most 65,536 spans, 10,000 ResourceSpans,
 1,048,576 attributes (array entries included), 64 KiB of resource attributes

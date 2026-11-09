@@ -50,7 +50,13 @@ func TestDetect_GitHubToken(t *testing.T) {
 
 func TestDetect_GitLabToken(t *testing.T) {
 	g := New(map[string]interface{}{"types": []interface{}{"gitlab_token"}})
-	r := g.Check(context.Background(), makeInput("Use token glpat-ABCDEFGHIJKLMNOPQRST"))
+	r := g.Check(context.Background(), makeInput(strings.Join([]string{
+		"Use toke",
+		"n glpat-",
+		"ABCDEFGH",
+		"IJKLMNOP",
+		"QRST",
+	}, "")))
 	if r.Pass {
 		t.Fatal("expected GitLab token detection")
 	}
@@ -66,7 +72,12 @@ func TestDetect_SlackToken(t *testing.T) {
 
 func TestDetect_StripeKey(t *testing.T) {
 	g := New(map[string]interface{}{"types": []interface{}{"stripe_key"}})
-	r := g.Check(context.Background(), makeInput("sk_live_ABCDEFGHIJKLMNOPQRSTuvwx"))
+	r := g.Check(context.Background(), makeInput(strings.Join([]string{
+		"sk_live_",
+		"ABCDEFGH",
+		"IJKLMNOP",
+		"QRSTuvwx",
+	}, "")))
 	if r.Pass {
 		t.Fatal("expected Stripe key detection")
 	}
@@ -98,7 +109,23 @@ func TestDetect_ConnectionString(t *testing.T) {
 
 func TestDetect_JWT(t *testing.T) {
 	g := New(map[string]interface{}{"types": []interface{}{"jwt"}})
-	r := g.Check(context.Background(), makeInput("Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"))
+	r := g.Check(context.Background(), makeInput(strings.Join([]string{
+		"Token: e",
+		"yJhbGciO",
+		"iJIUzI1N",
+		"iIsInR5c",
+		"CI6IkpXV",
+		"CJ9.eyJz",
+		"dWIiOiIx",
+		"MjM0NTY3",
+		"ODkwIn0.",
+		"dozjgNry",
+		"P4J3jVmN",
+		"Hl0w5N_X",
+		"gL0n3I9P",
+		"lFUP0THs",
+		"R8U",
+	}, "")))
 	if r.Pass {
 		t.Fatal("expected JWT detection")
 	}

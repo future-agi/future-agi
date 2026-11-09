@@ -1,0 +1,301 @@
+{
+ "schemaVersion": "omega-host-lifecycle-contract/v1",
+ "description": "Test vectors for the FA -> Omega EE lifecycle events (READINESS lane 3.22): workspace.deleted and org.deleted on the omega-host-events/v1 channel, and EE's answers with the omega-host-purge-receipt/v1 receipt. The same file is checked by futureagi/accounts/tests/test_lifecycle_contract.py and packages/server/src/workspace/lifecycle/lifecycle-contract.test.ts. Test-only secrets. Each store's total carries its outcome (erased, partial, kept, not_mounted or not_host_writable); the receipt names every store of EE's store inventory.",
+ "signatureHeader": "X-Omega-Host-Signature",
+ "toleranceSeconds": 300,
+ "issuer": "https://futureagi.test",
+ "keys": [
+  {
+   "keyId": "fa-1",
+   "secret": "contract-test-secret-not-for-production-0001"
+  }
+ ],
+ "vectors": [
+  {
+   "name": "workspace.deleted",
+   "body": "{\"events\":[{\"id\":\"7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0001\",\"occurredAtMs\":1759999990000,\"organizationId\":\"org-a\",\"role\":null,\"subject\":null,\"type\":\"workspace.deleted\",\"workspaceId\":\"ws-a-main\"}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+   "header": "t=1760000000,kid=fa-1,v1=f07124f13f215bbfd35fb4cfead4fb55fe38d09e1acb52d316b7a06b5694e20e",
+   "nowMs": 1760000002000,
+   "expect": "ok",
+   "events": 1
+  },
+  {
+   "name": "org.deleted",
+   "body": "{\"events\":[{\"id\":\"7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0002\",\"occurredAtMs\":1759999991000,\"organizationId\":\"org-a\",\"role\":null,\"subject\":null,\"type\":\"org.deleted\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+   "header": "t=1760000000,kid=fa-1,v1=34fdf75a54f6045a8fefc622c559d81e72f5ce494cc22766e5f4f8e29f80dd38",
+   "nowMs": 1760000002000,
+   "expect": "ok",
+   "events": 1
+  },
+  {
+   "name": "workspace.deleted-with-subject",
+   "body": "{\"events\":[{\"id\":\"7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0001\",\"occurredAtMs\":1759999990000,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-1\",\"type\":\"workspace.deleted\",\"workspaceId\":\"ws-a-main\"}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+   "header": "t=1760000000,kid=fa-1,v1=e26624db491b987972ac5dbe7077027e8990b0e742a916a5f656f9682e17ed21",
+   "nowMs": 1760000002000,
+   "expect": "body_invalid"
+  },
+  {
+   "name": "org.deleted-with-workspace",
+   "body": "{\"events\":[{\"id\":\"7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0002\",\"occurredAtMs\":1759999991000,\"organizationId\":\"org-a\",\"role\":null,\"subject\":null,\"type\":\"org.deleted\",\"workspaceId\":\"ws-a-main\"}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+   "header": "t=1760000000,kid=fa-1,v1=19f70e4a24c2cbfa9e9d93b09aa5ad4372a1187e31e2739fd495c8eeb5ce362a",
+   "nowMs": 1760000002000,
+   "expect": "body_invalid"
+  },
+  {
+   "name": "workspace.deleted-without-workspace",
+   "body": "{\"events\":[{\"id\":\"7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0001\",\"occurredAtMs\":1759999990000,\"organizationId\":\"org-a\",\"role\":null,\"subject\":null,\"type\":\"workspace.deleted\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+   "header": "t=1760000000,kid=fa-1,v1=a1b5520b5c677ebe822144d1b587ac9e5f68434e3091fb6ee39294b83f7833a1",
+   "nowMs": 1760000002000,
+   "expect": "body_invalid"
+  }
+ ],
+ "answers": [
+  {
+   "name": "pending",
+   "event": "workspace.deleted",
+   "answer": {
+    "results": [
+     {
+      "id": "7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0001",
+      "outcome": "pending"
+     }
+    ],
+    "receivedAtMs": 1760000002000
+   },
+   "expect": "pending"
+  },
+  {
+   "name": "applied-with-receipt",
+   "event": "workspace.deleted",
+   "answer": {
+    "results": [
+     {
+      "id": "7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0001",
+      "outcome": "applied",
+      "receipt": {
+       "schemaVersion": "omega-host-purge-receipt/v1",
+       "purgeId": "purge_0123456789abcdef01234567",
+       "eventId": "7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0001",
+       "kind": "workspace.deleted",
+       "hostOrgId": "org-a",
+       "hostWorkspaceId": "ws-a-main",
+       "requestedAtMs": 1759999990000,
+       "acceptedAtMs": 1760000002000,
+       "completedAtMs": 1760000009000,
+       "tenants": 1,
+       "bindingsClosed": 2,
+       "stores": {
+        "agents": {
+         "outcome": "partial",
+         "erased": 0,
+         "retired": 2,
+         "retained": [
+          "Retired agents' spec versions stay in the append-only agent registry, and their spend in the billing ledger, by design (lineage and invoices); every read of them answers 404."
+         ],
+         "runsCanceled": 1
+        },
+        "deployments": {
+         "outcome": "erased",
+         "erased": 1,
+         "retired": 0,
+         "retained": []
+        },
+        "sandboxes": {
+         "outcome": "erased",
+         "erased": 3,
+         "retired": 0,
+         "retained": []
+        },
+        "connections": {
+         "outcome": "erased",
+         "erased": 0,
+         "retired": 0,
+         "retained": []
+        },
+        "credentials": {
+         "outcome": "partial",
+         "erased": 0,
+         "retired": 1,
+         "retained": [
+          "Revoked credentials stay as encrypted envelopes in the append-only, MAC-chained vault ledger (no read or use returns them) until that ledger is compacted."
+         ]
+        },
+        "conversations": {
+         "outcome": "partial",
+         "erased": 0,
+         "retired": 4,
+         "retained": [
+          "Purged conversations stay as lines of the append-only conversation log (unreadable: a replay drops them) until that log is compacted."
+         ]
+        },
+        "accounts": {
+         "outcome": "partial",
+         "erased": 1,
+         "retired": 0,
+         "retained": [
+          "The accounts plane keeps the deleted org as a tombstone in its append-only log (no members, workspaces or keys); the host people's synthetic native accounts stay, holding no membership here."
+         ]
+        },
+        "deliverables": {
+         "outcome": "kept",
+         "erased": 0,
+         "retired": 0,
+         "retained": [
+          "Index entries of deliverables the workspace's agents generated (kind, title, owner and task ids) stay in the deliverable index, which has no erase and which no host route lists; their files are erased with the artifacts."
+         ]
+        },
+        "shares": {
+         "outcome": "not_host_writable",
+         "erased": 0,
+         "retired": 0,
+         "retained": [
+          "Share links: minted only by the Omega Console's artifact and replay share routes, which are not in the host route manifest."
+         ]
+        }
+       },
+       "audit": [
+        {
+         "entryId": "wa_0123456789abcdef_0",
+         "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+       ]
+      }
+     }
+    ],
+    "receivedAtMs": 1760000010000
+   },
+   "expect": "recorded"
+  },
+  {
+   "name": "applied-receipt-for-another-workspace",
+   "event": "workspace.deleted",
+   "answer": {
+    "results": [
+     {
+      "id": "7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0001",
+      "outcome": "applied",
+      "receipt": {
+       "schemaVersion": "omega-host-purge-receipt/v1",
+       "purgeId": "purge_0123456789abcdef01234567",
+       "eventId": "7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0001",
+       "kind": "workspace.deleted",
+       "hostOrgId": "org-a",
+       "hostWorkspaceId": "ws-a-other",
+       "requestedAtMs": 1759999990000,
+       "acceptedAtMs": 1760000002000,
+       "completedAtMs": 1760000009000,
+       "tenants": 1,
+       "bindingsClosed": 2,
+       "stores": {
+        "agents": {
+         "outcome": "partial",
+         "erased": 0,
+         "retired": 2,
+         "retained": [
+          "Retired agents' spec versions stay in the append-only agent registry, and their spend in the billing ledger, by design (lineage and invoices); every read of them answers 404."
+         ],
+         "runsCanceled": 1
+        },
+        "deployments": {
+         "outcome": "erased",
+         "erased": 1,
+         "retired": 0,
+         "retained": []
+        },
+        "sandboxes": {
+         "outcome": "erased",
+         "erased": 3,
+         "retired": 0,
+         "retained": []
+        },
+        "connections": {
+         "outcome": "erased",
+         "erased": 0,
+         "retired": 0,
+         "retained": []
+        },
+        "credentials": {
+         "outcome": "partial",
+         "erased": 0,
+         "retired": 1,
+         "retained": [
+          "Revoked credentials stay as encrypted envelopes in the append-only, MAC-chained vault ledger (no read or use returns them) until that ledger is compacted."
+         ]
+        },
+        "conversations": {
+         "outcome": "partial",
+         "erased": 0,
+         "retired": 4,
+         "retained": [
+          "Purged conversations stay as lines of the append-only conversation log (unreadable: a replay drops them) until that log is compacted."
+         ]
+        },
+        "accounts": {
+         "outcome": "partial",
+         "erased": 1,
+         "retired": 0,
+         "retained": [
+          "The accounts plane keeps the deleted org as a tombstone in its append-only log (no members, workspaces or keys); the host people's synthetic native accounts stay, holding no membership here."
+         ]
+        },
+        "deliverables": {
+         "outcome": "kept",
+         "erased": 0,
+         "retired": 0,
+         "retained": [
+          "Index entries of deliverables the workspace's agents generated (kind, title, owner and task ids) stay in the deliverable index, which has no erase and which no host route lists; their files are erased with the artifacts."
+         ]
+        },
+        "shares": {
+         "outcome": "not_host_writable",
+         "erased": 0,
+         "retired": 0,
+         "retained": [
+          "Share links: minted only by the Omega Console's artifact and replay share routes, which are not in the host route manifest."
+         ]
+        }
+       },
+       "audit": [
+        {
+         "entryId": "wa_0123456789abcdef_0",
+         "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+       ]
+      }
+     }
+    ],
+    "receivedAtMs": 1760000010000
+   },
+   "expect": "receipt_invalid"
+  },
+  {
+   "name": "applied-without-receipt",
+   "event": "workspace.deleted",
+   "answer": {
+    "results": [
+     {
+      "id": "7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0001",
+      "outcome": "applied"
+     }
+    ],
+    "receivedAtMs": 1760000010000
+   },
+   "expect": "receipt_invalid"
+  },
+  {
+   "name": "ignored",
+   "event": "org.deleted",
+   "answer": {
+    "results": [
+     {
+      "id": "7a0c3e52-6d1b-4f3a-8e21-5b7d9c0a0002",
+      "outcome": "ignored",
+      "reason": "just_in_time_identity_off"
+     }
+    ],
+    "receivedAtMs": 1760000010000
+   },
+   "expect": "ignored"
+  }
+ ]
+}

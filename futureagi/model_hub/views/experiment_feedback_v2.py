@@ -11,7 +11,6 @@ from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import Feedback, UserEvalMetric
-from model_hub.models.experiments import ExperimentsTable
 from model_hub.selectors.feedback import resolve_feedback_template_data
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
@@ -25,6 +24,7 @@ from model_hub.serializers.experiment_contracts import (
     ExperimentFeedbackTemplateResponseSerializer,
 )
 from model_hub.views.eval_runner import EvaluationRunner
+from model_hub.views.experiments import _scoped_experiment_queryset
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -32,13 +32,14 @@ from tfc.utils.general_methods import GeneralMethods
 logger = structlog.get_logger(__name__)
 
 
-def _get_experiment_or_error(experiment_id, organization, gm):
-    """Validate experiment exists, belongs to org, and has a snapshot dataset."""
-    experiment = ExperimentsTable.objects.filter(
-        id=experiment_id,
-        dataset__organization=organization,
-        deleted=False,
-    ).first()
+def _get_experiment_or_error(request, experiment_id, organization, gm):
+    """Validate experiment exists in the request's organization and workspace
+    (through its dataset), and has a snapshot dataset."""
+    experiment = (
+        _scoped_experiment_queryset(request, organization)
+        .filter(id=experiment_id)
+        .first()
+    )
     if not experiment:
         return None, gm.bad_request("Experiment not found.")
     if not experiment.snapshot_dataset_id:
@@ -46,9 +47,7 @@ def _get_experiment_or_error(experiment_id, organization, gm):
     return experiment, None
 
 
-def _get_experiment_metric_or_error(
-    experiment, organization, user_eval_metric_id, gm
-):
+def _get_experiment_metric_or_error(experiment, organization, user_eval_metric_id, gm):
     """Validate the metric belongs to the organization and this experiment."""
     try:
         user_eval_metric = experiment.user_eval_template_ids.select_related(
@@ -96,7 +95,10 @@ class ExperimentFeedbackGetTemplateV2View(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ExperimentFeedbackTemplateResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: ExperimentFeedbackTemplateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, experiment_id):
         try:
@@ -104,7 +106,7 @@ class ExperimentFeedbackGetTemplateV2View(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             experiment, err = _get_experiment_or_error(
-                experiment_id, organization, self._gm
+                request, experiment_id, organization, self._gm
             )
             if err:
                 return err
@@ -145,7 +147,10 @@ class ExperimentFeedbackCreateV2View(APIView):
 
     @validated_request(
         request_serializer=FeedbackSerializer,
-        responses={200: ExperimentFeedbackCreateResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ExperimentFeedbackCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, experiment_id):
@@ -154,7 +159,7 @@ class ExperimentFeedbackCreateV2View(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             experiment, err = _get_experiment_or_error(
-                experiment_id, organization, self._gm
+                request, experiment_id, organization, self._gm
             )
             if err:
                 return err
@@ -186,11 +191,14 @@ class ExperimentFeedbackCreateV2View(APIView):
             )
             if err:
                 return err
-            if row_id and not Row.objects.filter(
-                id=row_id,
-                dataset_id=experiment.snapshot_dataset_id,
-                deleted=False,
-            ).exists():
+            if (
+                row_id
+                and not Row.objects.filter(
+                    id=row_id,
+                    dataset_id=experiment.snapshot_dataset_id,
+                    deleted=False,
+                ).exists()
+            ):
                 return self._gm.bad_request(
                     get_error_message("FAILED_TO_CREATE_FEEDBACK")
                 )
@@ -219,7 +227,10 @@ class ExperimentFeedbackDetailsV2View(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ExperimentFeedbackDetailsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: ExperimentFeedbackDetailsResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, experiment_id):
         try:
@@ -227,7 +238,7 @@ class ExperimentFeedbackDetailsV2View(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             experiment, err = _get_experiment_or_error(
-                experiment_id, organization, self._gm
+                request, experiment_id, organization, self._gm
             )
             if err:
                 return err
@@ -250,9 +261,7 @@ class ExperimentFeedbackDetailsV2View(APIView):
                     experiment, organization, user_eval_metric_id, self._gm
                 )
                 if err:
-                    return self._gm.success_response(
-                        {"feedback": [], "total_count": 0}
-                    )
+                    return self._gm.success_response({"feedback": [], "total_count": 0})
                 experiment_columns = [
                     column
                     for column in experiment_columns
@@ -304,7 +313,10 @@ class ExperimentFeedbackSubmitV2View(APIView):
 
     @validated_request(
         request_serializer=ExperimentFeedbackSubmitRequestSerializer,
-        responses={200: ExperimentFeedbackSubmitResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ExperimentFeedbackSubmitResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, experiment_id):
@@ -313,7 +325,7 @@ class ExperimentFeedbackSubmitV2View(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             experiment, err = _get_experiment_or_error(
-                experiment_id, organization, self._gm
+                request, experiment_id, organization, self._gm
             )
             if err:
                 return err
@@ -368,11 +380,14 @@ class ExperimentFeedbackSubmitV2View(APIView):
             )
             if err:
                 return self._gm.bad_request("Evaluation column not found.")
-            if feedback.row_id and not Row.objects.filter(
-                id=feedback.row_id,
-                dataset_id=snapshot_dataset_id,
-                deleted=False,
-            ).exists():
+            if (
+                feedback.row_id
+                and not Row.objects.filter(
+                    id=feedback.row_id,
+                    dataset_id=snapshot_dataset_id,
+                    deleted=False,
+                ).exists()
+            ):
                 return self._gm.bad_request("Feedback not found.")
 
             feedback.eval_template = user_eval_metric.template

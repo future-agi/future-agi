@@ -9,7 +9,7 @@ const RunPromptButton = ({ children, ...props }) => {
       variant="contained"
       color="primary"
       size="small"
-      sx={{ borderRadius: "4px", minWidth: "130px" }}
+      sx={{ borderRadius: "4px", minWidth: "130px", whiteSpace: "nowrap" }}
       startIcon={
         <Iconify
           icon="lucide:play"

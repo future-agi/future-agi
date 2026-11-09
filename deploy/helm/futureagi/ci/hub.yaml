@@ -1,0 +1,14 @@
+# CI only: the Omega Hub over examples/external.yaml and examples/hub.yaml,
+# with NetworkPolicies on, the maintainer organisation set and the token from
+# its own Secret, so every hub/ template path renders.
+hub:
+  maintainerOrgId: 8a6d2f0e-3c1b-4e7a-9f5d-2b8c4a1e6d90
+  clientIpHeader: X-Real-IP
+  checker:
+    tokenSecret: futureagi-hub-checker
+    replicas: 2
+networkPolicy:
+  enabled: true
+urls:
+  app: https://futureagi.example.com
+  api: https://api.futureagi.example.com

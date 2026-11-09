@@ -1,0 +1,37 @@
+# The gateway config template of connectors/93_cn_conformance.sh, the
+# connector L3 conformance harness (CONNECTORS-PLAN CN8). The harness's Go
+# half (l3conformance render) appends the run's mcp block: MCP and stdio on,
+# the static org, an egress exception for each mock, and one operator YAML
+# stdio server per K4 case. lib_mcp.sh's scn_mcp_gateway_template then adds
+# the fixed test state key under mcp:, and lib.sh fills base.yaml's
+# placeholders (see config/base.yaml) and appends redis:.
+#
+# No model provider is configured: the harness makes no model call, so scn_up
+# runs with SCN_CATALOG_WAIT_SKIP=all. The keys the harness calls with are
+# created through the admin API, one pair per case, in the case's org. Every
+# key and token below is a fake value for the local mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  # Org keys are person-owned (733): under a control plane config.yaml holds
+  # only deployment identities (key_type internal, no org_id, no user_id).
+  # scn_up registers acme-app (SCN_KEY of org-acme, user SCN_USER) with the
+  # mock's control plane, which lists it on the key sync (lib.sh, Org keys).
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+# The X0 mock stands in for Django: the request-log webhook, which carries
+# M15's tool_call records, reaches its /__logs.
+# Its control plane lists the person-owned keys scn_up registers and does
+# not answer the org sync, so configs pushed with scn_org_config stay; the
+# gateway syncs keys on startup (scn_up waits for the first list).
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: true
+  sync_interval: 60s

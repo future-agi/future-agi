@@ -8,6 +8,7 @@ from django.urls import path
 from django.utils import timezone
 from django.utils.html import format_html, format_html_join
 
+from accounts.api_key_revocation import publish_key_revocation
 from accounts.models.auth_token import AuthToken
 from accounts.models.gcp_marketplace import (
     GCPMarketplaceEntitlement,
@@ -16,6 +17,7 @@ from accounts.models.gcp_marketplace import (
 )
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.services.hard_erase_admin import HardEraseAdminMixin
 from accounts.services.sos_service import build_sos_handoff_url
 
 from .models import (
@@ -26,7 +28,7 @@ from .models import (
 
 
 @admin.register(Organization)
-class OrganizationAdmin(admin.ModelAdmin):
+class OrganizationAdmin(HardEraseAdminMixin, admin.ModelAdmin):
     list_display = [
         "name",
         "display_name",
@@ -54,7 +56,7 @@ class OrganizationAdmin(admin.ModelAdmin):
 
 
 @admin.register(User)
-class CustomUserAdmin(UserAdmin):
+class CustomUserAdmin(HardEraseAdminMixin, UserAdmin):
     list_display = [
         "email",
         "name",
@@ -223,14 +225,44 @@ class OrgApiKeyAdmin(admin.ModelAdmin):
     ]
     list_filter = ["type", "enabled", "created_at", "organization"]
     search_fields = ["name", "organization__name", "user__email"]
-    readonly_fields = ["id", "api_key", "secret_key", "created_at"]
+    # The secret is stored as a keyed hash (L03); the admin shows only its hint.
+    readonly_fields = [
+        "id",
+        "name",
+        "masked_api_key",
+        "secret_key_hint",
+        "created_at",
+        "type",
+        "user",
+        "organization",
+        "workspace",
+    ]
+
+    @admin.display(description="API key")
+    def masked_api_key(self, obj):
+        from model_hub.models.api_key import mask_key
+
+        return mask_key(obj.api_key)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(self.readonly_fields)
+        if obj is not None and not obj.enabled:
+            fields.append("enabled")
+        return fields
+
     ordering = ["-created_at"]
 
     fieldsets = (
         (None, {"fields": ("name", "organization", "type")}),
         ("Access Control", {"fields": ("user", "workspace")}),
         ("Status", {"fields": ("enabled",)}),
-        ("Keys", {"fields": ("api_key", "secret_key")}),
+        ("Keys", {"fields": ("masked_api_key", "secret_key_hint")}),
         ("Metadata", {"fields": ("id", "created_at")}),
     )
 
@@ -240,6 +272,31 @@ class OrgApiKeyAdmin(admin.ModelAdmin):
             .get_queryset(request)
             .select_related("organization", "user", "workspace")
         )
+
+    # A key disabled or deleted here must leave fi-collector's cache too.
+    def save_model(self, request, obj, form, change):
+        from django.core.exceptions import PermissionDenied
+
+        from accounts.api_key_policy import is_retired_key
+
+        if not change:
+            raise PermissionDenied("Create personal keys from your account session.")
+        old = OrgApiKey._base_manager.get(pk=obj.pk)
+        if obj.enabled and (not old.enabled or is_retired_key(old)):
+            raise PermissionDenied("The admin may disable keys, not re-enable them.")
+        super().save_model(request, obj, form, change)
+        if "enabled" in form.changed_data and not obj.enabled:
+            publish_key_revocation(obj)
+
+    def delete_model(self, request, obj):
+        super().delete_model(request, obj)
+        publish_key_revocation(obj)
+
+    def delete_queryset(self, request, queryset):
+        keys = list(queryset)
+        super().delete_queryset(request, queryset)
+        for key in keys:
+            publish_key_revocation(key)
 
 
 @admin.register(AuthToken)

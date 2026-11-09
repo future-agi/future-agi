@@ -71,7 +71,18 @@ export const useRunCompareEvaluationStore = create((set) => ({
     set(() => ({ openRunCompareEvaluation: value })),
 }));
 
-// Run Experiment Store
+// Run Experiment Store (New / Edit experiment drawer, PRODUCT-SPEC §3.8).
+// Four steps in both modes: Configuration, Data, Evaluations, Review & run.
+export const EXPERIMENT_STEP_COUNT = 4;
+const freshSteps = (value = false) =>
+  Array.from({ length: EXPERIMENT_STEP_COUNT }, () => value);
+const firstVisited = () => freshSteps(false).map((_, i) => i === 0);
+const markVisited = (visited, step) => visited.map((v, i) => v || i === step);
+// Entry points pass an options object; an onClick handler may pass the
+// click event instead, which carries no options.
+const createOptionsOf = (opts) =>
+  opts && typeof opts === "object" && !("nativeEvent" in opts) ? opts : {};
+
 export const useRunExperimentStore = create((set) => ({
   openRunExperiment: false,
 
@@ -79,35 +90,68 @@ export const useRunExperimentStore = create((set) => ({
 
   currentStep: 0,
   mode: null,
-  validatedSteps: [false, false, false],
+  validatedSteps: freshSteps(),
+  visitedSteps: firstVisited(),
+  // Create-mode options (initiateCreateMode).
+  firstRunType: null,
+  duplicateFromExperimentId: null,
+  prefill: null,
+  // Set after a create whose runs are all From code: the drawer shows the
+  // "Waiting for results" panel instead of navigating away.
+  launched: null,
   setStepValidated: (stepIndex, isValid) =>
     set((state) => {
       const newValidatedSteps = [...state.validatedSteps];
       newValidatedSteps[stepIndex] = isValid;
       return { validatedSteps: newValidatedSteps };
     }),
-  setCurrentStep: (stepIndex) => set(() => ({ currentStep: stepIndex })),
+  setCurrentStep: (stepIndex) =>
+    set((state) => ({
+      currentStep: stepIndex,
+      visitedSteps: markVisited(state.visitedSteps, stepIndex),
+    })),
   initiateEditMode: (value) => {
     set(() => ({
       currentStep: 0,
       mode: "edit",
-      validatedSteps: [false, false],
+      validatedSteps: freshSteps(),
+      visitedSteps: firstVisited(),
       selectedExperiment: value,
+      firstRunType: null,
+      duplicateFromExperimentId: null,
+      prefill: null,
+      launched: null,
       openRunExperiment: true,
     }));
   },
-  initiateCreateMode: () => {
+  /**
+   * Opens the drawer in create mode.
+   * opts: { firstRunType: "prompt"|"agent"|"external"|"http",
+   *         duplicateFromExperimentId, prefill: { version_id, split_ids, row_ids } }
+   */
+  initiateCreateMode: (opts) => {
+    const o = createOptionsOf(opts);
     set(() => ({
       currentStep: 0,
       mode: "create",
-      validatedSteps: [false, false, false],
+      validatedSteps: freshSteps(),
+      visitedSteps: firstVisited(),
+      selectedExperiment: null,
+      firstRunType: o.firstRunType ?? null,
+      duplicateFromExperimentId: o.duplicateFromExperimentId ?? null,
+      prefill: o.prefill ?? null,
+      launched: null,
       openRunExperiment: true,
     }));
   },
+  setLaunched: (launched) => set(() => ({ launched })),
   nextStep: () =>
     set((state) => {
-      const maxStep = state.mode === "edit" ? 1 : 2;
-      return { currentStep: Math.min(state.currentStep + 1, maxStep) };
+      const step = Math.min(state.currentStep + 1, EXPERIMENT_STEP_COUNT - 1);
+      return {
+        currentStep: step,
+        visitedSteps: markVisited(state.visitedSteps, step),
+      };
     }),
   prevStep: () =>
     set((state) => ({
@@ -119,7 +163,12 @@ export const useRunExperimentStore = create((set) => ({
       selectedExperiment: null,
       currentStep: 0,
       mode: null,
-      validatedSteps: [false, false, false],
+      validatedSteps: freshSteps(),
+      visitedSteps: firstVisited(),
+      firstRunType: null,
+      duplicateFromExperimentId: null,
+      prefill: null,
+      launched: null,
     })),
 }));
 export const useRunExperimentStoreShallow = (func) =>

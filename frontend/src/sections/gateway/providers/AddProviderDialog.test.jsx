@@ -49,6 +49,9 @@ vi.mock("notistack", () => ({
 
 // Responses land on a later task, as a real request does; a synchronous mock
 // closes the window the dialog's ordering bugs live in.
+// Long enough for the dialog's 600 ms fetch debounce plus a loaded host.
+const DEBOUNCED_WAIT = 4000;
+
 const deferred =
   (impl) =>
   (...args) =>
@@ -129,7 +132,7 @@ describe("AddProviderDialog validation", () => {
     });
     const modelInput = screen.getByPlaceholderText(/model IDs/i);
     await userEvent.type(modelInput, "vertex_ai/gemini-3.7-flash{enter}");
-    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add provider" }));
 
     expect(fetchMutate).not.toHaveBeenCalled();
     expect(updateMutate).toHaveBeenCalledTimes(1);
@@ -276,14 +279,15 @@ describe("AddProviderDialog validation", () => {
     ).toBeTruthy();
     // Live feedback only — the summary stays down until Save.
     expect(screen.queryByText("Fix this before saving")).toBeNull();
-    expect(screen.getByRole("button", { name: "Add Provider" }).disabled).toBe(
+    expect(screen.getByRole("button", { name: "Add provider" }).disabled).toBe(
       true,
     );
   });
 
-  it("blocks Save when the stored key can no longer list models", async () => {
-    // Models already saved, so that gate passes — but the key on file no
-    // longer works, and saving would just keep it.
+  // A provider whose model list fails (its upstream is down, or the list
+  // answers nothing) can still have its timeout or base URL edited: Save
+  // keeps the models it already has, and the failure reads as a warning.
+  it("saves with the stored models when the provider's model list fails, warning, not blaming the key", async () => {
     fetchMutate.mockImplementation(
       deferred((_vars, opts) =>
         opts?.onSuccess?.({
@@ -292,21 +296,75 @@ describe("AddProviderDialog validation", () => {
         }),
       ),
     );
-    renderEditDialog({
+    renderEditDialogFor("walk-flaky", {
+      base_url: "http://flaky.example.test/v1",
       default_timeout: 30,
-      models: ["gpt-3.5-turbo-0125", "gpt-3.5-turbo-1106"],
+      models: ["walk-flaky-model"],
     });
 
     const save = await screen.findByRole("button", { name: "Save Changes" });
-    expect(save.disabled).toBe(true);
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(1));
+    const warning = await screen.findByText(
+      /Failed to fetch models from provider/,
+    );
+    expect(warning.closest(".MuiAlert-root")).toHaveClass(
+      "MuiAlert-outlinedWarning",
+    );
+    // Two sentences: what failed, then what Save does.
+    expect(warning.closest(".MuiAlert-root")).toHaveTextContent(
+      /^Failed to fetch models from provider\. Save keeps this provider's current models\.$/,
+    );
+    expect(save).toBeEnabled();
+    // The key field is not in an error state: blank keeps the stored key.
+    const key = screen.getByLabelText(/API Key/i);
+    expect(key).toHaveAttribute(
+      "placeholder",
+      "Leave blank to keep current key",
+    );
+    expect(key).toHaveAttribute("aria-invalid", "false");
     expect(
-      screen.getByText(/Enter a new API key, or add model IDs manually/i),
-    ).toBeTruthy();
+      screen.queryByText(/Enter a new API key, or add model IDs manually/i),
+    ).toBeNull();
 
-    // A replacement key is the way out, but it has to prove itself.
+    fireEvent.change(screen.getByLabelText(/Timeout/), {
+      target: { value: "45" },
+    });
+    await userEvent.click(save);
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    const { config } = updateMutate.mock.calls[0][0];
+    expect(config.models).toEqual(["walk-flaky-model"]);
+    expect(config).not.toHaveProperty("api_key");
+  });
+
+  it("drops the Base URL Required hint once the field is filled", async () => {
+    renderEditDialogFor("walk-flaky", {
+      base_url: "http://flaky.example.test/v1",
+      default_timeout: 30,
+      models: ["walk-flaky-model"],
+    });
+    const url = await screen.findByLabelText(/Base URL/);
+    expect(screen.queryByText(/Required — enter your endpoint URL/)).toBeNull();
+    fireEvent.change(url, { target: { value: "" } });
+    expect(
+      screen.getByText(/Required — enter your endpoint URL/),
+    ).toBeInTheDocument();
+  });
+
+  it("blocks Save when a newly typed key lists no models", async () => {
+    fetchMutate.mockImplementation(
+      deferred((vars, opts) =>
+        vars?.providerName
+          ? opts?.onSuccess?.({ models: ["gpt-4o"] })
+          : opts?.onSuccess?.({
+              models: [],
+              error: "Failed to fetch models from provider",
+            }),
+      ),
+    );
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+    await screen.findByRole("button", { name: "Save Changes" });
     await userEvent.type(screen.getByLabelText(/API Key/i), "sk-still-bad");
     await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(2));
-
     expect(
       await screen.findByText(/check that it is valid for this provider/i),
     ).toBeTruthy();
@@ -334,8 +392,7 @@ describe("AddProviderDialog validation", () => {
       models: ["gpt-3.5-turbo-0125"],
     });
 
-    const save = await screen.findByRole("button", { name: "Save Changes" });
-    expect(save.disabled).toBe(true);
+    await screen.findByRole("button", { name: "Save Changes" });
 
     await userEvent.type(screen.getByLabelText(/API Key/i), "sk-good");
 
@@ -348,7 +405,7 @@ describe("AddProviderDialog validation", () => {
       apiPathPrefix: "/v1",
     });
 
-    // Only once it lists models does Save open up.
+    // Once it lists models, Save is open.
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Save Changes" }).disabled,
@@ -379,7 +436,7 @@ describe("AddProviderDialog validation", () => {
     );
     await userEvent.type(screen.getByLabelText(/API Key/i), "sk-unlistable");
     await screen.findByText(/check that it is valid for this provider/i);
-    expect(screen.getByRole("button", { name: "Add Provider" }).disabled).toBe(
+    expect(screen.getByRole("button", { name: "Add provider" }).disabled).toBe(
       true,
     );
 
@@ -390,10 +447,10 @@ describe("AddProviderDialog validation", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Add Provider" }).disabled,
+        screen.getByRole("button", { name: "Add provider" }).disabled,
       ).toBe(false),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add provider" }));
     expect(updateMutate.mock.calls[0][0].config.models).toEqual(["my-model"]);
   });
 
@@ -413,7 +470,7 @@ describe("AddProviderDialog validation", () => {
     ).toBeNull();
     // The reason still surfaces, just not against the key.
     expect(
-      screen.getByText("The request timed out. Please try again."),
+      screen.getByText(/The request timed out\. Please try again\./),
     ).toBeTruthy();
 
     await userEvent.click(save);
@@ -440,18 +497,24 @@ describe("AddProviderDialog validation", () => {
 
     const key = screen.getByLabelText(/API Key/i);
     await userEvent.type(key, "sk-bad");
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Save Changes" }).disabled,
-      ).toBe(true),
+    // The dialog debounces the fetch by 600 ms; the default 1 s wait left
+    // 400 ms for the render and flaked under shared-host load.
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("button", { name: "Save Changes" }).disabled,
+        ).toBe(true),
+      { timeout: DEBOUNCED_WAIT },
     );
 
     await userEvent.clear(key);
 
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Save Changes" }).disabled,
-      ).toBe(false),
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("button", { name: "Save Changes" }).disabled,
+        ).toBe(false),
+      { timeout: DEBOUNCED_WAIT },
     );
     expect(
       screen.queryByText(/Enter a new API key, or add model IDs manually/i),
@@ -550,7 +613,7 @@ describe("AddProviderDialog validation", () => {
     // Only a listed model is selected now, so the rejected key still blocks.
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Add Provider" }).disabled,
+        screen.getByRole("button", { name: "Add provider" }).disabled,
       ).toBe(true),
     );
     expect(updateMutate).not.toHaveBeenCalled();
@@ -573,10 +636,10 @@ describe("AddProviderDialog validation", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Add Provider" }).disabled,
+        screen.getByRole("button", { name: "Add provider" }).disabled,
       ).toBe(false),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add provider" }));
     expect(updateMutate.mock.calls[0][0].config.models).toEqual([
       "model-a",
       "model-b",
@@ -606,6 +669,91 @@ describe("AddProviderDialog validation", () => {
 
     const save = await screen.findByRole("button", { name: "Save Changes" });
     expect(save.disabled).toBe(false);
+  });
+});
+
+describe("AddProviderDialog presets from the hosts registry", () => {
+  beforeEach(() => {
+    updateMutate.mockReset();
+    fetchMutate.mockReset();
+    fetchState.isPending = false;
+    refreshState.failed = false;
+    snackbars.length = 0;
+  });
+
+  it("lists the providers in groups, with every host the gateway can route to", async () => {
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+
+    for (const group of [
+      "Model providers",
+      "Inference hosts",
+      "Routers and gateways",
+      "Other",
+    ]) {
+      expect(screen.getByText(group)).toBeInTheDocument();
+    }
+    for (const name of [
+      "Cerebras",
+      "DeepInfra",
+      "Hugging Face",
+      "xAI",
+      "Vercel AI Gateway",
+      "Custom / Self-hosted",
+    ]) {
+      expect(screen.getByRole("option", { name })).toBeInTheDocument();
+    }
+    // Hosts whose vendors document no route the gateway can use.
+    expect(screen.queryByRole("option", { name: "Perplexity" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Anyscale" })).toBeNull();
+  });
+
+  it("fills a registry host's endpoint, path prefix and key hint", async () => {
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "Together AI" }));
+
+    expect(screen.getByLabelText(/^Base URL/)).toHaveValue(
+      "https://api.together.ai",
+    );
+    expect(screen.getByLabelText("API Path Prefix")).toHaveValue("/v1");
+
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "DeepInfra" }));
+    expect(screen.getByLabelText(/^Base URL/)).toHaveValue(
+      "https://api.deepinfra.com",
+    );
+    expect(screen.getByLabelText("API Path Prefix")).toHaveValue("/v1/openai");
+  });
+
+  it("links the vendor's docs and says who bills a request on the org's key", async () => {
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "Groq" }));
+
+    expect(screen.getByRole("link", { name: /Groq docs/ })).toHaveAttribute(
+      "href",
+      "https://console.groq.com/docs/api-reference",
+    );
+    expect(
+      screen.getByText(/Requests use your own Groq key\./),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps Azure on its one wire format", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "Azure OpenAI" }));
+
+    expect(screen.getByLabelText(/^API Format/)).toHaveTextContent("azure");
+    const outOfRange = [...errors.mock.calls, ...warnings.mock.calls].filter(
+      (call) => String(call[0]).includes("out-of-range"),
+    );
+    expect(outOfRange).toEqual([]);
+    errors.mockRestore();
+    warnings.mockRestore();
   });
 });
 
@@ -727,12 +875,67 @@ describe("AddProviderDialog model discovery", () => {
     });
   });
 
+  it("presets OpenRouter's endpoint and lists its models with the typed key", async () => {
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: ["anthropic/claude-sonnet-5.5"] }),
+      ),
+    );
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "OpenRouter" }));
+
+    expect(screen.getByLabelText(/^Base URL/)).toHaveValue(
+      "https://openrouter.ai/api",
+    );
+    expect(screen.getByLabelText("API Path Prefix")).toHaveValue("/v1");
+    expect(screen.getByLabelText(/^API Key/)).toHaveAttribute(
+      "placeholder",
+      "sk-or-...",
+    );
+    expect(
+      screen.getByText(/Requests use your own OpenRouter key\./),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^API Key/), {
+      target: { value: "sk-or-test" },
+    });
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled(), {
+      timeout: 3000,
+    });
+    expect(fetchMutate.mock.calls.at(-1)[0]).toMatchObject({
+      baseUrl: "https://openrouter.ai/api",
+      apiKey: "sk-or-test",
+      apiFormat: "openai",
+      apiPathPrefix: "/v1",
+    });
+
+    const models = await screen.findByPlaceholderText(/Select models/i);
+    // Escape closes the list first: with it open, the blur from clicking Add
+    // Provider auto-selects the highlighted option, which un-picks it.
+    await userEvent.type(models, "anthropic/claude-sonnet-5.5{enter}{escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Add provider" }));
+
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    const payload = updateMutate.mock.calls[0][0];
+    expect(payload.name).toBe("openrouter");
+    expect(payload.config).toMatchObject({
+      base_url: "https://openrouter.ai/api",
+      api_format: "openai",
+      api_path_prefix: "/v1",
+      api_key: "sk-or-test",
+      models: ["anthropic/claude-sonnet-5.5"],
+    });
+  });
+
   it("tags a catalogue model but never a hand-typed one the catalogue didn't list", async () => {
     // Perplexity's catalogue never lists `sonar`/`sonar-pro` — those are
     // typed by hand for chat completions — but it does list aggregator IDs
     // like `openai/gpt-4o`, which must still get tagged.
     fetchMutate.mockImplementation(
-      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["openai/gpt-4o"] })),
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: ["openai/gpt-4o"] }),
+      ),
     );
     renderEditDialogFor("perplexity", {
       base_url: "https://api.perplexity.ai",
@@ -746,7 +949,9 @@ describe("AddProviderDialog model discovery", () => {
       expect(screen.getAllByText(RESPONSES_ONLY_TAG).length).toBe(1),
     );
 
-    const sonarChip = screen.getByText("sonar").closest("li, [class*='MuiChip']");
+    const sonarChip = screen
+      .getByText("sonar")
+      .closest("li, [class*='MuiChip']");
     expect(sonarChip?.textContent).not.toContain(RESPONSES_ONLY_TAG);
 
     const catalogueChip = screen
@@ -787,7 +992,7 @@ describe("AddProviderDialog provider names", () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Add Provider" }).disabled,
+        screen.getByRole("button", { name: "Add provider" }).disabled,
       ).toBe(false),
     );
   };
@@ -814,7 +1019,7 @@ describe("AddProviderDialog provider names", () => {
     // the first, because every custom provider was saved as "custom".
     renderWithNames(["custom", "openai"]);
     await fillCustom("perplexity-sonar");
-    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add provider" }));
 
     await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
     expect(updateMutate.mock.calls[0][0].name).toBe("perplexity-sonar");
@@ -823,10 +1028,67 @@ describe("AddProviderDialog provider names", () => {
     );
   });
 
+  it("saves Perplexity on its Agent API endpoint through Custom / Self-hosted", async () => {
+    // The composed picker has no Perplexity preset. Keep the endpoint and
+    // path-prefix submission contract through the supported custom flow.
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: ["perplexity/sonar"] }),
+      ),
+    );
+    renderWithNames([]);
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(
+      screen.getByRole("option", { name: "Custom / Self-hosted" }),
+    );
+    await userEvent.clear(screen.getByLabelText(/^Name/));
+    await userEvent.type(screen.getByLabelText(/^Name/), "perplexity");
+    await userEvent.type(
+      screen.getByLabelText(/Base URL/),
+      "https://api.perplexity.ai",
+    );
+    await userEvent.clear(screen.getByLabelText("API Path Prefix"));
+    await userEvent.type(screen.getByLabelText("API Path Prefix"), "/v1");
+    await userEvent.type(screen.getByLabelText(/API Key/i), "pplx-test");
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(1), {
+      timeout: DEBOUNCED_WAIT,
+    });
+    expect(fetchMutate.mock.calls[0][0]).toEqual({
+      baseUrl: "https://api.perplexity.ai",
+      apiKey: "pplx-test",
+      apiFormat: "openai",
+      apiPathPrefix: "/v1",
+    });
+    await userEvent.type(
+      await screen.findByPlaceholderText(/Select models|type manually/i),
+      "perplexity/sonar{enter}{escape}",
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add provider" }),
+      ).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    expect(updateMutate.mock.calls[0][0]).toEqual({
+      gatewayId: "gw-1",
+      name: "perplexity",
+      config: {
+        base_url: "https://api.perplexity.ai",
+        api_format: "openai",
+        api_path_prefix: "/v1",
+        api_key: "pplx-test",
+        models: ["perplexity/sonar"],
+      },
+    });
+  });
+
   it("treats an object method name as an ordinary name", async () => {
     renderWithNames([]);
     await fillCustom("constructor");
-    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add provider" }));
 
     await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
     expect(updateMutate.mock.calls[0][0].name).toBe("constructor");
@@ -835,7 +1097,7 @@ describe("AddProviderDialog provider names", () => {
   it("keeps the old name for a first custom provider", async () => {
     renderWithNames(["openai"]);
     await fillCustom("custom");
-    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add provider" }));
 
     await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
     expect(updateMutate.mock.calls[0][0].name).toBe("custom");
@@ -849,30 +1111,9 @@ describe("AddProviderDialog provider names", () => {
   ])("refuses the name %j", async (customName, message) => {
     renderWithNames(["custom"]);
     await fillCustom(customName);
-    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add provider" }));
 
     expect((await screen.findAllByText(message)).length).toBeGreaterThan(0);
     expect(updateMutate).not.toHaveBeenCalled();
-  });
-
-  it("offers Perplexity on its Agent API endpoint", async () => {
-    renderWithNames([]);
-    await userEvent.click(screen.getByLabelText(/^Provider/));
-    await userEvent.click(screen.getByRole("option", { name: "Perplexity" }));
-
-    expect(screen.queryByLabelText(/^Name/)).toBeNull();
-    expect(screen.getByLabelText(/Base URL/).value).toBe(
-      "https://api.perplexity.ai/v1",
-    );
-    await userEvent.type(screen.getByLabelText(/API Key/i), "pplx-test");
-    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
-    await addModel("perplexity/sonar");
-    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
-
-    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
-    const payload = updateMutate.mock.calls[0][0];
-    expect(payload.name).toBe("perplexity");
-    expect(payload.config.base_url).toBe("https://api.perplexity.ai/v1");
-    expect(payload.config.api_path_prefix).toBe("/v1");
   });
 });

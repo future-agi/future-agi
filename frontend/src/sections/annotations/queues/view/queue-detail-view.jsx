@@ -46,6 +46,8 @@ import {
 import StatusBadge from "../components/status-badge";
 import QueueItemsTable from "../items/queue-items-table";
 import QueueItemsEmpty from "../items/queue-items-empty";
+import QueueItemsDenied from "../items/queue-items-denied";
+import { viewDenialOf } from "src/sections/common/Access/accessModel";
 import AddItemsDialog from "../items/add-items-dialog";
 import QueueSettingsTab from "./queue-settings-tab";
 import QueueAnalyticsTab from "./queue-analytics-tab";
@@ -104,6 +106,7 @@ export default function QueueDetailView() {
   );
   const {
     data: itemsData,
+    error: itemsError,
     isLoading,
     fetchNextPage,
     hasNextPage,
@@ -725,7 +728,10 @@ export default function QueueDetailView() {
           )}
 
           {/* Content */}
-          {isEmpty ? (
+          {/* W4 §9 (M6): a refused read says so instead of "No items". */}
+          {viewDenialOf(itemsError) ? (
+            <QueueItemsDenied error={itemsError} />
+          ) : isEmpty ? (
             <Box
               sx={{
                 display: "flex",

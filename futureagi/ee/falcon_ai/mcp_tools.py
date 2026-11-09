@@ -7,17 +7,17 @@ servers, so the agent can call them just like built-in tools.
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar, Optional, Type
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import create_model
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
+from ee.falcon_ai.tool_scope import accessible_connectors, connector_for_execution
 
 logger = logging.getLogger(__name__)
 
 
-def _build_pydantic_model(name: str, json_schema: dict) -> Type[PydanticBaseModel]:
+def _build_pydantic_model(name: str, json_schema: dict) -> type[PydanticBaseModel]:
     """Build a Pydantic model from a JSON Schema dict (MCP tool inputSchema)."""
     properties = json_schema.get("properties", {})
     required = set(json_schema.get("required", []))
@@ -28,9 +28,9 @@ def _build_pydantic_model(name: str, json_schema: dict) -> Type[PydanticBaseMode
         if field_name in required:
             field_definitions[field_name] = (field_type, ...)
         else:
-            # Optional fields: use Optional[type] with None default
+            # Optional fields accept None with a None default.
             field_definitions[field_name] = (
-                Optional[field_type],
+                field_type | None,
                 field_spec.get("default", None),
             )
 
@@ -69,7 +69,7 @@ class MCPToolWrapper(BaseTool):
     name: str = ""
     description: str = ""
     category: str = "mcp_external"
-    input_model: Type[PydanticBaseModel] = PydanticBaseModel
+    input_model: type[PydanticBaseModel] = PydanticBaseModel
 
     def __init__(self, connector, tool_schema: dict):
         self._connector = connector
@@ -108,7 +108,12 @@ class MCPToolWrapper(BaseTool):
 
     def execute(self, params: PydanticBaseModel, context: ToolContext) -> ToolResult:
         """Execute by calling the MCP server synchronously (fallback)."""
-        result = self._call_mcp_sync(params)
+        from ai_tools.background import background_tool_denial
+
+        denial = background_tool_denial(self, context)
+        if denial is not None:
+            return denial
+        result = self._call_mcp_sync(params, context)
         content = result.get("content", "No response")
         is_error = result.get("is_error", False)
         if is_error:
@@ -125,8 +130,12 @@ class MCPToolWrapper(BaseTool):
         """
         from channels.db import database_sync_to_async
 
+        from ai_tools.background import background_tool_denial
         from ee.falcon_ai.mcp_proxy import MCPConnectorProxy
-        from ee.falcon_ai.models import MCPConnector
+
+        denial = background_tool_denial(self, context)
+        if denial is not None:
+            return denial
 
         raw_params = (
             params.model_dump(exclude_none=True)
@@ -135,17 +144,21 @@ class MCPToolWrapper(BaseTool):
         )
         raw_params = {k: v for k, v in raw_params.items() if v is not None}
 
-        try:
-            connector = await database_sync_to_async(MCPConnector.objects.get)(
-                id=self._connector.id
-            )
-        except MCPConnector.DoesNotExist:
-            return ToolResult.error(
-                f"Connector '{self._connector.name}' no longer exists"
+        connector = await database_sync_to_async(connector_for_execution)(
+            self._connector.pk, self._remote_tool_name, context
+        )
+        if connector is None:
+            return ToolResult.permission_denied(
+                "Connector is not available in this workspace."
             )
 
         proxy = MCPConnectorProxy()
+        guard = getattr(context, "background_analysis", None)
+        if guard is not None:
+            proxy.background_analysis = guard
         result = await proxy.execute_tool(connector, self._remote_tool_name, raw_params)
+        if guard is not None:
+            await guard.checkpoint()
 
         content = result.get("content", "No response")
         is_error = result.get("is_error", False)
@@ -153,10 +166,9 @@ class MCPToolWrapper(BaseTool):
             return ToolResult.error(content)
         return ToolResult(content=content)
 
-    def _call_mcp_sync(self, params):
+    def _call_mcp_sync(self, params, context):
         """Sync MCP call — used only as fallback from BaseTool.run()."""
         from ee.falcon_ai.mcp_proxy import MCPConnectorProxy
-        from ee.falcon_ai.models import MCPConnector
 
         raw_params = (
             params.model_dump(exclude_none=True)
@@ -165,38 +177,32 @@ class MCPToolWrapper(BaseTool):
         )
         raw_params = {k: v for k, v in raw_params.items() if v is not None}
 
-        try:
-            connector = MCPConnector.objects.get(id=self._connector.id)
-        except MCPConnector.DoesNotExist:
+        connector = connector_for_execution(
+            self._connector.pk, self._remote_tool_name, context
+        )
+        if connector is None:
             return {
-                "content": f"Connector '{self._connector.name}' no longer exists",
+                "content": "Connector is not available in this workspace.",
                 "is_error": True,
             }
 
         proxy = MCPConnectorProxy()
-        return proxy.execute_tool_sync(connector, self._remote_tool_name, raw_params)
+        guard = getattr(context, "background_analysis", None)
+        if guard is not None:
+            proxy.background_analysis = guard
+        result = proxy.execute_tool_sync(connector, self._remote_tool_name, raw_params)
+        if guard is not None:
+            guard.check()
+        return result
 
 
-def load_mcp_tools(organization, workspace=None) -> list[MCPToolWrapper]:
+def load_mcp_tools(organization, workspace=None, *, user=None) -> list[MCPToolWrapper]:
     """Load enabled MCP connector tools for the given org/workspace.
 
     Returns a list of MCPToolWrapper instances ready to be used by the agent.
     """
-    from ee.falcon_ai.models import MCPConnector
-
     try:
-        from django.db.models import Q
-
-        connectors = MCPConnector.objects.filter(
-            organization=organization,
-            is_active=True,
-            is_verified=True,
-        )
-        if workspace:
-            # Filter to workspace-scoped or org-wide connectors
-            connectors = connectors.filter(
-                Q(workspace=workspace) | Q(workspace__isnull=True),
-            )
+        connectors = accessible_connectors(ToolContext(user, organization, workspace))
 
         tools = []
         for connector in connectors:
@@ -223,7 +229,7 @@ def load_mcp_tools(organization, workspace=None) -> list[MCPToolWrapper]:
         logger.info(
             "Loaded %d MCP tools from %d connectors",
             len(tools),
-            connectors.count(),
+            len(connectors),
         )
         return tools
 

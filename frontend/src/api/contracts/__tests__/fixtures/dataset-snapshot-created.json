@@ -1,0 +1,18 @@
+{
+  "status": true,
+  "result": {
+    "id": "2d7b1c88-3370-45ca-82ec-4155a10eb086",
+    "dataset": "5d71b2a3-1c77-4b82-9078-ca48b60598bd",
+    "parent_version": null,
+    "created_by": "25140599-f79b-4e53-8a71-563312b8c341",
+    "organization": "a1076cb2-d5b2-4bb6-8db1-62c4a0a16819",
+    "workspace": "9e2d7f58-80ed-4d76-9549-f28cd4032f29",
+    "content_hash": "1ffcbf774a6d5dc1d620082283ab4f9b82ba1b869659bd88db8fdb87b06fdda5",
+    "description": "",
+    "metadata": {},
+    "source_revision": "",
+    "created_at": "2026-10-13T08:07:12.209104Z",
+    "updated_at": "2026-10-13T08:07:12.209115Z",
+    "item_count": 0
+  }
+}

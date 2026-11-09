@@ -1,3 +1,4 @@
+import { multiplyMoneyValues } from "src/sections/common/format/money";
 /**
  * Plans & Pricing V3 — 2 tiers + add-ons (Phase 7b)
  *
@@ -43,6 +44,7 @@ import {
   Tooltip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import LoadFailedState from "src/components/load-failed-state";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
 import ConfirmDowngrade from "src/pages/dashboard/settings/ConfirmDowngrade";
 
@@ -50,6 +52,7 @@ import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import { fCurrency } from "src/utils/format-number";
 import { canonicalEntries } from "src/utils/utils";
+import { isNotBuiltPlanFeature } from "src/utils/planFormatters";
 import {
   FEATURE_LABELS,
   ADDON_ICONS,
@@ -149,8 +152,9 @@ function AddonCard({
 }) {
   const iconName = ADDON_ICONS[addon.key] || "mdi:star";
   const monthlyFee = addon.platform_fee_monthly;
-  const annualFee = monthlyFee * 12 * 0.8; // 20% discount for annual
-  const displayFee = isAnnual ? annualFee / 12 : monthlyFee;
+  const displayFee = isAnnual
+    ? multiplyMoneyValues(monthlyFee, "0.8")
+    : monthlyFee; // 20% annual discount, exact decimal
   const canPurchase = ADDON_ELIGIBLE_PLANS.includes(currentPlan);
   const disabledReason =
     currentPlan === "custom"
@@ -332,6 +336,7 @@ function BooleanFeatureList({ features, isRemove }) {
   const displayFeatures = canonicalEntries(features)
     .filter(([key, v]) => {
       if (SKIP_FEATURE_PREFIXES.some((p) => key.startsWith(p))) return false;
+      if (isNotBuiltPlanFeature(key)) return false;
       if (typeof v === "boolean") return v === true;
       if (typeof v === "number") return v > 0 && FEATURE_LABELS[key];
       return false;
@@ -585,10 +590,12 @@ export default function PricingPage() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = usePlansAndAddons();
+  const { data, isLoading, isError, refetch, isRefetching } =
+    usePlansAndAddons();
 
-  const closeDialog = () =>
-    setAddonDialog({ open: false, plan: null, action: null });
+  // Close only: the plan and action stay until the next open, so the dialog
+  // keeps its own title and button while it fades out (never "Remove ?").
+  const closeDialog = () => setAddonDialog((d) => ({ ...d, open: false }));
 
   const upgradeMutation = useMutation({
     mutationFn: async () => {
@@ -710,6 +717,21 @@ export default function PricingPage() {
           <Skeleton variant="rounded" height={250} sx={{ flex: 1 }} />
           <Skeleton variant="rounded" height={250} sx={{ flex: 1 }} />
         </Stack>
+      </Box>
+    );
+  }
+
+  // Never draw an empty tier picker or a feature table of dashes from a
+  // failed request.
+  if (isError && !data) {
+    return (
+      <Box p={3}>
+        <LoadFailedState
+          title="Plans couldn't be loaded"
+          detail="Your current plan and the plans you can move to are not shown until they load."
+          onRetry={refetch}
+          retrying={isRefetching}
+        />
       </Box>
     );
   }
@@ -1220,7 +1242,7 @@ export default function PricingPage() {
         }
         actionButton={
           addonDialog.action === "add"
-            ? `Add for ${fCurrency(dialogAddon?.platform_fee_monthly || 0)}/mo`
+            ? `Add for ${fCurrency(dialogAddon?.platform_fee_monthly) || "—"}/mo`
             : "Remove"
         }
         color={addonDialog.action === "remove" ? "error" : "primary"}

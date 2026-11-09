@@ -235,7 +235,7 @@ test(
       .first()
       .click({ timeout: UI_READY });
     await page
-      .getByText("Upload a file (JSON, CSV)", { exact: true })
+      .getByText("Upload a file", { exact: true })
       .click({ timeout: UI_READY });
     const dialog = page
       .getByRole("dialog")

@@ -42,8 +42,7 @@ from model_hub.serializers.develop_annotations import (
 )
 from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.views.utils.utils import replace_column_ids
-
-logger = structlog.get_logger(__name__)
+from tfc.migration_database import migration_database
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project, ProjectSourceChoices
@@ -52,6 +51,8 @@ from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.utils.helper import get_default_project_version_config
 from tracer.utils.otel import AttributeDecoder
+
+logger = structlog.get_logger(__name__)
 
 
 def update_dict_values(d, func):
@@ -67,7 +68,8 @@ def update_id(existing_id, column_mapping):
     return column_mapping[existing_id]
 
 
-def create_image_dataset(organization_id, user_id):
+@migration_database
+def create_image_dataset(organization_id, user_id, *, using=None):
     try:
         organization = Organization.objects.get(id=organization_id)
         dataset_id = str(uuid.uuid4())
@@ -251,7 +253,8 @@ def create_image_dataset(organization_id, user_id):
         )
 
 
-def upload_demo_dataset(organization_id, user_id):
+@migration_database
+def upload_demo_dataset(organization_id, user_id, *, using=None):
     try:
         organization = Organization.objects.get(id=organization_id)
 
@@ -1027,7 +1030,7 @@ Include a brief note explaining how your answer connects to the context.
                             logger.exception(
                                 f"Error creating experiment cell for row {i}, column {old_exp_col_id}: {exp_cell_exc}"
                             )
-            create_image_dataset(organization_id, user_id)
+            create_image_dataset(organization_id, user_id, using=using)
         else:
             logger.error(
                 f"Failed to create dataset. Errors: {dataset_serializer.errors}"
@@ -1075,7 +1078,7 @@ def create_demo_prompt_template(
                     "temperature": 0.7,
                     "tool_choice": "",
                     "model_detail": {
-                        "logo_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+                        "logo_url": "/icons/settings/openai.png",
                         "providers": "openai",
                         "model_name": "gpt-4o",
                         "is_available": False,
@@ -1226,7 +1229,8 @@ def create_demo_prompt_template(
         return None
 
 
-def create_demo_traces_and_spans(organization_id, user_id=None):
+@migration_database
+def create_demo_traces_and_spans(organization_id, user_id=None, *, using=None):
     try:
         organization = Organization.objects.get(id=organization_id)
 
@@ -1307,7 +1311,7 @@ def create_demo_traces_and_spans(organization_id, user_id=None):
                 if default_workspace is None:
                     raise RuntimeError(
                         f"Failed to get/create default workspace for org {organization_id}"
-                    )
+                    ) from None
 
         for trace_type in ["experiment", "observe"]:
             project = Project.objects.create(
@@ -1374,8 +1378,9 @@ def create_demo_traces_and_spans(organization_id, user_id=None):
 
             trace = Trace.objects.create(**trace_kwargs)
 
-            create_observation_spans(project, trace, organization, project_version)
-
+            create_observation_spans(
+                project, trace, organization, project_version, using=using
+            )
 
     except Exception as e:
         logger.exception(f"Error creating demo traces and spans: {str(e)}")
@@ -1401,7 +1406,10 @@ def get_input_output_span(otel_span: dict, decoder):
     return input_val, output_val
 
 
-def create_observation_spans(project, trace, organization, project_version):
+@migration_database
+def create_observation_spans(
+    project, trace, organization, project_version, *, using=None
+):
     decoder = AttributeDecoder()
     main_span_id = str(os.urandom(8).hex())
     main_span_kwargs = {

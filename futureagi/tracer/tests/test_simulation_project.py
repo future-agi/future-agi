@@ -17,6 +17,7 @@ from django.test.utils import CaptureQueriesContext
 
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
+from accounts.tests.hard_erase_fixture import migration_fixture_cursor
 from model_hub.management.commands import backfill_score_tracer_project
 from model_hub.models.ai_model import AIModel
 from simulate.models.agent_definition import AgentDefinition
@@ -94,7 +95,7 @@ def _agent_without_context(organization, workspace, name="Simulated agent"):
 
 
 def _collectors_upsert(agent):
-    with connection.cursor() as cursor:
+    with migration_fixture_cursor(connection) as cursor:
         cursor.execute(
             COLLECTORS_UPSERT,
             [uuid.uuid4(), simulation_project_name(agent.id), agent.id],

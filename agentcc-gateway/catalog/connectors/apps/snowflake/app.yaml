@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: snowflake
+version: 1.0.0
+name: Snowflake
+description: "Cortex Analyst, Cortex Search, Cortex Agents and SQL from your Snowflake account."
+vendor:
+  name: Snowflake
+  domains: [snowflake.com]
+eeCategory: data
+group: other
+categories: [data, data-warehouse]
+tags: [sql, cortex, analytics]
+docsUrl: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+archetype: data-warehouse
+defaultProvider: pat
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+    fetchedAt: 2026-10-21

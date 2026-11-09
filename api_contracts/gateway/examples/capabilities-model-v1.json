@@ -1,0 +1,88 @@
+{
+  "generated_at": "2026-10-15T09:00:00Z",
+  "model": "anthropic/claude-sonnet-5.5",
+  "providers": {
+    "openrouter": {
+      "credential_type": "managed",
+      "source": "catalog",
+      "flags": {
+        "stream": true,
+        "tools": true,
+        "json_schema": true,
+        "vision": true,
+        "audio_input": false,
+        "reasoning": true,
+        "prompt_caching": false
+      },
+      "context_length": 1000000,
+      "max_output_tokens": 64000,
+      "modalities": {
+        "input": ["text", "image"],
+        "output": ["text"]
+      },
+      "endpoints": {
+        "chat.completions": {
+          "status": "supported",
+          "managed_allowed": true
+        },
+        "embeddings": {
+          "status": "provider_dependent",
+          "managed_allowed": false
+        },
+        "messages": {
+          "status": "supported",
+          "managed_allowed": false
+        },
+        "models": {
+          "status": "supported",
+          "managed_allowed": true
+        },
+        "responses": {
+          "status": "provider_dependent",
+          "managed_allowed": false
+        }
+      }
+    },
+    "operator": {
+      "credential_type": "byok",
+      "source": "config",
+      "flags": {
+        "stream": true,
+        "tools": false,
+        "json_schema": false,
+        "vision": false,
+        "audio_input": false,
+        "reasoning": false,
+        "prompt_caching": false
+      },
+      "context_length": 0,
+      "max_output_tokens": 0,
+      "modalities": {
+        "input": null,
+        "output": null
+      },
+      "endpoints": {
+        "chat.completions": {
+          "status": "supported",
+          "managed_allowed": false
+        },
+        "embeddings": {
+          "status": "supported",
+          "managed_allowed": false
+        },
+        "messages": {
+          "status": "supported",
+          "managed_allowed": false
+        },
+        "models": {
+          "status": "supported",
+          "managed_allowed": false
+        },
+        "responses": {
+          "status": "supported",
+          "managed_allowed": false
+        }
+      }
+    }
+  }
+}

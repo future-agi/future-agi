@@ -1,0 +1,23 @@
+{
+  "http": {
+    "status": 402,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "error": {
+      "message": "This API key has spent its monthly budget ($50.00). It resets at 2026-11-01T00:00:00Z, or an org admin raises the workspace's agent key budget.",
+      "type": "payment_required",
+      "param": null,
+      "code": "agent_key_budget_exhausted",
+      "metadata": {
+        "limit_source": "agentcc_key_limit",
+        "remedy_hint": "raise_key_budget",
+        "available_usd": 0,
+        "scope": "key:key_3c9f1a7e5b2d8c4f6a0e1b9d",
+        "resets_at": "2026-11-01T00:00:00Z"
+      }
+    }
+  }
+}

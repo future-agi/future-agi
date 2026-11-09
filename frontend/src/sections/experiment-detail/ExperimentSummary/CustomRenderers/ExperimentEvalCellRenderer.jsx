@@ -8,11 +8,16 @@ import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common"
 
 const ExperimentEvalCellRenderer = ({ value, eGridCell, ...rest }) => {
   const column = rest?.colDef?.col;
-  const reverseOutput = column?.reverseOutput;
+  const reverseOutput = column?.reverse_output ?? column?.reverseOutput;
   const outputType = column?.output_type;
   const isNumeric = outputType === OutputTypes.NUMERIC;
 
-  const result = normalizeEvalResult(value, outputType);
+  // stats/ sends each eval column's average on a 0-100 scale for every output
+  // type (pass rate for Pass/Fail), so a number is a score, not a label.
+  const result =
+    typeof value === "number"
+      ? { kind: "score", score: value }
+      : normalizeEvalResult(value, outputType);
 
   // Score percentage drives the background color tint.
   const pct =
@@ -23,13 +28,10 @@ const ExperimentEvalCellRenderer = ({ value, eGridCell, ...rest }) => {
       : result.kind === "choices" && typeof result.score === "number"
         ? result.score * 100
         : 0;
+  // interpolateColorBasedOnScore inverts the scale itself when reverse is set.
   const backgroundColor = isNumeric
     ? null
-    : interpolateColorBasedOnScore(
-        reverseOutput ? 100 - pct : pct,
-        100,
-        reverseOutput,
-      );
+    : interpolateColorBasedOnScore(pct, 100, reverseOutput);
 
   useEffect(() => {
     if (eGridCell?.style) {

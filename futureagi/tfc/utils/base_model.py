@@ -6,7 +6,9 @@ from tfc.middleware.workspace_context import (
     get_current_organization,
     get_current_user,
     get_current_workspace,
+    workspace_scope_is_empty,
 )
+from tfc.utils.workspace_scope import model_has_workspace_data
 
 
 def _has_db_field(model, field_name):
@@ -45,6 +47,11 @@ class BaseModelManager(models.Manager):
         # Get the model class for field checking
         model = self.model
 
+        # A denied landing is not a background query. Include child tables
+        # whose workspace ownership is through a Dataset, Project or other FK.
+        if workspace_scope_is_empty() and model_has_workspace_data(model):
+            return queryset.none()
+
         # Apply workspace filtering if workspace context is set
         current_workspace = get_current_workspace()
         if current_workspace:
@@ -81,6 +88,11 @@ class AllObjectsManager(models.Manager):
         # Get the model class for field checking
         model = self.model
 
+        # A denied landing is not a background query. Include child tables
+        # whose workspace ownership is through a Dataset, Project or other FK.
+        if workspace_scope_is_empty() and model_has_workspace_data(model):
+            return queryset.none()
+
         # Apply workspace filtering if workspace context is set
         current_workspace = get_current_workspace()
         if current_workspace:
@@ -109,6 +121,10 @@ class AllObjectsManager(models.Manager):
 class NoWorkspaceFilterManager(models.Manager):
     def get_queryset(self):
         queryset = super().get_queryset()
+        # Bypassing one selected workspace is not permission to bypass a denied
+        # authenticated scope. Background jobs retain their unscoped semantics.
+        if workspace_scope_is_empty() and model_has_workspace_data(self.model):
+            return queryset.none()
         return queryset.filter(deleted=False)
 
 

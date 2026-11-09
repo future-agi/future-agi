@@ -2,6 +2,8 @@ module github.com/futureagi/agentcc-gateway
 
 go 1.25.0
 
+toolchain go1.26.10
+
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/oklog/ulid/v2 v2.1.0

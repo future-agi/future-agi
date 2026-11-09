@@ -1,6 +1,7 @@
 import math
 
 import structlog
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import OuterRef, Q, Subquery
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -15,6 +16,8 @@ from model_hub.serializers.catalog_queries import (
 )
 from model_hub.serializers.eval_group import (
     ApplyEvalGroupRequestSerializer,
+    EvalGroupDetailApiResponseSerializer,
+    EvalGroupListApiResponseSerializer,
     EvalGroupSerializer,
 )
 from model_hub.services.eval_group import (
@@ -24,6 +27,7 @@ from model_hub.services.eval_group import (
     filter_eval_templates_for_group_scope,
 )
 from model_hub.utils.function_eval_params import get_function_params_schema
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from model_hub.views.utils.utils import fetch_required_keys_for_eval_template
 from tfc.routers import uses_db
 from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
@@ -73,6 +77,7 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
     @validated_request(
         query_serializer=EvalGroupListQuerySerializer,
         auto_schema=ExplicitQueryAutoSchema,
+        responses={200: EvalGroupListApiResponseSerializer},
     )
     def list(self, request, *args, **kwargs):
         """List all eval groups for the user's organization.
@@ -89,20 +94,23 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             start = page_number * page_size
             end = start + page_size
 
-            eval_groups = EvalGroup.no_workspace_objects.db_manager(
-                DATABASE_FOR_EVAL_GROUP_LIST
-            ).filter(
-                Q(
-                    workspace=request.workspace,
-                    deleted=False,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
+            eval_groups = (
+                EvalGroup.no_workspace_objects.db_manager(DATABASE_FOR_EVAL_GROUP_LIST)
+                .filter(
+                    Q(
+                        workspace=request.workspace,
+                        deleted=False,
+                        organization=getattr(request, "organization", None)
+                        or request.user.organization,
+                    )
+                    | Q(is_sample=True, deleted=False)
                 )
-                | Q(is_sample=True, deleted=False)
-            ).select_related("organization", "created_by")
+                .select_related("organization", "created_by")
+            )
 
             if name:
                 from model_hub.utils.eval_list import normalize_search_for_name
+
                 eval_groups = eval_groups.filter(normalize_search_for_name(name))
 
             # Get total count before pagination
@@ -122,8 +130,9 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
 
             # Single query to get all template relationships from through table
             all_relationships = (
-                EvalGroup.eval_templates.through.objects
-                .using(DATABASE_FOR_EVAL_GROUP_LIST)
+                EvalGroup.eval_templates.through.objects.using(
+                    DATABASE_FOR_EVAL_GROUP_LIST
+                )
                 .filter(evalgroup_id__in=eval_group_ids)
                 .values_list("evalgroup_id", "evaltemplate_id")
             )
@@ -184,7 +193,10 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                 f"Failed to list eval groups: {str(e)}"
             )
 
-    @validated_request(query_serializer=EvalGroupQuerySerializer)
+    @validated_request(
+        query_serializer=EvalGroupQuerySerializer,
+        responses={200: EvalGroupDetailApiResponseSerializer},
+    )
     def retrieve(self, request, *args, **kwargs):
         """Retrieve a specific eval group"""
         try:
@@ -201,8 +213,11 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                     )
                     | Q(id=eval_group_id, is_sample=True)
                 )
-            except EvalGroup.DoesNotExist:
-                return self._gm.bad_request("Eval group does not exist for this user.")
+            except (EvalGroup.DoesNotExist, DjangoValidationError):
+                # An id that names no group of the caller's, or is not a UUID
+                # (Django's UUIDField refuses it while building the filter),
+                # is the same 404.
+                return self._gm.not_found("Eval group does not exist for this user.")
             eval_group_data = self.get_serializer(eval_group).data
             # Get template IDs first, then query with no_workspace_objects
             # This works because:
@@ -219,6 +234,7 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
 
             if name:
                 from model_hub.utils.eval_list import normalize_search_for_name
+
                 eval_templates = eval_templates.filter(normalize_search_for_name(name))
 
             # Get all template IDs for efficient querying
@@ -481,6 +497,10 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                 )
             except EvalGroup.DoesNotExist:
                 return self._gm.bad_request("Eval group does not exist for this user.")
+
+            kb_id = (filters or {}).get("kb_id")
+            if kb_id and not knowledge_base_in_scope(request, kb_id):
+                return self._gm.not_found("Knowledge base not found")
 
             response = apply_eval_group(
                 eval_group=eval_group,

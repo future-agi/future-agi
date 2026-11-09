@@ -54,6 +54,7 @@ TASK_QUEUES = {
     "tasks_l": "tasks_l",
     "tasks_s": "tasks_s",
     "agent_compass": "agent_compass",
+    "webhooks": "webhooks",
 }
 
 

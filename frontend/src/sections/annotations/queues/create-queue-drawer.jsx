@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Chip,
   Collapse,
   Drawer,
   FormControl,
@@ -603,56 +602,6 @@ export default function CreateQueueDrawer({
                               control={<Radio size="small" />}
                               label={
                                 <Typography variant="body2">Manual</Typography>
-                              }
-                            />
-                            <FormControlLabel
-                              value="round_robin"
-                              disabled
-                              control={<Radio size="small" />}
-                              label={
-                                <Stack
-                                  direction="row"
-                                  alignItems="center"
-                                  spacing={1}
-                                >
-                                  <Typography
-                                    variant="body2"
-                                    color="text.disabled"
-                                  >
-                                    Round Robin
-                                  </Typography>
-                                  <Chip
-                                    label="Coming soon"
-                                    size="small"
-                                    variant="outlined"
-                                    color="primary"
-                                  />
-                                </Stack>
-                              }
-                            />
-                            <FormControlLabel
-                              value="load_balanced"
-                              disabled
-                              control={<Radio size="small" />}
-                              label={
-                                <Stack
-                                  direction="row"
-                                  alignItems="center"
-                                  spacing={1}
-                                >
-                                  <Typography
-                                    variant="body2"
-                                    color="text.disabled"
-                                  >
-                                    Load Balanced
-                                  </Typography>
-                                  <Chip
-                                    label="Coming soon"
-                                    size="small"
-                                    variant="outlined"
-                                    color="primary"
-                                  />
-                                </Stack>
                               }
                             />
                           </RadioGroup>

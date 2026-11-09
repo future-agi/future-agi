@@ -240,6 +240,14 @@ class DjangoAPIExecutor:
         before Django's resolution runs, also avoids its side effects (such as
         auto-joining the user to the default workspace) for a denied caller.
         """
+        if context.api_key is not None:
+            from accounts.api_key_policy import admit_api_key
+            from accounts.models import OrgApiKey
+
+            key = OrgApiKey._base_manager.filter(pk=context.api_key.pk).first()
+            admit_api_key(key)
+            context.user.organization_role = key.user.organization_role
+            context.user.organization = key.organization
         if not context.user.can_access_organization(context.organization):
             raise PermissionDenied("Access denied to this organization")
         workspace = context.workspace

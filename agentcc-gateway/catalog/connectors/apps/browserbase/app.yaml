@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: browserbase
+version: 1.0.0
+name: Browserbase
+description: "A cloud browser session to navigate, act on and extract from web pages."
+vendor:
+  name: Browserbase
+  domains: [browserbase.com]
+eeCategory: research
+group: other
+categories: [research, browser-automation]
+tags: [browser, automation, extraction]
+docsUrl: https://docs.browserbase.com/integrations/mcp/setup
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.browserbase.com/integrations/mcp/setup
+    fetchedAt: 2026-10-21

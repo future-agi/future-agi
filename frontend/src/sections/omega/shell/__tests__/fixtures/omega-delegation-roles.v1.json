@@ -1,0 +1,21 @@
+{
+  "about": "The session exchange's role rule (futureagi/accounts/omega_session.py delegation_role) as (organization level, workspace level) -> role. 'refused' is the 403 omega_viewer_not_admitted. Levels: tfc/constants/levels.py (owner 15, admin 8, member 3, viewer 1; workspace admin 8, member 3, viewer 1).",
+  "cases": [
+    { "org": 15, "ws": null, "role": "owner" },
+    { "org": 15, "ws": 1, "role": "owner" },
+    { "org": 15, "ws": 8, "role": "owner" },
+    { "org": 8, "ws": null, "role": "admin" },
+    { "org": 8, "ws": 1, "role": "admin" },
+    { "org": 8, "ws": 3, "role": "admin" },
+    { "org": 3, "ws": 8, "role": "member" },
+    { "org": 3, "ws": 3, "role": "member" },
+    { "org": 3, "ws": 1, "role": "refused" },
+    { "org": 3, "ws": 0, "role": "refused" },
+    { "org": 3, "ws": 15, "role": "refused" },
+    { "org": 1, "ws": 8, "role": "refused" },
+    { "org": 1, "ws": 3, "role": "refused" },
+    { "org": 1, "ws": 1, "role": "refused" },
+    { "org": 0, "ws": 3, "role": "refused" },
+    { "org": 5, "ws": 3, "role": "refused" }
+  ]
+}

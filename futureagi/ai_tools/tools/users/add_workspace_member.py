@@ -3,6 +3,8 @@ from uuid import UUID
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
+from accounts.services.hard_erase_issuance_entry import tool_issuance_entry
+from accounts.services.identity_issuance import issue_membership
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import key_value_block, section
 from ai_tools.registry import register_tool
@@ -27,6 +29,7 @@ class AddWorkspaceMemberTool(BaseTool):
     category = "users"
     input_model = AddWorkspaceMemberInput
 
+    @tool_issuance_entry
     def execute(
         self, params: AddWorkspaceMemberInput, context: ToolContext
     ) -> ToolResult:
@@ -82,16 +85,16 @@ class AddWorkspaceMemberTool(BaseTool):
             existing_deleted.save()
             action = "re-added"
         else:
-            membership, created = (
-                WorkspaceMembership.no_workspace_objects.get_or_create(
-                    workspace=workspace,
-                    user=target_user,
-                    defaults={
-                        "role": params.role,
-                        "invited_by": actor,
-                        "is_active": True,
-                    },
-                )
+            membership, created = issue_membership(
+                WorkspaceMembership.no_workspace_objects,
+                "get_or_create",
+                workspace=workspace,
+                user=target_user,
+                defaults={
+                    "role": params.role,
+                    "invited_by": actor,
+                    "is_active": True,
+                },
             )
             if created:
                 action = "added"

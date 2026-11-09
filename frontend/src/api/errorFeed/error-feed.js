@@ -332,6 +332,8 @@ export const useCreateLinearIssue = () => {
         queryKey: KEYS.sidebar(variables.clusterId),
       });
     },
+    // The team picker (LinearTeamPicker) toasts the refusal itself, once.
+    meta: { errorHandled: true },
   });
 };
 

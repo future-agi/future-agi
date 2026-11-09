@@ -51,6 +51,9 @@ import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
+import AllowNaSwitch from "./AllowNaSwitch";
+import { createNameErrorOf } from "src/sections/evals/components/createNameError";
+import { allowNaApplies } from "./allowNaModel";
 import { buildCompositeChildConfigs } from "src/sections/evals/Helpers/compositeRuntimeConfig";
 import {
   contextOptionsForRowType,
@@ -90,10 +93,12 @@ def evaluate(input: Any, output: Any, expected: Any, context: dict, **kwargs):
     return {"score": 1.0, "reason": "Evaluation passed"}
 `;
 
+// L7c g7 (evalcreate:type): a Code evaluator cannot be created here: the
+// scorer does not execute workspace code, so the type is absent (built-in
+// code checks still score).
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
   { value: "llm", label: "LLM-As-A-Judge" },
-  { value: "code", label: "Code" },
 ];
 
 // Top-level mode toggle — mirrors EvalCreatePage so the drawer and the
@@ -153,6 +158,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
+  // W1-4: the judge may answer N/A (saved on the template as allow_na).
+  const [allowNa, setAllowNa] = useState(false);
   const [choiceScores, setChoiceScores] = useState({});
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState([]);
@@ -329,8 +336,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType === "agent"
           ? dataInjectionFromContextOptions(contextOptions)
           : undefined,
+      ...(allowNaApplies({ evalType }) ? { allow_na: allowNa } : {}),
     }),
     [
+      allowNa,
       evalType,
       instructions,
       code,
@@ -365,6 +374,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   // Test
   const handleTestEvaluation = useCallback(async () => {
+    // options-truth L3 G2 (evals:create-new): a composite tests its unsaved
+    // children, weights and aggregation (execute-adhoc), no draft needed.
+    if (mode === "composite") {
+      setIsTesting(true);
+      setTestError(null);
+      setTestPassed(false);
+      sourceRef.current?.runTest?.();
+      setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
+      return;
+    }
     if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -386,6 +405,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     }
   }, [
     draftId,
+    mode,
     fagiLocked,
     evalType,
     model,
@@ -525,7 +545,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const handleSaveAndAdd = useCallback(async () => {
     if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge instead.",
         { variant: "error" },
       );
       return;
@@ -585,15 +605,25 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType,
         outputType,
         instructions,
+        ...(allowNaApplies({ evalType })
+          ? { config: { allow_na: allowNa } }
+          : {}),
         data_injection:
           evalType === "agent"
             ? dataInjectionFromContextOptions(contextOptions)
             : undefined,
       });
     } catch (error) {
-      enqueueSnackbar(getSafeActionErrorMessage(error, "Failed to save"), {
-        variant: "error",
-      });
+      // L7c g7 (evalcreate:name): a name the workspace already uses (or
+      // one the rules refuse) is said at the field, not only in a toast.
+      const msg = createNameErrorOf(error);
+      if (msg) setErrors((prev) => ({ ...prev, name: msg }));
+      enqueueSnackbar(
+        msg ?? getSafeActionErrorMessage(error, "Failed to save"),
+        {
+          variant: "error",
+        },
+      );
     } finally {
       setIsSaving(false);
     }
@@ -612,6 +642,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     evalType,
     outputType,
     instructions,
+    allowNa,
     contextOptions,
     enqueueSnackbar,
     agentEvalLocked,
@@ -1189,6 +1220,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                       passThreshold={passThreshold}
                       onPassThresholdChange={handlePassThresholdChange}
                     />
+                    {allowNaApplies({ evalType }) && (
+                      <AllowNaSwitch checked={allowNa} onChange={setAllowNa} />
+                    )}
                     {errors.choiceScores && (
                       <Typography variant="caption" color="error.main">
                         {errors.choiceScores}
@@ -1243,7 +1277,12 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   fontWeight={600}
                   sx={{ fontSize: "13px" }}
                 >
-                  {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
+                  {[
+                    SOURCE_LABELS[source],
+                    isComposite ? "Composite Test" : "Variable mapping",
+                  ]
+                    .filter(Boolean)
+                    .join(" — ")}
                 </Typography>
                 {source === "task" && ROW_TYPE_LABELS[sourceRowType] && (
                   <Chip
@@ -1457,8 +1496,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   isTesting ||
                   !!disabledReason ||
                   !sourceReady ||
-                  !draftId ||
-                  isComposite ||
+                  (!draftId && !isComposite) ||
+                  (isComposite && !selectedChildren.length) ||
                   source === "workbench"
                 }
                 startIcon={

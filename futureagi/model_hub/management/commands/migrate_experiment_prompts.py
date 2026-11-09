@@ -30,7 +30,6 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from tqdm import tqdm
 
-from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset
 from model_hub.models.experiments import (
     ExperimentDatasetTable,
@@ -39,6 +38,7 @@ from model_hub.models.experiments import (
 )
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from model_hub.services.dataset_snapshot import create_dataset_snapshot
+from model_hub.services.prompt_label import events_suppressed
 from model_hub.views.experiments import (
     _build_and_save_v2_column_order,
     _translate_eval_mapping,
@@ -248,9 +248,7 @@ class Command(BaseCommand):
             # copied each EDT column.
             snapshot_cols_by_source = {
                 c.source_id: c
-                for c in Column.objects.filter(
-                    dataset=snapshot_dataset, deleted=False
-                )
+                for c in Column.objects.filter(dataset=snapshot_dataset, deleted=False)
                 if c.source_id
             }
 
@@ -584,8 +582,7 @@ class Command(BaseCommand):
             )
 
             logger.info(
-                f"Migrated EDT column {orig_col.id} -> {new_col.id} "
-                f"for EDT {edt.id}"
+                f"Migrated EDT column {orig_col.id} -> {new_col.id} for EDT {edt.id}"
             )
 
     def _get_or_create_prompt_template(
@@ -655,13 +652,15 @@ class Command(BaseCommand):
             },
         }
 
-        # Create version with full snapshot dict
-        version = PromptVersion.all_objects.create(
-            id=uuid.uuid4(),
-            original_template=template,
-            prompt_config_snapshot=snapshot,
-            template_version="v1",
-            is_default=True,
-        )
+        # Create version with full snapshot dict. A data migration of existing experiments, not a user's commit:
+        # no webhook event (webhooks DESIGN.md section 14.3).
+        with events_suppressed("migrate_experiment_prompts"):
+            version = PromptVersion.all_objects.create(
+                id=uuid.uuid4(),
+                original_template=template,
+                prompt_config_snapshot=snapshot,
+                template_version="v1",
+                is_default=True,
+            )
 
         return template, version

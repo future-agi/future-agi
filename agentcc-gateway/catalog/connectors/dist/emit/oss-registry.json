@@ -1,0 +1,49 @@
+{
+  "schema": "connector-oss-registry/v1",
+  "bundle": {
+    "version": "2026.10.28.0",
+    "sha256": "72dcd1cbc1dac9c8756eb011687158d5e451d765829915f751e548aa5243d136"
+  },
+  "servers": [
+    {
+      "id": "airtable",
+      "name": "Airtable",
+      "description": "Bases, tables and records.",
+      "transport": "http",
+      "url": "https://mcp.airtable.com/mcp",
+      "trusted": false,
+      "auth": "oauth",
+      "hosted": true,
+      "tags": ["data", "database", "records", "spreadsheets"]
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "Issues, pull requests and code in your repositories.",
+      "transport": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "trusted": false,
+      "hosted": false,
+      "tags": ["code-hosting", "developer", "git", "issues", "pull-requests"]
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "description": "Payments data: customers, invoices, products and balances.",
+      "transport": "http",
+      "url": "https://mcp.stripe.com",
+      "trusted": false,
+      "auth": "api_key",
+      "hosted": true,
+      "tags": ["billing", "data", "payments"]
+    }
+  ]
+}

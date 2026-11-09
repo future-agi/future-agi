@@ -1,0 +1,559 @@
+{
+  "catalog": {
+    "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "source_commit": "06e27ec2d88b0367a21900e7f477c8df0aab49e7",
+    "version": "2026.10.20.1"
+  },
+  "count": 6,
+  "current_page": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "categories": ["docs", "knowledge"],
+      "connected": true,
+      "default_provider": "acme-mcp",
+      "description": "Team wiki pages: search, read and edit.",
+      "docs_url": "https://docs.acme-docs.example.com/mcp",
+      "ee_category": "productivity",
+      "group": "other",
+      "icon": null,
+      "id": "acme-docs",
+      "lifecycle": "active",
+      "name": "Acme Docs",
+      "providers": [
+        {
+          "account_modes": ["agent"],
+          "catalog_ref": "acme-docs/acme-mcp@1.2.0",
+          "credential": {
+            "header_name": "X-Acme-Key",
+            "help": "Create a key under Settings, API keys.",
+            "help_url": "https://docs.acme-docs.example.com/keys",
+            "in": "header",
+            "kind": "api_key",
+            "label": "API key",
+            "mode": "shared",
+            "name": "X-Acme-Key"
+          },
+          "era": "auto",
+          "id": "acme-mcp",
+          "kind": "vendor_mcp",
+          "lifecycle": "active",
+          "publisher": "vendor",
+          "tier": "listed",
+          "tools": [
+            {
+              "description": "The search_pages tool.",
+              "destructive": false,
+              "gateway_posture": "allow",
+              "idempotent": true,
+              "name": "search_pages",
+              "open_world": true,
+              "read_only": true,
+              "reason": null,
+              "title": "Search pages"
+            },
+            {
+              "description": "The get_page tool.",
+              "destructive": false,
+              "gateway_posture": "allow",
+              "idempotent": true,
+              "name": "get_page",
+              "open_world": true,
+              "read_only": true,
+              "reason": null,
+              "title": "Get page"
+            },
+            {
+              "description": "The list_recent tool.",
+              "destructive": false,
+              "gateway_posture": "deny",
+              "idempotent": true,
+              "name": "list_recent",
+              "open_world": true,
+              "read_only": true,
+              "reason": "approval_not_enforced",
+              "title": "List recent"
+            },
+            {
+              "description": "The create_page tool.",
+              "destructive": false,
+              "gateway_posture": "deny",
+              "idempotent": false,
+              "name": "create_page",
+              "open_world": true,
+              "read_only": false,
+              "reason": "write_tool",
+              "title": "Create page"
+            },
+            {
+              "description": "The delete_page tool.",
+              "destructive": true,
+              "gateway_posture": "deny",
+              "idempotent": false,
+              "name": "delete_page",
+              "open_world": true,
+              "read_only": false,
+              "reason": "destructive_tool",
+              "title": "Delete page"
+            },
+            {
+              "description": "The run_query tool.",
+              "destructive": false,
+              "gateway_posture": "deny",
+              "idempotent": true,
+              "name": "run_query",
+              "open_world": true,
+              "read_only": true,
+              "reason": "generic_tool",
+              "title": "Run query"
+            },
+            {
+              "description": "The archive_page tool.",
+              "destructive": false,
+              "gateway_posture": "deny",
+              "idempotent": true,
+              "name": "archive_page",
+              "open_world": true,
+              "read_only": true,
+              "reason": "posture_deny",
+              "title": "Archive page"
+            }
+          ],
+          "transport": "http",
+          "url_template": "https://mcp.acme-docs.example.com/mcp",
+          "url_variables": [],
+          "vendor_status": "ga",
+          "version": "1.2.0"
+        }
+      ],
+      "servers": [
+        {
+          "catalog_ref": "acme-docs/acme-mcp@1.2.0",
+          "connected": true,
+          "credential_mode": "shared",
+          "enabled": true,
+          "provider": "acme-mcp",
+          "server_id": "acme-docs",
+          "version": "1.2.0",
+          "virtual_server": {
+            "id": "vs_01M5F7JBJH5XDKQ57KQFMC2NY1",
+            "slug": "acme-docs"
+          }
+        }
+      ],
+      "tags": ["wiki"],
+      "vendor": {
+        "domains": ["acme-docs.example.com"],
+        "name": "Acme Docs"
+      }
+    },
+    {
+      "categories": ["crm", "sales"],
+      "connected": false,
+      "default_provider": "bolt-mcp",
+      "description": "Leads, deals and accounts for sales teams.",
+      "docs_url": "https://docs.bolt-crm.example.com/mcp",
+      "ee_category": "data",
+      "group": "other",
+      "icon": null,
+      "id": "bolt-crm",
+      "lifecycle": "active",
+      "name": "Bolt CRM",
+      "providers": [
+        {
+          "account_modes": ["agent"],
+          "catalog_ref": "bolt-crm/bolt-mcp@1.0.0",
+          "credential": {
+            "header_name": "",
+            "help": "",
+            "help_url": "",
+            "in": "header",
+            "kind": "bearer",
+            "label": "Access token",
+            "mode": "shared",
+            "name": "Authorization"
+          },
+          "era": "auto",
+          "id": "bolt-mcp",
+          "kind": "vendor_mcp",
+          "lifecycle": "active",
+          "publisher": "vendor",
+          "tier": "listed",
+          "tools": [
+            {
+              "description": "The list_deals tool.",
+              "destructive": false,
+              "gateway_posture": "allow",
+              "idempotent": true,
+              "name": "list_deals",
+              "open_world": true,
+              "read_only": true,
+              "reason": null,
+              "title": "List deals"
+            },
+            {
+              "description": "The update_deal tool.",
+              "destructive": false,
+              "gateway_posture": "deny",
+              "idempotent": false,
+              "name": "update_deal",
+              "open_world": true,
+              "read_only": false,
+              "reason": "write_tool",
+              "title": "Update deal"
+            }
+          ],
+          "transport": "http",
+          "url_template": "https://{accountHost}/mcp/{workspace}?team={team}",
+          "url_variables": [
+            {
+              "default": null,
+              "description": "Your account host, such as acme.bolt.example.com.",
+              "name": "accountHost",
+              "pattern": "^[a-z0-9-]+[.]bolt[.]example[.]com$"
+            },
+            {
+              "default": null,
+              "description": "The workspace to reach.",
+              "name": "workspace",
+              "pattern": "^[A-Za-z0-9_:]{1,40}$"
+            },
+            {
+              "default": "main",
+              "description": "The team.",
+              "name": "team",
+              "pattern": "^[a-z]{2,20}$"
+            }
+          ],
+          "vendor_status": "ga",
+          "version": "1.0.0"
+        }
+      ],
+      "servers": [],
+      "tags": [],
+      "vendor": {
+        "domains": ["bolt-crm.example.com"],
+        "name": "Bolt Labs"
+      }
+    },
+    {
+      "categories": ["search"],
+      "connected": false,
+      "default_provider": "cobalt-mcp",
+      "description": "Web search with cited sources.",
+      "docs_url": "https://docs.cobalt-search.example.com/mcp",
+      "ee_category": "research",
+      "group": "other",
+      "icon": null,
+      "id": "cobalt-search",
+      "lifecycle": "active",
+      "name": "Cobalt Search",
+      "providers": [
+        {
+          "account_modes": ["agent"],
+          "catalog_ref": "cobalt-search/cobalt-mcp@1.0.0",
+          "credential": {
+            "header_name": "",
+            "help": "",
+            "help_url": "",
+            "in": "",
+            "kind": null,
+            "label": "",
+            "mode": "none",
+            "name": ""
+          },
+          "era": "2024-11-05",
+          "id": "cobalt-mcp",
+          "kind": "vendor_mcp",
+          "lifecycle": "active",
+          "publisher": "vendor",
+          "tier": "verified",
+          "tools": [
+            {
+              "description": "The web_search tool.",
+              "destructive": false,
+              "gateway_posture": "allow",
+              "idempotent": true,
+              "name": "web_search",
+              "open_world": true,
+              "read_only": true,
+              "reason": null,
+              "title": "Web search"
+            }
+          ],
+          "transport": "sse",
+          "url_template": "https://mcp.cobalt-search.example.com/sse",
+          "url_variables": [],
+          "vendor_status": "ga",
+          "version": "1.0.0"
+        }
+      ],
+      "servers": [],
+      "tags": [],
+      "vendor": {
+        "domains": ["cobalt-search.example.com"],
+        "name": "Cobalt Search"
+      }
+    },
+    {
+      "categories": ["chat"],
+      "connected": false,
+      "default_provider": "echo-mcp",
+      "description": "A key plus a fixed scope header.",
+      "docs_url": "https://docs.echo-chat.example.com/mcp",
+      "ee_category": "communication",
+      "group": "other",
+      "icon": null,
+      "id": "echo-chat",
+      "lifecycle": "active",
+      "name": "Echo Chat",
+      "providers": [
+        {
+          "account_modes": ["agent"],
+          "catalog_ref": "echo-chat/echo-mcp@1.0.0",
+          "credential": {
+            "header_name": "Echo-Key",
+            "help": "",
+            "help_url": "",
+            "in": "header",
+            "kind": "api_key",
+            "label": "",
+            "mode": "shared",
+            "name": "Echo-Key"
+          },
+          "era": "auto",
+          "id": "echo-mcp",
+          "kind": "vendor_mcp",
+          "lifecycle": "active",
+          "publisher": "vendor",
+          "tier": "listed",
+          "tools": [
+            {
+              "description": "The list_channels tool.",
+              "destructive": false,
+              "gateway_posture": "allow",
+              "idempotent": true,
+              "name": "list_channels",
+              "open_world": true,
+              "read_only": true,
+              "reason": null,
+              "title": "List channels"
+            }
+          ],
+          "transport": "http",
+          "url_template": "https://mcp.echo-chat.example.com/mcp",
+          "url_variables": [],
+          "vendor_status": "ga",
+          "version": "1.0.0"
+        }
+      ],
+      "servers": [],
+      "tags": [],
+      "vendor": {
+        "domains": ["echo-chat.example.com"],
+        "name": "Echo Chat"
+      }
+    },
+    {
+      "categories": ["files"],
+      "connected": false,
+      "default_provider": "fern-mcp",
+      "description": "A key sent as a query parameter or in the URL.",
+      "docs_url": "https://docs.fern-files.example.com/mcp",
+      "ee_category": "productivity",
+      "group": "other",
+      "icon": null,
+      "id": "fern-files",
+      "lifecycle": "active",
+      "name": "Fern Files",
+      "providers": [
+        {
+          "account_modes": ["agent"],
+          "catalog_ref": "fern-files/fern-mcp@1.0.0",
+          "credential": {
+            "header_name": "",
+            "help": "",
+            "help_url": "",
+            "in": "query",
+            "kind": "api_key",
+            "label": "",
+            "mode": "shared",
+            "name": "api_key"
+          },
+          "era": "auto",
+          "id": "fern-mcp",
+          "kind": "vendor_mcp",
+          "lifecycle": "active",
+          "publisher": "vendor",
+          "tier": "listed",
+          "tools": [
+            {
+              "description": "The list_files tool.",
+              "destructive": false,
+              "gateway_posture": "allow",
+              "idempotent": true,
+              "name": "list_files",
+              "open_world": true,
+              "read_only": true,
+              "reason": null,
+              "title": "List files"
+            }
+          ],
+          "transport": "http",
+          "url_template": "https://mcp.fern-files.example.com/mcp",
+          "url_variables": [],
+          "vendor_status": "ga",
+          "version": "1.0.0"
+        },
+        {
+          "account_modes": ["agent"],
+          "catalog_ref": "fern-files/fern-path@1.0.0",
+          "credential": {
+            "header_name": "",
+            "help": "",
+            "help_url": "",
+            "in": "url_variable",
+            "kind": "api_key",
+            "label": "",
+            "mode": "shared",
+            "name": "apiKey"
+          },
+          "era": "auto",
+          "id": "fern-path",
+          "kind": "vendor_mcp",
+          "lifecycle": "active",
+          "publisher": "vendor",
+          "tier": "listed",
+          "tools": [
+            {
+              "description": "The list_files tool.",
+              "destructive": false,
+              "gateway_posture": "allow",
+              "idempotent": true,
+              "name": "list_files",
+              "open_world": true,
+              "read_only": true,
+              "reason": null,
+              "title": "List files"
+            }
+          ],
+          "transport": "http",
+          "url_template": "https://mcp.fern-files.example.com/{apiKey}/mcp?region={region}",
+          "url_variables": [
+            {
+              "default": "us",
+              "description": "Your region.",
+              "name": "region",
+              "pattern": "^[a-z]{2}$"
+            }
+          ],
+          "vendor_status": "ga",
+          "version": "1.0.0"
+        }
+      ],
+      "servers": [],
+      "tags": [],
+      "vendor": {
+        "domains": ["fern-files.example.com"],
+        "name": "Fern Files"
+      }
+    },
+    {
+      "categories": ["code-hosting", "issue-tracking"],
+      "connected": false,
+      "default_provider": "iris-mcp",
+      "description": "Repositories, issues and pull requests.",
+      "docs_url": "https://docs.iris-code.example.com/mcp",
+      "ee_category": "developer",
+      "group": "other",
+      "icon": null,
+      "id": "iris-code",
+      "lifecycle": "active",
+      "name": "Iris Code",
+      "providers": [
+        {
+          "account_modes": ["agent"],
+          "catalog_ref": "iris-code/iris-mcp@1.0.0",
+          "credential": {
+            "header_name": "",
+            "help": "Create a fine-grained token with read access.",
+            "help_url": "https://docs.iris-code.example.com/tokens",
+            "in": "header",
+            "kind": "bearer",
+            "label": "Personal access token",
+            "mode": "shared",
+            "name": "Authorization"
+          },
+          "era": "auto",
+          "id": "iris-mcp",
+          "kind": "vendor_mcp",
+          "lifecycle": "active",
+          "publisher": "vendor",
+          "tier": "listed",
+          "tools": [
+            {
+              "description": "The search_issues tool.",
+              "destructive": false,
+              "gateway_posture": "allow",
+              "idempotent": true,
+              "name": "search_issues",
+              "open_world": true,
+              "read_only": true,
+              "reason": null,
+              "title": "Search issues"
+            },
+            {
+              "description": "The get_pull_request tool.",
+              "destructive": false,
+              "gateway_posture": "allow",
+              "idempotent": true,
+              "name": "get_pull_request",
+              "open_world": true,
+              "read_only": true,
+              "reason": null,
+              "title": "Get pull request"
+            },
+            {
+              "description": "The create_issue tool.",
+              "destructive": false,
+              "gateway_posture": "deny",
+              "idempotent": false,
+              "name": "create_issue",
+              "open_world": true,
+              "read_only": false,
+              "reason": "write_tool",
+              "title": "Create issue"
+            }
+          ],
+          "transport": "http",
+          "url_template": "https://mcp.iris-code.example.com/mcp",
+          "url_variables": [],
+          "vendor_status": "ga",
+          "version": "1.0.0"
+        }
+      ],
+      "servers": [
+        {
+          "catalog_ref": "iris-code/iris-mcp@1.0.0",
+          "connected": false,
+          "credential_mode": "shared",
+          "enabled": true,
+          "provider": "iris-mcp",
+          "server_id": "iris-code",
+          "version": "1.0.0",
+          "virtual_server": {
+            "id": "vs_01M5F7JBS88BJXZ4N1BYJ1Y4MJ",
+            "slug": "iris-code"
+          }
+        }
+      ],
+      "tags": ["git"],
+      "vendor": {
+        "domains": ["iris-code.example.com"],
+        "name": "Iris Labs"
+      }
+    }
+  ],
+  "total_pages": 1
+}

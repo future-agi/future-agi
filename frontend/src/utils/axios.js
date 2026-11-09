@@ -1,5 +1,7 @@
 import axios from "axios";
+import { WORKSPACE_UNAVAILABLE_EVENT } from "src/contexts/workspaceUnavailableEvent";
 import { enqueueSnackbar } from "notistack";
+import { clearOnboardingRecovery } from "src/auth/auth-url-intake";
 import {
   addToQueue,
   clearTokens,
@@ -12,7 +14,7 @@ import {
   setSession,
 } from "src/auth/context/jwt/utils";
 import { HOST_API } from "src/config-global";
-import { apiPath } from "src/api/contracts/api-surface";
+import { apiPath, uncontractedApiPath } from "src/api/contracts/api-surface";
 import {
   assertContractedRequestConfig,
   assertContractedResponse,
@@ -21,7 +23,11 @@ import {
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
 import { RESPONSE_CODES } from "./constants";
-import { SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "./sessionKeys";
+import {
+  SS_KEY_ORG_ID,
+  SS_KEY_USER_ID,
+  SS_KEY_WORKSPACE_ID,
+} from "./sessionKeys";
 
 // ----------------------------------------------------------------------
 //
@@ -69,6 +75,19 @@ export const readQuery = (url, { params = {}, ...config } = {}) => {
   });
 };
 
+function clearUnauthorizedOnboardingRecovery() {
+  // AuthProvider records this marker after authenticating in this tab. An old
+  // localStorage token alone must not discard a fresh marketplace landing.
+  let userId;
+  try {
+    userId = sessionStorage.getItem(SS_KEY_USER_ID);
+  } catch {
+    // Unavailable tab storage must not interrupt the existing logout path.
+    return;
+  }
+  if (userId) clearOnboardingRecovery();
+}
+
 const avoidRedirect = [
   "/auth/jwt/register",
   "/auth/jwt/login",
@@ -99,11 +118,42 @@ axiosInstance.interceptors.response.use(
       }
     }
 
+    // The gateway's operator credential failed, not the user's FA session.
+    // Keep the original error/response for the caller's administrator remedy,
+    // before either shared-link recovery or session refresh can mutate state.
+    if (
+      error?.response?.status === RESPONSE_CODES.UNAUTHORIZED &&
+      error?.response?.data?.code === "gateway_request_rejected"
+    ) {
+      return Promise.reject(error);
+    }
+
     const currentPath = window.location.href;
     const avoid = avoidRedirect.some((item) => currentPath.includes(item));
     const originalRequest = error?.config;
     const status = error?.response?.status;
     const url = error.config?.url;
+    const isWorkspaceUnavailable =
+      error?.response?.data?.code === "workspace_unavailable";
+    if (isWorkspaceUnavailable) {
+      const headers = originalRequest?.headers;
+      window.dispatchEvent(
+        new CustomEvent(WORKSPACE_UNAVAILABLE_EVENT, {
+          detail: {
+            // Only the create request's own typed 403 may claim its draft.
+            submissionId:
+              status === RESPONSE_CODES.FORBIDDEN
+                ? originalRequest?.falconSubmissionId
+                : undefined,
+            workspaceId:
+              headers?.get?.("X-Workspace-Id") ?? headers?.["X-Workspace-Id"],
+            organizationId:
+              headers?.get?.("X-Organization-Id") ??
+              headers?.["X-Organization-Id"],
+          },
+        }),
+      );
+    }
     const authEndpoints = [
       "/accounts/user-info/",
       "/accounts/token/",
@@ -120,6 +170,19 @@ axiosInstance.interceptors.response.use(
           detail: error.response.data,
         }),
       );
+    }
+
+    // Handle 403 with no_active_organization — the account has no active
+    // organization membership (for example, an administrator removed it
+    // while this tab was open). Requests that need an organization answer
+    // this way, so open the org-removed screen, which offers creating or
+    // joining an organization, instead of an error on every panel.
+    if (
+      status === RESPONSE_CODES.FORBIDDEN &&
+      error?.response?.data?.code === "no_active_organization" &&
+      !avoid
+    ) {
+      window.location.href = "/auth/jwt/org-removed";
     }
 
     // Handle 402 Payment Required — EE feature unavailable on OSS. Surface
@@ -142,7 +205,7 @@ axiosInstance.interceptors.response.use(
     // A signed-out viewer of a shared link has no session to refresh or end:
     // let the page show its own "Sign in required" screen.
     const signedOutOnSharedLink =
-      window.location.pathname.startsWith("/shared/") &&
+      window.location.pathname?.startsWith("/shared/") &&
       (!getRememberMe() || !getRefreshToken());
 
     // A dead session token on a shared link (nothing to refresh it with)
@@ -172,6 +235,8 @@ axiosInstance.interceptors.response.use(
 
       // 🚫 No refresh token or remember me: force logout
       if (!rememberMe || !refreshToken) {
+        // Clear recovery before navigation; refresh may throw without statusCode.
+        clearUnauthorizedOnboardingRecovery();
         setSession(null);
         resetUser();
         clearTokens();
@@ -235,6 +300,7 @@ axiosInstance.interceptors.response.use(
           return Promise.reject(err);
         }
         processQueue(err, null); // ❌ Fail queued requests too
+        clearUnauthorizedOnboardingRecovery();
         setSession(null);
         resetUser();
         clearTokens();
@@ -264,6 +330,7 @@ axiosInstance.interceptors.response.use(
 
     const isAuthError =
       status === RESPONSE_CODES.FORBIDDEN &&
+      !isWorkspaceUnavailable &&
       authEndpoints.some((endpoint) => url?.includes(endpoint));
 
     // Log the error for debugging (but don't log out for non-auth errors)
@@ -301,6 +368,11 @@ axiosInstance.interceptors.response.use(
       // Keep Axios' transport classification without overwriting a semantic
       // API error code from the response body (for example snapshot_changed).
       transportCode: error.code,
+      // Only browser-readable transport metadata, never body-supplied headers
+      // or the full request config (which can contain credentials).
+      responseHeaders: {
+        "x-request-id": error.response?.headers?.["x-request-id"],
+      },
     };
 
     return Promise.reject(customError);
@@ -349,7 +421,6 @@ export const endpoints = {
     dashboardSummary: apiPath("/model-hub/overview/"),
   },
   keys: {
-    keys: apiPath("/accounts/keys/"),
     getKeys: apiPath("/accounts/key/get_secret_keys/"),
     enableKey: apiPath("/accounts/key/enable_key/"),
     disablekey: apiPath("/accounts/key/disable_key/"),
@@ -1310,11 +1381,463 @@ export const endpoints = {
           ),
       },
     },
+    // W1 decision-model judges: GET /v1/decisions/models for the workspace.
+    decisionModels: uncontractedApiPath("/agentcc/decisions/models/"),
     apiKey: {
       create: apiPath("/model-hub/api-keys/"),
       status: apiPath("/model-hub/develops/provider-status/"),
       update: apiPath("/model-hub/api-keys/"),
       delete: (id) => apiPath("/model-hub/api-keys/{id}/", { id: id }),
+    },
+    // Datasets + Experiments prototype endpoints (PRODUCT-SPEC §6.2). They
+    // are not in the generated contract yet: each template is registered in
+    // src/api/contracts/api-contract-exceptions.js and answered by MSW in
+    // prototype mode (shapes: src/_mock/prototype/CONTRACT.md). Switch them
+    // to apiPath(...) when the backend ships them.
+    versions: {
+      // GET N1 list · POST N2 save a version
+      list: (datasetId) =>
+        apiPath("/model-hub/datasets/{dataset_id}/versions/", {
+          dataset_id: datasetId,
+        }),
+      // PATCH N5 tag / description
+      detail: (datasetId, versionId) =>
+        apiPath("/model-hub/datasets/{dataset_id}/versions/{version_id}/", {
+          dataset_id: datasetId,
+          version_id: versionId,
+        }),
+      // GET N3 as-of table
+      table: (datasetId, versionId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/versions/{version_id}/table/",
+          { dataset_id: datasetId, version_id: versionId },
+        ),
+      // GET N4 changes
+      changes: (datasetId, versionId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/versions/{version_id}/changes/",
+          { dataset_id: datasetId, version_id: versionId },
+        ),
+    },
+    splits: {
+      // GET list · POST create (N6)
+      list: (datasetId) =>
+        apiPath("/model-hub/datasets/{dataset_id}/splits/", {
+          dataset_id: datasetId,
+        }),
+      // PATCH · DELETE (N6)
+      detail: (datasetId, splitId) =>
+        apiPath("/model-hub/datasets/{dataset_id}/splits/{split_id}/", {
+          dataset_id: datasetId,
+          split_id: splitId,
+        }),
+    },
+    datasetRows: {
+      // GET N7 runs across experiments for one row
+      runs: (datasetId, rowId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/rows/{row_id}/runs/",
+          { dataset_id: datasetId, row_id: rowId },
+        ),
+      // GET N8 row activity
+      activity: (datasetId, rowId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/rows/{row_id}/activity/",
+          { dataset_id: datasetId, row_id: rowId },
+        ),
+      // POST R6 add experiment results to a dataset
+      fromResults: (targetDatasetId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{target_dataset_id}/rows/from-results/",
+          { target_dataset_id: targetDatasetId },
+        ),
+    },
+    datasetRuns: {
+      // GET R1 runs on a dataset (leaderboard, pickers)
+      list: (datasetId) =>
+        uncontractedApiPath("/model-hub/datasets/{dataset_id}/runs/", {
+          dataset_id: datasetId,
+        }),
+      // PUT · DELETE R2 pinned dataset baseline
+      baseline: (datasetId) =>
+        apiPath("/model-hub/datasets/{dataset_id}/baseline/", {
+          dataset_id: datasetId,
+        }),
+      // GET R3 results grid (+ summary on page 0)
+      results: (datasetId) =>
+        uncontractedApiPath("/model-hub/datasets/{dataset_id}/results/", {
+          dataset_id: datasetId,
+        }),
+      // GET W1-3 what scoring a run with an eval version would change
+      evalVersionPreview: (templateId, version) =>
+        uncontractedApiPath(
+          "/model-hub/eval-templates/{template_id}/versions/{version}/preview/",
+          { template_id: templateId, version },
+        ),
+      // GET R5 analysis (Summary tab)
+      analysis: (datasetId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/results/analysis/",
+          { dataset_id: datasetId },
+        ),
+      // POST V2 review vote from the result drawer
+      resultReviews: (datasetId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/result-reviews/",
+          { dataset_id: datasetId },
+        ),
+      // POST E2 resume stopped runs (contracted: F06 run control backs it)
+      resume: (experimentId) =>
+        apiPath("/model-hub/experiments/v2/{experiment_id}/resume/", {
+          experiment_id: experimentId,
+        }),
+      // POST E3 upload results for an external run
+      uploadResults: (experimentId, runId) =>
+        uncontractedApiPath(
+          "/model-hub/experiments/v2/{experiment_id}/runs/{run_id}/results/",
+          { experiment_id: experimentId, run_id: runId },
+        ),
+    },
+    // Round 2 prototype endpoints (R2-SPEC §6; shapes in CONTRACT.md
+    // "Round 2"): hooks in src/api/develop/r2.js.
+    r2: {
+      // POST I1 iterate a run, or a parentless quick test (`kind:"quick_test"`)
+      iterate: (experimentId) =>
+        uncontractedApiPath("/model-hub/experiments/v2/{experiment_id}/runs/", {
+          experiment_id: experimentId,
+        }),
+      // GET · POST S1 the live session of a My code run
+      codeSession: (experimentId, runId) =>
+        uncontractedApiPath(
+          "/model-hub/experiments/v2/{experiment_id}/runs/{run_id}/session/",
+          { experiment_id: experimentId, run_id: runId },
+        ),
+      // POST IM1 import traces / sessions / files into a dataset
+      imports: uncontractedApiPath("/model-hub/datasets/imports/"),
+      // GET an IM1 import job (an import above 1,000 rows; W3-5)
+      importJob: (jobId) =>
+        uncontractedApiPath("/model-hub/datasets/imports/jobs/{job_id}/", {
+          job_id: jobId,
+        }),
+      // GET · POST a dataset's saved import sources (W3-5)
+      importSources: (datasetId) =>
+        uncontractedApiPath("/model-hub/datasets/{dataset_id}/sources/", {
+          dataset_id: datasetId,
+        }),
+      // PATCH · DELETE one saved source
+      importSource: (datasetId, sourceId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/sources/{source_id}/",
+          { dataset_id: datasetId, source_id: sourceId },
+        ),
+      // POST Refresh now
+      importSourceRefresh: (datasetId, sourceId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/sources/{source_id}/refresh/",
+          { dataset_id: datasetId, source_id: sourceId },
+        ),
+    },
+    // Round 3 prototype endpoints (R3 G0 §B10; shapes in CONTRACT.md
+    // "Round 3" and fixtures/world/r3Shapes.js): hooks in api/develop/r3.js.
+    r3: {
+      // GET side-by-side task compare (?row=&runs=&trials=)
+      taskCompare: (datasetId) =>
+        uncontractedApiPath("/model-hub/datasets/{dataset_id}/task-compare/", {
+          dataset_id: datasetId,
+        }),
+      // GET · POST per-user review state of one task (?row=&runs=)
+      taskReview: (datasetId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/task-compare/review/",
+          { dataset_id: datasetId },
+        ),
+      // GET · POST saved views (?surface=&scope=)
+      savedViews: apiPath("/model-hub/r3/saved-views/"),
+      // DELETE one saved view
+      savedView: (viewId) =>
+        apiPath("/model-hub/r3/saved-views/{view_id}/", {
+          view_id: viewId,
+        }),
+    },
+    // Round 4 (lane F; CONTRACT.md "Round 4"). Owners fill the handlers.
+    r4: {
+      // GET run-source catalog (F)
+      catalog: uncontractedApiPath("/model-hub/r4/run-sources/catalog/"),
+      // GET one voice call (CallValue) and its audio (W)
+      call: (callId) =>
+        uncontractedApiPath("/model-hub/r4/calls/{call_id}/", {
+          call_id: callId,
+        }),
+      callAudio: (callId, channel) =>
+        uncontractedApiPath("/model-hub/r4/calls/{call_id}/audio/{channel}", {
+          call_id: callId,
+          channel: `${channel}.wav`,
+        }),
+      // GET machines · PATCH one machine {allow_teammates} (C)
+      connectMachines: uncontractedApiPath("/model-hub/r4/connect/machines/"),
+      connectMachine: (machineId) =>
+        uncontractedApiPath("/model-hub/r4/connect/machines/{machine_id}/", {
+          machine_id: machineId,
+        }),
+      // POST connect token (C)
+      connectTokens: uncontractedApiPath("/model-hub/r4/connect/tokens/"),
+      // GET session · POST simulate (C, prototype)
+      connectSession: (token) =>
+        uncontractedApiPath("/model-hub/r4/connect/sessions/{token}/", {
+          token,
+        }),
+      connectSimulate: (token) =>
+        uncontractedApiPath(
+          "/model-hub/r4/connect/sessions/{token}/simulate/",
+          { token },
+        ),
+      // POST try one row on a connected agent (C)
+      connectTry: (agentId) =>
+        uncontractedApiPath("/model-hub/r4/connect/agents/{agent_id}/try/", {
+          agent_id: agentId,
+        }),
+      // GET activity · POST control of a live run (C)
+      runActivity: (runId) =>
+        uncontractedApiPath("/model-hub/r4/runs/{run_id}/activity/", {
+          run_id: runId,
+        }),
+      runControl: (runId) =>
+        uncontractedApiPath("/model-hub/r4/runs/{run_id}/control/", {
+          run_id: runId,
+        }),
+      // POST simulated upload (Ra, prototype) · POST rerun with changes (Ra)
+      simulateUpload: (runId) =>
+        uncontractedApiPath("/model-hub/r4/runs/{run_id}/simulate-upload/", {
+          run_id: runId,
+        }),
+      rerun: (runId) =>
+        uncontractedApiPath("/model-hub/r4/runs/{run_id}/rerun/", {
+          run_id: runId,
+        }),
+      // GET aggregate paths of a run (T)
+      runPaths: (runId) =>
+        uncontractedApiPath("/model-hub/r4/runs/{run_id}/paths/", {
+          run_id: runId,
+        }),
+      // GET voice summary of a dataset's runs (X)
+      voiceSummary: (datasetId) =>
+        uncontractedApiPath(
+          "/model-hub/r4/datasets/{dataset_id}/voice-summary/",
+          { dataset_id: datasetId },
+        ),
+    },
+    // W4 collaboration, review and access (MOCK/CONTRACT.md "W4")
+    w4: {
+      // GET · PUT · POST per-dataset access (A)
+      access: (datasetId) =>
+        uncontractedApiPath("/model-hub/datasets/{dataset_id}/access/", {
+          dataset_id: datasetId,
+        }),
+      // GET · PUT workspace sharing policy (A)
+      sharingPolicy: (workspaceId) =>
+        uncontractedApiPath(
+          "/model-hub/workspaces/{workspace_id}/sharing-policy/",
+          { workspace_id: workspaceId },
+        ),
+      // GET audit trail (A)
+      audit: uncontractedApiPath("/model-hub/audit/"),
+      // GET all comments on a dataset (B)
+      datasetComments: (datasetId) =>
+        uncontractedApiPath("/model-hub/datasets/{dataset_id}/comments/", {
+          dataset_id: datasetId,
+        }),
+      // GET · POST comments on one row (B)
+      rowComments: (datasetId, rowId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/rows/{row_id}/comments/",
+          { dataset_id: datasetId, row_id: rowId },
+        ),
+      // PATCH · DELETE one row comment (B)
+      rowComment: (datasetId, rowId, commentId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/rows/{row_id}/comments/{comment_id}/",
+          { dataset_id: datasetId, row_id: rowId, comment_id: commentId },
+        ),
+      // GET · POST row assignments (B)
+      assignments: (datasetId) =>
+        uncontractedApiPath("/model-hub/datasets/{dataset_id}/assignments/", {
+          dataset_id: datasetId,
+        }),
+      // PATCH one assignment (B)
+      assignment: (datasetId, assignmentId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/assignments/{assignment_id}/",
+          { dataset_id: datasetId, assignment_id: assignmentId },
+        ),
+      // GET · POST translate a field (B)
+      translate: (datasetId) =>
+        uncontractedApiPath("/model-hub/datasets/{dataset_id}/translate/", {
+          dataset_id: datasetId,
+        }),
+      // GET · POST corrections (C)
+      corrections: (datasetId) =>
+        uncontractedApiPath("/model-hub/datasets/{dataset_id}/corrections/", {
+          dataset_id: datasetId,
+        }),
+      // PATCH one correction (C)
+      correction: (datasetId, correctionId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/corrections/{correction_id}/",
+          { dataset_id: datasetId, correction_id: correctionId },
+        ),
+      // GET · POST outside-reviewer invites on a queue (C)
+      invites: (queueId) =>
+        uncontractedApiPath(
+          "/model-hub/annotation-queues/{queue_id}/invites/",
+          { queue_id: queueId },
+        ),
+      // PATCH · DELETE one invite (C)
+      invite: (queueId, inviteId) =>
+        uncontractedApiPath(
+          "/model-hub/annotation-queues/{queue_id}/invites/{invite_id}/",
+          { queue_id: queueId, invite_id: inviteId },
+        ),
+      // GET one review link (C)
+      reviewLink: (token) =>
+        uncontractedApiPath("/model-hub/review-links/{token}/", { token }),
+      // GET · POST one item behind a review link (C)
+      reviewLinkItem: (token, itemId) =>
+        uncontractedApiPath(
+          "/model-hub/review-links/{token}/items/{item_id}/",
+          { token, item_id: itemId },
+        ),
+    },
+    // W9 dataset organisation (MOCK/CONTRACT.md "W9")
+    w9: {
+      // GET the dataset list query: filters, Group by, starred first (A)
+      datasetsQuery: uncontractedApiPath("/model-hub/datasets/query/"),
+      // POST · DELETE the caller's star on one dataset (A)
+      datasetStar: (datasetId) =>
+        apiPath("/model-hub/datasets/{dataset_id}/star/", {
+          dataset_id: datasetId,
+        }),
+    },
+    // W5 results analysis (MOCK/CONTRACT.md "W5")
+    w5: {
+      // GET · PUT a dataset's custom result columns (A)
+      resultColumns: (datasetId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/result-columns/",
+          { dataset_id: datasetId },
+        ),
+      // GET the custom columns' values over a results view (A)
+      resultColumnValues: (datasetId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/result-columns/values/",
+          { dataset_id: datasetId },
+        ),
+      // GET · PUT a dataset's run metrics (formulas); GET ?runs= values (B)
+      derivedMetrics: (datasetId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/derived-metrics/",
+          { dataset_id: datasetId },
+        ),
+      // GET · PUT a dataset's classification setup; GET ?runs= metrics (B)
+      classification: (datasetId) =>
+        uncontractedApiPath(
+          "/model-hub/datasets/{dataset_id}/classification/",
+          { dataset_id: datasetId },
+        ),
+      // GET two runs' rows matched by a key (B)
+      resultsMatch: uncontractedApiPath("/model-hub/results/match/"),
+      // GET options / one result · POST run best of N (B)
+      bestOf: (datasetId) =>
+        uncontractedApiPath("/model-hub/datasets/{dataset_id}/best-of/", {
+          dataset_id: datasetId,
+        }),
+      // GET · POST the workspace tag registry (C)
+      tags: uncontractedApiPath("/model-hub/tags/"),
+      // PATCH · DELETE one tag (C)
+      tag: (tagId) =>
+        uncontractedApiPath("/model-hub/tags/{tag_id}/", { tag_id: tagId }),
+      // PUT an experiment's tags (C)
+      experimentTags: (experimentId) =>
+        uncontractedApiPath("/model-hub/experiments/v2/{experiment_id}/tags/", {
+          experiment_id: experimentId,
+        }),
+      // GET · POST leaderboards across datasets (C)
+      leaderboards: uncontractedApiPath("/model-hub/leaderboards/"),
+      // GET · PATCH · DELETE one leaderboard (C)
+      leaderboard: (leaderboardId) =>
+        uncontractedApiPath("/model-hub/leaderboards/{leaderboard_id}/", {
+          leaderboard_id: leaderboardId,
+        }),
+      // GET a run's traces (C)
+      runTraces: (experimentId, runId) =>
+        uncontractedApiPath(
+          "/model-hub/experiments/v2/{experiment_id}/runs/{run_id}/traces/",
+          { experiment_id: experimentId, run_id: runId },
+        ),
+      // POST an Expression column on a dataset; dry_run tests it (A5, HO D7)
+      addExpressionColumn: (datasetId) =>
+        uncontractedApiPath(
+          "/model-hub/develops/{dataset_id}/add_expression_column/",
+          { dataset_id: datasetId },
+        ),
+    },
+    // KH parity pieces and integration (MOCK/CONTRACT.md "KH")
+    kh: {
+      // POST · record a run started with Record off (integration, K-2)
+      recordRun: (experimentId, runId) =>
+        uncontractedApiPath(
+          "/model-hub/experiments/v2/{experiment_id}/runs/{run_id}/record/",
+          { experiment_id: experimentId, run_id: runId },
+        ),
+    },
+    // W7 evaluator types and judge quality (MOCK/CONTRACT.md "W7")
+    w7: {
+      // Lane A: decision trees (POST create, GET · PATCH, Test on a row,
+      // a run's paths) and a composite's jury report
+      createDag: apiPath("/model-hub/eval-templates/create-dag/"),
+      dag: (templateId) =>
+        apiPath("/model-hub/eval-templates/{template_id}/dag/", {
+          template_id: templateId,
+        }),
+      dagExecuteAdhoc: apiPath("/model-hub/eval-templates/dag/execute-adhoc/"),
+      dagPaths: (templateId) =>
+        apiPath("/model-hub/eval-templates/{template_id}/dag/paths/", {
+          template_id: templateId,
+        }),
+      compositeJury: (templateId) =>
+        apiPath("/model-hub/eval-templates/{template_id}/composite/jury/", {
+          template_id: templateId,
+        }),
+      // Lane B: agreement with reviewers (GET) and Improve judge (POST)
+      agreement: (templateId) =>
+        apiPath("/model-hub/eval-templates/{template_id}/agreement/", {
+          template_id: templateId,
+        }),
+      improve: (templateId) =>
+        uncontractedApiPath(
+          "/model-hub/eval-templates/{template_id}/improve/",
+          {
+            template_id: templateId,
+          },
+        ),
+      // Lane C: remote scorers (create, GET · PATCH, Test on one row,
+      // Score a run, the job's progress)
+      createRemote: uncontractedApiPath(
+        "/model-hub/eval-templates/create-remote/",
+      ),
+      remote: (templateId) =>
+        uncontractedApiPath("/model-hub/eval-templates/{template_id}/remote/", {
+          template_id: templateId,
+        }),
+      remoteTest: uncontractedApiPath("/model-hub/eval-templates/remote/test/"),
+      remoteScoreRun: (templateId) =>
+        uncontractedApiPath(
+          "/model-hub/eval-templates/{template_id}/remote/score-run/",
+          { template_id: templateId },
+        ),
+      remoteJob: (jobId) =>
+        uncontractedApiPath("/model-hub/eval-templates/remote/jobs/{job_id}/", {
+          job_id: jobId,
+        }),
     },
   },
   stripe: {
@@ -1771,31 +2294,6 @@ export const endpoints = {
         { call_execution_id: id },
       ),
   },
-  // Fix my agent v0. Functions only: apiPath throws until the backend's
-  // paths are in the generated contract (yarn contracts:generate).
-  agentFixRuns: {
-    list: () => apiPath("/simulate/api/agent-fix-runs/"),
-    launchOptions: () =>
-      apiPath("/simulate/api/agent-fix-runs/launch-options/"),
-    detail: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/", { id }),
-    stop: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/stop/", { id }),
-    retry: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/retry/", { id }),
-    makeDefault: (id, candidateId) =>
-      apiPath(
-        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/",
-        { id, candidate_id: candidateId },
-      ),
-    pullRequest: (id, candidateId) =>
-      apiPath(
-        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/",
-        { id, candidate_id: candidateId },
-      ),
-    patch: (id, candidateId) =>
-      apiPath(
-        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/",
-        { id, candidate_id: candidateId },
-      ),
-  },
   runResultsV3: {
     calls: (id) =>
       apiPath("/simulate/v3/test-executions/{test_execution_id}/calls/", {
@@ -2009,6 +2507,8 @@ export const endpoints = {
       apiPath("/agentcc/gateways/{id}/remove-provider/", { id: id }),
     testPlayground: (id) =>
       apiPath("/agentcc/gateways/{id}/test-playground/", { id: id }),
+    testPlaygroundStream: (id) =>
+      apiPath("/agentcc/gateways/{id}/test-playground-stream/", { id: id }),
     toggleGuardrail: (id) =>
       apiPath("/agentcc/gateways/{id}/toggle-guardrail/", { id: id }),
     updateGuardrail: (id) =>
@@ -2021,6 +2521,8 @@ export const endpoints = {
     mcpStatus: (id) =>
       apiPath("/agentcc/gateways/{id}/mcp-status/", { id: id }),
     mcpTools: (id) => apiPath("/agentcc/gateways/{id}/mcp-tools/", { id: id }),
+    mcpServedTools: (id) =>
+      apiPath("/agentcc/gateways/{id}/mcp-served-tools/", { id: id }),
     updateMcpServer: (id) =>
       apiPath("/agentcc/gateways/{id}/update-mcp-server/", { id: id }),
     removeMcpServer: (id) =>
@@ -2033,6 +2535,37 @@ export const endpoints = {
       apiPath("/agentcc/gateways/{id}/mcp-resources/", { id: id }),
     mcpPrompts: (id) =>
       apiPath("/agentcc/gateways/{id}/mcp-prompts/", { id: id }),
+    mcpToolCalls: apiPath("/agentcc/mcp/tool-calls/"),
+    mcpToolCallsExport: apiPath("/agentcc/mcp/tool-calls/export/"),
+    siemDestinations: apiPath("/agentcc/siem/destinations/"),
+    siemTestConnection: apiPath("/agentcc/siem/destinations/test-connection/"),
+    siemDestination: (id) =>
+      apiPath("/agentcc/siem/destinations/{id}/", { id: id }),
+    siemDeliveries: apiPath("/agentcc/siem/deliveries/"),
+    siemRetryDelivery: (id) =>
+      apiPath("/agentcc/siem/deliveries/{id}/retry/", { id: id }),
+    siemDiscardDelivery: (id) =>
+      apiPath("/agentcc/siem/deliveries/{id}/discard/", { id: id }),
+    mcpToolCall: (pk) => apiPath("/agentcc/mcp/tool-calls/{id}/", { id: pk }),
+    mcpConnections: apiPath("/agentcc/mcp/connect/"),
+    mcpCredentials: apiPath("/agentcc/mcp/credentials/"),
+    mcpCredential: (credentialId) =>
+      apiPath("/agentcc/mcp/credentials/{credential_id}/", {
+        credential_id: credentialId,
+      }),
+    mcpRotateCredential: (credentialId) =>
+      apiPath("/agentcc/mcp/credentials/{credential_id}/rotate/", {
+        credential_id: credentialId,
+      }),
+    mcpProbe: apiPath("/agentcc/mcp/probe/"),
+    connectorCatalog: apiPath("/agentcc/connectors/catalog/"),
+    connectorOAuthClients: apiPath("/agentcc/connectors/oauth-clients/"),
+    connectorOAuthClient: (id) =>
+      apiPath("/agentcc/connectors/oauth-clients/{credential_id}/", {
+        credential_id: id,
+      }),
+    connectorAdd: (appId) =>
+      apiPath("/agentcc/connectors/apps/{app_id}/add/", { app_id: appId }),
     apiKeys: apiPath("/agentcc/api-keys/"),
     createApiKey: apiPath("/agentcc/api-keys/"),
     apiKeyDetail: (id) => apiPath("/agentcc/api-keys/{id}/", { id: id }),
@@ -2050,12 +2583,70 @@ export const endpoints = {
         session_id: sessionId,
       }),
     requestLogExport: apiPath("/agentcc/request-logs/export/"),
+    requestLogVolume: apiPath("/agentcc/request-logs/volume/"),
     analyticsOverview: apiPath("/agentcc/analytics/overview/"),
     analyticsUsage: apiPath("/agentcc/analytics/usage-timeseries/"),
     analyticsCost: apiPath("/agentcc/analytics/cost-breakdown/"),
     analyticsLatency: apiPath("/agentcc/analytics/latency-stats/"),
     analyticsErrors: apiPath("/agentcc/analytics/error-breakdown/"),
     analyticsModels: apiPath("/agentcc/analytics/model-comparison/"),
+    analyticsBillingSummary: uncontractedApiPath(
+      "/agentcc/analytics/billing-summary/",
+    ),
+    analyticsBillingMargin: uncontractedApiPath(
+      "/agentcc/analytics/billing-margin/",
+    ),
+    analyticsAgents: uncontractedApiPath("/agentcc/analytics/agents/"),
+    analyticsFailures: uncontractedApiPath("/agentcc/analytics/failures/"),
+    analyticsHealthSeries: uncontractedApiPath(
+      "/agentcc/analytics/health-series/",
+    ),
+    analyticsReport: uncontractedApiPath("/agentcc/analytics/report/"),
+    runs: uncontractedApiPath("/agentcc/runs/"),
+    runDetail: (runId) =>
+      uncontractedApiPath("/agentcc/runs/{run_id}/", { run_id: runId }),
+    managedModels: apiPath("/agentcc/managed-models/"),
+    managedModelsCatalog: apiPath("/agentcc/managed-models/catalog/"),
+    managedCatalogEndpoints: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/endpoints/",
+    ),
+    managedCatalogAccess: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/access/",
+    ),
+    managedCatalogStats: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/stats/",
+    ),
+    managedCatalogHistory: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/history/",
+    ),
+    managedCatalogRefresh: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/refresh/",
+    ),
+    managedCatalogReplay: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/replay/",
+    ),
+    managedCredits: apiPath("/agentcc/managed-credits/"),
+    managedCreditEntries: apiPath("/agentcc/managed-credits/entries/"),
+    managedCreditStatement: apiPath("/agentcc/managed-credits/statement/"),
+    managedCreditCheckout: apiPath("/agentcc/managed-credits/checkout/"),
+    managedCreditCheckoutStatus: (sessionId) =>
+      apiPath("/agentcc/managed-credits/checkout/{session_id}/", {
+        session_id: sessionId,
+      }),
+    managedCreditSettings: apiPath("/agentcc/managed-credits/settings/"),
+    managedCreditGrant: apiPath("/agentcc/managed-credits/grant/"),
+    managedCreditAdjust: apiPath("/agentcc/managed-credits/adjust/"),
+    managedCreditRefund: apiPath("/agentcc/managed-credits/refund/"),
+    managedCreditReconciliation: uncontractedApiPath(
+      "/agentcc/managed-credits/reconciliation/",
+    ),
+    capabilities: uncontractedApiPath("/agentcc/capabilities/"),
+    policyRollout: uncontractedApiPath("/agentcc/policy-rollout/"),
+    policyRolloutStage: uncontractedApiPath("/agentcc/policy-rollout/stage/"),
+    policyRolloutPromote: uncontractedApiPath(
+      "/agentcc/policy-rollout/promote/",
+    ),
+    policyRolloutAbort: uncontractedApiPath("/agentcc/policy-rollout/abort/"),
     orgConfig: {
       list: apiPath("/agentcc/org-configs/"),
       active: apiPath("/agentcc/org-configs/active/"),
@@ -2144,6 +2735,8 @@ export const endpoints = {
     providerCredentials: {
       fetchModels: apiPath("/agentcc/provider-credentials/fetch_models/"),
     },
+    providerCredentialRotate: (id) =>
+      apiPath("/agentcc/provider-credentials/{id}/rotate/", { id: id }),
   },
   integrations: {
     slack: {
@@ -2168,6 +2761,54 @@ export const endpoints = {
     },
     validate: apiPath("/integrations/connections/validate/"),
     syncLogs: apiPath("/integrations/sync-logs/"),
+    destinations: apiPath("/integrations/destinations/"),
+  },
+  webhooks: {
+    endpoints: apiPath("/webhooks/endpoints/"),
+    endpoint: (id) =>
+      apiPath("/webhooks/endpoints/{endpoint_id}/", { endpoint_id: id }),
+    enable: (id) =>
+      apiPath("/webhooks/endpoints/{endpoint_id}/enable/", { endpoint_id: id }),
+    disable: (id) =>
+      apiPath("/webhooks/endpoints/{endpoint_id}/disable/", {
+        endpoint_id: id,
+      }),
+    resume: (id) =>
+      apiPath("/webhooks/endpoints/{endpoint_id}/resume/", { endpoint_id: id }),
+    rotateSecret: (id) =>
+      apiPath("/webhooks/endpoints/{endpoint_id}/rotate-secret/", {
+        endpoint_id: id,
+      }),
+    revokePreviousSecret: (id) =>
+      apiPath("/webhooks/endpoints/{endpoint_id}/revoke-previous-secret/", {
+        endpoint_id: id,
+      }),
+    test: (id) =>
+      apiPath("/webhooks/endpoints/{endpoint_id}/test/", { endpoint_id: id }),
+    endpointDeliveries: (id) =>
+      apiPath("/webhooks/endpoints/{endpoint_id}/deliveries/", {
+        endpoint_id: id,
+      }),
+    activity: (id) =>
+      apiPath("/webhooks/endpoints/{endpoint_id}/activity/", {
+        endpoint_id: id,
+      }),
+    deliveries: apiPath("/webhooks/deliveries/"),
+    delivery: (id) =>
+      apiPath("/webhooks/deliveries/{delivery_id}/", { delivery_id: id }),
+    redeliver: (id) =>
+      apiPath("/webhooks/deliveries/{delivery_id}/redeliver/", {
+        delivery_id: id,
+      }),
+    redeliverBulk: apiPath("/webhooks/deliveries/redeliver/"),
+    preview: apiPath("/webhooks/preview/"),
+    eventTypes: apiPath("/webhooks/event-types/"),
+    egressIps: apiPath("/webhooks/egress-ips/"),
+    policy: apiPath("/webhooks/policy/"),
+    workspacePolicy: (workspaceId) =>
+      apiPath("/webhooks/policy/workspace/{workspace_id}/", {
+        workspace_id: workspaceId,
+      }),
   },
   agentPlayground: {
     listGraphs: apiPath("/agent-playground/graphs/"),

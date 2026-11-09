@@ -11,8 +11,7 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { ShareDialog } from "src/components/share-dialog";
 import AddTagsPopover from "src/components/traceDetail/AddTagsPopover";
 import AddToQueueDialog from "src/sections/annotations/queues/components/add-to-queue-dialog";
-import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
-import { LLM_TABS } from "src/sections/projects/LLMTracing/common";
+import { openAddData } from "src/sections/common/AddData/addDataStore";
 import useImagineStore from "src/components/imagine/useImagineStore";
 import {
   useGetSavedViews,
@@ -66,7 +65,6 @@ const ChatDetailDrawerV2 = ({
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
-  const [datasetDrawerOpen, setDatasetDrawerOpen] = useState(false);
   const [deleteTabId, setDeleteTabId] = useState(null);
 
   // ── Saved views / Imagine tabs ───────────────────────────────────────
@@ -163,7 +161,10 @@ const ChatDetailDrawerV2 = ({
         .filter((v) => orderedSet.has(v.id))
         .map((v) => v.position)
         .sort((a, b) => (a ?? 0) - (b ?? 0));
-      const order = orderedIds.map((id, i) => ({ id, position: slots[i] ?? i }));
+      const order = orderedIds.map((id, i) => ({
+        id,
+        position: slots[i] ?? i,
+      }));
       reorderSavedViews({ project_id: projectId, order });
     },
     [customViews, projectId, reorderSavedViews],
@@ -251,7 +252,15 @@ const ChatDetailDrawerV2 = ({
           break;
         }
         case "dataset":
-          setDatasetDrawerOpen(true);
+          // R2 (P5): one way in; the global Add-data sheet.
+          if (data?.trace_id)
+            openAddData({
+              source: {
+                kind: "traces",
+                trace_ids: [data.trace_id],
+                project_id: projectId,
+              },
+            });
           break;
         default:
           break;
@@ -518,16 +527,6 @@ const ChatDetailDrawerV2 = ({
         sourceType={data?.trace_id ? "trace" : "call_execution"}
         sourceIds={data?.trace_id ? [data.trace_id] : data?.id ? [data.id] : []}
         itemName={data?.customer_name || "Chat"}
-      />
-
-      {/* Move to dataset — gated by ChatDetailsBar (action is hidden
-          when there's no trace_id). The drawer still mounts the dialog
-          unconditionally so opening it always works. */}
-      <AddDataset
-        handleClose={() => setDatasetDrawerOpen(false)}
-        actionToDataset={datasetDrawerOpen}
-        currentTab={LLM_TABS.TRACE}
-        selectedTraces={data?.trace_id ? [data.trace_id] : []}
       />
 
       {/* Delete saved-view confirmation */}

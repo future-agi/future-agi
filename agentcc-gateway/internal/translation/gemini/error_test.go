@@ -10,8 +10,8 @@ import (
 
 func TestErrorFromCanonical_AllTypes(t *testing.T) {
 	cases := []struct {
-		apiErr         *models.APIError
-		wantStatusCode int
+		apiErr           *models.APIError
+		wantStatusCode   int
 		wantGeminiStatus string
 	}{
 		{
@@ -40,6 +40,13 @@ func TestErrorFromCanonical_AllTypes(t *testing.T) {
 			wantGeminiStatus: "RESOURCE_EXHAUSTED",
 		},
 		{
+			// A guardrail's refusal is PERMISSION_DENIED, as the native GenAI
+			// surface writes a 403; UNAVAILABLE says to retry.
+			apiErr:           models.ErrGuardrailBlocked("content_blocked", "Request blocked by guardrail: pii"),
+			wantStatusCode:   http.StatusForbidden,
+			wantGeminiStatus: "PERMISSION_DENIED",
+		},
+		{
 			apiErr:           &models.APIError{Status: http.StatusInternalServerError, Type: models.ErrTypeServer, Message: "internal"},
 			wantStatusCode:   http.StatusInternalServerError,
 			wantGeminiStatus: "INTERNAL",
@@ -48,6 +55,11 @@ func TestErrorFromCanonical_AllTypes(t *testing.T) {
 			apiErr:           &models.APIError{Status: http.StatusBadGateway, Type: models.ErrTypeUpstream, Message: "upstream"},
 			wantStatusCode:   http.StatusBadGateway,
 			wantGeminiStatus: "INTERNAL",
+		},
+		{
+			apiErr:           models.ErrProviderBusy("fixture"),
+			wantStatusCode:   http.StatusServiceUnavailable,
+			wantGeminiStatus: "UNAVAILABLE",
 		},
 		{
 			// Unknown type falls through to UNAVAILABLE

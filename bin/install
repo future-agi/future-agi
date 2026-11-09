@@ -32,7 +32,9 @@
 #                                      # https://docs.futureagi.com/docs/self-hosting/configuration/telemetry)
 #
 # Idempotent: a fresh install gets generated secrets in .env; re-running
-# never changes an existing value and merges any new vars from .env.example.
+# preserves operator-set API peppers and merges new vars from .env.example.
+# On upgrades, an empty or published-default API pepper is rotated with the
+# default retired so existing API keys still verify (bin/lib/secrets.sh).
 # --distributed is recorded in .env (COMPOSE_FILE), so later runs and a plain
 # `docker compose` stay on the distributed stack. An existing install keeps its
 # stack: moving one between standalone and distributed is refused, because its data
@@ -201,8 +203,8 @@ else
 fi
 
 # ---------------- telemetry and unsafe settings ----------------
-# Written before anything starts, so the first account's registration is
-# already the minimal opt-out one.
+# Written before anything starts, so deployment telemetry sends nothing,
+# including when the first account is created.
 if (( NO_TELEMETRY == 1 )); then
   set_env_var FUTURE_AGI_TELEMETRY_DISABLED true
   ok "FUTURE_AGI_TELEMETRY_DISABLED=true written to .env: telemetry is off"
@@ -218,6 +220,16 @@ telemetry_is_off() {
   [[ "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|yes|on)$ ]]
 }
 
+# Admin emails join the registration only on this opt-in (off by default).
+# Trimmed first, as the app reads it (config.telemetry_shares_admin_emails).
+telemetry_shares_admin_emails() {
+  local value
+  value=$(compose_env_value FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS)
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  [[ "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|yes|on)$ ]]
+}
+
 # What deployment telemetry sends, before any account (and so any admin
 # email) exists. Worded as the telemetry page,
 # https://docs.futureagi.com/docs/self-hosting/configuration/telemetry.
@@ -229,14 +241,25 @@ telemetry_notice() {
   hours=$(env_value FUTURE_AGI_TELEMETRY_INTERVAL_HOURS 6)
   step "Telemetry"
   if telemetry_is_off; then
-    ok "Off (FUTURE_AGI_TELEMETRY_DISABLED=true). One minimal registration still goes to ${host}: instance id, version, deployment type, timestamp."
+    ok "Off (FUTURE_AGI_TELEMETRY_DISABLED=true). Deployment telemetry sends nothing to Future AGI."
   else
-    say "  When the first account is created, this install registers with ${host}:"
-    say "  instance id, version, deployment type, and the emails and domains of owners,"
-    say "  admins and staff/superuser accounts. Then it"
-    say "  sends usage counts every ${hours} h; never traces, prompts or other content."
-    say "  Opt out: --no-telemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env. One minimal"
-    say "  registration remains: instance id, version, deployment type, timestamp."
+    say "  Deployment telemetry is on so Future AGI can count installs and plan release testing."
+    say "  When the first owner/admin account exists, this install registers with ${host}:"
+    if telemetry_shares_admin_emails; then
+      say "  instance id, version and deployment type, plus the emails and domains of owners,"
+      say "  admins and staff/superuser accounts (FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true)."
+      say "  Fields: schema_version, instance_id, version, deployment_type, timestamp,"
+      say "  telemetry_disabled=false, users[] (email, domain)."
+    else
+      say "  instance id, version and deployment type. It sends no email addresses unless"
+      say "  FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true is set in .env."
+      say "  Fields: schema_version, instance_id, version, deployment_type, timestamp,"
+      say "  telemetry_disabled=false."
+    fi
+    say "  Then it sends usage counts every ${hours} h and content-free journey events;"
+    say "  never traces, prompts or other content."
+    say "  Opt out: --no-telemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env."
+    say "  Opting out sends no deployment telemetry to Future AGI, including registration."
   fi
   say "  ${DIM}Details: https://docs.futureagi.com/docs/self-hosting/configuration/telemetry${RESET}"
 }
@@ -679,8 +702,8 @@ record_mode
 # Done up-front so the rest of the install can run unattended. Captured
 # values are used after the backend reports healthy. Press Enter on the
 # email prompt to skip; --skip-user-creation / CI=1 skip without asking.
-# The telemetry notice comes first: the first account's email is part of
-# the registration.
+# The telemetry notice runs before the first owner/admin account is created.
+# Admin email/domain sharing is off unless FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS opts in.
 telemetry_notice
 
 readonly ACCOUNT_SKIPPED="skipped"
@@ -809,9 +832,11 @@ while IFS=$'\t' read -r service image; do
   [[ -z "$service" ]] && continue
   if [[ "$image" != *:local ]]; then
     pull_services+=("$service")
-  elif [[ "$image" != futureagi/fi-collector:local ]] && ! docker image inspect "$image" >/dev/null 2>&1; then
-    # fi-collector:local has a build: section in the distributed stack; anything
-    # else tagged `local` exists only after --from-source.
+  elif [[ "$image" != futureagi/fi-collector:local && "$image" != futureagi/omega-hub-checker:local && \
+          "$image" != futureagi/omega-hub-runner-host:local ]] && ! docker image inspect "$image" >/dev/null 2>&1; then
+    # fi-collector:local (distributed) and the Omega Hub checker and its runner
+    # daemon (both stacks) have a build: section; compose builds them from this
+    # checkout. Anything else tagged `local` exists only after --from-source.
     preflight_fail "$image is not built yet. Re-run with --from-source to build it from this checkout, or set its tag in .env (FUTURE_AGI_VERSION) back to a published release"
   fi
 done <<<"$SERVICE_IMAGES"
@@ -882,6 +907,31 @@ if (( DISTRIBUTED == 1 )) && project_has_service rabbitmq; then
   warn "  Once the stack is healthy, remove it with: $DC up -d --remove-orphans"
   warn "  Its data volume stays until you delete it: docker volume rm ${project_name}_rabbitmq-data"
 fi
+
+# Profile removal does not retire containers from a previous default-on install.
+# Report only: never remove an operator's checker or privileged runner silently.
+warn_disabled_hub_containers() {
+  (( DISTRIBUTED == 1 )) || return 0
+  local profiles profile
+  # An explicitly empty shell variable overrides .env in Compose too.
+  if [[ ${COMPOSE_PROFILES+x} ]]; then
+    profiles="$COMPOSE_PROFILES"
+  else
+    profiles=$(compose_env_value COMPOSE_PROFILES "")
+  fi
+  # No word splitting/globbing, and no empty arrays under Bash 3 nounset.
+  while IFS= read -r profile; do
+    profile="${profile#"${profile%%[![:space:]]*}"}"
+    profile="${profile%"${profile##*[![:space:]]}"}"
+    if [[ "$profile" == hub || "$profile" == '*' ]]; then return 0; fi
+  done <<< "${profiles//,/$'\n'}"
+  if project_has_service hub-runner || project_has_service hub-checker; then
+    warn "The hub profile is off, but this project's Hub containers still exist. Turning the profile off does not stop them."
+    warn "  Production intentionally keeps its external-runner checker; leave that checker running."
+    warn "  If you intended to disable Hub, stop and remove its containers explicitly: $DC -f docker-compose.distributed.yml -p $(printf '%q' "$project_name") --profile hub rm -sf hub-runner hub-checker"
+  fi
+}
+warn_disabled_hub_containers
 
 # ---------------- readiness wait ----------------
 if (( DISTRIBUTED == 1 )); then

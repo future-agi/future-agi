@@ -1,0 +1,17 @@
+{
+  "http": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "not_found",
+    "code": "not_found",
+    "detail": "Not found.",
+    "message": "Not found.",
+    "error": "Not found.",
+    "result": "Not found."
+  }
+}

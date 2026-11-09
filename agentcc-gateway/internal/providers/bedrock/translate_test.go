@@ -1162,9 +1162,9 @@ func TestTranslateResponse_TextResponse(t *testing.T) {
 			{Type: "text", Text: "Hello! I'm doing well, thank you."},
 		},
 		StopReason: "end_turn",
-		Usage: bedrockUsage{
-			InputTokens:  12,
-			OutputTokens: 8,
+		Usage: &bedrockUsage{
+			InputTokens:  usageCount(12),
+			OutputTokens: usageCount(8),
 		},
 	}
 
@@ -1218,9 +1218,9 @@ func TestTranslateResponse_ToolUse(t *testing.T) {
 			},
 		},
 		StopReason: "tool_use",
-		Usage: bedrockUsage{
-			InputTokens:  25,
-			OutputTokens: 40,
+		Usage: &bedrockUsage{
+			InputTokens:  usageCount(25),
+			OutputTokens: usageCount(40),
 		},
 	}
 
@@ -1269,9 +1269,9 @@ func TestTranslateResponse_UsageMapping(t *testing.T) {
 			{Type: "text", Text: "OK"},
 		},
 		StopReason: "end_turn",
-		Usage: bedrockUsage{
-			InputTokens:  100,
-			OutputTokens: 50,
+		Usage: &bedrockUsage{
+			InputTokens:  usageCount(100),
+			OutputTokens: usageCount(50),
 		},
 	}
 
@@ -1323,7 +1323,7 @@ func TestTranslateResponse_EmptyContent(t *testing.T) {
 		Role:       "assistant",
 		Content:    []bedrockContentBlock{},
 		StopReason: "end_turn",
-		Usage:      bedrockUsage{InputTokens: 5, OutputTokens: 0},
+		Usage:      &bedrockUsage{InputTokens: usageCount(5), OutputTokens: usageCount(0)},
 	}
 
 	result := translateResponse(resp)
@@ -1441,8 +1441,8 @@ func TestParseStreamPayload_MessageStart(t *testing.T) {
 	if state.messageID != "msg_123" {
 		t.Errorf("state messageID = %q, want %q", state.messageID, "msg_123")
 	}
-	if state.inputTokens != 10 {
-		t.Errorf("state inputTokens = %d, want 10", state.inputTokens)
+	if state.inputTokens == nil || *state.inputTokens != 10 {
+		t.Errorf("state inputTokens = %v, want 10", state.inputTokens)
 	}
 }
 
@@ -1575,7 +1575,7 @@ func TestParseStreamPayload_ContentBlockDeltaInputJSONDelta(t *testing.T) {
 func TestParseStreamPayload_MessageDelta(t *testing.T) {
 	state := newBedrockStreamState("claude-3-sonnet")
 	state.messageID = "msg_123"
-	state.inputTokens = 10
+	state.inputTokens = usageCount(10)
 
 	msg := &eventStreamMessage{
 		Headers: map[string]string{":message-type": "event"},

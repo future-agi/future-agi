@@ -1,0 +1,56 @@
+# The LangSmith Remote MCP on LangSmith Cloud, with a LangSmith API key in
+# the X-Api-Key header. Each Cloud region has its own host, so the org picks
+# it: {apiHost} admits exactly the four hosts LangSmith lists. Self-hosted and
+# BYOC hosts are not offered: they are arbitrary hosts, and the key would go
+# wherever an org pointed it.
+schema: "connector-manifest/v1#provider"
+app: langsmith
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://{apiHost}/mcp
+  urlVariables:
+    apiHost:
+      description: "Your LangSmith Cloud region's API host: api (GCP US), eu.api (GCP EU), apac.api (GCP APAC) or aws.api (AWS US), then .smith.langchain.com."
+      pattern: '^(api|eu\.api|apac\.api|aws\.api)\.smith\.langchain\.com$'
+      default: api.smith.langchain.com
+      scope: org
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: X-Api-Key
+      secret: true
+      label: API key
+      help: "A LangSmith API key, sent in the X-Api-Key header. Calls act as the key's owner, with that key's workspace and permissions."
+      helpUrl: https://docs.langchain.com/langsmith/langsmith-remote-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.langchain.com/langsmith/langsmith-remote-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.apiHost
+    url: https://docs.langchain.com/langsmith/langsmith-remote-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.langchain.com/langsmith/langsmith-remote-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.langchain.com/langsmith/langsmith-remote-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.langchain.com/langsmith/langsmith-remote-mcp
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

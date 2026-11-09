@@ -1,8 +1,8 @@
-from typing import Optional
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
+from accounts.services.hard_erase_issuance_entry import tool_issuance_entry
+from accounts.services.identity_issuance import issue_membership
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import format_datetime, key_value_block, section
 from ai_tools.registry import register_tool
@@ -10,7 +10,7 @@ from ai_tools.registry import register_tool
 
 class CreateWorkspaceInput(PydanticBaseModel):
     name: str = Field(description="Name for the new workspace")
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None, description="Optional description for the workspace"
     )
 
@@ -25,6 +25,7 @@ class CreateWorkspaceTool(BaseTool):
     category = "users"
     input_model = CreateWorkspaceInput
 
+    @tool_issuance_entry
     def execute(self, params: CreateWorkspaceInput, context: ToolContext) -> ToolResult:
         from django.db import IntegrityError
 
@@ -59,7 +60,9 @@ class CreateWorkspaceTool(BaseTool):
             # Add creator as workspace admin (matches WorkspaceManagementView.post behavior)
             from accounts.models.workspace import WorkspaceMembership
 
-            WorkspaceMembership.no_workspace_objects.create(
+            issue_membership(
+                WorkspaceMembership.no_workspace_objects,
+                "create",
                 workspace=workspace,
                 user=actor,
                 role=OrganizationRoles.WORKSPACE_ADMIN,

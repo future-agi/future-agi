@@ -1,0 +1,102 @@
+schema: connector-manifest/v1#provider
+app: google-drive
+id: futureagi-rest
+version: 1.0.0
+kind: rest
+publisher: futureagi
+vendorStatus:
+  label: ga
+  source: https://developers.google.com/workspace/drive/api/reference/rest
+transport:
+  kind: http
+  url: https://{connectorsHost}/google-drive/mcp
+  variant: streamable
+hosted: true
+trusted: false
+accountModes:
+  - agent
+  - user
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://accounts.google.com/o/oauth2/v2/auth
+    tokenUrl: https://oauth2.googleapis.com/token
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    extraAuthorizeParams:
+      access_type: offline
+      prompt: consent
+    refresh:
+      supported: true
+      rotates: false
+    revocation:
+      url: https://oauth2.googleapis.com/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration:
+      - preregistered
+    clientGroup: google
+  verify:
+    tool: list_files
+tools:
+  source: operations
+  defaultPosture: ask
+  generated: tools.generated.json
+pricing:
+  model: free
+upstream:
+  spec:
+    url: https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/drive/v3/drive-api.json
+    format: google-discovery
+    sha256: 5f3972e38acc412206944388e5528a47aeb8779e76303bb6c8a31327c7ba49f9
+    licence: BSD-3-Clause (googleapis/google-api-go-client)
+quality:
+  tier: listed
+  owner: connectors
+lifecycle:
+  status: active
+sources:
+  - fact: auth.oauth2.revocation.url
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.extraAuthorizeParams
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.refresh
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/drive/v3/drive-api.json
+    fetchedAt: "2026-10-28"
+x-omega:
+  ee: exclude
+  oss: exclude

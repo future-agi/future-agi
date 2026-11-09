@@ -2,6 +2,7 @@ package redisstate
 
 import (
 	"os"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -101,10 +102,14 @@ func redisAddr() string {
 	return addr
 }
 
+// skipIfNoRedis connects to the test Redis on DB TEST_REDIS_DB (default 0),
+// so a run on a shared Redis stays on the database it was given.
 func skipIfNoRedis(t *testing.T) *Client {
 	t.Helper()
+	db, _ := strconv.Atoi(os.Getenv("TEST_REDIS_DB"))
 	client, err := NewClient(Config{
 		Address: redisAddr(),
+		DB:      db,
 		Timeout: 1 * time.Second,
 	})
 	if err != nil {

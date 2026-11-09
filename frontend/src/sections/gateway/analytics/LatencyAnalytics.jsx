@@ -1,29 +1,28 @@
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, Card, Grid, Typography, Skeleton } from "@mui/material";
+import { Box, Skeleton, Stack, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsLatency } from "./hooks/useAnalyticsLatency";
+import { formatMs } from "../logs/logStatus";
+import ChartPanel from "./ChartPanel";
+import { isWholeTick } from "./axisLabels";
+import { EMPTY } from "../utils/formatters";
+import {
+  UTC_DAYS_NOTE,
+  bucketTime,
+  localTimeAxis,
+  localTimeTooltip,
+} from "../utils/timeZone";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function computeGranularity(start, end) {
-  if (!start || !end) return "1h";
-  const diffMs = new Date(end).getTime() - new Date(start).getTime();
-  const diffHours = diffMs / (1000 * 60 * 60);
-  if (diffHours <= 6) return "5m";
-  if (diffHours <= 24) return "15m";
-  if (diffHours <= 168) return "1h";
-  if (diffHours <= 720) return "6h";
-  return "1d";
-}
-
 function formatLatency(value) {
-  if (value == null) return "--";
+  if (value == null) return EMPTY;
   const num = Number(value);
-  if (Number.isNaN(num)) return "--";
+  if (Number.isNaN(num)) return EMPTY;
   if (num >= 1000) return `${(num / 1000).toFixed(2)}s`;
   return `${Math.round(num)}ms`;
 }
@@ -39,45 +38,11 @@ const SUMMARY_STATS = [
   { key: "avg_ms", label: "Average" },
 ];
 
-StatCard.propTypes = {
-  label: PropTypes.string.isRequired,
-  value: PropTypes.number,
-  isLoading: PropTypes.bool,
-  color: PropTypes.string,
-};
-
-function StatCard({ label, value, isLoading, color }) {
-  if (isLoading) {
-    return (
-      <Card sx={{ p: 3, textAlign: "center" }}>
-        <Skeleton variant="text" width="50%" height={18} sx={{ mx: "auto" }} />
-        <Skeleton
-          variant="text"
-          width="60%"
-          height={32}
-          sx={{ mx: "auto", mt: 1 }}
-        />
-      </Card>
-    );
-  }
-
-  return (
-    <Card sx={{ p: 3, textAlign: "center" }}>
-      <Typography variant="body2" color="text.secondary" fontWeight={500}>
-        {label}
-      </Typography>
-      <Typography variant="h4" fontWeight={700} sx={{ mt: 0.5, color }}>
-        {formatLatency(value)}
-      </Typography>
-    </Card>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Chart builder
 // ---------------------------------------------------------------------------
 
-function buildLatencyChartOptions(theme) {
+function buildLatencyChartOptions(theme, time) {
   return {
     chart: {
       type: "line",
@@ -96,16 +61,19 @@ function buildLatencyChartOptions(theme) {
       width: [2, 2, 2],
       dashArray: [0, 5, 8], // P50 solid, P95 dashed, P99 dotted
     },
-    xaxis: {
-      type: "datetime",
-      labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-      },
-    },
+    xaxis: localTimeAxis({
+      color: theme.palette.text.secondary,
+      utc: time.utc,
+    }),
     yaxis: {
       labels: {
         style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-        formatter: (val) => formatLatency(val),
+        // Whole milliseconds only (axisLabels.js); the tooltip shows each
+        // point's own value.
+        formatter: (val) =>
+          val != null && Number(val) < 1000 && !isWholeTick(val)
+            ? ""
+            : formatLatency(val),
       },
       title: {
         text: "Latency (ms)",
@@ -118,7 +86,7 @@ function buildLatencyChartOptions(theme) {
     },
     tooltip: {
       theme: theme.palette.mode,
-      x: { format: "MMM dd, HH:mm" },
+      x: localTimeTooltip(time),
       y: { formatter: (val) => formatLatency(val) },
     },
     grid: {
@@ -171,13 +139,8 @@ function buildSeries(timeseries) {
 // Main component
 // ---------------------------------------------------------------------------
 
-const LatencyAnalytics = ({ start, end, gatewayId }) => {
+const LatencyAnalytics = ({ start, end, granularity, gatewayId }) => {
   const theme = useTheme();
-
-  const granularity = useMemo(
-    () => computeGranularity(start, end),
-    [start, end],
-  );
 
   const { data, isLoading } = useAnalyticsLatency({
     start,
@@ -190,67 +153,80 @@ const LatencyAnalytics = ({ start, end, gatewayId }) => {
   const timeseries = data?.timeseries;
 
   const chartSeries = useMemo(() => buildSeries(timeseries), [timeseries]);
-  const chartOptions = useMemo(() => buildLatencyChartOptions(theme), [theme]);
-
-  const statColors = [
-    theme.palette.success.main,
-    theme.palette.warning.main,
-    theme.palette.error.main,
-    theme.palette.info.main,
-  ];
+  // Day buckets read in the zone the API cut them in.
+  const { day, utc } = bucketTime(granularity, data);
+  const chartOptions = useMemo(
+    () => buildLatencyChartOptions(theme, { day, utc }),
+    [theme, day, utc],
+  );
 
   return (
-    <Box>
-      {/* Summary stat cards */}
-      <Grid container spacing={2} mb={3}>
-        {SUMMARY_STATS.map((stat, index) => (
-          <Grid item xs={6} sm={3} key={stat.key}>
-            <StatCard
-              label={stat.label}
-              value={summary?.[stat.key]}
-              isLoading={isLoading}
-              color={statColors[index]}
-            />
-          </Grid>
-        ))}
-      </Grid>
-
-      {/* Latency percentiles over time */}
-      <Card sx={{ p: 3 }}>
-        <Typography variant="subtitle1" fontWeight={600} mb={2}>
-          Latency Percentiles Over Time
-        </Typography>
-        {isLoading ? (
-          <Skeleton
-            variant="rectangular"
-            height={380}
-            sx={{ borderRadius: 1 }}
-          />
-        ) : chartSeries.length > 0 && chartSeries[0].data.length > 0 ? (
-          <Chart
-            type="line"
-            height={380}
-            options={chartOptions}
-            series={chartSeries}
-          />
-        ) : (
-          <Box
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-            height={380}
-          >
-            <Typography variant="body2" color="text.secondary">
-              No latency data available for this time range.
+    <Stack spacing={1.5}>
+      <Box
+        component="ul"
+        aria-label="Latency summary"
+        sx={{
+          m: 0,
+          p: 1.5,
+          listStyle: "none",
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "repeat(2, minmax(0, 1fr))",
+            sm: "repeat(4, minmax(0, 1fr))",
+          },
+          gap: 1.5,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 1,
+        }}
+      >
+        {SUMMARY_STATS.map((stat) => (
+          <Box component="li" key={stat.key} sx={{ minWidth: 0 }}>
+            <Typography
+              typography="s3"
+              color="text.secondary"
+              sx={{ display: "block" }}
+            >
+              {stat.label}
             </Typography>
+            {isLoading ? (
+              <Skeleton width="50%" height={22} />
+            ) : (
+              <Typography
+                typography="m3"
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {/* No request, no latency: "—", never "0 ms". */}
+                {formatMs(
+                  Number(summary?.total_requests) === 0
+                    ? null
+                    : summary?.[stat.key],
+                )}
+              </Typography>
+            )}
           </Box>
-        )}
-      </Card>
-    </Box>
+        ))}
+      </Box>
+      <ChartPanel
+        title="Latency percentiles over time"
+        caption={utc ? UTC_DAYS_NOTE : undefined}
+        loading={isLoading}
+        height={320}
+        empty={!(chartSeries.length > 0 && chartSeries[0].data.length > 0)}
+      >
+        <Chart
+          type="line"
+          height={320}
+          options={chartOptions}
+          series={chartSeries}
+        />
+      </ChartPanel>
+    </Stack>
   );
 };
 
 LatencyAnalytics.propTypes = {
+  granularity: PropTypes.oneOf(["minute", "hour", "day"]),
   start: PropTypes.string,
   end: PropTypes.string,
   gatewayId: PropTypes.string,

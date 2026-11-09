@@ -37,6 +37,7 @@ from simulate.temporal.types.hosted_runner import (
     RunHostedJobInput,
     RunHostedJobOutput,
 )
+from tfc.ee_loader import is_cloud_env
 
 # Per-worker cap on concurrent child processes. Real capacity tuning (weighted
 # units per §9.2) lands in Slice 4; this is a simple safety ceiling.
@@ -49,6 +50,17 @@ _SINK_ENV_BY_PURPOSE = {
     "internal_api_secret": "FI_INTERNAL_SUBMIT_SECRET",
 }
 
+# Frozen source -> destination contract: the builder's internal submit secret
+# and the two explicit sink aliases retained by the r1 compatibility tests.
+# A purpose alone is never authority to read an arbitrary worker credential.
+_SINK_SOURCE_DESTINATIONS = frozenset(
+    {
+        ("INTERNAL_API_SECRET", "FI_INTERNAL_SUBMIT_SECRET"),
+        ("SINK_API_TOKEN", "FI_API_KEY"),
+        ("SINK_SECRET", "FI_SECRET_KEY"),
+    }
+)
+
 
 @functools.lru_cache(maxsize=1)
 def _customer_provider_env_keys() -> frozenset[str]:
@@ -59,7 +71,7 @@ def _customer_provider_env_keys() -> frozenset[str]:
 
     return frozenset(
         p["api_key_env"] for p in _PROVIDER_PROFILES.values() if p.get("api_key_env")
-    )
+    ) | {"VAPI_PUBLIC_API_KEY"}
 
 
 _CHILD_SLOT_HEARTBEAT_SECONDS = float(
@@ -121,9 +133,25 @@ async def build_runner_job(input: BuildRunnerJobInput) -> BuildRunnerJobOutput:
     )
 
 
+def _check_child_launch_hold() -> None:
+    """Refuse new children; this startup setting does not stop existing ones.
+
+    No runtime-reloadable worker config is available here. Operators must set
+    HOSTED_RUNNER_LAUNCH_HOLD=true before starting/replacing every runner worker;
+    changing a deployment environment does not update an existing process.
+    """
+    if getattr(settings, "HOSTED_RUNNER_LAUNCH_HOLD", False):
+        raise ApplicationError(
+            "Hosted simulation child launches are on hold. Try again after the hold is lifted.",
+            type="hosted_runner_launch_held",
+            non_retryable=True,
+        )
+
+
 @activity.defn(name="run_hosted_sdk_job")
 async def run_hosted_sdk_job(input: RunHostedJobInput) -> RunHostedJobOutput:
     """Spawn the SDK child, stream its status lines as heartbeats, await exit."""
+    _check_child_launch_hold()
     from simulate.temporal.constants import HOSTED_RUNNER_CHAT_MODE
 
     # Chat has no budget to derive, matching build_runner_job's own
@@ -151,6 +179,7 @@ async def run_hosted_sdk_job(input: RunHostedJobInput) -> RunHostedJobOutput:
     work_dir: str | None = None
     proc: asyncio.subprocess.Process | None = None
     try:
+        _check_child_launch_hold()
         # Scratch + run-root setup can fail (disk full, bad ALK_RUNNER_RUN_ROOT).
         # Keep it INSIDE the try so the finally still releases the child slot
         # rather than leaking it — otherwise repeated setup failures exhaust the
@@ -220,12 +249,27 @@ async def run_hosted_sdk_job(input: RunHostedJobInput) -> RunHostedJobOutput:
             handle.write(json.dumps(job))
 
         python = os.getenv("ALK_RUNNER_PYTHON", "python")
-        child_env = _child_environment(job)
-        child_env.update(await _resolve_voice_secret_env(job))
+        # Worker-local sidecar, never taken from the job payload or sent to the
+        # child. Every ref records its actual manager/source before resolution.
+        origins: dict[str, tuple[str, str, str]] = {}
+        child_env = _child_environment(job, origins=origins)
+        try:
+            child_env.update(await _resolve_voice_secret_env(job, origins=origins))
+        except ApplicationError as exc:
+            if exc.type != "vapi_public_control_key_required":
+                raise
+            # The workflow surfaces outcome.detail, whereas an activity raise
+            # is wrapped as a generic ActivityError. Return the actionable
+            # refusal, with no child created; the outer finally frees resources.
+            return RunHostedJobOutput(phase="failed", return_code=1, detail=str(exc))
         child_env["FI_RUN_ROOT"] = run_root
         last: dict[str, Any] = {"phase": "pending"}
         return_code = 1
 
+        # Enforce the credential classes on the exact spawn environment, after
+        # every sink, target and metadata overlay (including future overlays).
+        child_env = _final_child_environment(job, child_env, origins=origins)
+        _check_child_launch_hold()
         proc = await asyncio.create_subprocess_exec(
             python,
             "-m",
@@ -398,28 +442,238 @@ def _runs_base() -> str:
     )
 
 
-_CHILD_ENV_DENY_EXACT = frozenset(
+# Closed, case-sensitive inheritance contract for the built-in hosted branches.
+# Reviewed against ALK c95d01efe3 (local origin/dev; deployed pin governs).
+# No prefix matching: new SDK dependencies require an explicit review here.
+# FI_* job/sink fields are injected below, never taken from ambient aliases.
+# VAPI/RETELL customer keys remain resolved per job, not inherited.
+_CHILD_ENV_ALLOWLIST = frozenset(
     {
-        "INTERNAL_API_SECRET",
-        "SECRET_KEY",
-        "DJANGO_SECRET_KEY",
-        "DATABASE_URL",
-        "PGPASSWORD",
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LC_COLLATE",
+        "LC_MESSAGES",
+        "LC_MONETARY",
+        "LC_NUMERIC",
+        "LC_TIME",
+        "TZ",
+        "TMPDIR",
+        "PYTHONUNBUFFERED",
+        "PYTHONIOENCODING",
+        "PYTHONUTF8",
+        "PYTHONDONTWRITEBYTECODE",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        # INTERIM v1.56.1 gateway-only voice parity (main 357 / RL 1840).
+        # Replace this exact pair with the per-job proxy token when it lands.
+        # No tenant code runs here; never admit other AGENTCC_* names.
+        "AGENTCC_API_KEY",
+        "AGENTCC_BASE_URL",
+        "SIMULATOR_LLM_API_KEY",
+        "SIMULATOR_LLM_BASE_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "SIMULATOR_LLM_API_KEY_HEADER",
+        "GOOGLE_CLOUD_PROJECT",
+        "VERTEX_PROJECT",
+        "GOOGLE_CLOUD_LOCATION",
+        "VERTEX_LOCATION",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "SIMULATOR_LLM_THINKING",
+        "SIMULATOR_LLM_FALLBACK_MODELS",
+        "ELEVEN_API_KEY",
+        "ELEVENLABS_API_KEY",
+        "DEEPGRAM_API_KEY",
+        "CARTESIA_API_KEY",
+        "FI_HOSTED_DISPATCH_ACK",
+        "ALK_VOICE_MAX_CASE_CONCURRENCY",
+        "HARNESS_BACKGROUND_NOISE",
+        "HARNESS_BACKGROUND_NOISE_VOLUME",
+        "HARNESS_VOICEMAIL_CLIP",
+        "HARNESS_VOICEMAIL_CLIP_TRANSCRIPT",
+        "HARNESS_VOICEMAIL_CLIP_HAS_TONE",
+        "HARNESS_CALLER_BARGE_IN_RATE",
+        "HARNESS_CALL_DIRECTION",
+        "SIMULATOR_VOICE_PROVIDER",
+        "SIMULATOR_STT_MODEL",
+        "SIMULATOR_TTS_MODEL",
+        "SIMULATOR_TTS_VOICE_ID",
+        "HARNESS_VOICEMAIL_STYLE",
+        "HARNESS_ANSWERED_BY",
+        "SIMULATOR_LLM_PROVIDER",
+        "SIMULATOR_LLM_MODEL",
+        "LIVEKIT_INBOUND_TRUNK_ID",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "VAPI_API_BASE_URL",
+        "VAPI_ASSISTANT_ID",
+        "VAPI_PHONE_NUMBER_ID",
+        "RETELL_API_BASE_URL",
+        "RETELL_AGENT_ID",
+        "RETELL_FROM_NUMBER",
+        "RETELL_API_URL",
+        "RETELL_LIVEKIT_URL",
     }
 )
-_CHILD_ENV_DENY_PREFIXES = (
-    "POSTGRES_",
-    "PGBOUNCER_",
-    "TEMPORAL_",
-    "CELERY_",
-    "RABBITMQ_",
-    "REDIS_",
-    "CLICKHOUSE_",
+
+
+# A source contract is not a denylist: unknown names never authorize a lookup.
+# Retain the reviewed SDK runtime inputs above (including platform LiveKit and
+# simulator credentials and the interim exact gateway pair). Customer account
+# credentials below are env-only and self-host-only; never widen to a prefix.
+_CHILD_ENV_OPERATOR_SOURCES = frozenset(
+    {"VAPI_API_KEY", "VAPI_PUBLIC_API_KEY", "RETELL_API_KEY"}
 )
+# Only these settings have a reviewed secret-env use/fallback. An env contract
+# name is not automatically permission to read a same-named Django setting.
+_CHILD_ENV_SETTING_SOURCES = frozenset({"LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"})
 
 
-def _is_backend_only_secret(key: str) -> bool:
-    return key in _CHILD_ENV_DENY_EXACT or key.startswith(_CHILD_ENV_DENY_PREFIXES)
+def _is_backend_only_secret(name: str) -> bool:
+    """Forbidden destination classes, even when a job explicitly names them.
+
+    Matching is case-insensitive; only the two exact SDK gateway spellings are
+    exceptions. Sink aliases (FI_SECRET_KEY/FI_INTERNAL_SUBMIT_SECRET) and
+    customer provider credentials are deliberately not generic secret matches.
+    """
+    upper = name.upper()
+    if upper.startswith("AGENTCC_"):
+        return name not in {"AGENTCC_API_KEY", "AGENTCC_BASE_URL"}
+    return (
+        upper.startswith(
+            (
+                "PG",
+                "POSTGRES",
+                "REDIS",
+                "CLICKHOUSE",
+                "TEMPORAL",
+                "CELERY",
+                "CH_",
+                "CH25_",
+            )
+        )
+        or bool(
+            set(upper.split("_"))
+            & {
+                "PG",
+                "POSTGRES",
+                "REDIS",
+                "CLICKHOUSE",
+                "TEMPORAL",
+                "CELERY",
+                "CH",
+                "DATABASE",
+                "PGBOUNCER",
+            }
+        )
+        or "ENCRYPTION_KEY" in upper
+        or upper
+        in {
+            "SECRET_KEY",
+            "DJANGO_SECRET_KEY",
+            "INTERNAL_API_SECRET",
+            "ALK_CAB_GUEST_POC_PIN",
+            "ALK_UNSAFE_INPROCESS_CODE_ACTORS",
+        }
+    )
+
+
+def _secret_ref_origin(ref: dict[str, Any], scope: str) -> tuple[str, str, str]:
+    """Describe the exact lookup, not the (possibly aliased) destination name."""
+    manager = str(ref.get("manager") or "")
+    if manager == "provider_credentials":
+        source = ref.get("credential_id")
+    elif manager == "setting":
+        source = ref.get("setting")
+    else:
+        source = ref.get("source") or ref.get("key")
+    return manager, str(source or ""), scope
+
+
+def _secret_source_allowed(origin: tuple[str, str, str], destination: str) -> bool:
+    """Two-sided policy shared by lookup and the exact final spawn boundary."""
+    manager, source, scope = origin
+    if scope == "sink":
+        return manager == "env" and (source, destination) in _SINK_SOURCE_DESTINATIONS
+    if manager == "provider_credentials":
+        # This source is a customer record ID, not a worker env/setting name.
+        return bool(source)
+    cloud = is_cloud_env(getattr(settings, "CLOUD_DEPLOYMENT", "") or "")
+    if manager == "setting":
+        allowed = source in _CHILD_ENV_SETTING_SOURCES
+    elif manager == "env":
+        allowed = source in _CHILD_ENV_ALLOWLIST or (
+            not cloud and source in _CHILD_ENV_OPERATOR_SOURCES
+        )
+    else:
+        return False
+    # The existing backend-class gate is deliberately redundant with the
+    # closed contract. New names must pass BOTH, not just miss a denylist.
+    if not allowed or _is_backend_only_secret(source):
+        return False
+    if cloud and source.upper() in {
+        key.upper() for key in _customer_provider_env_keys()
+    }:
+        return False
+    return True
+
+
+def _final_child_environment(
+    job: dict[str, Any],
+    env: dict[str, str],
+    *,
+    origins: dict[str, tuple[str, str, str]],
+) -> dict[str, str]:
+    """Check destination classes AND worker-local source provenance at spawn.
+
+    Dropping rather than refusing preserves authorized sink/customer mappings
+    in older jobs. The sidecar is mandatory here; it is never job-supplied.
+    Never log values or entire references. Self-host operators own their worker
+    account; Cloud must only use resolved customer keys.
+    """
+    if not is_cloud_env(getattr(settings, "CLOUD_DEPLOYMENT", "") or ""):
+        # A declared but unresolved customer ref must not fall back. Successful
+        # per-job resolution wins over the operator's compatibility value.
+        key = "VAPI_PUBLIC_API_KEY"
+        if key not in env and key not in _secret_env_ref_keys(job):
+            value = os.environ.get(key)
+            if value:
+                env[key] = value
+    refs = list((job.get("metadata") or {}).get("secret_env") or [])
+    target = (job.get("spec") or {}).get("target") or {}
+    refs.extend((target.get("secret_refs") or {}).values())
+    # Include denied ref names already stripped by an earlier helper so those
+    # drops are recorded too. Sink SOURCE names are not child destinations.
+    names = set(env) | {str(ref["key"]) for ref in refs if ref.get("key")}
+    denied = sorted(
+        {name for name in names if _is_backend_only_secret(name)}
+        | {
+            destination
+            for destination, origin in origins.items()
+            if not _secret_source_allowed(origin, destination)
+            or (
+                origin[0] in {"env", "setting"}
+                and not isinstance(env.get(destination), str)
+            )
+        }
+    )
+    for name in denied:
+        env.pop(name, None)
+    if denied:
+        activity.logger.warning("Dropped forbidden hosted child env names: %s", denied)
+    return env
 
 
 def _secret_env_ref_keys(job: dict[str, Any]) -> set[str]:
@@ -436,6 +690,9 @@ def _secret_env_ref_keys(job: dict[str, Any]) -> set[str]:
     for ref in ((job.get("sink") or {}).get("secret_refs") or {}).values():
         if ref.get("key"):
             keys.add(str(ref["key"]))
+        destination = _SINK_ENV_BY_PURPOSE.get(ref.get("purpose"))
+        if destination:
+            keys.add(destination)
     target = (job.get("spec") or {}).get("target") or {}
     for ref in (target.get("secret_refs") or {}).values():
         if ref.get("key"):
@@ -443,34 +700,16 @@ def _secret_env_ref_keys(job: dict[str, Any]) -> set[str]:
     return keys
 
 
-def _child_environment(job: dict[str, Any]) -> dict[str, str]:
-    # Copy the worker env MINUS backend-only secrets the SDK child never needs
-    # (DB creds, the internal API secret — the child instead receives that by
-    # ref below via _SINK_ENV_BY_PURPOSE — plus Temporal/Celery/broker/cache
-    # creds). A strict allowlist is the stronger posture but risks omitting a
-    # provider/LiveKit var the child depends on; the denylist closes the named
-    # leak without that breakage risk. TODO: tighten to an allowlist once the
-    # child's required env is enumerated.
-    env = {k: v for k, v in os.environ.items() if not _is_backend_only_secret(k)}
-    # Deny every CUSTOMER-provider secret key by its EXACT name — derived
-    # from the same profile table as the hoisted customer-key raise in
-    # _resolve_voice_secret_env, so a new provider with an api_key_env is
-    # denied automatically. Key-scoped complement to the ref-scoped
-    # scrub below (_secret_env_ref_keys): that scrub only pops a name a job's
-    # OWN secret_env/sink/target refs declare, so a job shape that declares
-    # no ref for the OTHER provider's key (e.g. a Vapi sip_inbound job never
-    # mentions RETELL_API_KEY) would otherwise inherit it straight from the
-    # worker process. Deliberately EXACT-KEY, not prefix: non-secret
-    # RETELL_*/VAPI_* config the SDK reads from env — base URLs, phone
-    # number ids, assistant ids — is NOT stripped, only the platform's own
-    # provider API key is. This cannot starve a legitimate resolution: a job
-    # that DOES declare its own provider's key ref still gets it back via the
-    # provider_credentials overlay applied after _child_environment returns
-    # (run_hosted_sdk_job: child_env.update(...)), because that overlay reads
-    # os.environ directly, not this dict. LiveKit is unaffected: its
-    # api_key_env is None, so it never joins _customer_provider_env_keys() —
-    # LiveKit system creds are the platform's own runtime vars by design (C5)
-    # and stay inherited-then-scrubbed via the ref-scoped pop only.
+def _child_environment(
+    job: dict[str, Any], *, origins: dict[str, tuple[str, str, str]] | None = None
+) -> dict[str, str]:
+    # Start empty except for reviewed runtime names. Unknown worker names,
+    # backend credentials and unsafe code-execution toggles are not inherited.
+    env = {k: v for k, v in os.environ.items() if k in _CHILD_ENV_ALLOWLIST}
+    # Keep the existing customer-provider invariant even if a future allowlist
+    # edit accidentally adds a provider-profile key: only per-job credential
+    # resolution may supply it. LiveKit keys are platform runtime credentials,
+    # not customer-profile keys, so they remain eligible for inheritance.
     for name in _customer_provider_env_keys():
         env.pop(name, None)
     # A job-declared secret ref (provider key, sink/target secret) must never
@@ -492,14 +731,17 @@ def _child_environment(job: dict[str, Any]) -> dict[str, str]:
         env["FI_TEST_EXECUTION_ID"] = str(sink["test_execution_id"])
 
     for ref in (sink.get("secret_refs") or {}).values():
-        value = _resolve_secret(ref)
         dest = _SINK_ENV_BY_PURPOSE.get(ref.get("purpose"))
-        if dest and value:
-            env[dest] = value
+        if dest:
+            value = _resolve_secret(
+                ref, destination=dest, scope="sink", origins=origins
+            )
+            if value:
+                env[dest] = value
 
     target = (job.get("spec") or {}).get("target") or {}
     for ref in (target.get("secret_refs") or {}).values():
-        value = _resolve_secret(ref)
+        value = _resolve_secret(ref, origins=origins)
         if value and ref.get("key"):
             env[str(ref["key"])] = value
 
@@ -511,18 +753,37 @@ def _child_environment(job: dict[str, Any]) -> dict[str, str]:
     env.pop("LIVEKIT_INBOUND_DID", None)
     if inbound_did:
         env["LIVEKIT_INBOUND_DID"] = str(inbound_did)
+    # SecretRef names are job overlays, not permission to enable local code.
+    env.pop("ALK_UNSAFE_INPROCESS_CODE_ACTORS", None)
     return env
 
 
-def _resolve_secret(ref: dict[str, Any]) -> str | None:
-    # Slice 1 supports the env manager; platform/secret-manager resolution
-    # (short-lived per-job tokens, §10.1) lands with the hosted deployment.
-    if ref.get("manager") == "env" and ref.get("key"):
-        return os.environ.get(str(ref["key"]))
+def _resolve_secret(
+    ref: dict[str, Any],
+    *,
+    destination: str | None = None,
+    scope: str = "target",
+    origins: dict[str, tuple[str, str, str]] | None = None,
+) -> str | None:
+    destination = destination or str(ref.get("key") or "")
+    origin = _secret_ref_origin(ref, scope)
+    if origins is not None and destination:
+        origins[destination] = origin
+    # Cloud public control credentials remain customer-owned. Self-host may
+    # explicitly resolve only the exact reviewed operator env source names.
+    if (
+        destination == "VAPI_PUBLIC_API_KEY"
+        and is_cloud_env(getattr(settings, "CLOUD_DEPLOYMENT", "") or "")
+    ) or not _secret_source_allowed(origin, destination):
+        return None
+    if origin[0] == "env" and destination:
+        return os.environ.get(origin[1])
     return None
 
 
-async def _resolve_voice_secret_env(job: dict[str, Any]) -> dict[str, str]:
+async def _resolve_voice_secret_env(
+    job: dict[str, Any], *, origins: dict[str, tuple[str, str, str]] | None = None
+) -> dict[str, str]:
     """Resolve a voice job's ``metadata.secret_env`` refs into child env vars.
 
     Provider secrets (Vapi/Retell/LiveKit keys) come from ``ProviderCredentials``
@@ -530,8 +791,6 @@ async def _resolve_voice_secret_env(job: dict[str, Any]) -> dict[str, str]:
     env-var → value map to overlay on the child environment.
     """
     secret_env = ((job.get("metadata") or {}).get("secret_env")) or []
-    if not secret_env:
-        return {}
 
     def _resolve() -> dict[str, str]:
         close_old_connections()
@@ -542,21 +801,16 @@ async def _resolve_voice_secret_env(job: dict[str, Any]) -> dict[str, str]:
             if not key:
                 continue
             manager = ref.get("manager")
-            # A customer-account provider key must never be sourced from
-            # anything but provider_credentials — not a plain env
-            # passthrough, not a "setting" ref, not any manager added later
-            # (§10.1) — because any value found through another manager is
-            # the WORKER's (platform's) own key, not this job's customer
-            # credential. Checked here, up front, before the manager
-            # dispatch below, so the rule is keyed on "this IS a customer
-            # key" rather than living inside the env-passthrough `else`
-            # branch, where a manager:"setting" ref (or any future manager)
-            # would silently bypass it. Unlike the LiveKit system runtime
-            # vars, which are the platform's key by design, so raise
-            # unconditionally rather than only when unset.
+            # On Cloud, customer-account destinations must use per-job
+            # records, never the platform's worker keys. Self-host operators
+            # are the customer; the closed source contract below still limits
+            # their env refs to exact reviewed names, never arbitrary prefixes.
+            # LiveKit system runtime credentials remain distinct from these
+            # customer-provider credentials.
             if (
                 str(key) in _customer_provider_env_keys()
                 and manager != "provider_credentials"
+                and is_cloud_env(getattr(settings, "CLOUD_DEPLOYMENT", "") or "")
             ):
                 source = str(ref.get("source") or ref.get("setting") or key)
                 raise ApplicationError(
@@ -566,20 +820,88 @@ async def _resolve_voice_secret_env(job: dict[str, Any]) -> dict[str, str]:
                     type="provider_credentials_missing",
                     non_retryable=True,
                 )
+            origin = _secret_ref_origin(ref, "metadata")
+            if origins is not None:
+                origins[str(key)] = origin
+            if not _secret_source_allowed(origin, str(key)):
+                continue
             if manager == "provider_credentials":
                 value = _resolve_provider_credential(ref, cache)
             elif manager == "setting":
-                value = getattr(
-                    settings, ref.get("setting", ""), None
-                ) or os.environ.get(str(ref.get("setting", "")))
-            else:  # env passthrough
-                source = str(ref.get("source") or key)
-                value = os.environ.get(source)
+                value = getattr(settings, origin[1], None)
+                # Missing/empty settings retain the reviewed same-name env
+                # fallback. Aggregates and other non-strings are never coerced
+                # or rescued by Python truthiness (e.g. an empty list).
+                if value is None or (isinstance(value, str) and not value):
+                    value = os.environ.get(origin[1])
+            else:  # only the explicitly admitted env manager can reach here
+                value = os.environ.get(origin[1])
+            if manager in {"env", "setting"} and not isinstance(value, str):
+                continue
             if value:
                 resolved[str(key)] = str(value)
+        _check_vapi_control_key(job, resolved, cache)
         return resolved
 
     return await sync_to_async(_resolve, thread_sensitive=True)()
+
+
+def _check_vapi_control_key(
+    job: dict[str, Any], resolved: dict[str, str], cache: dict[str, Any]
+) -> None:
+    """Refuse only explicitly saved enabled control auth without a per-job key.
+
+    UNKNOWN policy runs as at v1.56.1: the SDK discovers provider policy and its
+    generic vapi_call_start_failed path remains unchanged (main 435). Never
+    borrow a Cloud worker key or infer a new error code from exception text.
+    """
+    transport = ((job.get("voice") or {}).get("agent_definition") or {}).get(
+        "transport"
+    ) or {}
+    if (
+        not is_cloud_env(getattr(settings, "CLOUD_DEPLOYMENT", "") or "")
+        or transport.get("inbound_call_originator") != "vapi"
+    ):
+        return
+    refs = (job.get("metadata") or {}).get("secret_env") or []
+    credential_ids = {
+        ref.get("credential_id")
+        for ref in refs
+        if ref.get("key") == "VAPI_API_KEY"
+        and ref.get("manager") == "provider_credentials"
+    }
+    requires_key = False
+    for credential_id in credential_ids:
+        credential = cache.get(credential_id)
+        if credential is not None and credential.provider_type == "vapi":
+            config = credential.config_json or {}
+            plan = config.get("monitorPlan") if isinstance(config, dict) else None
+            requires_key = requires_key or (
+                isinstance(plan, dict)
+                and plan.get("controlAuthenticationEnabled") is True
+            )
+            if (
+                len(credential_ids) == 1
+                and resolved.get("VAPI_PUBLIC_API_KEY")
+                and any(
+                    ref.get("key") == "VAPI_PUBLIC_API_KEY"
+                    and ref.get("manager") == "provider_credentials"
+                    and ref.get("credential_id") == credential_id
+                    for ref in refs
+                )
+            ):
+                return
+    if not requires_key:
+        return
+    raise ApplicationError(
+        "This test can't run on hosted Future AGI yet: the Vapi assistant has control "
+        "authentication turned on, and saving its Vapi public key here is coming soon. "
+        "No call was started. Until then, test a Vapi assistant without control "
+        "authentication, or run the test on a self-hosted install, where the operator "
+        "sets the Vapi public key.",
+        type="vapi_public_control_key_required",
+        non_retryable=True,
+    )
 
 
 def _resolve_provider_credential(
@@ -606,11 +928,52 @@ def _resolve_provider_credential(
             ) from None
         cache[credential_id] = credentials
     field = ref.get("field")
-    value = (
-        credentials.get_api_secret()
-        if field == "api_secret"
-        else credentials.get_api_key()
-    )
+    if env_key == "VAPI_PUBLIC_API_KEY" or field == "public_api_key":
+        # The public control key is saved in this customer's target config,
+        # not the worker environment, private API key or LiveKit api_secret.
+        if (
+            env_key != "VAPI_PUBLIC_API_KEY"
+            or field != "public_api_key"
+            or credentials.provider_type != "vapi"
+        ):
+            raise ApplicationError(
+                "Invalid Vapi public control credential reference",
+                type="provider_credentials_missing",
+                non_retryable=True,
+            )
+        config = credentials.config_json or {}
+        plan = config.get("monitorPlan", {}) if isinstance(config, dict) else None
+        authenticated = (
+            plan.get("controlAuthenticationEnabled", False)
+            if isinstance(plan, dict)
+            else None
+        )
+        if type(authenticated) is not bool:
+            raise ApplicationError(
+                "Invalid Vapi control authentication configuration",
+                type="provider_credentials_missing",
+                non_retryable=True,
+            )
+        if not authenticated:
+            return None
+        public_key = config.get("public_api_key")
+        value = public_key.strip() if isinstance(public_key, str) else None
+        if not value:
+            raise ApplicationError(
+                "This test can't run on hosted Future AGI yet: the Vapi assistant has "
+                "control authentication turned on, and saving its Vapi public key here "
+                "is coming soon. No call was started. Until then, test a Vapi "
+                "assistant without control authentication, or run the test on a "
+                "self-hosted install, where the operator sets the Vapi public key.",
+                type="vapi_public_control_key_required",
+                non_retryable=True,
+            )
+    else:
+        value = (
+            credentials.get_api_secret()
+            if field == "api_secret"
+            else credentials.get_api_key()
+        )
     if not value:
         raise ApplicationError(
             f"provider credential {credential_id} has no {field or 'api_key'} "

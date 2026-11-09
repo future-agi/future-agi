@@ -197,6 +197,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
           width={"max-content"}
           gap={1.5}
           sx={{
+            maxWidth: "100%",
             pl: 1.25,
             pr: 1.5,
             py: 1,

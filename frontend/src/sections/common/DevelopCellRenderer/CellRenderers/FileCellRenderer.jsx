@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { Box, IconButton, Stack, Typography, useTheme } from "@mui/material";
+import { Box, IconButton, Typography, useTheme } from "@mui/material";
 import { useDropzone } from "react-dropzone";
 import CustomTooltip from "src/components/tooltip";
+import {
+  formatBytes,
+  useFileSize,
+} from "src/sections/common/Values/MediaViewers";
 import RenderMeta from "../RenderMeta";
 import { commonPropTypes, tooltipSlotProp } from "./cellRendererHelper";
 import DeleteMediaDialog from "src/sections/develop-detail/DataTab/DoubleClickEditCell/ConfirmDelete";
@@ -10,6 +14,7 @@ import logger from "src/utils/logger";
 import { enqueueSnackbar } from "notistack";
 import SvgColor from "src/components/svg-color";
 import { getFileType, getFileTypeFromMime } from "./common";
+import { documentMetaOf } from "../../../develop-detail/DataTab/DoubleClickEditCell/mediaEditorRoute";
 import ReplaceMediaDialog from "../../../develop-detail/DataTab/DoubleClickEditCell/ReplaceMediaDialog";
 import { getFileIcon } from "../../../knowledge-base/sheet-view/icons";
 
@@ -54,11 +59,20 @@ const FileCellRenderer = ({
   const { dataset } = useParams();
   const { experimentId } = useParams();
   const [openMediaUpload, setOpenMediaUpload] = useState(false);
+  const fileSize = useFileSize(typeof value === "string" ? value : null);
   useEffect(() => {
     if (value) {
-      if (typeof value === "string") {
-        setFileName(value?.split("/")?.pop() || value);
-        setFileType(getFileType(value?.split(".")?.pop()));
+      if (typeof value === "string" && value.startsWith("data:")) {
+        // An uploaded file (a pending edit carries it as a data: URL): its
+        // `name=` and MIME type, not the base64 payload (documentMetaOf,
+        // the rule EditFile shows too).
+        const meta = documentMetaOf(value);
+        setFileName(meta.fileName);
+        setFileType(meta.fileType);
+      } else if (typeof value === "string") {
+        const meta = documentMetaOf(value);
+        setFileName(meta.fileName);
+        setFileType(meta.fileType);
         if (!value?.startsWith("data:")) {
           if (
             valueInfos?.documentName &&
@@ -178,7 +192,7 @@ const FileCellRenderer = ({
             display: "flex",
             height: "100%",
             justifyContent: "flex-start",
-            padding: theme.spacing(1.75, 1),
+            padding: theme.spacing(0.5, 1),
             position: "relative",
             "&:hover .icon-actions": {
               opacity: 1,
@@ -193,8 +207,8 @@ const FileCellRenderer = ({
                 display: "flex",
                 alignItems: "center",
                 cursor: "pointer",
-                borderRadius: "8px",
-                padding: theme.spacing(2, 1.5),
+                borderRadius: "6px",
+                padding: theme.spacing(0.25, 1),
                 border: "1px solid",
                 borderColor: theme.palette.divider,
                 backgroundColor: theme.palette.background.paper,
@@ -208,37 +222,40 @@ const FileCellRenderer = ({
                 sx={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 1,
-                  width: "80%",
+                  gap: 0.75,
+                  width: "100%",
+                  minWidth: 0,
                 }}
                 onClick={handleFileClick}
               >
                 <Box
                   component={"img"}
                   sx={{
-                    height: "20px",
-                    width: "20px",
+                    height: "16px",
+                    width: "16px",
                   }}
                   alt="document icon"
                   src={getFileIcon(fileType, "pdf")}
                 />
-                <Stack gap={0.25} sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography
-                    variant="s2"
-                    fontWeight={"fontWeightMedium"}
-                    noWrap
-                    color={"text.primary"}
-                  >
-                    {fileName}
-                  </Typography>
-                  <Typography
-                    variant="s2"
-                    fontWeight={"fontWeightRegular"}
-                    color={"text.primary"}
-                  >
-                    {fileType}
-                  </Typography>
-                </Stack>
+                <Typography
+                  variant="s2"
+                  fontWeight={"fontWeightMedium"}
+                  noWrap
+                  color={"text.primary"}
+                  sx={{ flex: 1, minWidth: 0 }}
+                >
+                  {fileName}
+                  {fileSize ? (
+                    <Typography
+                      component="span"
+                      variant="s2"
+                      color="text.secondary"
+                      fontWeight={"fontWeightRegular"}
+                    >
+                      {` · ${formatBytes(fileSize)}`}
+                    </Typography>
+                  ) : null}
+                </Typography>
               </Box>
               {experimentId && value && (
                 <Box
@@ -362,50 +379,34 @@ const FileCellRenderer = ({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    borderRadius: "8px",
+                    borderRadius: "6px",
                     border: "1px dashed",
                     borderColor: theme.palette.divider,
-                    minHeight: "60px",
                     backgroundColor: isDragActive
                       ? theme.palette.background.neutral
                       : "transparent",
-                    position: "relative",
-                    textAlign: "center",
                   }}
                 >
-                  <Typography
-                    variant="s3"
-                    color="text.primary"
-                    textAlign="center"
+                  <CustomTooltip
+                    show
+                    size="small"
+                    placement="top"
+                    title="Or drop a PDF, DOCX, DOC or TXT file here"
                   >
-                    <label
+                    <Typography
+                      variant="s3"
+                      component="label"
                       htmlFor="file-upload"
-                      style={{
-                        color: "var(--primary-main)",
-                        cursor: "pointer",
-                      }}
                       onClick={(e) => {
                         e.stopPropagation();
                         window.__fileClick = true;
                         setOpenMediaUpload(true);
                       }}
+                      sx={{ color: "primary.main", cursor: "pointer" }}
                     >
-                      Click here
-                    </label>{" "}
-                    to upload file or <br />
-                    drop a file here
-                    <br />
-                    <Typography
-                      variant="caption"
-                      component="span"
-                      sx={{
-                        color: theme.palette.text.secondary,
-                        fontSize: "0.7rem",
-                      }}
-                    >
-                      (PDF, DOCX, DOC, TXT)
+                      Upload file
                     </Typography>
-                  </Typography>
+                  </CustomTooltip>
                 </Box>
               </Box>
             )

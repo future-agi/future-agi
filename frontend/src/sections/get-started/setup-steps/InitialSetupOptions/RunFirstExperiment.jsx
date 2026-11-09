@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Typography } from "@mui/material";
 import React, { useState } from "react";
 import NewExperiment from "src/sections/project/NewProject/NewExperiment";
@@ -76,7 +77,7 @@ const RunFirstExperiment = ({ setCurrentLabel }) => {
               width: "100%",
             }}
           >
-            <iframe
+            <ExternalContentFrame
               src={iframeVideo}
               title="Prototype: Future AGI"
               frameBorder="0"

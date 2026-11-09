@@ -34,17 +34,17 @@ def backfill_names(apps, schema_editor):
     """
     HostedHarnessJob = apps.get_model("simulate", "HostedHarnessJob")
     pending = []
-    for job in HostedHarnessJob.objects.filter(name="").iterator(chunk_size=_CHUNK):
+    for job in HostedHarnessJob.objects.using(schema_editor.connection.alias).filter(name="").iterator(chunk_size=_CHUNK):
         try:
             job.name = _derived_name(job)
         except (AttributeError, TypeError):
             job.name = f"simulation-{str(job.id)[:8]}"
         pending.append(job)
         if len(pending) >= _CHUNK:
-            HostedHarnessJob.objects.bulk_update(pending, ["name"])
+            HostedHarnessJob.objects.using(schema_editor.connection.alias).bulk_update(pending, ["name"])
             pending = []
     if pending:
-        HostedHarnessJob.objects.bulk_update(pending, ["name"])
+        HostedHarnessJob.objects.using(schema_editor.connection.alias).bulk_update(pending, ["name"])
 
 
 def clear_names(apps, schema_editor):

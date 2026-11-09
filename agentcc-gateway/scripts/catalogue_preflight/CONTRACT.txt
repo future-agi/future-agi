@@ -1,0 +1,79 @@
+733 CATALOGUE LAUNCHER — AUTHORING ONLY
+
+Execution is deliberately not installed or enabled by this change. No stack,
+probe, launcher, synthetic routing run or policy-removal run may start until
+main supplies independently accepted native-containment inputs OS1-OS6.
+There is no environment override or receipt-file-as-authorization switch.
+
+Go: all new code is cataloguepreflighttest-tagged. The route assembly lives
+in cmd/agentcc/catalogue_route_launcher_test.go (test binary only). The native
+supervisor's future adapter calls LaunchCatalogueRoute, supplying its actual
+CatalogueNativeBoundary implementation. There is no automatic Test function
+that starts it. Release builds must contain none of CataloguePreflight,
+CatalogueSynthetic, cataloguePreflight, catalogueSynthetic or the new fixture
+package. Existing production egress/check/TLS/route/wiring bytes are untouched.
+
+Adapter obligations (NOT implemented or certified here)
+1. BeforeSetup/require_before_imports: attach the actual process and all native
+   children before interpreter startup/imports, NSS, utilities or any socket.
+   Verify accepted OS1-OS6 identity, native positive/refusal/fail-closed controls,
+   executable and static input closure. Install the frozen Go and Python guards,
+   per-test ledgers, refusing proxy and unchanged classified provider tripwire.
+2. start_gateway: compile the exact source/tag with the frozen guard (offline),
+   execute the registered Go child, call LaunchCatalogueRoute, return its URL,
+   Bundle, Seal, fixture Name/Port. Carry the ephemeral admin token only in the
+   private child channel, not argv, console output or receipts.
+3. SealLive/seal_django: exclusively seal actual retained listeners with PID,
+   birth, socket inode/equivalent, namespace/cgroup, nonce, source/binary/fixture
+   hashes, DNS exact question/answer, CA/leaf digests/SAN, and static intent hash.
+   Verify live ownership before/after every action; restart/drift means STOP.
+4. BeforeAction/before_action: verify current native attachment, observer health,
+   registration immutability, and permitted invocation before every route action.
+5. verify_database: dedicated already-migrated synthetic catalogue_733_* DB on
+   numeric loopback. Supply pinned Django settings/venv/startup WITHOUT reading
+   real .env, private EE or credentials. Python launcher requires a fresh child.
+6. reconcile_action: persist full per-process native socket/DNS/exec closure,
+   zero dropped events and ZERO ordinary non-loopback attempts. A Python ledger
+   alone is NOT containment. No getent. Provider hit stops; never self-triage.
+7. run_synthetic_arm: only after native acceptance, compile green/red/restored
+   exact-head test binaries. For red ONLY compose the generated check-entry
+   compiler input with the unchanged Go guard; fail on overlay collisions.
+   Return actual command_exit, source_sha256, frozen_guards_unchanged and the
+   saved same-invocation receipt. Preserve failed receipts and every ledger.
+   These are required supervisor interfaces, not supplied implementations.
+
+Real call path
+Authenticated Bearer owner/member request over owned numeric loopback HTTP ->
+Django WSGI/router/serializer/RBAC/org selection -> connector_catalog.add_connector
+-> real connector_tool_listing -> real gateway /-/mcp/probe admin route -> real
+mcp.HandleProbe/HTTPClient/DialTLSContext -> tagged scoped resolver -> owned
+numeric loopback DNS -> original hostname-based policy -> owned TLS MCP mock.
+No force_authenticate, direct Server.Probe, canned listing, HTTP-only hook,
+InsecureSkipVerify, system-DNS fallback, localhost regex exception or status
+substitution is provided. Only BUNDLE_PATH and ordinary test configuration
+inputs point to the owned generated catalogue/gateway.
+
+Cases: positive A/B 201 + real tools/list credential hash + five-tool baseline +
+distinct virtual IDs; member 403; localhost 400 url_variable_invalid; wrong SAN
+and untrusted CA 502/unreachable; absent allow, wrong port and unlisted same-IP
+name 502/egress_refused; logical metadata 502/egress_refused. Negatives compare
+same-invocation own AND foreign authenticated API/whole-config/vault snapshots,
+including every version and deleted/revoked row. No credential value is logged.
+
+Separate synthetic assertion-red
+Only metadata.google.internal resolving to 169.254.169.254 may be synthetically
+mapped to the pre-registered owned numeric loopback TLS socket, at the same port.
+The mapping sits AFTER the original check. Green cannot reach it. The disposable
+compiler input short-circuits ONLY check, leaves TLS and all assertions intact,
+and must produce actual 201 + actual mock/TLS reach and a failed original refusal
+assertion. Restored must be green. This never binds/dials the metadata address,
+never proves live metadata access, and grants no new egress-count budget.
+
+Allowed authoring gates
+Release/tagged compile and vet; release nm absence with ordinary-symbol positive
+control; network-free DNS packet/certificate/check/receipt unit tests; unchanged
+focused egress/manifest/config/netguard tests. No fixture Start or launcher,
+Django, catalogue add, native browser, assertion-red execution or stack startup.
+Old STOP/results, original :80 partition, main 97a and its templates stay intact.
+Native containment adapter qualification, actual DNS/TLS roundtrips, route
+witnesses and synthetic assertion-red remain OWED; productAccepted remains false.

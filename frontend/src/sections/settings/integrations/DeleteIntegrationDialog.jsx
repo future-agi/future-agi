@@ -11,11 +11,13 @@ import {
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import { useDeleteConnection } from "src/api/integrations";
+import { EXPORT_PLATFORMS } from "./constants";
 import { outlinedNeutralButtonSx } from "./styles";
 
 function DeleteDialogContent({ onClose, onDeleted, connection }) {
   const { mutate: deleteConnection, isPending } = useDeleteConnection();
   const [confirmText, setConfirmText] = useState("");
+  const isExport = EXPORT_PLATFORMS.includes(connection?.platform);
 
   const handleDelete = () => {
     deleteConnection(connection.id, {
@@ -31,8 +33,10 @@ function DeleteDialogContent({ onClose, onDeleted, connection }) {
           <strong>
             {connection?.display_name || connection?.external_project_name}
           </strong>
-          ? This will stop syncing and remove the connection configuration.
-          Previously synced traces will not be deleted.
+          ?{" "}
+          {isExport
+            ? "This stops exporting request logs and removes the connection. Request logs already exported stay where they were sent."
+            : "This will stop syncing and remove the connection configuration. Previously synced traces will not be deleted."}
         </DialogContentText>
         <TextField
           fullWidth

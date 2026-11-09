@@ -1,0 +1,50 @@
+# Gateway config template for 69_m13_upstream.sh: three static YAML MCP
+# servers on three agentcc-mcpmock upstreams.
+#   pages   dual era, at a path that is not /mcp, answering in SSE, 120 tools
+#           in pages of 50
+#   legacy  2025-06-18 only (sessions; drop_session forgets them)
+#   slow    2025-06-18, a 90 s tool, with timeout_ms 120000 against the 30 s
+#           tool_call_timeout
+# Every key and token below is a fake value for the local mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+providers:
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+logging:
+  level: "info"
+mcp:
+  enabled: true
+  # The YAML servers serve the keys' org, org-acme (mcp.static.org_id): the
+  # legacy view serves them only to that org's principals and to a principal
+  # with no org (M10 IR-11, at the W3b merge).
+  static:
+    org_id: "org-acme"
+  tool_call_timeout: 30s
+  servers:
+    pages:
+      url: "@@MCP_PAGES_URL@@/rpc/v2"
+      transport: "http"
+    legacy:
+      url: "@@MCP_LEGACY_URL@@/mcp"
+      transport: "http"
+    slow:
+      url: "@@MCP_SLOW_URL@@/mcp"
+      transport: "http"
+      timeout_ms: 120000

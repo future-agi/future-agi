@@ -7,7 +7,7 @@ import React, {
 } from "react";
 import PropTypes from "prop-types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router";
+import { useLocation, useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { getRandomId, sanitizeContent } from "src/utils/utils";
 import { useDebouncedFunction } from "src/hooks/use-debounced-function";
@@ -18,6 +18,11 @@ import { DefaultMessages } from "../constant";
 import { isContentNotEmpty } from "./Playground/common";
 import { modelConfigDefault, PromptWorkbenchContext } from "./WorkbenchContext";
 import { visibleWorkbenchTab } from "./workbenchTab";
+import {
+  prefillOf,
+  withPrefilledModel,
+  withPrefilledVariables,
+} from "./workbenchPrefill";
 import {
   getVariables,
   handleAuthFailClose,
@@ -66,11 +71,23 @@ const buildPromptRunOutput = (runStatus) => {
           cost: metadata?.cost?.total_cost,
           tokens: metadata?.usage?.total_tokens,
           responseTime: metadata?.response_time,
+          // IT-R1 G4 (additive): what the model and its tools did.
+          steps: metadata?.steps,
+          tools: metadata?.tools,
+          // IT-R2 G4 (additive): the tool choice used and the request sent.
+          toolChoice: metadata?.tool_choice,
+          request: metadata?.request,
         },
         outputFormat,
       };
     });
 };
+
+// `V3`, `v3` and `3` name the same prompt version.
+const sameVersionName = (a, b) =>
+  a != null &&
+  b != null &&
+  String(a).replace(/^v/i, "") === String(b).replace(/^v/i, "");
 
 const WorkbenchProvider = ({ children }) => {
   const { id } = useParams();
@@ -133,6 +150,32 @@ const WorkbenchProvider = ({ children }) => {
   const [isImportDatasetDrawerOpen, setImportDatasetDrawerOpen] =
     useState(false);
   const [variableData, setVariableData] = useState({});
+  // `Open in Prompts with this row ↗` (results drawer, PRODUCT-SPEC M12;
+  // L7b G8): the router state is read ONCE at mount (a later navigate that
+  // writes the selected versions into the URL drops location.state) and
+  // applied after the ?version= restore below has settled, so the row's
+  // variables, the run's model and its params win over the draft's values.
+  const { state: locationState, search: mountSearch } = useLocation();
+  const prefillRef = useRef(prefillOf(locationState));
+  const [versionSettled, setVersionSettled] = useState(
+    () => !new URLSearchParams(mountSearch).get("version"),
+  );
+  useEffect(() => {
+    const prefill = prefillRef.current;
+    if (!prefill || !versionSettled || !Object.keys(variableData).length)
+      return;
+    prefillRef.current = null;
+    if (prefill.variables)
+      setVariableData((prev) =>
+        withPrefilledVariables(prev, prefill.variables),
+      );
+    if (prefill.model || prefill.params)
+      setModelConfig((prev) =>
+        prev.map((config, index) =>
+          index === 0 ? withPrefilledModel(config, prefill) : config,
+        ),
+      );
+  }, [versionSettled, variableData]);
   const [promptName, setPromptName] = useState("");
   const [openSelectModel, setOpenSelectModel] = useState(null);
   const [valuesChanged, setValuesChanged] = useState(false);
@@ -492,6 +535,29 @@ const WorkbenchProvider = ({ children }) => {
               break;
             }
             resultSetter(versionIndex, resultIndex, wsData?.chunk, "running");
+            // IT-R5 G4 P3: a run that streams its steps (model and tool
+            // calls) fills the structured `What the model did` panel as it
+            // goes, instead of raw intermediate text.
+            if (Array.isArray(wsData?.metadata?.steps)) {
+              const m = wsData.metadata;
+              setResultsByIndex(versionIndex, (prev) => ({
+                ...prev,
+                output: (prev?.output ?? []).map((opt, rIndex) =>
+                  rIndex === resultIndex
+                    ? {
+                        ...opt,
+                        metadata: {
+                          ...(opt?.metadata ?? {}),
+                          steps: m.steps,
+                          tools: m.tools,
+                          toolChoice: m.tool_choice,
+                          request: m.request,
+                        },
+                      }
+                    : opt,
+                ),
+              }));
+            }
             break;
           }
           case "completed": {
@@ -511,6 +577,10 @@ const WorkbenchProvider = ({ children }) => {
                       cost: wsData.metadata?.cost?.total_cost,
                       tokens: wsData.metadata?.usage?.total_tokens,
                       responseTime: wsData.metadata?.response_time,
+                      steps: wsData.metadata?.steps,
+                      tools: wsData.metadata?.tools,
+                      toolChoice: wsData.metadata?.tool_choice,
+                      request: wsData.metadata?.request,
                     },
                     outputFormat: wsData?.output_format,
                   };
@@ -654,6 +724,10 @@ const WorkbenchProvider = ({ children }) => {
             cost: data?.metadata?.[outputIdx]?.cost?.total_cost,
             tokens: data?.metadata?.[outputIdx]?.usage?.total_tokens,
             responseTime: data?.metadata?.[outputIdx]?.response_time,
+            steps: data?.metadata?.[outputIdx]?.steps,
+            tools: data?.metadata?.[outputIdx]?.tools,
+            toolChoice: data?.metadata?.[outputIdx]?.tool_choice,
+            request: data?.metadata?.[outputIdx]?.request,
           },
           outputFormat: data?.prompt_config?.[0]?.configuration?.output_format,
         })),
@@ -810,6 +884,10 @@ const WorkbenchProvider = ({ children }) => {
               cost: version?.metadata?.[outputIdx]?.cost?.total_cost,
               tokens: version?.metadata?.[outputIdx]?.usage?.total_tokens,
               responseTime: version?.metadata?.[outputIdx]?.response_time,
+              steps: version?.metadata?.[outputIdx]?.steps,
+              tools: version?.metadata?.[outputIdx]?.tools,
+              toolChoice: version?.metadata?.[outputIdx]?.tool_choice,
+              request: version?.metadata?.[outputIdx]?.request,
             },
             outputFormat:
               version?.prompt_config_snapshot?.configuration?.output_format,
@@ -834,8 +912,12 @@ const WorkbenchProvider = ({ children }) => {
       const currentConfig = { ...modelConfig[index] };
       delete currentConfig.id;
       const configuration = normalizeConfigurationForSave(currentConfig);
+      // IT-R2 G4 P1: the playground's Tool choice (Auto · Required · a
+      // tool) is sent as is; Auto when tools are attached and none is set.
       configuration["tool_choice"] =
-        currentConfig?.tools?.length > 0 ? "auto" : "";
+        currentConfig?.tools?.length > 0
+          ? currentConfig?.tool_choice || "auto"
+          : "";
       configuration["template_format"] = templateFormat || "mustache";
 
       const selectedVersion = selectedVersions[index];
@@ -1002,14 +1084,28 @@ const WorkbenchProvider = ({ children }) => {
     },
   });
 
+  const runFromDraft = useRef([]);
   const { mutate: runPromptTemplate } = useMutation({
     /**
      *
      * @param {Object} data
      * @returns
      */
-    mutationFn: ({ index }) => {
+    mutationFn: async ({ index }) => {
       const payload = getRunTemplatePayload(index);
+      // IT-R4 G4 P2: save the editor first, so the run reads what is on
+      // screen (a variable value typed < 0.5 s ago is still waiting for its
+      // debounced save; the stream only names the version). Only a draft
+      // is saved in place; a committed version is never edited.
+      if (runFromDraft.current[index] && selectedVersions[index]?.version)
+        try {
+          await axios.post(
+            endpoints.develop.runPrompt.runTemplatePrompt(id),
+            getSaveTemplatePayload(index, false),
+          );
+        } catch {
+          // the run still starts on the saved version
+        }
 
       return new Promise((resolve, reject) => {
         let completed = false;
@@ -1124,9 +1220,19 @@ const WorkbenchProvider = ({ children }) => {
     onError: (error, variables) => {
       const index = variables?.index ?? 0;
       setLoadingStatusByIndex(index, false);
+      // IT-R4 G4 P2: the failure stays in the output panel with Retry
+      // (`Couldn't run: <reason>`), not only in a toast that fades.
+      const reason =
+        error?.response?.data?.result ??
+        error?.response?.data?.detail ??
+        error?.result ??
+        error?.detail ??
+        error?.message ??
+        "the run did not start";
       setResultsByIndex(index, (previous) => ({
         ...previous,
         isAnimating: false,
+        error: typeof reason === "string" ? reason : "the run did not start",
       }));
       enqueueSnackbar(error?.message || "Prompt run failed.", {
         variant: "error",
@@ -1354,6 +1460,10 @@ const WorkbenchProvider = ({ children }) => {
             cost: version?.metadata?.[index]?.cost?.total_cost,
             tokens: version?.metadata?.[index]?.usage?.total_tokens,
             responseTime: version?.metadata?.[index]?.response_time,
+            steps: version?.metadata?.[index]?.steps,
+            tools: version?.metadata?.[index]?.tools,
+            toolChoice: version?.metadata?.[index]?.tool_choice,
+            request: version?.metadata?.[index]?.request,
           },
           outputFormat:
             version?.prompt_config_snapshot?.configuration?.output_format,
@@ -1363,6 +1473,69 @@ const WorkbenchProvider = ({ children }) => {
       },
     ]);
   };
+
+  // options-truth L3 G8 P5: `Open in Prompts` from a run card carries the
+  // card's version (`?version=V3`); once the latest load lands, open that
+  // version (its messages, model and tools) instead of the latest one.
+  const { search: locationSearch } = useLocation();
+  const openVersionRef = useRef(
+    new URLSearchParams(locationSearch).get("version"),
+  );
+  useEffect(() => {
+    const want = openVersionRef.current;
+    if (!want || !data) return;
+    openVersionRef.current = null;
+    if (sameVersionName(data?.version, want)) {
+      setVersionSettled(true);
+      return;
+    }
+    let cancelled = false;
+    axios
+      .get(endpoints.develop.runPrompt.getPromptVersions(), {
+        params: { template_id: id, page: 1 },
+      })
+      .then((res) => {
+        const hit = (res?.data?.results ?? []).find((v) =>
+          sameVersionName(v?.template_version, want),
+        );
+        if (cancelled) return;
+        if (!hit) {
+          setVersionSettled(true);
+          return;
+        }
+        // Keep the values already typed for the variables this version uses.
+        const saved = hit.variable_names;
+        const names = Array.isArray(saved) ? saved : Object.keys(saved ?? {});
+        onRestoreVersion({ ...hit, variable_names: undefined });
+        if (names.length)
+          setVariableData((cur) =>
+            Object.fromEntries(
+              names.map((n) => {
+                const typed = cur?.[n];
+                const has = Array.isArray(typed)
+                  ? typed.some((x) => String(x ?? "") !== "")
+                  : String(typed ?? "") !== "";
+                return [
+                  n,
+                  has ? typed : (!Array.isArray(saved) && saved?.[n]) || [""],
+                ];
+              }),
+            ),
+          );
+        setVersionSettled(true);
+      })
+      .catch((e) => {
+        logger.error("Couldn't open the version", e);
+        setVersionSettled(true);
+      });
+    return () => {
+      cancelled = true;
+      // The restore is skipped; a pending prefill still applies to what
+      // is loaded rather than never.
+      setVersionSettled(true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, id]);
 
   const addToCompare = async () => {
     if (selectedVersions.length === 3) {
@@ -1559,6 +1732,9 @@ const WorkbenchProvider = ({ children }) => {
   };
 
   const saveAndRun = (index) => {
+    // IT-R4 G4 P2: which versions were drafts when Run was pressed (the
+    // run then clears isDraft); only those are saved before the stream.
+    runFromDraft.current = selectedVersions.map((v) => Boolean(v?.isDraft));
     // If no index we run all
     if (index === undefined) {
       runningVersionIndexMapping.current = selectedVersions.reduce(

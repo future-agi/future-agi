@@ -1,5 +1,6 @@
 """Fake Docker/OpenSSL setup tests; one real daemon-free Compose dotenv roundtrip."""
 
+import base64
 import json
 import os
 import select
@@ -13,8 +14,10 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+URL_SAFE_BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_="
 APPLICATION_SECRETS = (
-    "SECRET_KEY", "AGENTCC_INTERNAL_API_KEY", "AGENTCC_ADMIN_TOKEN", "PG_PASSWORD",
+    "SECRET_KEY", "FI_API_SECRET_PEPPER", "AGENTCC_INTERNAL_API_KEY", "AGENTCC_ADMIN_TOKEN",
+    "OMEGA_HUB_CHECKER_TOKEN", "PG_PASSWORD",
     "MINIO_ROOT_PASSWORD", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
     "GOOGLE_API_KEY", "INTEGRATION_ENCRYPTION_KEY", "EE_LICENSE_KEY",
     "RECAPTCHA_SECRET_KEY", "MAILGUN_API_KEY", "AWS_ACCESS_KEY_ID",
@@ -43,8 +46,12 @@ args = sys.argv[1:]
 with open(os.environ["SETUP_TEST_RECORD"], "a") as log:
     log.write(json.dumps([tool, *args]) + "\\n")
 if tool == "openssl":
-    assert args[:2] == ["rand", "-hex"]
-    print("a" * (2 * int(args[2])))
+    assert args[0] == "rand" and args[1] in ("-hex", "-base64"), args
+    if args[1] == "-hex":
+        print("a" * (2 * int(args[2])))
+    else:  # standard base64, with the + and / that setup.sh must translate
+        import base64
+        print(base64.b64encode((bytes([0xFB, 0xEF, 0xFF]) * 11)[:int(args[2])]).decode())
 elif tool == "docker":
     assert args[0] == "compose"
     if args[1:] == ["version"]:
@@ -59,6 +66,9 @@ elif tool == "docker":
     if "config" in args:
         if os.environ.get("SETUP_TEST_INVALID_CONFIG"):
             sys.exit(17)
+        if os.environ.get("SETUP_TEST_CONFIG_STDERR"):
+            sys.stderr.write(os.environ["SETUP_TEST_CONFIG_STDERR"])
+            sys.exit(1)
         if "--images" in args:
             print("futureagi/fi-collector:" + os.environ.get("FI_COLLECTOR_VERSION", "test-release"))
     elif "pull" in args:
@@ -86,6 +96,10 @@ else:
             "SERVING_VERSION": "test-serving-release",
             "CODE_EXECUTOR_VERSION": "test-executor-release",
             "SIMULATION_RUNNER_VERSION": "test-simulation-release",
+            "OMEGA_HUB_CHECKER_VERSION": "test-hub-checker-release",
+            "OMEGA_HUB_RUNNER_IMAGE": "registry.example.invalid/omega-hub-runner@sha256:" + "0" * 64,
+            "OMEGA_HUB_RUNNER_DOCKER_HOST": "tcp://hub-runner.example.invalid:2376",
+            "OMEGA_HUB_RUNNER_TLS_DIR": "/etc/futureagi/hub-runner-client",
             "PROPERTY_CATALOG_API_PASSWORD": "private-reader-$literal # ' \\ ü",
             "PROPERTY_CATALOG_CONSUMER_PASSWORD": "private-writer-$literal # ' \\ ø",
         }
@@ -126,6 +140,8 @@ else:
         for key in ("FRONTEND_URL", "VITE_HOST_API", "FI_COLLECTOR_VERSION",
                     "FUTURE_AGI_VERSION", "FRONTEND_VERSION", "AGENTCC_GATEWAY_VERSION",
                     "SERVING_VERSION", "CODE_EXECUTOR_VERSION", "SIMULATION_RUNNER_VERSION",
+                    "OMEGA_HUB_CHECKER_VERSION", "OMEGA_HUB_RUNNER_IMAGE", "OMEGA_HUB_RUNNER_DOCKER_HOST",
+                    "OMEGA_HUB_RUNNER_TLS_DIR",
                     "PROPERTY_CATALOG_API_PASSWORD", "PROPERTY_CATALOG_CONSUMER_PASSWORD"):
             with self.subTest(key=key):
                 result = self.run_setup("--non-interactive", "--skip-up", **{key: ""})
@@ -282,6 +298,101 @@ else:
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(self.config.read_bytes() == original)
         self.assertFalse(any(call[0] == "openssl" for call in self.calls()))
+        self.assert_no_lifecycle()
+
+    def generated_value(self, key):
+        line = next(
+            entry
+            for entry in self.config.read_text().splitlines()
+            if entry.startswith(key + "=")
+        )
+        return line.split("=", 1)[1].strip('"')
+
+    def assert_fernet_key(self, value, name):
+        # What cryptography's Fernet accepts: 32 bytes in URL-safe base64.
+        self.assertTrue(len(value) == 44 and value.endswith("="), name)
+        self.assertTrue(set(value) <= set(URL_SAFE_BASE64), name)
+        self.assertTrue(len(base64.urlsafe_b64decode(value)) == 32, name)
+
+    def test_fresh_install_generates_a_fernet_integration_key(self):
+        # Every organization's system API key is sealed under it at sign-up: an
+        # empty key failed the first sign-up of a production install (L03).
+        result = self.run_setup("--non-interactive", "--skip-up")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(["openssl", "rand", "-base64", "32"], self.calls())
+        self.assert_fernet_key(self.generated_value("INTEGRATION_ENCRYPTION_KEY"), "key")
+        self.assertTrue(len(self.generated_value("FI_API_SECRET_PEPPER")) >= 32)
+
+    def test_fresh_install_gives_every_production_process_both_keys(self):
+        # Real openssl and the real overlay: what an operator's first install renders.
+        docker_only = self.root / "docker-only"
+        docker_only.mkdir()
+        shutil.copy2(self.root / "fake-bin" / "docker", docker_only / "docker")
+        path = os.pathsep.join((str(docker_only), os.environ.get("PATH", os.defpath)))
+        self.assertEqual(self.run_setup("--non-interactive", "--skip-up", PATH=path).returncode, 0)
+        key = self.generated_value("INTEGRATION_ENCRYPTION_KEY")
+        pepper = self.generated_value("FI_API_SECRET_PEPPER")
+        self.assert_fernet_key(key, "generated key")
+        rendered = subprocess.run(
+            [shutil.which("docker"), "compose", "--env-file", str(self.config),
+             "-f", "docker-compose.distributed.yml", "-f", "deploy/docker-compose.production.yml",
+             "config", "--format", "json"],
+            cwd=ROOT, env={k: v for k, v in os.environ.items() if k in ("PATH", "HOME")},
+            text=True, capture_output=True, timeout=60,
+        )
+        self.assertTrue(rendered.returncode == 0, "compose config failed")  # never print secrets
+        services = json.loads(rendered.stdout)["services"]
+        django = [name for name, svc in services.items()
+                  if (svc.get("environment") or {}).get("ENV_TYPE") == "production"]
+        self.assertIn("backend", django)
+        for name in django:
+            env = services[name]["environment"]
+            self.assertTrue(env.get("INTEGRATION_ENCRYPTION_KEY") == key, name)
+            self.assertTrue(env.get("FI_API_SECRET_PEPPER") == pepper, name)
+        collector = services["fi-collector"]["environment"]
+        self.assertTrue(collector.get("FI_API_SECRET_PEPPER") == pepper, "fi-collector")
+        # The Hub checker shares the backend's generated token and dials the runner host only.
+        token = self.generated_value("OMEGA_HUB_CHECKER_TOKEN")
+        self.assertTrue(len(token) >= 32)
+        checker = services["hub-checker"]
+        self.assertTrue(checker["environment"].get("OMEGA_HUB_CHECKER_TOKEN") == token, "hub-checker")
+        self.assertTrue(services["backend"]["environment"].get("OMEGA_HUB_CHECKER_TOKEN") == token, "backend")
+        self.assertEqual(checker["environment"]["DOCKER_HOST"], self.env["OMEGA_HUB_RUNNER_DOCKER_HOST"])
+        self.assertEqual(checker["image"], "futureagi/omega-hub-checker:test-hub-checker-release")
+        self.assertEqual([(v["source"], v["target"], v["read_only"]) for v in checker["volumes"]],
+                         [(self.env["OMEGA_HUB_RUNNER_TLS_DIR"], "/certs/client", True)])
+        self.assertNotIn("hub-runner", services)
+        self.assertEqual(services["backend"]["environment"]["OMEGA_HUB_APP_URL"],
+                         "https://app.example.invalid/dashboard/hub")
+        self.assertEqual(services["backend"]["environment"]["OMEGA_HUB_PUBLIC_API_URL"],
+                         "https://api.example.invalid/omega-hub/v1")
+
+    def test_hub_runner_must_be_a_pinned_image_on_a_tcp_runner_host(self):
+        for key, value, why in (
+            ("OMEGA_HUB_RUNNER_IMAGE", "registry.example.invalid/omega-hub-runner:latest", "pinned by digest"),
+            ("OMEGA_HUB_RUNNER_DOCKER_HOST", "unix:///var/run/docker.sock", "never this host's Docker socket"),
+        ):
+            with self.subTest(key=key):
+                result = self.run_setup("--non-interactive", "--skip-up", **{key: value})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(why, result.stderr)
+                self.assertFalse(self.config.exists())
+        self.assert_no_lifecycle()
+
+    def test_a_missing_required_setting_is_named_without_any_value(self):
+        original = b"# retained configuration from before the keyed-hash release\n"
+        self.config.write_bytes(original)
+        message = (
+            "error while interpolating services.backend.environment.INTEGRATION_ENCRYPTION_KEY: "
+            "required variable INTEGRATION_ENCRYPTION_KEY is missing a value: must be set for production\n"
+            "unrelated line quoting a value: private-value-never-echoed\n"
+        )
+        result = self.run_setup("--non-interactive", "--skip-up", SETUP_TEST_CONFIG_STDERR=message)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Required setting missing from", result.stderr)
+        self.assertIn(": INTEGRATION_ENCRYPTION_KEY (deploy/README.md", result.stderr)
+        self.assertNotIn("private-value-never-echoed", result.stdout + result.stderr)
+        self.assertTrue(self.config.read_bytes() == original)
         self.assert_no_lifecycle()
 
     def test_retained_catalog_credentials_cannot_be_overridden_by_ambient_environment(self):

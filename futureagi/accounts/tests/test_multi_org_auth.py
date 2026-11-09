@@ -12,7 +12,7 @@ These are integration tests that hit the actual auth layer.
 """
 
 import base64
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from rest_framework.exceptions import AuthenticationFailed
@@ -176,6 +176,40 @@ class TestAPIKeyAuthentication:
         with pytest.raises(AuthenticationFailed):
             auth_instance.authenticate(request)
 
+    def test_deactivated_personal_api_key_is_rejected(
+        self, auth_instance, auth_user, org_primary
+    ):
+        key = OrgApiKey.no_workspace_objects.create(
+            name="Deactivated personal auth key",
+            organization=org_primary,
+            type="user",
+            user=auth_user,
+        )
+        auth_user.is_active = False
+        auth_user.save(update_fields=["is_active"])
+        request = _make_request(
+            headers={"X-Api-Key": key.api_key, "X-Secret-Key": key.secret_key}
+        )
+
+        with pytest.raises(AuthenticationFailed, match="Invalid API key or secret key"):
+            auth_instance.authenticate(request)
+
+    def test_deactivated_personal_api_key_is_rejected_by_mcp(
+        self, auth_user, org_primary
+    ):
+        from accounts.tests.personal_keys import personal_key_for
+        from mcp_server.mcp_app import _authenticate_and_set_context
+
+        key = personal_key_for(
+            auth_user, org_primary, name="Deactivated personal MCP key"
+        )
+        secret = key.secret_key
+        assert _authenticate_and_set_context(key.api_key, secret) is not None
+        auth_user.is_active = False
+        auth_user.save(update_fields=["is_active"])
+
+        assert _authenticate_and_set_context(key.api_key, secret) is None
+
     def test_deleted_basic_api_key_is_rejected(self, auth_user, org_primary):
         key = OrgApiKey.no_workspace_objects.create(
             name="Deleted basic auth key",
@@ -184,9 +218,9 @@ class TestAPIKeyAuthentication:
             user=auth_user,
             deleted=True,
         )
-        encoded = base64.b64encode(
-            f"{key.api_key}:{key.secret_key}".encode("utf-8")
-        ).decode("ascii")
+        encoded = base64.b64encode(f"{key.api_key}:{key.secret_key}".encode()).decode(
+            "ascii"
+        )
         request = _make_request()
         request.META = {"HTTP_AUTHORIZATION": f"Basic {encoded}"}
 
@@ -408,12 +442,29 @@ class TestGetUserDefaultWorkspace:
     def test_creates_default_workspace_if_missing(
         self, auth_instance, auth_user, org_invited
     ):
-        """Creates default workspace for org if none exists."""
-        # org_invited has no workspaces
+        """Only explicit organization provisioning creates the missing workspace."""
+        from accounts.views.organization_selection import SwitchOrganizationView
+
+        # Authentication is a read, even for an unprovisioned organization.
+        assert not Workspace.objects.filter(organization=org_invited).exists()
+        memberships_before = WorkspaceMembership.no_workspace_objects.count()
         ws = auth_instance._get_user_default_workspace(auth_user, org_invited)
+        assert ws is None
+        assert not Workspace.objects.filter(organization=org_invited).exists()
+        assert WorkspaceMembership.no_workspace_objects.count() == memberships_before
+
+        # The explicit switch/bootstrap path requires authority in the TARGET
+        # org; being Owner of the primary org does not grant that authority.
+        OrganizationMembership._base_manager.filter(
+            user=auth_user, organization=org_invited
+        ).update(role=OrganizationRoles.ADMIN, level=Level.ADMIN)
+        ws = SwitchOrganizationView()._resolve_workspace_for_org(auth_user, org_invited)
         assert ws is not None
         assert ws.organization_id == org_invited.id
         assert ws.is_default is True
+        assert Workspace.objects.filter(organization=org_invited).count() == 1
+        assert auth_user.can_access_workspace(ws)
+        assert auth_instance._get_user_default_workspace(auth_user, org_invited) == ws
 
     def test_returns_none_when_no_org(self, auth_instance, auth_user):
         ws = auth_instance._get_user_default_workspace(auth_user, None)

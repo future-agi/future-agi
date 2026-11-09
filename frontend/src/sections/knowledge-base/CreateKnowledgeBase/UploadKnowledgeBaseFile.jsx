@@ -20,7 +20,8 @@ const UploadKnowledgeBaseFile = ({ control, handleShowSdkInfo, isPending }) => {
 
     const safeRejected = Array.isArray(rejected) ? rejected : [];
 
-    // Show SDK info dialog if any file is too large
+    // Show SDK info dialog if any file is too large (the drawer makes this
+    // a no-op in prototype builds, which have no SDK: the toast below stays).
     if (
       safeRejected.some((r) =>
         (r?.errors || []).some((e) => e?.code === "file-too-large"),
@@ -52,7 +53,7 @@ const UploadKnowledgeBaseFile = ({ control, handleShowSdkInfo, isPending }) => {
         );
       } else if (isInvalidType) {
         enqueueSnackbar(
-          "Unsupported file type. Please upload a PDF, DOCX, RTF, or TXT file.",
+          "Unsupported file type. Please upload a TXT, MD or RTF file.",
           { variant: "error" },
         );
       } else if (isTooLarge) {
@@ -99,7 +100,7 @@ const UploadKnowledgeBaseFile = ({ control, handleShowSdkInfo, isPending }) => {
         heading="Choose a file or drag & drop it here"
         description={[
           "Add documents up to 5 MB each (1 GB total storage).",
-          "File formats supported: PDF, DOCX, RTF, TXT",
+          "File formats supported: TXT, MD, RTF",
         ]}
         actionButton={
           <Button
@@ -120,10 +121,9 @@ const UploadKnowledgeBaseFile = ({ control, handleShowSdkInfo, isPending }) => {
         multiple={true}
         showIllustration={false}
         accept={{
-          "application/pdf": [".pdf"],
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            [".docx"],
+          // v2.1 g8 (kb:page): the formats whose text is read.
           "text/plain": [".txt"],
+          "text/markdown": [".md"],
           "text/rtf": [".rtf"],
         }}
         maxSize={MAX_FILE_SIZE}

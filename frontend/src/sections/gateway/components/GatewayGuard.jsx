@@ -3,9 +3,10 @@ import PropTypes from "prop-types";
 import { Box, Skeleton, Stack } from "@mui/material";
 import { useGatewayContext } from "../context/useGatewayContext";
 import GatewayEmptyState from "./GatewayEmptyState";
+import GatewayPageFrame from "./frame/GatewayPageFrame";
 
 const GatewayGuardSkeleton = () => (
-  <Box p={3}>
+  <Box p={3} data-testid="gateway-guard-loading">
     <Stack
       direction="row"
       justifyContent="space-between"
@@ -25,7 +26,7 @@ const GatewayGuardSkeleton = () => (
 );
 
 const GatewayGuard = ({ children }) => {
-  const { gatewayId, isLoading, refreshGateways } = useGatewayContext();
+  const { gatewayId, isLoading, refreshGateways, error } = useGatewayContext();
 
   if (isLoading) {
     return <GatewayGuardSkeleton />;
@@ -33,7 +34,13 @@ const GatewayGuard = ({ children }) => {
 
   if (!gatewayId) {
     return (
-      <GatewayEmptyState variant="no-gateway" onAction={refreshGateways} />
+      <GatewayPageFrame title="AI Gateway" testId="gateway-guard-empty">
+        <GatewayEmptyState
+          variant="no-gateway"
+          onAction={refreshGateways}
+          errorMessage={error ? "The gateway request failed." : undefined}
+        />
+      </GatewayPageFrame>
     );
   }
 

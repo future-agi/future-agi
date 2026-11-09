@@ -1194,6 +1194,20 @@ class ObserveGraphDataPointSerializer(serializers.Serializer):
     timestamp = serializers.CharField()
     value = serializers.FloatField(allow_null=True)
     primary_traffic = serializers.FloatField(required=False, allow_null=True)
+    count = serializers.IntegerField(required=False, min_value=0)
+    scored_count = serializers.IntegerField(required=False, min_value=0)
+    unscored_count = serializers.IntegerField(required=False, min_value=0)
+    completed_count = serializers.IntegerField(required=False, min_value=0)
+    error_count = serializers.IntegerField(required=False, min_value=0)
+    pending_count = serializers.IntegerField(required=False, min_value=0)
+    running_count = serializers.IntegerField(required=False, min_value=0)
+    skipped_count = serializers.IntegerField(required=False, min_value=0)
+    failed_count = serializers.IntegerField(required=False, min_value=0)
+    error_rate = serializers.FloatField(
+        required=False,
+        allow_null=True,
+        help_text="Execution errors / (errors + completed attempts), percent; excludes skipped and in-flight rows. Independent of quality failures.",
+    )
 
 
 class ObserveGraphDataResultSerializer(serializers.Serializer):
@@ -1226,7 +1240,12 @@ class ObserveGraphDataResultSerializer(serializers.Serializer):
         choices=("complete", "sampled", "degraded", "pending"), required=False
     )
     query_error_code = serializers.ChoiceField(
-        choices=("sample_limit", "read_budget_exceeded", "query_failed"),
+        choices=(
+            "sample_limit",
+            "read_budget_exceeded",
+            "query_failed",
+            "eval_lifecycle_unavailable",
+        ),
         required=False,
     )
     query_window_start = serializers.CharField(required=False)

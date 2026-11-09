@@ -4,6 +4,17 @@ Renders nothing when the values are consistent.
 */ -}}
 {{- $v := .Values -}}
 {{- $errors := list -}}
+{{- /* Validate the original values, before the name helpers truncate them.
+The reserved-label map-key check cannot detect a scalar containing raw YAML:
+a multiline name used to inject the trusted Omega sender label onto every pod
+and its immutable selector, including the code executor, even with Omega off.
+The label helpers also quote their scalars; validation is not serialization. */ -}}
+{{- range $key := list "nameOverride" "fullnameOverride" -}}
+{{- $name := get $v $key | default "" | toString -}}
+{{- if and $name (or (gt (len $name) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $name))) -}}
+{{- $errors = append $errors (printf "%s must be empty or a DNS label (1-63 lowercase letters, digits or hyphens, starting and ending with a letter or digit)" $key) -}}
+{{- end -}}
+{{- end -}}
 {{- $hint := "Quick evaluation with every datastore in the cluster: helm install futureagi deploy/helm/futureagi -n futureagi --create-namespace -f deploy/helm/futureagi/examples/bundled.yaml --timeout 20m" -}}
 {{- range $store := list "postgres" "clickhouse" "redis" "temporal" "objectStorage" -}}
 {{- $mode := (index $v $store).mode -}}
@@ -223,6 +234,17 @@ empty is no storageClassName (the cluster default), "-" is storageClassName
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- /* The Python pods' variable names reach Kubernetes as written (quoted):
+"LOG_FORMAT " would be a variable of its own, not LOG_FORMAT. */ -}}
+{{- range $scope := include "futureagi.env.userMaps" . | fromJsonArray -}}
+{{- range $name := keys (index $scope 1) | sortAlpha -}}
+{{- if ne $name (trim $name) -}}
+{{- $errors = append $errors (printf "%s[%q]: a variable name with whitespace around it reaches the pods as written, so it is not the variable it looks like; remove the whitespace" (index $scope 0) $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $errors = concat $errors (include "futureagi.omega.errors" . | fromJsonArray) -}}
+{{- $errors = concat $errors (include "futureagi.hub.errors" . | fromJsonArray) -}}
 {{- if $errors -}}
 {{- fail (printf "\n\nFuture AGI chart: fix these values\n  - %s\n\n%s\n" (join "\n  - " $errors) $hint) -}}
 {{- end -}}

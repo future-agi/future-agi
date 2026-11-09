@@ -175,11 +175,11 @@ def _canonical_conditions(conditions):
 
 def canonicalize_automation_rule_filters(apps, schema_editor):
     AutomationRule = apps.get_model("model_hub", "AutomationRule")
-    for rule in AutomationRule.objects.all().only("id", "conditions").iterator():
+    for rule in AutomationRule.objects.using(schema_editor.connection.alias).all().only("id", "conditions").iterator():
         next_conditions, changed = _canonical_conditions(rule.conditions or {})
         if changed:
             rule.conditions = next_conditions
-            rule.save(update_fields=["conditions"])
+            rule.save(using=schema_editor.connection.alias, update_fields=["conditions"])
 
 
 class Migration(migrations.Migration):

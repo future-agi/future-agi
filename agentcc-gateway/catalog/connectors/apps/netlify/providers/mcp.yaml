@@ -1,0 +1,65 @@
+# Netlify's remote MCP server, which Netlify's docs recommend over its local
+# package. Netlify's pages give no auth method for it; the server's own
+# protected-resource and authorization-server metadata do: OAuth from an
+# authorization server on the same host that registers clients dynamically.
+# The scopes are offline_access, read and write from the metadata's list;
+# its fourth scope, claudeai, is left out, as it names another vendor's
+# client. EE reads a pre-registered client id and secret from its
+# environment and cannot register a client, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: netlify
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://netlify-mcp.netlify.app/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://netlify-mcp.netlify.app/oauth-server/auth
+    tokenUrl: https://netlify-mcp.netlify.app/oauth-server/token
+    scopes: [offline_access, read, write]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.netlify.com/build/build-with-ai/agent-setup-guides/agent-setup-overview/
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://netlify-mcp.netlify.app/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://netlify-mcp.netlify.app/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://netlify-mcp.netlify.app/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://netlify-mcp.netlify.app/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://netlify-mcp.netlify.app/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://netlify-mcp.netlify.app/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://netlify-mcp.netlify.app/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://netlify-mcp.netlify.app/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude }

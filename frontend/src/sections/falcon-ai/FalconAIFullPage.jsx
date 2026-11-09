@@ -2,14 +2,15 @@ import React, { useCallback, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
 import useFalconStore from "./store/useFalconStore";
-import useFalconSocket from "./hooks/useFalconSocket";
-import { useFalconContext } from "./hooks/useFalconContext";
+import { captureFalconRequest } from "./store/falconRequestGuard";
 import {
-  createConversation,
-  getConversation,
-  listSkills,
-  fetchConnectors,
-} from "./hooks/useFalconAPI";
+  beginFalconSubmission,
+  clearFalconSubmission,
+} from "./store/falconSubmission";
+import useFalconSocket from "./hooks/useFalconSocket";
+import useFalconCatalog from "./hooks/useFalconCatalog";
+import { useFalconContext } from "./hooks/useFalconContext";
+import { createConversation, getConversation } from "./hooks/useFalconAPI";
 import FalconAIHeader from "./components/FalconAIHeader";
 import MessageList from "./components/MessageList";
 import ChatInput from "./components/ChatInput";
@@ -29,32 +30,13 @@ export default function FalconAIFullPage() {
   const setStreaming = useFalconStore((s) => s.setStreaming);
   const setPendingPrompt = useFalconStore((s) => s.setPendingPrompt);
 
-  const setSkills = useFalconStore((s) => s.setSkills);
-  const setConnectors = useFalconStore((s) => s.setConnectors);
   const messages = useFalconStore((s) => s.messages);
   const showCustomize = useFalconStore((s) => s.showCustomize);
 
   const { sendChat, sendStop, sendFeedback } = useFalconSocket();
   const context = useFalconContext();
 
-  const loadSkillsAndConnectors = useCallback(async () => {
-    try {
-      const skillData = await listSkills();
-      setSkills(skillData.results || skillData || []);
-    } catch {
-      // silent — skills are optional
-    }
-    try {
-      const connData = await fetchConnectors();
-      setConnectors(connData.results || connData || []);
-    } catch {
-      // silent — connectors are optional
-    }
-  }, [setSkills, setConnectors]);
-
-  useEffect(() => {
-    loadSkillsAndConnectors();
-  }, [loadSkillsAndConnectors]);
+  const loadSkillsAndConnectors = useFalconCatalog();
 
   // Sync URL ↔ store (one-way: URL wins on mount, store wins after)
   const initializedRef = useRef(false);
@@ -66,8 +48,11 @@ export default function FalconAIFullPage() {
 
     if (urlConversationId) {
       setCurrentConversation(urlConversationId);
+      const isCurrent = captureFalconRequest({ conversation: true });
       getConversation(urlConversationId)
         .then((data) => {
+          // A recovery or user navigation may have invalidated this load.
+          if (!isCurrent()) return;
           const conv = data.result || data;
           // Normalize camelCase API response to snake_case for components
           const messages = (conv.messages || []).map((m) => ({
@@ -83,8 +68,26 @@ export default function FalconAIFullPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A reset must also discard the old deep link so a remount cannot reload it.
+  useEffect(() => {
+    if (
+      !currentConversationId &&
+      urlConversationId &&
+      !useFalconStore.getState().currentConversationId
+    ) {
+      navigate("/dashboard/falcon-ai", { replace: true });
+    }
+  }, [currentConversationId, urlConversationId, navigate]);
+
   const handleSend = useCallback(
     async (text) => {
+      const isCurrent = captureFalconRequest({ conversation: true });
+      const attachedFiles = useFalconStore.getState().attachedFiles;
+      const submissionId = beginFalconSubmission(
+        text,
+        attachedFiles,
+        isCurrent,
+      );
       let convId = currentConversationId;
 
       if (!convId) {
@@ -92,7 +95,15 @@ export default function FalconAIFullPage() {
           const resp = await createConversation(
             text.slice(0, 50),
             context.page,
+            { submissionId },
           );
+          if (
+            !isCurrent() ||
+            useFalconStore.getState().pendingDraft?.id !== submissionId
+          ) {
+            clearFalconSubmission(submissionId);
+            return;
+          }
           const newConv = resp.result || resp;
           convId = newConv.id;
           setCurrentConversation(convId);
@@ -107,12 +118,12 @@ export default function FalconAIFullPage() {
             ...(store.conversations || []),
           ]);
         } catch {
+          clearFalconSubmission(submissionId);
           return;
         }
       }
 
       // Capture attached files before clearing
-      const attachedFiles = useFalconStore.getState().attachedFiles;
       const fileIds = attachedFiles.map((f) => f.id);
 
       const userMsg = {
@@ -141,7 +152,7 @@ export default function FalconAIFullPage() {
       setStreaming(true, assistantMsgId);
 
       // Send chat BEFORE navigate — navigate can cause re-renders
-      sendChat(text, convId, context, fileIds);
+      sendChat(text, convId, context, fileIds, attachedFiles, submissionId);
 
       // Update URL after sending (won't remount due to optional route param)
       navigate(`/dashboard/falcon-ai/${convId}`, { replace: true });

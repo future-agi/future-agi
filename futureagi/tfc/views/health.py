@@ -16,7 +16,7 @@ from tfc.utils.general_methods import GeneralMethods
 
 class HealthCheckView(APIView):
     """
-    Health check endpoint that returns 200 status when server is up.
+    Liveness endpoint: server is up; dependency readiness is checked at /readyz/.
     No authentication required for this endpoint.
     """
 

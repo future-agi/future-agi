@@ -1,0 +1,60 @@
+[
+  {
+    "tool": "get_site",
+    "arguments": {
+      "site-id": "site-fixture"
+    }
+  },
+  {
+    "tool": "list_drives",
+    "arguments": {
+      "site-id": "site-fixture"
+    }
+  },
+  {
+    "tool": "list_lists",
+    "arguments": {
+      "site-id": "site-fixture"
+    }
+  },
+  {
+    "tool": "get_list",
+    "arguments": {
+      "site-id": "site-fixture",
+      "list-id": "list-fixture"
+    }
+  },
+  {
+    "tool": "list_items",
+    "arguments": {
+      "site-id": "site-fixture",
+      "list-id": "list-fixture"
+    }
+  },
+  {
+    "tool": "get_item",
+    "arguments": {
+      "site-id": "site-fixture",
+      "list-id": "list-fixture",
+      "listItem-id": "item-fixture"
+    }
+  },
+  {
+    "tool": "list_columns",
+    "arguments": {
+      "site-id": "site-fixture"
+    }
+  },
+  {
+    "tool": "list_content_types",
+    "arguments": {
+      "site-id": "site-fixture"
+    }
+  },
+  {
+    "tool": "get_site",
+    "arguments": {
+      "site-id": "missing-fixture"
+    }
+  }
+]

@@ -6,7 +6,6 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import close_old_connections
 from django.db.models import Count, Q
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from model_hub.models.choices import (
     CellStatus,
@@ -20,16 +19,41 @@ from model_hub.models.experiments import (
     ExperimentsTable,
     PendingRowTask,
 )
-from model_hub.models.openai_tools import Tools
 from model_hub.models.run_prompt import UserResponseSchema
 from model_hub.models.tts_voices import TTSVoice
 from model_hub.services.column_service import create_experiment_column
+from model_hub.services.experiment_tools import experiment_tools
 from model_hub.services.experiment_utils import is_experiment_cancelled
 from model_hub.utils.utils import remove_empty_text_from_messages
 from model_hub.views.eval_runner import EvaluationRunner, bulk_update_or_create_cells
 from model_hub.views.run_prompt import populate_placeholders
 from tfc.temporal import temporal_activity
-from tfc.utils.error_codes import get_error_message
+
+logger = structlog.get_logger(__name__)
+
+
+def _experiment_response_format(value, dataset):
+    """Resolve UUIDs in the run's tenant; an inaccessible schema fails the row."""
+    if not value or isinstance(value, dict):
+        return value
+    try:
+        uuid.UUID(str(value))
+    except ValueError:
+        return value
+    workspace = dataset.workspace
+    scope = Q(workspace=workspace) if workspace else Q()
+    if workspace and workspace.is_default:
+        scope |= Q(workspace__isnull=True) | Q(workspace__is_default=True)
+    schema = (
+        UserResponseSchema.no_workspace_objects.filter(
+            scope, id=value, organization_id=dataset.organization_id, deleted=False
+        ).first()
+        if dataset.organization_id
+        else None
+    )
+    if schema is None:
+        raise ValueError("Response schema is not accessible to this experiment")
+    return schema.schema
 
 
 def _get_or_create_eval_column(
@@ -183,14 +207,36 @@ def check_and_update_column_status(column_id: uuid.UUID):
                 SourceChoices.EXPERIMENT_EVALUATION.value,
                 SourceChoices.EVALUATION_REASON.value,
             ]:
-                # This is an evaluation column - source_id has pattern "{experiment_dataset.id}-sourceid-{eval_metric_id}"
+                # Evaluation columns: "<table>-<output>-sourceid-<metric>", or
+                # "<table>-sourceid-<metric>" for earlier tables. Reason columns:
+                # "<evaluation or output column>-sourceid-<metric>".
                 if column.source_id and "-sourceid-" in str(column.source_id):
                     try:
                         # Extract experiment_dataset_id from source_id
                         experiment_dataset_id_str = str(column.source_id).split(
                             "-sourceid-"
                         )[0]
-                        experiment_dataset_id = uuid.UUID(experiment_dataset_id_str)
+                        linked_tables = []
+                        if column.source == SourceChoices.EVALUATION_REASON.value:
+                            # The runner links a reason column to its table.
+                            linked_tables = list(
+                                column.experiments_dataset_column.values_list(
+                                    "id", flat=True
+                                )[:2]
+                            )
+                        if len(linked_tables) == 1:
+                            experiment_dataset_id = linked_tables[0]
+                        elif (
+                            len(experiment_dataset_id_str) == 73
+                            and experiment_dataset_id_str[36] == "-"
+                        ):
+                            # "<table>-<output>": the table id comes first.
+                            uuid.UUID(experiment_dataset_id_str[37:])
+                            experiment_dataset_id = uuid.UUID(
+                                experiment_dataset_id_str[:36]
+                            )
+                        else:
+                            experiment_dataset_id = uuid.UUID(experiment_dataset_id_str)
                         # Check if experiment_dataset is complete
                         check_and_update_experiment_dataset_status(
                             experiment_dataset_id
@@ -248,8 +294,6 @@ def _trigger_row_wise_evaluations(
 
         if not eval_templates:
             return
-
-        dataset = column.dataset
 
         # Process each eval template
         for eval_template in eval_templates:
@@ -328,21 +372,45 @@ def check_and_update_experiment_dataset_status(experiment_dataset_id: uuid.UUID)
         if not experiment_dataset:
             return False
 
+        from model_hub.models.develop_dataset import Dataset
+        from tfc.utils.tenant_scope import workspace_scope_q
+
         current_status = experiment_dataset.status
+        experiment = experiment_dataset.experiment
+        if experiment is None:
+            # Legacy tables use the M2M. An ambiguous owner cannot define a scope.
+            owners = list(experiment_dataset.experiments_datasets_created.all()[:2])
+            if len(owners) != 1:
+                return False
+            experiment = owners[0]
+        if (
+            experiment.deleted
+            or experiment.dataset.deleted
+            or not experiment.dataset.organization_id
+        ):
+            return False
+        dataset = Dataset.objects.filter(
+            workspace_scope_q(experiment.dataset.workspace),
+            organization_id=experiment.dataset.organization_id,
+            id=experiment.snapshot_dataset_id or experiment.dataset_id,
+        ).first()
+        if dataset is None:
+            return False
+        columns = Column.objects.filter(dataset=dataset, deleted=False)
 
-        # Get result columns (source_id = experiment_dataset.id)
+        # Result and evaluation identifiers are meaningful only in this
+        # experiment's snapshot (or its own dataset when it has no snapshot).
         result_column_ids = list(
-            Column.objects.filter(
-                source_id=str(experiment_dataset_id), deleted=False
-            ).values_list("id", flat=True)
+            columns.filter(source_id=str(experiment_dataset_id)).values_list(
+                "id", flat=True
+            )
         )
-
-        # CRITICAL FIX: Also get evaluation columns for this experiment_dataset
-        # Eval columns have source_id like "{experiment_dataset.id}-sourceid-{eval_metric_id}"
+        # Evaluation columns: "<table>-<output>-sourceid-<metric>", or
+        # "<table>-sourceid-<metric>" for earlier tables and tag columns.
         eval_column_ids = list(
-            Column.objects.filter(
-                source_id__startswith=f"{experiment_dataset_id}-sourceid-",
-                deleted=False,
+            columns.filter(
+                source_id__startswith=f"{experiment_dataset_id}-",
+                source_id__contains="-sourceid-",
             ).values_list("id", flat=True)
         )
 
@@ -1036,7 +1104,10 @@ class ExperimentRunner:
                 graph_version=eac.graph_version,
                 deleted=False,
             )
-            .filter(Q(node_template__name="llm_prompt") | Q(type=NodeType.SUBGRAPH))
+            .filter(
+                Q(node_template__name__in=("llm_prompt", "deterministic_text"))
+                | Q(type=NodeType.SUBGRAPH)
+            )
             .select_related("node_template")
         )
 
@@ -1273,25 +1344,21 @@ class ExperimentRunner:
 
         try:
             close_old_connections()
-            unsupported_exception = False
-            tools_config = []
-            if model_config.get("tools"):
-                tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
-                for tool in tools:
-                    tools_config.append(tool.as_openai_tool())
+            tools_config = experiment_tools(
+                model_config.get("tools"), self.experiment.dataset
+            )
 
-            rf = model_config.get("response_format")
-            if rf and not isinstance(rf, dict):
-                try:
-                    uuid.UUID(str(rf))
-                    rf = UserResponseSchema.objects.get(id=rf)
-                    rf = rf.schema
-                except Exception:
-                    pass
+            rf = _experiment_response_format(
+                model_config.get("response_format"), self.experiment.dataset
+            )
 
             try:
                 messages = populate_placeholders(
-                    messages, self.dataset.id, row.id, column.id, model_name=model,
+                    messages,
+                    self.dataset.id,
+                    row.id,
+                    column.id,
+                    model_name=model,
                     template_format=model_config.get("template_format"),
                 )
                 if output_format != "audio":
@@ -1299,7 +1366,6 @@ class ExperimentRunner:
                 # logger.info(f"messages: {messages}")
 
             except ValueError as e:
-                unsupported_exception = True
                 raise e
 
             run_prompt = RunPrompt(
@@ -1543,41 +1609,35 @@ def _process_row_impl(
     skip_celery_evals: bool = False,
 ):
     """Implementation of process_row that can be called as a standalone function"""
+    context_ready = False
     try:
         close_old_connections()
         row = Row.objects.get(id=row_id, deleted=False)
         column = Column.objects.get(id=column_id, deleted=False)
         dataset = column.dataset
         experiment = ExperimentsTable.objects.get(id=experiment_id, deleted=False)
+        context_ready = True
 
         status = CellStatus.PASS.value
-        unsupported_exception = False
-        tools_config = []
+        tools_config = experiment_tools(model_config.get("tools"), experiment.dataset)
 
-        if model_config.get("tools"):
-            tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
-            for tool in tools:
-                tools_config.append(tool.as_openai_tool())
-
-        rf = model_config.get("response_format")
-        if rf and not isinstance(rf, dict):
-            try:
-                uuid.UUID(str(rf))
-                rf = UserResponseSchema.objects.get(id=rf)
-                rf = rf.schema
-            except Exception:
-                pass
+        rf = _experiment_response_format(
+            model_config.get("response_format"), experiment.dataset
+        )
 
         try:
             messages = populate_placeholders(
-                messages, dataset_id, row_id, column_id, model_name=model,
+                messages,
+                dataset_id,
+                row_id,
+                column_id,
+                model_name=model,
                 template_format=model_config.get("template_format"),
             )
             if output_format != "audio":
                 messages = remove_empty_text_from_messages(messages)
 
         except ValueError as e:
-            unsupported_exception = True
             raise e
 
         run_prompt = RunPrompt(
@@ -1601,10 +1661,18 @@ def _process_row_impl(
             ),
         )
 
-        response, value_info = run_prompt.litellm_response()
+        from tfc.temporal.experiments.provider_policy import prompt_response
+
+        response, value_info = prompt_response(
+            run_prompt, experiment, row_id, column_id
+        )
         value_info["reason"] = value_info.get("data", {}).get("response")
 
     except Exception as e:
+        if not context_ready:
+            # No result can be persisted until every row-context lookup succeeds.
+            close_old_connections()
+            raise
         # Expected, handled validation failure (empty messages) is user
         # misconfiguration; the row is persisted as a failed cell below.
         # Downgrade only that case to warning so real failures stay errors.

@@ -20,6 +20,8 @@ import (
 //   - message.content (string) → single text content block
 //   - message.tool_calls[]     → tool_use content blocks (after text)
 //   - message.thinking_blocks  → thinking content blocks at START of content[]
+//   - message.reasoning_content is ignored (thinking_unsupported on requests),
+//     including by ResponseFromCanonicalWithMapping; never fold it into text
 //   - finish_reason reverse-mapped (stop→end_turn, etc.)
 //   - usage: prompt_tokens→input_tokens, completion_tokens→output_tokens
 //   - truncated tool names restored from Extra["tool_name_mapping"]
@@ -113,13 +115,7 @@ func (t *Translator) ResponseFromCanonical(resp *models.ChatCompletionResponse) 
 	stopReason := reverseMapFinishReason(choice.FinishReason)
 
 	// usage.
-	var usage ResponseUsage
-	if resp.Usage != nil {
-		usage = ResponseUsage{
-			InputTokens:  resp.Usage.PromptTokens,
-			OutputTokens: resp.Usage.CompletionTokens,
-		}
-	}
+	usage := dialectUsage(resp.Usage)
 
 	// Response ID.
 	id := resp.ID
@@ -203,13 +199,7 @@ func (t *Translator) ResponseFromCanonicalWithMapping(
 
 	stopReason := reverseMapFinishReason(choice.FinishReason)
 
-	var usage ResponseUsage
-	if resp.Usage != nil {
-		usage = ResponseUsage{
-			InputTokens:  resp.Usage.PromptTokens,
-			OutputTokens: resp.Usage.CompletionTokens,
-		}
-	}
+	usage := dialectUsage(resp.Usage)
 
 	id := resp.ID
 	if id == "" {
@@ -239,6 +229,7 @@ func (t *Translator) ResponseFromCanonicalWithMapping(
 //	invalid_request  → invalid_request_error
 //	authentication   → authentication_error
 //	permission       → permission_error
+//	payment_required → billing_error
 //	not_found        → not_found_error
 //	rate_limit       → rate_limit_error
 //	api_error        → api_error
@@ -278,6 +269,10 @@ func gatewayTypeToAnthropic(t string) string {
 		return "authentication_error"
 	case models.ErrTypePermission: // "permission_error"
 		return "permission_error"
+	case models.ErrTypePaymentRequired: // "payment_required": a 402
+		return "billing_error"
+	case models.ErrTypeGuardrail: // "guardrail_error": a refusal, 403
+		return "permission_error"
 	case models.ErrTypeNotFound: // "not_found"
 		return "not_found_error"
 	case models.ErrTypeRateLimit: // "rate_limit_error"
@@ -301,6 +296,8 @@ func anthropicStatusForType(t string) int {
 		return http.StatusBadRequest
 	case "authentication_error":
 		return http.StatusUnauthorized
+	case "billing_error":
+		return http.StatusPaymentRequired
 	case "permission_error":
 		return http.StatusForbidden
 	case "not_found_error":
@@ -385,3 +382,31 @@ func reverseMapFinishReasonForStream(openaiReason string) string {
 	return reverseMapFinishReason(openaiReason)
 }
 
+// dialectUsage renders canonical usage in Anthropic's dialect. Canonical
+// prompt_tokens include the cache reads (prompt_tokens_details.cached_tokens)
+// and writes (cache_write_tokens), as OpenAI's do; Anthropic's input_tokens
+// count only the input after the last cache breakpoint, with the reads and
+// writes reported apart (G1 IR-9). A usage whose cache tokens exceed
+// prompt_tokens is already exclusive, so prompt_tokens stays the input.
+func dialectUsage(u *models.Usage) ResponseUsage {
+	if u == nil {
+		return ResponseUsage{}
+	}
+	d := u.PromptDetails
+	if d.CachedTokens == 0 && d.CacheWriteTokens == 0 && u.PromptTokensDetails != nil {
+		var raw models.PromptTokensDetails
+		if json.Unmarshal(*u.PromptTokensDetails, &raw) == nil {
+			d = raw
+		}
+	}
+	input := u.PromptTokens
+	if cache := d.CachedTokens + d.CacheWriteTokens; cache > 0 && cache <= input {
+		input -= cache
+	}
+	return ResponseUsage{
+		InputTokens:              input,
+		OutputTokens:             u.CompletionTokens,
+		CacheReadInputTokens:     d.CachedTokens,
+		CacheCreationInputTokens: d.CacheWriteTokens,
+	}
+}

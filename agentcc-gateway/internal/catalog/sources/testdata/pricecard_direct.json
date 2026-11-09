@@ -1,0 +1,37 @@
+{
+  "provider": "anthropic-direct",
+  "upstream_slug": "anthropic",
+  "upstream_fee_bps": 0,
+  "as_of": "2026-10-01",
+  "source_url": "https://example.test/anthropic/pricing",
+  "data_collection": "deny",
+  "regions": ["us"],
+  "models": [
+    {
+      "id": "claude-3-5-sonnet-20241022",
+      "canonical": "anthropic/claude-3.5-sonnet",
+      "name": "Claude 3.5 Sonnet",
+      "context_length": 200000,
+      "max_output": 8192,
+      "prices": {
+        "prompt": "0.000003",
+        "completion": "0.000015",
+        "cache_read": "0.0000003",
+        "cache_write": "0.00000375"
+      },
+      "supported_parameters": ["tools", "max_tokens", "temperature"],
+      "modalities": { "input": ["text", "image"], "output": ["text"] }
+    },
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "context_length": 200000,
+      "max_output": 64000,
+      "prices": { "prompt": 0.000001, "completion": 0.000005, "request": 0 }
+    },
+    {
+      "id": "claude-next-preview",
+      "canonical": "anthropic/claude-next-preview",
+      "context_length": 200000
+    }
+  ]
+}

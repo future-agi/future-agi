@@ -319,10 +319,10 @@ class TracesAggregatesSerializer(serializers.Serializer):
     total_traces = serializers.IntegerField()
     failing_traces = serializers.IntegerField()
     passing_traces = serializers.IntegerField()
-    avg_score = serializers.FloatField(allow_null=True)
+    avg_score = serializers.FloatField()
     p50_latency = serializers.IntegerField()
     p95_latency = serializers.IntegerField()
-    avg_turns = serializers.FloatField(allow_null=True)
+    avg_turns = serializers.FloatField()
 
 
 class TracesListRowSerializer(serializers.Serializer):
@@ -490,6 +490,7 @@ class RecommendationSerializer(serializers.Serializer):
 class DeepAnalysisResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
     trace_id = serializers.CharField()
+    code = serializers.CharField(allow_null=True, required=False)
     root_causes = RootCauseSerializer(many=True)
     recommendations = RecommendationSerializer(many=True)
     immediate_fix = serializers.CharField(allow_null=True)

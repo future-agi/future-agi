@@ -8,7 +8,7 @@ def backfill_agent_version(apps, schema_editor):
     ProviderCredentials = apps.get_model("simulate", "ProviderCredentials")
     AgentVersion = apps.get_model("simulate", "AgentVersion")
 
-    qs = ProviderCredentials.objects.filter(
+    qs = ProviderCredentials.objects.using(schema_editor.connection.alias).filter(
         agent_definition__isnull=False,
         agent_version__isnull=True,
     ).select_related("agent_definition")
@@ -16,12 +16,12 @@ def backfill_agent_version(apps, schema_editor):
     processed = 0
     for creds in qs.iterator(chunk_size=BATCH_SIZE):
         version = (
-            AgentVersion.objects.filter(agent_definition=creds.agent_definition)
+            AgentVersion.objects.using(schema_editor.connection.alias).filter(agent_definition=creds.agent_definition)
             .order_by("-version_number")
             .first()
         )
         if version:
-            ProviderCredentials.objects.filter(pk=creds.pk).update(
+            ProviderCredentials.objects.using(schema_editor.connection.alias).filter(pk=creds.pk).update(
                 agent_version=version
             )
         processed += 1
@@ -66,7 +66,7 @@ def reverse_backfill_agent_version(apps, schema_editor):
 def remove_credential_fields_from_snapshots(apps, schema_editor):
     AgentVersion = apps.get_model("simulate", "AgentVersion")
 
-    qs = AgentVersion.objects.all()
+    qs = AgentVersion.objects.using(schema_editor.connection.alias).all()
     total = qs.count()
     processed = 0
     for version in qs.iterator(chunk_size=BATCH_SIZE):
@@ -79,7 +79,7 @@ def remove_credential_fields_from_snapshots(apps, schema_editor):
             continue
         for key in CREDENTIAL_FIELDS:
             snapshot.pop(key, None)
-        AgentVersion.objects.filter(pk=version.pk).update(
+        AgentVersion.objects.using(schema_editor.connection.alias).filter(pk=version.pk).update(
             configuration_snapshot=snapshot
         )
         processed += 1

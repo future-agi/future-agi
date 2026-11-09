@@ -1,137 +1,169 @@
-import React, { useState } from "react";
-import {
-  Box,
-  Typography,
-  Stack,
-  TextField,
-  Button,
-  Chip,
-  Collapse,
-} from "@mui/material";
-import Iconify from "src/components/iconify";
-import { enqueueSnackbar } from "notistack";
+import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { useCreateGuardrailFeedback } from "./hooks/useGuardrailFeedback";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
+import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
+import { enqueueSnackbar } from "notistack";
 
-const FEEDBACK_OPTIONS = [
-  { value: "correct", label: "Correct", color: "success" },
-  { value: "false_positive", label: "False Positive", color: "warning" },
-  { value: "false_negative", label: "False Negative", color: "error" },
-  { value: "unsure", label: "Unsure", color: "default" },
+import { GatewayStatusChip } from "../components/frame";
+import {
+  useCreateGuardrailFeedback,
+  useMyGuardrailFeedback,
+  useUpdateGuardrailFeedback,
+} from "./hooks/useGuardrailFeedback";
+
+const OPTIONS = [
+  { value: "correct", label: "Correct", tone: "healthy" },
+  { value: "false_positive", label: "False positive", tone: "warning" },
+  { value: "false_negative", label: "False negative", tone: "error" },
+  { value: "unsure", label: "Unsure", tone: "neutral" },
 ];
 
-const FeedbackWidget = ({ requestLogId, checkName, existingFeedback }) => {
-  const [expanded, setExpanded] = useState(false);
-  const [feedback, setFeedback] = useState(existingFeedback?.feedback || "");
-  const [comment, setComment] = useState(existingFeedback?.comment || "");
-  const [selectedCheck, setSelectedCheck] = useState(checkName || "");
-  const createMutation = useCreateGuardrailFeedback();
-  const [submitted, setSubmitted] = useState(Boolean(existingFeedback));
+const optionFor = (value) => OPTIONS.find((option) => option.value === value);
 
-  const handleSubmit = () => {
-    if (!feedback || !requestLogId) return;
-    createMutation.mutate(
-      {
-        request_log: requestLogId,
-        check_name: selectedCheck,
-        feedback,
-        comment,
+/**
+ * A reviewer's verdict on one guardrail match of one request. It loads the
+ * review this reviewer saved for this request and check (only its author may
+ * change a review, so another reviewer's answer is never shown as "Your
+ * review"), and an edit changes that review (PATCH) rather than adding
+ * another.
+ */
+const FeedbackWidget = ({ requestLogId, checkName }) => {
+  const saved = useMyGuardrailFeedback(requestLogId, checkName);
+  const existing = saved.answer || null;
+
+  const create = useCreateGuardrailFeedback();
+  const update = useUpdateGuardrailFeedback();
+  const [editing, setEditing] = useState(false);
+  const [verdict, setVerdict] = useState("");
+  const [comment, setComment] = useState("");
+
+  useEffect(() => {
+    setVerdict(existing?.feedback || "");
+    setComment(existing?.comment || "");
+  }, [existing?.id, existing?.feedback, existing?.comment]);
+
+  const busy = create.isPending || update.isPending;
+
+  const submit = () => {
+    const done = {
+      onSuccess: () => {
+        enqueueSnackbar(existing ? "Review updated" : "Review saved", {
+          variant: "success",
+        });
+        setEditing(false);
       },
-      {
-        onSuccess: () => {
-          enqueueSnackbar("Feedback submitted", { variant: "success" });
-          setSubmitted(true);
-          setExpanded(false);
+      onError: () =>
+        enqueueSnackbar("The review could not be saved", { variant: "error" }),
+    };
+    if (existing) {
+      update.mutate({ id: existing.id, feedback: verdict, comment }, done);
+    } else {
+      create.mutate(
+        {
+          request_log: requestLogId,
+          check_name: checkName,
+          feedback: verdict,
+          comment,
         },
-        onError: () =>
-          enqueueSnackbar("Failed to submit feedback", { variant: "error" }),
-      },
-    );
+        done,
+      );
+    }
   };
 
-  if (submitted && !expanded) {
+  if (saved.isLoading) {
     return (
-      <Stack direction="row" spacing={1} alignItems="center">
-        <Iconify
-          icon="mdi:check-circle"
-          width={18}
-          sx={{ color: "success.main" }}
-        />
-        <Typography variant="caption" color="success.main">
-          Feedback:{" "}
-          {FEEDBACK_OPTIONS.find((f) => f.value === feedback)?.label ||
-            feedback}
-        </Typography>
-        <Button
-          size="small"
-          onClick={() => {
-            setExpanded(true);
-            setSubmitted(false);
-          }}
-        >
-          Edit
-        </Button>
-      </Stack>
+      <Typography typography="s2" color="text.secondary">
+        Loading review…
+      </Typography>
     );
   }
 
-  return (
-    <Box>
-      <Stack direction="row" spacing={1} alignItems="center">
-        <Typography variant="caption" color="text.secondary">
-          Guardrail Feedback:
+  if (existing && !editing) {
+    const option = optionFor(existing.feedback);
+    return (
+      <Box
+        sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}
+      >
+        <Typography typography="s2" color="text.secondary">
+          Your review
         </Typography>
-        {FEEDBACK_OPTIONS.map((opt) => (
+        <GatewayStatusChip
+          tone={option?.tone || "neutral"}
+          label={option?.label || existing.feedback}
+          showIcon={false}
+        />
+        <Button size="small" onClick={() => setEditing(true)}>
+          Edit
+        </Button>
+      </Box>
+    );
+  }
+
+  const open = editing || Boolean(verdict);
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.75,
+          flexWrap: "wrap",
+        }}
+      >
+        <Typography typography="s2" color="text.secondary">
+          Was this match right?
+        </Typography>
+        {OPTIONS.map((option) => (
           <Chip
-            key={opt.value}
-            label={opt.label}
-            color={feedback === opt.value ? opt.color : "default"}
-            variant={feedback === opt.value ? "filled" : "outlined"}
+            key={option.value}
             size="small"
-            onClick={() => {
-              setFeedback(opt.value);
-              setExpanded(true);
-            }}
-            sx={{ cursor: "pointer" }}
+            label={option.label}
+            component="button"
+            variant={verdict === option.value ? "filled" : "outlined"}
+            color={verdict === option.value ? "primary" : "default"}
+            aria-pressed={verdict === option.value}
+            onClick={() => setVerdict(option.value)}
           />
         ))}
-      </Stack>
-
-      <Collapse in={expanded}>
-        <Stack spacing={1.5} sx={{ mt: 1.5 }}>
-          {!checkName && (
-            <TextField
-              size="small"
-              label="Check Name"
-              value={selectedCheck}
-              onChange={(e) => setSelectedCheck(e.target.value)}
-              placeholder="e.g. pii_detection, toxicity"
-            />
-          )}
+      </Box>
+      {open && (
+        <>
           <TextField
             size="small"
-            label="Comment (optional)"
+            label="Comment"
+            placeholder="Optional: why it was right or wrong"
             value={comment}
-            onChange={(e) => setComment(e.target.value)}
+            onChange={(event) => setComment(event.target.value)}
             multiline
-            rows={2}
-            placeholder="Describe why this is correct/incorrect..."
+            minRows={2}
           />
-          <Stack direction="row" spacing={1}>
+          <Box sx={{ display: "flex", gap: 1 }}>
             <Button
               size="small"
               variant="contained"
-              onClick={handleSubmit}
-              disabled={!feedback || createMutation.isPending}
+              color="primary"
+              disabled={!verdict || busy}
+              onClick={submit}
             >
-              {createMutation.isPending ? "Submitting..." : "Submit Feedback"}
+              Save review
             </Button>
-            <Button size="small" onClick={() => setExpanded(false)}>
+            <Button
+              size="small"
+              disabled={busy}
+              onClick={() => {
+                setEditing(false);
+                setVerdict(existing?.feedback || "");
+                setComment(existing?.comment || "");
+              }}
+            >
               Cancel
             </Button>
-          </Stack>
-        </Stack>
-      </Collapse>
+          </Box>
+        </>
+      )}
     </Box>
   );
 };
@@ -139,7 +171,6 @@ const FeedbackWidget = ({ requestLogId, checkName, existingFeedback }) => {
 FeedbackWidget.propTypes = {
   requestLogId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   checkName: PropTypes.string,
-  existingFeedback: PropTypes.object,
 };
 
 export default FeedbackWidget;

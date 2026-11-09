@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:webhooks:v1:prompt.version.created",
+  "title": "prompt.version.created, api_version v1 (DESIGN.md section 14.2)",
+  "allOf": [{"$ref": "urn:futureagi:webhooks:v1:envelope"}],
+  "type": "object",
+  "properties": {
+    "type": {"const": "prompt.version.created"},
+    "data": {
+      "type": "object",
+      "required": ["prompt", "version", "previous_version", "links"],
+      "properties": {
+        "prompt": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/prompt"},
+        "version": {
+          "type": "object",
+          "required": ["id", "version", "commit_message", "is_default", "labels", "created_at", "created_by"],
+          "properties": {
+            "id": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/uuid"},
+            "version": {"type": "string", "minLength": 1},
+            "commit_message": {"type": ["string", "null"], "maxLength": 1000},
+            "commit_message_truncated": {"const": true},
+            "is_default": {"type": "boolean"},
+            "labels": {"type": "array", "items": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/label"}},
+            "created_at": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/ts"},
+            "created_by": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/person"}
+          }
+        },
+        "previous_version": {"oneOf": [{"type": "null"}, {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/versionRef"}]},
+        "links": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/promptLinks"},
+        "content": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/content"},
+        "content_truncated": {"const": true},
+        "content_omitted": {"const": "secret_shape"}
+      }
+    }
+  }
+}

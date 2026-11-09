@@ -1,0 +1,3 @@
+{"version":2,"width":100,"height":2,"title":"good-agent (keyless)","env":{"TERM":"xterm-256color"}}
+[0.306,"o","answer: In Lisbon today: sunny, 24 degrees.\r\n"]
+[0.306,"o","tool get_weather ok=true -> {\"city\":\"Lisbon\",\"forecast\":\"sunny, 24 degrees\"}\r\n"]

@@ -112,8 +112,7 @@ const AddEvalsFeedbackDrawerChild = ({
   }, [configData]);
 
   const multiChoice = Boolean(configData?.multi_choice);
-  const isMultiSelect =
-    outputType === OUTPUT_TYPES.STR_LIST && multiChoice;
+  const isMultiSelect = outputType === OUTPUT_TYPES.STR_LIST && multiChoice;
 
   const { control, reset, handleSubmit, formState } = useForm({
     defaultValues: {
@@ -148,10 +147,9 @@ const AddEvalsFeedbackDrawerChild = ({
     mutationFn: ({ url, body }) => axios.post(url, body),
     onSuccess: (data) => {
       // @ts-ignore
-      enqueueSnackbar(
-        data?.data?.result?.message || "Feedback updated",
-        { variant: "success" },
-      );
+      enqueueSnackbar(data?.data?.result?.message || "Feedback updated", {
+        variant: "success",
+      });
       reset();
       onClose(true);
       refreshGrid({ purge: true });
@@ -255,14 +253,13 @@ const AddEvalsFeedbackDrawerChild = ({
       retuneOptions={[
         {
           title: "Re-tune",
-          description:
-            "A new version of this metric will be created and used in all future evaluations.",
+          description: "Submits feedback without creating a new eval version.",
           value: ACTION_TYPES.RETUNE,
         },
         {
           title: "Re-calculate and re-tune",
           description:
-            "We will create a new version of this metric and use in future evaluations. We will also recalculate all past evaluation runs using this feedback. This may take some time.",
+            "Submits feedback and requests recalculation for this source; it does not create a new eval version.",
           value: ACTION_TYPES.RECALCULATE,
         },
       ]}

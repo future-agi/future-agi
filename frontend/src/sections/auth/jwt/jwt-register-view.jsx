@@ -13,6 +13,10 @@ import { Box, Button, IconButton, InputAdornment } from "@mui/material";
 import { useNavigate, useLocation } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { useAuthContext } from "src/auth/hooks";
+import {
+  clearOnboardingRecovery,
+  useAuthRedirectParams,
+} from "src/auth/auth-url-intake";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
@@ -38,6 +42,31 @@ import {
   usePostLoginPath,
 } from "src/hooks/useDeploymentMode";
 
+// Marketplace views send these attempt-ending outcomes through bad_request.
+// Email/field validation is retryable, even though it uses the same HTTP 400.
+const TERMINAL_MARKETPLACE_MESSAGES = new Set([
+  "Invalid or expired onboarding token",
+  "This AWS Marketplace customer already has an account",
+  "This Marketplace subscription already has an account",
+]);
+
+function isTerminalMarketplaceBadRequest(error) {
+  if (
+    error?.statusCode !== 400 ||
+    error?.code === "SIGNUP_VALIDATION_FAILED" ||
+    error?.result?.error_code === "SIGNUP_VALIDATION_FAILED"
+  ) {
+    return false;
+  }
+  return [error?.error, error?.message, error?.result?.error].some(
+    (message) =>
+      typeof message === "string" &&
+      TERMINAL_MARKETPLACE_MESSAGES.has(
+        message.replace(/^Signup failed: /, ""),
+      ),
+  );
+}
+
 export default function JwtRegisterView() {
   const { register, login, marketplaceRegister } = useAuthContext();
   const [errorMsg, setErrorMsg] = useState("");
@@ -57,7 +86,7 @@ export default function JwtRegisterView() {
   const navigate = useNavigate();
   const { search } = useLocation();
   const [loading, setLoading] = useState(false);
-  const queryParams = new URLSearchParams(location.search);
+  const queryParams = useAuthRedirectParams();
   const onboarding_token = queryParams.get("onboarding_token");
   const onboarding_gcp_token = queryParams.get("onboarding_gcp_token");
 
@@ -199,6 +228,13 @@ export default function JwtRegisterView() {
         response = await register(payload);
       }
       if (response?.result) {
+        if (isOSS) {
+          queryParams.clear();
+        } else {
+          // Cloud keeps this form mounted for "Back to sign up". Release the
+          // global handoff, but retain marketplace context until real unmount.
+          queryParams.release();
+        }
         if (!isOSS) {
           // Cloud: the password is set via an emailed link.
           enqueueSnackbar({
@@ -267,6 +303,15 @@ export default function JwtRegisterView() {
       setLoading(false);
     } catch (error) {
       setLoading(false);
+      // Only terminal onboarding errors end recovery; validation/throttling
+      // must still allow a reload and retry of the same marketplace signup.
+      if (
+        (onboarding_token || onboarding_gcp_token) &&
+        ([401, 403, 404, 409, 410].includes(error?.statusCode) ||
+          isTerminalMarketplaceBadRequest(error))
+      ) {
+        clearOnboardingRecovery();
+      }
       if (
         (error?.statusCode >= 400 && error?.statusCode < 500) ||
         error?.name === "NotAllowedError"
@@ -379,6 +424,7 @@ export default function JwtRegisterView() {
       localStorage.setItem("signupProvider", provider);
 
       if (response.data?.result?.url) {
+        if (onboarding_gcp_token) clearOnboardingRecovery();
         window.location.href = response.data.result.url;
       } else {
         logger.error("Missing URL in response:", response.data);

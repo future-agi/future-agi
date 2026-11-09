@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import {
   Dialog,
   DialogContent,
@@ -20,16 +21,16 @@ const CustomBackdrop = styled(Backdrop)(({ theme }) => ({
 }));
 export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
   const theme = useTheme();
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setIsLoading(true);
+      setIsLoading(false);
     }
   }, [open]);
 
   const handleClose = () => {
-    setIsLoading(true);
+    setIsLoading(false);
     onClose();
   };
 
@@ -112,7 +113,8 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
           </Box>
         )}
 
-        <iframe
+        <ExternalContentFrame
+          onRequestLoad={() => setIsLoading(true)}
           src={hubspotUrl}
           width="100%"
           height="100%"

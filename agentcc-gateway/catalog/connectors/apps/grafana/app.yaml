@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: grafana
+version: 1.0.0
+name: Grafana Cloud
+description: "Dashboards, metrics, logs, traces, alerts and incidents in Grafana Cloud."
+vendor:
+  name: Grafana Labs
+  domains: [grafana.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [dashboards, metrics, logs, alerts]
+docsUrl: https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/
+defaultProvider: cloud-mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/
+    fetchedAt: 2026-10-21

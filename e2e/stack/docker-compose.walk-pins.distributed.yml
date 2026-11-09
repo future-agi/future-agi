@@ -1,0 +1,113 @@
+# H12 on the Distributed stack (walks W17 and W18): the same environment pins
+# as docker-compose.walk-pins.yml, on the API and the worker, added by bin/e2e
+# when E2E_WALK_PINS=1. The Distributed overlay already publishes the harness
+# ports; the boundary is enforced in the browser (lib/walk/boundary.ts).
+x-walk-pins: &walk-pins
+  FUTURE_AGI_LICENSE_URL: http://127.0.0.1:9
+  FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  FUTURE_AGI_TELEMETRY_DISABLED: "true"
+  OLLAMA_HOST: 127.0.0.1:9
+  OLLAMA_URL: http://127.0.0.1:9
+  OLLAMA_BASE_URL: http://127.0.0.1:9
+  LITELLM_LOCAL_MODEL_COST_MAP: "True"
+  APP_URL: http://localhost:3100
+  STRIPE_SECRET_KEY: ""
+  STRIPE_API_KEY: ""
+  STRIPE_PUBLISHABLE_KEY: ""
+  STRIPE_WEBHOOK_SECRET: ""
+services:
+  backend:
+    restart: "no"
+    environment: *walk-pins
+  worker:
+    restart: "no"
+    environment: *walk-pins
+  postgres-schema-bootstrap:
+    restart: "no"
+    environment: *walk-pins
+  clickhouse-native-bootstrap:
+    restart: "no"
+    environment: *walk-pins
+  clickhouse-cdc-bootstrap:
+    restart: "no"
+    environment: *walk-pins
+  frontend:
+    restart: "no"
+  worker-default:
+    restart: "no"
+    environment: *walk-pins
+  worker-tasks-s:
+    restart: "no"
+    environment: *walk-pins
+  worker-tasks-l:
+    restart: "no"
+    environment: *walk-pins
+  worker-tasks-xl:
+    restart: "no"
+    environment: *walk-pins
+  worker-exact-aggregation:
+    restart: "no"
+    environment: *walk-pins
+  worker-trace-ingestion:
+    restart: "no"
+    environment: *walk-pins
+  worker-agent-compass:
+    restart: "no"
+    environment: *walk-pins
+  worker-simulation-runner:
+    restart: "no"
+    environment: *walk-pins
+  agentcc-gateway:
+    restart: "no"
+  serving:
+    restart: "no"
+  code-executor:
+    restart: "no"
+  postgres:
+    restart: "no"
+  clickhouse:
+    restart: "no"
+  property-catalog-clickhouse-bootstrap:
+    restart: "no"
+  property-catalog-kafka-volume-init:
+    restart: "no"
+  property-catalog-runtime-volume-init:
+    restart: "no"
+  property-catalog-kafka:
+    restart: "no"
+  property-catalog-topic-init:
+    restart: "no"
+  fi-collector:
+    restart: "no"
+  fi-property-catalog-consumer:
+    restart: "no"
+  redis:
+    restart: "no"
+  minio:
+    restart: "no"
+  temporal:
+    restart: "no"
+  temporal-ui:
+    restart: "no"
+  temporal-admin-tools:
+    restart: "no"
+  peerdb-catalog:
+    restart: "no"
+  peerdb-temporal:
+    restart: "no"
+  peerdb-minio:
+    restart: "no"
+  peerdb-flow-api:
+    restart: "no"
+  peerdb-flow-worker:
+    restart: "no"
+  peerdb-flow-snapshot-worker:
+    restart: "no"
+  peerdb-server:
+    restart: "no"
+  peerdb-ui:
+    restart: "no"
+  peerdb-temporal-init:
+    restart: "no"
+  peerdb-init:
+    restart: "no"

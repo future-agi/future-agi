@@ -577,11 +577,6 @@ _GROUPING_STORE = filed(
     why="grouping reads and verifies its own feature rows",
     table="f6_grouping_features and f6_grouping_buckets",
 )
-_HOURLY_EVAL_STATEMENT = filed(
-    NO_SPAN_TABLE,
-    why="eval chart statement over the hourly eval aggregate",
-    table="eval_metrics_hourly",
-)
 _LEGACY_PAGE_STATEMENT = filed(
     PROJECT_SET,
     why="legacy page statement for the project ids of the list view",
@@ -1201,11 +1196,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "ErrorAnalysisQueryBuilder._build_time_series": _NO_LIVE_CALLER_ERROR_ANALYSIS,
     },
     "tracer.services.clickhouse.query_builders.eval_metrics": {
-        "EvalMetricsQueryBuilder._build_choices_query": _EVAL_CHART_ROWS,
-        "EvalMetricsQueryBuilder._build_pass_fail_agg": _HOURLY_EVAL_STATEMENT,
-        "EvalMetricsQueryBuilder._build_pass_fail_raw": _EVAL_CHART_ROWS,
-        "EvalMetricsQueryBuilder._build_score_agg": _HOURLY_EVAL_STATEMENT,
-        "EvalMetricsQueryBuilder._build_score_raw": _EVAL_CHART_ROWS,
+        "EvalMetricsQueryBuilder._build_raw_query": _EVAL_CHART_ROWS,
         "EvalMetricsQueryBuilder._filter_fragment": filed(
             PROJECT_SET,
             why=(
@@ -1782,6 +1773,22 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "TraceDetailReadBuilder.build_identity_query": _TRACE_DETAIL_BY_ID,
         "TraceDetailReadBuilder.build_span_anchor_query": _TRACE_DETAIL_BY_ID,
     },
+    "tracer.services.clickhouse.v2.trace_root_reads": {
+        "build_summary_query": filed(
+            BY_ID_ALONE,
+            why=(
+                "bounded experiment-run page summary for the trace ids it is given; "
+                "the supplied project ids only narrow those reads"
+            ),
+        ),
+        "build_root_content_query": filed(
+            BY_ID_ALONE,
+            why=(
+                "root content for exact PhysicalSpanIdentity values chosen from "
+                "the scoped summary, including project, trace, span and start time"
+            ),
+        ),
+    },
     "tracer.services.clickhouse.v2.trace_session_dict_reader": {
         "session_exists": filed(
             NO_SPAN_TABLE,
@@ -1807,6 +1814,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "GroupingFeatureStore.read_vectors": _GROUPING_STORE,
         "GroupingFeatureStore.write_and_verify": _GROUPING_STORE,
         "nearest_sql": _GROUPING_STORE,
+    },
+    "tracer.services.omega_agents.curves.runs": {
+        "AGENT_RUNS_SQL": filed(
+            PROJECT_SET,
+            why=(
+                "a Console agent's runs (learning-service P1-09), for the one Observe "
+                "project the curves view took from Project.no_workspace_objects, "
+                "filtered to the caller's own workspace and organization"
+            ),
+        ),
     },
     "tracer.services.users_list_manager": {
         "_users_attr_enrichment_query": _SESSION_OR_USER,
@@ -1953,6 +1970,11 @@ SCOPE_IDS = {
     "project_version_id",
 }
 BY_ID_WITHOUT_AN_ID = {
+    "tracer.services.clickhouse.v2.trace_root_reads:build_root_content_query": (
+        "takes structured PhysicalSpanIdentity values, each containing the project, "
+        "trace and span ids plus start time; the exact tuple is bound in SQL "
+        "(test_trace_root_reads.py pins the query and its parameters)"
+    ),
     "tracer.services.clickhouse.v2.span_reader:_dedup_sql": (
         "wraps reads that name their ids in the where clause the caller passes"
     ),
@@ -2102,6 +2124,70 @@ def names_a_project(key):
     return any(re.search("project", text, re.IGNORECASE) for text in texts)
 
 
+def distinct_reader_import(source, name, module):
+    """Recognize a different reader's explicit binding, never an ambiguous one."""
+    tree = ast.parse(source)
+    origins = [
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name == name
+    ]
+    ambiguous = any(
+        (isinstance(node, ast.Attribute) and node.attr == name)
+        or (
+            isinstance(node, ast.ImportFrom)
+            and any(alias.name == "*" for alias in node.names)
+        )
+        or (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        )
+        or (
+            isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, ast.Store)
+        )
+        for node in ast.walk(tree)
+    )
+    return origins == [module] and not ambiguous
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source", "distinct"),
+    [
+        ("from model_hub.services.experiment_run_traces import list_run_traces", True),
+        ("from simulate.services.run_traces_v3 import list_run_traces", False),
+        (
+            "from model_hub.services.experiment_run_traces import list_run_traces\n"
+            "from simulate.services.run_traces_v3 import list_run_traces as hidden",
+            False,
+        ),
+        (
+            "from model_hub.services.experiment_run_traces import list_run_traces\n"
+            "hidden.list_run_traces()",
+            False,
+        ),
+        (
+            "from model_hub.services.experiment_run_traces import list_run_traces\n"
+            "from simulate.services.run_traces_v3 import *",
+            False,
+        ),
+    ],
+)
+def test_same_named_experiment_reader_does_not_exempt_a_simulation_reader(
+    source, distinct
+):
+    assert (
+        distinct_reader_import(
+            source, "list_run_traces", "model_hub.services.experiment_run_traces"
+        )
+        is distinct
+    )
+
+
 def caller_problems():
     """Readers of the hidden project that a module outside the map uses."""
 
@@ -2115,6 +2201,15 @@ def caller_problems():
     ]
     for label, name, also, allowed in checks:
         for path in sorted(files_naming(name, also=also) - allowed):
+            # The SDK's experiment reader shares this spelling but does not read
+            # the simulation hidden project. Keep refusing any actual or
+            # ambiguous use of the simulation reader from outside its map.
+            if name == "list_run_traces" and distinct_reader_import(
+                module_code(module_name(Path(path))),
+                name,
+                "model_hub.services.experiment_run_traces",
+            ):
+                continue
             problems.append(
                 f"{label} is used by {path}, which the callers map does not list; "
                 f"it may be used only from {sorted(allowed)}"
@@ -2856,7 +2951,7 @@ def creator_problems(found, pinned, present):
                     f"{key} (line {creator.call.lineno}) is pinned as {claim!r} and "
                     "the code does not show it"
                 )
-    for key, (claim, _why) in sorted(pinned.items()):
+    for key, (_claim, _why) in sorted(pinned.items()):
         if key in found:
             continue
         relative = key.split(":", 1)[0]
@@ -3011,6 +3106,13 @@ ROW_TYPES = {
     "tracer.EvaluationRun.project": USER_MADE,
     "tracer.ImagineAnalysis.project": USER_MADE,
     "tracer.ObservabilityProvider.project": OTHER_PROJECTS_ROW,
+    # The fork's Omega Observe link (round 7 merge; agent kind in P1-08): made
+    # only by the Deployments tab's ensure (POST /tracer/omega/deployments/<id>/
+    # observe/, which EE calls for a deployed agent) on its deploy/<name>
+    # project, or by the Console agent ensure (POST /tracer/omega/agents/<id>/
+    # observe/) on its agent/<slug>-<shortid> project; a simulated run never
+    # creates one.
+    "tracer.OmegaDeploymentObserveLink.project": USER_MADE,
     "tracer.ObservationSpan.project": TRACE_STORE_ROW,
     "tracer.ProjectCapability.project": JOB_THROUGH_MANAGERS,
     "tracer.ProjectVersion.project": USER_MADE,
@@ -3052,6 +3154,10 @@ SOFT_PROJECT_COLUMNS = {
         "the project of a session a user bookmarks or renames; written by the "
         "session view"
     ),
+    "model_hub.RowSource.project_id": (
+        "the project of the trace, span or session a dataset row was imported "
+        "from; written by the Observe import worker for the project it read"
+    ),
 }
 
 
@@ -3080,8 +3186,8 @@ def _install_recorder(monkeypatch):
     recorder = _Recorder()
 
     class Exporter:
-        def __init__(self, *args, **kwargs):
-            pass
+        def __init__(self, protocol, **kwargs):
+            assert protocol == "grpc"
 
         def export(self, spans):
             for span in spans:
@@ -3097,9 +3203,7 @@ def _install_recorder(monkeypatch):
         recorder.project_names.extend([project_name] * len(spans))
         return len(spans)
 
-    monkeypatch.setattr(
-        "simulate.services.sim_collector_emit.OTLPSpanExporter", Exporter
-    )
+    monkeypatch.setattr("simulate.services.sim_collector_emit.span_exporter", Exporter)
     monkeypatch.setattr(
         "tracer.services.collector_ingest.emit_spans_to_collector", emit
     )

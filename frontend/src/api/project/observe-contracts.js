@@ -16,6 +16,16 @@ const nullableGraphPoint = z.object({
   timestamp: z.string().min(1),
   value: z.number().nullable(),
   primary_traffic: z.number().nullable().optional(),
+  count: z.number().int().nonnegative().optional(),
+  scored_count: z.number().int().nonnegative().optional(),
+  unscored_count: z.number().int().nonnegative().optional(),
+  completed_count: z.number().int().nonnegative().optional(),
+  error_count: z.number().int().nonnegative().optional(),
+  pending_count: z.number().int().nonnegative().optional(),
+  running_count: z.number().int().nonnegative().optional(),
+  skipped_count: z.number().int().nonnegative().optional(),
+  failed_count: z.number().int().nonnegative().optional(),
+  error_rate: z.number().nullable().optional(),
 });
 // The generated schema closes `metric_statistic` to today's enum. A newer
 // server may name a statistic this tab predates (for example p95); rejecting

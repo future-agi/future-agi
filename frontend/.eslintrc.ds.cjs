@@ -1,0 +1,122 @@
+// Future AGI Design System guard (product-design/design-system).
+// Run with `npm run lint:ds`. Each rule flags styling that should come from the
+// theme or a shared component instead of being written by hand on a screen.
+// Adapted from Vel 148ee8a615 (including affa74ec19 control guards).
+// REPORT ONLY: no CI gate until the deferred screen cleanup. The report lists
+// every violation and parser failure; it is not a claim that the repo is clean.
+
+const DS = (selector, message) => ({ selector, message: `[DS] ${message}` });
+
+module.exports = {
+  root: true,
+  env: { browser: true, es2021: true },
+  parserOptions: {
+    ecmaVersion: "latest",
+    sourceType: "module",
+    ecmaFeatures: { jsx: true },
+  },
+  ignorePatterns: [
+    "src/theme/**",
+    "src/generated/**",
+    "src/**/_mock/**",
+    "src/**/__tests__/**",
+    "src/**/*.test.*",
+    "src/**/*.stories.*",
+    "src/assets/**",
+  ],
+  // Loaded only so existing eslint-disable comments for these rules resolve;
+  // the rules themselves stay off here (the main config runs them).
+  plugins: ["react", "react-hooks", "react-refresh"],
+  rules: {
+    "react/prop-types": "off",
+    "react-hooks/exhaustive-deps": "off",
+    "react-refresh/only-export-components": "off",
+    "no-restricted-imports": [
+      "warn",
+      {
+        paths: [
+          {
+            name: "@mui/material",
+            importNames: ["Card", "CardContent", "CardHeader"],
+            message: "[DS] Use src/components/section (plain or panel) instead of Card.",
+          },
+        ],
+      },
+    ],
+    "no-restricted-syntax": [
+      "warn",
+      DS(
+        "Literal[value=/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3}([0-9A-Fa-f]{2})?)?$/]",
+        "Hex colour. Use a theme token (text.*, background.*, border.*, status.*).",
+      ),
+      DS(
+        "Literal[value=/^(red|green|blue|orange|purple|pink|yellow|black|whiteScale)\\.(o?\\d+)$/]",
+        "Legacy palette hue. Use status.<role>.* or text/border/background tokens.",
+      ),
+      DS(
+        "Property[key.name='fontSize'] > Literal[value=/^(8|9|10|14|16|17|18|19|21|22|28)(px)?$/]",
+        "Font size off the pinned v0.2 role scale. Use a typography variant (UI 12/18, body 13/20, caption 11/16).",
+      ),
+      DS(
+        "JSXAttribute[name.name='fontSize'] Literal[value=/^(8|9|10|14|16|17|18|19|21|22|28)(px)?$/]",
+        "Font size off the pinned v0.2 role scale. Use a typography variant (UI 12/18, body 13/20, caption 11/16).",
+      ),
+      DS(
+        "Property[key.name='fontWeight'] > Literal[value=/^(700|800|900|bold)$/]",
+        "Weight above 600. The DS uses 400 / 500 / 600.",
+      ),
+      DS(
+        "Property[key.name='textTransform'] > Literal[value='uppercase']",
+        "Uppercase label. The DS uses sentence case.",
+      ),
+      DS(
+        "JSXText[value=/^\\s*[A-Z]{3,}(\\s+[A-Z]{2,})+\\s*$/]",
+        "Typed-in capitals. Write labels in sentence case.",
+      ),
+      DS(
+        "Property[key.value='&.Mui-selected'] Property[key.name='color'] > Literal[value='primary.main']",
+        "Purple selected state. Selected tabs, items and rows use text.primary; purple is for the main action only.",
+      ),
+      DS(
+        "JSXOpeningElement[name.name=/Tooltip$/] JSXAttribute[name.name=/^(slotProps|componentsProps|PopperProps)$/] Property[key.name=/^(bgcolor|backgroundColor|background|color|border|borderColor|boxShadow|borderRadius|fontSize|fontWeight|padding|p|px|py)$/]",
+        "Tooltip restyle. Tooltips are the DS tooltip from the theme; only placement, width (maxWidth) and offset may change.",
+      ),
+      DS(
+        "JSXOpeningElement[name.name=/^(Checkbox|Radio)$/] JSXAttribute[name.name=/^(icon|checkedIcon|indeterminateIcon)$/]",
+        "Checkbox/Radio icon override. Use the theme's Checkbox or Radio as is.",
+      ),
+      DS(
+        "JSXAttribute[name.name='icon'] Literal[value=/^(solar:(check-square|square|circle-dot)-(linear|bold)$|famicons:checkbox|mdi:checkbox|mdi:radiobox)/]",
+        "Hand-drawn checkbox or radio icon. Render <Checkbox> or <Radio> (tabIndex={-1} inside a clickable row).",
+      ),
+      DS(
+        "JSXOpeningElement[name.name=/^(Avatar|AvatarGroup)$/] JSXAttribute[name.name='sx'] Property[key.name=/^(bgcolor|backgroundColor|color|border|borderColor)$/]",
+        "Avatar colour override. Avatars are the neutral DS avatar; only size may change.",
+      ),
+      DS(
+        "JSXOpeningElement[name.name=/^(Tabs|Tab|CustomTabs|SegmentedTabs|ToggleButtonGroup|ToggleButton)$/] JSXAttribute[name.name='sx'] Property[key.name=/^(height|minHeight|fontSize|fontWeight|color|bgcolor|backgroundColor|borderRadius|border|textTransform|padding|px|py)$/]",
+        "Tab / segmented-control override. The theme styles these; don't restyle per screen.",
+      ),
+      DS(
+        "JSXOpeningElement[name.name=/^(MenuItem|ListItemText)$/] JSXAttribute[name.name='sx'] Property[key.name=/^(fontSize|fontWeight|color|minHeight|height)$/]",
+        "Menu item override. Menu items are 13px regular from the theme.",
+      ),
+      DS(
+        "JSXOpeningElement[name.name='Alert'] JSXAttribute[name.name='sx'] Property[key.name=/^(bgcolor|backgroundColor|color|border|borderColor|borderRadius)$/]",
+        "Alert colour override. Use severity; the theme colours it.",
+      ),
+      DS(
+        "JSXOpeningElement[name.name=/^(Card|Paper)$/] JSXAttribute[name.name='sx'] Property[key.name=/^(boxShadow|borderRadius|bgcolor|backgroundColor)$/]",
+        "Card/Paper styling. Use the shared Section (plain or panel).",
+      ),
+      DS(
+        "Property[key.name='boxShadow'] > Literal[value!='none']",
+        "Custom shadow. In-page surfaces have no shadow; overlays get theme shadows.",
+      ),
+      DS(
+        "JSXOpeningElement[name.name=/^(Button|LoadingButton|IconButton|Chip)$/] > JSXAttribute[name.name='sx'] > JSXExpressionContainer > ObjectExpression > Property[key.name=/^(height|minHeight|fontSize|fontWeight|borderRadius|textTransform)$/]",
+        "Button/Chip size or type override. Use the component's size prop; the theme sets the rest.",
+      ),
+    ],
+  },
+};

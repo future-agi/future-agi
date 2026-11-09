@@ -1,0 +1,116 @@
+# Standalone preparation manifest, NOT an overlay on the local/bootstrap
+# stack. Use external datastores and an independently qualified ingress.
+# No ports are published: admin/control-plane surfaces remain internal.
+# Worker resumption is explicit, after the migration/sync receipts.
+x-backend-env: &backend-env
+  AGENTCC_DEPLOYMENT_PROFILE: hosted
+  ENV_TYPE: production
+  NO_STARTUP_DB_MUTATIONS: "true"
+  STARTUP_DB_MUTATION_MODE: disabled
+  REGISTER_TEMPORAL_SCHEDULES: "false"
+  FI_SKIP_CH25_MIGRATION: "1"
+  BASE_URL: ${BASE_URL:?required operator API URL}
+  FRONTEND_URL: ${FRONTEND_URL:?required operator frontend URL}
+  SECRET_KEY: ${SECRET_KEY:?required from secret injection}
+  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?required stable key from secret injection}
+  AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?required from secret injection}
+  AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?required from secret injection}
+  AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:?required from secret injection}
+  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8080
+  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8080
+  AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: "false"
+  # The settlement drain reads the gateway billing outbox, not the cache DB.
+  # REDIS_URL must use the SAME Redis instance and database 4 as the mounted
+  # config.hosted.example.yaml. A db-0 URL otherwise silently drains nothing.
+  # The shared DB assertion makes a mismatched backend/worker fail at startup.
+  REDIS_URL: ${REDIS_URL:?required gateway billing Redis URL using database 4}
+  AGENTCC_REDIS_DB: "4"
+  PGBOUNCER_HOST: ${PG_HOST:?required PostgreSQL host}
+  PGBOUNCER_PORT: ${PG_PORT:?required PostgreSQL port}
+  PG_HOST: ${PG_HOST:?required PostgreSQL host}
+  PG_PORT: ${PG_PORT:?required PostgreSQL port}
+  PG_DB: ${PG_DB:?required database name}
+  PG_USER: ${PG_USER:?required database user}
+  PG_PASSWORD: ${PG_PASSWORD:?required from secret injection}
+  CH_HOST: ${CH_HOST:?required ClickHouse host}
+  CH_PORT: ${CH_PORT:?required ClickHouse native port}
+  CH_USER: ${CH_USER:?required ClickHouse user}
+  CH_PASSWORD: ${CH_PASSWORD:?required from secret injection}
+  TEMPORAL_HOST: ${TEMPORAL_HOST:?required Temporal endpoint}
+
+services:
+  backend:
+    image: ${BACKEND_IMAGE:?required repository}@${BACKEND_DIGEST:?required sha256 digest}
+    entrypoint: ["granian"]
+    command:
+      [
+        "--interface",
+        "asgi",
+        "tfc.asgi:application",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: backend
+    expose: ["8000"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz/', timeout=4).close()",
+        ]
+      timeout: 5s
+      interval: 10s
+      start_period: 60s
+    stop_grace_period: 45s
+
+  agentcc-gateway:
+    image: ${GATEWAY_IMAGE:?required repository}@${GATEWAY_DIGEST:?required sha256 digest}
+    command: ["--config", "/etc/agentcc/config.yaml"]
+    deploy:
+      # Launch is intentionally single-replica; no autoscaler is attached.
+      replicas: 1
+    environment:
+      AGENTCC_DEPLOYMENT_PROFILE: hosted
+      # Operator go and release proofs required; this never provisions providers.
+      AGENTCC_HOSTED_ONEKEY_ACTIVATION: ${AGENTCC_HOSTED_ONEKEY_ACTIVATION:-false}
+      AGENTCC_AUTH_ENABLED: "true"
+      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?required from secret injection}
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?required from secret injection}
+      AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:?required from secret injection}
+      FI_BASE_URL: http://backend:8000
+      AGENTCC_CONTROL_PLANE_URL: http://backend:8000
+      # Exact operator backend only: saved evaluation callbacks use this dialer
+      # too. MCP remains disabled; no subnet or K2 exception is admitted.
+      AGENTCC_MCP_EGRESS_PRIVATE_ALLOW: backend:8000
+      AGENTCC_SYNC_ON_STARTUP: "true"
+      AGENTCC_SYNC_INTERVAL: 60s
+      AGENTCC_REDIS_ADDRESS: ${AGENTCC_REDIS_ADDRESS:?required shared Redis address}
+      AGENTCC_REDIS_DB: "4"
+      AGENTCC_REDIS_PASSWORD: ${AGENTCC_REDIS_PASSWORD:?required from secret injection}
+      AGENTCC_TRUSTED_PROXY_CIDR: ${AGENTCC_TRUSTED_PROXY_CIDR:?required exact proxy address or CIDR}
+    volumes:
+      - ../agentcc-gateway/config.hosted.example.yaml:/etc/agentcc/config.yaml:ro
+    expose: ["8080"]
+    healthcheck:
+      test:
+        ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8080/readyz"]
+      timeout: 4s
+      interval: 10s
+      start_period: 60s
+    stop_grace_period: 45s
+
+  worker:
+    image: ${BACKEND_IMAGE:?required repository}@${BACKEND_DIGEST:?required sha256 digest}
+    profiles: ["resume-workers-after-acceptance"]
+    entrypoint: ["python"]
+    command: ["manage.py", "start_temporal_worker"]
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: worker
+    stop_grace_period: 90s

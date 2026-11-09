@@ -92,8 +92,14 @@ def get_activities():
         setup_prompt_v2_activity,
         stop_experiment_cleanup_activity,
     )
+    from tfc.temporal.experiments.run_control_activities import (
+        bind_experiment_run_activity,
+        persist_experiment_run_state_activity,
+    )
 
     return [
+        bind_experiment_run_activity,
+        persist_experiment_run_state_activity,
         setup_experiment_activity,
         process_prompt_activity,
         setup_prompt_v2_activity,

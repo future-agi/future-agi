@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
 import PropTypes from "prop-types";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 
@@ -19,11 +20,16 @@ const B = evalRow("e2", "groundedness");
 
 // Exercise the same queue and acknowledgement path as EvaluationDrawer. These
 // buttons stand in for successful saves; changing evals simulates a GET refresh.
+// SavedEvalsList reads react-query (the experiment-default toggle), so the
+// session holds one client across rerenders.
 function SavedListSession({ evals }) {
+  const [queryClient] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  );
   const { autoSelectRequests, requestAutoSelect, acknowledgeAutoSelect } =
     usePendingEvalSelections();
   return (
-    <>
+    <QueryClientProvider client={queryClient}>
       <button onClick={() => requestAutoSelect(A.name)}>Save A</button>
       <button onClick={() => requestAutoSelect(B.name)}>Save B</button>
       <button
@@ -41,7 +47,7 @@ function SavedListSession({ evals }) {
         onAutoSelectApplied={acknowledgeAutoSelect}
         allColumns={[]}
       />
-    </>
+    </QueryClientProvider>
   );
 }
 

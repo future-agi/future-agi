@@ -46,7 +46,7 @@ import {
 import { enqueueSnackbar } from "notistack";
 import { ShareDialog } from "src/components/share-dialog";
 import AddToQueueDialog from "src/sections/annotations/queues/components/add-to-queue-dialog";
-import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
+import { openAddData } from "src/sections/common/AddData/addDataStore";
 import AnnotationSidebarContent from "src/components/traceDetailDrawer/AnnotationSidebarContent";
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { buildTraceAnnotationSources } from "src/components/voiceAnnotationSources";
@@ -58,6 +58,7 @@ import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel"
 import ImagineTab from "src/components/imagine/ImagineTab";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import useImagineStore from "src/components/imagine/useImagineStore";
+import FindBar from "src/sections/common/Find/FindBar";
 
 const PANEL_WIDTH = "60vw";
 
@@ -103,7 +104,7 @@ TraceDetailSpanFilterPanel.propTypes = {
 };
 
 const ACTION_ITEMS = [
-  { id: "dataset", label: "Move to dataset", icon: "mdi:database-outline" },
+  { id: "dataset", label: "Add to dataset", icon: "mdi:database-outline" },
   {
     id: "workbench",
     label: "Iterate in prompt workbench",
@@ -205,7 +206,6 @@ const TraceDetailDrawerV2 = ({
 
   // Action dialog/drawer state
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
-  const [datasetDrawerOpen, setDatasetDrawerOpen] = useState(false);
   const [annotateDrawerOpen, setAnnotateDrawerOpen] = useState(null);
   const [addLabelDrawerOpen, setAddLabelDrawerOpen] = useState(false);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
@@ -693,7 +693,15 @@ const TraceDetailDrawerV2 = ({
           });
           break;
         case "dataset":
-          setDatasetDrawerOpen(true);
+          // R2 (P5): one way in; the global Add-data sheet.
+          if (traceId)
+            openAddData({
+              source: {
+                kind: "traces",
+                trace_ids: [traceId],
+                project_id: projectId,
+              },
+            });
           break;
         case "workbench": {
           if (!span) {
@@ -799,7 +807,9 @@ const TraceDetailDrawerV2 = ({
           setTagsAnchorEl(anchorEl || document.body);
           break;
         default:
-          enqueueSnackbar(`${actionId} — coming soon`, { variant: "info" });
+          // options-truth L3 G10 (S1): every listed action has a case above;
+          // an unknown id is a wiring bug, never a `coming soon` toast.
+          logger.warn(`trace drawer: unknown action ${actionId}`);
       }
     },
     [
@@ -906,6 +916,7 @@ const TraceDetailDrawerV2 = ({
         />
       )}
 
+      <FindBar scope=".MuiDrawer-paper" label="Find in this trace" />
       {/* Header */}
       <DrawerHeader
         open={open}
@@ -1443,13 +1454,6 @@ const TraceDetailDrawerV2 = ({
         sourceType={selectedSpanId ? "observation_span" : "trace"}
         sourceIds={selectedSpanId ? [selectedSpanId] : traceId ? [traceId] : []}
         itemName={selectedSpanData ? getSpan(selectedSpanData)?.name : "Trace"}
-      />
-
-      {/* Move to Dataset Drawer */}
-      <AddDataset
-        handleClose={() => setDatasetDrawerOpen(false)}
-        actionToDataset={datasetDrawerOpen}
-        spanId={selectedSpanId}
       />
 
       {/* Annotate Drawer — new sidebar UI */}

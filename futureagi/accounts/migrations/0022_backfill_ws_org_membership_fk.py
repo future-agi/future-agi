@@ -44,7 +44,7 @@ def backfill_ws_org_membership_fk(apps, schema_editor):
     connection = schema_editor.connection
 
     null_ids = list(
-        WorkspaceMembership.objects.filter(
+        WorkspaceMembership.objects.using(schema_editor.connection.alias).filter(
             organization_membership__isnull=True
         ).values_list("id", flat=True)
     )

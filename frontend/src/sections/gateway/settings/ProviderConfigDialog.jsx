@@ -234,6 +234,7 @@ const ProviderConfigDialog = ({
         <Button onClick={onClose}>Cancel</Button>
         <Button
           variant="contained"
+          color="primary"
           onClick={handleSave}
           disabled={!form.name || !form.apiKey}
         >

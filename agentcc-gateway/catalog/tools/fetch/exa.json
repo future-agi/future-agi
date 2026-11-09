@@ -1,0 +1,26 @@
+{
+  "vendor": "exa",
+  "capability": "fetch",
+  "skus": [
+    {
+      "sku": "exa.contents.content_page",
+      "unit": "content_page",
+      "usd_per_unit": 0.001,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "unconfirmed",
+  "resale_terms_ref": "",
+  "terms_url": "https://exa.ai/terms",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": true,
+  "trains_on_input": "no",
+  "improvement_license": true,
+  "regions": [],
+  "results_retention": "metadata",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

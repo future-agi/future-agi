@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Button, Grid, Skeleton, Typography } from "@mui/material";
 import React, { useState } from "react";
 import SvgColor from "src/components/svg-color";
@@ -13,7 +14,7 @@ import {
 import { useNavigate } from "react-router";
 
 const SimulationAgentEmptyScreen = () => {
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const { role } = useAuthContext();
   const navigate = useNavigate();
   const handleAddAgent = () => {
@@ -129,7 +130,8 @@ const SimulationAgentEmptyScreen = () => {
                   }}
                 />
               )}
-              <iframe
+              <ExternalContentFrame
+                onRequestLoad={() => setIsLoading(true)}
                 src="https://www.loom.com/embed/f13e7911fb5c4ec583c72dc20acbc83a"
                 title="Knowledge Base"
                 frameBorder="0"

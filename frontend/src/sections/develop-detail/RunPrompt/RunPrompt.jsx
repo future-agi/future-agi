@@ -15,6 +15,8 @@ import {
 import CustomTooltip from "src/components/tooltip";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import PropTypes from "prop-types";
+import RerunScopeField from "../AddColumn/RerunScopeField";
+import { EDIT_RUN_PROMPT_BODY, withRerunScope } from "../AddColumn/rerunScope";
 import React, {
   useImperativeHandle,
   useEffect,
@@ -95,6 +97,7 @@ import PromptImageInput from "./Components/PromptImageInput";
 import ChooseModelType from "./Components/ChooseModelType";
 import ModelOptionsState from "../Common/ModelOptionsState";
 import CustomAudioDialog from "../CustomAudioDialog";
+import { rerunResultToast } from "../AddColumn/rerunResult";
 
 const DEFAULT_CONFIG_KEYS = [
   "responseFormat",
@@ -113,6 +116,26 @@ const DEFAULT_CONFIG_KEYS = [
   "promptVersion",
   "run_prompt_config",
 ];
+
+// v2.1 g8 (knob:run-prompt:model, the capability contract d): the parameters a Run
+// Prompt cell honours (temperature, max tokens). Top P, the penalties and
+// reasoning change nothing in a cell, so they are not shown.
+const HONOURED_PARAMS = ["temperature", "maxtokens"];
+const paramKey = (s) =>
+  String(s?.label ?? s?.id ?? "")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+const honouredModelParams = (params) =>
+  params
+    ? {
+        ...params,
+        sliders: (params.sliders ?? []).filter((s) =>
+          HONOURED_PARAMS.includes(paramKey(s)),
+        ),
+        booleans: [],
+        dropdowns: [],
+      }
+    : params;
 
 const buildRunPromptConfig = (
   data,
@@ -298,6 +321,8 @@ export const RunPromptForm = React.forwardRef(
   ) => {
     const { dataset } = useParams();
     const [testRun, setTestRun] = useState(Boolean);
+    // L5 G4: which rows `Update and Run` re-runs.
+    const [rerunScope, setRerunScope] = useState("all");
     const [, setShowOutput] = useState(Boolean);
     const [selected, setSelected] = useState("firstRows");
     const [rowNum, setRowNum] = useState("1,2,3,4,5");
@@ -320,7 +345,9 @@ export const RunPromptForm = React.forwardRef(
     const draftResponseFormatRef = useRef(null);
 
     const handleOpenModelParams = (e) => {
-      setDraftModelParameters(JSON.parse(JSON.stringify(modelParameters)));
+      setDraftModelParameters(
+        honouredModelParams(JSON.parse(JSON.stringify(modelParameters))),
+      );
       setDraftReasoningState(JSON.parse(JSON.stringify(reasoningState)));
       draftResponseFormatRef.current = getValues("config.responseFormat");
       setModelParamsAnchorEl(e.currentTarget);
@@ -342,9 +369,9 @@ export const RunPromptForm = React.forwardRef(
 
     const handleClearModelParams = () => {
       setDraftModelParameters({
-        ...modelParameters,
+        ...honouredModelParams(modelParameters),
         ...(modelParameters?.sliders && {
-          sliders: modelParameters.sliders.map((s) => ({
+          sliders: honouredModelParams(modelParameters).sliders.map((s) => ({
             ...s,
             value: s?.default !== undefined ? s?.default : 0,
           })),
@@ -420,7 +447,10 @@ export const RunPromptForm = React.forwardRef(
     const hasModelParamsChanges = useMemo(() => {
       if (!draftModelParameters || !modelParameters) return false;
       return (
-        !_.isEqual(draftModelParameters, modelParameters) ||
+        !_.isEqual(
+          draftModelParameters,
+          honouredModelParams(modelParameters),
+        ) ||
         !_.isEqual(draftReasoningState, reasoningState) ||
         watchedResponseFormat !== draftResponseFormatRef.current
       );
@@ -607,7 +637,8 @@ export const RunPromptForm = React.forwardRef(
     const { data: voiceOptions, isLoading: isLoadingVoiceOptions } =
       useVoiceOptions({
         model: watchedModel,
-        enabled: !!watchedModel,
+        // v2.1 g8: voices are a TTS setting; other models never ask.
+        enabled: !!watchedModel && watchedModelType === MODEL_TYPES.TTS,
       });
 
     const { mutate: createRunPrompt, isPending: isSubmittingPrompt } =
@@ -629,10 +660,9 @@ export const RunPromptForm = React.forwardRef(
       useMutation({
         mutationFn: (data) =>
           axios.post(endpoints.develop.runPrompt.editRunPrompt(), data),
-        onSuccess: () => {
-          enqueueSnackbar("Run Prompt updated successfully", {
-            variant: "success",
-          });
+        onSuccess: (res) => {
+          const toast = rerunResultToast("Run Prompt", res);
+          enqueueSnackbar(toast.text, { variant: toast.variant });
           refreshGrid(null, true);
           resetPreviewData();
           onClose();
@@ -982,7 +1012,14 @@ export const RunPromptForm = React.forwardRef(
       if (isEditMode) {
         if (performExtraCheckForSampleDataset(submitObject)) return;
         // @ts-ignore
-        updateRunPrompt({ column_id: editConfigData?.id, ...submitObject });
+        // L2: dev's edit_run_prompt_column is strict and declares no scope.
+        updateRunPrompt(
+          withRerunScope(
+            { column_id: editConfigData?.id, ...submitObject },
+            rerunScope,
+            EDIT_RUN_PROMPT_BODY,
+          ),
+        );
       } else {
         // @ts-ignore
         createRunPrompt(submitObject);
@@ -1558,6 +1595,7 @@ export const RunPromptForm = React.forwardRef(
                         <IconButton
                           disabled={!watchedModel || isLoadingModelParams}
                           size="small"
+                          aria-label="Model options"
                           onClick={handleOpenModelParams}
                           sx={{
                             height: "28px",
@@ -1741,7 +1779,7 @@ export const RunPromptForm = React.forwardRef(
                       modelResponseFormat={modelParams?.responseFormat}
                       control={control}
                       fieldNamePrefix="config"
-                      reasoning={modelParams?.reasoning}
+                      reasoning={undefined}
                       reasoningState={draftReasoningState}
                       setReasoningState={setDraftReasoningState}
                       showActions
@@ -1832,7 +1870,10 @@ export const RunPromptForm = React.forwardRef(
                 <RunWrapper>
                   <RunHeader>
                     <RunTitle>Run Preview on Custom Rows</RunTitle>
-                    <IconButton onClick={() => setTestRun(false)}>
+                    <IconButton
+                      aria-label="Close test run"
+                      onClick={() => setTestRun(false)}
+                    >
                       <Iconify icon="mingcute:close-line" />
                     </IconButton>
                   </RunHeader>
@@ -1963,6 +2004,15 @@ export const RunPromptForm = React.forwardRef(
                   </RunBtnWrap>
                 </Box>
               </Popover>
+              {isEditMode && (
+                <Box sx={{ px: 2 }}>
+                  <RerunScopeField
+                    definition={EDIT_RUN_PROMPT_BODY}
+                    value={rerunScope}
+                    onChange={setRerunScope}
+                  />
+                </Box>
+              )}
               <Box
                 sx={{
                   display: "flex",
@@ -2038,7 +2088,7 @@ export const RunPromptForm = React.forwardRef(
                   }}
                 >
                   <Typography typography="s1" fontWeight={"fontWeightSemiBold"}>
-                    {isEditMode ? "Update" : "Run"}
+                    {isEditMode ? "Update and Run" : "Apply and Run"}
                   </Typography>
                 </LoadingButton>
               </Box>
@@ -2168,6 +2218,7 @@ export const RunPromptForm = React.forwardRef(
             View Docs
           </Button>
           <IconButton
+            aria-label="Close run prompt"
             onClick={onCloseHandler}
             size="small"
             sx={{

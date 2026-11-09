@@ -201,7 +201,7 @@ describe("AnnotationQueueTable", () => {
     render(<AnnotationQueueTable {...defaultProps} />);
 
     expect(screen.getByText("2 labels")).toBeInTheDocument();
-    expect(screen.getByText("1 labels")).toBeInTheDocument();
+    expect(screen.getByText("1 label")).toBeInTheDocument();
   });
 
   it("shows all queue members, including managers and reviewers", () => {

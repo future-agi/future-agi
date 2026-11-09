@@ -256,15 +256,17 @@ export default function FolderListView({ sortConfig }) {
         >
           <Stack gap={1} direction="row" alignItems="center">
             <Typography
+              id="page-size-select-label"
               typography="s2"
               color="text.primary"
               fontWeight="fontWeightRegular"
             >
-              Result per page
+              Results per page
             </Typography>
             <Select
               size="small"
               id="page-size-select"
+              labelId="page-size-select-label"
               value={pageLimit}
               onChange={(e) => {
                 setPage(1);

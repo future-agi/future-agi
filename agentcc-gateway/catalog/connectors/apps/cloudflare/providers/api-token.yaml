@@ -1,0 +1,47 @@
+# The Cloudflare API MCP server with a Cloudflare API token (a user or an
+# account token) as the bearer. Its execute tool runs code against any
+# Cloudflare API endpoint, so what it may do is the token's permissions;
+# Cloudflare's product-specific servers are not offered.
+schema: "connector-manifest/v1#provider"
+app: cloudflare
+id: api-token
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.cloudflare.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API token
+      help: "A Cloudflare user or account API token, sent as a bearer token. The agent can do what the token's permissions allow, so grant only what it needs."
+      helpUrl: https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

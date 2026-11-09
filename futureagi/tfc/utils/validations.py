@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field, field_validator
 
 from tfc.utils.error_codes import get_error_message
-from tfc.utils.ssrf_guard import safe_fetch
+from tfc.utils.ssrf_guard import HttpsRequired, safe_fetch
 
 
 # Function to check if URL is valid
@@ -15,9 +15,14 @@ def is_valid_url(url):
     # SSRF-guarded reachability check — safe_fetch resolves + pins IP, blocks
     # private/link-local hosts (including 169.254.169.254 cloud metadata),
     # and re-validates each redirect hop.
+    # HttpsRequired propagates: its text tells the user to use https:// (or
+    # that a redirect downgraded to http://); a generic "invalid URL" would
+    # hide that. Other refusals stay a plain False (generic INVALID_URL).
     try:
         response = safe_fetch(url, method="HEAD", timeout=5)
         return response.status_code == 200
+    except HttpsRequired:
+        raise
     except ValueError:
         return False
 

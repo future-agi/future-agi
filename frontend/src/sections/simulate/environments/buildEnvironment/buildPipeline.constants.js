@@ -77,7 +77,8 @@ export const BUILD_PIPELINE = [
     phase: "setup",
     milestone: "scenarios",
     label: "Validating scenarios",
-    detail: "Three gates: ready, solvable, not vacuous. Kept only if all three pass",
+    detail:
+      "Three gates: ready, solvable, not vacuous. Kept only if all three pass",
   },
   {
     id: "connect-agent",
@@ -105,14 +106,15 @@ export const BUILD_PIPELINE = [
     phase: "run",
     milestone: "agent",
     label: "Uploading artifacts",
-    detail: "Persisting traces, transcripts, tool logs and eval results",
+    detail: "Persisting transcripts, tool logs and evaluation results",
   },
   {
     id: "completed",
     phase: "run",
     milestone: "agent",
     label: "Completed",
-    detail: "The first run is on record and the environment is ready to iterate",
+    detail:
+      "The first run is on record and the environment is ready to iterate",
   },
 ];
 
@@ -130,7 +132,12 @@ export const PIPELINE_PHASES = [
 // pipeline does not look like a failed one. `failure` is optional
 // ({ stepId, title, detail, retryable }); when present that step lands "failed"
 // and every step after it stays pending — a failure halts the pipeline.
-export const pipelineStatus = (done = [], running = false, currentPhase = "setup", failure = null) => {
+export const pipelineStatus = (
+  done = [],
+  running = false,
+  currentPhase = "setup",
+  failure = null,
+) => {
   const doneSet = new Set(done);
   let seenPending = false;
   let halted = false;
@@ -163,7 +170,11 @@ export const pipelineStatus = (done = [], running = false, currentPhase = "setup
 const MILESTONE_STAGES = {
   understand: ["understanding_agent"],
   build: ["generating_environment", "building_environment", "generating_data"],
-  scenarios: ["generating_scenarios", "validating_environment", "validating_scenarios"],
+  scenarios: [
+    "generating_scenarios",
+    "validating_environment",
+    "validating_scenarios",
+  ],
 };
 
 // Map a real harness job (getHarnessJob) into the `{ done, running, failure }`

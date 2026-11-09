@@ -120,7 +120,7 @@ const DonutChart = ({
               />
               {item.name}
               <TotalRowCount
-                value={item.totalCells}
+                value={item.total_cells}
                 sx={{ marginTop: "4px" }}
               />
             </Button>
@@ -160,7 +160,7 @@ const DonutChart = ({
               {/* {headerValue.map((item) => `${item} ${(headerData?.average[item])?.toFixed(0)}%`).join(", ")} */}
             </Typography>
             {visibleSeries?.length === 1 && (
-              <TotalRowCount value={visibleSeries?.[0]?.totalCells} />
+              <TotalRowCount value={visibleSeries?.[0]?.total_cells} />
             )}
           </Box>
           <CustomLegend />

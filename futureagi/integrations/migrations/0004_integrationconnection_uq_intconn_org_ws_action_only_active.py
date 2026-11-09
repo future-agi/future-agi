@@ -26,7 +26,7 @@ def _dedupe_action_only_connections(apps, schema_editor):
     """
     IntegrationConnection = apps.get_model("integrations", "IntegrationConnection")
 
-    live = IntegrationConnection.objects.filter(
+    live = IntegrationConnection.objects.using(schema_editor.connection.alias).filter(
         platform__in=_ACTION_ONLY_PLATFORMS_SNAPSHOT, deleted=False
     ).order_by("organization_id", "workspace_id", "platform", "-created_at")
 
@@ -48,7 +48,7 @@ def _dedupe_action_only_connections(apps, schema_editor):
         for loser in rows[1:]:
             loser.deleted = True
             loser.deleted_at = now
-            loser.save(update_fields=["deleted", "deleted_at"])
+            loser.save(using=schema_editor.connection.alias, update_fields=["deleted", "deleted_at"])
 
 
 def _noop_reverse(apps, schema_editor):

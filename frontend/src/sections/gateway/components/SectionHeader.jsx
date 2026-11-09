@@ -1,6 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, Typography, Button, Stack } from "@mui/material";
+import { Box, Typography, Button, Stack, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 const SectionHeader = ({
@@ -55,23 +55,34 @@ const SectionHeader = ({
 
     {(actions || children) && (
       <Stack direction="row" spacing={1} flexShrink={0} sx={{ ml: 2 }}>
-        {actions?.map((action, idx) => (
-          <Button
-            key={action.label || idx}
-            variant={action.variant || "outlined"}
-            size={action.size || "medium"}
-            color={action.color || "primary"}
-            startIcon={
-              action.icon ? (
-                <Iconify icon={action.icon} width={20} />
-              ) : undefined
-            }
-            onClick={action.onClick}
-            disabled={action.disabled}
-          >
-            {action.label}
-          </Button>
-        ))}
+        {actions?.map((action, idx) => {
+          const button = (
+            <Button
+              key={action.label || idx}
+              variant={action.variant || "outlined"}
+              size={action.size || "medium"}
+              color={action.color || "primary"}
+              startIcon={
+                action.icon ? (
+                  <Iconify icon={action.icon} width={20} />
+                ) : undefined
+              }
+              onClick={action.onClick}
+              disabled={action.disabled}
+            >
+              {action.label}
+            </Button>
+          );
+          // A disabled button fires no events, so a tooltip that says why
+          // (e.g. "Owner or Admin only") sits on a wrapping span.
+          return action.tooltip ? (
+            <Tooltip key={action.label || idx} title={action.tooltip}>
+              <span style={{ display: "inline-flex" }}>{button}</span>
+            </Tooltip>
+          ) : (
+            button
+          );
+        })}
         {children}
       </Stack>
     )}
@@ -91,6 +102,7 @@ SectionHeader.propTypes = {
       icon: PropTypes.string,
       onClick: PropTypes.func,
       disabled: PropTypes.bool,
+      tooltip: PropTypes.string,
     }),
   ),
   statusChip: PropTypes.node,

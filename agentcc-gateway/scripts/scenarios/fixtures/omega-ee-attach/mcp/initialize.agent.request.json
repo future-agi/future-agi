@@ -1,0 +1,27 @@
+{
+  "http": {
+    "method": "POST",
+    "url": "https://gateway.example.com/mcp/v/vs_01K7CN5EEAGENTM0DE00000001",
+    "headers": {
+      "content-type": "application/json",
+      "accept": "application/json, text/event-stream",
+      "authorization": "Bearer {{ORG_VIRTUAL_KEY}}"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-06-18",
+      "capabilities": {},
+      "clientInfo": {
+        "name": "omega",
+        "version": "0.1.0"
+      },
+      "_meta": {
+        "protocolVersion": "2025-06-18"
+      }
+    }
+  }
+}

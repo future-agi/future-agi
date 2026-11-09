@@ -7,14 +7,15 @@ import numpy as np
 import structlog
 from django.db.models import Count, F, Sum
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from model_hub.models.choices import CellStatus, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.utils.SQL_queries import SQLQueryHandler
-from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.constants.api_calls import APICallStatusChoices
+from tfc.utils.clickhouse import ClickHouseClientSingleton
+
+logger = structlog.get_logger(__name__)
 
 
 def add_one_day_in_date(date_str):
@@ -126,8 +127,14 @@ def _calculate_numeric_choices_average(cells, multi_choice, numeric_choices):
             0 <= choice <= 1 for choice in numeric_choices
         )
 
+        from tfc.temporal.experiments.run_policy import is_policy_zero
+
         for cell in cells:
             try:
+                # An errored row the run counts as 0 scores 0, choice or not.
+                if is_policy_zero(cell):
+                    numeric_values.append(0.0)
+                    continue
                 cell_numeric_values = _extract_numeric_choices(
                     cell.value,
                     numeric_choice_set,
@@ -374,7 +381,7 @@ def get_numeric_choices_score_format(
 
                 # Convert counts to percentages
                 total_count = len(metric_numeric_values)
-                distribution_percentages = {
+                distribution_percentages = {  # noqa: F841
                     key: round((count / total_count), 2)
                     for key, count in distribution.items()
                 }
@@ -517,9 +524,7 @@ def calculate_column_average(column_id, row_ids=None):
                                             scores = json.loads(
                                                 cell.value.replace("'", '"')
                                             )
-                                            if isinstance(
-                                                scores, (float, int)
-                                            ):  # noqa: UP038
+                                            if isinstance(scores, (float, int)):  # noqa: UP038
                                                 scores = {"single_score": scores}
                                         except json.JSONDecodeError:
                                             if cell.value in ["Passed", "Failed"]:
@@ -638,14 +643,16 @@ def calculate_column_average(column_id, row_ids=None):
         }
 
 
-def calculate_eval_average(eval_template, api_logs):
+def calculate_eval_average(eval_template, api_logs, *, empty_value=0):
     """
     Calculate average and related metrics for evaluations based on the eval template and logs.
     Args:
         eval_template: The evaluation template object.
         api_logs: Queryset/List of APICallLog objects
+        empty_value: Result when no valid logs can be scored. Defaults to 0 for
+            legacy callers; pass None to distinguish unscored graph intervals.
     Returns:
-        float: Average score or 0 if no valid logs.
+        float | None: Average score, or empty_value if no valid logs.
     """
     try:
         output_type = eval_template.config.get("output")
@@ -693,19 +700,14 @@ def calculate_eval_average(eval_template, api_logs):
             except Exception:
                 continue
 
-        if output_type == "Pass/Fail":
-            average = round((success_count / valid_logs) * 100, 2) if valid_logs else 0
-        elif output_type == "score":
-            average = round((success_count / valid_logs) * 100, 2) if valid_logs else 0
-        elif output_type in ["choices", "reason"]:
-            average = round((success_count / valid_logs) * 100, 2) if valid_logs else 0
-
-        return average
+        return (
+            round((success_count / valid_logs) * 100, 2) if valid_logs else empty_value
+        )
 
     except Exception as e:
         logger.error(f"Error calculating eval average: {str(e)}")
         traceback.print_exc()
-        return 0
+        return empty_value
 
 
 def get_eval_stats(eval_template, dataset_id, user_eval_metric_ids=None, row_ids=None):

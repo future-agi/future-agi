@@ -26,6 +26,7 @@ if not has_ee("ee.cloud"):
     pytest.skip("requires ee/cloud (OSS lane)", allow_module_level=True)
 
 from ee.cloud.telemetry import schema as receiver_schema  # noqa: E402
+
 from tfc.deployment_telemetry import schema as sender_schema  # noqa: E402
 
 
@@ -57,11 +58,12 @@ def test_sender_heartbeat_payload_validates_on_receiver():
     from ee.cloud.telemetry.serializers import (
         DeploymentHeartbeatSerializer,
     )
+
     from tfc.deployment_telemetry.payloads import build_heartbeat_payload
 
     window_end = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     window_start = window_end - timedelta(hours=6)
-    counts = {field: 0 for field in sender_schema.COUNT_FIELDS}
+    counts = dict.fromkeys(sender_schema.COUNT_FIELDS, 0)
     counts["traces_count"] = 12
     counts["total_evaluations_count"] = (
         counts["eval_logger_count"]
@@ -79,11 +81,12 @@ def test_sender_null_count_validates_on_receiver():
     from ee.cloud.telemetry.serializers import (
         DeploymentHeartbeatSerializer,
     )
+
     from tfc.deployment_telemetry.payloads import build_heartbeat_payload
 
     window_end = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     window_start = window_end - timedelta(hours=6)
-    counts = {field: 0 for field in sender_schema.COUNT_FIELDS}
+    counts = dict.fromkeys(sender_schema.COUNT_FIELDS, 0)
     counts["eval_logger_count"] = None
     counts["total_evaluations_count"] = None
     payload = build_heartbeat_payload(uuid.uuid4(), window_start, window_end, counts)
@@ -98,17 +101,43 @@ def test_overlarge_count_is_400_not_db_error():
     from ee.cloud.telemetry.serializers import (
         DeploymentHeartbeatSerializer,
     )
+
     from tfc.deployment_telemetry.payloads import build_heartbeat_payload
 
     window_end = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     window_start = window_end - timedelta(hours=6)
-    counts = {field: 0 for field in sender_schema.COUNT_FIELDS}
+    counts = dict.fromkeys(sender_schema.COUNT_FIELDS, 0)
     counts["traces_count"] = sender_schema.MAX_COUNT_VALUE + 1
     payload = build_heartbeat_payload(uuid.uuid4(), window_start, window_end, counts)
 
     serializer = DeploymentHeartbeatSerializer(data=payload)
     assert not serializer.is_valid()
     assert "traces_count" in serializer.errors
+
+
+def test_sender_registration_without_users_validates_on_receiver(monkeypatch):
+    """The default registration omits ``users`` (admin emails are opt-in via
+    FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS); the v1 receiver accepts that."""
+    from unittest.mock import MagicMock
+
+    from ee.cloud.telemetry.serializers import (
+        DeploymentRegistrationSerializer,
+    )
+
+    from tfc.deployment_telemetry import payloads
+
+    accounts = MagicMock()
+    accounts.objects.filter.return_value.filter.return_value.exists.return_value = True
+    monkeypatch.setattr(payloads, "User", accounts)
+    monkeypatch.delenv("FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", raising=False)
+
+    payload = payloads.build_full_registration_payload(uuid.uuid4())
+
+    assert payload is not None
+    assert "users" not in payload
+    serializer = DeploymentRegistrationSerializer(data=payload)
+    assert serializer.is_valid(), serializer.errors
+    assert list(serializer.validated_data.get("users") or []) == []
 
 
 # The HMAC signing cross-checks live in the cloud suite

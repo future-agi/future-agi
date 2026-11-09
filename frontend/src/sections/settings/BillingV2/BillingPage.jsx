@@ -1,15 +1,15 @@
 /**
- * Billing Page V2 — Usage-based billing dashboard (Phase 7c)
+ * Billing Page V2 — the one central billing page.
  *
- * Replaces wallet-based UI with:
- * - Current period cost breakdown (platform fee + per-dimension costs)
- * - Invoice history with expandable line items
- * - Payment method management
- * - Billing details
+ * On cloud: the usage-based platform plan (current period, budgets, invoice
+ * history, payment methods). Wherever the AI Gateway's managed-credit ledger
+ * answers (cloud or self-hosted): the AI Gateway credits (balance, top-up,
+ * auto-reload, ledger, statement). Anyone with neither goes to their profile.
  */
 
-import { useState } from "react";
+import React, { useState } from "react";
 import PropTypes from "prop-types";
+import { Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Box,
@@ -30,11 +30,14 @@ import {
   Alert,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import LoadFailedState from "src/components/load-failed-state";
 
 import axios, { endpoints } from "src/utils/axios";
 import { fCurrency } from "src/utils/format-number";
 import BudgetManager from "./BudgetManager";
 import PaymentMethods from "./PaymentMethods";
+import GatewayCreditsSection from "./gateway-credits/GatewayCreditsSection";
+import { useCentralBilling } from "./useCentralBilling";
 
 // Status badge colors
 const STATUS_CONFIG = {
@@ -90,7 +93,7 @@ function CurrentPeriodSummary({ data }) {
             Estimated total
           </Typography>
           <Typography variant="h4" fontWeight={700}>
-            {fCurrency(data.total || 0)}
+            {fCurrency(data.total) || "—"}
           </Typography>
         </Box>
       </Stack>
@@ -114,8 +117,7 @@ function CurrentPeriodSummary({ data }) {
                       fontWeight={500}
                       color={item.amount < 0 ? "success.main" : "text.primary"}
                     >
-                      {item.amount < 0 ? "-" : ""}
-                      {fCurrency(Math.abs(item.amount))}
+                      {fCurrency(item.amount)}
                     </Typography>
                   </TableCell>
                 </TableRow>
@@ -128,7 +130,7 @@ function CurrentPeriodSummary({ data }) {
                 </TableCell>
                 <TableCell align="right" sx={{ pr: 0, borderBottom: 0 }}>
                   <Typography variant="subtitle2" fontWeight={700}>
-                    {fCurrency(data.total || 0)}
+                    {fCurrency(data.total) || "—"}
                   </Typography>
                 </TableCell>
               </TableRow>
@@ -269,8 +271,7 @@ function InvoiceRow({ inv }) {
                               item.amount < 0 ? "success.main" : "text.primary"
                             }
                           >
-                            {item.amount < 0 ? "-" : ""}
-                            {fCurrency(Math.abs(item.amount))}
+                            {fCurrency(item.amount)}
                           </Typography>
                         </TableCell>
                       </TableRow>
@@ -303,7 +304,13 @@ InvoiceRow.propTypes = {
 };
 
 function InvoiceHistory() {
-  const { data: invoiceData, isLoading } = useQuery({
+  const {
+    data: invoiceData,
+    isLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ["v2-invoices"],
     queryFn: () => axios.get(endpoints.settings.v2.invoices),
     select: (res) => res.data?.result?.invoices || [],
@@ -311,6 +318,16 @@ function InvoiceHistory() {
 
   if (isLoading) {
     return <Skeleton variant="rounded" height={200} />;
+  }
+
+  if (isError && !invoiceData) {
+    return (
+      <LoadFailedState
+        title="Invoices couldn't be loaded"
+        onRetry={refetch}
+        retrying={isRefetching}
+      />
+    );
   }
 
   const invoices = invoiceData || [];
@@ -332,8 +349,8 @@ function InvoiceHistory() {
           sx={{ color: "text.disabled", mb: 1 }}
         />
         <Typography variant="body2" color="text.secondary">
-          No invoices yet. Your first invoice will appear at the end of the
-          billing period.
+          No invoices. Your first invoice will appear at the end of the billing
+          period.
         </Typography>
       </Paper>
     );
@@ -369,19 +386,38 @@ function InvoiceHistory() {
 // ── Main Page ──────────────────────────────────────────────────────────────
 
 export default function BillingPageV2() {
-  const { data: billingData, isLoading } = useQuery({
+  const {
+    isCloud,
+    creditsAvailable,
+    isLoading: accessLoading,
+  } = useCentralBilling();
+
+  const {
+    data: billingData,
+    isLoading: platformLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ["v2-billing-overview"],
     queryFn: () => axios.get(endpoints.settings.v2.billingOverview),
     select: (res) => res.data?.result,
+    enabled: isCloud,
   });
 
   const { data: notifications } = useQuery({
     queryKey: ["v2-notifications"],
     queryFn: () => axios.get(endpoints.settings.v2.notifications),
     select: (res) => res.data?.result?.banners || [],
+    enabled: isCloud,
   });
 
   const [dismissedBanners, setDismissedBanners] = useState(new Set());
+  const isLoading = accessLoading || (isCloud && platformLoading);
+
+  if (!isLoading && !isCloud && !creditsAvailable) {
+    return <Navigate to="/dashboard/settings/profile-settings" replace />;
+  }
 
   if (isLoading) {
     return (
@@ -393,15 +429,70 @@ export default function BillingPageV2() {
     );
   }
 
-  return (
-    <Box>
-      <Typography variant="h5" fontWeight={700} mb={0.5}>
+  const header = (
+    <>
+      <Typography variant="h5" component="h1" fontWeight={700} mb={0.5}>
         Billing
       </Typography>
       <Typography variant="body2" color="text.secondary" mb={3}>
-        Manage your billing, view invoices, and update payment methods.
+        {isCloud
+          ? "Manage your billing, view invoices, and update payment methods."
+          : "Future AGI credits for the AI Gateway."}
       </Typography>
+    </>
+  );
 
+  // The plan, period and totals all come from this request. When it fails,
+  // say so: a "Free plan, no billing this period" drawn from nothing is not
+  // a fact.
+  if (isCloud && isError && !billingData) {
+    return (
+      <Box>
+        {header}
+        <LoadFailedState
+          title="Billing couldn't be loaded"
+          detail="Your plan, current period and invoices are not shown until it loads."
+          onRetry={refetch}
+          retrying={isRefetching}
+        />
+        {creditsAvailable && (
+          <Box mt={4}>
+            <GatewayCreditsSection />
+          </Box>
+        )}
+      </Box>
+    );
+  }
+
+  return (
+    <Box>
+      {header}
+
+      {!isCloud && creditsAvailable && <GatewayCreditsSection />}
+
+      {isCloud && (
+        <PlatformBilling
+          billingData={billingData}
+          notifications={notifications}
+          dismissedBanners={dismissedBanners}
+          setDismissedBanners={setDismissedBanners}
+          creditsAvailable={creditsAvailable}
+        />
+      )}
+    </Box>
+  );
+}
+
+// The cloud platform plan, then the AI Gateway credits.
+function PlatformBilling({
+  billingData,
+  notifications,
+  dismissedBanners,
+  setDismissedBanners,
+  creditsAvailable,
+}) {
+  return (
+    <Box>
       {/* Alert banners from notifications API */}
       {notifications?.filter((b) => !dismissedBanners.has(b.id)).length > 0 && (
         <Stack spacing={1} mb={3}>
@@ -467,6 +558,20 @@ export default function BillingPageV2() {
       <Box mt={4}>
         <PaymentMethods />
       </Box>
+
+      {creditsAvailable && (
+        <Box mt={4}>
+          <GatewayCreditsSection />
+        </Box>
+      )}
     </Box>
   );
 }
+
+PlatformBilling.propTypes = {
+  billingData: PropTypes.object,
+  notifications: PropTypes.array,
+  dismissedBanners: PropTypes.instanceOf(Set).isRequired,
+  setDismissedBanners: PropTypes.func.isRequired,
+  creditsAvailable: PropTypes.bool,
+};

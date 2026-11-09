@@ -1,0 +1,2486 @@
+{
+  "akar-icons": {
+    "name": "Akar Icons",
+    "author": {
+      "name": "Arturo Wibawa",
+      "url": "https://github.com/artcoholic/akar-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/artcoholic/akar-icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/akar-icons.json",
+    "icons": [
+      "akar-icons:chevron-down",
+      "akar-icons:chevron-down-small",
+      "akar-icons:chevron-left-small",
+      "akar-icons:chevron-right-small",
+      "akar-icons:cross",
+      "akar-icons:play",
+      "akar-icons:plus"
+    ]
+  },
+  "ant-design": {
+    "name": "Ant Design Icons",
+    "author": {
+      "name": "HeskeyBaozi",
+      "url": "https://github.com/ant-design/ant-design-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/ant-design/ant-design-icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/ant-design.json",
+    "icons": [
+      "ant-design:info-circle-outlined",
+      "ant-design:instagram-filled"
+    ]
+  },
+  "basil": {
+    "name": "Basil",
+    "author": {
+      "name": "Craftwork",
+      "url": "https://www.figma.com/community/file/931906394678748246"
+    },
+    "license": {
+      "title": "CC BY 4.0",
+      "spdx": "CC-BY-4.0",
+      "url": "https://creativecommons.org/licenses/by/4.0/"
+    },
+    "source": "@iconify/json@2.2.548/json/basil.json",
+    "icons": [
+      "basil:copy-outline",
+      "basil:cross-outline",
+      "basil:edit-alt-outline",
+      "basil:share-outline"
+    ]
+  },
+  "bi": {
+    "name": "Bootstrap Icons",
+    "author": {
+      "name": "The Bootstrap Authors",
+      "url": "https://github.com/twbs/icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/twbs/icons/blob/main/LICENSE.md"
+    },
+    "source": "@iconify/json@2.2.548/json/bi.json",
+    "icons": [
+      "bi:arrows-collapse",
+      "bi:github",
+      "bi:sliders",
+      "bi:stop-circle"
+    ]
+  },
+  "bitcoin-icons": {
+    "name": "Bitcoin Icons",
+    "author": {
+      "name": "Bitcoin Design Community",
+      "url": "https://github.com/BitcoinDesign/Bitcoin-Icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/BitcoinDesign/Bitcoin-Icons/blob/main/LICENSE-MIT"
+    },
+    "source": "@iconify/json@2.2.548/json/bitcoin-icons.json",
+    "icons": [
+      "bitcoin-icons:verify-outline"
+    ]
+  },
+  "bx": {
+    "name": "BoxIcons v2",
+    "author": {
+      "name": "Boxicons",
+      "url": "https://github.com/box-icons/boxicons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/box-icons/boxicons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/bx.json",
+    "icons": [
+      "bx:error"
+    ]
+  },
+  "bxs": {
+    "name": "BoxIcons v2 Solid",
+    "author": {
+      "name": "Boxicons",
+      "url": "https://github.com/box-icons/boxicons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/box-icons/boxicons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/bxs.json",
+    "icons": [
+      "bxs:duplicate"
+    ]
+  },
+  "carbon": {
+    "name": "Carbon",
+    "author": {
+      "name": "IBM",
+      "url": "https://github.com/carbon-design-system/carbon/tree/main/packages/icons"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0"
+    },
+    "source": "@iconify/json@2.2.548/json/carbon.json",
+    "icons": [
+      "carbon:checkbox",
+      "carbon:enterprise",
+      "carbon:filter",
+      "carbon:growth",
+      "carbon:product",
+      "carbon:user-avatar-filled"
+    ]
+  },
+  "charm": {
+    "name": "Charm Icons",
+    "author": {
+      "name": "Jay Newey",
+      "url": "https://github.com/jaynewey/charm-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/jaynewey/charm-icons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/charm.json",
+    "icons": [
+      "charm:grab-horizontal",
+      "charm:menu-kebab",
+      "charm:tick"
+    ]
+  },
+  "ci": {
+    "name": "coolicons",
+    "author": {
+      "name": "Kryston Schwarze",
+      "url": "https://github.com/krystonschwarze/coolicons"
+    },
+    "license": {
+      "title": "CC BY 4.0",
+      "spdx": "CC-BY-4.0",
+      "url": "https://creativecommons.org/licenses/by/4.0/"
+    },
+    "source": "@iconify/json@2.2.548/json/ci.json",
+    "icons": [
+      "ci:arrow-undo-down-left",
+      "ci:arrow-undo-up-right",
+      "ci:chevron-down"
+    ]
+  },
+  "circle-flags": {
+    "name": "Circle Flags",
+    "author": {
+      "name": "HatScripts",
+      "url": "https://github.com/HatScripts/circle-flags"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/HatScripts/circle-flags/blob/gh-pages/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/circle-flags.json",
+    "icons": [
+      "circle-flags:ad",
+      "circle-flags:ae",
+      "circle-flags:af",
+      "circle-flags:ag",
+      "circle-flags:ai",
+      "circle-flags:al",
+      "circle-flags:am",
+      "circle-flags:ao",
+      "circle-flags:aq",
+      "circle-flags:ar",
+      "circle-flags:as",
+      "circle-flags:at",
+      "circle-flags:au",
+      "circle-flags:aw",
+      "circle-flags:ax",
+      "circle-flags:az",
+      "circle-flags:ba",
+      "circle-flags:bb",
+      "circle-flags:bd",
+      "circle-flags:be",
+      "circle-flags:bf",
+      "circle-flags:bg",
+      "circle-flags:bh",
+      "circle-flags:bi",
+      "circle-flags:bj",
+      "circle-flags:bl",
+      "circle-flags:bm",
+      "circle-flags:bn",
+      "circle-flags:bo",
+      "circle-flags:br",
+      "circle-flags:bs",
+      "circle-flags:bt",
+      "circle-flags:bv",
+      "circle-flags:bw",
+      "circle-flags:by",
+      "circle-flags:bz",
+      "circle-flags:ca",
+      "circle-flags:cc",
+      "circle-flags:cd",
+      "circle-flags:cf",
+      "circle-flags:cg",
+      "circle-flags:ch",
+      "circle-flags:ci",
+      "circle-flags:ck",
+      "circle-flags:cl",
+      "circle-flags:cm",
+      "circle-flags:cn",
+      "circle-flags:co",
+      "circle-flags:cr",
+      "circle-flags:cu",
+      "circle-flags:cv",
+      "circle-flags:cw",
+      "circle-flags:cx",
+      "circle-flags:cy",
+      "circle-flags:cz",
+      "circle-flags:de",
+      "circle-flags:dj",
+      "circle-flags:dk",
+      "circle-flags:dm",
+      "circle-flags:do",
+      "circle-flags:dz",
+      "circle-flags:ec",
+      "circle-flags:ee",
+      "circle-flags:eg",
+      "circle-flags:eh",
+      "circle-flags:er",
+      "circle-flags:es",
+      "circle-flags:et",
+      "circle-flags:fi",
+      "circle-flags:fj",
+      "circle-flags:fk",
+      "circle-flags:fm",
+      "circle-flags:fo",
+      "circle-flags:fr",
+      "circle-flags:ga",
+      "circle-flags:gb",
+      "circle-flags:gd",
+      "circle-flags:ge",
+      "circle-flags:gf",
+      "circle-flags:gg",
+      "circle-flags:gh",
+      "circle-flags:gi",
+      "circle-flags:gl",
+      "circle-flags:gm",
+      "circle-flags:gn",
+      "circle-flags:gp",
+      "circle-flags:gq",
+      "circle-flags:gr",
+      "circle-flags:gs",
+      "circle-flags:gt",
+      "circle-flags:gu",
+      "circle-flags:gw",
+      "circle-flags:gy",
+      "circle-flags:hk",
+      "circle-flags:hm",
+      "circle-flags:hn",
+      "circle-flags:hr",
+      "circle-flags:ht",
+      "circle-flags:hu",
+      "circle-flags:id",
+      "circle-flags:ie",
+      "circle-flags:il",
+      "circle-flags:im",
+      "circle-flags:in",
+      "circle-flags:io",
+      "circle-flags:iq",
+      "circle-flags:ir",
+      "circle-flags:is",
+      "circle-flags:it",
+      "circle-flags:je",
+      "circle-flags:jm",
+      "circle-flags:jo",
+      "circle-flags:jp",
+      "circle-flags:ke",
+      "circle-flags:kg",
+      "circle-flags:kh",
+      "circle-flags:ki",
+      "circle-flags:km",
+      "circle-flags:kn",
+      "circle-flags:kp",
+      "circle-flags:kr",
+      "circle-flags:kw",
+      "circle-flags:ky",
+      "circle-flags:kz",
+      "circle-flags:la",
+      "circle-flags:lb",
+      "circle-flags:lc",
+      "circle-flags:li",
+      "circle-flags:lk",
+      "circle-flags:lr",
+      "circle-flags:ls",
+      "circle-flags:lt",
+      "circle-flags:lu",
+      "circle-flags:lv",
+      "circle-flags:ly",
+      "circle-flags:ma",
+      "circle-flags:mc",
+      "circle-flags:md",
+      "circle-flags:me",
+      "circle-flags:mf",
+      "circle-flags:mg",
+      "circle-flags:mh",
+      "circle-flags:mk",
+      "circle-flags:ml",
+      "circle-flags:mm",
+      "circle-flags:mn",
+      "circle-flags:mo",
+      "circle-flags:mp",
+      "circle-flags:mq",
+      "circle-flags:mr",
+      "circle-flags:ms",
+      "circle-flags:mt",
+      "circle-flags:mu",
+      "circle-flags:mv",
+      "circle-flags:mw",
+      "circle-flags:mx",
+      "circle-flags:my",
+      "circle-flags:mz",
+      "circle-flags:na",
+      "circle-flags:nc",
+      "circle-flags:ne",
+      "circle-flags:nf",
+      "circle-flags:ng",
+      "circle-flags:ni",
+      "circle-flags:nl",
+      "circle-flags:no",
+      "circle-flags:np",
+      "circle-flags:nr",
+      "circle-flags:nu",
+      "circle-flags:nz",
+      "circle-flags:om",
+      "circle-flags:pa",
+      "circle-flags:pe",
+      "circle-flags:pf",
+      "circle-flags:pg",
+      "circle-flags:ph",
+      "circle-flags:pk",
+      "circle-flags:pl",
+      "circle-flags:pm",
+      "circle-flags:pn",
+      "circle-flags:pr",
+      "circle-flags:ps",
+      "circle-flags:pt",
+      "circle-flags:pw",
+      "circle-flags:py",
+      "circle-flags:qa",
+      "circle-flags:re",
+      "circle-flags:ro",
+      "circle-flags:rs",
+      "circle-flags:ru",
+      "circle-flags:rw",
+      "circle-flags:sa",
+      "circle-flags:sb",
+      "circle-flags:sc",
+      "circle-flags:sd",
+      "circle-flags:se",
+      "circle-flags:sg",
+      "circle-flags:sh",
+      "circle-flags:si",
+      "circle-flags:sj",
+      "circle-flags:sk",
+      "circle-flags:sl",
+      "circle-flags:sm",
+      "circle-flags:sn",
+      "circle-flags:so",
+      "circle-flags:sr",
+      "circle-flags:ss",
+      "circle-flags:st",
+      "circle-flags:sv",
+      "circle-flags:sx",
+      "circle-flags:sy",
+      "circle-flags:sz",
+      "circle-flags:tc",
+      "circle-flags:td",
+      "circle-flags:tf",
+      "circle-flags:tg",
+      "circle-flags:th",
+      "circle-flags:tj",
+      "circle-flags:tk",
+      "circle-flags:tl",
+      "circle-flags:tm",
+      "circle-flags:tn",
+      "circle-flags:to",
+      "circle-flags:tr",
+      "circle-flags:tt",
+      "circle-flags:tv",
+      "circle-flags:tw",
+      "circle-flags:tz",
+      "circle-flags:ua",
+      "circle-flags:ug",
+      "circle-flags:us",
+      "circle-flags:uy",
+      "circle-flags:uz",
+      "circle-flags:va",
+      "circle-flags:vc",
+      "circle-flags:ve",
+      "circle-flags:vg",
+      "circle-flags:vi",
+      "circle-flags:vn",
+      "circle-flags:vu",
+      "circle-flags:wf",
+      "circle-flags:ws",
+      "circle-flags:xk",
+      "circle-flags:ye",
+      "circle-flags:yt",
+      "circle-flags:za",
+      "circle-flags:zm",
+      "circle-flags:zw"
+    ]
+  },
+  "clarity": {
+    "name": "Clarity",
+    "author": {
+      "name": "VMware",
+      "url": "https://github.com/vmware/clarity"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/vmware/clarity-assets/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/clarity.json",
+    "icons": [
+      "clarity:error-solid",
+      "clarity:refresh-line"
+    ]
+  },
+  "codex": {
+    "name": "CodeX Icons",
+    "author": {
+      "name": "CodeX",
+      "url": "https://github.com/codex-team/icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/codex-team/icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/codex.json",
+    "icons": [
+      "codex:loader"
+    ]
+  },
+  "codicon": {
+    "name": "Codicons",
+    "author": {
+      "name": "Microsoft Corporation",
+      "url": "https://github.com/microsoft/vscode-codicons"
+    },
+    "license": {
+      "title": "CC BY 4.0",
+      "spdx": "CC-BY-4.0",
+      "url": "https://github.com/microsoft/vscode-codicons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/codicon.json",
+    "icons": [
+      "codicon:settings"
+    ]
+  },
+  "mdi": {
+    "name": "Material Design Icons",
+    "author": {
+      "name": "Pictogrammers",
+      "url": "https://github.com/Templarian/MaterialDesign"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/Templarian/MaterialDesign/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/mdi.json",
+    "icons": [
+      "mdi:currency-usd",
+      "mdi:close",
+      "mdi:plus-circle-outline",
+      "mdi:message-outline",
+      "mdi:access-point",
+      "mdi:account",
+      "mdi:account-arrow-right-outline",
+      "mdi:account-check-outline",
+      "mdi:account-clock-outline",
+      "mdi:account-edit-outline",
+      "mdi:account-group",
+      "mdi:account-group-outline",
+      "mdi:account-multiple-check-outline",
+      "mdi:account-multiple-outline",
+      "mdi:account-multiple-plus-outline",
+      "mdi:account-outline",
+      "mdi:account-plus-outline",
+      "mdi:account-remove-outline",
+      "mdi:account-switch-outline",
+      "mdi:account-voice",
+      "mdi:alert",
+      "mdi:alert-circle",
+      "mdi:alert-circle-outline",
+      "mdi:alert-octagon-outline",
+      "mdi:alert-outline",
+      "mdi:alpha-c-circle",
+      "mdi:alpha-m-circle",
+      "mdi:api",
+      "mdi:apple-keyboard-command",
+      "mdi:approximately-equal",
+      "mdi:archive-arrow-up-outline",
+      "mdi:archive-outline",
+      "mdi:arrow-collapse",
+      "mdi:arrow-collapse-down",
+      "mdi:arrow-collapse-up",
+      "mdi:arrow-down",
+      "mdi:arrow-down-bold",
+      "mdi:arrow-down-bold-box-outline",
+      "mdi:arrow-down-bold-circle-outline",
+      "mdi:arrow-down-bold-outline",
+      "mdi:arrow-expand",
+      "mdi:arrow-expand-horizontal",
+      "mdi:arrow-left",
+      "mdi:arrow-left-bottom",
+      "mdi:arrow-right",
+      "mdi:arrow-right-bold-box-outline",
+      "mdi:arrow-right-thick",
+      "mdi:arrow-right-thin",
+      "mdi:arrow-split-horizontal",
+      "mdi:arrow-top-right",
+      "mdi:arrow-up",
+      "mdi:arrow-up-bold",
+      "mdi:arrow-up-bold-outline",
+      "mdi:arrow-up-circle",
+      "mdi:at",
+      "mdi:auto-fix",
+      "mdi:aws",
+      "mdi:bell-outline",
+      "mdi:bell-ring-outline",
+      "mdi:book-alert-outline",
+      "mdi:book-open-outline",
+      "mdi:book-open-page-variant-outline",
+      "mdi:book-open-variant",
+      "mdi:book-search-outline",
+      "mdi:bookmark-outline",
+      "mdi:brain",
+      "mdi:broom",
+      "mdi:bug-check-outline",
+      "mdi:bug-outline",
+      "mdi:calendar-clock",
+      "mdi:calendar-clock-outline",
+      "mdi:calendar-outline",
+      "mdi:call-split",
+      "mdi:cancel",
+      "mdi:card-account-details-outline",
+      "mdi:cash-multiple",
+      "mdi:chart-bar",
+      "mdi:chart-bar-stacked",
+      "mdi:chart-bell-curve-cumulative",
+      "mdi:chart-box-outline",
+      "mdi:chart-bubble",
+      "mdi:chart-donut",
+      "mdi:chart-gantt",
+      "mdi:chart-histogram",
+      "mdi:chart-line",
+      "mdi:chart-line-stacked",
+      "mdi:chart-pie",
+      "mdi:chart-sankey",
+      "mdi:chart-scatter-plot",
+      "mdi:chart-timeline-variant",
+      "mdi:chart-timeline-variant-shimmer",
+      "mdi:chat-outline",
+      "mdi:chat-processing-outline",
+      "mdi:check",
+      "mdi:check-all",
+      "mdi:check-bold",
+      "mdi:check-circle",
+      "mdi:check-circle-outline",
+      "mdi:check-decagram",
+      "mdi:check-decagram-outline",
+      "mdi:checkbox-blank-outline",
+      "mdi:checkbox-intermediate",
+      "mdi:checkbox-marked",
+      "mdi:checkbox-marked-circle",
+      "mdi:checkbox-marked-circle-outline",
+      "mdi:checkbox-marked-outline",
+      "mdi:chevron-double-left",
+      "mdi:chevron-double-right",
+      "mdi:chevron-down",
+      "mdi:chevron-left",
+      "mdi:chevron-right",
+      "mdi:chevron-up",
+      "mdi:chip",
+      "mdi:circle-half-full",
+      "mdi:circle-medium",
+      "mdi:circle-off-outline",
+      "mdi:circle-outline",
+      "mdi:circle-small",
+      "mdi:clipboard-check-multiple-outline",
+      "mdi:clipboard-check-outline",
+      "mdi:clipboard-list-outline",
+      "mdi:clipboard-outline",
+      "mdi:clipboard-text-outline",
+      "mdi:clock-outline",
+      "mdi:clock-start",
+      "mdi:close",
+      "mdi:close-circle",
+      "mdi:close-circle-outline",
+      "mdi:cloud-alert-outline",
+      "mdi:cloud-cog-outline",
+      "mdi:cloud-outline",
+      "mdi:cloud-upload-outline",
+      "mdi:code",
+      "mdi:code-braces",
+      "mdi:code-brackets",
+      "mdi:code-json",
+      "mdi:code-parentheses",
+      "mdi:code-tags",
+      "mdi:cog-outline",
+      "mdi:comment-check-outline",
+      "mdi:comment-off-outline",
+      "mdi:comment-outline",
+      "mdi:comment-plus-outline",
+      "mdi:comment-question-outline",
+      "mdi:comment-text-outline",
+      "mdi:compare",
+      "mdi:compare-horizontal",
+      "mdi:compare-horizontal",
+      "mdi:connection",
+      "mdi:console",
+      "mdi:content-copy",
+      "mdi:content-duplicate",
+      "mdi:content-paste",
+      "mdi:content-save-outline",
+      "mdi:counter",
+      "mdi:creation",
+      "mdi:creation-outline",
+      "mdi:credit-card",
+      "mdi:credit-card-outline",
+      "mdi:credit-card-plus",
+      "mdi:crosshairs-gps",
+      "mdi:crown",
+      "mdi:crown-outline",
+      "mdi:cube-outline",
+      "mdi:currency-usd",
+      "mdi:cursor-default-click",
+      "mdi:cursor-default-click-outline",
+      "mdi:database",
+      "mdi:database-arrow-right",
+      "mdi:database-check-outline",
+      "mdi:database-cog-outline",
+      "mdi:database-export-outline",
+      "mdi:database-import-outline",
+      "mdi:database-off-outline",
+      "mdi:database-outline",
+      "mdi:database-plus",
+      "mdi:database-plus-outline",
+      "mdi:database-search",
+      "mdi:database-search-outline",
+      "mdi:debug-step-over",
+      "mdi:delete",
+      "mdi:delete-outline",
+      "mdi:diamond",
+      "mdi:dice-multiple-outline",
+      "mdi:dock-bottom",
+      "mdi:docker",
+      "mdi:dots-grid",
+      "mdi:dots-horizontal",
+      "mdi:dots-horizontal-circle-outline",
+      "mdi:dots-vertical",
+      "mdi:download",
+      "mdi:download-lock-outline",
+      "mdi:download-outline",
+      "mdi:drag",
+      "mdi:drag-vertical",
+      "mdi:earth",
+      "mdi:electric-switch",
+      "mdi:email-outline",
+      "mdi:emoticon-happy-outline",
+      "mdi:emoticon-sad-outline",
+      "mdi:equal",
+      "mdi:exclamation",
+      "mdi:eye",
+      "mdi:eye-off",
+      "mdi:eye-off-outline",
+      "mdi:eye-outline",
+      "mdi:file-code-outline",
+      "mdi:file-compare",
+      "mdi:file-delimited-outline",
+      "mdi:file-document",
+      "mdi:file-document-check-outline",
+      "mdi:file-document-edit-outline",
+      "mdi:file-document-outline",
+      "mdi:file-edit-outline",
+      "mdi:file-excel-outline",
+      "mdi:file-image-outline",
+      "mdi:file-outline",
+      "mdi:file-pdf-box",
+      "mdi:file-search-outline",
+      "mdi:file-table-outline",
+      "mdi:file-tree-outline",
+      "mdi:file-upload-outline",
+      "mdi:file-word-outline",
+      "mdi:filmstrip",
+      "mdi:filmstrip-off",
+      "mdi:filter-off-outline",
+      "mdi:filter-outline",
+      "mdi:filter-remove-outline",
+      "mdi:filter-variant",
+      "mdi:fingerprint",
+      "mdi:fit-to-screen-outline",
+      "mdi:flag-checkered",
+      "mdi:flag-outline",
+      "mdi:flash",
+      "mdi:flash-alert-outline",
+      "mdi:flask-off-outline",
+      "mdi:flask-outline",
+      "mdi:folder-cog-outline",
+      "mdi:folder-move-outline",
+      "mdi:folder-multiple-outline",
+      "mdi:folder-off-outline",
+      "mdi:folder-open-outline",
+      "mdi:folder-outline",
+      "mdi:folder-plus-outline",
+      "mdi:form-dropdown",
+      "mdi:format-list-bulleted",
+      "mdi:format-list-bulleted-type",
+      "mdi:format-list-checks",
+      "mdi:format-list-group",
+      "mdi:format-list-numbered",
+      "mdi:format-quote-close",
+      "mdi:format-quote-close-outline",
+      "mdi:format-text",
+      "mdi:forum-outline",
+      "mdi:fullscreen",
+      "mdi:fullscreen-exit",
+      "mdi:function-variant",
+      "mdi:gavel",
+      "mdi:github",
+      "mdi:gitlab",
+      "mdi:google",
+      "mdi:google-cloud",
+      "mdi:graph-outline",
+      "mdi:grid",
+      "mdi:group",
+      "mdi:handshake-outline",
+      "mdi:head-lightbulb-outline",
+      "mdi:head-question-outline",
+      "mdi:headset",
+      "mdi:help-circle-outline",
+      "mdi:history",
+      "mdi:identifier",
+      "mdi:image-broken-variant",
+      "mdi:image-multiple-outline",
+      "mdi:image-outline",
+      "mdi:import",
+      "mdi:information",
+      "mdi:information-outline",
+      "mdi:ip-network-outline",
+      "mdi:jira",
+      "mdi:key",
+      "mdi:key-alert-outline",
+      "mdi:key-link",
+      "mdi:key-outline",
+      "mdi:key-plus",
+      "mdi:key-variant",
+      "mdi:keyboard-outline",
+      "mdi:keyboard-return",
+      "mdi:lan-check",
+      "mdi:language-html5",
+      "mdi:language-markdown-outline",
+      "mdi:language-python",
+      "mdi:laptop",
+      "mdi:layers-outline",
+      "mdi:leak",
+      "mdi:license",
+      "mdi:lightbulb-on-outline",
+      "mdi:lightbulb-outline",
+      "mdi:lightning-bolt",
+      "mdi:lightning-bolt-outline",
+      "mdi:link-off",
+      "mdi:link-variant",
+      "mdi:link-variant-off",
+      "mdi:list-status",
+      "mdi:loading",
+      "mdi:lock-outline",
+      "mdi:magnify",
+      "mdi:magnify-minus-outline",
+      "mdi:magnify-plus-outline",
+      "mdi:magnify-scan",
+      "mdi:map-marker-outline",
+      "mdi:map-marker-path",
+      "mdi:medal",
+      "mdi:medal-outline",
+      "mdi:medical-bag",
+      "mdi:message-outline",
+      "mdi:message-question-outline",
+      "mdi:message-reply-text-outline",
+      "mdi:message-text-outline",
+      "mdi:microphone-outline",
+      "mdi:microsoft-azure",
+      "mdi:microsoft-visual-studio-code",
+      "mdi:minus",
+      "mdi:minus-circle-outline",
+      "mdi:monitor-eye",
+      "mdi:new-box",
+      "mdi:not-equal-variant",
+      "mdi:office-building",
+      "mdi:open-in-app",
+      "mdi:open-in-new",
+      "mdi:page-layout-body",
+      "mdi:page-layout-header",
+      "mdi:paperclip",
+      "mdi:pause",
+      "mdi:pause-circle-outline",
+      "mdi:pencil-box-outline",
+      "mdi:pencil-circle-outline",
+      "mdi:pencil-outline",
+      "mdi:percent",
+      "mdi:phone-in-talk",
+      "mdi:phone-off-outline",
+      "mdi:phone-outline",
+      "mdi:piggy-bank-outline",
+      "mdi:pin",
+      "mdi:pin-off-outline",
+      "mdi:pin-outline",
+      "mdi:pipe",
+      "mdi:play",
+      "mdi:play-box-outline",
+      "mdi:play-circle-outline",
+      "mdi:play-network-outline",
+      "mdi:play-outline",
+      "mdi:playlist-plus",
+      "mdi:plus",
+      "mdi:plus-circle",
+      "mdi:plus-circle-outline",
+      "mdi:podium",
+      "mdi:pound",
+      "mdi:power-plug-off-outline",
+      "mdi:printer-outline",
+      "mdi:progress-clock",
+      "mdi:pulse",
+      "mdi:puzzle-outline",
+      "mdi:radar",
+      "mdi:radiobox-blank",
+      "mdi:radiobox-marked",
+      "mdi:ray-vertex",
+      "mdi:receipt-text",
+      "mdi:receipt-text-outline",
+      "mdi:refresh",
+      "mdi:repeat",
+      "mdi:replay",
+      "mdi:resize",
+      "mdi:restart",
+      "mdi:restore",
+      "mdi:robot",
+      "mdi:robot-excited-outline",
+      "mdi:robot-outline",
+      "mdi:rocket-launch-outline",
+      "mdi:scale-balance",
+      "mdi:scale-unbalanced",
+      "mdi:script-text-outline",
+      "mdi:search-add-outline",
+      "mdi:selection-ellipse-arrow-inside",
+      "mdi:server-network",
+      "mdi:server-off",
+      "mdi:share-outline",
+      "mdi:share-variant-outline",
+      "mdi:shield-account",
+      "mdi:shield-account-outline",
+      "mdi:shield-airplane-outline",
+      "mdi:shield-alert",
+      "mdi:shield-alert-outline",
+      "mdi:shield-bug-outline",
+      "mdi:shield-check",
+      "mdi:shield-check-outline",
+      "mdi:shield-crown-outline",
+      "mdi:shield-edit-outline",
+      "mdi:shield-half-full",
+      "mdi:shield-key",
+      "mdi:shield-key-outline",
+      "mdi:shield-link-variant",
+      "mdi:shield-link-variant-outline",
+      "mdi:shield-lock",
+      "mdi:shield-lock-outline",
+      "mdi:shield-off",
+      "mdi:shield-outline",
+      "mdi:shield-remove",
+      "mdi:shield-search",
+      "mdi:shield-star",
+      "mdi:shield-sword-outline",
+      "mdi:sigma",
+      "mdi:sine-wave",
+      "mdi:sitemap-outline",
+      "mdi:skip-next",
+      "mdi:slack",
+      "mdi:sort-ascending",
+      "mdi:sort-descending",
+      "mdi:sort-variant",
+      "mdi:sort-variant-remove",
+      "mdi:source-branch",
+      "mdi:source-branch-check",
+      "mdi:speedometer",
+      "mdi:star",
+      "mdi:star-circle",
+      "mdi:star-four-points",
+      "mdi:star-four-points-outline",
+      "mdi:star-half-full",
+      "mdi:star-off-outline",
+      "mdi:star-outline",
+      "mdi:stop",
+      "mdi:stop-circle",
+      "mdi:stop-circle-outline",
+      "mdi:subdirectory-arrow-right",
+      "mdi:swap-horizontal",
+      "mdi:swap-vertical",
+      "mdi:sync",
+      "mdi:table",
+      "mdi:table-arrow-down",
+      "mdi:table-check",
+      "mdi:table-column",
+      "mdi:table-column-plus-after",
+      "mdi:table-column-plus-before",
+      "mdi:table-eye",
+      "mdi:table-large",
+      "mdi:table-off",
+      "mdi:table-pivot",
+      "mdi:table-row",
+      "mdi:table-row-plus-after",
+      "mdi:table-split-cell",
+      "mdi:tag",
+      "mdi:tag-multiple-outline",
+      "mdi:tag-outline",
+      "mdi:tag-plus-outline",
+      "mdi:tag-text-outline",
+      "mdi:target",
+      "mdi:test-tube",
+      "mdi:text",
+      "mdi:text-box-check-outline",
+      "mdi:text-box-edit-outline",
+      "mdi:text-box-outline",
+      "mdi:text-box-remove-outline",
+      "mdi:text-box-search-outline",
+      "mdi:text-long",
+      "mdi:text-search",
+      "mdi:text-short",
+      "mdi:thumb-down",
+      "mdi:thumb-down-outline",
+      "mdi:thumb-up",
+      "mdi:thumb-up-outline",
+      "mdi:tick-circle-outline",
+      "mdi:tilde",
+      "mdi:timeline-clock-outline",
+      "mdi:timeline-remove-outline",
+      "mdi:timeline-text-outline",
+      "mdi:timer-outline",
+      "mdi:timer-sand",
+      "mdi:timer-sand-empty",
+      "mdi:toggle-switch-outline",
+      "mdi:tools",
+      "mdi:transit-connection-variant",
+      "mdi:translate",
+      "mdi:trash-can-outline",
+      "mdi:tray-arrow-down",
+      "mdi:tray-arrow-up",
+      "mdi:tray-plus",
+      "mdi:tray-remove",
+      "mdi:trending-down",
+      "mdi:trending-up",
+      "mdi:triangle",
+      "mdi:trophy-outline",
+      "mdi:tune-variant",
+      "mdi:tune-vertical",
+      "mdi:umbrella-outline",
+      "mdi:undo",
+      "mdi:undo-variant",
+      "mdi:unfold-less-horizontal",
+      "mdi:unfold-more-horizontal",
+      "mdi:upload",
+      "mdi:upload-outline",
+      "mdi:vector-combine",
+      "mdi:vector-difference",
+      "mdi:vector-polyline",
+      "mdi:vector-square",
+      "mdi:video-outline",
+      "mdi:view-agenda-outline",
+      "mdi:view-column-outline",
+      "mdi:view-dashboard-edit-outline",
+      "mdi:view-dashboard-outline",
+      "mdi:view-grid-outline",
+      "mdi:view-headline",
+      "mdi:view-column-outline",
+      "mdi:view-sequential-outline",
+      "mdi:view-split-vertical",
+      "mdi:volume-high",
+      "mdi:volume-off",
+      "mdi:wallet-outline",
+      "mdi:waveform",
+      "mdi:weather-night",
+      "mdi:web",
+      "mdi:webhook",
+      "mdi:white-balance-sunny",
+      "mdi:wrap",
+      "mdi:wrench",
+      "mdi:wrench-check-outline",
+      "mdi:wrench-cog-outline",
+      "mdi:wrench-outline",
+      "mdi:circle-outline",
+      "mdi:close",
+      "mdi:dice-multiple-outline",
+      "mdi:transit-connection-variant",
+      "mdi:inbox-outline",
+      "mdi:calendar-outline",
+      "mdi:alert-outline"
+    ]
+  },
+  "ep": {
+    "name": "Element Plus",
+    "author": {
+      "name": "Element Plus",
+      "url": "https://github.com/element-plus/element-plus-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/element-plus/element-plus-icons/blob/main/packages/svg/package.json"
+    },
+    "source": "@iconify/json@2.2.548/json/ep.json",
+    "icons": [
+      "ep:arrow-left",
+      "ep:arrow-right"
+    ]
+  },
+  "eva": {
+    "name": "Eva Icons",
+    "author": {
+      "name": "Akveo",
+      "url": "https://github.com/akveo/eva-icons/"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/akveo/eva-icons/blob/master/LICENSE.txt"
+    },
+    "source": "@iconify/json@2.2.548/json/eva.json",
+    "icons": [
+      "eva:alert-circle-fill",
+      "eva:alert-triangle-fill",
+      "eva:archive-outline",
+      "eva:arrow-back-fill",
+      "eva:arrow-back-outline",
+      "eva:arrow-circle-down-fill",
+      "eva:arrow-forward-fill",
+      "eva:arrow-ios-back-fill",
+      "eva:arrow-ios-downward-fill",
+      "eva:arrow-ios-forward-fill",
+      "eva:arrow-ios-upward-fill",
+      "eva:checkmark-circle-2-fill",
+      "eva:checkmark-fill",
+      "eva:chevron-down-fill",
+      "eva:chevron-left-fill",
+      "eva:chevron-right-fill",
+      "eva:chevron-up-fill",
+      "eva:close-circle-fill",
+      "eva:close-fill",
+      "eva:cloud-upload-fill",
+      "eva:copy-fill",
+      "eva:copy-outline",
+      "eva:diagonal-arrow-right-up-fill",
+      "eva:done-all-fill",
+      "eva:download-fill",
+      "eva:download-outline",
+      "eva:edit-2-fill",
+      "eva:eye-fill",
+      "eva:eye-off-fill",
+      "eva:facebook-fill",
+      "eva:github-fill",
+      "eva:google-fill",
+      "eva:grid-fill",
+      "eva:info-fill",
+      "eva:info-outline",
+      "eva:link-2-fill",
+      "eva:linkedin-fill",
+      "eva:message-square-outline",
+      "eva:minus-fill",
+      "eva:more-horizontal-fill",
+      "eva:more-vertical-fill",
+      "eva:paper-plane-fill",
+      "eva:pause-circle-fill",
+      "eva:play-circle-fill",
+      "eva:plus-fill",
+      "eva:plus-outline",
+      "eva:refresh-fill",
+      "eva:search-fill",
+      "eva:search-outline",
+      "eva:skip-forward-fill",
+      "eva:star-fill",
+      "eva:trash-2-outline",
+      "eva:twitter-fill"
+    ]
+  },
+  "fa6-solid": {
+    "name": "Font Awesome 6 Solid",
+    "author": {
+      "name": "Dave Gandy",
+      "url": "https://github.com/FortAwesome/Font-Awesome"
+    },
+    "license": {
+      "title": "CC BY 4.0",
+      "spdx": "CC-BY-4.0",
+      "url": "https://creativecommons.org/licenses/by/4.0/"
+    },
+    "source": "@iconify/json@2.2.548/json/fa6-solid.json",
+    "icons": [
+      "fa6-solid:rotate"
+    ]
+  },
+  "famicons": {
+    "name": "Famicons",
+    "author": {
+      "name": "Family",
+      "url": "https://github.com/familyjs/famicons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/familyjs/famicons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/famicons.json",
+    "icons": [
+      "famicons:checkbox"
+    ]
+  },
+  "fe": {
+    "name": "Feather Icon",
+    "author": {
+      "name": "Megumi Hano",
+      "url": "https://github.com/feathericon/feathericon"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/feathericon/feathericon/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/fe.json",
+    "icons": [
+      "fe:plus"
+    ]
+  },
+  "flagpack": {
+    "name": "Flagpack",
+    "author": {
+      "name": "Yummygum",
+      "url": "https://github.com/Yummygum/flagpack-core"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/Yummygum/flagpack-core/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/flagpack.json",
+    "icons": [
+      "flagpack:cn",
+      "flagpack:de",
+      "flagpack:fr",
+      "flagpack:gb-nir",
+      "flagpack:kr",
+      "flagpack:sa",
+      "flagpack:us",
+      "flagpack:vn"
+    ]
+  },
+  "flat-color-icons": {
+    "name": "Flat Color Icons",
+    "author": {
+      "name": "Icons8",
+      "url": "https://github.com/icons8/flat-Color-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT"
+    },
+    "source": "@iconify/json@2.2.548/json/flat-color-icons.json",
+    "icons": [
+      "flat-color-icons:flash-auto"
+    ]
+  },
+  "flowbite": {
+    "name": "Flowbite Icons",
+    "author": {
+      "name": "Themesberg",
+      "url": "https://github.com/themesberg/flowbite-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/themesberg/flowbite-icons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/flowbite.json",
+    "icons": [
+      "flowbite:x-outline"
+    ]
+  },
+  "fluent": {
+    "name": "Fluent UI System Icons",
+    "author": {
+      "name": "Microsoft Corporation",
+      "url": "https://github.com/microsoft/fluentui-system-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/microsoft/fluentui-system-icons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/fluent.json",
+    "icons": [
+      "fluent:calendar-agenda-24-regular",
+      "fluent:chevron-down-16-filled",
+      "fluent:chevron-right-12-regular",
+      "fluent:chevron-up-16-filled",
+      "fluent:document-square-28-regular",
+      "fluent:edit-12-regular",
+      "fluent:edit-16-regular",
+      "fluent:info-24-regular",
+      "fluent:magic-wand-16-regular",
+      "fluent:speaker-2-16-regular",
+      "fluent:warning-16-regular",
+      "fluent:warning-24-regular"
+    ]
+  },
+  "fontisto": {
+    "name": "Fontisto",
+    "author": {
+      "name": "Kenan Gündoğan",
+      "url": "https://github.com/kenangundogan/fontisto"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/kenangundogan/fontisto/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/fontisto.json",
+    "icons": [
+      "fontisto:american-express"
+    ]
+  },
+  "formkit": {
+    "name": "FormKit Icons",
+    "author": {
+      "name": "FormKit, Inc",
+      "url": "https://github.com/formkit/formkit/tree/master/packages/icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/formkit/formkit/blob/master/packages/icons/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/formkit.json",
+    "icons": [
+      "formkit:left"
+    ]
+  },
+  "gg": {
+    "name": "css.gg",
+    "author": {
+      "name": "Astrit",
+      "url": "https://github.com/astrit/css.gg"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/astrit/css.gg/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/gg.json",
+    "icons": [
+      "gg:check-o",
+      "gg:chevron-right",
+      "gg:duplicate"
+    ]
+  },
+  "grommet-icons": {
+    "name": "Grommet Icons",
+    "author": {
+      "name": "Grommet",
+      "url": "https://github.com/grommet/grommet-icons"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0"
+    },
+    "source": "@iconify/json@2.2.548/json/grommet-icons.json",
+    "icons": [
+      "grommet-icons:update"
+    ]
+  },
+  "heroicons": {
+    "name": "HeroIcons",
+    "author": {
+      "name": "Refactoring UI Inc",
+      "url": "https://github.com/tailwindlabs/heroicons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/tailwindlabs/heroicons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/heroicons.json",
+    "icons": [
+      "heroicons:bars-2-16-solid",
+      "heroicons:chevron-down-20-solid",
+      "heroicons:chevron-up-20-solid"
+    ]
+  },
+  "hugeicons": {
+    "name": "Huge Icons",
+    "author": {
+      "name": "Hugeicons",
+      "url": "https://icon-sets.iconify.design/icon-sets/hugeicons/"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT"
+    },
+    "source": "@iconify/json@2.2.548/json/hugeicons.json",
+    "icons": [
+      "hugeicons:ai-network",
+      "hugeicons:analytics-01",
+      "hugeicons:api",
+      "hugeicons:checkmark-circle-04",
+      "hugeicons:delete-01",
+      "hugeicons:message-programming",
+      "hugeicons:minus-sign-circle",
+      "hugeicons:node-add",
+      "hugeicons:python",
+      "hugeicons:test-tube-01",
+      "hugeicons:user-multiple-02"
+    ]
+  },
+  "humbleicons": {
+    "name": "Humbleicons",
+    "author": {
+      "name": "Jiří Zralý",
+      "url": "https://github.com/zraly/humbleicons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/zraly/humbleicons/blob/master/license"
+    },
+    "source": "@iconify/json@2.2.548/json/humbleicons.json",
+    "icons": [
+      "humbleicons:prompt"
+    ]
+  },
+  "ic": {
+    "name": "Google Material Icons",
+    "author": {
+      "name": "Material Design Authors",
+      "url": "https://github.com/material-icons/material-icons"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/material-icons/material-icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/ic.json",
+    "icons": [
+      "ic:baseline-list",
+      "ic:baseline-schedule",
+      "ic:outline-close",
+      "ic:outline-plus",
+      "ic:round-dashboard-customize",
+      "ic:round-plus",
+      "ic:round-vpn-key",
+      "ic:twotone-zoom-in"
+    ]
+  },
+  "icon-park-outline": {
+    "name": "IconPark Outline",
+    "author": {
+      "name": "ByteDance",
+      "url": "https://github.com/bytedance/IconPark"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/bytedance/IconPark/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/icon-park-outline.json",
+    "icons": [
+      "icon-park-outline:caution",
+      "icon-park-outline:code",
+      "icon-park-outline:left",
+      "icon-park-outline:right",
+      "icon-park-outline:smart-optimization"
+    ]
+  },
+  "iconamoon": {
+    "name": "IconaMoon",
+    "author": {
+      "name": "Dariush Habibpour",
+      "url": "https://github.com/dariushhpg1/IconaMoon"
+    },
+    "license": {
+      "title": "CC BY 4.0",
+      "spdx": "CC-BY-4.0",
+      "url": "https://creativecommons.org/licenses/by/4.0/"
+    },
+    "source": "@iconify/json@2.2.548/json/iconamoon.json",
+    "icons": [
+      "iconamoon:arrow-right-1-light",
+      "iconamoon:compare",
+      "iconamoon:history",
+      "iconamoon:zoom-in-light",
+      "iconamoon:zoom-out-light"
+    ]
+  },
+  "iconoir": {
+    "name": "Iconoir",
+    "author": {
+      "name": "Luca Burgio",
+      "url": "https://github.com/iconoir-icons/iconoir"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/iconoir-icons/iconoir/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/iconoir.json",
+    "icons": [
+      "iconoir:auto-flash",
+      "iconoir:open-new-window"
+    ]
+  },
+  "ion": {
+    "name": "IonIcons",
+    "author": {
+      "name": "Ben Sperry",
+      "url": "https://github.com/ionic-team/ionicons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/ionic-team/ionicons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/ion.json",
+    "icons": [
+      "ion:chevron-back",
+      "ion:chevron-down"
+    ]
+  },
+  "jam": {
+    "name": "Jam Icons",
+    "author": {
+      "name": "Michael Amprimo",
+      "url": "https://github.com/michaelampr"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/cyberalien/jam-backup/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/jam.json",
+    "icons": [
+      "jam:write"
+    ]
+  },
+  "la": {
+    "name": "Line Awesome",
+    "author": {
+      "name": "Icons8",
+      "url": "https://github.com/icons8/line-awesome"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0"
+    },
+    "source": "@iconify/json@2.2.548/json/la.json",
+    "icons": [
+      "la:user-edit"
+    ]
+  },
+  "line-md": {
+    "name": "Material Line Icons",
+    "author": {
+      "name": "Vjacheslav Trushkin",
+      "url": "https://github.com/cyberalien/line-md"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/cyberalien/line-md/blob/main/license.txt"
+    },
+    "source": "@iconify/json@2.2.548/json/line-md.json",
+    "icons": [
+      "line-md:chevron-left",
+      "line-md:chevron-right",
+      "line-md:chevron-up",
+      "line-md:close",
+      "line-md:minus",
+      "line-md:phone",
+      "line-md:plus",
+      "line-md:star"
+    ]
+  },
+  "lineicons": {
+    "name": "Lineicons",
+    "author": {
+      "name": "Lineicons",
+      "url": "https://github.com/LineiconsHQ/Lineicons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/LineiconsHQ/Lineicons/blob/main/LICENSE.md"
+    },
+    "source": "@iconify/json@2.2.548/json/lineicons.json",
+    "icons": [
+      "lineicons:pause"
+    ]
+  },
+  "logos": {
+    "name": "SVG Logos",
+    "author": {
+      "name": "Gil Barbara",
+      "url": "https://github.com/gilbarbara/logos"
+    },
+    "license": {
+      "title": "CC0",
+      "spdx": "CC0-1.0",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/master/LICENSE.txt"
+    },
+    "source": "@iconify/json@2.2.548/json/logos.json",
+    "icons": [
+      "logos:bitbucket",
+      "logos:google-icon",
+      "logos:google-pay",
+      "logos:mastercard",
+      "logos:paypal",
+      "logos:stripe",
+      "logos:visa"
+    ]
+  },
+  "lucide": {
+    "name": "Lucide",
+    "author": {
+      "name": "Lucide Contributors",
+      "url": "https://github.com/lucide-icons/lucide"
+    },
+    "license": {
+      "title": "ISC",
+      "spdx": "ISC",
+      "url": "https://github.com/lucide-icons/lucide/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/lucide.json",
+    "icons": [
+      "lucide:chevron-left",
+      "lucide:chevrons-left",
+      "lucide:chevrons-right",
+      "lucide:download",
+      "lucide:fullscreen",
+      "lucide:grip-horizontal",
+      "lucide:minimize",
+      "lucide:pencil",
+      "lucide:play",
+      "lucide:text-cursor-input",
+      "lucide:volume-2",
+      "lucide:volume-x"
+    ]
+  },
+  "mage": {
+    "name": "Mage Icons",
+    "author": {
+      "name": "MageIcons",
+      "url": "https://github.com/Mage-Icons/mage-icons"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/Mage-Icons/mage-icons/blob/main/License.txt"
+    },
+    "source": "@iconify/json@2.2.548/json/mage.json",
+    "icons": [
+      "mage:dollar",
+      "mage:email",
+      "mage:filter"
+    ]
+  },
+  "material-symbols-light": {
+    "name": "Material Symbols Light",
+    "author": {
+      "name": "Google",
+      "url": "https://github.com/google/material-design-icons"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/google/material-design-icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/material-symbols-light.json",
+    "icons": [
+      "material-symbols-light:content-copy-outline-rounded",
+      "material-symbols-light:help-outline",
+      "material-symbols-light:keyboard-arrow-down",
+      "material-symbols-light:pause-outline-rounded",
+      "material-symbols-light:resume-outline-rounded"
+    ]
+  },
+  "material-symbols": {
+    "name": "Material Symbols",
+    "author": {
+      "name": "Google",
+      "url": "https://github.com/google/material-design-icons"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/google/material-design-icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/material-symbols.json",
+    "icons": [
+      "material-symbols:add",
+      "material-symbols:arrow-downward-rounded",
+      "material-symbols:arrow-forward-ios-rounded",
+      "material-symbols:arrow-upward-rounded",
+      "material-symbols:art-track-outline",
+      "material-symbols:attach-money",
+      "material-symbols:broken-image-outline",
+      "material-symbols:call-split",
+      "material-symbols:cancel-outline",
+      "material-symbols:check",
+      "material-symbols:check-circle-outline",
+      "material-symbols:chip-extraction",
+      "material-symbols:close",
+      "material-symbols:close-rounded",
+      "material-symbols:compare-arrows",
+      "material-symbols:credit-score-rounded",
+      "material-symbols:data-array",
+      "material-symbols:data-object",
+      "material-symbols:delete",
+      "material-symbols:download",
+      "material-symbols:download-sharp",
+      "material-symbols:edit",
+      "material-symbols:edit-outline",
+      "material-symbols:error-outline",
+      "material-symbols:expand-less-rounded",
+      "material-symbols:expand-more-rounded",
+      "material-symbols:filter-list",
+      "material-symbols:filter-list-rounded",
+      "material-symbols:first-page",
+      "material-symbols:format-align-left",
+      "material-symbols:fullscreen",
+      "material-symbols:help",
+      "material-symbols:hourglass-empty-rounded",
+      "material-symbols:image-outline",
+      "material-symbols:info-outline",
+      "material-symbols:info-outline-rounded",
+      "material-symbols:keyboard-arrow-down-rounded",
+      "material-symbols:label-outline",
+      "material-symbols:last-page",
+      "material-symbols:lock-outline",
+      "material-symbols:new-label-outline-rounded",
+      "material-symbols:notes",
+      "material-symbols:pause",
+      "material-symbols:play-arrow-rounded",
+      "material-symbols:resume-outline",
+      "material-symbols:rocket-launch-outline",
+      "material-symbols:schedule-outline",
+      "material-symbols:science-outline",
+      "material-symbols:sort",
+      "material-symbols:sort-rounded",
+      "material-symbols:star",
+      "material-symbols:star-outline",
+      "material-symbols:stop-rounded",
+      "material-symbols:swap-vert-rounded",
+      "material-symbols:tag",
+      "material-symbols:toggle-on-outline",
+      "material-symbols:trending-down-rounded",
+      "material-symbols:trending-up-rounded",
+      "material-symbols:tune",
+      "material-symbols:upload",
+      "material-symbols:warning-outline",
+      "material-symbols:warning-outline-rounded",
+      "material-symbols:warning-rounded"
+    ]
+  },
+  "meteor-icons": {
+    "name": "Meteor Icons",
+    "author": {
+      "name": "zkreations",
+      "url": "https://github.com/zkreations/icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/zkreations/icons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/meteor-icons.json",
+    "icons": [
+      "meteor-icons:arrows-rotate"
+    ]
+  },
+  "mi": {
+    "name": "Mono Icons",
+    "author": {
+      "name": "Mono",
+      "url": "https://github.com/mono-company/mono-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/mono-company/mono-icons/blob/master/LICENSE.md"
+    },
+    "source": "@iconify/json@2.2.548/json/mi.json",
+    "icons": [
+      "mi:expand"
+    ]
+  },
+  "mingcute": {
+    "name": "MingCute Icon",
+    "author": {
+      "name": "MingCute Design",
+      "url": "https://github.com/Richard9394/MingCute"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/Richard9394/MingCute/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/mingcute.json",
+    "icons": [
+      "mingcute:add-line",
+      "mingcute:arrow-down-line",
+      "mingcute:arrow-up-line",
+      "mingcute:chat-3-line",
+      "mingcute:classify-2-line",
+      "mingcute:close-line",
+      "mingcute:command-line",
+      "mingcute:down-fill",
+      "mingcute:down-line",
+      "mingcute:edit-line",
+      "mingcute:exit-door-line",
+      "mingcute:external-link-line",
+      "mingcute:file-export-fill",
+      "mingcute:file-line",
+      "mingcute:filter-2-fill",
+      "mingcute:fullscreen-exit-2-line",
+      "mingcute:grid-2-line",
+      "mingcute:information-line",
+      "mingcute:left-fill",
+      "mingcute:left-line",
+      "mingcute:lock-fill",
+      "mingcute:message-3-line",
+      "mingcute:pencil-2-ai-line",
+      "mingcute:play-line",
+      "mingcute:refresh-2-line",
+      "mingcute:right-fill",
+      "mingcute:right-line",
+      "mingcute:thumb-down-2-fill",
+      "mingcute:thumb-up-2-fill"
+    ]
+  },
+  "mynaui": {
+    "name": "Myna UI Icons",
+    "author": {
+      "name": "Praveen Juge",
+      "url": "https://github.com/praveenjuge/mynaui-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/praveenjuge/mynaui-icons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/mynaui.json",
+    "icons": [
+      "mynaui:chevron-right",
+      "mynaui:lock",
+      "mynaui:logout",
+      "mynaui:plus",
+      "mynaui:trash-solid"
+    ]
+  },
+  "nrk": {
+    "name": "NRK Core Icons",
+    "author": {
+      "name": "Norsk rikskringkasting",
+      "url": "https://github.com/nrkno/core-icons"
+    },
+    "license": {
+      "title": "CC BY 4.0",
+      "spdx": "CC-BY-4.0",
+      "url": "https://creativecommons.org/licenses/by/4.0/"
+    },
+    "source": "@iconify/json@2.2.548/json/nrk.json",
+    "icons": [
+      "nrk:media-completed"
+    ]
+  },
+  "octicon": {
+    "name": "Octicons",
+    "author": {
+      "name": "GitHub",
+      "url": "https://github.com/primer/octicons/"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/primer/octicons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/octicon.json",
+    "icons": [
+      "octicon:chevron-down-24",
+      "octicon:chevron-left-24",
+      "octicon:chevron-right-24",
+      "octicon:chevron-up-24",
+      "octicon:plus-24",
+      "octicon:thumbsdown-24",
+      "octicon:thumbsup-24"
+    ]
+  },
+  "ooui": {
+    "name": "OOUI",
+    "author": {
+      "name": "OOUI Team",
+      "url": "https://github.com/wikimedia/oojs-ui"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/wikimedia/oojs-ui/blob/master/LICENSE-MIT"
+    },
+    "source": "@iconify/json@2.2.548/json/ooui.json",
+    "icons": [
+      "ooui:expand"
+    ]
+  },
+  "oui": {
+    "name": "OpenSearch UI",
+    "author": {
+      "name": "OpenSearch Contributors",
+      "url": "https://github.com/opensearch-project/oui"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/opensearch-project/oui/blob/main/LICENSE.txt"
+    },
+    "source": "@iconify/json@2.2.548/json/oui.json",
+    "icons": [
+      "oui:apm-trace",
+      "oui:cross"
+    ]
+  },
+  "ph": {
+    "name": "Phosphor",
+    "author": {
+      "name": "Phosphor Icons",
+      "url": "https://github.com/phosphor-icons/core"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/phosphor-icons/core/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/ph.json",
+    "icons": [
+      "ph:arrow-square-out-bold",
+      "ph:caret-down-bold",
+      "ph:chart-line-up-bold",
+      "ph:chat-text-bold",
+      "ph:check-square-bold",
+      "ph:coins-light",
+      "ph:compass-bold",
+      "ph:copy",
+      "ph:database-bold",
+      "ph:exam-bold",
+      "ph:flask-bold",
+      "ph:flow-arrow",
+      "ph:microphone",
+      "ph:pen-nib-light",
+      "ph:plugs-bold",
+      "ph:robot-bold",
+      "ph:shield-check",
+      "ph:sparkle-bold",
+      "ph:speaker-simple-high",
+      "ph:speaker-simple-none",
+      "ph:squares-four-bold",
+      "ph:terminal-bold",
+      "ph:tree-structure-bold",
+      "ph:tree-view",
+      "ph:user-sound",
+      "ph:warning-circle-bold",
+      "ph:waveform-bold",
+      "ph:wind-bold",
+      "ph:wrench-bold"
+    ]
+  },
+  "prime": {
+    "name": "Prime Icons",
+    "author": {
+      "name": "PrimeTek",
+      "url": "https://github.com/primefaces/primeicons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/primefaces/primeicons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/prime.json",
+    "icons": [
+      "prime:download",
+      "prime:external-link"
+    ]
+  },
+  "proicons": {
+    "name": "ProIcons",
+    "author": {
+      "name": "ProCode",
+      "url": "https://github.com/ProCode-Software/proicons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/ProCode-Software/proicons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/proicons.json",
+    "icons": [
+      "proicons:dollar",
+      "proicons:javascript"
+    ]
+  },
+  "qlementine-icons": {
+    "name": "Qlementine Icons",
+    "author": {
+      "name": "Olivier Cléro",
+      "url": "https://github.com/oclero/qlementine-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/oclero/qlementine-icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/qlementine-icons.json",
+    "icons": [
+      "qlementine-icons:check-tick-16",
+      "qlementine-icons:success-16"
+    ]
+  },
+  "quill": {
+    "name": "Quill Icons",
+    "author": {
+      "name": "Casper Lourens",
+      "url": "https://www.figma.com/community/file/1034432054377533052/Quill-Iconset"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/yourtempo/tempo-quill-icons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/quill.json",
+    "icons": [
+      "quill:info",
+      "quill:link-out",
+      "quill:warning"
+    ]
+  },
+  "radix-icons": {
+    "name": "Radix Icons",
+    "author": {
+      "name": "WorkOS",
+      "url": "https://github.com/radix-ui/icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/radix-ui/icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/radix-icons.json",
+    "icons": [
+      "radix-icons:box-model",
+      "radix-icons:clock"
+    ]
+  },
+  "ri": {
+    "name": "Remix Icon",
+    "author": {
+      "name": "Remix Design",
+      "url": "https://github.com/cyberalien/RemixIcon"
+    },
+    "license": {
+      "title": "Apache 2.0",
+      "spdx": "Apache-2.0",
+      "url": "https://github.com/cyberalien/RemixIcon/blob/master/License"
+    },
+    "source": "@iconify/json@2.2.548/json/ri.json",
+    "icons": [
+      "ri:edit-line",
+      "ri:more-fill",
+      "ri:skip-left-line",
+      "ri:skip-right-line"
+    ]
+  },
+  "simple-icons": {
+    "name": "Simple Icons",
+    "author": {
+      "name": "Simple Icons Collaborators",
+      "url": "https://github.com/simple-icons/simple-icons"
+    },
+    "license": {
+      "title": "CC0 1.0",
+      "spdx": "CC0-1.0",
+      "url": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md"
+    },
+    "source": "@iconify/json@2.2.548/json/simple-icons.json",
+    "icons": [
+      "simple-icons:anthropic",
+      "simple-icons:cursor",
+      "simple-icons:linear",
+      "simple-icons:meta",
+      "simple-icons:notion",
+      "simple-icons:openai",
+      "simple-icons:slack",
+      "simple-icons:visualstudiocode"
+    ]
+  },
+  "solar": {
+    "name": "Solar",
+    "author": {
+      "name": "480 Design",
+      "url": "https://www.figma.com/community/file/1166831539721848736"
+    },
+    "license": {
+      "title": "CC BY 4.0",
+      "spdx": "CC-BY-4.0",
+      "url": "https://creativecommons.org/licenses/by/4.0/"
+    },
+    "source": "@iconify/json@2.2.548/json/solar.json",
+    "icons": [
+      "solar:add-circle-bold",
+      "solar:add-circle-linear",
+      "solar:add-square-linear",
+      "solar:alt-arrow-down-bold",
+      "solar:alt-arrow-down-line-duotone",
+      "solar:alt-arrow-down-linear",
+      "solar:alt-arrow-left-linear",
+      "solar:alt-arrow-right-bold",
+      "solar:alt-arrow-right-linear",
+      "solar:alt-arrow-up-line-duotone",
+      "solar:alt-arrow-up-linear",
+      "solar:archive-down-bold",
+      "solar:archive-up-bold",
+      "solar:arrow-left-linear",
+      "solar:arrow-right-linear",
+      "solar:arrow-right-up-bold",
+      "solar:arrow-right-up-linear",
+      "solar:arrow-up-bold",
+      "solar:arrow-up-linear",
+      "solar:atom-linear",
+      "solar:bell-bing-bold-duotone",
+      "solar:bicycling-linear",
+      "solar:bill-list-bold",
+      "solar:book-linear",
+      "solar:bot-bold",
+      "solar:box-linear",
+      "solar:box-minimalistic-linear",
+      "solar:calendar-mark-bold-duotone",
+      "solar:camera-add-bold",
+      "solar:card-linear",
+      "solar:cart-large-linear",
+      "solar:chart-2-linear",
+      "solar:chart-square-bold",
+      "solar:chart-square-linear",
+      "solar:chat-dots-linear",
+      "solar:chat-line-outline",
+      "solar:chat-round-dots-bold",
+      "solar:chat-round-dots-linear",
+      "solar:chat-round-line-bold",
+      "solar:chat-round-line-linear",
+      "solar:chat-round-linear",
+      "solar:chat-square-code-linear",
+      "solar:check-circle-bold",
+      "solar:check-circle-bold-duotone",
+      "solar:check-circle-linear",
+      "solar:check-read-bold",
+      "solar:check-read-linear",
+      "solar:check-square-linear",
+      "solar:checklist-bold",
+      "solar:checklist-minimalistic-bold",
+      "solar:checklist-minimalistic-linear",
+      "solar:clipboard-check-linear",
+      "solar:clipboard-list-bold",
+      "solar:clipboard-list-linear",
+      "solar:clipboard-remove-linear",
+      "solar:clock-circle-linear",
+      "solar:clock-circle-outline",
+      "solar:close-circle-bold",
+      "solar:close-circle-linear",
+      "solar:cloud-cross-linear",
+      "solar:cloud-linear",
+      "solar:cloud-upload-linear",
+      "solar:code-bold",
+      "solar:code-linear",
+      "solar:code-scan-bold",
+      "solar:code-square-bold-duotone",
+      "solar:code-square-linear",
+      "solar:command-linear",
+      "solar:copy-bold",
+      "solar:copy-linear",
+      "solar:cpu-bolt-linear",
+      "solar:cpu-linear",
+      "solar:cup-star-linear",
+      "solar:cursor-linear",
+      "solar:danger-bold",
+      "solar:danger-circle-bold",
+      "solar:danger-circle-linear",
+      "solar:danger-triangle-bold",
+      "solar:danger-triangle-linear",
+      "solar:database-bold",
+      "solar:database-linear",
+      "solar:diagram-up-linear",
+      "solar:dialog-2-linear",
+      "solar:diskette-bold",
+      "solar:dislike-bold",
+      "solar:document-broken",
+      "solar:document-medicine-linear",
+      "solar:document-outline",
+      "solar:document-text-bold",
+      "solar:document-text-linear",
+      "solar:dollar-linear",
+      "solar:double-alt-arrow-down-bold-duotone",
+      "solar:double-alt-arrow-right-bold-duotone",
+      "solar:double-alt-arrow-up-bold-duotone",
+      "solar:download-bold",
+      "solar:download-minimalistic-bold",
+      "solar:download-minimalistic-linear",
+      "solar:emoji-funny-circle-linear",
+      "solar:export-bold",
+      "solar:eye-bold",
+      "solar:eye-closed-bold",
+      "solar:eye-closed-linear",
+      "solar:eye-linear",
+      "solar:eye-outline",
+      "solar:file-corrupted-linear",
+      "solar:filter-linear",
+      "solar:filter-outline",
+      "solar:flag-bold",
+      "solar:folder-with-files-bold",
+      "solar:folder-with-files-linear",
+      "solar:forbidden-circle-bold",
+      "solar:gallery-remove-linear",
+      "solar:gallery-wide-bold",
+      "solar:gamepad-linear",
+      "solar:ghost-linear",
+      "solar:graph-bold-duotone",
+      "solar:graph-new-linear",
+      "solar:hashtag-square-linear",
+      "solar:headphones-round-linear",
+      "solar:health-linear",
+      "solar:heart-linear",
+      "solar:history-bold",
+      "solar:history-linear",
+      "solar:hourglass-line-linear",
+      "solar:hourglass-linear",
+      "solar:import-bold",
+      "solar:inbox-line-bold",
+      "solar:info-circle-bold",
+      "solar:info-circle-line-duotone",
+      "solar:info-circle-linear",
+      "solar:info-circle-outline",
+      "solar:key-bold",
+      "solar:key-linear",
+      "solar:key-square-linear",
+      "solar:keyboard-bold-duotone",
+      "solar:laptop-2-linear",
+      "solar:layers-linear",
+      "solar:layers-minimalistic-linear",
+      "solar:layers-outline",
+      "solar:letter-linear",
+      "solar:lightbulb-bolt-linear",
+      "solar:lightbulb-linear",
+      "solar:like-bold",
+      "solar:link-broken-linear",
+      "solar:link-circle-linear",
+      "solar:link-round-linear",
+      "solar:list-check-bold",
+      "solar:list-check-bold-duotone",
+      "solar:list-check-linear",
+      "solar:list-linear",
+      "solar:lock-keyhole-bold",
+      "solar:lock-keyhole-linear",
+      "solar:lock-keyhole-minimalistic-linear",
+      "solar:magic-stick-3-bold",
+      "solar:magic-stick-3-linear",
+      "solar:magnifer-linear",
+      "solar:magnifer-outline",
+      "solar:map-linear",
+      "solar:map-point-wave-linear",
+      "solar:medal-ribbon-star-linear",
+      "solar:menu-dots-bold",
+      "solar:microphone-3-bold",
+      "solar:microphone-3-linear",
+      "solar:minus-circle-linear",
+      "solar:minus-square-linear",
+      "solar:monitor-linear",
+      "solar:monitor-smartphone-linear",
+      "solar:moon-linear",
+      "solar:notebook-linear",
+      "solar:pause-bold",
+      "solar:pause-circle-bold",
+      "solar:pause-circle-linear",
+      "solar:pen-2-linear",
+      "solar:pen-bold",
+      "solar:pen-linear",
+      "solar:pen-new-square-bold",
+      "solar:pen-new-square-linear",
+      "solar:phone-calling-linear",
+      "solar:phone-calling-rounded-linear",
+      "solar:phone-linear",
+      "solar:plain-linear",
+      "solar:plane-linear",
+      "solar:play-bold",
+      "solar:play-circle-linear",
+      "solar:play-linear",
+      "solar:plug-circle-bold-duotone",
+      "solar:plug-circle-linear",
+      "solar:printer-minimalistic-bold",
+      "solar:question-circle-bold",
+      "solar:question-circle-linear",
+      "solar:record-circle-bold",
+      "solar:record-circle-linear",
+      "solar:record-linear",
+      "solar:refresh-bold",
+      "solar:refresh-circle-linear",
+      "solar:refresh-linear",
+      "solar:repeat-linear",
+      "solar:reply-bold",
+      "solar:restart-bold",
+      "solar:restart-linear",
+      "solar:rewind-back-linear",
+      "solar:rocket-2-bold",
+      "solar:route-linear",
+      "solar:server-bold-duotone",
+      "solar:server-linear",
+      "solar:server-minimalistic-linear",
+      "solar:server-square-cloud-linear",
+      "solar:server-square-linear",
+      "solar:settings-bold-duotone",
+      "solar:settings-linear",
+      "solar:settings-minimalistic-linear",
+      "solar:share-bold",
+      "solar:share-linear",
+      "solar:shield-check-bold",
+      "solar:shield-check-bold-duotone",
+      "solar:shield-check-linear",
+      "solar:shield-cross-linear",
+      "solar:shield-keyhole-linear",
+      "solar:shield-warning-bold",
+      "solar:shield-warning-linear",
+      "solar:smartphone-linear",
+      "solar:smile-circle-outline",
+      "solar:soundwave-linear",
+      "solar:speedometer-max-linear",
+      "solar:star-bold",
+      "solar:star-line-duotone",
+      "solar:stop-bold",
+      "solar:stop-circle-bold",
+      "solar:stopwatch-linear",
+      "solar:sun-linear",
+      "solar:tag-bold-duotone",
+      "solar:tag-linear",
+      "solar:target-bold",
+      "solar:target-linear",
+      "solar:test-tube-bold",
+      "solar:test-tube-linear",
+      "solar:trash-bin-minimalistic-bold",
+      "solar:trash-bin-minimalistic-linear",
+      "solar:trash-bin-trash-bold",
+      "solar:trash-bin-trash-linear",
+      "solar:tuning-2-linear",
+      "solar:upload-linear",
+      "solar:upload-minimalistic-linear",
+      "solar:user-check-rounded-bold",
+      "solar:user-id-bold",
+      "solar:user-id-bold-duotone",
+      "solar:user-id-linear",
+      "solar:user-linear",
+      "solar:user-rounded-linear",
+      "solar:user-speak-rounded-linear",
+      "solar:users-group-rounded-bold",
+      "solar:users-group-rounded-bold-duotone",
+      "solar:users-group-rounded-linear",
+      "solar:users-group-two-rounded-linear",
+      "solar:wallet-money-bold",
+      "solar:wallet-money-linear",
+      "solar:widget-4-bold",
+      "solar:widget-4-linear",
+      "solar:widget-5-bold-duotone",
+      "solar:widget-5-linear",
+      "solar:widget-6-linear",
+      "solar:widget-add-linear",
+      "solar:widget-broken",
+      "solar:widget-linear"
+    ]
+  },
+  "stash": {
+    "name": "Stash Icons",
+    "author": {
+      "name": "Pingback LLC",
+      "url": "https://github.com/stash-ui/icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/stash-ui/icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/stash.json",
+    "icons": [
+      "stash:clock",
+      "stash:version"
+    ]
+  },
+  "svg-spinners": {
+    "name": "SVG Spinners",
+    "author": {
+      "name": "Utkarsh Verma",
+      "url": "https://github.com/n3r4zzurr0/svg-spinners"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/n3r4zzurr0/svg-spinners/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/svg-spinners.json",
+    "icons": [
+      "svg-spinners:180-ring",
+      "svg-spinners:3-dots-bounce",
+      "svg-spinners:90-ring",
+      "svg-spinners:90-ring-with-bg",
+      "svg-spinners:bars-scale",
+      "svg-spinners:ring-resize"
+    ]
+  },
+  "system-uicons": {
+    "name": "System UIcons",
+    "author": {
+      "name": "Corey Ginnivan",
+      "url": "https://github.com/CoreyGinnivan/system-uicons"
+    },
+    "license": {
+      "title": "Unlicense",
+      "spdx": "Unlicense",
+      "url": "https://github.com/CoreyGinnivan/system-uicons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/system-uicons.json",
+    "icons": [
+      "system-uicons:checkbox-empty",
+      "system-uicons:coins"
+    ]
+  },
+  "tabler": {
+    "name": "Tabler Icons",
+    "author": {
+      "name": "Paweł Kuna",
+      "url": "https://github.com/tabler/tabler-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/tabler/tabler-icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/tabler.json",
+    "icons": [
+      "tabler:align-left",
+      "tabler:bulb",
+      "tabler:calendar",
+      "tabler:chevron-down",
+      "tabler:chevron-right",
+      "tabler:chevron-up",
+      "tabler:clock",
+      "tabler:coins",
+      "tabler:copy",
+      "tabler:decimal",
+      "tabler:eye",
+      "tabler:hash",
+      "tabler:info-circle",
+      "tabler:link",
+      "tabler:list-tree",
+      "tabler:logs",
+      "tabler:message"
+    ]
+  },
+  "tdesign": {
+    "name": "TDesign Icons",
+    "author": {
+      "name": "TDesign",
+      "url": "https://github.com/Tencent/tdesign-icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/Tencent/tdesign-icons/blob/main/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/tdesign.json",
+    "icons": [
+      "tdesign:brackets",
+      "tdesign:enter"
+    ]
+  },
+  "token": {
+    "name": "Web3 Icons",
+    "author": {
+      "name": "0xa3k5",
+      "url": "https://github.com/0xa3k5/web3icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/0xa3k5/web3icons/blob/main/LICENCE"
+    },
+    "source": "@iconify/json@2.2.548/json/token.json",
+    "icons": [
+      "token:rune"
+    ]
+  },
+  "uiw": {
+    "name": "uiw icons",
+    "author": {
+      "name": "liwen0526",
+      "url": "https://github.com/uiwjs/icons"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT",
+      "url": "https://github.com/uiwjs/icons/blob/master/LICENSE"
+    },
+    "source": "@iconify/json@2.2.548/json/uiw.json",
+    "icons": [
+      "uiw:more"
+    ]
+  },
+  "weui": {
+    "name": "WeUI Icon",
+    "author": {
+      "name": "WeUI",
+      "url": "https://github.com/weui/weui-icon"
+    },
+    "license": {
+      "title": "MIT",
+      "spdx": "MIT"
+    },
+    "source": "@iconify/json@2.2.548/json/weui.json",
+    "icons": [
+      "weui:like-outlined",
+      "weui:play-filled"
+    ]
+  }
+}

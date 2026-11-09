@@ -15,7 +15,7 @@ def backfill(apps, schema_editor):
     """
     EvalLogger = apps.get_model("tracer", "EvalLogger")
     rows = list(
-        EvalLogger.objects.filter(
+        EvalLogger.objects.using(schema_editor.connection.alias).filter(
             error=True, error_message__startswith=LEGACY_PREFIX
         )
     )
@@ -27,7 +27,7 @@ def backfill(apps, schema_editor):
         row.error_message = None
         row.output_str = None
     if rows:
-        EvalLogger.objects.bulk_update(
+        EvalLogger.objects.using(schema_editor.connection.alias).bulk_update(
             rows,
             ["skipped_reason", "error", "error_message", "output_str"],
             batch_size=500,

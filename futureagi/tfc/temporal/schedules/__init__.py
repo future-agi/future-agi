@@ -11,6 +11,16 @@ Pattern:
 """
 
 # Config (no temporalio)
+from tfc.temporal.schedules.agentcc_alerts import AGENTCC_ALERT_SCHEDULES
+from tfc.temporal.schedules.agentcc_batches import AGENTCC_BATCH_SCHEDULES
+from tfc.temporal.schedules.agentcc_managed import AGENTCC_MANAGED_SCHEDULES
+from tfc.temporal.schedules.agentcc_mcp_credentials import (
+    AGENTCC_MCP_CREDENTIAL_SCHEDULES,
+)
+from tfc.temporal.schedules.agentcc_mcp_revisions import (
+    AGENTCC_MCP_REVISION_SCHEDULES,
+)
+from tfc.temporal.schedules.agentcc_retention import AGENTCC_RETENTION_SCHEDULES
 from tfc.temporal.schedules.billing import BILLING_SCHEDULES
 from tfc.temporal.schedules.config import ScheduleConfig
 from tfc.temporal.schedules.deployment_telemetry import (
@@ -22,11 +32,16 @@ from tfc.temporal.schedules.enterprise_heartbeat import (
 from tfc.temporal.schedules.integrations import INTEGRATION_SCHEDULES
 from tfc.temporal.schedules.marketplace import MARKETPLACE_SCHEDULES
 from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
+
+# Config (no temporalio)
+from tfc.temporal.schedules.omega_host_events import OMEGA_HOST_EVENT_SCHEDULES
+from tfc.temporal.schedules.omega_hub import HUB_SCHEDULES
 from tfc.temporal.schedules.outbox_cdc import OUTBOX_CDC_SCHEDULES
 from tfc.temporal.schedules.retention import RETENTION_SCHEDULES
 from tfc.temporal.schedules.saml import SAML_SCHEDULES
 from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
 from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
+from tfc.temporal.schedules.webhooks import WEBHOOKS_SCHEDULES
 
 # All schedules to be registered
 ALL_SCHEDULES = [
@@ -39,9 +54,22 @@ ALL_SCHEDULES = [
     *RETENTION_SCHEDULES,
     *DEPLOYMENT_TELEMETRY_SCHEDULES,
     *ENTERPRISE_HEARTBEAT_SCHEDULES,
+    # Omega Hub operations (READINESS lane 3.20).
+    *HUB_SCHEDULES,
+    # FA -> Omega EE revocation events (READINESS lane 1.2a).
+    *OMEGA_HOST_EVENT_SCHEDULES,
+    *AGENTCC_MANAGED_SCHEDULES,
+    *AGENTCC_RETENTION_SCHEDULES,
+    *AGENTCC_MCP_REVISION_SCHEDULES,
+    *AGENTCC_MCP_CREDENTIAL_SCHEDULES,
+    # Email alert evaluator (every minute) and webhook delivery (every 30 s).
+    *AGENTCC_ALERT_SCHEDULES,
+    # Console batches: batch.completed once and the minted key revoked (every minute).
+    *AGENTCC_BATCH_SCHEDULES,
     # Empty unless FI_CDC_MODE=outbox (the standalone install).
     *OUTBOX_CDC_SCHEDULES,
     *SAML_SCHEDULES,
+    *WEBHOOKS_SCHEDULES,
 ]
 
 # Manager functions
@@ -83,8 +111,16 @@ __all__ = [
     "MARKETPLACE_SCHEDULES",
     "RETENTION_SCHEDULES",
     "DEPLOYMENT_TELEMETRY_SCHEDULES",
+    "HUB_SCHEDULES",
+    "AGENTCC_MANAGED_SCHEDULES",
+    "AGENTCC_RETENTION_SCHEDULES",
+    "AGENTCC_MCP_REVISION_SCHEDULES",
+    "AGENTCC_MCP_CREDENTIAL_SCHEDULES",
+    "AGENTCC_ALERT_SCHEDULES",
+    "AGENTCC_BATCH_SCHEDULES",
     "ALL_SCHEDULES",
     "SAML_SCHEDULES",
+    "WEBHOOKS_SCHEDULES",
     # Async functions (a_ prefix)
     "a_schedule_exists",
     "a_create_schedule",

@@ -12,6 +12,7 @@ from django.utils import timezone
 from tracer.models.trace_grouping import (
     GroupingFeatureState,
     TraceGroupingFeature,
+    TraceGroupingFeatureJob,
 )
 from tracer.queries.grouping import (
     canonical_grouping_source_digest,
@@ -22,7 +23,6 @@ from tracer.services.grouping.control import (
     GroupingControlError,
     GroupingNotFound,
     _token_hash,
-    lock_feature_job,
     mark_feature_ready,
     require_feature_job,
 )
@@ -75,7 +75,12 @@ def complete_feature_job(
     # The first transaction reads the source fence but does not hold PG locks
     # across ClickHouse I/O or MiniLM work.
     with transaction.atomic():
-        job = lock_feature_job(feature_job_id=feature_job_id)
+        job = (
+            TraceGroupingFeatureJob.no_workspace_objects.select_for_update(of=("self",))
+            .select_related("report__job")
+            .filter(pk=feature_job_id)
+            .first()
+        )
         if job is None or not secrets.compare_digest(
             job.lease_token_digest, _token_hash(lease_token)
         ):

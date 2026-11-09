@@ -1,4 +1,4 @@
-from django.urls import path  # type: ignore
+from django.urls import include, path  # type: ignore
 from rest_framework.routers import DefaultRouter
 
 from tracer.views.alerts import (
@@ -108,6 +108,9 @@ router.register(r"shared-links", SharedLinkViewSet, basename="shared-link")
 router.register(r"dashboard", DashboardViewSet, basename="dashboard")
 
 urlpatterns = [
+    path("", include("tracer.views.omega_agent_curves")),
+    path("", include("tracer.views.omega_deployments")),
+    path("", include("tracer.views.omega_agents")),
     path("alerts/", AlertView.as_view(), name="alerts"),
     path("alerts/options/", AlertOptionsView.as_view(), name="alert-options"),
     path(

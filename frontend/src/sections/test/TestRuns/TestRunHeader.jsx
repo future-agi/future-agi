@@ -12,6 +12,8 @@ import {
   useTestRunsSearchStore,
 } from "./states";
 import axios, { endpoints } from "src/utils/axios";
+import { getTestExecutionErrorMessage } from "src/utils/errorUtils";
+import { handleError } from "src/utils/queryErrorHandler";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { LoadingButton } from "@mui/lab";
 import { useTestDetailContext } from "../context/TestDetailContext";
@@ -78,6 +80,22 @@ const TestRunHeader = () => {
               scenario_ids: selectedScenarios,
             },
       ),
+    // Only the run-test endpoint serves the approved execution error copy.
+    // Keep prompt execution on the existing global handler, without duplicates.
+    meta: { errorHandled: !isPromptSimulation },
+    onError: (error) => {
+      if (!isPromptSimulation) {
+        // Preserve flattened client refusals, including structured validation
+        // and the interceptor-owned rate-limit notification.
+        if (error?.statusCode < 500) {
+          handleError(error);
+          return;
+        }
+        enqueueSnackbar(getTestExecutionErrorMessage(error), {
+          variant: "error",
+        });
+      }
+    },
     onSuccess: () => {
       enqueueSnackbar("Test run started", { variant: "success" });
       refreshTestRunGrid();

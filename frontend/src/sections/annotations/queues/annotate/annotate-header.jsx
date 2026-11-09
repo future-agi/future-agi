@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { KeyCap } from "src/sections/common/RowPanel/ShortcutSheet";
 
 function statusTone(theme, color = "info") {
   const paletteColor = theme.palette[color] || theme.palette.info;
@@ -129,6 +130,7 @@ AnnotateHeader.propTypes = {
     }),
   }),
   onBack: PropTypes.func.isRequired,
+  backLabel: PropTypes.string,
   onSkip: PropTypes.func.isRequired,
   isSkipping: PropTypes.bool,
   isReviewMode: PropTypes.bool,
@@ -147,12 +149,15 @@ AnnotateHeader.propTypes = {
   completedToggleDisabled: PropTypes.bool,
   isItemCompleted: PropTypes.bool,
   completedByCurrentUser: PropTypes.bool,
+  // W4: extra header actions (the experiment review's `Review summary`)
+  extraActions: PropTypes.node,
 };
 
 export default function AnnotateHeader({
   queueName,
   progress,
   onBack,
+  backLabel = "Back to Queue",
   onSkip,
   isSkipping,
   isReviewMode,
@@ -171,6 +176,7 @@ export default function AnnotateHeader({
   completedToggleDisabled = false,
   isItemCompleted = false,
   completedByCurrentUser = false,
+  extraActions = null,
 }) {
   const userProgress = progress?.user_progress;
   const hasUserProgress = userProgress && userProgress.total > 0;
@@ -204,7 +210,8 @@ export default function AnnotateHeader({
         borderColor: "divider",
         gap: 1.5,
         flexWrap: "wrap",
-        "@media (min-width:1000px)": {
+        // RW#2: one line only when the 280 px nav + every control fit.
+        "@media (min-width:1400px)": {
           flexWrap: "nowrap",
         },
       }}
@@ -229,7 +236,7 @@ export default function AnnotateHeader({
             flexShrink: 0,
           }}
         >
-          Back to Queue
+          {backLabel}
         </Button>
         <Typography variant="h6" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
           {queueName || "Queue"}
@@ -280,7 +287,7 @@ export default function AnnotateHeader({
           flex: "1 1 100%",
           flexWrap: "wrap",
           justifyContent: "flex-end",
-          "@media (min-width:1000px)": {
+          "@media (min-width:1400px)": {
             flex: "0 0 auto",
             flexWrap: "nowrap",
           },
@@ -432,6 +439,7 @@ export default function AnnotateHeader({
             </span>
           </Tooltip>
         )}
+        {extraActions}
         <Box sx={{ minWidth: 150, flex: "0 1 172px" }}>
           <Stack
             direction="row"
@@ -464,7 +472,7 @@ export default function AnnotateHeader({
             title={
               isItemCompleted
                 ? "Completed items cannot be skipped"
-                : "Press S to skip"
+                : "Skip this row for now (S). Find it again with Show completed."
             }
           >
             <span>
@@ -498,6 +506,7 @@ export default function AnnotateHeader({
                 }}
               >
                 Skip
+                <KeyCap sx={{ ml: 0.75 }}>S</KeyCap>
               </Button>
             </span>
           </Tooltip>

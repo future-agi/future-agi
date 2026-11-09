@@ -1,3 +1,5 @@
+import { importWithRecovery } from "src/utils/chunkRecovery";
+
 export const AGENT_TAB_IDS = {
   AGENT_CONFIGURATION: "AgentConfiguration",
   PERFORMANCE_ANALYTICS: "PerformanceAnalytics",
@@ -369,9 +371,22 @@ export const PROVIDER_STEPS_MAPPER = {
 };
 
 /**
+ * The form status a LiveKit "Test Connection" result maps to. On Future AGI
+ * Cloud the backend never contacts a customer's LiveKit URL, so it answers
+ * `skipped`: the credentials were not verified. That is never shown as a
+ * success and never blocks saving them.
+ * @param {{ valid?: boolean, skipped?: boolean }} result
+ * @returns {"valid" | "skipped" | "invalid"}
+ */
+export const livekitValidationStatus = (result) => {
+  if (result?.skipped) return "skipped";
+  return result?.valid ? "valid" : "invalid";
+};
+
+/**
  * Validate LiveKit credentials by calling the backend endpoint.
  * @param {{ livekitUrl: string, livekitApiKey: string, livekitApiSecret: string, livekitAgentName: string }} params
- * @returns {Promise<{ valid: boolean, error?: string }>}
+ * @returns {Promise<{ valid: boolean, skipped?: boolean, message?: string, error?: string }>}
  */
 export const validateLiveKitCredentials = async ({
   livekitUrl,
@@ -381,7 +396,9 @@ export const validateLiveKitCredentials = async ({
   agentDefinitionId,
 }) => {
   // Importing here to avoid circular dependency issues at module level
-  const { default: axios, endpoints } = await import("src/utils/axios");
+  const { default: axios, endpoints } = await importWithRecovery(
+    () => import("src/utils/axios"),
+  );
   try {
     const response = await axios.post(
       endpoints.runTests.validateLiveKitCredentials,
@@ -396,6 +413,13 @@ export const validateLiveKitCredentials = async ({
       },
     );
     const result = response.data?.result || response.data;
+    if (result?.skipped) {
+      return {
+        valid: false,
+        skipped: true,
+        message: result?.message || "LiveKit credentials were not verified.",
+      };
+    }
     if (result?.valid) {
       return { valid: true };
     }

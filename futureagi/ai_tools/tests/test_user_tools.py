@@ -134,12 +134,13 @@ class TestListApiKeysTool:
     def test_list_api_keys_leaves_out_sandbox_ingest_keys(self, tool_context):
         from accounts.models.user import OrgApiKey
 
-        user_key = OrgApiKey.no_workspace_objects.create(
+        from accounts.tests.personal_keys import personal_key_for
+
+        user_key = personal_key_for(
+            tool_context.user,
+            tool_context.organization,
             name="listed-user-key",
-            organization=tool_context.organization,
             workspace=tool_context.workspace,
-            type="user",
-            user=tool_context.user,
         )
         # Created last, so it would head the newest-first list.
         ingest_key = OrgApiKey.no_workspace_objects.create(

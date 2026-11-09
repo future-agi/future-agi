@@ -1,0 +1,17 @@
+{
+  "http": {
+    "status": 422,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "client_error",
+    "code": "idempotency_key_reused",
+    "detail": "This Idempotency-Key was sent in the last 24 hours with a different mint request. Send a new Idempotency-Key for a new mint.",
+    "message": "This Idempotency-Key was sent in the last 24 hours with a different mint request. Send a new Idempotency-Key for a new mint.",
+    "error": "This Idempotency-Key was sent in the last 24 hours with a different mint request. Send a new Idempotency-Key for a new mint.",
+    "result": "This Idempotency-Key was sent in the last 24 hours with a different mint request. Send a new Idempotency-Key for a new mint."
+  }
+}

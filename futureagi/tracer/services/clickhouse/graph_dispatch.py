@@ -488,6 +488,8 @@ def degraded_graph_response(
         error_code = "read_budget_exceeded"
     elif explicit_code == "sample_limit":
         error_code = "sample_limit"
+    elif explicit_code == "eval_lifecycle_unavailable":
+        error_code = "eval_lifecycle_unavailable"
     elif is_read_budget_error(exc):
         error_code = "read_budget_exceeded"
     else:
@@ -2805,7 +2807,7 @@ def fetch_eval_graph_ch(
             refresh=refresh,
             organization_id=organization_id,
             workspace_id=workspace_id,
-            namespace="observe-eval-graph",
+            namespace="observe-eval-graph-nk20-v1",
             fits_wall=raw_log_membership_fits_wall,
         )
     try:
@@ -2850,7 +2852,11 @@ def fetch_eval_chart_series_ch(
     organization_id: str | None = None,
     workspace_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return a cached complete exact eval-chart series bundle."""
+    """Return exact quality series in a new cache namespace.
+
+    Old workers cannot service this namespace, so a rolling deploy cannot
+    refill it with zero-coerced pre-NK20 payloads.
+    """
 
     project_id = _validated_project_id(project_id)
     filters = list(filters or [])
@@ -2862,7 +2868,7 @@ def fetch_eval_chart_series_ch(
         "eval_name": eval_name,
     }
     return _read_or_refresh_exact_graph(
-        namespace="observe-eval-chart-series",
+        namespace="observe-eval-chart-series-nk20-v1",
         identity=identity,
         refresh=bool(refresh),
         pending_payload=[

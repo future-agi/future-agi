@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import {
   Box,
-  Button,
   CircularProgress,
   Dialog,
   DialogContent,
@@ -31,7 +30,15 @@ import {
 import { useOrgMembers } from "src/api/annotation-queues/annotation-queues";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { useSharedIssueSidebar } from "src/api/shared-links";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { canManageIntegrations } from "src/sections/settings/integrations/access";
+import { getErrorMessage } from "src/sections/settings/integrations/utils";
 import openExternal, { safeExternalUrl } from "../openExternal";
+import {
+  LINEAR_CONNECT_ADMIN_ONLY,
+  LINEAR_CREATE_VIEWER,
+} from "../linearAccess";
 import { useErrorFeedStore } from "../store";
 import { useSharedIssue } from "../sharedIssueContext";
 import ErrorStatusChip from "./ErrorStatusChip";
@@ -68,7 +75,7 @@ function FieldRow({ label, children }) {
 FieldRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
 
 // ── Meta row ────────────────────────────────────────────────────────────────
-function MetaRow({ label, value, icon, monospace, linkHref }) {
+function MetaRow({ label, value, icon, linkHref }) {
   if (value == null || value === "") return null;
   return (
     <Stack
@@ -790,12 +797,6 @@ ActivityItem.propTypes = {
 };
 
 // ── Co-occurring issues ───────────────────────────────────────────────────────
-const SEV_COLOR = {
-  critical: "#DB2F2D",
-  high: "#E9690C",
-  medium: "#F5A623",
-  low: "#71717a",
-};
 
 function CoOccurringList({ issues, readOnly = false }) {
   const theme = useTheme();
@@ -804,7 +805,6 @@ function CoOccurringList({ issues, readOnly = false }) {
   return (
     <Stack gap={0.5}>
       {issues.map((issue) => {
-        const c = SEV_COLOR[issue.severity] || "#71717a";
         return (
           <Stack
             key={issue.id}
@@ -895,10 +895,15 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
           }
           onClose();
         },
+        // The refusal the API gave, once (the mutation's meta.errorHandled
+        // keeps the app's error handler from adding a second toast).
         onError: (err) => {
-          const message =
-            err?.response?.data?.result || "Failed to create Linear issue";
-          enqueueSnackbar(message, { variant: "error" });
+          enqueueSnackbar(
+            getErrorMessage(err, "Failed to create Linear issue"),
+            {
+              variant: "error",
+            },
+          );
         },
       },
     );
@@ -1026,9 +1031,18 @@ LinearTeamPicker.propTypes = {
   traceId: PropTypes.string,
 };
 
-function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
+function ConnectorRow({
+  icon,
+  color,
+  name,
+  subtitle,
+  action,
+  onAction,
+  disabledReason,
+}) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+  const disabled = Boolean(disabledReason);
 
   return (
     <Stack
@@ -1073,30 +1087,37 @@ function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
       </Stack>
 
       {action && (
-        <Box
-          onClick={onAction}
-          sx={{
-            px: 0.75,
-            py: 0.25,
-            borderRadius: "4px",
-            cursor: "pointer",
-            border: "1px solid",
-            borderColor: alpha(color, 0.3),
-            bgcolor: isDark ? alpha(color, 0.1) : alpha(color, 0.07),
-            "&:hover": {
-              bgcolor: isDark ? alpha(color, 0.18) : alpha(color, 0.12),
-            },
-            transition: "all 0.15s",
-          }}
-        >
-          <Typography
-            fontSize="10px"
-            fontWeight={600}
-            sx={{ color, whiteSpace: "nowrap" }}
+        <Tooltip title={disabledReason || ""} describeChild>
+          <Box
+            role="button"
+            aria-disabled={disabled || undefined}
+            onClick={disabled ? undefined : onAction}
+            sx={{
+              px: 0.75,
+              py: 0.25,
+              borderRadius: "4px",
+              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: disabled ? 0.5 : 1,
+              border: "1px solid",
+              borderColor: alpha(color, 0.3),
+              bgcolor: isDark ? alpha(color, 0.1) : alpha(color, 0.07),
+              "&:hover": disabled
+                ? undefined
+                : {
+                    bgcolor: isDark ? alpha(color, 0.18) : alpha(color, 0.12),
+                  },
+              transition: "all 0.15s",
+            }}
           >
-            {action}
-          </Typography>
-        </Box>
+            <Typography
+              fontSize="10px"
+              fontWeight={600}
+              sx={{ color, whiteSpace: "nowrap" }}
+            >
+              {action}
+            </Typography>
+          </Box>
+        </Tooltip>
       )}
     </Stack>
   );
@@ -1108,6 +1129,7 @@ ConnectorRow.propTypes = {
   subtitle: PropTypes.string.isRequired,
   action: PropTypes.string,
   onAction: PropTypes.func,
+  disabledReason: PropTypes.string,
 };
 
 function SharedLinearLink({ url, issueId }) {
@@ -1146,7 +1168,8 @@ SharedLinearLink.propTypes = {
   issueId: PropTypes.string,
 };
 
-function Integrations({
+// The issue's connector rows (Linear): exported for its role tests.
+export function Integrations({
   clusterId,
   traceId,
   externalIssueUrl,
@@ -1163,6 +1186,11 @@ function Integrations({
   } = useLinearTeams(currentOrganizationId);
   const linearConnected = linearData?.connected === true;
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
+  const { role } = useAuthContext();
+  const canConnect = canManageIntegrations(role);
+  const canCreate =
+    RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT]?.[role] ===
+    true;
 
   const linked = !!externalIssueUrl;
 
@@ -1194,6 +1222,16 @@ function Integrations({
       : linearConnected
         ? "Create issue"
         : "Connect";
+  const linearDisabledReason =
+    linked || linearLoading
+      ? undefined
+      : linearConnected
+        ? canCreate
+          ? undefined
+          : LINEAR_CREATE_VIEWER
+        : canConnect
+          ? undefined
+          : LINEAR_CONNECT_ADMIN_ONLY;
 
   return (
     <>
@@ -1205,6 +1243,7 @@ function Integrations({
           subtitle={linearSubtitle}
           action={linearAction}
           onAction={handleLinearAction}
+          disabledReason={linearDisabledReason}
         />
       </Stack>
 

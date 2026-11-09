@@ -20,7 +20,6 @@ import { DATADOG_SITES } from "../../constants";
 export default function DatadogCredentials({ data, onUpdate, onNext, onBack }) {
   const [site, setSite] = useState(data.credentials?.site || "us1");
   const [apiKey, setApiKey] = useState(data.credentials?.api_key || "");
-  const [appKey, setAppKey] = useState(data.credentials?.app_key || "");
   const [showApiKey, setShowApiKey] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
 
@@ -35,11 +34,7 @@ export default function DatadogCredentials({ data, onUpdate, onNext, onBack }) {
     }
     setFieldErrors({});
 
-    const credentials = {
-      api_key: apiKey.trim(),
-      site,
-      app_key: appKey.trim(),
-    };
+    const credentials = { api_key: apiKey.trim(), site };
 
     validate(
       { platform: "datadog", credentials },
@@ -101,17 +96,6 @@ export default function DatadogCredentials({ data, onUpdate, onNext, onBack }) {
             </IconButton>
           ),
         }}
-      />
-
-      <TextField
-        label="Application Key (Optional)"
-        value={appKey}
-        onChange={(e) => setAppKey(e.target.value)}
-        size="small"
-        fullWidth
-        type="password"
-        helperText="Optional — needed for creating Datadog dashboard templates"
-        placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       />
 
       {error && (

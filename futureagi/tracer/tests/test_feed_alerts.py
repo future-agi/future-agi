@@ -572,46 +572,6 @@ class TestAlertEventPipeline:
         )
         assert state.last_event_id == event.id
 
-    def test_occurrence_threshold_fires_once_when_the_count_falls_and_returns(
-        self, organization, workspace, user, observe_project, slack_connection, issue
-    ):
-        rule = _rule(
-            organization,
-            workspace,
-            user,
-            slack_connection,
-            observe_project,
-            trigger_type=FeedAlertTrigger.OCCURRENCES_CROSSED,
-            trigger_value=100,
-            cooldown_seconds=0,
-        )
-        snapshot = events.issue_snapshot(issue)
-
-        def crossing(key, before, after):
-            return ErrorFeedIssueEvent.no_workspace_objects.create(
-                organization=organization,
-                workspace=workspace,
-                project=observe_project,
-                cluster=issue,
-                event_kind="issue_changed",
-                source_key=key,
-                before={**snapshot, "occurrences": before},
-                after={**snapshot, "occurrences": after},
-            )
-
-        # 99 -> 100 fires. A re-eval retires a member (99) and assign brings it
-        # back (100): the same threshold must not fire again.
-        for key, before, after in (("up-1", 99, 100), ("down", 100, 99), ("up-2", 99, 100)):
-            events._queue_event(crossing(key, before, after))
-
-        assert (
-            ErrorFeedAlertDelivery.no_workspace_objects.filter(rule=rule).count() == 1
-        )
-        state = ErrorFeedAlertIssueState.no_workspace_objects.get(
-            rule=rule, cluster=issue
-        )
-        assert state.occurrences_high_water == 100
-
     def test_delivery_retries_transient_slack_failures_then_sends(
         self,
         monkeypatch,

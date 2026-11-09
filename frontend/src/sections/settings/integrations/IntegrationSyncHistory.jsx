@@ -27,7 +27,7 @@ function StatusCellRenderer({ value }) {
   );
 }
 
-export default function IntegrationSyncHistory({ connectionId }) {
+export default function IntegrationSyncHistory({ connectionId, isExport }) {
   const agTheme = useAgTheme();
   const { data, isLoading, isError } = useSyncLogs(connectionId);
 
@@ -39,24 +39,37 @@ export default function IntegrationSyncHistory({ connectionId }) {
         flex: 1,
         valueFormatter: ({ value }) => (value ? fDateTime(value) : "—"),
       },
-      {
-        field: "traces_fetched",
-        headerName: "Traces",
-        width: 100,
-        valueFormatter: ({ value }) => value?.toLocaleString() || "0",
-      },
-      {
-        field: "spans_synced",
-        headerName: "Spans",
-        width: 100,
-        valueFormatter: ({ value }) => value?.toLocaleString() || "0",
-      },
-      {
-        field: "scores_synced",
-        headerName: "Scores",
-        width: 100,
-        valueFormatter: ({ value }) => value?.toLocaleString() || "0",
-      },
+      // An export's sync counts the request logs it sent
+      // (activities.py _sync_export_integration stores them as traces_fetched).
+      ...(isExport
+        ? [
+            {
+              field: "traces_fetched",
+              headerName: "Request logs",
+              minWidth: 150,
+              valueFormatter: ({ value }) => value?.toLocaleString() || "0",
+            },
+          ]
+        : [
+            {
+              field: "traces_fetched",
+              headerName: "Traces",
+              width: 100,
+              valueFormatter: ({ value }) => value?.toLocaleString() || "0",
+            },
+            {
+              field: "spans_synced",
+              headerName: "Spans",
+              width: 100,
+              valueFormatter: ({ value }) => value?.toLocaleString() || "0",
+            },
+            {
+              field: "scores_synced",
+              headerName: "Scores",
+              width: 100,
+              valueFormatter: ({ value }) => value?.toLocaleString() || "0",
+            },
+          ]),
       {
         field: "status",
         headerName: "Status",
@@ -70,13 +83,11 @@ export default function IntegrationSyncHistory({ connectionId }) {
         tooltipField: "error_message",
       },
     ],
-    [],
+    [isExport],
   );
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ height: 400 }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ height: 400 }} />;
   }
 
   if (isError) {
@@ -114,4 +125,5 @@ export default function IntegrationSyncHistory({ connectionId }) {
 
 IntegrationSyncHistory.propTypes = {
   connectionId: PropTypes.string.isRequired,
+  isExport: PropTypes.bool,
 };

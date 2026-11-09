@@ -1,0 +1,36 @@
+# The Omega Hub runner host of a production install (README.md here): run on a
+# VM of its own, never on the app's host.
+#
+#   OMEGA_HUB_RUNNER_HOST_NAME=hub-runner.example.internal docker compose up -d --build --wait
+#
+# It publishes only TCP 2376 (Docker, mutual TLS). The client certificate the
+# checker needs is written to the hub-runner-client volume on first start:
+#   docker compose cp hub-runner:/certs/client ./client
+name: omega-hub-runner
+
+services:
+  hub-runner:
+    image: futureagi/omega-hub-runner-host:${OMEGA_HUB_RUNNER_HOST_VERSION:-local}
+    build:
+      context: .
+    privileged: true
+    # Docker refuses a privileged container in a remapped user namespace.
+    userns_mode: host
+    environment:
+      # The name (and/or IP:) the checker dials; it goes into the server
+      # certificate, next to the container's own names.
+      DOCKER_TLS_SAN: DNS:${OMEGA_HUB_RUNNER_HOST_NAME:?set to the name the checker reaches this host by},${OMEGA_HUB_RUNNER_HOST_SAN_EXTRA:-DNS:hub-runner}
+    ports:
+      - "${OMEGA_HUB_RUNNER_BIND:-0.0.0.0}:2376:2376"
+    volumes:
+      - hub-runner-ca:/certs/ca
+      - hub-runner-server:/certs/server
+      - hub-runner-client:/certs/client
+      - hub-runner-data:/var/lib/docker
+    restart: always
+
+volumes:
+  hub-runner-ca:
+  hub-runner-server:
+  hub-runner-client:
+  hub-runner-data:

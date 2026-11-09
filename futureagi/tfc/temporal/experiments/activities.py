@@ -348,8 +348,8 @@ def _process_prompt_sync(
     try:
         import json
 
-        from model_hub.models.choices import CellStatus, SourceChoices, StatusType
-        from model_hub.models.develop_dataset import Cell, Column, Row
+        from model_hub.models.choices import CellStatus, StatusType
+        from model_hub.models.develop_dataset import Row
         from model_hub.models.experiments import (
             ExperimentDatasetTable,
             ExperimentsTable,
@@ -518,15 +518,29 @@ def _setup_prompt_v2_sync(
             "experiment_dataset__experiment",
             "experiment_dataset__experiment__dataset",
             "experiment_dataset__experiment__dataset__organization",
-            "prompt_version",
-        ).get(id=experiment_prompt_config_id)
+            "experiment_dataset__experiment__dataset__workspace",
+            "prompt_version__original_template__workspace",
+        ).get(
+            id=experiment_prompt_config_id,
+            experiment_dataset__experiment_id=experiment_id,
+            experiment_dataset__experiment__snapshot_dataset_id=dataset_id,
+        )
 
         experiment = epc.experiment_dataset.experiment
         experiment_dataset = epc.experiment_dataset
         snapshot_dataset_id = str(experiment.snapshot_dataset_id)
 
-        # Resolve config from EPC
+        # Resolve version defaults + explicit request overrides once. Keep the
+        # effective settings on this run's EPC so detail/edit and reruns can
+        # audit what the worker actually passed to the provider.
         config = resolve_prompt_config(epc)
+        if (
+            epc.model_params != config["model_params"]
+            or epc.configuration != config["configuration"]
+        ):
+            epc.model_params = config["model_params"]
+            epc.configuration = config["configuration"]
+            epc.save(update_fields=["model_params", "configuration"])
 
         model_name = config["model"]
         # get_messages() returns prompt_version.prompt_config_snapshot for LLM
@@ -625,16 +639,17 @@ def _setup_agent_sync(
     try:
         from model_hub.models.choices import StatusType
         from model_hub.models.develop_dataset import Column
-        from model_hub.models.experiments import ExperimentAgentConfig
+        from model_hub.services.experiment_target_admission import (
+            ensure_agent_worker_admitted,
+        )
 
-        # Load the EAC with related EDT and experiment
-        eac = ExperimentAgentConfig.objects.select_related(
-            "experiment_dataset",
-            "experiment_dataset__experiment",
-            "graph_version",
-            "graph_version__graph",
-        ).get(id=experiment_agent_config_id)
-
+        # Revalidate the persisted target and all supplied bindings before writes.
+        eac = ensure_agent_worker_admitted(
+            experiment_id=experiment_id,
+            dataset_id=dataset_id,
+            experiment_agent_config_id=experiment_agent_config_id,
+            row_ids=rerun_row_ids,
+        )
         experiment = eac.experiment_dataset.experiment
         experiment_dataset = eac.experiment_dataset
         snapshot_dataset_id = str(experiment.snapshot_dataset_id)
@@ -690,6 +705,7 @@ def _prepare_agent_row_sync(
     dataset_id: str,
     experiment_id: str,
     graph_version_id: str,
+    experiment_agent_config_id: str = "",
 ) -> dict:
     """
     Prepare a single row for graph execution.
@@ -701,9 +717,23 @@ def _prepare_agent_row_sync(
     close_old_connections()
 
     try:
+        from django.db.models import Q
+
         from model_hub.models.choices import SourceChoices
         from model_hub.models.develop_dataset import Cell
+        from model_hub.services.experiment_target_admission import (
+            ensure_agent_worker_admitted,
+        )
         from tfc.temporal.agent_playground.client import _create_graph_execution
+
+        # Admission precedes even reading row payloads, graph creation or budgets.
+        eac = ensure_agent_worker_admitted(
+            experiment_id=experiment_id,
+            dataset_id=dataset_id,
+            experiment_agent_config_id=experiment_agent_config_id,
+            graph_version_id=graph_version_id,
+            row_id=row_id,
+        )
 
         # Experiment-generated column sources to exclude from input
         EXCLUDE_SOURCES = {
@@ -715,8 +745,12 @@ def _prepare_agent_row_sync(
         # Get base-data cells for this row (exclude experiment-generated columns)
         cells = (
             Cell.objects.filter(
+                Q(dataset__isnull=True) | Q(dataset_id=dataset_id),
                 row_id=row_id,
+                row__dataset_id=dataset_id,
+                row__deleted=False,
                 column__dataset_id=dataset_id,
+                column__deleted=False,
                 deleted=False,
             )
             .exclude(column__source__in=EXCLUDE_SOURCES)
@@ -725,11 +759,14 @@ def _prepare_agent_row_sync(
 
         input_payload = {cell.column.name: cell.value for cell in cells}
 
-        # Create GraphExecution via graph engine helper
+        # Use the validated persisted version, not the incoming identifier.
         graph_execution_id = _create_graph_execution(
-            graph_version_id=uuid.UUID(graph_version_id),
+            graph_version_id=eac.graph_version_id,
             input_payload=input_payload,
         )
+        from model_hub.services.experiment_row_budget import bind_graph_budget
+
+        bind_graph_budget(experiment_id, row_id, str(eac.pk), graph_execution_id)
 
         activity.logger.info(
             f"Prepared agent row {row_id}: "
@@ -743,13 +780,15 @@ def _prepare_agent_row_sync(
             "status": "READY",
         }
     except Exception as e:
+        from model_hub.services.experiment_target_admission import worker_error
+
         activity.logger.exception(f"Error in _prepare_agent_row_sync: {e}")
         return {
             "row_id": row_id,
             "graph_execution_id": "",
             "input_payload": {},
             "status": "FAILED",
-            "error": str(e),
+            "error": worker_error(e),
         }
     finally:
         close_old_connections()
@@ -763,8 +802,8 @@ def _process_row_sync(
     messages: list,
     model: str,
     model_config: dict,
-    output_format: Optional[str],
-    run_prompt_config: Optional[dict],
+    output_format: str | None,
+    run_prompt_config: dict | None,
 ) -> dict:
     """Synchronous implementation of process_row."""
     close_old_connections()
@@ -792,10 +831,19 @@ def _process_row_sync(
         # before evaluations finish, causing the experiment to complete prematurely.
         # The workflow handles status checks at the right time (after evals complete).
 
+        from tfc.temporal.experiments.run_policy import (
+            persisted_prompt_status,
+            reports_failed_rows,
+        )
+
         return {
             "row_id": row_id,
             "column_id": column_id,
-            "status": "COMPLETED",
+            "status": (
+                persisted_prompt_status(row_id, column_id, dataset_id, experiment_id)
+                if reports_failed_rows()
+                else "COMPLETED"
+            ),
         }
     except Exception as e:
         from model_hub.models.choices import CellStatus
@@ -900,8 +948,8 @@ def _run_base_evaluation_sync(
     close_old_connections()
 
     try:
-        from model_hub.models.choices import CellStatus, SourceChoices
-        from model_hub.models.develop_dataset import Cell, Column, Row
+        from model_hub.models.choices import SourceChoices
+        from model_hub.models.develop_dataset import Column, Row
         from model_hub.models.evals_metric import UserEvalMetric
         from model_hub.models.experiments import ExperimentsTable
         from model_hub.services.experiment_utils import (
@@ -1021,8 +1069,8 @@ def _run_base_evaluation_sync(
         # the callback attribute, point it at evaluation_tracker so that
         # StopUserEvalView's request_cancel breaks the loop at row level.
         if hasattr(runner, "_check_cancel_callback"):
-            runner._check_cancel_callback = (
-                lambda eid=user_eval_metric.id: evaluation_tracker.should_cancel(eid)
+            runner._check_cancel_callback = lambda eid=user_eval_metric.id: (
+                evaluation_tracker.should_cancel(eid)
             )
 
         # If base column is a run_prompt column and eval needs prompt_chain,
@@ -1145,14 +1193,11 @@ def _run_base_evaluation_sync(
         close_old_connections()
 
 
-
-
 def _check_column_status_sync(column_id: str) -> dict:
     """Synchronous implementation of check_column_status."""
     close_old_connections()
 
     try:
-        from model_hub.models.choices import StatusType
         from model_hub.models.develop_dataset import Column
         from model_hub.views.experiment_runner import check_and_update_column_status
 
@@ -1407,6 +1452,8 @@ async def setup_agent_activity(
         )
 
     except Exception as e:
+        from model_hub.services.experiment_target_admission import worker_error
+
         activity.logger.exception(
             f"Error setting up agent for experiment {input.experiment_id}: {e}"
         )
@@ -1418,7 +1465,7 @@ async def setup_agent_activity(
             node_column_mapping={},
             row_ids=[],
             status="FAILED",
-            error=str(e),
+            error=worker_error(e),
         )
 
 
@@ -1440,6 +1487,7 @@ async def prepare_agent_row_activity(
             input.dataset_id,
             input.experiment_id,
             input.graph_version_id,
+            input.experiment_agent_config_id,
         )
 
         return PrepareAgentRowOutput(
@@ -1971,8 +2019,8 @@ def _create_error_eval_cells_sync(
     try:
         import json
 
-        from model_hub.models.choices import CellStatus, SourceChoices
-        from model_hub.models.develop_dataset import Cell, Column, Row
+        from model_hub.models.choices import CellStatus, SourceChoices, StatusType
+        from model_hub.models.develop_dataset import Column, Row
         from model_hub.models.evals_metric import UserEvalMetric
         from model_hub.models.experiments import (
             ExperimentDatasetTable,
@@ -1996,11 +2044,93 @@ def _create_error_eval_cells_sync(
         )
         experiment_dataset = ExperimentDatasetTable.objects.get(id=column.source_id)
         dataset = experiment.snapshot_dataset
+        from tfc.temporal.experiments.run_policy import failed_row_values
+
+        policy_values = failed_row_values(
+            experiment.run_policy.get("error_policy"), error_message
+        )
+        if policy_values and (
+            str(dataset.id) != str(dataset_id)
+            or column.dataset_id != dataset.id
+            or experiment_dataset.experiment_id != experiment.id
+            or dataset.organization_id != experiment.dataset.organization_id
+            or dataset.workspace_id != experiment.dataset.workspace_id
+        ):
+            raise ValueError(
+                "Error policy target does not match the experiment snapshot."
+            )
+
+        if policy_values:
+            from django.db.models import Q
+
+            workspace_scope = Q(workspace_id=experiment.dataset.workspace_id)
+            if (
+                not experiment.dataset.workspace_id
+                or experiment.dataset.workspace.is_default
+            ):
+                workspace_scope |= Q(workspace__isnull=True) | Q(
+                    workspace__is_default=True
+                )
+            admitted_rows = set(
+                Row.objects.filter(
+                    id__in=failed_row_ids, dataset=dataset, deleted=False
+                ).values_list("id", flat=True)
+            )
+            admitted_evals = set(
+                experiment.user_eval_template_ids.filter(
+                    workspace_scope,
+                    id__in=eval_template_ids,
+                    deleted=False,
+                    organization_id=experiment.dataset.organization_id,
+                ).values_list("id", flat=True)
+            )
+            if admitted_rows != {
+                uuid.UUID(str(r)) for r in failed_row_ids
+            } or admitted_evals != {uuid.UUID(str(e)) for e in eval_template_ids}:
+                raise ValueError(
+                    "Error policy rows or evaluations are outside the experiment."
+                )
 
         error_value = json.dumps({"error": error_message})
+        from django.db import transaction
+
+        from model_hub.services.experiment_utils import (
+            is_experiment_cancelled,
+            is_user_eval_stopped,
+        )
+        from tfc.temporal.experiments.run_policy import (
+            evaluation_stopped,
+            write_failed_row_cells,
+        )
+
+        # Bulk fetch the failed rows once for every template
+        row_uuids = [uuid.UUID(rid) for rid in failed_row_ids]
+        rows = Row.objects.filter(id__in=row_uuids, dataset=dataset, deleted=False)
+        row_map = {str(r.id): r for r in rows}
+        missing = set(failed_row_ids) - set(row_map.keys())
+        for rid in missing:
+            activity.logger.warning(f"Row {rid} not found in dataset {dataset.id}")
+
+        score_values = policy_values or {
+            "value": error_value,
+            "status": CellStatus.ERROR.value,
+            "value_infos": json.dumps({"reason": error_message}),
+        }
+        reason_values = {
+            "value": error_message,
+            "status": CellStatus.ERROR.value,
+            "value_infos": json.dumps({"reason": error_message}),
+        }
 
         for eval_template_id in eval_template_ids:
             try:
+                # A whole-experiment stop owns every cell it has not settled.
+                if is_experiment_cancelled(experiment.id):
+                    return {
+                        "cells_created": cells_created,
+                        "status": "SKIPPED",
+                    }
+
                 eval_template = UserEvalMetric.objects.select_related("template").get(
                     id=uuid.UUID(eval_template_id)
                 )
@@ -2012,83 +2142,98 @@ def _create_error_eval_cells_sync(
                     "source": "experiment",
                 }
 
-                runner = EvaluationRunner(
-                    user_eval_metric_id=eval_template.id,
-                    experiment_dataset=experiment_dataset,
-                    is_only_eval=False,
-                    source="experiment",
-                    source_id=str(eval_template.template.id),
-                    source_configs=config,
-                    column=column,
-                )
-                runner.dataset = dataset
-                runner.load_user_eval_metric()
+                runner = None
+                if eval_template.template.template_type == "composite":
+                    # Composite parents have no single evaluator class: build
+                    # their result column the way experiment setup does.
+                    from model_hub.tasks.composite_runner import (
+                        CompositeEvaluationRunner,
+                    )
+                    from model_hub.views.experiment_runner import (
+                        _get_or_create_eval_column,
+                    )
 
-                column_config = runner._get_column_config(dataset)
-                eval_column = runner._create_or_update_column(
-                    dataset, column_config, new_column=True
-                )
+                    eval_column = _get_or_create_eval_column(
+                        dataset,
+                        CompositeEvaluationRunner.build_column_config(
+                            user_eval_metric=eval_template,
+                            dataset=dataset,
+                            experiment_dataset=experiment_dataset,
+                            column=column,
+                        ),
+                        experiment_dataset=experiment_dataset,
+                    )
+                else:
+                    # format_output skips the runner's own start-up, which
+                    # would mark the evaluation RUNNING (and so un-stop it).
+                    runner = EvaluationRunner(
+                        user_eval_metric_id=eval_template.id,
+                        experiment_dataset=experiment_dataset,
+                        is_only_eval=False,
+                        source="experiment",
+                        source_id=str(eval_template.template.id),
+                        source_configs=config,
+                        column=column,
+                        format_output=True,
+                    )
+                    runner.dataset = dataset
+                    runner.load_user_eval_metric()
 
-                # Bulk fetch all rows for this batch
-                row_uuids = [uuid.UUID(rid) for rid in failed_row_ids]
-                rows = Row.objects.filter(
-                    id__in=row_uuids, dataset=dataset, deleted=False
-                )
-                row_map = {str(r.id): r for r in rows}
-
-                missing = set(failed_row_ids) - set(row_map.keys())
-                for rid in missing:
-                    activity.logger.warning(
-                        f"Row {rid} not found in dataset {dataset.id}"
+                    column_config = runner._get_column_config(dataset)
+                    eval_column = runner._create_or_update_column(
+                        dataset, column_config, new_column=True
                     )
 
                 # Stop guard: skip writing error cells if the user already
                 # stopped this eval — otherwise the late error path
                 # overwrites the "User stopped evaluation" marker.
-                from model_hub.services.experiment_utils import (
-                    is_user_eval_stopped,
-                )
-
                 if is_user_eval_stopped(eval_template.id):
                     continue
 
-                # Bulk create error cells for the eval column
-                error_value_infos = json.dumps({"reason": error_message})
-                eval_cells = [
-                    Cell(
-                        dataset=dataset,
-                        column=eval_column,
-                        row=row,
-                        value=error_value,
-                        status=CellStatus.ERROR.value,
-                        value_infos=error_value_infos,
-                    )
-                    for row in row_map.values()
-                ]
-                if eval_cells:
-                    Cell.objects.bulk_create(eval_cells, ignore_conflicts=True)
-                    cells_created += len(eval_cells)
-
-                # Handle reason column if enabled
-                if eval_template.config.get("reason_column"):
+                # Handle the reason column: create it if enabled, and settle an
+                # existing one either way (setup creates and resets it).
+                reason_column = None
+                if runner is not None and eval_template.config.get("reason_column"):
                     reason_column_name = f"{eval_template.name}-{column.name}-reason"
                     reason_column = runner._create_reason_column(
                         dataset, reason_column_name, parent_column=eval_column
                     )
+                elif runner is not None:
+                    reason_column = Column.objects.filter(
+                        dataset=dataset,
+                        source=SourceChoices.EVALUATION_REASON.value,
+                        source_id=f"{eval_column.id}-sourceid-{eval_template.id}",
+                        deleted=False,
+                    ).first()
+
+                # The stop cleanup cancels the experiment before it marks any
+                # cell; holding the experiment row while writing means a stop
+                # either sees these results or this write sees the stop.
+                with transaction.atomic():
+                    locked = (
+                        ExperimentsTable.objects.select_for_update()
+                        .filter(id=experiment.id, deleted=False)
+                        .values_list("status", flat=True)
+                        .first()
+                    )
+                    if locked in (None, StatusType.CANCELLED.value):
+                        return {
+                            "cells_created": cells_created,
+                            "status": "SKIPPED",
+                        }
+                    written = write_failed_row_cells(
+                        dataset, eval_column, row_map.values(), score_values
+                    )
                     if reason_column is not None:
-                        reason_cells = [
-                            Cell(
-                                dataset=dataset,
-                                column=reason_column,
-                                row=row,
-                                value=error_message,
-                                status=CellStatus.ERROR.value,
-                                value_infos=json.dumps({"reason": error_message}),
-                            )
-                            for row in row_map.values()
-                        ]
-                        if reason_cells:
-                            Cell.objects.bulk_create(reason_cells, ignore_conflicts=True)
+                        write_failed_row_cells(
+                            dataset, reason_column, row_map.values(), reason_values
+                        )
+                    # A per-evaluation stop saves its status before it marks
+                    # cells: if it landed, undo these writes and keep its marks.
+                    if evaluation_stopped(eval_template.id):
+                        transaction.set_rollback(True)
+                        written = 0
+                cells_created += written
 
             except Exception as e:
                 activity.logger.exception(
@@ -2334,10 +2479,8 @@ def _process_row_evals_sync(
                 # Wire distributed cancel check so the runner aborts the
                 # row mid-flight if the user presses Stop during execution.
                 if hasattr(runner, "_check_cancel_callback"):
-                    runner._check_cancel_callback = (
-                        lambda eid=eval_template.id: (
-                            evaluation_tracker.should_cancel(eid)
-                        )
+                    runner._check_cancel_callback = lambda eid=eval_template.id: (
+                        evaluation_tracker.should_cancel(eid)
                     )
 
                 # Run evaluation for this single row
@@ -2605,6 +2748,12 @@ def _stop_experiment_cleanup_sync(experiment_id: str, stop_message: str) -> dict
             id=uuid.UUID(experiment_id), deleted=False
         )
 
+        # Cancel first: late cell writers re-check this status under the
+        # experiment row lock, so no write can land after a cell is marked.
+        ExperimentsTable.objects.filter(id=experiment.id).update(
+            status=StatusType.CANCELLED.value
+        )
+
         # Get columns directly from the snapshot dataset
         all_column_ids = list(
             Column.objects.filter(
@@ -2711,11 +2860,6 @@ def _stop_experiment_cleanup_sync(experiment_id: str, stop_message: str) -> dict
             ],
         ).update(status=StatusType.FAILED.value)
 
-        # Mark experiment as CANCELLED
-        ExperimentsTable.objects.filter(id=experiment.id).update(
-            status=StatusType.CANCELLED.value
-        )
-
         activity.logger.info(
             f"Stop cleanup for experiment {experiment_id}: "
             f"{cells_updated} cells marked as ERROR, "
@@ -2765,8 +2909,7 @@ async def stop_experiment_cleanup_activity(
 
     except Exception as e:
         activity.logger.exception(
-            f"Error in stop_experiment_cleanup_activity for "
-            f"{input.experiment_id}: {e}"
+            f"Error in stop_experiment_cleanup_activity for {input.experiment_id}: {e}"
         )
         return StopExperimentCleanupOutput(
             experiment_id=input.experiment_id,

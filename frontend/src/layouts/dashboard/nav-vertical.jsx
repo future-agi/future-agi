@@ -1,5 +1,5 @@
 import React from "react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 
 import Box from "@mui/material/Box";
@@ -11,37 +11,52 @@ import { usePathname } from "src/routes/hooks";
 import { useResponsive } from "src/hooks/use-responsive";
 import { useAuthContext } from "src/auth/hooks";
 
-import Logo from "src/components/logo";
 import Scrollbar from "src/components/scrollbar";
 import { NavSectionVertical } from "src/components/nav-section";
 
 import { NAV } from "../config-layout";
 import {
-  useNavData,
   useNavUpgradeData,
   useNavSettingsData,
   useNavDashBoardData,
+  useNavGatewayData,
   useWorkspaceSettingsNav,
 } from "./config-navigation";
+import { useShellNavData } from "./useShellNavData";
 import WorkspaceSwitcher from "./WorkspaceSwitcher/WorkspaceSwitcher";
-import { useSettingsOpen, useGatewayOpen } from "./states";
+import { useSettingsOpen, syncSettingsOpen } from "./states";
+import NavBrandRow from "src/sections/omega/shell/NavBrandRow";
+import {
+  hostReturnPath,
+  isGatewayPath,
+} from "src/sections/omega/shell/products";
+import GatewayRail from "src/sections/gateway/shell/GatewayRail";
+import GatewayRailScroll from "src/sections/gateway/shell/GatewayRailScroll";
 
-import { Button, Typography } from "@mui/material";
+import { Button, IconButton, Typography } from "@mui/material";
 import SVGColor from "src/components/svg-color";
 import { useNavigate } from "react-router";
 
 // ----------------------------------------------------------------------
 
-export default function NavVertical({ openNav, onCloseNav }) {
+export default function NavVertical({
+  openNav,
+  onCloseNav,
+  temporary = false,
+}) {
   const { user } = useAuthContext();
   const pathname = usePathname();
-  const lgUp = useResponsive("up", "xs");
+  const mdUp = useResponsive("up", "md");
   const navigate = useNavigate();
-  const navData = useNavData();
+  const navData = useShellNavData();
   const navUpgradeData = useNavUpgradeData();
   const navSettingsData = useNavSettingsData();
   const navDashboardData = useNavDashBoardData();
+  const navGatewayData = useNavGatewayData();
   const { settingOpen, setSettingOpen } = useSettingsOpen();
+  // On /dashboard/gateway/* the AI Gateway is the open product: its rail
+  // replaces the Future AGI nav (the product switcher on top switches back).
+  const onGateway = isGatewayPath(pathname);
 
   // Detect workspace-specific settings route
   const wsMatch = pathname.match(
@@ -49,36 +64,34 @@ export default function NavVertical({ openNav, onCloseNav }) {
   );
   const activeWorkspaceId = wsMatch ? wsMatch[1] : null;
   const workspaceNav = useWorkspaceSettingsNav(activeWorkspaceId);
-  const { gatewayOpen, setGatewayOpen } = useGatewayOpen();
 
+  // Close the drawer after a navigation, not the moment it opens.
+  const lastPathnameRef = useRef(pathname);
   useEffect(() => {
+    if (lastPathnameRef.current === pathname) return;
+    lastPathnameRef.current = pathname;
     if (openNav) {
       onCloseNav();
     }
   }, [onCloseNav, openNav, pathname]);
 
-  // Sync settings sidebar visibility with URL on page reload
+  // Keep the gateway rail; elsewhere the settings panel follows the URL both ways.
   useEffect(() => {
-    if (pathname.includes("/settings/")) {
-      setSettingOpen(true);
+    if (isGatewayPath(pathname)) {
+      setSettingOpen(false);
+    } else {
+      syncSettingsOpen(pathname, setSettingOpen);
     }
   }, [pathname, setSettingOpen]);
 
-  // Auto-open gateway panel when on gateway routes, close when leaving
-  useEffect(() => {
-    const isGatewayRoute = pathname.startsWith("/dashboard/gateway");
-    if (isGatewayRoute && !gatewayOpen && !settingOpen) {
-      setGatewayOpen(true);
-    } else if (!isGatewayRoute && gatewayOpen) {
-      setGatewayOpen(false);
-    }
-  }, [pathname, gatewayOpen, settingOpen, setGatewayOpen]);
-
   const renderContent = (
     <Box
+      component="nav"
+      id="dashboard-navigation"
+      aria-label="Main navigation"
       sx={{
         height: 1,
-        width: NAV.W_VERTICAL - 40,
+        width: 1,
         position: "relative",
         overflow: "hidden",
         display: "flex",
@@ -96,40 +109,77 @@ export default function NavVertical({ openNav, onCloseNav }) {
           pt: "12px",
         }}
       >
-        <Logo sx={{ mb: "4px" }} />
+        <Stack direction="row" alignItems="center" justifyContent="space-between">
+          <NavBrandRow showCollapse={!temporary && mdUp} />
+          {(temporary || !mdUp) && (
+            <IconButton aria-label="Close navigation" onClick={onCloseNav} sx={{ mr: 1 }}>
+              <SVGColor src="/assets/icons/ic_close.svg" />
+            </IconButton>
+          )}
+        </Stack>
+        {onGateway && (
+          <Box sx={{ px: 1 }}>
+            <Button
+              onClick={() => navigate(hostReturnPath())}
+              startIcon={
+                <SVGColor
+                  src="/assets/icons/custom/lucide--chevron-right.svg"
+                  sx={{ transform: "rotate(180deg)" }}
+                  width={16}
+                  height={16}
+                />
+              }
+              size="small"
+              sx={{ color: "text.secondary" }}
+            >
+              Back to Future AGI
+            </Button>
+          </Box>
+        )}
         <WorkspaceSwitcher />
-        <NavSectionVertical
-          data={navDashboardData}
-          slotProps={{
-            currentRole: user?.role,
-            gap: 0,
-          }}
-        />
-      </Stack>
-
-      {/* Scrollable Navigation Content */}
-      <Box sx={{ flex: 1, overflow: "hidden" }}>
-        <Scrollbar
-          sx={{
-            height: 1,
-            "& .simplebar-content": {
-              height: "auto",
-              minHeight: 1,
-              display: "flex",
-              flexDirection: "column",
-              paddingBottom: 0.5,
-            },
-          }}
-        >
+        {!onGateway && (
           <NavSectionVertical
-            data={navData}
+            label="Home"
+            data={navDashboardData}
             slotProps={{
               currentRole: user?.role,
               gap: 0,
             }}
           />
-        </Scrollbar>
-      </Box>
+        )}
+      </Stack>
+
+      {/* Scrollable Navigation Content */}
+      {onGateway ? (
+        // The rail fades at the bottom while more items are below.
+        <GatewayRailScroll>
+          <GatewayRail groups={navGatewayData} />
+        </GatewayRailScroll>
+      ) : (
+        <Box sx={{ flex: 1, overflow: "hidden" }}>
+          <Scrollbar
+            sx={{
+              height: 1,
+              "& .simplebar-content": {
+                height: "auto",
+                minHeight: 1,
+                display: "flex",
+                flexDirection: "column",
+                paddingBottom: 0.5,
+              },
+            }}
+          >
+            <NavSectionVertical
+              label="Main"
+              data={navData}
+              slotProps={{
+                currentRole: user?.role,
+                gap: 0,
+              }}
+            />
+          </Scrollbar>
+        </Box>
+      )}
 
       {/* Fixed Bottom Section */}
       <Box
@@ -140,6 +190,7 @@ export default function NavVertical({ openNav, onCloseNav }) {
         }}
       >
         <NavSectionVertical
+          label="Resources"
           data={navUpgradeData}
           slotProps={{
             currentRole: user?.role,
@@ -210,6 +261,7 @@ export default function NavVertical({ openNav, onCloseNav }) {
             </Box>
             <Box sx={{ flex: 1, overflow: "hidden" }}>
               <NavSectionVertical
+                label="Workspace settings"
                 data={workspaceNav.data}
                 slotProps={{
                   currentRole: user?.role,
@@ -258,6 +310,7 @@ export default function NavVertical({ openNav, onCloseNav }) {
             </Box>
             <Box sx={{ flex: 1, overflow: "hidden" }}>
               <NavSectionVertical
+                label="Settings"
                 data={navSettingsData}
                 slotProps={{
                   currentRole: user?.role,
@@ -274,41 +327,36 @@ export default function NavVertical({ openNav, onCloseNav }) {
     </Box>
   );
 
+  // Narrow Omega, gateway and compact Settings shells reserve no drawer width.
+  if (temporary || !mdUp) {
+    return (
+      <Drawer
+        open={!!openNav}
+        onClose={onCloseNav}
+        PaperProps={{
+          sx: { width: NAV.W_VERTICAL - 40, maxWidth: "calc(100vw - 32px)" },
+        }}
+      >
+        {renderContent}
+      </Drawer>
+    );
+  }
+
   return (
+    // The sidebar is one landmark (a11y "region"): the logo link and the
+    // workspace switcher sit in it with the named nav landmarks.
     <Box
+      component="aside"
+      aria-label="Sidebar"
       sx={{
-        flexShrink: { xs: 0 },
-        width: { xs: NAV.W_VERTICAL - 40 },
+        flexShrink: 0,
+        width: NAV.W_VERTICAL - 40,
         position: "relative",
-        backgroundColor: "background.paper",
-        height: "100vh",
+        bgcolor: "background.paper",
+        height: "calc(100dvh - var(--fa-proto-label-h, 0px))",
       }}
     >
-      {lgUp ? (
-        <Stack
-          sx={{
-            height: 1,
-            // position: "fixed",
-            width: NAV.W_VERTICAL - 40,
-            background: "background.paper",
-            marginBottom: "1rem",
-          }}
-        >
-          {renderContent}
-        </Stack>
-      ) : (
-        <Drawer
-          open={openNav}
-          onClose={onCloseNav}
-          PaperProps={{
-            sx: {
-              width: NAV.W_VERTICAL - 40,
-            },
-          }}
-        >
-          {renderContent}
-        </Drawer>
-      )}
+      {renderContent}
     </Box>
   );
 }
@@ -316,4 +364,5 @@ export default function NavVertical({ openNav, onCloseNav }) {
 NavVertical.propTypes = {
   openNav: PropTypes.bool,
   onCloseNav: PropTypes.func,
+  temporary: PropTypes.bool,
 };

@@ -1,0 +1,240 @@
+# Microsoft's Work IQ MCP server: one remote server for all of Microsoft 365
+# (mail, calendar, files, Teams chats and more), the same server under
+# microsoft-outlook and microsoft-teams. Its tools are generic verbs on
+# Microsoft Graph resource paths ("fetch /me/messages", "do_action
+# /me/sendMail"), so per-tool policy sees only the verb, never the mailbox or
+# chat it reaches: every tool that reads or writes data is marked generic,
+# and the gateway refuses a generic tool until approvals can see its
+# arguments (CN9 tool_policy; CN39). Writes are also blocked by default by
+# the tenant's Work IQ MCP policy until a tenant admin enables them.
+#
+# A tenant needs, before anyone can connect: Work IQ enabled (its service
+# principal created by a Global Administrator), usage-based Copilot Credits
+# billing with the calling users in a spending policy that includes the Work
+# IQ API, and a tenant admin's consent to WorkIQAgent.Ask for the client. It
+# accepts delegated tokens only. The client is the microsoft group's.
+#
+# The URL is the one Microsoft's documentation gives; clients are told to
+# discover the sign-in through /.well-known/oauth-protected-resource, which
+# this record does not rely on (it declares the Entra endpoints). The
+# documentation names no transport variant, so the gateway's default
+# (Streamable HTTP, era negotiated) applies; a test-tenant snapshot (CN31)
+# confirms both.
+#
+# The retrieve tool is in public preview, so it is not declared:
+# defaultPosture deny refuses it, and any tool not listed here.
+#
+# The documentation does not label the server as a whole GA or preview, so
+# vendorStatus is unknown. Not emitted to Omega.
+schema: "connector-manifest/v1#provider"
+app: microsoft-teams
+id: workiq
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://workiq.svc.cloud.microsoft/mcp
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
+    tokenUrl: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    scopes:
+      - offline_access
+      - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    urlVariables:
+      tenant:
+        description: "Entra tenant: organizations for a multitenant client, or the tenant id of a single-tenant client."
+        pattern: "^(organizations|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+        default: organizations
+        scope: org
+    refresh: { supported: true, rotates: true }
+    registration: [preregistered]
+    clientGroup: microsoft
+tools:
+  source: upstream_mcp
+  defaultPosture: deny
+  items:
+    - name: fetch
+      title: Fetch entities
+      description: "Read one or more Microsoft 365 entities by Graph resource path, such as /me/messages or /me/events/{event-id}."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+      generic: true
+      genericArguments: [entityUrls]
+    - name: fetch_blob
+      title: Fetch binary content
+      description: "Read binary content by Graph resource path, such as a OneDrive file's content, returned as Base64."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+      generic: true
+      genericArguments: [path]
+    - name: call_function
+      title: Call a function
+      description: "Call a Microsoft Graph function by resource path, such as /me/calendarview with a time window."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+      generic: true
+      genericArguments: [functionUrl]
+    - name: create_entity
+      title: Create an entity
+      description: "Create a Microsoft 365 entity in a collection, such as an event in /me/events. Blocked by tenant policy until an admin allows writes."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: false
+        idempotentHint: false
+        openWorldHint: true
+      posture: deny
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+      generic: true
+      genericArguments: [parentUrl, jsonBody]
+    - name: update_entity
+      title: Update an entity
+      description: "Change the fields of a Microsoft 365 entity by resource path. Blocked by tenant policy until an admin allows writes."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: true
+        idempotentHint: true
+        openWorldHint: true
+      posture: deny
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+      generic: true
+      genericArguments: [entityUrl, jsonBody]
+    - name: delete_entity
+      title: Delete an entity
+      description: "Delete a Microsoft 365 entity by resource path. Blocked by tenant policy until an admin allows writes."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: true
+        idempotentHint: true
+        openWorldHint: true
+      posture: deny
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+      generic: true
+      genericArguments: [entityUrl]
+    - name: do_action
+      title: Run an action
+      description: "Run a Microsoft Graph action by resource path, such as /me/messages/{message-id}/send. Blocked by tenant policy until an admin allows writes."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: true
+        idempotentHint: false
+        openWorldHint: true
+      posture: deny
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+      generic: true
+      genericArguments: [actionUrl, jsonBody]
+    - name: ask
+      title: Ask Microsoft 365 Copilot
+      description: "Ask Microsoft 365 Copilot, or another agent by id, a question in natural language; billed in Copilot Credits."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: false
+        idempotentHint: false
+        openWorldHint: true
+      posture: deny
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+      generic: true
+      genericArguments: [question, agentId]
+    - name: list_agents
+      title: List agents
+      description: "List the Microsoft 365 Copilot agents the user can ask, with their ids and publishers."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: auto
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+    - name: get_schema
+      title: Get an API schema
+      description: "Return the JSON Schema or TypeScript definition of a Graph path or operation, for fetch, create or update."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: auto
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+    - name: search_paths
+      title: Search API paths
+      description: "Find the Graph resource paths that match a prefix or a regular expression, such as messages."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: auto
+      scopes:
+        - api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask
+pricing:
+  model: vendor_metered
+  notes: "Work IQ API use is billed to the tenant in Copilot Credits (usage-based)."
+  source: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq-api-overview
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/retrieve
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/overview
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/permissions
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.urlVariables.tenant
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.refresh
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/tool-reference
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/policy-governance-mcp
+    fetchedAt: 2026-10-21
+  - fact: tools.defaultPosture
+    url: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/overview
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

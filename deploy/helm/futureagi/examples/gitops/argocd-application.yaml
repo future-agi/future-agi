@@ -2,7 +2,7 @@
 # kubectl in the Argo CD namespace). Argo CD renders the chart with `helm
 # template`, so the chart cannot `lookup` its generated Secret: set
 # secrets.existingSecret to a Secret with the application keys SECRET_KEY,
-# INTEGRATION_ENCRYPTION_KEY, AGENTCC_INTERNAL_API_KEY, AGENTCC_ADMIN_TOKEN,
+# INTEGRATION_ENCRYPTION_KEY, FI_API_SECRET_PEPPER, AGENTCC_INTERNAL_API_KEY, AGENTCC_ADMIN_TOKEN,
 # PROPERTY_CATALOG_API_PASSWORD, PROPERTY_CATALOG_CONSUMER_PASSWORD and
 # AGENTCC_WEBHOOK_SECRET (examples/external-secrets.yaml creates it from a
 # store), and pass every other value here or from a values file in Git.

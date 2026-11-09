@@ -1,0 +1,9 @@
+A Future AGI maintainer asked for changes to {{ ref }}@{{ version }}.
+
+Reason:
+{{ submission.decision_reason }}
+{% if submission.change_notes %}
+Notes:
+{% for note in submission.change_notes %}{{ note.file }}{% if note.line %}:{{ note.line }}{% endif %} {{ note.note }}
+{% endfor %}{% endif %}
+Answer by publishing a new upload: {{ status_url }}

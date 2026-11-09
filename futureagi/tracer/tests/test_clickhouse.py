@@ -4443,7 +4443,7 @@ class TestEvalMetricsQueryBuilder:
         assert len(query) > 0
 
     def test_build_with_preaggregated(self):
-        """When use_preaggregated=True, SCORE should use eval_metrics_hourly."""
+        """The compatibility rollup flag must still use latest raw rows."""
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
         builder = EvalMetricsQueryBuilder(
@@ -4454,7 +4454,8 @@ class TestEvalMetricsQueryBuilder:
             use_preaggregated=True,
         )
         query, params = builder.build()
-        assert "eval_metrics_hourly" in query
+        assert "eval_metrics_hourly" not in query
+        assert "FINAL" in query
 
     def test_build_without_preaggregated(self):
         """When use_preaggregated=False, should query tracer_eval_logger directly."""
@@ -6539,7 +6540,7 @@ class TestEvalMetricsQueryBuilderExtended:
     queries, column names, and result formatting."""
 
     def test_score_agg_query_uses_correct_columns(self):
-        """Score agg query should use float_sum and float_count columns."""
+        """Compatibility aggregate entry uses conditional raw sums and counts."""
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
         builder = EvalMetricsQueryBuilder(
@@ -6549,12 +6550,12 @@ class TestEvalMetricsQueryBuilderExtended:
             use_preaggregated=True,
         )
         query, _ = builder.build()
-        assert "float_sum" in query
-        assert "float_count" in query
-        assert "eval_metrics_hourly" in query
+        assert "sumIf(ifNull(output_float, 0), nk_valid)" in query
+        assert "nullIf(countIf(nk_valid), 0)" in query
+        assert "eval_metrics_hourly" not in query
 
     def test_score_agg_query_uses_sum_not_summerge(self):
-        """Score agg query should use sum() not sumMerge()."""
+        """Raw quality sums must not read stored aggregate states."""
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
         builder = EvalMetricsQueryBuilder(
@@ -6564,8 +6565,8 @@ class TestEvalMetricsQueryBuilderExtended:
             use_preaggregated=True,
         )
         query, _ = builder.build()
-        assert "sum(float_sum)" in query
-        assert "sum(float_count)" in query
+        assert "sumIf(ifNull(output_float, 0), nk_valid)" in query
+        assert "countIf(nk_valid)" in query
         assert "sumMerge" not in query
 
     def test_score_raw_query_uses_eval_logger(self):
@@ -6581,10 +6582,10 @@ class TestEvalMetricsQueryBuilderExtended:
         query, _ = builder.build()
         assert "tracer_eval_logger" in query
         assert "FINAL" in query
-        assert "avg(output_float)" in query
+        assert "sumIf(ifNull(output_float, 0), nk_valid)" in query
 
     def test_pass_fail_agg_query_uses_correct_columns(self):
-        """Pass/fail agg query should use bool_pass and bool_fail columns."""
+        """Pass/fail compatibility entry counts only valid boolean results."""
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
         builder = EvalMetricsQueryBuilder(
@@ -6594,12 +6595,12 @@ class TestEvalMetricsQueryBuilderExtended:
             use_preaggregated=True,
         )
         query, _ = builder.build()
-        assert "bool_pass" in query
-        assert "bool_fail" in query
-        assert "eval_metrics_hourly" in query
+        assert "countIf(nk_valid AND output_bool = 1)" in query
+        assert "output_bool = 0" in query
+        assert "eval_metrics_hourly" not in query
 
     def test_pass_fail_agg_uses_sum_not_summerge(self):
-        """Pass/fail agg query should use sum() not sumMerge()."""
+        """Pass/fail quality must not merge lossy aggregate states."""
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
         builder = EvalMetricsQueryBuilder(
@@ -6609,7 +6610,7 @@ class TestEvalMetricsQueryBuilderExtended:
             use_preaggregated=True,
         )
         query, _ = builder.build()
-        assert "sum(bool_pass)" in query
+        assert "countIf(nk_valid AND output_bool = 1)" in query
         assert "sumMerge" not in query
 
     def test_pass_fail_raw_query(self):
@@ -6638,14 +6639,16 @@ class TestEvalMetricsQueryBuilderExtended:
         )
         query, params = builder.build()
         assert "countIf" in query
-        assert "has(JSONExtract(output_str_list, 'Array(String)')" in query
+        assert (
+            "has(JSONExtract(ifNull(output_str_list, '[]'), 'Array(String)')" in query
+        )
         assert "OR output_str =" in query
         assert "choice_0" in params
         assert "choice_1" in params
         assert "choice_2" in params
 
     def test_choices_query_without_choices_falls_back(self):
-        """Choices query with empty choices list should fall back to score raw."""
+        """Choices query with empty choices list must not invent a numeric score."""
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
         builder = EvalMetricsQueryBuilder(
@@ -6655,7 +6658,7 @@ class TestEvalMetricsQueryBuilderExtended:
             choices=[],
         )
         query, _ = builder.build()
-        assert "avg(output_float)" in query
+        assert "NULL AS value" in query
 
     def test_agg_query_filters_by_config_id(self):
         """Agg queries should filter by custom_eval_config_id."""
@@ -6718,7 +6721,7 @@ class TestEvalMetricsQueryBuilderExtended:
             use_preaggregated=False,
         )
         query, _ = builder.build()
-        assert "avg(output_float)" in query
+        assert "sumIf(ifNull(output_float, 0), nk_valid)" in query
 
 
 # ============================================================================
@@ -7883,9 +7886,7 @@ class TestVoiceCallListPhase1bMigration:
 
         query, _ = VoiceCallListQueryBuilderV2(
             project_id=self._ROOT_IDENTITY[0]
-        ).build_content_query(
-            ["root-1"], root_identities=[self._ROOT_IDENTITY]
-        )
+        ).build_content_query(["root-1"], root_identities=[self._ROOT_IDENTITY])
         assert "AS span_attributes" in query
         assert "AS attrs_string" in query
         assert "AS attrs_number" in query

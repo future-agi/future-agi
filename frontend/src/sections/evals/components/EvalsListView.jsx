@@ -1,4 +1,4 @@
-import { Avatar, Box, Button, Chip, Typography } from "@mui/material";
+import { Avatar, Box, Button, Chip, Link, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { enqueueSnackbar } from "notistack";
@@ -15,6 +15,7 @@ import {
   removeStorage,
 } from "src/hooks/use-local-storage";
 import { useNavigate } from "react-router";
+import { Link as RouterLink } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -517,7 +518,7 @@ const EvalsListView = () => {
         header: "Evaluation Name",
         meta: { flex: 1.5 },
         minSize: 200,
-        cell: ({ getValue }) => {
+        cell: ({ getValue, row, tabIndex }) => {
           const name = getValue();
           return (
             <CustomTooltip
@@ -528,9 +529,25 @@ const EvalsListView = () => {
               title={name || ""}
               placement="top"
             >
-              <Typography variant="s1" noWrap>
+              <Link
+                component={RouterLink}
+                to={`/dashboard/evaluations/${row.original.id}`}
+                tabIndex={tabIndex}
+                variant="s1"
+                color="inherit"
+                underline="hover"
+                noWrap
+                onClick={(event) => event.stopPropagation()}
+                sx={{
+                  "&:focus-visible": {
+                    outline: (theme) =>
+                      `2px solid ${theme.palette.border.focus}`,
+                    outlineOffset: "-2px",
+                  },
+                }}
+              >
                 {name}
-              </Typography>
+              </Link>
             </CustomTooltip>
           );
         },
@@ -1164,7 +1181,7 @@ const EvalsListView = () => {
         count={selectedItems.length}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteDialogOpen(false)}
-        isLoading={bulkDelete.isLoading}
+        isLoading={bulkDelete.isPending}
       />
     </Box>
   );

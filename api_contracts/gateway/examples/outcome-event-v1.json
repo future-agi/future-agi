@@ -1,0 +1,14 @@
+{
+  "kind": "outcome",
+  "event_id": "evt_01JD8Z9V2W3X4Y5Z6A7B",
+  "org_id": "0b7c1e52-4f3a-4d0e-9b8a-2a7d6c5e4f31",
+  "generation_id": "req_01JD8Z3K4M5N6P7Q8R9S",
+  "outcome": "verify_failed",
+  "source": "prev_outcome",
+  "score": 0.2,
+  "agent_run_id": "run_R2",
+  "agent_id": "researcher",
+  "agent_step": "act",
+  "model": "anthropic/claude-sonnet-5.5",
+  "ts_ms": 1792056614201
+}

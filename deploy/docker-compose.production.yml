@@ -10,17 +10,29 @@ x-production-backend-env: &production-backend-env
   NO_STARTUP_DB_MUTATIONS: "true"
   FI_SKIP_CH25_MIGRATION: "1"
   SECRET_KEY: ${SECRET_KEY:?must be set for production}
+  FI_API_SECRET_PEPPER: ${FI_API_SECRET_PEPPER:?must be set for production}
+  # Fernet key: every organization's system API key is encrypted under it.
+  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?must be set for production}
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?must be set for production}
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?must be set for production}
   PG_PASSWORD: ${PG_PASSWORD:?must be set for production}
   MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?must be set for production}
   PROPERTY_CATALOG_CH_PASSWORD: ${PROPERTY_CATALOG_API_PASSWORD:?must be set for production}
+  # The Hub's checker token; OMEGA_HUB_MAINTAINER_ORG_ID is set once the
+  # maintainer organisation exists (deploy/README.md, "Omega Hub").
+  # Production keeps its external-runner checker active even with profiles=full.
+  OMEGA_HUB_COMPOSE_PROFILES: hub
+  OMEGA_HUB_CHECKER_TOKEN: ${OMEGA_HUB_CHECKER_TOKEN:?must be set for production}
+  OMEGA_HUB_APP_URL: ${OMEGA_HUB_APP_URL:?set to the UI's Hub URL, e.g. https://app.example.com/dashboard/hub}
+  OMEGA_HUB_PUBLIC_API_URL: ${OMEGA_HUB_PUBLIC_API_URL:?set to the public Hub API, e.g. https://api.example.com/omega-hub/v1}
 
 services:
   # Production uses the reviewed published image, never a source build or :local.
   fi-collector:
     image: futureagi/fi-collector:${FI_COLLECTOR_VERSION:?set the reviewed collector release for production}
     build: !reset null
+    environment:
+      FI_API_SECRET_PEPPER: ${FI_API_SECRET_PEPPER:?must be set for production}
 
   # Hosted schema/mirror changes require an explicit, separately qualified
   # deployment. Never inherit the local fresh-install --apply commands.
@@ -119,6 +131,8 @@ services:
   serving:
     image: futureagi/serving:${SERVING_VERSION:?must be set for production}
     environment:
+      # This service also inherits backend-env from the distributed base.
+      OMEGA_HUB_COMPOSE_PROFILES: hub
       ENV_TYPE: production
       SECRET_KEY: ${SECRET_KEY:?must be set for production}
     restart: always
@@ -136,3 +150,31 @@ services:
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:?must be set for production}
     restart: always
+
+  # The Hub checker runs uploads on the dedicated runner host only
+  # (deploy/hub-runner/docker-compose.yml: its own VM, gVisor, an egress
+  # firewall), never on this host: the co-located hub-runner does not start.
+  hub-checker:
+    image: futureagi/omega-hub-checker:${OMEGA_HUB_CHECKER_VERSION:?must be set for production}
+    # Keep the production checker active; it uses the external runner below.
+    profiles: !reset []
+    build: !reset null
+    environment:
+      OMEGA_HUB_CHECKER_TOKEN: ${OMEGA_HUB_CHECKER_TOKEN:?must be set for production}
+      OMEGA_HUB_RUNNER_IMAGE: ${OMEGA_HUB_RUNNER_IMAGE:?set the reviewed runner image, pinned by digest (futureagi/omega-hub-runner@sha256:...)}
+      # A checker that cannot sandbox exits, so `up --wait` fails loudly.
+      OMEGA_HUB_RUNNER_WAIT: "0"
+      DOCKER_HOST: ${OMEGA_HUB_RUNNER_DOCKER_HOST:?set to the dedicated runner host, tcp://<host>:2376 (deploy/hub-runner)}
+    volumes:
+      !override # ca.pem, cert.pem and key.pem: the runner host's client certificate.
+      - ${OMEGA_HUB_RUNNER_TLS_DIR:?set to the directory holding the runner host's client certificate}:/certs/client:ro
+    depends_on: !override
+      backend:
+        condition: service_started
+    restart: always
+
+  hub-runner:
+    # Replace, do not merge, the base hub profile: enabling hub must not
+    # start a privileged runner on the production application host.
+    profiles: !override ["not-in-production"]
+    build: !reset null

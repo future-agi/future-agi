@@ -19,7 +19,7 @@ def backfill_composite_v1_snapshots(apps, schema_editor):
 
     # Find all composite templates
     composite_ids = list(
-        EvalTemplate.objects.filter(
+        EvalTemplate.objects.using(schema_editor.connection.alias).filter(
             template_type="composite",
             deleted=False,
         ).values_list("id", flat=True)
@@ -29,7 +29,7 @@ def backfill_composite_v1_snapshots(apps, schema_editor):
         return
 
     # Find versions with empty config_snapshot
-    empty_versions = EvalTemplateVersion.objects.filter(
+    empty_versions = EvalTemplateVersion.objects.using(schema_editor.connection.alias).filter(
         eval_template_id__in=composite_ids,
         config_snapshot={},
         deleted=False,
@@ -37,9 +37,9 @@ def backfill_composite_v1_snapshots(apps, schema_editor):
 
     updated = 0
     for version in empty_versions:
-        parent = EvalTemplate.objects.get(id=version.eval_template_id)
+        parent = EvalTemplate.objects.using(schema_editor.connection.alias).get(id=version.eval_template_id)
         links = (
-            CompositeEvalChild.objects.filter(parent=parent, deleted=False)
+            CompositeEvalChild.objects.using(schema_editor.connection.alias).filter(parent=parent, deleted=False)
             .select_related("child")
             .order_by("order")
         )
@@ -66,7 +66,7 @@ def backfill_composite_v1_snapshots(apps, schema_editor):
                 for link in links
             ],
         }
-        version.save(update_fields=["config_snapshot"])
+        version.save(using=schema_editor.connection.alias, update_fields=["config_snapshot"])
         updated += 1
 
     if updated:

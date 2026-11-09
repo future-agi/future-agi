@@ -1,0 +1,1067 @@
+{
+  "schema": "connector-catalog-bundle/v1",
+  "version": "2026.10.20.0",
+  "sha256": "df9961425af464b41490fceb4b4ddc51f987d1fc2f7cdec8e6921dd42613e7d0",
+  "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
+  "apps": [
+    {
+      "categories": ["crm"],
+      "defaultProvider": "close-mcp",
+      "description": "Sales CRM: leads, contacts and opportunities.",
+      "docsUrl": "https://developer.close.com/mcp",
+      "eeCategory": "data",
+      "group": "other",
+      "id": "close",
+      "lifecycle": {
+        "status": "active"
+      },
+      "name": "Close",
+      "schema": "connector-manifest/v1#app",
+      "sources": [
+        {
+          "fact": "vendor.domains",
+          "fetchedAt": "2026-10-19",
+          "url": "https://developer.close.com/mcp"
+        }
+      ],
+      "vendor": {
+        "domains": ["close.com"],
+        "name": "Close"
+      },
+      "version": "1.0.0"
+    },
+    {
+      "archetype": "code-host",
+      "categories": ["developer"],
+      "defaultProvider": "remote",
+      "description": "Issues, pull requests and code in your repositories.",
+      "docsUrl": "https://github.com/github/github-mcp-server",
+      "eeCategory": "developer",
+      "group": "other",
+      "id": "github",
+      "lifecycle": {
+        "status": "active"
+      },
+      "name": "GitHub",
+      "schema": "connector-manifest/v1#app",
+      "sources": [
+        {
+          "fact": "vendor.domains",
+          "fetchedAt": "2026-10-19",
+          "url": "https://github.com/github/github-mcp-server"
+        },
+        {
+          "fact": "vendor.githubOrgs",
+          "fetchedAt": "2026-10-19",
+          "url": "https://github.com/github/github-mcp-server"
+        }
+      ],
+      "vendor": {
+        "domains": ["github.com", "githubcopilot.com"],
+        "githubOrgs": ["github"],
+        "name": "GitHub"
+      },
+      "version": "1.0.0"
+    },
+    {
+      "archetype": "mailbox",
+      "categories": ["communication", "email"],
+      "defaultProvider": "futureagi-rest",
+      "description": "Read, search and send email.",
+      "docsUrl": "https://developers.google.com/workspace/gmail/api",
+      "eeCategory": "communication",
+      "group": "google",
+      "id": "gmail",
+      "lifecycle": {
+        "status": "active"
+      },
+      "name": "Gmail",
+      "schema": "connector-manifest/v1#app",
+      "sources": [
+        {
+          "fact": "vendor.domains",
+          "fetchedAt": "2026-10-19",
+          "url": "https://developers.google.com/workspace/gmail/api"
+        }
+      ],
+      "tags": ["email"],
+      "vendor": {
+        "domains": ["google.com", "googleapis.com"],
+        "name": "Google"
+      },
+      "version": "1.0.0",
+      "x-omega": {
+        "eeId": "gmail",
+        "envPrefix": "OMEGA_INTEGRATION_GMAIL"
+      }
+    },
+    {
+      "archetype": "issue-tracker",
+      "categories": ["developer", "issue-tracking"],
+      "defaultProvider": "linear-mcp",
+      "description": "Issues, projects and cycles.",
+      "docsUrl": "https://linear.app/docs/mcp",
+      "eeCategory": "developer",
+      "group": "other",
+      "id": "linear",
+      "lifecycle": {
+        "status": "active"
+      },
+      "name": "Linear",
+      "schema": "connector-manifest/v1#app",
+      "sources": [
+        {
+          "fact": "vendor.domains",
+          "fetchedAt": "2026-10-19",
+          "url": "https://linear.app/docs/mcp"
+        },
+        {
+          "fact": "vendor.githubOrgs",
+          "fetchedAt": "2026-10-19",
+          "url": "https://github.com/linear"
+        }
+      ],
+      "tags": ["issues"],
+      "vendor": {
+        "domains": ["linear.app"],
+        "githubOrgs": ["linear"],
+        "name": "Linear"
+      },
+      "version": "1.0.0"
+    },
+    {
+      "categories": ["messaging"],
+      "defaultProvider": "slack-mcp",
+      "description": "Search, read channels and post messages.",
+      "docsUrl": "https://docs.slack.dev/ai/slack-mcp-server/",
+      "eeCategory": "communication",
+      "group": "other",
+      "id": "slack",
+      "lifecycle": {
+        "status": "active"
+      },
+      "name": "Slack",
+      "schema": "connector-manifest/v1#app",
+      "sources": [
+        {
+          "fact": "vendor.domains",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.slack.dev/ai/slack-mcp-server/"
+        }
+      ],
+      "vendor": {
+        "domains": ["slack.com"],
+        "name": "Slack"
+      },
+      "version": "1.0.0"
+    },
+    {
+      "categories": ["data-warehouse"],
+      "defaultProvider": "cortex-mcp",
+      "description": "Query governed data through a Snowflake MCP server object.",
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp",
+      "eeCategory": "data",
+      "group": "other",
+      "id": "snowflake",
+      "lifecycle": {
+        "status": "active"
+      },
+      "name": "Snowflake",
+      "schema": "connector-manifest/v1#app",
+      "sources": [
+        {
+          "fact": "vendor.domains",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp"
+        }
+      ],
+      "vendor": {
+        "domains": ["snowflake.com"],
+        "name": "Snowflake"
+      },
+      "version": "1.0.0",
+      "x-omega": {
+        "ee": "exclude",
+        "oss": "exclude"
+      }
+    },
+    {
+      "categories": ["payments"],
+      "defaultProvider": "stripe-mcp",
+      "description": "Payments, customers and invoices.",
+      "docsUrl": "https://docs.stripe.com/mcp",
+      "eeCategory": "data",
+      "group": "other",
+      "id": "stripe",
+      "lifecycle": {
+        "status": "active"
+      },
+      "name": "Stripe",
+      "schema": "connector-manifest/v1#app",
+      "sources": [
+        {
+          "fact": "vendor.domains",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.stripe.com/mcp"
+        }
+      ],
+      "vendor": {
+        "domains": ["stripe.com"],
+        "name": "Stripe"
+      },
+      "version": "1.0.0"
+    }
+  ],
+  "providers": [
+    {
+      "accountModes": ["agent"],
+      "app": "close",
+      "auth": {
+        "credentialParts": [
+          {
+            "helpUrl": "https://developer.close.com/mcp",
+            "in": "header",
+            "label": "API key",
+            "name": "Close-API-Key",
+            "secret": true
+          },
+          {
+            "help": "The scope your Close admin granted the key.",
+            "in": "header",
+            "label": "Scope",
+            "name": "Close-Scope",
+            "secret": false
+          }
+        ],
+        "kind": "api_key"
+      },
+      "hosted": true,
+      "id": "close-mcp",
+      "kind": "vendor_mcp",
+      "lifecycle": {
+        "status": "active"
+      },
+      "pricing": {
+        "model": "vendor_plan"
+      },
+      "publisher": "vendor",
+      "quality": {
+        "tier": "listed"
+      },
+      "schema": "connector-manifest/v1#provider",
+      "sources": [
+        {
+          "fact": "transport.url",
+          "fetchedAt": "2026-10-19",
+          "url": "https://developer.close.com/mcp"
+        },
+        {
+          "fact": "auth.credentialParts",
+          "fetchedAt": "2026-10-19",
+          "url": "https://developer.close.com/mcp"
+        }
+      ],
+      "tools": {
+        "defaultPosture": "ask",
+        "source": "upstream_mcp"
+      },
+      "transport": {
+        "kind": "http",
+        "url": "https://mcp.close.com/mcp"
+      },
+      "trusted": false,
+      "vendorStatus": {
+        "label": "ga",
+        "source": "https://developer.close.com/mcp"
+      },
+      "version": "1.0.0"
+    },
+    {
+      "accountModes": ["agent"],
+      "app": "github",
+      "auth": {
+        "kind": "local_setup"
+      },
+      "hosted": false,
+      "id": "local",
+      "kind": "vendor_local",
+      "lifecycle": {
+        "status": "active"
+      },
+      "pricing": {
+        "model": "free"
+      },
+      "publisher": "vendor",
+      "quality": {
+        "tier": "listed"
+      },
+      "schema": "connector-manifest/v1#provider",
+      "sources": [],
+      "tools": {
+        "defaultPosture": "ask",
+        "source": "upstream_mcp"
+      },
+      "transport": {
+        "args": [
+          "run",
+          "-i",
+          "--rm",
+          "-e",
+          "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "ghcr.io/github/github-mcp-server"
+        ],
+        "command": "docker",
+        "env": {
+          "GITHUB_PERSONAL_ACCESS_TOKEN": "A GitHub personal access token for the account the server acts as."
+        },
+        "kind": "stdio"
+      },
+      "trusted": false,
+      "vendorStatus": {
+        "label": "ga",
+        "source": "https://github.com/github/github-mcp-server"
+      },
+      "version": "1.0.0",
+      "x-omega": {
+        "ossId": "github"
+      }
+    },
+    {
+      "accountModes": ["agent", "user"],
+      "app": "github",
+      "auth": {
+        "kind": "oauth2",
+        "oauth2": {
+          "authorizeUrl": "https://github.com/login/oauth/authorize",
+          "clientAuth": "body",
+          "pkce": true,
+          "registration": ["preregistered"],
+          "scopes": ["repo", "read:org"],
+          "tokenBody": "form",
+          "tokenUrl": "https://github.com/login/oauth/access_token"
+        }
+      },
+      "hosted": true,
+      "id": "remote",
+      "kind": "vendor_mcp",
+      "lifecycle": {
+        "status": "active"
+      },
+      "pricing": {
+        "model": "free"
+      },
+      "publisher": "vendor",
+      "quality": {
+        "tier": "listed"
+      },
+      "schema": "connector-manifest/v1#provider",
+      "sources": [
+        {
+          "fact": "transport.url",
+          "fetchedAt": "2026-10-19",
+          "url": "https://github.com/github/github-mcp-server"
+        },
+        {
+          "fact": "auth.oauth2.authorizeUrl",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps"
+        },
+        {
+          "fact": "auth.oauth2.tokenUrl",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps"
+        },
+        {
+          "fact": "auth.oauth2.scopes",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps"
+        }
+      ],
+      "tools": {
+        "defaultPosture": "ask",
+        "source": "upstream_mcp"
+      },
+      "transport": {
+        "kind": "http",
+        "url": "https://api.githubcopilot.com/mcp/"
+      },
+      "trusted": false,
+      "vendorStatus": {
+        "label": "ga",
+        "source": "https://github.com/github/github-mcp-server"
+      },
+      "version": "1.0.0",
+      "x-omega": {
+        "ossId": "github-remote"
+      }
+    },
+    {
+      "accountModes": ["agent", "user"],
+      "app": "gmail",
+      "auth": {
+        "kind": "oauth2",
+        "oauth2": {
+          "authorizeUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+          "clientAuth": "body",
+          "clientGroup": "google",
+          "extraAuthorizeParams": {
+            "access_type": "offline",
+            "include_granted_scopes": "true",
+            "prompt": "consent"
+          },
+          "pkce": true,
+          "refresh": {
+            "rotates": false,
+            "supported": true
+          },
+          "registration": ["preregistered"],
+          "review": {
+            "leadTime": "P6W",
+            "program": "google_restricted_scopes",
+            "source": "https://support.google.com/cloud/answer/13463817"
+          },
+          "revocation": {
+            "clientAuth": "body",
+            "method": "POST",
+            "tokenBody": "form",
+            "tokenField": "token",
+            "url": "https://oauth2.googleapis.com/revoke"
+          },
+          "scopes": [
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.compose"
+          ],
+          "tokenBody": "form",
+          "tokenUrl": "https://oauth2.googleapis.com/token"
+        },
+        "verify": {
+          "tool": "search_threads"
+        }
+      },
+      "hosted": true,
+      "id": "futureagi-rest",
+      "kind": "rest",
+      "lifecycle": {
+        "status": "active"
+      },
+      "pricing": {
+        "model": "free"
+      },
+      "publisher": "futureagi",
+      "quality": {
+        "tier": "listed"
+      },
+      "retry": {
+        "honorRetryAfter": true,
+        "on": [429, 503]
+      },
+      "schema": "connector-manifest/v1#provider",
+      "sources": [
+        {
+          "fact": "auth.oauth2.authorizeUrl",
+          "fetchedAt": "2026-10-19",
+          "url": "https://developers.google.com/identity/protocols/oauth2/web-server"
+        },
+        {
+          "fact": "auth.oauth2.tokenUrl",
+          "fetchedAt": "2026-10-19",
+          "url": "https://developers.google.com/identity/protocols/oauth2/web-server"
+        },
+        {
+          "fact": "auth.oauth2.scopes",
+          "fetchedAt": "2026-10-19",
+          "url": "https://developers.google.com/workspace/gmail/api/auth/scopes"
+        },
+        {
+          "fact": "auth.oauth2.revocation.url",
+          "fetchedAt": "2026-10-19",
+          "url": "https://developers.google.com/identity/protocols/oauth2/web-server"
+        }
+      ],
+      "tools": {
+        "defaultPosture": "ask",
+        "items": [
+          {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": true,
+              "readOnlyHint": true
+            },
+            "description": "Search the user's mail threads with a Gmail query, such as from:alice is:unread. Returns thread ids and snippets.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "maxResults": {
+                  "default": 20,
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "q": {
+                  "description": "A Gmail search query, such as from:alice is:unread.",
+                  "type": "string"
+                }
+              },
+              "required": ["q"],
+              "type": "object"
+            },
+            "name": "search_threads",
+            "operation": {
+              "method": "GET",
+              "path": "/gmail/v1/users/me/threads"
+            },
+            "outputSchema": {
+              "properties": {
+                "threads": {
+                  "items": {
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "snippet": {
+                        "type": ["string", "null"]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            },
+            "posture": "auto",
+            "response": {
+              "fields": ["id", "snippet"],
+              "maxBytes": 25000,
+              "unwrap": "threads"
+            },
+            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+            "title": "Search threads"
+          },
+          {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": true,
+              "readOnlyHint": false
+            },
+            "description": "Send an email from the user's mailbox. to is a comma-separated list of addresses, such as alice@example.com.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "body": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "threadId": {
+                  "description": "Reply in this thread.",
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                }
+              },
+              "required": ["to", "subject", "body"],
+              "type": "object"
+            },
+            "name": "send_email",
+            "operation": {
+              "method": "POST",
+              "path": "/gmail/v1/users/me/messages/send"
+            },
+            "posture": "ask",
+            "scopes": ["https://www.googleapis.com/auth/gmail.compose"],
+            "title": "Send email"
+          }
+        ],
+        "source": "operations"
+      },
+      "transport": {
+        "kind": "http",
+        "url": "https://{connectorsHost}/gmail/mcp",
+        "variant": "streamable"
+      },
+      "trusted": false,
+      "upstream": {
+        "spec": {
+          "format": "google-discovery",
+          "licence": "Google APIs Terms of Service",
+          "sha256": "a0408c1f8851c250ba41a627d77ea05d6df63d740ffc8ac4cbd90b57846ead1a",
+          "url": "https://gmail.googleapis.com/$discovery/rest?version=v1"
+        }
+      },
+      "vendorStatus": {
+        "label": "ga",
+        "source": "https://developers.google.com/workspace/gmail/api"
+      },
+      "version": "1.0.0"
+    },
+    {
+      "accountModes": ["agent", "user"],
+      "app": "gmail",
+      "auth": {
+        "kind": "partner",
+        "partner": {
+          "binding": "header",
+          "platform": "relay",
+          "toolMode": "fixed",
+          "toolkit": "gmail",
+          "version": "2026-10-01"
+        }
+      },
+      "hosted": true,
+      "id": "relay",
+      "kind": "partner",
+      "lifecycle": {
+        "status": "active"
+      },
+      "pricing": {
+        "model": "partner_metered"
+      },
+      "publisher": "partner",
+      "quality": {
+        "tier": "listed"
+      },
+      "schema": "connector-manifest/v1#provider",
+      "sources": [
+        {
+          "fact": "transport.url",
+          "fetchedAt": "2026-10-19",
+          "url": "https://relay.example/docs/mcp"
+        }
+      ],
+      "tools": {
+        "defaultPosture": "ask",
+        "source": "partner"
+      },
+      "transport": {
+        "kind": "http",
+        "url": "https://mcp.relay.example/servers/{serverId}",
+        "urlVariables": {
+          "serverId": {
+            "description": "The org's Relay server id.",
+            "pattern": "^[A-Za-z0-9-]{8,64}$",
+            "scope": "org"
+          }
+        }
+      },
+      "trusted": false,
+      "vendorStatus": {
+        "label": "unknown"
+      },
+      "version": "1.0.0"
+    },
+    {
+      "accountModes": ["agent", "user"],
+      "app": "linear",
+      "auth": {
+        "kind": "oauth2",
+        "oauth2": {
+          "authorizeUrl": "https://linear.app/oauth/authorize",
+          "clientAuth": "body",
+          "pkce": true,
+          "refresh": {
+            "rotates": false,
+            "supported": true
+          },
+          "registration": ["preregistered", "dcr"],
+          "scopes": ["read", "write"],
+          "tokenBody": "form",
+          "tokenUrl": "https://api.linear.app/oauth/token"
+        },
+        "verify": {
+          "tool": "list_issues"
+        }
+      },
+      "hosted": true,
+      "id": "linear-mcp",
+      "kind": "vendor_mcp",
+      "lifecycle": {
+        "status": "active"
+      },
+      "pricing": {
+        "model": "free"
+      },
+      "publisher": "vendor",
+      "quality": {
+        "owner": "connectors",
+        "review": {
+          "at": "2026-10-19",
+          "by": "connectors-maintainer"
+        },
+        "tier": "listed"
+      },
+      "rateLimits": [
+        {
+          "per": "1h",
+          "requests": 1500,
+          "scope": "user",
+          "source": "https://linear.app/developers/rate-limiting"
+        }
+      ],
+      "schema": "connector-manifest/v1#provider",
+      "sources": [
+        {
+          "fact": "transport.url",
+          "fetchedAt": "2026-10-19",
+          "url": "https://linear.app/docs/mcp"
+        },
+        {
+          "fact": "auth.oauth2.authorizeUrl",
+          "fetchedAt": "2026-10-19",
+          "url": "https://linear.app/developers/oauth-2-0-authentication"
+        },
+        {
+          "fact": "auth.oauth2.tokenUrl",
+          "fetchedAt": "2026-10-19",
+          "url": "https://linear.app/developers/oauth-2-0-authentication"
+        },
+        {
+          "fact": "auth.oauth2.scopes",
+          "fetchedAt": "2026-10-19",
+          "url": "https://linear.app/developers/oauth-2-0-authentication"
+        }
+      ],
+      "tools": {
+        "defaultPosture": "ask",
+        "items": [
+          {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": true,
+              "readOnlyHint": true
+            },
+            "description": "List issues in the user's workspace, filtered by team, assignee or state.",
+            "name": "list_issues",
+            "posture": "auto",
+            "scopes": ["read"],
+            "title": "List issues"
+          },
+          {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": true,
+              "readOnlyHint": false
+            },
+            "description": "Create an issue in a team, with a title and an optional description.",
+            "name": "create_issue",
+            "posture": "ask",
+            "scopes": ["write"],
+            "title": "Create issue"
+          }
+        ],
+        "snapshot": {
+          "count": 2,
+          "era": "2025-06-18",
+          "takenAt": "2026-10-19",
+          "toolsHash": "sha256:c55690cf679360ccc1893b5648dc0e23b41defa99ceb1271cd1098af4881d055"
+        },
+        "source": "upstream_mcp"
+      },
+      "transport": {
+        "era": "auto",
+        "kind": "http",
+        "url": "https://mcp.linear.app/mcp",
+        "variant": "streamable"
+      },
+      "trusted": false,
+      "upstream": {
+        "registry": {
+          "name": "app.linear/linear",
+          "namespace": "domain",
+          "version": "1.0.0"
+        }
+      },
+      "vendorStatus": {
+        "label": "ga",
+        "source": "https://linear.app/docs/mcp"
+      },
+      "version": "1.0.0",
+      "x-gateway": {
+        "timeoutMs": 30000
+      }
+    },
+    {
+      "accountModes": ["agent", "user"],
+      "app": "slack",
+      "auth": {
+        "clientApproval": {
+          "program": "Slack Marketplace listing",
+          "required": true,
+          "source": "https://docs.slack.dev/ai/slack-mcp-server/",
+          "url": "https://api.slack.com/apps"
+        },
+        "kind": "oauth2",
+        "oauth2": {
+          "authorizeUrl": "https://slack.com/oauth/v2_user/authorize",
+          "clientAuth": "body",
+          "pkce": false,
+          "registration": ["preregistered"],
+          "scopes": ["search:read", "channels:history", "chat:write"],
+          "tokenBody": "form",
+          "tokenUrl": "https://slack.com/api/oauth.v2.user.access"
+        }
+      },
+      "hosted": true,
+      "id": "slack-mcp",
+      "kind": "vendor_mcp",
+      "lifecycle": {
+        "status": "active"
+      },
+      "pricing": {
+        "model": "free"
+      },
+      "publisher": "vendor",
+      "quality": {
+        "tier": "listed"
+      },
+      "schema": "connector-manifest/v1#provider",
+      "sources": [
+        {
+          "fact": "transport.url",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.slack.dev/ai/slack-mcp-server/"
+        },
+        {
+          "fact": "auth.oauth2.authorizeUrl",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.slack.dev/ai/slack-mcp-server/"
+        },
+        {
+          "fact": "auth.oauth2.tokenUrl",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.slack.dev/ai/slack-mcp-server/"
+        },
+        {
+          "fact": "auth.oauth2.scopes",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.slack.dev/ai/slack-mcp-server/"
+        }
+      ],
+      "tools": {
+        "defaultPosture": "ask",
+        "source": "upstream_mcp"
+      },
+      "transport": {
+        "kind": "http",
+        "url": "https://mcp.slack.com/mcp"
+      },
+      "trusted": false,
+      "vendorStatus": {
+        "label": "ga",
+        "source": "https://docs.slack.dev/ai/slack-mcp-server/"
+      },
+      "version": "1.0.0",
+      "x-omega": {
+        "publicClient": {
+          "evidence": [
+            {
+              "fetchedAt": "2026-10-20",
+              "quote": "Slack supports confidential OAuth for MCP clients. You'll need to use your app's client_id and client_secret for Slack OAuth.",
+              "sha256": "2e6daeb1dbe00dd14ffc6c27dd2352615c53b57f7f720684caccb86e38f96703",
+              "url": "https://docs.slack.dev/ai/slack-mcp-server/"
+            }
+          ],
+          "supported": false
+        }
+      }
+    },
+    {
+      "accountModes": ["user"],
+      "app": "snowflake",
+      "auth": {
+        "kind": "oauth2",
+        "oauth2": {
+          "authorizeUrl": "https://{accountUrl}/oauth/authorize",
+          "clientAuth": "basic",
+          "pkce": true,
+          "registration": ["preregistered"],
+          "scopes": [],
+          "tokenBody": "form",
+          "tokenUrl": "https://{accountUrl}/oauth/token-request",
+          "urlVariables": {
+            "accountUrl": {
+              "description": "The account host.",
+              "pattern": "^[a-z0-9-]+([.][a-z0-9-]+)*[.]snowflakecomputing[.]com$",
+              "scope": "org"
+            }
+          }
+        }
+      },
+      "hosted": true,
+      "id": "cortex-mcp",
+      "kind": "vendor_mcp",
+      "lifecycle": {
+        "status": "active"
+      },
+      "pricing": {
+        "model": "vendor_metered"
+      },
+      "publisher": "vendor",
+      "quality": {
+        "tier": "listed"
+      },
+      "schema": "connector-manifest/v1#provider",
+      "sources": [
+        {
+          "fact": "transport.url",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp"
+        },
+        {
+          "fact": "auth.oauth2.authorizeUrl",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.snowflake.com/en/user-guide/oauth-custom"
+        },
+        {
+          "fact": "auth.oauth2.tokenUrl",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.snowflake.com/en/user-guide/oauth-custom"
+        }
+      ],
+      "tools": {
+        "defaultPosture": "ask",
+        "source": "upstream_mcp"
+      },
+      "transport": {
+        "kind": "http",
+        "url": "https://{accountUrl}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{serverName}",
+        "urlVariables": {
+          "accountUrl": {
+            "description": "The account host, such as myorg-myaccount.snowflakecomputing.com.",
+            "pattern": "^[a-z0-9-]+([.][a-z0-9-]+)*[.]snowflakecomputing[.]com$",
+            "scope": "org"
+          },
+          "database": {
+            "description": "The database that holds the MCP server object.",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$",
+            "scope": "org"
+          },
+          "schema": {
+            "description": "The schema that holds the MCP server object.",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$",
+            "scope": "org"
+          },
+          "serverName": {
+            "description": "The MCP server object's name.",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$",
+            "scope": "org"
+          }
+        }
+      },
+      "trusted": false,
+      "vendorStatus": {
+        "label": "ga",
+        "source": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp"
+      },
+      "version": "1.0.0"
+    },
+    {
+      "accountModes": ["agent"],
+      "app": "stripe",
+      "auth": {
+        "credentialParts": [
+          {
+            "in": "header",
+            "label": "Restricted API key",
+            "name": "Authorization",
+            "prefix": "Bearer ",
+            "secret": true
+          }
+        ],
+        "kind": "api_key"
+      },
+      "hosted": true,
+      "id": "stripe-mcp",
+      "kind": "vendor_mcp",
+      "lifecycle": {
+        "status": "active"
+      },
+      "pricing": {
+        "model": "vendor_plan"
+      },
+      "publisher": "vendor",
+      "quality": {
+        "tier": "listed"
+      },
+      "schema": "connector-manifest/v1#provider",
+      "sources": [
+        {
+          "fact": "transport.url",
+          "fetchedAt": "2026-10-19",
+          "url": "https://docs.stripe.com/mcp"
+        }
+      ],
+      "tools": {
+        "defaultPosture": "ask",
+        "items": [
+          {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": true,
+              "readOnlyHint": true
+            },
+            "description": "Call any Stripe API GET endpoint.",
+            "generic": true,
+            "name": "stripe_api_read"
+          },
+          {
+            "annotations": {
+              "destructiveHint": true,
+              "idempotentHint": false,
+              "openWorldHint": true,
+              "readOnlyHint": false
+            },
+            "description": "Call any Stripe API POST, PATCH, PUT or DELETE endpoint.",
+            "generic": true,
+            "name": "stripe_api_write",
+            "posture": "deny"
+          }
+        ],
+        "source": "upstream_mcp"
+      },
+      "transport": {
+        "kind": "http",
+        "url": "https://mcp.stripe.com"
+      },
+      "trusted": false,
+      "vendorStatus": {
+        "label": "ga",
+        "source": "https://docs.stripe.com/mcp"
+      },
+      "version": "1.0.0"
+    }
+  ],
+  "platforms": [
+    {
+      "account": "byo",
+      "connect": {
+        "modes": ["oauth", "headers"],
+        "urlPattern": "https://mcp.relay.example/servers/{serverId}"
+      },
+      "description": "A fictional partner platform for the validator tests.",
+      "id": "relay",
+      "metaTools": ["search_tools"],
+      "name": "Relay",
+      "schema": "connector-manifest/v1#platform",
+      "selfHostable": false,
+      "sources": [
+        {
+          "fact": "connect.urlPattern",
+          "fetchedAt": "2026-10-19",
+          "url": "https://relay.example/docs/mcp"
+        }
+      ],
+      "termsCheckedAt": "2026-10-19",
+      "termsUrl": "https://relay.example/terms",
+      "toolMode": "fixed",
+      "version": "1.0.0"
+    }
+  ]
+}

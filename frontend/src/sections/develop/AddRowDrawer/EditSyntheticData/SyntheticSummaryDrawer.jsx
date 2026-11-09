@@ -16,10 +16,9 @@ import SvgColor from "../../../../components/svg-color";
 import PropTypes from "prop-types";
 import EachColumnSummary from "../CreateSyntheticData/Summary/EachColumnSummary";
 import { transformColumnPayload } from "../CreateSyntheticData/common";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
-import { ShowComponent } from "src/components/show";
 import { enqueueSnackbar } from "notistack";
 import { useDevelopDetailContext } from "src/sections/develop-detail/Context/DevelopDetailContext";
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
@@ -246,7 +245,6 @@ export default function SyntheticSummaryDrawer() {
     openEditDrawer: _openEditDrawer,
     setOpenEditDrawer,
     setOpenConfirmEdit,
-    failedToGenerateData,
     openConfirmEdit,
   } = useEditSyntheticDataStore();
   const navigate = useNavigate();
@@ -266,32 +264,6 @@ export default function SyntheticSummaryDrawer() {
     enabled: !!dataset && !!tableData?.data?.result?.synthetic_dataset,
     select: (d) => d.data?.result?.data,
   });
-
-  const { mutate: updateSyntheticData, isPending: isUpdating } = useMutation({
-    mutationFn: (data) => {
-      return axios.put(endpoints.develop.updateSyntheticDataset(dataset), data);
-    },
-    onSuccess: (res) => {
-      refreshGrid();
-      setOpenSummaryDrawer(false);
-      enqueueSnackbar(res?.data?.result?.message || "Dataset updated", {
-        variant: "success",
-      });
-      setTimeout(() => {
-        navigate(
-          `/dashboard/develop/${res?.data?.result?.data?.datasetId}?tab=data`,
-          {
-            replace: true,
-          },
-        );
-      }, 0);
-    },
-  });
-
-  const handleRegenerate = useCallback(() => {
-    if (!dataset) return;
-    updateSyntheticData({ ...data, regenerate: true });
-  }, [data, dataset, updateSyntheticData]);
 
   const _onEditSuccessCallback = useCallback(() => {
     queryClient.invalidateQueries({
@@ -367,26 +339,6 @@ export default function SyntheticSummaryDrawer() {
             justifyContent={"flex-end"}
             gap={2}
           >
-            <ShowComponent condition={Boolean(failedToGenerateData)}>
-              <Button
-                disabled={isUpdating}
-                onClick={handleRegenerate}
-                startIcon={
-                  <SvgColor
-                    sx={{
-                      height: 16,
-                      width: 16,
-                    }}
-                    src="/assets/icons/ic_reload.svg"
-                  />
-                }
-                size="small"
-                color="primary"
-                variant="contained"
-              >
-                Re-Generate same Configuration
-              </Button>
-            </ShowComponent>
             <Button
               onClick={() => {
                 if (processingComplete) {

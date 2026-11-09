@@ -1,6 +1,11 @@
+from django.core.validators import RegexValidator
 from rest_framework import serializers
 
-from model_hub.serializers.contracts import DerivedVariableDetailSerializer
+from model_hub.serializers.contracts import (
+    DATASET_COLUMN_ROLES,
+    DatasetBehaviorRequestSerializer,
+    DerivedVariableDetailSerializer,
+)
 from model_hub.serializers.develop_dataset import ColumnSerializer, DatasetSerializer
 
 
@@ -43,18 +48,94 @@ class ManualDatasetCreateResponseSerializer(serializers.Serializer):
     result = ManualDatasetCreateResultSerializer()
 
 
-class DatasetListItemSerializer(serializers.Serializer):
+class _DatasetTextField(serializers.CharField):
+    def to_internal_value(self, data):
+        if not isinstance(data, str):
+            self.fail("invalid")
+        return super().to_internal_value(data)
+
+
+class DatasetSettingsRequestSerializer(DatasetBehaviorRequestSerializer):
+    # Keep existing generated client imports when extending the request contract.
+    swagger_retained_serializers = (DatasetBehaviorRequestSerializer,)
+
+    description = _DatasetTextField(required=False, allow_blank=True, max_length=500)
+    tags = serializers.ListField(
+        child=_DatasetTextField(
+            max_length=30,
+            validators=[RegexValidator(r"^[a-z0-9][a-z0-9._-]{0,29}$")],
+        ),
+        required=False,
+        allow_empty=True,
+        max_length=20,
+    )
+
+    def validate_tags(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError("Tags must be unique.")
+        return value
+
+
+class DatasetDetailsSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     name = serializers.CharField()
+    description = serializers.CharField(allow_blank=True)
+    tags = serializers.ListField(child=serializers.CharField())
+
+
+class DatasetDetailsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = DatasetDetailsSerializer()
+
+
+class DatasetStarRequestSerializer(_StrictSerializer):
+    pass
+
+
+class DatasetStarResultSerializer(serializers.Serializer):
+    dataset_id = serializers.UUIDField()
+    starred = serializers.BooleanField()
+
+
+class DatasetStarResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = DatasetStarResultSerializer()
+
+
+class DatasetListItemSerializer(DatasetDetailsSerializer):
+    folder = serializers.CharField(allow_blank=True)
+    folder_id = serializers.UUIDField(allow_null=True)
+    starred = serializers.BooleanField()
     number_of_datapoints = serializers.IntegerField()
     number_of_experiments = serializers.IntegerField()
     number_of_optimisations = serializers.IntegerField()
     derived_datasets = serializers.IntegerField()
+    # F44 fields are optional even in ON-generated clients (OFF payloads omit them).
+    created_by = serializers.UUIDField(required=False, allow_null=True)
+    created_by_name = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    source = serializers.CharField(required=False)
+    updated_at = serializers.DateTimeField(required=False)
     created_at = serializers.CharField()
     dataset_type = serializers.CharField()
 
+    def get_fields(self):
+        from django.conf import settings
+
+        fields = super().get_fields()
+        if getattr(settings, "DSX_DATASET_LIST_COLUMNS_ENABLED", False) is not True:
+            # Preserve int6 validation too: unknown metadata used to be ignored.
+            for name in ("created_by", "created_by_name", "source", "updated_at"):
+                fields.pop(name)
+        return fields
+
 
 class DatasetListQuerySerializer(_StrictSerializer):
+    folder_path = serializers.CharField(
+        required=False, allow_blank=True, max_length=500
+    )
+    starred = serializers.BooleanField(required=False, default=False)
     search_text = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -88,6 +169,7 @@ class DatasetListResponseSerializer(serializers.Serializer):
 
 
 class DatasetTableMetadataSerializer(serializers.Serializer):
+    counts = serializers.JSONField(required=False)
     dataset_name = serializers.CharField()
     experiment_id = serializers.UUIDField(required=False)
     experiment_name = serializers.CharField(required=False)
@@ -124,6 +206,7 @@ class DatasetTableMetadataSerializer(serializers.Serializer):
         child=serializers.CharField(), required=False
     )
     status = serializers.JSONField(required=False, allow_null=True)
+    counts = serializers.JSONField(required=False)
 
 
 class DatasetTableColumnSerializer(serializers.Serializer):
@@ -144,6 +227,10 @@ class DatasetTableColumnSerializer(serializers.Serializer):
     eval_tag = serializers.ListField(child=serializers.CharField(), default=list)
     metadata = serializers.JSONField()
     choices_map = serializers.JSONField()
+    # A user column's stored role (null: none); generated columns carry none.
+    role = serializers.ChoiceField(
+        choices=DATASET_COLUMN_ROLES, required=False, allow_null=True
+    )
 
 
 class DatasetTableRowSerializer(serializers.Serializer):
@@ -461,6 +548,14 @@ class DatasetCreationProgressResultSerializer(serializers.Serializer):
     is_processing = serializers.BooleanField()
     is_completed = serializers.BooleanField()
     is_failed = serializers.BooleanField()
+    media_dispatch_status = serializers.ChoiceField(
+        choices=["pending", "dispatched", "failed"], required=False, allow_null=True
+    )
+    media_dispatch_attempts = serializers.IntegerField(required=False, min_value=0)
+    media_dispatch_last_error_class = serializers.CharField(
+        required=False, allow_null=True
+    )
+    media_processing_message = serializers.CharField(required=False, allow_null=True)
     original_filename = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
@@ -505,6 +600,11 @@ class SyntheticDatasetCreateStartedResponseSerializer(serializers.Serializer):
 
 
 class SyntheticDatasetConfigPayloadSerializer(serializers.Serializer):
+    reference_row_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False
+    )
+    generation_mode = serializers.ChoiceField(choices=["append"], required=False)
+    model = serializers.CharField(required=False)
     num_rows = serializers.IntegerField(required=False)
     columns = serializers.ListField(child=serializers.JSONField(), required=False)
     dataset = serializers.JSONField(required=False)

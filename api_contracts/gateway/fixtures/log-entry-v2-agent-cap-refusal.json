@@ -1,0 +1,31 @@
+{
+  "auth_key_id": "key_rf_logerr_b",
+  "cache_hit": false,
+  "completion_tokens": 0,
+  "content_mode": "full",
+  "cost": 0,
+  "error_code": "org_budget_exceeded",
+  "error_message": "daily model-spend cap cannot admit this request",
+  "fallback_used": false,
+  "generation_id": "req_g8_agent_cap_refusal",
+  "guardrail_triggered": false,
+  "is_error": true,
+  "is_stream": false,
+  "latency_ms": 3,
+  "metadata": {
+    "auth_key_id": "key_rf_logerr_b",
+    "billing_mode": "managed",
+    "budget_action": "block",
+    "budget_exceeded_level": "agent:agent-a",
+    "budget_period": "daily",
+    "budget_period_start": "2026-10-27T00:00:00Z",
+    "org_id": "org-r7-budget"
+  },
+  "model": "synthetic-chat",
+  "prompt_tokens": 0,
+  "provider": "synthetic",
+  "request_id": "req_g8_agent_cap_refusal",
+  "status_code": 429,
+  "timestamp": "2026-10-27T12:00:00Z",
+  "total_tokens": 0
+}

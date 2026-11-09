@@ -1,0 +1,16 @@
+{
+  "http": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "error": {
+      "message": "Unknown endpoint: /mcp/v/vs_01K7CN5EEAGENTM0DE00000001.",
+      "type": "not_found",
+      "param": null,
+      "code": "not_found"
+    }
+  }
+}

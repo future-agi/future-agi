@@ -55,6 +55,25 @@ ACTION_ONLY_PLATFORMS: frozenset[str] = frozenset(
     p for p, cat in PLATFORM_CATEGORY.items() if cat == IntegrationCategory.ACTION_ONLY
 )
 
+# Platforms the gateway's request logs are exported to (push). Every other
+# data-sync platform imports into a FutureAGI project.
+EXPORT_PLATFORMS: frozenset[str] = frozenset(
+    {
+        IntegrationPlatform.DATADOG.value,
+        IntegrationPlatform.POSTHOG.value,
+        IntegrationPlatform.MIXPANEL.value,
+        IntegrationPlatform.CLOUD_STORAGE.value,
+        IntegrationPlatform.MESSAGE_QUEUE.value,
+    }
+)
+
+# Platforms whose address the user enters (a Langfuse or PostHog instance).
+# Every other platform's destination follows from its credentials
+# (integrations/services/export_destinations.py).
+HOST_URL_PLATFORMS: frozenset[str] = frozenset(
+    {IntegrationPlatform.LANGFUSE.value, IntegrationPlatform.POSTHOG.value}
+)
+
 
 class ConnectionStatus(models.TextChoices):
     ACTIVE = "active", "Active"

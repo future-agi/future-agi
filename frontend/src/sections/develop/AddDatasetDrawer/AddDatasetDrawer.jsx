@@ -1,125 +1,112 @@
 import { Box, Drawer, IconButton, Typography, Link } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import Iconify from "src/components/iconify";
+import { dsSize } from "src/theme/ds-tokens";
 import DatasetOptions from "./DatasetOptions";
 import UploadFileModal from "./UploadFileModal";
 import ManuallyCreateDataset from "./ManuallyCreateDataset";
-import ImportFromHuggingFace from "./ImportFromHuggingFace";
-import { useNavigate } from "react-router";
-import { paths } from "src/routes/paths";
-import AddSDKModal from "./AddSDKModal";
-import SyntheticDataDrawer from "../AddRowDrawer/CreateSyntheticData";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import ExistingDatasetModal from "../AddRowDrawer/ExistingDatasetModal";
-import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import NewTaskSuiteDialog from "src/sections/develop-detail/TaskSuite/NewTaskSuiteDialog";
+import { openAddData } from "src/sections/common/AddData/addDataStore";
+import {
+  DATASETS_DOCS,
+  IMPORT_OPTIONS,
+  createDoorShown,
+  offeredImportOptions,
+} from "../importOptions";
 
-const options = [
-  {
-    title: "Add data using SDK",
-    subTitle: "Add SDK to import your data to our system",
-    id: "addSdk",
-    disabled: false,
-    icons: "add_from_SDK",
-  },
-  {
-    title: "Upload a file (JSON, CSV)",
-    subTitle: "Upload in various file format",
-    id: "uploadFile",
-    disabled: false,
-    icons: "upload_file",
-  },
-  {
-    title: "Create Synthetic Data",
-    subTitle: "Generate realistic Synthetic data to add in the dataset",
-    id: "synthetic-data",
-    icons: "create_synthetic",
-  },
-  {
-    title: "Add datasets Manually",
-    subTitle: "Add SDK to import your data to our system",
-    disabled: false,
-    icons: "manual_dataset",
-    id: "manuallyCreateDataset",
-  },
-  {
-    title: "Import from HuggingFace",
-    subTitle: "Add SDK to import your data to our system",
-    disabled: false,
-    icons: "hugging_face",
-    id: "importFromHuggingface",
-  },
-  {
-    title: "Add from existing model dataset or experiment",
-    subTitle:
-      "Choose from the existing datasets in our system to create a new dataset",
-    disabled: false,
-    icons: "add_existing_model",
-    id: "addFromExistingDataset",
-  },
-  // {
-  //   title: "Add dataset using SDK",
-  //   subTitle: "Add SDK to import your data to our system",
-  //   disabled: true,
-  //   id: "addDatasetUsingSDK",
-  // },
-  // {
-  //   title: "Import from LLM logs",
-  //   subTitle: "Import LLM logged inferences",
-  //   disabled: true,
-  //   id: "importFromLLMLogs",
-  // },
-  // {
-  //   title: "Add dataset from Knowledge Base",
-  //   subTitle: "Import a dataset from Knowledge Base",
-  //   disabled: true,
-  //   id: "addFromKnowledgeBase",
-  // },
-];
-
-const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
-  const [uploadFileModalOpen, setUploadFileModalOpen] = useState(false);
-  const [addSDK, setAddSDK] = useState(false);
-  const [manuallyCreateDatasetModalOpen, setManuallyCreateDatasetModalOpen] =
-    useState(false);
-  const [importFromHuggingFaceModalOpen, setImportFromHuggingFaceModalOpen] =
-    useState(false);
-  const [cloneDevelopDatasetModalOpen, setCloneDevelopDatasetModalOpen] =
-    useState(false);
-  const [syntheticDataDrawerOpen, setSyntheticDataDrawerOpen] = useState(false);
-
+/**
+ * New dataset chooser (DL#3, DL#24). A chosen path replaces the drawer
+ * (the drawer hides while its dialog is open); Cancel in the dialog brings
+ * the chooser back. `startWith = {path, name}` skips the chooser (⌘K
+ * `Upload a file`, empty search `Create dataset named "…"`).
+ * Only the doors in IMPORT_OPTIONS open (options-truth L5 G5, W0-1): each
+ * previews what it creates and ends on the new dataset; a `startWith.path`
+ * naming any other door leaves the chooser open.
+ */
+const OFFERED = new Set(IMPORT_OPTIONS.map((o) => o.id));
+const AddDatasetDrawer = ({ open, onClose, refreshGrid, startWith }) => {
+  const [path, setPath] = useState(null);
   const navigate = useNavigate();
-  // Hide the Synthetic Data tile while capabilities load or when denied
-  // (fail closed) so it never flashes for a deployment/plan without it. The
-  // route is separately guarded by CapabilityGate for deep-links.
-  const { locked: syntheticLocked } = useFeatureLocked(CAPABILITY.SYNTHETIC_DATA);
-  const filteredOptions = syntheticLocked
-    ? options.filter((o) => o.id !== "synthetic-data")
-    : options;
+  useEffect(() => {
+    if (open && startWith?.path) choose(startWith.path);
+    if (!open) setPath(null);
+  }, [open, startWith?.path]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Cancel in a path dialog: back to the chooser (or out, when the path
+  // was opened directly).
+  const back = () => {
+    setPath(null);
+    if (startWith?.path) onClose();
+  };
+  const done = () => {
+    setPath(null);
+    onClose();
+  };
+  const uploadFileModalOpen = open && path === "uploadFile";
+  const manuallyCreateDatasetModalOpen =
+    open && path === "manuallyCreateDataset";
+  const cloneDevelopDatasetModalOpen =
+    open && path === "addFromExistingDataset";
+  const taskSuiteOpen = open && path === "taskSuite";
+  const startWithDisabled = offeredImportOptions().some(
+    (option) => option.id === startWith?.path && option.disabled,
+  );
+
+  function choose(id) {
+    if (!OFFERED.has(id) || !createDoorShown(id)) return;
+    if (offeredImportOptions().find((option) => option.id === id)?.disabled)
+      return;
+    const method = {
+      uploadFile: "add from uploadfile",
+      manuallyCreateDataset: "add from manuallyCreateDataset",
+      addFromExistingDataset: "add from existing dataset",
+    }[id];
+    if (method)
+      trackEvent(Events.datasetTypeChoosed, { [PropertyName.method]: method });
+    if (id === "uploadFile") trackEvent(Events.datasetFromJSONCSVClicked);
+    if (id === "manuallyCreateDataset")
+      trackEvent(Events.datasetManualAdditionClicked);
+    if (id === "addFromExistingDataset")
+      trackEvent(Events.datasetFromExistingDatasetClicked);
+    if (id === "createSyntheticData") {
+      // W3-8a: the synthetic page creates the dataset at v1.
+      onClose();
+      navigate("/dashboard/develop/create-synthetic-dataset");
+      return;
+    }
+    if (id === "importFromHuggingface") {
+      // W3-7: the Hugging Face page creates the dataset at v1.
+      onClose();
+      navigate("/dashboard/huggingface");
+      return;
+    }
+    if (id === "fromProduction") {
+      // Close first: this drawer sits above the sheet.
+      onClose();
+      openAddData({
+        source: { kind: "sessions" },
+        target: { new: { name: startWith?.name ?? "", kind: "conversations" } },
+      });
+      return;
+    }
+    setPath(id);
+  }
 
   return (
     <>
-      <AddSDKModal
-        open={addSDK}
-        onClose={() => setAddSDK(false)}
-        refreshGrid={refreshGrid}
-      />
       <UploadFileModal
         open={uploadFileModalOpen}
-        onClose={() => {
-          setUploadFileModalOpen(false);
-          onClose();
-        }}
+        onClose={back}
+        onDone={done}
         refreshGrid={refreshGrid}
       />
       <ManuallyCreateDataset
         open={manuallyCreateDatasetModalOpen}
-        onClose={() => setManuallyCreateDatasetModalOpen(false)}
-        refreshGrid={refreshGrid}
-      />
-      <ImportFromHuggingFace
-        open={importFromHuggingFaceModalOpen}
-        onClose={() => setImportFromHuggingFaceModalOpen(false)}
+        initialName={startWith?.name}
+        onClose={back}
         refreshGrid={refreshGrid}
       />
       {/* <CloneDevelopDataset
@@ -127,22 +114,21 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
         onClose={() => setCloneDevelopDatasetModalOpen(false)}
         refreshGrid={refreshGrid}
       /> */}
-      <SyntheticDataDrawer
-        open={syntheticDataDrawerOpen}
-        onClose={() => {
-          setSyntheticDataDrawerOpen(false);
-          onClose();
-        }}
-        datasetId={null}
-        refreshGrid={refreshGrid}
-      />
+      <NewTaskSuiteDialog open={taskSuiteOpen} onClose={back} />
       <Drawer
         anchor="right"
-        open={open}
+        // The Copy-from pane opens inside the drawer, beside the chooser.
+        open={
+          open &&
+          (!path || path === "addFromExistingDataset") &&
+          (!startWith?.path || startWithDisabled)
+        }
         onClose={onClose}
         PaperProps={{
           sx: {
-            height: "100vh",
+            height: "100dvh",
+            maxWidth: "100vw",
+            overflowY: "auto",
             position: "fixed",
             zIndex: 9999,
             borderRadius: "10px",
@@ -155,16 +141,33 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
           },
         }}
       >
-        <Box sx={{ display: "flex", flexDirection: "row-reverse" }}>
-          <Box sx={{ padding: 2 }}>
+        <Box
+          sx={{
+            display: "flex",
+            // The two token-sized panes fit together only at lg and above.
+            flexDirection: { xs: "column", lg: "row-reverse" },
+            width: { xs: dsSize.drawer.md, lg: "auto" },
+            maxWidth: "100%",
+            flexShrink: 0,
+          }}
+        >
+          <Box
+            sx={{
+              padding: 2,
+              width: { xs: "100%", lg: dsSize.drawer.sm },
+              minWidth: 0,
+              boxSizing: "border-box",
+              flexShrink: 0,
+            }}
+          >
             <Box
               sx={{
                 gap: 2,
                 display: "flex",
                 flexDirection: "column",
-                width: "500px",
-                overflowY: "auto",
-                height: "calc(100vh - 32px)",
+                width: "100%",
+                overflowY: { xs: "visible", lg: "auto" },
+                height: { xs: "auto", lg: "calc(100dvh - 32px)" },
               }}
             >
               <Box sx={{ display: "flex" }}>
@@ -178,27 +181,38 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
                       fontWeight={600}
                       color="text.primary"
                       variant="m3"
+                      component="h2"
                     >
-                      Add dataset
+                      New dataset
                     </Typography>
                     <Link
-                      href="https://docs.futureagi.com/docs/dataset"
-                      underline="always"
-                      color="blue.500"
+                      href={DATASETS_DOCS}
+                      underline="hover"
+                      color="primary.main"
                       target="_blank"
                       rel="noopener noreferrer"
+                      typography="s2"
                       fontWeight="fontWeightMedium"
+                      sx={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 0.25,
+                        mr: 4,
+                      }}
                     >
-                      Learn more
+                      Read the datasets guide
+                      <Iconify icon="mdi:arrow-top-right" width={14} />
                     </Link>
                   </Box>
-                  <Typography typography="s1">
-                    Provide a dataset to experiment, evaluate, and optimize.
+                  <Typography typography="s2" color="text.secondary">
+                    A dataset holds the tasks you test on. Pick how to fill it;
+                    you can add more rows later.
                   </Typography>
                 </Box>
 
                 <IconButton
                   onClick={onClose}
+                  aria-label="Close"
                   sx={{ position: "absolute", top: "10px", right: "12px" }}
                 >
                   <Iconify icon="mingcute:close-line" color="text.primary" />
@@ -207,67 +221,20 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
               <Box
                 sx={{ display: "flex", flexDirection: "column", gap: "16px" }}
               >
-                {filteredOptions.map((option) => (
+                {offeredImportOptions().map((option) => (
                   <DatasetOptions
-                    key={option.title}
+                    key={option.id}
                     {...option}
-                    onClick={() => {
-                      if (option.id === "addSdk") {
-                        trackEvent(Events.datasetTypeChoosed, {
-                          [PropertyName.method]: "add from Sdk",
-                        });
-                        trackEvent(Events.datasetFromSDKClicked);
-                        setAddSDK(true);
-                      }
-                      if (option.id === "uploadFile") {
-                        trackEvent(Events.datasetTypeChoosed, {
-                          [PropertyName.method]: "add from uploadfile",
-                        });
-                        trackEvent(Events.datasetFromJSONCSVClicked);
-                        setUploadFileModalOpen(true);
-                      }
-                      if (option.id === "manuallyCreateDataset") {
-                        trackEvent(Events.datasetTypeChoosed, {
-                          [PropertyName.method]:
-                            "add from manuallyCreateDataset",
-                        });
-                        trackEvent(Events.datasetManualAdditionClicked);
-                        setManuallyCreateDatasetModalOpen(true);
-                      }
-                      if (option.id === "importFromHuggingface") {
-                        trackEvent(Events.datasetTypeChoosed, {
-                          [PropertyName.method]:
-                            "add from importFromHuggingFace",
-                        });
-                        trackEvent(Events.datasetFromHuggingFaceClicked);
-                        navigate(paths.dashboard.huggingface);
-                      }
-                      if (option.id === "addFromExistingDataset") {
-                        trackEvent(Events.datasetTypeChoosed, {
-                          [PropertyName.method]: "add from existing dataset",
-                        });
-                        trackEvent(Events.datasetFromExistingDatasetClicked);
-                        setCloneDevelopDatasetModalOpen(true);
-                      }
-                      if (option.id === "synthetic-data") {
-                        trackEvent(Events.datasetTypeChoosed, {
-                          [PropertyName.method]: "add from synthetic-data",
-                        });
-                        trackEvent(Events.syntheticDatasetCreationClicked);
-                        // setSyntheticDataDrawerOpen(true);
-                        navigate("/dashboard/develop/create-synthetic-dataset");
-                      }
-                    }}
+                    onClick={() => choose(option.id)}
                   />
                 ))}
               </Box>
             </Box>
           </Box>
           <ExistingDatasetModal
+            stackBelowLg
             open={cloneDevelopDatasetModalOpen}
-            onClose={() => {
-              setCloneDevelopDatasetModalOpen(false);
-            }}
+            onClose={back}
             refreshGrid={refreshGrid}
             datasetId={null}
             closeDrawer={onClose}
@@ -279,6 +246,10 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
 };
 
 AddDatasetDrawer.propTypes = {
+  startWith: PropTypes.shape({
+    path: PropTypes.string,
+    name: PropTypes.string,
+  }),
   open: PropTypes.bool,
   onClose: PropTypes.func,
   refreshGrid: PropTypes.func,

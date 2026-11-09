@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import {
   Box,
   Button,
@@ -141,7 +142,7 @@ const PopoverOptions = ({
                 />
               )}
               <Image
-                src={logoUrl}
+                src={localProviderLogo(providers)}
                 alt=""
                 width={theme.spacing(2)}
                 disableThemeFilter={

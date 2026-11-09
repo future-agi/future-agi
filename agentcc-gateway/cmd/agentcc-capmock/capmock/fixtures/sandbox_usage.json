@@ -1,0 +1,21 @@
+{
+  "records": [
+    {
+      "record_id": "rec_{{id}}",
+      "org_id": "org-acme",
+      "api_key_id": "key_1",
+      "agent_id": "agent-1",
+      "run_id": "run-1",
+      "step_id": "step-1",
+      "sandbox_id": "sbx_1",
+      "backend": "e2b",
+      "billing_mode": "byok",
+      "cpu_seconds": 12.5,
+      "gib_seconds": 50.0,
+      "wall_seconds": 60.0,
+      "started_at": "2026-10-15T10:00:00Z",
+      "ended_at": "2026-10-15T10:01:00Z",
+      "receipt_id": "rcpt_1"
+    }
+  ]
+}

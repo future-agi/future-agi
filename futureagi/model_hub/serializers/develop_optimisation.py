@@ -29,6 +29,15 @@ def get_optimization_link_errors(dataset, column=None, user_eval_template_ids=No
         errors["user_eval_template_ids"] = [
             "Evaluation metrics must belong to the selected dataset."
         ]
+    elif user_eval_template_ids:
+        from model_hub.services.external_metrics import external_execution_refusal
+
+        # The metrics are already scoped to the request by the serializer.
+        refusal = external_execution_refusal(
+            [metric.id for metric in user_eval_template_ids]
+        )
+        if refusal:
+            errors["user_eval_template_ids"] = [refusal]
 
     return errors
 

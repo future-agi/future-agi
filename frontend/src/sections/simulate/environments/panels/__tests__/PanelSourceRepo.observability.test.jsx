@@ -7,6 +7,20 @@ import {
   waitFor,
 } from "src/utils/test-utils";
 
+// Decorations and account-level billing queries are outside this source-form test.
+vi.mock("src/components/iconify", () => ({ default: () => null }));
+vi.mock("src/hooks/useDeploymentMode", () => ({
+  useDeploymentMode: () => ({ isCloud: false }),
+}));
+vi.mock("src/hooks/use-credit-exhaustion", () => ({
+  useCreditExhaustion: () => ({
+    exhaustionError: null,
+    handleError: () => false,
+    handleUpgradeClick: vi.fn(),
+    handleDismiss: vi.fn(),
+  }),
+}));
+
 const navigate = vi.fn();
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -43,18 +57,23 @@ const PASS = {
 };
 
 const HELPER =
-  "We can observe your agent only if its code already sends telemetry (OpenTelemetry or traceAI). If it doesn't, the Environment still builds, without observability.";
+  "Calls imported from connected voice providers and spans from agents run in hosted sandboxes aren't stored in Observe in this release.";
 
 const render = (ui) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return baseRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return baseRender(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
 };
 
-const preflightBtn = () => screen.getByRole("button", { name: "Run preflight" });
-const buildBtn = () => screen.getByRole("button", { name: /Build environment/ });
-const box = () => screen.getByRole("checkbox", { name: "Turn on observability" });
+const preflightBtn = () =>
+  screen.getByRole("button", { name: "Run preflight" });
+const buildBtn = () =>
+  screen.getByRole("button", { name: /Build environment/ });
+const box = () =>
+  screen.getByRole("checkbox", { name: "Turn on observability" });
 
 const typeRepo = () =>
   fireEvent.change(screen.getByPlaceholderText("owner/repo"), {
@@ -114,6 +133,15 @@ describe("PanelSourceRepo observability choice", () => {
     render(<PanelSourceRepo />);
     expect(screen.getByText(HELPER)).toBeInTheDocument();
     expect(box()).toHaveAccessibleDescription(HELPER);
+    expect(
+      screen.getByRole("link", { name: "2.0.0 release notes: Known issues" }),
+    ).toHaveAttribute(
+      "href",
+      "https://github.com/future-agi/future-agi/releases/tag/v2.0.0",
+    );
+    expect(
+      screen.getByRole("link", { name: "2.0.0 release notes: Known issues" }),
+    ).toHaveAttribute("target", "_blank");
     expect(box()).toBeEnabled();
     fireEvent.click(box());
     expect(box()).toBeChecked();

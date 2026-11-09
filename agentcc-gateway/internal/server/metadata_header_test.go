@@ -34,9 +34,17 @@ func TestParseMetadataHeader(t *testing.T) {
 			wantCustom: []string{"tenant"},
 		},
 		{
-			name:       "malformed json is flagged, not recorded",
+			// The budget plugin reads rbac_team as the key's team when the key
+			// has none, and nothing overwrites it where RBAC is off.
+			name:       "rbac keys are rejected, not recorded",
+			header:     `{"rbac_team":"engineering","RBAC_ROLE":"admin","tenant":"ok"}`,
+			wantMeta:   map[string]string{"tenant": "ok"},
+			wantCustom: []string{"tenant"},
+		},
+		{
+			name:       "malformed json is ignored",
 			header:     `not json`,
-			wantMeta:   map[string]string{metadataErrorKey: "x-agentcc-metadata is not a JSON object"},
+			wantMeta:   map[string]string{},
 			wantCustom: nil,
 		},
 		{
@@ -48,22 +56,10 @@ func TestParseMetadataHeader(t *testing.T) {
 			wantCustom: []string{"beta", "depth", "tenant"},
 		},
 		{
-			name:       "a non-object body is flagged, not recorded",
+			name:       "a non-object body is ignored",
 			header:     `["a","b"]`,
-			wantMeta:   map[string]string{metadataErrorKey: "x-agentcc-metadata is not a JSON object"},
+			wantMeta:   map[string]string{},
 			wantCustom: nil,
-		},
-		{
-			name:       "null is flagged, not recorded",
-			header:     `null`,
-			wantMeta:   map[string]string{metadataErrorKey: "x-agentcc-metadata is not a JSON object"},
-			wantCustom: nil,
-		},
-		{
-			name:       "a caller cannot set the flag itself",
-			header:     `{"metadata_error":"forged","tenant":"ok"}`,
-			wantMeta:   map[string]string{"tenant": "ok"},
-			wantCustom: []string{"tenant"},
 		},
 	}
 
@@ -274,6 +270,7 @@ func TestIsBlockedMetadataKeyCostFamily(t *testing.T) {
 		"cost", "cost_source", "cost_SOURCE",
 		"credits_used", "credits_remaining", "credit_balance",
 		"budget_remaining", "ratelimit_limit", "org_id", "authorization",
+		"rbac_team", "rbac_role",
 	}
 	for _, k := range blocked {
 		if !isBlockedMetadataKey(k) {
@@ -418,36 +415,24 @@ func TestDialectHandlersCaptureCallerExtrasBeforeThePipeline(t *testing.T) {
 	}
 }
 
-// A request with a malformed header still goes through, so a caller sending
-// one today does not start to fail, but the response says why its dimensions
-// are missing.
-func TestMalformedMetadataHeaderIsReportedToTheCaller(t *testing.T) {
-	mock := startMockOpenAI(t)
-	defer mock.Close()
-	srv := createTestServer(t, mock.URL)
+// V3 IR-4 (W2b integration): ocr_pages is the page count the cost plugin
+// prices OCR by; a caller cannot plant it on any endpoint.
+func TestOCRPagesMetadataKeyReserved(t *testing.T) {
+	for _, k := range []string{models.OCRPagesMetadataKey, "OCR_PAGES"} {
+		if !isBlockedMetadataKey(k) {
+			t.Errorf("%q is writable by callers but the cost plugin owns it", k)
+		}
+	}
+}
 
-	for _, tc := range []struct {
-		name, header, want string
-	}{
-		{"not json", `{application: "billing"`, "x-agentcc-metadata is not a JSON object"},
-		{"valid", `{"application":"billing"}`, ""},
-		{"absent", "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}`
-			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-			if tc.header != "" {
-				req.Header.Set("x-agentcc-metadata", tc.header)
-			}
-			w := httptest.NewRecorder()
-			srv.httpServer.Handler.ServeHTTP(w, req)
-
-			if w.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200. Body: %s", w.Code, w.Body.String())
-			}
-			if got := w.Header().Get("x-agentcc-metadata-error"); got != tc.want {
-				t.Errorf("x-agentcc-metadata-error = %q, want %q", got, tc.want)
-			}
-		})
+// V8a IR-2 (W2c integration): the rerank handler records the upstream's
+// billed search units under this key, so no caller may set it on any
+// endpoint (it would be logged as gateway evidence, and a content_mode none
+// flush strips caller keys).
+func TestRerankSearchUnitsMetadataKeyReserved(t *testing.T) {
+	for _, k := range []string{models.RerankSearchUnitsMetadataKey, "Search_Units"} {
+		if !isBlockedMetadataKey(k) {
+			t.Errorf("%q is writable by callers but the rerank handler owns it", k)
+		}
 	}
 }

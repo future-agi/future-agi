@@ -34,8 +34,11 @@ export default function LinearCredentials({
     isPending: validating,
     error,
   } = useValidateCredentials();
-  const { mutate: createConnection, isPending: creating } =
-    useCreateConnection();
+  const {
+    mutate: createConnection,
+    isPending: creating,
+    error: createError,
+  } = useCreateConnection();
 
   const isPending = validating || creating;
 
@@ -125,9 +128,11 @@ export default function LinearCredentials({
         }}
       />
 
-      {error && (
+      {(error || createError) && (
         <Alert severity="error">
-          {getErrorMessage(error, "Failed to validate credentials")}
+          {error
+            ? getErrorMessage(error, "Failed to validate credentials")
+            : getErrorMessage(createError, "Failed to connect Linear")}
         </Alert>
       )}
 

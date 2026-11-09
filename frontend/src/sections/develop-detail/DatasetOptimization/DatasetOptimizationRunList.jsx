@@ -76,7 +76,9 @@ const DatasetOptimizationRunList = ({
   );
 
   const checkQueryParams = useMemo(() => {
-    const params = { page: 1, page_size: pageLimit };
+    // The list paginates with `limit` (ExtendedPageNumberPagination
+    // page_size_query_param); `page_size` is not a contract query key.
+    const params = { page: 1, limit: pageLimit };
     if (datasetId) params.dataset_id = datasetId;
     if (columnId) params.column_id = columnId;
     return params;
@@ -108,7 +110,7 @@ const DatasetOptimizationRunList = ({
 
         const queryParams = {
           page: pageNumber,
-          page_size: pageSize,
+          limit: pageSize,
         };
 
         if (datasetId) {
@@ -233,6 +235,9 @@ const DatasetOptimizationRunList = ({
     onSelectOptimization?.(params.data.id);
   };
   const handleSuccessOfStop = () => {
+    // W6 C6: after Stop (or a run that had already finished) the grid reads
+    // the list again, not its cached page, so the row shows its real status.
+    queryClient.removeQueries({ queryKey: ["dataset-optimization-runs"] });
     gridRef?.current?.api.refreshServerSide({ purge: false });
   };
 
@@ -255,29 +260,39 @@ const DatasetOptimizationRunList = ({
     return (
       <EmptyLayout
         icon="/assets/icons/navbar/ic_dash_tasks.svg"
-        title="Ready to make your prompts smarter"
-        description="Run your first optimization to test, compare, and improve prompt performance."
+        title={
+          onCreateClick
+            ? "Ready to make your prompts smarter"
+            : "No optimizations on this dataset yet"
+        }
+        description={
+          onCreateClick
+            ? "Run your first optimization to test, compare, and improve prompt performance."
+            : "Optimizations started on this dataset are listed here."
+        }
         link="https://docs.futureagi.com/docs/optimization"
         linkText="Check docs"
         action={
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={
-              <SvgColor
-                sx={{
-                  height: 16,
-                  width: 16,
-                  bgcolor: "primary.contrastText",
-                }}
-                src="/assets/icons/navbar/ic_optimize.svg"
-              />
-            }
-            onClick={onCreateClick}
-            disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
-          >
-            Run Optimization
-          </Button>
+          onCreateClick ? (
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={
+                <SvgColor
+                  sx={{
+                    height: 16,
+                    width: 16,
+                    bgcolor: "primary.contrastText",
+                  }}
+                  src="/assets/icons/navbar/ic_optimize.svg"
+                />
+              }
+              onClick={onCreateClick}
+              disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
+            >
+              Run Optimization
+            </Button>
+          ) : null
         }
       />
     );
@@ -303,25 +318,27 @@ const DatasetOptimizationRunList = ({
         }}
       >
         <Typography variant="h6">Optimization Runs</Typography>
-        <Button
-          size="small"
-          color="primary"
-          variant="contained"
-          startIcon={
-            <SvgColor
-              src="/assets/icons/navbar/ic_optimize.svg"
-              sx={{ width: 16, height: 16 }}
-            />
-          }
-          onClick={onCreateClick}
-          disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
-          sx={{
-            py: 0.5,
-            px: 1.5,
-          }}
-        >
-          Optimize Prompts
-        </Button>
+        {onCreateClick ? (
+          <Button
+            size="small"
+            color="primary"
+            variant="contained"
+            startIcon={
+              <SvgColor
+                src="/assets/icons/navbar/ic_optimize.svg"
+                sx={{ width: 16, height: 16 }}
+              />
+            }
+            onClick={onCreateClick}
+            disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
+            sx={{
+              py: 0.5,
+              px: 1.5,
+            }}
+          >
+            Optimize Prompts
+          </Button>
+        ) : null}
       </Box>
 
       {/* AG Grid */}

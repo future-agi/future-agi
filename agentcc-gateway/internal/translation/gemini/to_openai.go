@@ -1,6 +1,8 @@
 package gemini
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -49,7 +51,7 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 		for _, part := range content.Parts {
 			if part.FunctionCall != nil {
 				name := part.FunctionCall.Name
-				callIDsByName[name] = append(callIDsByName[name], models.NewToolCallID())
+				callIDsByName[name] = append(callIDsByName[name], newCallID())
 			}
 		}
 	}
@@ -322,6 +324,13 @@ func translateContent(
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+// newCallID generates a stable random call ID in the format call_{hex16}.
+func newCallID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return "call_" + hex.EncodeToString(b)
+}
+
 // nextCallID returns the next unclaimed call ID for the given function name,
 // advancing the cursor. Falls back to a fresh ID if the pre-computed list is
 // exhausted (defensive: a functionResponse without a matching functionCall).
@@ -331,7 +340,7 @@ func nextCallID(callIDsByName map[string][]string, cursor map[string]int, name s
 		cursor[name] = idx + 1
 		return ids[idx]
 	}
-	return models.NewToolCallID()
+	return newCallID()
 }
 
 // flattenPartsText concatenates the Text fields of all parts.

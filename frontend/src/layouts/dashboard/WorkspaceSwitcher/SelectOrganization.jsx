@@ -9,6 +9,7 @@ import { useOrganization } from "src/contexts/OrganizationContext";
 import { useCreateOrganizationModal } from "../states";
 import Iconify from "src/components/iconify";
 import { Events, trackEvent } from "src/utils/Mixpanel";
+import { isPrototypeMode } from "src/utils/prototype";
 
 const SelectOrganizationChild = React.forwardRef(
   ({ setOpen }, popperTimeoutRef) => {
@@ -137,22 +138,25 @@ const SelectOrganizationChild = React.forwardRef(
             ))}
           </ShowComponent>
         </Box>
-        <Box>
-          <Button
-            variant="text"
-            color="primary"
-            fullWidth
-            size="small"
-            startIcon={<SVGColor src="/assets/icons/ic_add.svg" />}
-            sx={{ justifyContent: "flex-start" }}
-            onClick={() => {
-              setOpen(false);
-              useCreateOrganizationModal.getState().setOpen(true);
-            }}
-          >
-            Create Organization
-          </Button>
-        </Box>
+        {/* L7b absent-sweep: not mocked, so absent in prototype builds. */}
+        {!isPrototypeMode() && (
+          <Box>
+            <Button
+              variant="text"
+              color="primary"
+              fullWidth
+              size="small"
+              startIcon={<SVGColor src="/assets/icons/ic_add.svg" />}
+              sx={{ justifyContent: "flex-start" }}
+              onClick={() => {
+                setOpen(false);
+                useCreateOrganizationModal.getState().setOpen(true);
+              }}
+            >
+              Create Organization
+            </Button>
+          </Box>
+        )}
       </Box>
     );
   },

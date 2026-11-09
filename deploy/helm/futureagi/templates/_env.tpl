@@ -35,6 +35,7 @@ never through postgres.pooler or a read replica.
 {{- $secretEnv := list
       (dict "name" "SECRET_KEY" "secret" $appSecret "key" "SECRET_KEY")
       (dict "name" "INTEGRATION_ENCRYPTION_KEY" "secret" $appSecret "key" "INTEGRATION_ENCRYPTION_KEY")
+      (dict "name" "FI_API_SECRET_PEPPER" "secret" $appSecret "key" "FI_API_SECRET_PEPPER")
       (dict "name" "AGENTCC_INTERNAL_API_KEY" "secret" $appSecret "key" "AGENTCC_INTERNAL_API_KEY")
       (dict "name" "AGENTCC_ADMIN_TOKEN" "secret" $appSecret "key" "AGENTCC_ADMIN_TOKEN")
       (dict "name" "PROPERTY_CATALOG_CH_PASSWORD" "secret" $appSecret "key" "PROPERTY_CATALOG_API_PASSWORD") -}}
@@ -44,6 +45,8 @@ never through postgres.pooler or a read replica.
 {{- $secretEnv = append $secretEnv (dict "name" "AGENTCC_WEBHOOK_SECRET" "secret" (include "futureagi.webhookSecretName" $root) "key" "AGENTCC_WEBHOOK_SECRET") -}}
 {{- /* license, email and SSO clients: _enterprise.tpl */ -}}
 {{- $secretEnv = concat $secretEnv (include "futureagi.env.enterpriseSecrets" (dict "root" $root) | fromJsonArray) -}}
+{{- /* the Omega Hub checker's token: hub/_hub.tpl */ -}}
+{{- $secretEnv = concat $secretEnv (include "futureagi.hub.secretEnv" (dict "root" $root) | fromJsonArray) -}}
 {{- range $name := keys $v.secrets.extra | sortAlpha -}}
 {{- $secretEnv = append $secretEnv (dict "name" $name "secret" $chartSecret "key" $name) -}}
 {{- end -}}
@@ -115,6 +118,7 @@ is only port-forwarded). */ -}}
       "FUTURE_AGI_VERSION" ($v.backend.image.tag | default $v.image.tag | default $root.Chart.AppVersion)
       "APP_VERSION" ($v.backend.image.tag | default $v.image.tag | default $root.Chart.AppVersion)
       "FUTURE_AGI_TELEMETRY_DISABLED" (ternary "false" "true" (and $v.config.telemetry (ne (toString $v.global.airgap) "true")))
+      "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS" (toString $v.config.telemetryShareAdminEmails)
       "OTEL_ENABLED" (toString $v.config.otel)
       "RECAPTCHA_ENABLED" (toString $v.config.recaptcha)
       "ALLOWED_HOSTS" $allowedHosts
@@ -168,6 +172,9 @@ is only port-forwarded). */ -}}
       "CODE_EXECUTOR_URL" (ternary (printf "http://%s:8060" (include "futureagi.component" (dict "root" $root "component" "code-executor"))) "" $v.codeExecutor.enabled)
       "CODE_EXECUTOR_LOCAL_FALLBACK" (toString $v.codeExecutor.localFallback)
       "AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS" (toString $v.agentccGateway.allowPrivateProviderURLs)
+      "AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED" (toString $v.mcpFeatures.upstreamOAuth)
+      "AGENTCC_MCP_CLIENT_OAUTH_ENABLED" (toString $v.mcpFeatures.clientOAuth)
+      "AGENTCC_MCP_K2_APPS_ENABLED" (toString $v.mcpFeatures.k2Apps)
       "USAGE_EVENTS_ENABLED" (toString $v.config.usageEvents)
       "MODEL_SERVING_URL" (ternary (printf "http://%s:8080" (include "futureagi.component" (dict "root" $root "component" "serving"))) "" $v.serving.enabled)
       "FI_COLLECTOR_HOST" (include "futureagi.component" (dict "root" $root "component" "fi-collector"))
@@ -192,7 +199,7 @@ a public URL, and every origin while it is only port-forwarded. */ -}}
 the direct server: the outbox CDC's advisory lock needs a session. */ -}}
 {{- $pooler := $v.postgres.pooler | default dict -}}
 {{- $replica := $v.postgres.readReplica | default dict -}}
-{{- if and $pooler.enabled .direct -}}
+{{- if and .direct (or $pooler.enabled $v.hosted.enabled) -}}
 {{- $_ := set $plain "PG_DIRECT_HOST" $pgHost -}}
 {{- $_ := set $plain "PG_DIRECT_PORT" $pgPort -}}
 {{- else if $pooler.enabled -}}
@@ -206,20 +213,55 @@ the direct server: the outbox CDC's advisory lock needs a session. */ -}}
 {{- with $replica.optIn }}{{ $_ := set $plain "READ_REPLICA_OPT_IN" (join "," .) }}{{ end -}}
 {{- end -}}
 {{- if $objectsEndpoint }}{{ $_ := set $plain "S3_ENDPOINT_URL" $objectsEndpoint }}{{ end -}}
+{{- with include "futureagi.url.llmGateway" $root }}{{ $_ := set $plain "AGENTCC_GATEWAY_PUBLIC_URL" . }}{{ end -}}
 {{- with $v.config.email.mailgunSenderDomain }}{{ $_ := set $plain "MAILGUN_SENDER_DOMAIN" . }}{{ end -}}
 {{- with $v.config.email.fromEmail }}{{ $_ := set $plain "DEFAULT_FROM_EMAIL" . }}{{ end -}}
 {{- with $v.config.email.replyTo }}{{ $_ := set $plain "DEFAULT_REPLY_TO_EMAIL" . }}{{ end -}}
 {{- with $v.config.email.serverEmail }}{{ $_ := set $plain "SERVER_EMAIL" . }}{{ end -}}
+{{- /* The hosted settlement drain consumes the gateway billing DB, not DB 0.
+Match the effective gateway environment; keep explicit REDIS_URL overrides so
+the hosted startup checker can reject a mismatched operator URL value-free. */ -}}
+{{- $billingDB := dig "AGENTCC_REDIS_DB" (dig "redis" "db" 4 $v.agentccGateway) $v.agentccGateway.extraEnv -}}
+{{- if $v.hosted.enabled -}}
+{{- $_ := set $plain "REDIS_URL" (include "futureagi.redis.url" (dict "root" $root "db" $billingDB)) -}}
+{{- end -}}
 {{- /* license and SSO settings, then the proxy, CA bundle and air-gap
 variables (_enterprise.tpl); every extraEnv wins over them. */ -}}
 {{- $plain = mergeOverwrite $plain (include "futureagi.env.enterprisePlain" $root | fromYaml) (include "futureagi.env.platform" (dict "root" $root "kind" "python") | fromYaml) -}}
+{{- /* the Omega Hub's settings (hub.enabled): hub/_hub.tpl */ -}}
+{{- $plain = mergeOverwrite $plain (include "futureagi.hub.env" $root | fromYaml) -}}
 {{- $plain = mergeOverwrite $plain $v.config.extraEnv (.component | default dict) (.overrides | default dict) -}}
+{{- if $v.hosted.enabled -}}
+{{- $_ := set $plain "AGENTCC_DEPLOYMENT_PROFILE" "hosted" -}}
+{{- $_ := set $plain "AGENTCC_HOSTED_RELEASE_REVISION" $v.hosted.releaseRevision -}}
+{{- $_ := set $plain "AGENTCC_REDIS_DB" (toString $billingDB) -}}
+{{- $_ := set $plain "REGISTER_TEMPORAL_SCHEDULES" "false" -}}
+{{- end -}}
 {{- $_ := unset $plain "REDIS_PASSWORD" -}}
 {{- $_ := unset $plain "POD_IP" -}}
+{{- /* Names are quoted: Kubernetes gets each exactly as written, the name the
+chart's checks saw (futureagi.omega.errors), never one YAML made of it. */ -}}
 {{- range $name := keys $plain | sortAlpha }}
-- name: {{ $name }}
+- name: {{ $name | quote }}
   value: {{ get $plain $name | toString | quote }}
 {{- end }}
+{{- end -}}
+
+{{/* The variable maps users give the Python pods (API, workers, bootstrap
+job), as JSON [[<values path>, <map>], ...]: each key becomes a variable name
+as written (futureagi.env.python). validate.yaml refuses a name with
+whitespace around it, futureagi.omega.errors the names only the chart sets. */}}
+{{- define "futureagi.env.userMaps" -}}
+{{- $v := .Values -}}
+{{- $maps := list
+      (list "config.extraEnv" ($v.config.extraEnv | default dict))
+      (list "backend.extraEnv" ($v.backend.extraEnv | default dict))
+      (list "worker.extraEnv" ($v.worker.extraEnv | default dict))
+      (list "secrets.extra" ($v.secrets.extra | default dict)) -}}
+{{- range $i, $queue := $v.worker.queues | default list -}}
+{{- $maps = append $maps (list (printf "worker.queues[%d].extraEnv" $i) ($queue.extraEnv | default dict)) -}}
+{{- end -}}
+{{- toJson $maps -}}
 {{- end -}}
 
 {{/* LLM provider keys: dict "root" $ "overrides" <map> ["gateway" true].
@@ -308,8 +350,15 @@ publishes them to Kafka instead, for your own fi-property-catalog-consumer.
 {{- if not (hasKey $overrides "FI_PG_READ_PASSWORD") }}
 {{ include "futureagi.postgres.passwordEnv" (dict "root" $root "name" "FI_PG_READ_PASSWORD") }}
 {{- end }}
-{{- if and (not $redisTls) (eq (include "futureagi.redis.auth" $root) "true") (not (hasKey $overrides "FI_AUTH_REDIS_PASSWORD")) }}
+{{- if and (eq (include "futureagi.redis.auth" $root) "true") (not (hasKey $overrides "FI_AUTH_REDIS_PASSWORD")) }}
 {{ include "futureagi.redis.passwordEnv" (dict "root" $root "name" "FI_AUTH_REDIS_PASSWORD") }}
+{{- end }}
+{{- /* the backend's pepper: fi-collector verifies the API secrets it stores */ -}}
+{{- if not (hasKey $overrides "FI_API_SECRET_PEPPER") }}
+{{ include "futureagi.secretEnv" (dict "name" "FI_API_SECRET_PEPPER" "secret" (include "futureagi.appSecretName" $root) "key" "FI_API_SECRET_PEPPER") }}
+{{- end }}
+{{- if and (hasKey $v.secrets.extra "FI_API_SECRET_PEPPERS_RETIRED") (not (hasKey $overrides "FI_API_SECRET_PEPPERS_RETIRED")) }}
+{{ include "futureagi.secretEnv" (dict "name" "FI_API_SECRET_PEPPERS_RETIRED" "secret" (include "futureagi.secretName" $root) "key" "FI_API_SECRET_PEPPERS_RETIRED") }}
 {{- end }}
 {{- if and (eq $observedMode "direct") (not (hasKey $overrides "FI_OBSERVED_CATALOG_CH_PASSWORD")) }}
 {{ include "futureagi.secretEnv" (dict "name" "FI_OBSERVED_CATALOG_CH_PASSWORD" "secret" (include "futureagi.appSecretName" $root) "key" "PROPERTY_CATALOG_CONSUMER_PASSWORD") }}
@@ -348,8 +397,16 @@ pod's 1Gi emptyDir with the dead-letter file. */ -}}
 {{- $_ := set $plain "FI_OBSERVED_CATALOG_CH_DATABASE" $v.clickhouse.propertyCatalogDatabase -}}
 {{- $_ := set $plain "FI_OBSERVED_CATALOG_CH_USERNAME" "observed_catalog_writer" -}}
 {{- end -}}
-{{- if not $redisTls }}{{ $_ := set $plain "FI_AUTH_REDIS_ADDR" (printf "%s:%s" (include "futureagi.redis.host" $root) (include "futureagi.redis.port" $root)) }}{{ end -}}
+{{- $_ := set $plain "FI_AUTH_REDIS_ADDR" (printf "%s:%s" (include "futureagi.redis.host" $root) (include "futureagi.redis.port" $root)) -}}
+{{- $_ := set $plain "FI_AUTH_REDIS_TLS" (toString $redisTls) -}}
+{{- $billing := include "futureagi.collector.billingEnforcement" $root -}}
+{{- $_ := set $plain "FI_BILLING_ENFORCEMENT_ENABLED" $billing -}}
 {{- $plain = mergeOverwrite $plain (include "futureagi.env.platform" (dict "root" $root "kind" "collector") | fromYaml) $overrides -}}
+{{- /* Auto mode protects backend-derived enforcement from a collector-only
+opt-out. An explicit chart billing mode wins over collector extraEnv both ways. */ -}}
+{{- if or (eq $billing "true") (ne (dig "enforcement" "auto" ($v.billing | default dict) | toString) "auto") -}}
+{{- $_ := set $plain "FI_BILLING_ENFORCEMENT_ENABLED" $billing -}}
+{{- end -}}
 {{- range $name := keys $plain | sortAlpha }}
 - name: {{ $name }}
   value: {{ get $plain $name | toString | quote }}
@@ -407,6 +464,9 @@ redis.external.tls. */}}
 {{- $plain := dict
       "AGENTCC_PORT" (include "futureagi.gateway.port" $root)
       "AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS" (toString $g.allowPrivateProviderURLs)
+      "AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED" (toString $v.mcpFeatures.upstreamOAuth)
+      "AGENTCC_MCP_CLIENT_OAUTH_ENABLED" (toString $v.mcpFeatures.clientOAuth)
+      "AGENTCC_MCP_K2_APPS_ENABLED" (toString $v.mcpFeatures.k2Apps)
       "AWS_REGION" $v.secrets.llm.awsRegion
       "FI_BASE_URL" (printf "http://%s:%v" $backend $v.backend.service.port)
       "GOMEMLIMIT" $g.goMemLimit
@@ -423,6 +483,13 @@ redis.external.tls. */}}
 {{- $_ := set $plain "GOOGLE_APPLICATION_CREDENTIALS" "/var/run/secrets/futureagi/gcp/credentials.json" -}}
 {{- end -}}
 {{- $plain = mergeOverwrite $plain (include "futureagi.env.platform" (dict "root" $root "kind" "gateway") | fromYaml) $overrides -}}
+{{- if $v.hosted.enabled -}}
+{{- $_ := set $plain "AGENTCC_DEPLOYMENT_PROFILE" "hosted" -}}
+{{- $_ := set $plain "AGENTCC_AUTH_ENABLED" "true" -}}
+{{- $_ := set $plain "AGENTCC_HOSTED_ONEKEY_ACTIVATION" (toString $v.hosted.onekeyActivation) -}}
+{{- $_ := set $plain "AGENTCC_SYNC_INTERVAL" "60s" -}}
+{{- $_ := set $plain "AGENTCC_MCP_EGRESS_PRIVATE_ALLOW" (printf "%s:%v" $backend $v.backend.service.port) -}}
+{{- end -}}
 {{- range $name := keys $plain | sortAlpha }}
 - name: {{ $name }}
   value: {{ get $plain $name | toString | quote }}

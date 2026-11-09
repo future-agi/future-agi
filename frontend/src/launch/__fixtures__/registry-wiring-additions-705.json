@@ -1,0 +1,137 @@
+[
+  {
+    "kind": "pathOwner",
+    "path": "/model-hub/experiments/v2/{experiment_id}/resume/",
+    "from": "exp.rerun",
+    "to": "exp.runControl",
+    "lane": "T-XPB",
+    "feature": "F06"
+  },
+  {
+    "file": "sections/develop-detail/Experiment/RunExperiment.jsx",
+    "lane": "T-XPC",
+    "feature": "F05",
+    "newSite": true,
+    "expected": [
+      "exp.new.scope"
+    ]
+  },
+  {
+    "kind": "settingOwner",
+    "map": "WIZARD_SETTING_SURFACE",
+    "key": "splits",
+    "from": "dataset.splits",
+    "to": "exp.new.splitScope",
+    "lane": "T-XPC",
+    "feature": "SPLIT-SCOPE"
+  },
+  {
+    "file": "sections/develop-detail/Experiment/RunExperiment.jsx",
+    "lane": "T-XPC",
+    "feature": "SPLIT-SCOPE",
+    "expected": [
+      "exp.new.splitScope",
+      "exp.new.scope"
+    ],
+    "newSite": true
+  },
+  {
+    "file": "sections/develop-detail/Experiment/CostEstimateLine.jsx",
+    "lane": "T-XPC",
+    "feature": "SPLIT-SCOPE",
+    "expected": [
+      "exp.new.splitScope"
+    ],
+    "newSite": true
+  },
+  {
+    "file": "sections/common/RunSources/RunOnRowsButton.jsx",
+    "lane": "T-XPC",
+    "feature": "SPLIT-SCOPE",
+    "expected": [
+      "exp.new",
+      "exp.new.scope",
+      "exp.new.splitScope"
+    ]
+  },
+  {
+    "file": "sections/develop-detail/Experiment/splitScopeVisibility.js",
+    "lane": "T-XPC",
+    "feature": "SPLIT-SCOPE",
+    "newSite": true,
+    "expected": [
+      "exp.new.splitScope"
+    ]
+  },
+  {
+    "file": "sections/evals/alignment/AgreementTab.jsx",
+    "lane": "T-EVAL",
+    "feature": "F69",
+    "newSite": true,
+    "expected": [
+      "evals.agreementTools",
+      "evals.agreement"
+    ]
+  },
+  {
+    "file": "sections/evals/alignment/StoredAgreement.jsx",
+    "lane": "T-EVAL",
+    "feature": "F69",
+    "newSite": true,
+    "expected": [
+      "evals.agreement",
+      "evals.agreement"
+    ]
+  },
+  {
+    "file": "sections/develop-detail/Experiment/RunExperiment.jsx",
+    "lane": "T-XPC",
+    "feature": "SPLIT-SCOPE-RECEIPT",
+    "newSite": true,
+    "expected": [
+      "exp.new.splitScope",
+      "exp.new.scope",
+      "exp.new.splitScope"
+    ]
+  },
+  {
+    "kind": "settingOwner",
+    "map": "ADD_ROWS_TILE_SURFACE",
+    "key": "paste",
+    "from": "dataset.addRows",
+    "to": "dataset.imports.pasteRows",
+    "lane": "NOHIDE-IMPORT-r2",
+    "feature": "Separate NEW paste from the pre-existing Add rows doors"
+  },
+  {
+    "file": "sections/develop-detail/Experiment/RunExperiment.jsx",
+    "lane": "NOHIDE-EXP",
+    "feature": "CENSUS-A-CLASSIC",
+    "newSite": true,
+    "expected": [
+      "exp.new",
+      "exp.new.splitScope",
+      "dataset.experimentDefaults",
+      "exp.new.scope",
+      "exp.new.splitScope",
+      "dataset.tab.experiments",
+      "dataset.tab.experiments",
+      "exp.new",
+      "exp.new",
+      "exp.new",
+      "dataset.tab.experiments",
+      "exp.new",
+      "exp.new"
+    ]
+  },
+  {
+    "file": "sections/develop-detail/DevelopBarRightSection/DevelopDataRightSection.jsx",
+    "lane": "T-GRID",
+    "feature": "F47",
+    "expected": [
+      "dataset.schema",
+      "dataset.savedViews",
+      "dataset.export"
+    ]
+  }
+]

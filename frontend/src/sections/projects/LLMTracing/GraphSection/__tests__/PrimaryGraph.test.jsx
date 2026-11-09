@@ -11,21 +11,33 @@ import {
   QUERY_FAILED_RETRY_MESSAGE,
 } from "src/utils/queryReadState";
 import PrimaryGraph from "../PrimaryGraph";
+import {
+  errorPoint,
+  invalidCases,
+  qualityPoint,
+  zeroPoint,
+} from "src/utils/__tests__/fixtures/evalQualityCases";
+
+const chartProps = vi.hoisted(() => ({ current: null }));
 
 const { propertyCatalogOptionsSpy } = vi.hoisted(() => ({
   propertyCatalogOptionsSpy: vi.fn(),
 }));
 
 vi.mock("react-apexcharts", () => ({
-  default: ({ series, options }) => (
-    <div
-      data-testid="apex-chart"
-      data-primary-series-name={series?.[0]?.name}
-      data-traffic-series-name={series?.[1]?.name}
-      data-traffic-axis-series-name={options?.yaxis?.[1]?.seriesName}
-      data-primary-first-y={series?.[0]?.data?.[0]?.y}
-    />
-  ),
+  default: (props) => {
+    chartProps.current = props;
+    const { series, options } = props;
+    return (
+      <div
+        data-testid="apex-chart"
+        data-primary-series-name={series?.[0]?.name}
+        data-traffic-series-name={series?.[1]?.name}
+        data-traffic-axis-series-name={options?.yaxis?.[1]?.seriesName}
+        data-primary-first-y={series?.[0]?.data?.[0]?.y}
+      />
+    );
+  },
 }));
 
 const datePickerProps = vi.hoisted(() => ({ current: null }));
@@ -1815,5 +1827,218 @@ describe("PrimaryGraph", () => {
         expect(screen.queryByTestId("graph-metric-statistic")).toBeNull();
       },
     );
+  });
+});
+
+describe("PrimaryGraph NK20 copy contract", () => {
+  // These references stay fixed across initial resolution and graph-only refreshes.
+  const staticMetrics = {
+    evaluation: [
+      { id: "nk20-eval", label: "Quality", unit: "%", apiType: "EVAL" },
+    ],
+  };
+  const setDateFilter = vi.fn();
+  const snapshot = (points, extra = {}) => ({
+    data: {
+      result: {
+        metric_name: "nk20-eval",
+        data: points.map((point, index) => ({
+          ...point,
+          timestamp: new Date(Date.UTC(2026, 7, 3, index)).toISOString(),
+          primary_traffic: null,
+        })),
+        query_complete: true,
+        query_status: "complete",
+        query_sampled: false,
+        query_completed_at: "2026-08-03T02:00:00Z",
+        ...extra,
+      },
+    },
+  });
+  const mountEval = () =>
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-nk20"
+        defaultMetric="nk20-eval"
+        staticMetrics={staticMetrics}
+        setDateFilter={setDateFilter}
+      />,
+    );
+  const hover = (value, dataPointIndex = 0, seriesIndex = 0) =>
+    chartProps.current.options.tooltip.y.formatter(value, {
+      dataPointIndex,
+      seriesIndex,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    chartProps.current = null;
+    axios.get.mockResolvedValue({ data: { result: { metrics: [] } } });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("NK20-R1-INITIAL-RESPONSE-MEMO resolves pending EVAL without changing static dependencies", async () => {
+    const request = deferred();
+    axios.post.mockReturnValue(request.promise);
+    mountEval();
+    await waitFor(() => expect(axios.post).toHaveBeenCalledOnce());
+    expect(screen.queryByText("No data")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unavailable")).not.toBeInTheDocument();
+    expect(chartProps.current).toBeNull();
+    await act(async () => request.resolve(snapshot([errorPoint])));
+    await screen.findByTestId("apex-chart");
+    expect(hover(null)).toBe("Unscored");
+    expect(chartProps.current.series[0].data[0]).toMatchObject(errorPoint);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Unscored · 1 execution error (100.0%)",
+    );
+  });
+
+  it("NK20-R1-REFRESH-MEMO updates only graph data through empty, unscored and numeric-zero responses", async () => {
+    axios.post.mockResolvedValue(snapshot([errorPoint]));
+    mountEval();
+    await screen.findByTestId("apex-chart");
+    const initial = chartProps.current.options;
+    expect(hover(null)).toBe("Unscored");
+    let previousFormatter = initial.tooltip.y.formatter;
+    for (const [point, expected] of [
+      [qualityPoint(), "No data"],
+      [errorPoint, "Unscored"],
+      [zeroPoint, "0.00 %"],
+    ]) {
+      const calls = axios.post.mock.calls.length;
+      axios.post.mockResolvedValue(snapshot([point]));
+      act(() => window.dispatchEvent(new CustomEvent("observe-refresh")));
+      await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(calls + 1));
+      await waitFor(() =>
+        expect(chartProps.current.series[0].data[0]).toMatchObject(point),
+      );
+      const current = chartProps.current.options;
+      expect(current.chart.events.zoomed).toBe(initial.chart.events.zoomed);
+      expect(current.colors).toEqual(initial.colors);
+      expect(current.tooltip.theme).toBe(initial.tooltip.theme);
+      expect(current.tooltip.y.formatter).not.toBe(previousFormatter);
+      expect(hover(point.value)).toBe(expected);
+      previousFormatter = current.tooltip.y.formatter;
+    }
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it("hovers the selected mixed buckets independently and keeps null traffic separate", async () => {
+    const points = [
+      qualityPoint(),
+      errorPoint,
+      zeroPoint,
+      { ...zeroPoint, value: null },
+    ];
+    axios.post.mockResolvedValue(snapshot(points));
+    mountEval();
+    await screen.findByTestId("apex-chart");
+    points.forEach((point, index) =>
+      expect(chartProps.current.series[0].data[index]).toMatchObject(point),
+    );
+    expect(hover(null, 0)).toBe("No data");
+    expect(hover(null, 1)).toBe("Unscored");
+    expect(hover(0, 2)).toBe("0.00 %");
+    expect(hover(null, 3)).toBe("-");
+    expect(hover(null, 1, 1)).toBe("-");
+    expect(hover(0, 1, 1)).toBe("0 traces");
+    expect(hover(null, 99)).toBe("-");
+  });
+
+  it("rejects every malformed count case in the real callback for null and numeric values", async () => {
+    const points = invalidCases.flatMap(({ point }) => [
+      { ...point, value: null },
+      { ...point, value: 0 },
+    ]);
+    axios.post.mockResolvedValue(snapshot([qualityPoint()]));
+    mountEval();
+    await screen.findByTestId("apex-chart");
+    // The transport parser already rejects several malformed types. Inject at
+    // the chart boundary to independently exercise the real callback's guard,
+    // including corrupted retained metadata and missing properties.
+    const data = chartProps.current.series[0].data;
+    const { x, timestamp } = data[0];
+    const actual = points.map((point) => {
+      data[0] = { ...point, x, timestamp, y: point.value };
+      return hover(point.value);
+    });
+    expect(actual).toEqual(points.map(() => "-"));
+  });
+
+  it("rejects malformed transport counts before publishing a completed EVAL snapshot", async () => {
+    axios.post.mockResolvedValue(snapshot([{ ...errorPoint, count: "1" }]));
+    mountEval();
+    expect(await screen.findByText(QUERY_FAILED_RETRY_MESSAGE)).toBeVisible();
+    expect(screen.queryByTestId("apex-chart")).not.toBeInTheDocument();
+    expect(screen.queryByText("No data")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["completed empty array", [], "No data"],
+    ["zero-attempt buckets", [qualityPoint()], "No data"],
+    ["missing metadata", [{ value: null }], "Unavailable"],
+    [
+      "mixed malformed positive bucket",
+      [qualityPoint(), invalidCases[8].point],
+      "Unavailable",
+    ],
+  ])(
+    "gives %s explicit EVAL summary context",
+    async (_name, points, expected) => {
+      axios.post.mockResolvedValue(snapshot(points));
+      mountEval();
+      expect(await screen.findByText(expected)).toBeVisible();
+    },
+  );
+
+  it.each(["pending", "failed", "missing"])(
+    "never synthesizes an empty summary for a cold %s read",
+    async (state) => {
+      if (state === "failed")
+        axios.post.mockRejectedValue(new Error("unavailable"));
+      else if (state === "missing") axios.post.mockResolvedValue({ data: {} });
+      else
+        axios.post.mockResolvedValue(
+          snapshot([], {
+            query_complete: false,
+            query_status: "pending",
+            query_refreshing: true,
+          }),
+        );
+      mountEval();
+      await waitFor(() => expect(axios.post).toHaveBeenCalled());
+      if (state === "failed" || state === "missing")
+        await screen.findByText(QUERY_FAILED_RETRY_MESSAGE);
+      else await screen.findByRole("status", { name: GRAPH_LOADING_MESSAGE });
+      expect(screen.queryByText("No data")).not.toBeInTheDocument();
+      expect(screen.queryByText("Unavailable")).not.toBeInTheDocument();
+    },
+  );
+
+  it("retains validated EVAL data and the failure indicator after a failed refresh", async () => {
+    axios.post
+      .mockResolvedValueOnce(snapshot([errorPoint]))
+      .mockRejectedValue(new Error("refresh failed"));
+    mountEval();
+    await screen.findByTestId("apex-chart");
+    act(() => window.dispatchEvent(new CustomEvent("observe-refresh")));
+    expect(await screen.findByText(QUERY_FAILED_RETRY_MESSAGE)).toBeVisible();
+    expect(hover(null)).toBe("Unscored");
+    expect(screen.queryByText("No data")).not.toBeInTheDocument();
+    expect(chartProps.current.series[0].data[0]).toMatchObject(errorPoint);
+  });
+
+  it("keeps non-EVAL summaries absent and resource nulls as a dash", async () => {
+    axios.post.mockResolvedValue(snapshot([errorPoint]));
+    renderWithQueryClient(<PrimaryGraph observeIdOverride="project-nk20" />);
+    await screen.findByTestId("apex-chart");
+    expect(hover(null)).toBe("-");
+    expect(
+      screen.queryByText(/without a quality score/),
+    ).not.toBeInTheDocument();
   });
 });

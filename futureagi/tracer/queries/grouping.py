@@ -10,13 +10,7 @@ from typing import TypeVar
 
 from django.db.models import QuerySet
 
-from tracer.constants.grouping_versions import (
-    FEATURE_POLICY_VERSION,
-    GROUPING_GATE_VERSION,
-    SIMULATION_FEATURE_POLICY_VERSION,
-    SIMULATION_GROUPING_POLICY_VERSION,
-)
-from tracer.models.trace_grouping import TraceGroupingScope
+from tracer.constants.grouping_versions import GROUPING_GATE_VERSION
 from tracer.models.trace_investigation import (
     InvestigationWorkload,
     TraceInvestigationAttribution,
@@ -71,48 +65,27 @@ class GroupingSnapshotError(ValueError):
     """The selected report cannot safely cross the grouping boundary."""
 
 
-def simulation_behavior_enabled(report: TraceInvestigationReport) -> bool:
-    if report.workload_type != InvestigationWorkload.SIMULATION_TEST_EXECUTION:
-        return False
-    policy = (
-        TraceGroupingScope.no_workspace_objects.filter(project_id=report.project_id)
-        .values_list("policy_version", flat=True)
-        .first()
-    )
-    return policy in (None, SIMULATION_GROUPING_POLICY_VERSION)
-
-
-def grouping_feature_policy(report: TraceInvestigationReport) -> str:
-    return (
-        SIMULATION_FEATURE_POLICY_VERSION
-        if simulation_behavior_enabled(report)
-        else FEATURE_POLICY_VERSION
-    )
-
-
 def groupable_findings(
     report: TraceInvestigationReport,
 ) -> QuerySet[TraceInvestigationFinding]:
-    """Group unresolved findings under the report gate or simulation upgrade.
+    """Only unresolved findings become Feed occurrences.
 
-    Legacy reports retain their admission until the simulation registry is
-    explicitly upgraded; reports stamped with the current gate already admit
-    all unresolved findings.
+    A report stamped with the current gate groups every unresolved finding,
+    whatever its outcome. Older reports keep the legacy gate, so the occurrence
+    list and source digest of a report never change after it is published.
     """
     findings = TraceInvestigationFinding.no_workspace_objects.filter(report=report)
     if report.grouping_gate not in (None, GROUPING_GATE_VERSION):
         raise GroupingSnapshotError(f"unknown grouping gate {report.grouping_gate!r}")
     if report.execution_status != "completed":
         return findings.none()
-    unresolved = findings.filter(recovery__in=GROUPABLE_RECOVERY)
-    # Existing registries retain their snapshot identity until explicitly migrated.
-    if report.grouping_gate == GROUPING_GATE_VERSION or simulation_behavior_enabled(
-        report
-    ):
-        return unresolved
+    if report.grouping_gate == GROUPING_GATE_VERSION:
+        return findings.filter(recovery__in=GROUPABLE_RECOVERY)
     if report.outcome != "failure":
         return findings.none()
-    return unresolved.filter(requirement__status="violated")
+    return findings.filter(
+        recovery__in=GROUPABLE_RECOVERY, requirement__status="violated"
+    )
 
 
 def canonical_snapshot_digest(value: Mapping[str, object]) -> str:

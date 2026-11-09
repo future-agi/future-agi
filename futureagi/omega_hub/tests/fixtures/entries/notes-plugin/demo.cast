@@ -1,0 +1,3 @@
+{"version":2,"width":100,"height":6,"title":"notes-plugin (keyless)","env":{"TERM":"xterm-256color"}}
+[0.287,"o","plugin acme.notes 1.2.0 asks for: NOTES_FILE (required)\r\n"]
+[0.287,"o","server tools: add_note, list_notes\r\nadd_note -> saved note 1\r\nadd_note -> saved note 2\r\nlist_notes -> [\"Buy oat milk\",\"Call the plumber on Monday\"]\r\nthe notes file holds 2 notes\r\n"]

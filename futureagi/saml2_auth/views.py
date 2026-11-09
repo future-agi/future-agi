@@ -699,7 +699,41 @@ class IDPUploadViews(viewsets.ModelViewSet):
 
 import urllib.parse  # noqa: E402
 
-from jose import jwt  # noqa: E402
+import jwt  # noqa: E402
+
+# The AUTH0_* settings are Google's OAuth client (AUTH0_DOMAIN is
+# accounts.google.com/o/oauth2), so the ID token is Google's: its issuer and
+# signing keys are the ones https://accounts.google.com/.well-known/
+# openid-configuration publishes. Google documents both issuer spellings.
+GOOGLE_ID_TOKEN_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
+GOOGLE_ID_TOKEN_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+# One client per process: the key set is cached for an hour, and a token that
+# names a key id not in the cache (Google rotated) triggers one early refetch.
+_GOOGLE_JWKS_CLIENT = jwt.PyJWKClient(
+    GOOGLE_ID_TOKEN_JWKS_URL, cache_jwk_set=True, lifespan=3600, timeout=10
+)
+
+
+def _verified_google_id_token(id_token):
+    """Claims of an ID token Google signed for our client, or raise.
+
+    Only RS256 is accepted, so neither an unsigned token nor one HMAC-keyed
+    with the public key passes. The account is looked up by email, so the
+    email must be one Google has verified.
+    """
+    signing_key = _GOOGLE_JWKS_CLIENT.get_signing_key_from_jwt(id_token)
+    claims = jwt.decode(
+        id_token,
+        key=signing_key.key,
+        algorithms=["RS256"],
+        audience=AUTH0_CLIENT_ID,
+        issuer=GOOGLE_ID_TOKEN_ISSUERS,
+        leeway=60,
+        options={"require": ["exp", "iat", "iss", "aud"]},
+    )
+    if claims.get("email_verified") is not True:
+        raise PermissionDenied("Google has not verified this email address.")
+    return claims
 
 
 class Auth0LoginView(APIView):
@@ -846,16 +880,10 @@ class Auth0CallbackView(APIView):
             tokens = response.json()
             id_token = tokens.get("id_token")
 
-            # Decode the ID token
+            # Verify the ID token before trusting the identity it names
             if id_token:
                 access_token = tokens.get("access_token")
-                decoded = jwt.decode(
-                    id_token,
-                    options={"verify_signature": False},
-                    key=AUTH0_CLIENT_ID,
-                    audience=AUTH0_CLIENT_ID,
-                    access_token=access_token,
-                )
+                decoded = _verified_google_id_token(id_token)
                 logger.info("oauth_identity_decoded", provider="auth0")
 
                 user_email = decoded.get("email")
@@ -1069,6 +1097,65 @@ class GithubCallbackView(APIView):
             return HttpResponseRedirect(redirect_url)
 
 
+MICROSOFT_SIGN_IN_REFUSED_MESSAGE = (
+    "We couldn't sign you in with Microsoft. Sign in with your email, "
+    "or contact support."
+)
+
+
+class MicrosoftIdentityRefused(Exception):
+    """A Microsoft identity that must not be mapped to an account.
+
+    reason is a short code for the security log; the user sees one generic
+    message whatever the reason.
+    """
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _normalised_address(value):
+    # User.email is looked up exactly, and first_signup stores it lowercased,
+    # so stripping and lowercasing keeps lookup and creation on one key.
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+def microsoft_account_email(graph_user):
+    """The account address a Graph /me profile resolves to, or raise.
+
+    Only the userPrincipalName names the account. Its suffix has to be one of
+    the tenant's verified domains, whereas `mail` is a directory attribute any
+    tenant admin can set to any address, so trusting `mail` let a foreign
+    tenant sign in as a victim. Guest UPNs (#EXT#) carry the home address
+    only in an unverified, rewritten local part, so they are refused too.
+    """
+    upn = _normalised_address(graph_user.get("userPrincipalName"))
+    if not upn:
+        raise MicrosoftIdentityRefused("upn_missing")
+    if "#ext#" in upn:
+        raise MicrosoftIdentityRefused("upn_guest")
+    local, _, domain = upn.partition("@")
+    if not local or not domain or "@" in domain:
+        raise MicrosoftIdentityRefused("upn_malformed")
+    return upn
+
+
+def refuse_if_microsoft_signup_would_duplicate(upn, mail):
+    """Refuse rather than create a second account for someone who has one.
+
+    Reached only when no account has the UPN. An account under the profile's
+    `mail`, or under a case variant of the UPN, most likely belongs to this
+    person, but `mail` is unverified, so neither signing them in nor creating
+    a parallel account is safe. They are sent to sign in with their email.
+    """
+    if User.objects.filter(email__iexact=upn).exists():
+        raise MicrosoftIdentityRefused("upn_matches_other_case")
+    mail = _normalised_address(mail)
+    if mail and User.objects.filter(email__iexact=mail).exists():
+        raise MicrosoftIdentityRefused("mail_matches_other_account")
+
+
 class MicrosoftCallbackView(APIView):
     _gm = GeneralMethods()
     permission_classes = (AllowAny,)
@@ -1135,12 +1222,7 @@ class MicrosoftCallbackView(APIView):
             microsoft_user = user_response.json()
             logger.info("oauth_profile_loaded", provider="microsoft")
 
-            # Extract user information
-            user_email = microsoft_user.get("mail") or microsoft_user.get(
-                "userPrincipalName"
-            )
-            if not user_email:
-                raise Exception("Email not found in Microsoft account.")
+            user_email = microsoft_account_email(microsoft_user)
 
             name = microsoft_user.get("displayName")
             if not name:
@@ -1165,6 +1247,9 @@ class MicrosoftCallbackView(APIView):
                 track_mixpanel_event(MixpanelEvents.SSO_LOGIN.value, properties)
 
             except User.DoesNotExist:
+                refuse_if_microsoft_signup_would_duplicate(
+                    user_email, microsoft_user.get("mail")
+                )
                 new_org = "true"
                 data = {"full_name": name, "email": user_email}
                 user_model = first_signup(data, mode=MixpanelModes.MICROSOFT.value)
@@ -1198,6 +1283,12 @@ class MicrosoftCallbackView(APIView):
             response["new_org"] = new_org
             return response
 
+        except MicrosoftIdentityRefused as exc:
+            security_logger.warning(
+                "oauth_identity_refused", provider="microsoft", reason=exc.reason
+            )
+            encoded = urlsafe_base64_encode(MICROSOFT_SIGN_IN_REFUSED_MESSAGE.encode())
+            return HttpResponseRedirect(f"{default_error_next_url}&reason={encoded}")
         except Exception as exc:
             logger.error(
                 "oauth_callback_failed",

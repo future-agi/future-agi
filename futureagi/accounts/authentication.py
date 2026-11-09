@@ -11,7 +11,8 @@ import structlog
 from cryptography.fernet import Fernet
 from django.conf import settings
 from django.core.cache import cache
-from django.db import DatabaseError, IntegrityError, InterfaceError, OperationalError
+from django.core.exceptions import ValidationError
+from django.db import DatabaseError, InterfaceError, OperationalError
 from django.http import JsonResponse
 from django.utils import timezone
 from rest_framework import status
@@ -23,6 +24,8 @@ from rest_framework.exceptions import (
 )
 from rest_framework.response import Response
 
+from accounts.api_key_lookup import find_api_key
+from accounts.api_key_policy import authenticate_api_key
 from accounts.models import OrgApiKey, User
 from accounts.models.auth_token import (
     AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
@@ -33,8 +36,8 @@ from accounts.models.auth_token import (
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
-from accounts.services.workspace_membership import create_workspace_membership
-from tfc.constants.roles import OrganizationRoles
+from accounts.services.workspace_landing import resolve_user_workspace
+from accounts.services.workspace_selection import accessible_workspace_selections
 from tfc.ee_gating import is_oss
 from tfc.utils.api_errors import (
     build_error_envelope,
@@ -84,7 +87,9 @@ def workspace_read_only(view_cls):
     Some read-only endpoints use a POST body only to carry filters or a
     search query — they read, they don't mutate. Decorate those views with
     ``@workspace_read_only`` so the workspace write-permission check skips
-    them and read-only roles (viewers) can reach them.
+    them and read-only roles (viewers) can reach them. A POST declared on the
+    decorated class also skips the landing requirement; inherited handlers
+    are not marked by this decorator.
 
     Prefer this over adding the path to a string allow-list: the intent
     lives at the view definition, so it cannot drift out of sync when the
@@ -92,7 +97,104 @@ def workspace_read_only(view_cls):
     without the marker travelling with it.
     """
     view_cls.workspace_write_exempt = True
+    post = vars(view_cls).get("post")
+    if callable(post):
+        allows_no_workspace("POST")(post)
     return view_cls
+
+
+NO_ACTIVE_ORGANIZATION = "no_active_organization"
+
+
+def allows_no_workspace(*methods):
+    """Exempt only named methods on an account/recovery handler, never a path.
+
+    Place above @api_view for function views; on APIViews/ViewSets decorate the
+    concrete method/action. Its existing permission and ownership gates still run.
+    """
+
+    def decorate(handler):
+        view_cls = getattr(handler, "cls", None)
+        for method in methods:
+            target = getattr(view_cls, method.lower(), None) if view_cls else handler
+            if callable(target):
+                target._no_workspace_methods = frozenset(
+                    getattr(target, "_no_workspace_methods", ())
+                ) | {method}
+        return handler
+
+    return decorate
+
+
+def _view_allows_no_workspace(request):
+    """Resolve the exact HTTP handler/action, independent of legacy role skips."""
+    view_cls = _resolve_view_class(request)
+    if view_cls is None:
+        return False
+    method = request.method
+    callback = request.resolver_match.func
+    actions = getattr(callback, "actions", None)
+    if actions is not None:
+        if not isinstance(actions, dict):
+            return False
+        name = actions.get(method.lower())
+    else:
+        name = method.lower()
+    if not isinstance(name, str):
+        return False
+    handler = getattr(view_cls, name, None)
+    return method in getattr(handler, "_no_workspace_methods", ()) or (
+        method == "POST" and getattr(handler, "_read_query_post", False) is True
+    )
+
+
+def allows_no_organization(view):
+    """Mark a view that serves an account with no organization.
+
+    Authentication answers 403 ``no_active_organization`` when it resolves no
+    organization for a signed-in account (an account whose membership rows
+    are all inactive or removed: e-mail, OAuth and SSO sign-ups all create the
+    account's first organization), unless the view handling the request
+    carries this marker. Mark only the views such an account needs: signing
+    in and out, its own profile, and creating, choosing or joining an
+    organization. Works on a view class and on a function view built by
+    ``@api_view`` (place it above ``@api_view``).
+
+    A view that only a signed-out visitor reaches needs no marker: a request
+    without credentials never reaches this check. The AWS and GCP Marketplace
+    sign-up endpoints are such views; the register page that calls them is
+    shown only to signed-out visitors (``GuestGuard``).
+    """
+    view_cls = getattr(view, "cls", view)
+    view_cls.allows_no_organization = True
+    # Account recovery also works without a landing, but only for the concrete
+    # handlers declared now. A future write/action does not inherit a wildcard.
+    for method in ("post", "put", "patch", "delete"):
+        handler = vars(view_cls).get(method)
+        if callable(handler):
+            allows_no_workspace(method.upper())(handler)
+    return view
+
+
+def _view_allows_no_organization(request):
+    """Fail-closed: a view that cannot be resolved does not carry the marker."""
+    return getattr(_resolve_view_class(request), "allows_no_organization", False)
+
+
+def _require_an_organization(request):
+    """Refuse a signed-in request that resolved no organization.
+
+    The organization context comes only from an active membership. Views that
+    serve an account without one carry ``@allows_no_organization``.
+    """
+    if getattr(request, "organization", None) is not None:
+        return
+    if _view_allows_no_organization(request):
+        return
+    raise PermissionDenied(
+        "This account has no active organization membership.",
+        code=NO_ACTIVE_ORGANIZATION,
+    )
 
 
 def _resolve_view_class(request):
@@ -114,8 +216,14 @@ def _is_workspace_write_exempt_view(request):
     access.
     """
     view_cls = _resolve_view_class(request)
-    if getattr(view_cls, "workspace_write_exempt", False):
-        return True
+    return bool(
+        getattr(view_cls, "workspace_write_exempt", False)
+    ) or _is_read_query_post(request)
+
+
+def _is_read_query_post(request):
+    """Only the concrete, resolved read-query POST is a read, not every exemption."""
+    view_cls = _resolve_view_class(request)
     if view_cls is None or getattr(request, "method", None) != "POST":
         return False
     callback = request.resolver_match.func
@@ -131,6 +239,75 @@ def _is_workspace_write_exempt_view(request):
         getattr(getattr(view_cls, handler_name, None), "_read_query_post", False)
         is True
     )
+
+
+WORKSPACE_ACCOUNT_ROUTES = frozenset(
+    {
+        "switch_workspace",
+        "switch_organization",
+        "update-user-full-name",
+        "user-onboarding",
+        "user-logout",
+        "2fa_status",
+        "2fa_totp_setup",
+        "2fa_totp_confirm",
+        "2fa_totp_disable",
+        "2fa_verify_totp",
+        "2fa_verify_recovery",
+        "2fa_verify_passkey_options",
+        "2fa_verify_passkey",
+        "2fa_recovery_codes",
+        "2fa_recovery_regenerate",
+        "passkey_register_options",
+        "passkey_register_verify",
+        "passkey_list",
+        "passkey_detail",
+        "passkey_auth_options",
+        "passkey_auth_verify",
+    }
+)
+
+
+def _is_workspace_write(request):
+    return request.method in {
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+    } and not _is_read_query_post(request)
+
+
+def _workspace_selection_optional(request):
+    # No-workspace markers alone are NOT enough: key creation can carry that
+    # marker but still consumes request.workspace when a landing exists.
+    return _view_allows_no_organization(request) or _is_workspace_account_route(request)
+
+
+def _is_workspace_account_route(request):
+    match = getattr(request, "resolver_match", None)
+    return getattr(match, "url_name", None) in WORKSPACE_ACCOUNT_ROUTES
+
+
+def _refuse_unavailable_workspace(request):
+    return _is_workspace_write(request) and not _workspace_selection_optional(request)
+
+
+class ServiceEnvelopeEvalAuthentication(BaseAuthentication):
+    """The gateway service credential is valid only on standalone eval."""
+
+    def authenticate_header(self, request):
+        return "ServiceEnvelope"
+
+    def authenticate(self, request):
+        if "X-FA-Envelope" not in request.headers:
+            return None
+        from accounts.services.eval_envelope import authenticate_eval
+        from tfc.service_envelope import EnvelopeRejected
+
+        try:
+            return authenticate_eval(request)
+        except (EnvelopeRejected, PermissionDenied) as exc:
+            raise AuthenticationFailed("service_envelope_rejected") from exc
 
 
 class APIKeyAuthentication(BaseAuthentication):
@@ -152,6 +329,12 @@ class APIKeyAuthentication(BaseAuthentication):
                 organization_id=str(user.organization.id)
             )
 
+    def _decode_bearer(self, token):
+        return decode_token(token)
+
+    def _find_api_key(self, queryset, api_key, secret_key):
+        return find_api_key(queryset, api_key, secret_key)
+
     def authenticate(self, request):
         # Check for JWT token first
         auth_token = (
@@ -162,10 +345,10 @@ class APIKeyAuthentication(BaseAuthentication):
 
         if auth_token:
             try:
-                user, token, auth_scope = decode_token(auth_token)
-                # Allow org-less users to authenticate (they were removed
-                # from their org).  View layer handles access control via
-                # request.organization being None.
+                user, token, auth_scope = self._decode_bearer(auth_token)
+                # An account with no active membership still authenticates,
+                # but only views marked @allows_no_organization serve it
+                # (_require_an_organization below).
                 # Validate that user is active
                 if not user.is_active:
                     raise AuthenticationFailed("User account is inactive")
@@ -173,10 +356,14 @@ class APIKeyAuthentication(BaseAuthentication):
 
                 # Bind user context for structured logging
                 request.auth_scope = auth_scope
+                # decode_token validates a live browser access-session row; API
+                # pairs, OAuth tool tokens and service identities never set this.
+                request.credential_provenance = "interactive_session"
                 self._bind_user_context(user, auth_scope)
 
                 # Set workspace context after JWT authentication
                 self._set_workspace_context(request, user)
+                _require_an_organization(request)
                 return user, token
             except SamlCredentialInvalid as exc:
                 security_logger.warning(
@@ -197,39 +384,14 @@ class APIKeyAuthentication(BaseAuthentication):
             return None
 
         try:
-            org_api_key = OrgApiKey.objects.select_related(
-                "organization", "workspace"
-            ).get(
-                api_key=api_key,
-                secret_key=secret_key,
-                enabled=True,
-                deleted=False,
+            # Look the key up by its public id; the secret is checked against its
+            # keyed hash in constant time (accounts/api_key_lookup.py, L03).
+            org_api_key = authenticate_api_key(
+                api_key,
+                secret_key,
+                workspace_unavailable_on_write=_refuse_unavailable_workspace(request),
             )
-
-            # An ingest key lives inside a customer's untrusted process and may
-            # only write spans to the collector; refused before a user is chosen
-            # so it can never act as the organisation's system user.
-            if org_api_key.type == "ingest":
-                raise AuthenticationFailed("ingest keys cannot call the API")
-
-            # Validate that the API key has a valid organization
-            if not org_api_key.organization:
-                raise AuthenticationFailed("API key has no organization")
-
-            # Validate that the API key is enabled
-            if not org_api_key.enabled:
-                raise AuthenticationFailed("API key is disabled")
-
-            # Get or create a system user for this organization
-            if org_api_key.type == "system":
-                user = (
-                    User.objects.select_related("organization")
-                    .filter(organization=org_api_key.organization)
-                    .order_by("created_at")
-                    .first()
-                )
-            else:
-                user = org_api_key.user
+            user = org_api_key.user
 
             # Store the API key info in request for workspace context
             request.org_api_key = org_api_key
@@ -252,14 +414,34 @@ class APIKeyAuthentication(BaseAuthentication):
            (managers, signals, fields) that has no access to the request object.
         """
         from tfc.middleware.workspace_context import set_workspace_context
+        from tfc.utils.tenant_scope import (
+            acts_in_organization,
+            align_legacy_organization,
+        )
 
         # --- Step 1: Resolve current organization ---
         organization = self._resolve_organization(request, user)
 
+        # The organization context comes only from an active membership: the
+        # in-memory user record must not name an organization the account
+        # can no longer act in.
+        align_legacy_organization(user, organization)
+
         if not organization:
             request.workspace = None
             request.organization = None
+            set_workspace_context(
+                workspace=None, organization=None, user=user, require_workspace=True
+            )
             return
+
+        # An API key names its organization (every other source above already
+        # requires an active membership); the account acting for the key must
+        # still act in it. Refused here, before the workspace lookup runs.
+        if getattr(request, "org_api_key", None) is not None and not (
+            acts_in_organization(user, organization)
+        ):
+            raise PermissionDenied("Access denied to this workspace")
 
         # --- Step 2: Resolve workspace within that org ---
         workspace = self._get_requested_workspace(request, user, organization)
@@ -270,36 +452,49 @@ class APIKeyAuthentication(BaseAuthentication):
             else:
                 workspace = self._get_user_default_workspace(user, organization)
 
+        # A bound session must resolve an accessible workspace (742s/T-048).
+        # A global org role is not permission to run a workspace-less request.
+        if workspace is None and getattr(request, "auth_scope", None) is not None:
+            request.workspace = None
+            request.organization = organization
+            set_workspace_context(
+                workspace=None,
+                organization=organization,
+                user=user,
+                require_workspace=True,
+            )
+            raise PermissionDenied(
+                "This session has no accessible workspace in its organization.",
+                code="workspace_required",
+            )
+
         # Check workspace access permissions
         if workspace and not self._user_has_workspace_access(user, workspace):
             raise PermissionDenied("Access denied to this workspace")
 
+        is_write = _is_workspace_write(request)
+        # Empty landing is not permission to insert NULL-workspace data, even
+        # for global org roles. Exemptions require a resolved handler/method
+        # marker (including account/recovery), a read-query POST marker, or a
+        # workspace_read_only POST marker. Each handler owns its authorization.
+        # Legacy role-check path skips below must never waive this boundary.
+        if is_write and workspace is None and not _view_allows_no_workspace(request):
+            raise PermissionDenied(
+                "This request needs an accessible workspace.",
+                code="workspace_required",
+            )
+
         # Check write permissions for write operations
-        # These paths are excluded from workspace write checks because they:
+        # These resolved account routes skip workspace write checks because they:
         # - Don't modify workspace data (switch operations, profile updates)
         # - Or need to be accessible regardless of workspace role
-        excluded_paths = [
-            "workspace/switch/",
-            "organizations/switch/",
-            "update-user-full-name",  # Users can always update their own profile
-            "onboarding/",  # Users can always update their own onboarding profile
-            "logout/",  # Users can always invalidate their own access token
-            "2fa/",  # Users can always manage their own second factor state
-            "passkey/",  # Users can always manage their own passkey challenges
-            "passkeys/",  # Users can always manage their own passkey records
-        ]
-
         should_skip_write_check = (
             _is_workspace_write_exempt_view(request)
-            or any(excluded_path in request.path for excluded_path in excluded_paths)
+            or _is_workspace_account_route(request)
             or _is_annotation_queue_role_scoped_write_path(request.path)
         )
 
-        if (
-            request.method in ["POST", "PUT", "PATCH", "DELETE"]
-            and workspace
-            and not should_skip_write_check
-        ):
+        if is_write and not should_skip_write_check and workspace is not None:
             if not self._can_write_to_workspace(user, workspace):
                 raise PermissionDenied("Write access denied to this workspace")
 
@@ -307,11 +502,13 @@ class APIKeyAuthentication(BaseAuthentication):
         request.workspace = workspace
         request.organization = organization
 
-        # Thread-local for model-layer code
+        # None means no accessible workspace, never an unscoped data query.
+        # Organization-level operations remain available without a landing.
         set_workspace_context(
             workspace=workspace,
             organization=organization,
             user=user,
+            require_workspace=True,
         )
 
     def _resolve_organization(self, request, user):
@@ -429,13 +626,11 @@ class APIKeyAuthentication(BaseAuthentication):
             return first_membership.organization
 
         # 5. Legacy fallback: user.organization FK (for old accounts without membership records)
-        # Only use if user has no memberships at all (truly legacy account)
-        if (
-            user.organization
-            and not OrganizationMembership.no_workspace_objects.filter(
-                user=user
-            ).exists()
-        ):
+        # Only use if user has no membership rows at all, in any state (truly
+        # legacy account): an inactive or removed row grants nothing.
+        from tfc.utils.tenant_scope import has_membership_rows
+
+        if user.organization and not has_membership_rows(user):
             logger.debug(
                 "org_resolved", source="user_fk", org_id=str(user.organization_id)
             )
@@ -466,9 +661,26 @@ class APIKeyAuthentication(BaseAuthentication):
                 )
             return workspace
 
-        # First, check if this is an API key request and get workspace from API key
+        is_write = _is_workspace_write(request)
+        selection_optional = _workspace_selection_optional(request)
+        refuse_unavailable = is_write and not selection_optional
+
+        # A pinned credential is an explicit destination, not a landing hint.
+        # Re-read its workspace: cached credential relations can be stale.
         if hasattr(request, "org_api_key") and request.org_api_key:
             org_api_key = request.org_api_key
+            if refuse_unavailable and org_api_key.workspace_id is not None:
+                workspace = (
+                    accessible_workspace_selections(user)
+                    .filter(pk=org_api_key.workspace_id, organization=organization)
+                    .first()
+                )
+                if workspace is None:
+                    raise PermissionDenied(
+                        "The selected workspace is unavailable. Select an accessible workspace and retry.",
+                        code="workspace_unavailable",
+                    )
+                return workspace
             if org_api_key.workspace and org_api_key.workspace.is_active:
                 if self._user_has_workspace_access(user, org_api_key.workspace):
                     return org_api_key.workspace
@@ -482,15 +694,26 @@ class APIKeyAuthentication(BaseAuthentication):
 
         if workspace_id:
             try:
+                if refuse_unavailable:
+                    # A write destination is never an existence probe. Inaccessible
+                    # and missing IDs both miss this already-authorized lookup.
+                    return accessible_workspace_selections(user).get(
+                        id=workspace_id, organization=organization
+                    )
                 workspace = Workspace.objects.get(
                     id=workspace_id, organization=organization, is_active=True
                 )
                 if self._user_has_workspace_access(user, workspace):
                     return workspace
+                if selection_optional:
+                    return (
+                        None  # Account/navigation operations do not use this selector.
+                    )
                 # User explicitly requested a workspace they can't access.
                 # Only reject if they already have workspace memberships in
                 # this org (meaning they were assigned to specific workspaces).
-                # Users with zero memberships need the fallback auto-assignment.
+                # With no memberships, the access-checked landing may be None;
+                # authentication does not auto-assign a workspace.
                 has_any_ws = WorkspaceMembership.no_workspace_objects.filter(
                     user=user,
                     workspace__organization=organization,
@@ -500,6 +723,14 @@ class APIKeyAuthentication(BaseAuthentication):
                     raise PermissionDenied("Access denied to this workspace")
             except (Workspace.DoesNotExist, ValueError):
                 pass
+            except ValidationError:
+                if not is_write:
+                    raise  # Preserve the existing read behavior for malformed IDs.
+            if refuse_unavailable:
+                raise PermissionDenied(
+                    "The selected workspace is unavailable. Select an accessible workspace and retry.",
+                    code="workspace_unavailable",
+                )
 
         return None
 
@@ -512,134 +743,17 @@ class APIKeyAuthentication(BaseAuthentication):
         return user.can_write_to_workspace(workspace)
 
     def _get_user_default_workspace(self, user, organization):
-        """Get user's preferred workspace within the given organization."""
-        if not organization:
-            return None
+        """Select existing access only; authentication never provisions access.
 
-        # Token-cached users can retain old preferences after a workspace
-        # switch. Read persisted config just as organization fallback does,
-        # without mutating the cached user or overriding explicit scope.
-        fresh_config = (
-            User.objects.filter(pk=user.pk).values_list("config", flat=True).first()
-        ) or {}
-
-        # Check org-specific workspace preference
-        org_workspace_map = fresh_config.get("orgWorkspaceMap", {})
-        workspace_id = org_workspace_map.get(str(organization.id))
-
-        # Fallback: legacy currentWorkspaceId (only if it belongs to this org)
-        if not workspace_id:
-            workspace_id = fresh_config.get("currentWorkspaceId") or fresh_config.get(
-                "defaultWorkspaceId"
-            )
-
-        if workspace_id:
-            try:
-                workspace = Workspace.objects.get(
-                    id=workspace_id,
-                    organization=organization,
-                    is_active=True,
-                )
-                if user.can_access_workspace(workspace):
-                    return workspace
-            except (Workspace.DoesNotExist, ValueError):
-                pass
-
-        # Fallback: use first existing workspace membership in this org
-        existing_ws_membership = (
-            WorkspaceMembership.no_workspace_objects.filter(
-                user=user,
-                workspace__organization=organization,
-                workspace__is_active=True,
-                is_active=True,
-            )
-            .select_related("workspace")
-            .first()
-        )
-        if existing_ws_membership:
-            return existing_ws_membership.workspace
-
-        # Last resort: get or create default workspace (only creates membership
-        # when user has NO workspace memberships in this org)
-        return self._get_or_create_default_workspace(user, organization)
+        Workspace creation and membership grants belong to the explicit
+        onboarding, organization creation and invitation flows. A denied
+        landing must remain None, including for a first-time org member.
+        """
+        return resolve_user_workspace(user, organization)
 
     def _get_scoped_default_workspace(self, user, organization):
-        """Resolve a bound-org workspace without consulting mutable user config."""
-
-        membership = (
-            WorkspaceMembership.no_workspace_objects.filter(
-                user=user,
-                workspace__organization=organization,
-                workspace__is_active=True,
-                is_active=True,
-            )
-            .select_related("workspace")
-            .first()
-        )
-        if membership:
-            return membership.workspace
-        workspace = Workspace.objects.filter(
-            organization=organization, is_default=True, is_active=True
-        ).first()
-        return workspace if workspace and user.can_access_workspace(workspace) else None
-
-    def _get_or_create_default_workspace(self, user, organization):
-        """Get or create the default workspace for an organization.
-
-        Also ensures the user has a WorkspaceMembership for the workspace,
-        creating one (as workspace_admin) if missing.  Without a membership
-        the next request's ``_user_has_workspace_access`` check would fail.
-        """
-        try:
-            default_workspace = Workspace.objects.get(
-                organization=organization, is_default=True, is_active=True
-            )
-        except Workspace.DoesNotExist:
-            try:
-                default_workspace = Workspace.objects.create(
-                    name="Default Workspace",
-                    organization=organization,
-                    is_default=True,
-                    is_active=True,
-                    created_by=user,
-                )
-            except IntegrityError as e:
-                if "unique_default_workspace_per_org" in str(e):
-                    try:
-                        default_workspace = Workspace.objects.get(
-                            organization=organization,
-                            is_default=True,
-                            is_active=True,
-                        )
-                    except Workspace.DoesNotExist:
-                        logger.error(
-                            f"Failed to get default workspace after creation conflict: {e}"
-                        )
-                        return None
-                else:
-                    logger.error(f"Failed to create default workspace: {e}")
-                    return None
-            except Exception as e:
-                logger.error(f"Failed to create default workspace: {e}")
-                return None
-
-        # Ensure the user has a workspace membership so that subsequent
-        # _user_has_workspace_access checks pass.
-        if not WorkspaceMembership.no_workspace_objects.filter(
-            user=user, workspace=default_workspace, is_active=True
-        ).exists():
-            try:
-                create_workspace_membership(
-                    workspace=default_workspace,
-                    user=user,
-                    role=OrganizationRoles.WORKSPACE_ADMIN,
-                    invited_by=user,
-                )
-            except IntegrityError:
-                # Race condition: another request created it concurrently.
-                pass
-
-        return default_workspace
+        """Apply the same landing policy inside the immutable signed-in org."""
+        return resolve_user_workspace(user, organization)
 
 
 class LangfuseBasicAuthentication(APIKeyAuthentication):
@@ -682,39 +796,12 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
             raise AuthenticationFailed("Empty credentials in Basic auth")
 
         # Look up OrgApiKey using the Langfuse credentials
-        try:
-            org_api_key = OrgApiKey.objects.select_related(
-                "organization", "workspace"
-            ).get(
-                api_key=public_key,
-                secret_key=secret_key,
-                enabled=True,
-                deleted=False,
-            )
-        except OrgApiKey.DoesNotExist as e:
-            raise AuthenticationFailed("Invalid API key or secret key") from e
-
-        if not org_api_key.organization:
-            raise AuthenticationFailed("API key has no organization")
-
-        # Same refusal as the parent class: an ingest key may only write spans
-        # to the collector, even if a user was attached to it.
-        if org_api_key.type == "ingest":
-            raise AuthenticationFailed("ingest keys cannot call the API")
-
-        # Resolve user (same logic as parent class)
-        if org_api_key.type == "system":
-            user = (
-                User.objects.select_related("organization")
-                .filter(organization=org_api_key.organization)
-                .order_by("created_at")
-                .first()
-            )
-        else:
-            user = org_api_key.user
-
-        if not user:
-            raise AuthenticationFailed("No user found for API key")
+        org_api_key = authenticate_api_key(
+            public_key,
+            secret_key,
+            workspace_unavailable_on_write=_refuse_unavailable_workspace(request),
+        )
+        user = org_api_key.user
 
         request.org_api_key = org_api_key
         self._bind_user_context(user)
@@ -961,13 +1048,20 @@ def decrypt_message(encrypted_message: str) -> dict[str, Any]:
         raise AuthenticationFailed("Invalid token format") from ex
 
 
-def _touch_non_saml_access_token(token_id, user_id, now):
-    """One-query liveness check; even a poisoned cache cannot authorize SAML."""
+def _touch_non_saml_access_token(token_id, user_id, now, *, user):
+    """Validate cached authority on the primary in the existing liveness write.
+
+    A bulk update or a racing cache refill can bypass signal eviction. A changed
+    authority bit makes the cache hit miss, so decode_token reloads the User
+    before any permission sees it. Ordinary hits still need only one query.
+    """
     return (
-        AuthToken.objects.filter(
+        AuthToken.objects.using("default").filter(
             id=token_id,
             user_id=user_id,
             user__is_active=True,
+            user__is_staff=user.is_staff,
+            user__is_superuser=user.is_superuser,
             auth_type=AuthTokenType.ACCESS.value,
             is_active=True,
             last_used_at__gte=now
@@ -979,7 +1073,14 @@ def _touch_non_saml_access_token(token_id, user_id, now):
     )
 
 
-def decode_token(token: str, *, transport: str = "http"):
+def decode_token(token: str, *, transport: str = "http", touch: bool = True):
+    """Validate a bearer; optional read-only mode never reads or writes auth cache.
+
+    Invitation previews/refusals must not extend token lifetimes or mutate cache
+    state before the handler runs. That mode validates authoritative rows with
+    all the same liveness, identity and SAML checks, but without bookkeeping.
+    Ordinary authentication retains its existing sliding expiry/cache behavior.
+    """
     try:
         if not token:
             raise AuthenticationFailed("empty token")
@@ -992,7 +1093,9 @@ def decode_token(token: str, *, transport: str = "http"):
 
         now = timezone.now()
         cache_key = f"access_token_{token_id}"
-        cache_data = cache.get(cache_key)
+        # Even a cache read may evict an expired entry, so bypass it entirely
+        # in no-touch mode rather than just suppressing set/delete calls.
+        cache_data = cache.get(cache_key) if touch else None
         # Older pods may cache SAML as ordinary. Only this code writes the
         # versioned marker, after authoritative classification and validation.
         # Keep the existing cache key so all revocation paths still evict it.
@@ -1003,10 +1106,14 @@ def decode_token(token: str, *, transport: str = "http"):
                 and str(user.pk) == str(user_id)
                 and user.is_active
                 and cache_data.get("token") == token
-                and _touch_non_saml_access_token(token_id, user_id, now)
+                and _touch_non_saml_access_token(token_id, user_id, now, user=user)
             ):
                 if "organization" not in user._state.fields_cache:
-                    user = User.objects.select_related("organization").get(pk=user.pk)
+                    user = (
+                        User.objects.using("default")
+                        .select_related("organization")
+                        .get(pk=user.pk)
+                    )
                 cache.set(
                     cache_key,
                     {"token": token, "user": user, "non_saml_v1": True},
@@ -1018,7 +1125,7 @@ def decode_token(token: str, *, transport: str = "http"):
         if cache_data:
             cache.delete(cache_key)
         token_row = (
-            AuthToken.objects.filter(id=token_id)
+            AuthToken.objects.using("default").filter(id=token_id)
             .values(
                 "id",
                 "user_id",
@@ -1038,8 +1145,12 @@ def decode_token(token: str, *, transport: str = "http"):
             credential = validate_saml_credential(
                 token_row, user_id, now=now, transport=transport
             )
-            user = User.objects.select_related("organization").get(id=user_id)
-            if (
+            user = (
+                User.objects.using("default")
+                .select_related("organization")
+                .get(id=user_id, is_active=True)
+            )
+            if touch and (
                 AuthToken.objects.filter(id=token_id, is_active=True).update(
                     last_used_at=now
                 )
@@ -1062,25 +1173,30 @@ def decode_token(token: str, *, transport: str = "http"):
             token_row["last_used_at"] is None
             or token_row["last_used_at"] < expiration_threshold
         ):
-            # Do not deactivate a token concurrently touched by a live request.
-            AuthToken.objects.filter(
-                id=token_id, last_used_at=token_row["last_used_at"]
-            ).update(is_active=False)
+            # Do not deactivate a token concurrently touched by a live request,
+            # or perform any cleanup from a read-only invitation request.
+            if touch:
+                AuthToken.objects.filter(
+                    id=token_id, last_used_at=token_row["last_used_at"]
+                ).update(is_active=False)
             raise AuthenticationFailed(
                 f"Access token expired due to inactivity since {AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES} minutes"
             )
 
-        user = User.objects.select_related("organization").get(
-            id=user_id, is_active=True
+        user = (
+            User.objects.using("default")
+            .select_related("organization")
+            .get(id=user_id, is_active=True)
         )
-        if not _touch_non_saml_access_token(token_id, user_id, now):
-            raise AuthenticationFailed("Invalid auth token")
+        if touch:
+            if not _touch_non_saml_access_token(token_id, user_id, now, user=user):
+                raise AuthenticationFailed("Invalid auth token")
 
-        cache.set(
-            cache_key,
-            {"token": token, "user": user, "non_saml_v1": True},
-            timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-        )
+            cache.set(
+                cache_key,
+                {"token": token, "user": user, "non_saml_v1": True},
+                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+            )
 
         return user, token, None
 
@@ -1126,9 +1242,9 @@ def _database_unavailable_metadata(exc):
     cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
     metadata = {
         "error_class": bounded_name(type(exc).__name__),
-        "cause_class": bounded_name(type(cause).__name__)
-        if cause is not None
-        else None,
+        "cause_class": (
+            bounded_name(type(cause).__name__) if cause is not None else None
+        ),
         "sqlstate": None,
         "source_module": None,
         "source_function": None,
@@ -1219,4 +1335,9 @@ def custom_exception_handler(exc, context):
             details=error_details(response.data),
         )
 
+    if response is not None:
+        from accounts.api_key_policy import APIKeyRetired
+
+        if isinstance(exc, APIKeyRetired):
+            response.data["create_url"] = exc.create_url
     return response

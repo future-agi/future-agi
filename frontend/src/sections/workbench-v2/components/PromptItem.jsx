@@ -207,6 +207,7 @@ export default function PromptItem({
           >
             <Box
               component="img"
+              alt=""
               src={PROMPT_ICON_MAPPER[type] ?? PROMPT_ICON_MAPPER["PROMPT"]}
               sx={{
                 height: 20,
@@ -289,6 +290,7 @@ export default function PromptItem({
           <IconButton
             ref={ref}
             size="small"
+            aria-label={`More actions for ${name}`}
             sx={{ ml: "auto" }}
             onClick={(e) => {
               e.stopPropagation();

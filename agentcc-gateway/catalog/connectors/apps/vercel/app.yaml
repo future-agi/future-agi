@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: vercel
+version: 1.0.0
+name: Vercel
+description: "Projects, deployments, logs and docs."
+vendor:
+  name: Vercel
+  domains: [vercel.com]
+eeCategory: developer
+group: other
+categories: [developer, hosting]
+tags: [deployments, projects]
+docsUrl: https://vercel.com/docs/agent-resources/vercel-mcp
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://vercel.com/docs/agent-resources/vercel-mcp
+    fetchedAt: 2026-10-21

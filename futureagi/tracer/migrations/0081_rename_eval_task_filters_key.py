@@ -27,9 +27,9 @@ from django.db import migrations
 logger = logging.getLogger(__name__)
 
 
-def _rename_in_eval_task_filters(apps, stats):
+def _rename_in_eval_task_filters(apps, stats, alias):
     EvalTask = apps.get_model("tracer", "EvalTask")
-    for et in EvalTask.objects.iterator(chunk_size=500):
+    for et in EvalTask.objects.using(alias).iterator(chunk_size=500):
         try:
             f = et.filters
             if not isinstance(f, dict):
@@ -44,7 +44,7 @@ def _rename_in_eval_task_filters(apps, stats):
             else:
                 f.pop("span_attributes_filters")
             et.filters = f
-            et.save(update_fields=["filters"])
+            et.save(using=alias, update_fields=["filters"])
             stats["renamed"] += 1
         except Exception as e:
             stats["failed"] += 1
@@ -77,7 +77,7 @@ def _restore_in_eval_task_filters(apps, stats):
 
 def forwards(apps, schema_editor):
     stats = {"renamed": 0, "failed": 0}
-    _rename_in_eval_task_filters(apps, stats)
+    _rename_in_eval_task_filters(apps, stats, schema_editor.connection.alias)
     print(
         f"[rename_eval_task_filters_key] {stats['renamed']} eval tasks "
         f"renamed, {stats['failed']} rows skipped due to errors"

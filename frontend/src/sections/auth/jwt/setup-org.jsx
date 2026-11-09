@@ -19,6 +19,12 @@ import PropTypes from "prop-types";
 import { paths } from "src/routes/paths";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { Controller, useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -816,7 +822,7 @@ const SetupOrganization = ({ getStarted = false }) => {
     switch (activeStep) {
       case 0:
         return (
-          <Stack spacing={2} width="440px">
+          <Stack spacing={2} width={{ xs: "100%", lg: "440px" }}>
             <Box>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
@@ -890,7 +896,7 @@ const SetupOrganization = ({ getStarted = false }) => {
 
       case 1:
         return (
-          <Stack spacing={2} width="440px">
+          <Stack spacing={2} width={{ xs: "100%", lg: "440px" }}>
             <Box>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
@@ -1042,11 +1048,10 @@ const SetupOrganization = ({ getStarted = false }) => {
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+    <Box sx={authSplitSx}>
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           bgcolor: "background.paper",
           display: "flex",
           flexDirection: "column",
@@ -1058,7 +1063,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           sx={{
             maxWidth: "640px",
             width: "100%",
-            px: 10,
+            ...authFormGutterSx,
             paddingY: "100px",
             display: "flex",
             flexDirection: "column",
@@ -1076,13 +1081,7 @@ const SetupOrganization = ({ getStarted = false }) => {
         </Box>
       </Box>
 
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

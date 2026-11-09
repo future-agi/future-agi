@@ -1,0 +1,37 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#provider"
+app: close
+id: close-mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: ga, source: https://developer.close.com/mcp }
+transport: { kind: http, url: https://mcp.close.com/mcp }
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Close-API-Key
+      secret: true
+      label: API key
+      helpUrl: https://developer.close.com/mcp
+    - in: header
+      name: Close-Scope
+      secret: false
+      label: Scope
+      help: The scope your Close admin granted the key.
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-19
+  - fact: auth.credentialParts
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-19

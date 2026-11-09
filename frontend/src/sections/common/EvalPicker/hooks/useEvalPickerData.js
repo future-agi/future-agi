@@ -53,9 +53,31 @@ export function normalizeOldEndpointEval(e) {
     model: e.model || e.selected_model,
     owner,
     eval_template_tags: e.eval_template_tags,
+    // integration S9b: a typed eval's judge calls a row (the run estimate).
+    ...(e.judge_models ? { judge_models: e.judge_models } : {}),
     // Keep original for pass-through
     _original: e,
   };
+}
+
+// The old getEvalsList endpoint has no sort: the picker sorts its rows by
+// the column the user picked (the same keys the templates endpoint sorts).
+const SORT_KEYS = {
+  name: (it) => String(it.name ?? "").toLowerCase(),
+  last_updated: (it) => String(it.last_updated ?? ""),
+  created_by_name: (it) => String(it.created_by_name ?? "").toLowerCase(),
+};
+
+/** Rows sorted by `sorting[0]` ({id, desc}); unknown ids keep the order. */
+export function sortPickerItems(items, sorting) {
+  const s = sorting?.[0];
+  const key = s && SORT_KEYS[s.id];
+  if (!key) return items;
+  const dir = s.desc ? -1 : 1;
+  return items
+    .map((it, i) => [it, i])
+    .sort(([a, i], [b, j]) => dir * key(a).localeCompare(key(b)) || i - j)
+    .map(([it]) => it);
 }
 
 /**
@@ -85,6 +107,7 @@ export function useEvalPickerData({
     // Locked filters override and cannot be removed by the user.
     const lf = lockedFilters;
     if (lf?.eval_type) f.eval_type = lf.eval_type;
+    if (lf?.eval_type_not) f.eval_type_not = lf.eval_type_not;
     if (lf?.output_type) f.output_type = lf.output_type;
     if (lf?.template_type) f.template_type = lf.template_type;
     return Object.keys(f).length > 0 ? f : null;
@@ -182,6 +205,7 @@ export function useEvalPickerData({
     const tags = filters?.tags;
     const nameMatch = filters?.search;
     return items.filter((it) => {
+      if (lf?.eval_type_not?.includes(it.eval_type)) return false;
       if (evalTypes?.length && !evalTypes.includes(it.eval_type)) return false;
       if (outputTypes?.length && !outputTypes.includes(it.output_type))
         return false;
@@ -202,12 +226,16 @@ export function useEvalPickerData({
 
   const total = isUsingOldEndpoint ? filteredItems.length : rawData?.total || 0;
 
-  // Client-side pagination for old endpoint (it returns all evals at once)
+  // Client-side sort + pagination for old endpoint (it returns all evals
+  // at once, unsorted).
   const paginatedItems = useMemo(() => {
     if (!isUsingOldEndpoint) return filteredItems;
     const start = page * pageSize;
-    return filteredItems.slice(start, start + pageSize);
-  }, [filteredItems, isUsingOldEndpoint, page, pageSize]);
+    return sortPickerItems(filteredItems, sorting).slice(
+      start,
+      start + pageSize,
+    );
+  }, [filteredItems, isUsingOldEndpoint, page, pageSize, sorting]);
 
   return {
     items: paginatedItems,

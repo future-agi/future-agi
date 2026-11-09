@@ -1,0 +1,92 @@
+{
+  "_comment": "H16: one cloud VM per walk group (GATEWAY-WALK-PLAN-706). launch.sh <group> reads this. job: gate (typecheck, catalog, offline harness), walks (bin/e2e build + one up per profile + playwright.walk.config.ts), hosted (W19, e2e/walks/hosted/run-hosted.sh). grep selects the walks by their @walk-Wnn tags; strict names the walks that need the egress kit (e2e/walks/kit/strict-kit.sh) for acceptance. productSha is the product commit the run stands for (shipped with --ref; the receipt checks HEAD's product is identical to it). lane is the cloud lane (one VM each); gate and dryrun-int2 share gw-walk-int2, so the cheap gate and the dry run reuse one STANDARD VM and its Docker images.",
+  "gate": {
+    "lane": "gw-walk-int2",
+    "job": "gate"
+  },
+  "dryrun-int2": {
+    "lane": "gw-walk-int2",
+    "job": "walks",
+    "stack": "standalone",
+    "profiles": [
+      "stock",
+      "mcp-catalog",
+      "mcp",
+      "mcp-signin",
+      "mcp-otel",
+      "pricefeed",
+      "onekey-cat"
+    ],
+    "grep": "@walk-W00",
+    "strict": [],
+    "replicas": 1,
+    "productSha": "c99dc71f351285eca0060b510a719b251297aa70"
+  },
+  "vm-1": {
+    "lane": "gw-walk-vm-1",
+    "job": "walks",
+    "stack": "standalone",
+    "profiles": ["stock"],
+    "grep": "@walk-W0[0-4](?![0-9])",
+    "strict": ["W01", "W02"],
+    "replicas": 1,
+    "productSha": ""
+  },
+  "vm-2": {
+    "lane": "gw-walk-vm-2",
+    "job": "walks",
+    "stack": "standalone",
+    "profiles": ["onekey-cat", "pricefeed", "stock"],
+    "grep": "@walk-W0[056](?![0-9])",
+    "strict": ["W06"],
+    "replicas": 1,
+    "productSha": ""
+  },
+  "vm-3a": {
+    "lane": "gw-walk-vm-3a",
+    "job": "walks",
+    "stack": "standalone",
+    "profiles": ["mcp", "mcp-signin", "mcp-catalog"],
+    "grep": "@walk-W(00|07|08|09|10)(?![0-9])",
+    "strict": ["W07", "W08", "W09", "W10"],
+    "replicas": 2,
+    "productSha": ""
+  },
+  "vm-3b": {
+    "lane": "gw-walk-vm-3b",
+    "job": "walks",
+    "stack": "standalone",
+    "profiles": ["mcp", "mcp-otel"],
+    "grep": "@walk-W(00|1[1-6])(?![0-9])",
+    "strict": ["W13", "W14"],
+    "replicas": 2,
+    "productSha": ""
+  },
+  "vm-4": {
+    "lane": "gw-walk-vm-4",
+    "job": "walks",
+    "stack": "distributed",
+    "profiles": ["stock"],
+    "grep": "@walk-W(00|17|18)(?![0-9])",
+    "strict": ["W17", "W18"],
+    "replicas": 1,
+    "productSha": ""
+  },
+  "w18": {
+    "lane": "gw-walk-w18",
+    "job": "walks",
+    "stack": "standalone",
+    "profiles": ["stock"],
+    "grep": "@walk-W18(?![0-9])",
+    "strict": ["W18"],
+    "replicas": 1,
+    "productSha": ""
+  },
+  "vm-5": {
+    "lane": "gw-walk-vm-5",
+    "job": "hosted",
+    "grep": "@walk-W19",
+    "strict": ["W19"],
+    "productSha": ""
+  }
+}

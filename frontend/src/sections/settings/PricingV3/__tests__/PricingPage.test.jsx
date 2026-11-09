@@ -1,3 +1,4 @@
+import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -105,6 +106,7 @@ const MOCK_PLANS_RESPONSE = {
             has_knowledge_base: true,
             has_review_workflow: true,
             has_scim: true,
+            has_project_rbac: true,
             has_audit_logs: true,
             has_data_masking: false,
             has_optimization: true,
@@ -121,6 +123,7 @@ const MOCK_PLANS_RESPONSE = {
             has_knowledge_base: true,
             has_review_workflow: true,
             has_scim: true,
+            has_project_rbac: true,
             has_audit_logs: true,
             has_data_masking: true,
             has_optimization: true,
@@ -156,6 +159,27 @@ describe("PricingPage", () => {
     vi.clearAllMocks();
     mockGet.mockResolvedValue(MOCK_PLANS_RESPONSE);
     mockPost.mockResolvedValue({ data: { result: {} } });
+  });
+
+  it("shows Plans couldn't be loaded with Retry instead of an empty tier picker when the request fails", async () => {
+    mockGet
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Not found"), { statusCode: 404 }),
+      )
+      .mockResolvedValue(MOCK_PLANS_RESPONSE);
+    const { default: PricingPage } = await import("../PricingPage");
+    renderWithQuery(<PricingPage />);
+
+    expect(
+      await screen.findByText("Plans couldn't be loaded"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Choose your tier")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Choose your tier")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Plans couldn't be loaded"),
+    ).not.toBeInTheDocument();
   });
 
   it("should be importable", async () => {
@@ -203,6 +227,45 @@ describe("PricingPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/Add Boost Add-on/i)).toBeInTheDocument();
     });
+  });
+
+  // Ruling 491 (b): closing the Add dialog used to reset the plan and action at
+  // once, so while it faded out it showed "Remove ?" and a Remove button.
+  it("keeps the Add title and action while the Add Scale dialog closes", async () => {
+    const { default: PricingPage } = await import("../PricingPage");
+    renderWithQuery(<PricingPage />);
+
+    fireEvent.click(await screen.findByText("Add Scale"));
+    const dialog = await screen.findByRole("dialog");
+    const titleText = () =>
+      document.getElementById("custom-dialog-title")?.textContent ?? null;
+    const removeButton = () =>
+      Array.from(document.querySelectorAll('[role="dialog"] button')).some(
+        (b) => /^\s*Remove\s*$/.test(b.textContent),
+      );
+    expect(titleText()).toMatch(/^Add Scale Add-on/);
+
+    const seen = [];
+    const record = () =>
+      seen.push({ title: titleText(), remove: removeButton() });
+    const observer = new MutationObserver(record);
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+    });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    record();
+    // Still mounted: this is the fade-out, not after it.
+    expect(document.getElementById("custom-dialog-title")).not.toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    observer.disconnect();
+
+    const during = seen.filter((s) => s.title !== null);
+    expect(during.length).toBeGreaterThan(0);
+    expect(during.filter((s) => /^Remove/.test(s.title))).toEqual([]);
+    expect(during.filter((s) => s.remove)).toEqual([]);
   });
 
   it("shows remove-addon warning dialog with plan parameter", async () => {
@@ -276,6 +339,63 @@ describe("PricingPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Storage")).toBeInTheDocument();
     });
+  });
+
+  // Ruling 383: SCIM and project-level RBAC are not built, so no pricing copy
+  // offers them, even though the plan entitlements still carry the flags.
+  it("never offers SCIM or project RBAC in the matrix or the add-on cards", async () => {
+    const { default: PricingPage } = await import("../PricingPage");
+    renderWithQuery(<PricingPage />);
+
+    expect(await screen.findByText("Feature comparison")).toBeInTheDocument();
+    expect(screen.getAllByText("Custom Roles").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/scim/i)).toBeNull();
+    expect(screen.queryByText(/project rbac/i)).toBeNull();
+  });
+
+  it("never lists SCIM or project RBAC in the add-on confirmation", async () => {
+    const { default: PricingPage } = await import("../PricingPage");
+    renderWithQuery(<PricingPage />);
+
+    fireEvent.click(await screen.findByText("Add Scale"));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      "You\u2019ll get access to these features",
+    );
+    expect(dialog).toHaveTextContent("Optimization");
+    expect(dialog.textContent).not.toMatch(/scim|rbac/i);
+  });
+
+  it("never lists SCIM or project RBAC among a custom plan's features", async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        result: {
+          ...MOCK_PLANS_RESPONSE.data.result,
+          current_plan: "custom",
+          isCustomPricing: true,
+          customDetails: {
+            platform_fee: 12000,
+            platform_fee_billing_cycle: 12,
+            per_charge_amount: 12000,
+            contract_end_date: "2026-12-31",
+            features: {
+              has_scim: true,
+              has_project_rbac: true,
+              has_custom_roles: true,
+              monitors: 100,
+            },
+            pricing: {},
+          },
+        },
+      },
+    });
+    const { default: PricingPage } = await import("../PricingPage");
+    renderWithQuery(<PricingPage />);
+
+    expect(await screen.findByText("Your plan features")).toBeInTheDocument();
+    expect(screen.getByText("Custom Roles")).toBeInTheDocument();
+    expect(screen.queryByText(/scim/i)).toBeNull();
+    expect(screen.queryByText(/project rbac/i)).toBeNull();
   });
 
   it("renders custom pricing from the v2 camelCase contract", async () => {

@@ -16,11 +16,18 @@ def _guard_source() -> str:
     return source[start:end]
 
 
+def _runtime_source() -> str:
+    source = ENTRYPOINT.read_text()
+    start = source.index("CLOUD_STARTUP=false")
+    end = source.index("STARTUP_DB_MUTATION_MODE=", start)
+    return source[start:end]
+
+
 def _startup_source() -> str:
     source = ENTRYPOINT.read_text()
     start = source.index("# Run startup checks for services that need them")
     end = source.index("should_register_temporal_schedules()", start)
-    return source[start:end]
+    return f"{_runtime_source()}\n{source[start:end]}"
 
 
 def _run_guard(
@@ -401,6 +408,7 @@ def test_backend_forwards_sigterm_so_granian_drains_in_flight_requests(tmp_path)
     script.write_text(
         "set -e\nSERVICE_TYPE=backend\nENV_TYPE=prod\nNO_STARTUP_DB_MUTATIONS=true\n"
         "ENABLE_HTTP=true\nENABLE_GRPC=false\nGRANIAN_WORKERS=1\nGRANIAN_THREADS=1\n"
+        f"{_runtime_source()}\n"
         f"{source[source.index('should_register_temporal_schedules()') :]}"
     )
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}

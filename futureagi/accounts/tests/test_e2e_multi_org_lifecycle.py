@@ -130,7 +130,7 @@ class TestCreateAdditionalOrg:
         assert mem.role == "Owner"
         assert mem.is_active is True
 
-    def test_new_org_has_default_workspace_and_api_key(self, auth_client, user):
+    def test_new_org_has_default_workspace_and_no_api_key(self, auth_client, user):
         resp = auth_client.post(
             "/accounts/organizations/new/",
             {"name": "Org WS"},
@@ -141,9 +141,8 @@ class TestCreateAdditionalOrg:
         assert Workspace.objects.filter(
             organization_id=org_id, is_default=True
         ).exists()
-        assert OrgApiKey.no_workspace_objects.filter(
-            organization_id=org_id, type="system"
-        ).exists()
+        assert resp.status_code == status.HTTP_201_CREATED
+        assert not OrgApiKey._base_manager.filter(organization_id=org_id).exists()
 
     def test_create_three_plus_orgs_all_appear(self, auth_client, user, organization):
         for i in range(3):
@@ -260,6 +259,25 @@ class TestOrgSwitching:
         )
         return org_b, ws_b
 
+    @pytest.fixture
+    def user_in_org_b_ws(self, user, org_b_with_ws):
+        """The active workspace row an org Member needs to land in Org B WS."""
+        org_b, ws_b = org_b_with_ws
+        WorkspaceMembership.no_workspace_objects.get_or_create(
+            workspace=ws_b,
+            user=user,
+            defaults={
+                "role": OrganizationRoles.WORKSPACE_MEMBER,
+                "level": Level.WORKSPACE_MEMBER,
+                "organization_membership": (
+                    OrganizationMembership.no_workspace_objects.get(
+                        user=user, organization=org_b
+                    )
+                ),
+                "is_active": True,
+            },
+        )
+
     def test_switch_to_org_b_returns_200(self, auth_client, org_b_with_ws):
         org_b, _ = org_b_with_ws
         resp = auth_client.post(
@@ -281,6 +299,7 @@ class TestOrgSwitching:
         user.refresh_from_db()
         assert user.config.get("currentOrganizationId") == str(org_b.id)
 
+    @pytest.mark.usefixtures("user_in_org_b_ws")
     def test_workspace_resolves_to_org_b_default(self, auth_client, org_b_with_ws):
         org_b, ws_b = org_b_with_ws
         resp = auth_client.post(

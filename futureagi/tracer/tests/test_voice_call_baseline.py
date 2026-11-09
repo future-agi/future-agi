@@ -339,7 +339,7 @@ def _baseline_project():
 
 
 def _run_top_span(patch: pytest.MonkeyPatch, call: dict) -> tuple[dict, Any]:
-    """The exported dict and the OTLP span today's export builds from it."""
+    """The normalized dict and real OTLP encoding with a synthetic emitter."""
     from opentelemetry.sdk.trace.export import SpanExportResult
 
     import simulate.services.sim_collector_emit as sim_emit
@@ -365,9 +365,14 @@ def _run_top_span(patch: pytest.MonkeyPatch, call: dict) -> tuple[dict, Any]:
     def _leave_url(*, audio_url, **_kwargs):
         return audio_url, 0
 
-    def _system_key(organization_id, workspace_id):
+    def _fixture_export(spans, *, organization_id, workspace_id, **kwargs):
+        # This recording pins normalisation and the OTLP encoder, not platform
+        # emission availability. Explicit synthetic credentials exercise that
+        # encoder while the real platform emitter remains OFF.
         seen["credentials"].append((organization_id, workspace_id))
-        return SYSTEM_KEY_PAIR
+        return sim_emit.export_sim_spans(
+            spans, api_key=SYSTEM_KEY_PAIR[0], secret_key=SYSTEM_KEY_PAIR[1], **kwargs
+        )
 
     real_export = sim_emit.export_sim_spans
 
@@ -378,7 +383,8 @@ def _run_top_span(patch: pytest.MonkeyPatch, call: dict) -> tuple[dict, Any]:
     class _KeepingExporter:
         # Stands in for the gRPC exporter only, so everything between the
         # exported dict and the wire runs as in production.
-        def __init__(self, **kwargs):
+        def __init__(self, protocol, **kwargs):
+            assert protocol == "grpc"
             self.kwargs, self.exported = kwargs, []
             seen["exporters"].append(self)
 
@@ -397,10 +403,11 @@ def _run_top_span(patch: pytest.MonkeyPatch, call: dict) -> tuple[dict, Any]:
         "fetch_and_parse_call_logs",
         classmethod(lambda cls, **_kwargs: None),
     )
-    # The real lookup reads or creates the organisation's system key in Postgres.
-    patch.setattr(collector_ingest, "resolve_system_emit_credentials", _system_key)
+    # The production OFF/no-mint boundary is pinned in test_collector_ingest;
+    # preserve this recording's independent normalisation/encoding coverage.
+    patch.setattr(collector_ingest, "emit_spans_to_collector", _fixture_export)
     patch.setattr(sim_emit, "export_sim_spans", _keep_dict)
-    patch.setattr(sim_emit, "OTLPSpanExporter", _KeepingExporter)
+    patch.setattr(sim_emit, "span_exporter", _KeepingExporter)
     patch.setattr(
         op, "emit_span_ingestion_usage", lambda **kw: seen["usage"].append(kw)
     )

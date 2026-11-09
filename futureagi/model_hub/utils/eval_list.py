@@ -13,6 +13,16 @@ from typing import TYPE_CHECKING
 
 from django.db.models import Count, Q, QuerySet
 
+from agentic_eval.core_evals.fi_evals.eval_type import (
+    FunctionEvalTypeId,
+    FutureAgiEvalTypeId,
+    GroundedEvalTypeId,
+    LlmEvalTypeId,
+)
+from model_hub.models.choices import EvalOutputType, OwnerChoices
+from model_hub.types import EvalListFilters, ThirtyDayDataPoint
+from tfc.constants.api_calls import APICallStatusChoices
+
 _RUN_CONFIG_DEFAULTS: dict = {
     "agent_mode": "agent",
     "check_internet": False,
@@ -68,16 +78,6 @@ def normalize_search_for_name(search: str) -> Q:
         | Q(name__icontains=term.replace(" ", "-"))
     )
 
-
-from agentic_eval.core_evals.fi_evals.eval_type import (
-    FunctionEvalTypeId,
-    FutureAgiEvalTypeId,
-    GroundedEvalTypeId,
-    LlmEvalTypeId,
-)
-from model_hub.models.choices import EvalOutputType, OwnerChoices
-from model_hub.types import EvalListFilters, ThirtyDayDataPoint
-from tfc.constants.api_calls import APICallStatusChoices
 
 if TYPE_CHECKING:
     from model_hub.models.evals_metric import EvalTemplate
@@ -301,9 +301,11 @@ def build_user_eval_list_items(
 ) -> list[dict]:
     """Build the canonical user-eval item shape used by get_evals_list."""
     from model_hub.models.develop_dataset import Column, SourceChoices
+    from model_hub.services.experiment_defaults import eval_scoring_views
     from model_hub.utils.evals import NOT_UI_EVALS
 
     user_evals = list(user_evals)
+    scoring_views = eval_scoring_views(user_evals)
     column_qs = Column.objects.filter(
         source_id__in=[str(user_eval.id) for user_eval in user_evals],
         deleted=False,
@@ -334,7 +336,9 @@ def build_user_eval_list_items(
             "description": template.description,
             "config": user_eval.config or {},
             "model": run_config_raw.get("model")
-            or (user_eval.config or {}).get("config", {}).get("model", ""),
+            or (user_eval.config or {}).get("config", {}).get("model")
+            or user_eval.model
+            or "",
             "column_id": column_map.get(str(user_eval.id)),
             "updated_at": user_eval.updated_at,
             "eval_group": user_eval.eval_group.name if user_eval.eval_group else None,
@@ -355,6 +359,12 @@ def build_user_eval_list_items(
             "pinned_version_id": str(user_eval.pinned_version_id)
             if user_eval.pinned_version_id
             else None,
+            # DSX L5: "Use in new experiments", and the version and pass
+            # rule a dataset run applies (services/experiment_defaults.py).
+            "is_experiment_default": bool(
+                getattr(user_eval, "is_experiment_default", False)
+            ),
+            **scoring_views.get(user_eval.id, {}),
         }
 
         if template.template_type == "composite":
@@ -472,7 +482,6 @@ def build_eval_list_queryset(
         if _f("tags") or _f("tags_not"):
             from django.contrib.postgres.fields import ArrayField as PGArrayField
             from django.db.models import Func, TextField
-            from django.db.models.functions import Cast
 
             class _LowerArray(Func):
                 function = "ARRAY"

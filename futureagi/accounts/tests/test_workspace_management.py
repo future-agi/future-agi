@@ -18,8 +18,10 @@ from datetime import UTC, datetime
 import pytest
 from rest_framework import status
 
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 
@@ -70,6 +72,29 @@ def member_user(db, organization, workspace):
         role=OrganizationRoles.WORKSPACE_MEMBER,
     )
     return member
+
+
+def _add_migrated_org_membership(actor):
+    # 0015_backfill_rbac_data.backfill_org_memberships requires the legacy
+    # organization_role row; 0023_create_missing_org_memberships heals missing
+    # org memberships for active workspace members. Keep endpoint assertions.
+    OrganizationMembership.no_workspace_objects.create(
+        user=actor,
+        organization=actor.organization,
+        role=actor.organization_role,
+        level=Level.STRING_TO_LEVEL[actor.organization_role],
+        is_active=True,
+    )
+
+
+@pytest.fixture
+def migrated_admin_membership(admin_user):
+    _add_migrated_org_membership(admin_user)
+
+
+@pytest.fixture
+def migrated_member_membership(member_user):
+    _add_migrated_org_membership(member_user)
 
 
 @pytest.fixture
@@ -408,11 +433,13 @@ class TestUserListAPIView:
         data = response.json()
         assert "results" in data
 
+    @pytest.mark.usefixtures("migrated_admin_membership")
     def test_list_users_as_admin(self, admin_client):
         """Admin can list users."""
         response = admin_client.get("/accounts/user/list/")
         assert response.status_code == status.HTTP_200_OK
 
+    @pytest.mark.usefixtures("migrated_member_membership")
     def test_list_users_as_member_success(self, member_client):
         """Member can list users (with org-level permission)."""
         response = member_client.get("/accounts/user/list/")
@@ -514,6 +541,7 @@ class TestUserRoleUpdateAPIView:
             status.HTTP_403_FORBIDDEN,
         ]
 
+    @pytest.mark.usefixtures("migrated_member_membership", "migrated_admin_membership")
     def test_update_role_as_member_success(self, member_client, admin_user):
         """Member can update roles (with org-level permission)."""
         response = member_client.post(

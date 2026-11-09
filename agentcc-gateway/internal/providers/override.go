@@ -32,6 +32,10 @@ type OrgProviderCache struct {
 	// allowPrivateBaseURLs lets an org base_url point at private and LAN
 	// addresses; see validateBaseURL.
 	allowPrivateBaseURLs bool
+
+	// queueTimeout is provider_defaults.queue_timeout, the queue wait of an
+	// instance whose config leaves its own unset.
+	queueTimeout time.Duration
 }
 
 // NewOrgProviderCache creates a cache pre-loaded with base provider configs.
@@ -40,8 +44,16 @@ func NewOrgProviderCache(baseCfgs map[string]config.ProviderConfig, allowPrivate
 	return &OrgProviderCache{
 		providers:            make(map[string]Provider),
 		baseCfgs:             baseCfgs,
-		allowPrivateBaseURLs: allowPrivateBaseURLs,
+		allowPrivateBaseURLs: allowPrivateBaseURLs && !config.IsCloudDeployment(),
 	}
+}
+
+// SetDefaultQueueTimeout sets the queue wait (provider_defaults.queue_timeout)
+// of the instances built from now on whose config leaves queue_timeout unset.
+func (c *OrgProviderCache) SetDefaultQueueTimeout(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.queueTimeout = d
 }
 
 // Get returns a cached provider for the org+provider combo, or nil if not cached.
@@ -101,8 +113,6 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 			BaseURL:        tenantCfg.BaseURL,
 			APIFormat:      apiFormat,
 			DefaultTimeout: 60 * time.Second,
-			MaxConcurrent:  100,
-			ConnPoolSize:   100,
 		}
 		ok = true
 	}
@@ -111,11 +121,19 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 	}
 
 	orgCfg := resolveOrgConfig(baseCfg, apiKey, tenantCfg)
+	if orgCfg.BaseURL == "" {
+		return nil, &ConfigurationError{
+			ProviderID: providerID,
+			Problem:    "base_url is required because no upstream endpoint is configured for this provider",
+		}
+	}
+	// After the org's own values, which win, as the config.yaml entry's do.
+	applyConcurrencyDefaults(&orgCfg, c.queueTimeout)
 	if tenantCfg != nil && tenantCfg.BaseURL != "" {
 		orgCfg.DialContext = orgDialContext(c.allowPrivateBaseURLs)
 	}
 
-	p, err := createProvider(providerID+"_org_"+orgID, orgCfg)
+	p, err := createProvider(orgInstanceID(providerID, orgID), orgCfg)
 	if err != nil {
 		return nil, fmt.Errorf("creating org provider %s/%s: %w", orgID, providerID, err)
 	}
@@ -129,6 +147,26 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 	)
 
 	return p, nil
+}
+
+// orgInstanceID is the ID of the instance GetOrCreateWithTenantConfig builds
+// from an org's own config for providerID. The gateway's own instances (the
+// registry's) carry the provider ID alone.
+func orgInstanceID(providerID, orgID string) string {
+	return providerID + "_org_" + orgID
+}
+
+// IsOrgInstance reports whether p is an instance built from orgID's own
+// provider config, and so calls its upstream with the org's credentials
+// rather than the gateway's.
+func IsOrgInstance(p Provider, orgID string) bool {
+	if p == nil || orgID == "" {
+		return false
+	}
+	// orgInstanceID's suffix, matched without building it: this runs on
+	// every upstream attempt.
+	id := p.ID()
+	return strings.HasSuffix(id, orgID) && strings.HasSuffix(id[:len(id)-len(orgID)], "_org_")
 }
 
 // resolveOrgConfig clones a base provider config for one org. The upstream it
@@ -288,7 +326,8 @@ func validateBaseURL(baseURL string, allowPrivate bool) error {
 	if host == "" {
 		return &BaseURLError{BaseURL: baseURL, Reason: BaseURLInvalid, Err: fmt.Errorf("no hostname")}
 	}
-	if metadataHosts[host] {
+	if metadataHosts[host] || (config.IsCloudDeployment() &&
+		(host == "host.docker.internal" || host == "localhost" || strings.HasSuffix(host, ".localhost"))) {
 		return &BaseURLError{BaseURL: baseURL, Host: host, Reason: BaseURLForbidden}
 	}
 

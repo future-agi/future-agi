@@ -1,0 +1,72 @@
+{
+  "mcp": {
+    "enabled": true,
+    "servers": {
+      "gmail": {
+        "url": "https://connectors.example.com/gmail/mcp",
+        "transport": "http",
+        "catalog_ref": "gmail/futureagi-rest@1.2.0",
+        "credential": { "mode": "per_user" }
+      },
+      "snowflake": {
+        "url": "https://acme-prod.snowflake.example.com/api/v2/databases/SALES/schemas/PUBLIC/mcp-servers/analyst",
+        "transport": "http",
+        "catalog_ref": "snowflake/vendor-mcp@1.0.0",
+        "url_variables": {
+          "accountUrl": "acme-prod.snowflake.example.com",
+          "database": "SALES",
+          "schema": "PUBLIC",
+          "serverName": "analyst"
+        },
+        "credential": { "mode": "per_user" }
+      },
+      "exa": {
+        "url": "https://mcp.exa.example.com/mcp",
+        "catalog_ref": "exa/vendor-mcp@2.1.0",
+        "credential": {
+          "mode": "shared",
+          "credential_id": "cred_e7a1",
+          "header": "x-api-key",
+          "state": "active",
+          "secret": {
+            "type": "api_key",
+            "header": "x-api-key",
+            "in": "header",
+            "name": "x-api-key",
+            "value": "test-exa-key-not-a-real-key"
+          }
+        }
+      },
+      "browserbase": {
+        "url": "https://mcp.browserbase.example.com/mcp",
+        "catalog_ref": "browserbase/vendor-mcp@1.0.0",
+        "credential": {
+          "mode": "shared",
+          "credential_id": "cred_b0b5",
+          "state": "active",
+          "secret": {
+            "type": "api_key",
+            "in": "query",
+            "name": "browserbaseApiKey",
+            "value": "test-browserbase-key-not-a-real-key"
+          }
+        }
+      },
+      "hooks": {
+        "url": "https://hooks.example.com/mcp/{token}",
+        "catalog_ref": "hooks/vendor-mcp@1.0.0",
+        "credential": {
+          "mode": "shared",
+          "credential_id": "cred_400c",
+          "state": "active",
+          "secret": {
+            "type": "api_key",
+            "in": "url_variable",
+            "name": "token",
+            "value": "test-hooks-token-not-a-real-token"
+          }
+        }
+      }
+    }
+  }
+}

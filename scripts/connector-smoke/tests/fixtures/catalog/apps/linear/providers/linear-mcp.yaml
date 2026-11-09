@@ -1,0 +1,88 @@
+# Fixture for the live-smoke runner's tests (scripts/connector-smoke), not
+# catalog data. Facts are illustrative. tools.snapshot is the tools hash of
+# tests/fixtures/live/linear-tools.json, what the fake server lists.
+schema: "connector-manifest/v1#provider"
+app: linear
+id: linear-mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: ga, source: https://linear.app/docs/mcp }
+transport:
+  kind: http
+  url: https://mcp.linear.app/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://linear.app/oauth/authorize
+    tokenUrl: https://api.linear.app/oauth/token
+    scopes: [read, write]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    refresh: { supported: true, rotates: false }
+    registration: [preregistered, dcr]
+  verify: { tool: list_issues }
+tools:
+  source: upstream_mcp
+  defaultPosture: ask
+  snapshot:
+    count: 4
+    toolsHash: sha256:2274bfc0f9e2f7de24f3650ab8b6b86713e50d70a48522c26e086fd2d69d9542
+    era: 2025-11-25
+    takenAt: 2026-10-20
+  items:
+    - name: list_issues
+      title: List issues
+      description: "List issues in the user's workspace, filtered by team."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: true
+      posture: auto
+      scopes: [read]
+    - name: create_issue
+      title: Create issue
+      description: "Create an issue in a team."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: false
+        idempotentHint: false
+        openWorldHint: true
+      posture: ask
+      scopes: [write]
+    - name: delete_issue
+      title: Delete issue
+      description: "Delete an issue."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: true
+        idempotentHint: true
+        openWorldHint: true
+      posture: deny
+      scopes: [write]
+pricing: { model: free }
+quality:
+  tier: listed
+  review: { by: connectors-maintainer, at: 2026-10-19 }
+  owner: connectors
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.authorizeUrl
+    url: https://linear.app/developers/oauth-2-0-authentication
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.tokenUrl
+    url: https://linear.app/developers/oauth-2-0-authentication
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.scopes
+    url: https://linear.app/developers/oauth-2-0-authentication
+    fetchedAt: 2026-10-19

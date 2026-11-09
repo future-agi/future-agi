@@ -39,7 +39,7 @@ def create_threads_for_existing_comments(apps, schema_editor):
             workspace_id=comment.workspace_id,
         )
         comment.thread_id = thread.id
-        comment.save(update_fields=["thread"])
+        comment.save(using=db_alias, update_fields=["thread"])
 
 
 class Migration(migrations.Migration):

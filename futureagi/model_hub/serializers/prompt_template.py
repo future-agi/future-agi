@@ -22,6 +22,7 @@ from model_hub.utils.workspace_scope import (
     request_organization,
     request_workspace_filter,
 )
+from tfc.utils.serializer_fields import JsonValueField
 
 logger = structlog.get_logger(__name__)
 
@@ -219,6 +220,12 @@ class CompareVersionsSerializer(serializers.Serializer):
 
 
 class PromptTemplateSerializer(serializers.ModelSerializer):
+    # A list of names on a new template (the model default), a dict of name to
+    # values once a run has stored them (views/prompt_template.py run paths).
+    # Same JSONField behaviour as the model-derived field; documented as any
+    # JSON value instead of an object.
+    variable_names = JsonValueField(required=False, allow_null=True)
+
     class Meta:
         model = PromptTemplate
         fields = [
@@ -442,13 +449,20 @@ class PromptHistoryTemplateAddonSerializer(serializers.ModelSerializer):
         return obj.version
 
 
+class PromptVersionLabelSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    type = serializers.CharField()
+
+
 class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
     template_name = serializers.SerializerMethodField()
     variable_names = serializers.SerializerMethodField()
     prompt_config_snapshot = serializers.SerializerMethodField()
     labels = serializers.SerializerMethodField()
 
-    output = serializers.JSONField(read_only=True, allow_null=True)
+    # PromptVersion.output defaults to a list; it is any JSON value.
+    output = JsonValueField(read_only=True, allow_null=True)
     metadata = serializers.JSONField(read_only=True, allow_null=True)
     evaluation_configs = serializers.JSONField(read_only=True, allow_null=True)
 
@@ -503,7 +517,9 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
 
         return config_snapshot
 
-    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
+    @swagger_serializer_method(
+        serializer_or_field=PromptVersionLabelSerializer(many=True)
+    )
     def get_labels(self, obj):
         # Single optimized query: join through table with PromptLabel
         # Uses values() to avoid ORM object instantiation overhead
@@ -578,6 +594,20 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
             if len(value) < max_len:
                 value.extend([""] * (max_len - len(value)))
         return var_names
+
+
+class PromptVersionHistoryPageSerializer(serializers.Serializer):
+    """Paginated response for GET /model-hub/prompt-templates/{id}/versions/.
+
+    ``versions()`` answers ``ExtendedPageNumberPagination``'s page directly.
+    """
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = PromptHistoryExecutionSerializer(many=True, read_only=True)
+    total_pages = serializers.IntegerField(read_only=True)
+    current_page = serializers.IntegerField(read_only=True)
 
 
 class PromptVersionSerializer(serializers.ModelSerializer):
@@ -674,4 +704,38 @@ class SingleEvaluationConfigSerializer(serializers.Serializer):
                 "Evaluation configuration must contain a 'name' field"
             )
 
+        self._validate_choice_score_override(data)
         return data
+
+    def _validate_choice_score_override(self, data):
+        """Refuse an invalid per-evaluation Choices score override at save.
+
+        Checked against the template the caller may use (a system template or
+        one of the caller's organization); an id naming no such template is
+        left to the view, which refuses it.
+        """
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        from model_hub.models.choices import OwnerChoices
+        from model_hub.models.evals_metric import EvalTemplate
+        from model_hub.utils.scoring import (
+            ChoiceScoreOverrideError,
+            validate_choice_score_override,
+        )
+
+        organization = request_organization(self.context.get("request"))
+        usable = Q(owner=OwnerChoices.SYSTEM.value)
+        if organization is not None:
+            usable |= Q(owner=OwnerChoices.USER.value, organization=organization)
+        try:
+            template = EvalTemplate.no_workspace_objects.filter(
+                usable, id=data["id"]
+            ).first()
+        except (DjangoValidationError, ValueError):
+            return
+        if template is None:
+            return
+        try:
+            validate_choice_score_override(template, data.get("config"))
+        except ChoiceScoreOverrideError as e:
+            raise serializers.ValidationError({"config": [str(e)]}) from e

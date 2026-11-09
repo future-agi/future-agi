@@ -14,6 +14,8 @@ import structlog
 
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import WorkspaceMembership
+from accounts.services.hard_erase_issuance_entry import issuance_entry
+from accounts.services.identity_issuance import issue_membership
 
 logger = structlog.get_logger(__name__)
 
@@ -46,9 +48,11 @@ def ensure_org_membership(user, organization, *, invited_by=None):
 
     Fail-closed on removal: if a row already exists but is *inactive* (the user
     was deliberately removed from the org), it is NOT resurrected — ``None`` is
-    returned and the caller leaves the FK NULL. New rows are created at the
-    minimal ``Viewer`` level, which grants org membership without global
-    workspace access (that requires ``>= ADMIN``).
+    returned and the caller leaves the FK NULL. A removed (soft-deleted) row,
+    such as the one a cancelled invitation leaves, counts the same way: no new
+    row is created next to it. New rows are created at the minimal ``Viewer``
+    level, which grants org membership without global workspace access (that
+    requires ``>= ADMIN``).
     """
     if user is None or organization is None:
         return None
@@ -56,12 +60,25 @@ def ensure_org_membership(user, organization, *, invited_by=None):
     from tfc.constants.levels import Level
     from tfc.constants.roles import OrganizationRoles
 
+    # A pair whose only rows were removed (soft-deleted, as a cancelled
+    # invitation leaves them) gets no new row either. The unique constraint
+    # below covers only rows with deleted=False, so get_or_create alone would
+    # create one next to them; the base manager also reads removed rows.
+    pair = {"user": user, "organization": organization}
+    if (
+        not OrganizationMembership.no_workspace_objects.filter(**pair).exists()
+        and OrganizationMembership._base_manager.filter(**pair).exists()
+    ):
+        return None
+
     # The (user, organization) unique constraint (WHERE deleted=False) guarantees
     # at most one non-deleted row, so get_or_create resolves to exactly that row.
     # get_or_create also closes the race where two concurrent invite flows both
     # find no row: the loser's INSERT hits the unique constraint, Django catches
     # the IntegrityError and re-fetches the winner's row instead of raising.
-    membership, _created = OrganizationMembership.no_workspace_objects.get_or_create(
+    membership, _created = issue_membership(
+        OrganizationMembership.no_workspace_objects,
+        "get_or_create",
         user=user,
         organization=organization,
         defaults={
@@ -94,34 +111,42 @@ def create_workspace_membership(
     workspace's organization. ``manager`` defaults to ``no_workspace_objects`` to
     match the existing create sites.
     """
-    manager = manager or WorkspaceMembership.no_workspace_objects
-    # Resolve lazily: only query when the caller didn't already pass the FK.
-    # ``setdefault`` would evaluate ``resolve_org_membership`` unconditionally
-    # (and fire a wasted query per call — N times inside bulk-invite loops).
-    if "organization_membership" not in extra:
-        org_membership = resolve_org_membership(user, workspace.organization)
-        if org_membership is None:
-            # No active org membership — create the minimal one so a workspace
-            # member always belongs to the org (TH-6156). Returns None only when
-            # an inactive (deliberately removed) membership exists.
-            org_membership = ensure_org_membership(
-                user, workspace.organization, invited_by=invited_by
+    with issuance_entry(
+        organizations=[workspace.organization_id],
+        people=[
+            user.pk,
+            getattr(invited_by, "pk", invited_by),
+            getattr(granted_by, "pk", granted_by),
+        ],
+    ):
+        manager = manager or WorkspaceMembership.no_workspace_objects
+        # Resolve lazily: only query when the caller didn't already pass the FK.
+        # ``setdefault`` would evaluate ``resolve_org_membership`` unconditionally
+        # (and fire a wasted query per call — N times inside bulk-invite loops).
+        if "organization_membership" not in extra:
+            org_membership = resolve_org_membership(user, workspace.organization)
+            if org_membership is None:
+                # No active org membership — create the minimal one so a workspace
+                # member always belongs to the org (TH-6156). Returns None only when
+                # an inactive (deliberately removed) membership exists.
+                org_membership = ensure_org_membership(
+                    user, workspace.organization, invited_by=invited_by
+                )
+            extra["organization_membership"] = org_membership
+        if extra["organization_membership"] is None:
+            # Visibility into the only path that can still produce a NULL FK (user
+            # with a deactivated org membership we won't resurrect) — distinct from
+            # the old silent drift.
+            logger.warning(
+                "workspace_membership_created_without_org_fk",
+                workspace_id=str(getattr(workspace, "id", "")),
+                user_id=str(getattr(user, "id", "")),
             )
-        extra["organization_membership"] = org_membership
-    if extra["organization_membership"] is None:
-        # Visibility into the only path that can still produce a NULL FK (user
-        # with a deactivated org membership we won't resurrect) — distinct from
-        # the old silent drift.
-        logger.warning(
-            "workspace_membership_created_without_org_fk",
-            workspace_id=str(getattr(workspace, "id", "")),
-            user_id=str(getattr(user, "id", "")),
-        )
-    fields = {"workspace": workspace, "user": user, "role": role, **extra}
-    if level is not None:
-        fields["level"] = level
-    if invited_by is not None:
-        fields["invited_by"] = invited_by
-    if granted_by is not None:
-        fields["granted_by"] = granted_by
-    return manager.create(**fields)
+        fields = {"workspace": workspace, "user": user, "role": role, **extra}
+        if level is not None:
+            fields["level"] = level
+        if invited_by is not None:
+            fields["invited_by"] = invited_by
+        if granted_by is not None:
+            fields["granted_by"] = granted_by
+        return issue_membership(manager, "create", **fields)

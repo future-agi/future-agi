@@ -75,14 +75,18 @@ type PostParallel interface {
 	IsPostParallel() bool
 }
 
-// PostPriority is an optional interface for a plugin whose response-side work
-// must run at another point than its request-side check. Budgets check spend
-// early, before guardrails, but record it only after the cost plugin has
-// priced the request; the cache stores a response only after the output
-// guardrails have passed it. Sequential post-plugins run in PostPriority
-// order, and a plugin without it keeps its Priority.
-type PostPriority interface {
+// PostOrdered is an optional interface for a plugin whose post-processing
+// must run at a different point than its Priority puts it. Sequential post
+// plugins run in ascending PostPriority, which defaults to Priority.
+type PostOrdered interface {
 	PostPriority() int
+}
+
+func postPriority(p Plugin) int {
+	if po, ok := p.(PostOrdered); ok {
+		return po.PostPriority()
+	}
+	return p.Priority()
 }
 
 // SkipOnCacheHit is an optional interface plugins can implement to indicate

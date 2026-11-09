@@ -94,7 +94,7 @@ export const ALL_LABELS_VALUES = {
 export const ALL_ANNOTATORS = [
   {
     id: "1",
-    name: "nick.coolvyas@gmail.comaaa",
+    name: "example-user-10@example.com",
   },
   {
     id: "2",

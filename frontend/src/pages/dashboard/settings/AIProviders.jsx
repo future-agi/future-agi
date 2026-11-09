@@ -178,7 +178,13 @@ const ConfigureProviders = () => {
   const keyCardsGridStyles = useMemo(
     () => ({
       display: "grid",
-      gridTemplateColumns: "repeat(3, minmax(250px, 1fr))",
+      // Three columns in the desktop shell; fewer in the compact Settings
+      // shell below md, so the cards never scroll sideways on a phone.
+      gridTemplateColumns: {
+        xs: "minmax(0, 1fr)",
+        sm: "repeat(2, minmax(250px, 1fr))",
+        md: "repeat(3, minmax(250px, 1fr))",
+      },
       gap:
         filteredData?.length === 1
           ? theme.spacing(6)

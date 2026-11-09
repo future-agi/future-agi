@@ -25,7 +25,14 @@ import Iconify from "src/components/iconify";
 import { useQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import useSessions from "./hooks/useSessions";
-import { formatCost } from "../utils/formatters";
+import {
+  EMPTY,
+  NO_PRICE,
+  costTooltip,
+  formatCost,
+  formatCostCell,
+  isUnpriced,
+} from "../utils/formatters";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -50,7 +57,7 @@ const SESSION_ORDERING_BY_SORT = {
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(iso) {
-  if (!iso) return "N/A";
+  if (!iso) return EMPTY;
   try {
     return new Date(iso).toLocaleString(undefined, {
       month: "short",
@@ -60,7 +67,7 @@ function formatTimestamp(iso) {
       hour12: false,
     });
   } catch {
-    return "N/A";
+    return EMPTY;
   }
 }
 
@@ -147,10 +154,10 @@ function SessionDetail({ sessionId, onRequestClick }) {
                 </Typography>
               </Tooltip>
             </TableCell>
-            <TableCell>{req.model || "-"}</TableCell>
+            <TableCell>{req.model || EMPTY}</TableCell>
             <TableCell>
               <Chip
-                label={req.status_code ?? "-"}
+                label={req.status_code ?? EMPTY}
                 size="small"
                 variant="outlined"
                 color={getStatusChipColor(req.status_code)}
@@ -166,10 +173,16 @@ function SessionDetail({ sessionId, onRequestClick }) {
                       : undefined,
                 }}
               >
-                {req.latency_ms != null ? `${req.latency_ms}ms` : "-"}
+                {req.latency_ms != null ? `${req.latency_ms}ms` : EMPTY}
               </Typography>
             </TableCell>
-            <TableCell>{formatCost(req.cost)}</TableCell>
+            {isUnpriced(req) ? (
+              <TableCell title={NO_PRICE}>{EMPTY}</TableCell>
+            ) : (
+              <TableCell title={costTooltip(req.cost) ?? undefined}>
+                {formatCostCell(req.cost)}
+              </TableCell>
+            )}
           </TableRow>
         ))}
       </TableBody>
@@ -320,7 +333,7 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
                     noWrap
                     sx={{ maxWidth: 200 }}
                   >
-                    {(session.models || []).join(", ") || "-"}
+                    {(session.models || []).join(", ") || EMPTY}
                   </Typography>
 
                   <Typography variant="body2" noWrap>

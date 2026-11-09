@@ -30,6 +30,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { RESPONSE_CODES } from "src/utils/constants";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
+import { isPrototypeMode } from "src/utils/prototype";
 
 const tabItems = [
   { label: "Upload", value: "Upload", disabled: false },
@@ -191,11 +192,16 @@ const CreateKnowledgeBaseDrawerChild = ({
     setShowSdkInfo(false);
   };
 
+  // L7b absent-sweep (absent:sdk-doors): prototype builds have no SDK, so
+  // an oversized file only gets the `File size is too large` toast; no SDK
+  // dialog, no Python tab.
   const handleShowSdkInfo = () => {
+    if (isPrototypeMode()) return;
     setShowSdkInfo(true);
   };
 
   const handleOpenSDKTab = () => {
+    if (isPrototypeMode()) return;
     setCurrentTab("ImprortfromSDK");
     handleCloseSdkInfo();
   };
@@ -216,6 +222,7 @@ const CreateKnowledgeBaseDrawerChild = ({
         },
       }),
     select: (d) => d?.data?.result,
+    enabled: !isPrototypeMode(),
   });
 
   return (
@@ -329,27 +336,33 @@ const CreateKnowledgeBaseDrawerChild = ({
                   }}
                   sx={{ borderBottom: "1px solid", borderColor: "divider" }}
                 >
-                  {tabItems.map((tab) => (
-                    <Tab
-                      disabled={tab.disabled}
-                      key={tab.value}
-                      label={tab.label}
-                      value={tab.value}
-                      sx={{
-                        paddingLeft: "24px",
-                        paddingRight: "24px",
-                        ...theme.typography["s1"],
-                        fontWeight: theme.typography["fontWeightSemiBold"],
-                        "&:not(.Mui-selected)": {
-                          color: "text.disabled", // Color for unselected tabs
-                          fontWeight: theme.typography["fontWeightMedium"],
-                        },
-                        ["&:not(:last-of-type)"]: {
-                          marginRight: "4px",
-                        },
-                      }}
-                    />
-                  ))}
+                  {/* Prototype builds have no SDK: its import tab is absent. */}
+                  {tabItems
+                    .filter(
+                      (tab) =>
+                        !isPrototypeMode() || tab.value !== "ImprortfromSDK",
+                    )
+                    .map((tab) => (
+                      <Tab
+                        disabled={tab.disabled}
+                        key={tab.value}
+                        label={tab.label}
+                        value={tab.value}
+                        sx={{
+                          paddingLeft: "24px",
+                          paddingRight: "24px",
+                          ...theme.typography["s1"],
+                          fontWeight: theme.typography["fontWeightSemiBold"],
+                          "&:not(.Mui-selected)": {
+                            color: "text.disabled", // Color for unselected tabs
+                            fontWeight: theme.typography["fontWeightMedium"],
+                          },
+                          ["&:not(:last-of-type)"]: {
+                            marginRight: "4px",
+                          },
+                        }}
+                      />
+                    ))}
                 </Tabs>
               </Box>
             </Box>
@@ -362,7 +375,7 @@ const CreateKnowledgeBaseDrawerChild = ({
                     control={control}
                   />
                 )}
-                {currentTab === "ImprortfromSDK" && (
+                {currentTab === "ImprortfromSDK" && !isPrototypeMode() && (
                   <UploadKnowledgeBaseSDK
                     pythonCode={sdkCode?.code}
                     action={knowledgeId ? "update" : "add"}
@@ -455,11 +468,13 @@ const CreateKnowledgeBaseDrawerChild = ({
           </Box>
         )}
       </Box>
-      <SdkInfoDialog
-        onSubmit={handleOpenSDKTab}
-        open={showSdkInfo}
-        onClose={handleCloseSdkInfo}
-      />
+      {!isPrototypeMode() && (
+        <SdkInfoDialog
+          onSubmit={handleOpenSDKTab}
+          open={showSdkInfo}
+          onClose={handleCloseSdkInfo}
+        />
+      )}
       <ConfirmDialog
         content="Are you sure you want to close? Your work will be lost"
         action={

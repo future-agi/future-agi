@@ -235,6 +235,7 @@ const TimelineRow = ({
   traceDuration,
   showMetrics,
   visibleMetrics,
+  neutralLatency = false,
   rootLatency,
   searchQuery,
   expandedSet,
@@ -403,7 +404,11 @@ const TimelineRow = ({
                       component="span"
                       sx={{
                         fontSize: 10,
-                        color: getLatencyColor(durationMs, rootLatency),
+                        // Additive (IT-R5 G4 P3): `neutralLatency` keeps the clock grey;
+                        // red is for errors only.
+                        color: neutralLatency
+                          ? "text.disabled"
+                          : getLatencyColor(durationMs, rootLatency),
                         display: "inline-flex",
                         alignItems: "center",
                         gap: "2px",
@@ -692,6 +697,7 @@ const TimelineRow = ({
               traceDuration={traceDuration}
               showMetrics={showMetrics}
               visibleMetrics={visibleMetrics}
+              neutralLatency={neutralLatency}
               rootLatency={rootLatency}
               searchQuery={searchQuery}
               expandedSet={expandedSet}
@@ -714,6 +720,7 @@ TimelineRow.propTypes = {
   traceDuration: PropTypes.number.isRequired,
   showMetrics: PropTypes.bool,
   visibleMetrics: PropTypes.object,
+  neutralLatency: PropTypes.bool,
   rootLatency: PropTypes.number,
   searchQuery: PropTypes.string,
   expandedSet: PropTypes.instanceOf(Set).isRequired,
@@ -730,7 +737,9 @@ const SpanTreeTimeline = ({
   onSelectSpan,
   showMetrics: showMetricsProp,
   visibleMetrics: visibleMetricsProp,
+  neutralLatency = false,
   onToggleMetrics: onToggleMetricsProp,
+  axisRangeMs,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [showMetricsLocal, setShowMetricsLocal] = useState(true);
@@ -824,9 +833,17 @@ const SpanTreeTimeline = ({
 
     if (!starts.length || !ends.length)
       return { traceStart: 0, traceDuration: 1, timeLabels: [] };
-    const minT = Math.min(...starts);
+    const ownStart = Math.min(...starts);
     const maxT = Math.max(...ends);
-    const dur = maxT - minT || 1;
+    // R4 lane T (additive): a shared axis so side-by-side lanes read on one
+    // time scale (`axisRangeMs = {start?, duration}`); absent → own range.
+    const shared =
+      Number.isFinite(axisRangeMs?.duration) && axisRangeMs.duration > 0;
+    const minT =
+      shared && Number.isFinite(axisRangeMs.start)
+        ? axisRangeMs.start
+        : ownStart;
+    const dur = shared ? axisRangeMs.duration : maxT - ownStart || 1;
 
     const labels = [0, 0.25, 0.5, 0.75, 1].map((pct) => ({
       pct: pct * 100,
@@ -834,7 +851,7 @@ const SpanTreeTimeline = ({
     }));
 
     return { traceStart: minT, traceDuration: dur, timeLabels: labels };
-  }, [spans]);
+  }, [spans, axisRangeMs?.start, axisRangeMs?.duration]);
 
   if (!spans?.length) {
     return (
@@ -994,6 +1011,7 @@ const SpanTreeTimeline = ({
                 traceDuration={traceDuration}
                 showMetrics={showMetrics}
                 visibleMetrics={visibleMetrics}
+                neutralLatency={neutralLatency}
                 rootLatency={rootLatency}
                 searchQuery={searchQuery}
                 expandedSet={expandedSet}
@@ -1014,7 +1032,14 @@ SpanTreeTimeline.propTypes = {
   onSelectSpan: PropTypes.func.isRequired,
   showMetrics: PropTypes.bool,
   visibleMetrics: PropTypes.object,
+  neutralLatency: PropTypes.bool,
   onToggleMetrics: PropTypes.func,
+  // R4 lane T (additive, inert when absent): shared time axis in ms;
+  // `start` (epoch ms) is optional, each lane then starts at its own 0.
+  axisRangeMs: PropTypes.shape({
+    start: PropTypes.number,
+    duration: PropTypes.number,
+  }),
 };
 
 export default React.memo(SpanTreeTimeline);

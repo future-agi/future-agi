@@ -13,6 +13,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/admission"
 )
 
 // ---------------------------------------------------------------------------
@@ -40,8 +41,8 @@ func TestNew_DefaultValues(t *testing.T) {
 	if p.httpClient.Timeout != 120*time.Second {
 		t.Errorf("timeout = %v, want %v", p.httpClient.Timeout, 120*time.Second)
 	}
-	if cap(p.semaphore) != 100 {
-		t.Errorf("semaphore capacity = %d, want 100", cap(p.semaphore))
+	if p.slots.Cap() != 1024 {
+		t.Errorf("semaphore capacity = %d, want 1024", p.slots.Cap())
 	}
 }
 
@@ -65,8 +66,8 @@ func TestNew_CustomValues(t *testing.T) {
 	if p.httpClient.Timeout != 30*time.Second {
 		t.Errorf("timeout = %v, want %v", p.httpClient.Timeout, 30*time.Second)
 	}
-	if cap(p.semaphore) != 50 {
-		t.Errorf("semaphore capacity = %d, want 50", cap(p.semaphore))
+	if p.slots.Cap() != 50 {
+		t.Errorf("semaphore capacity = %d, want 50", p.slots.Cap())
 	}
 	if p.headers["X-Custom"] != "value" {
 		t.Errorf("headers[X-Custom] = %q, want %q", p.headers["X-Custom"], "value")
@@ -158,8 +159,8 @@ func TestIntegration_NonStreamingRoundTrip(t *testing.T) {
 			},
 		},
 		UsageMetadata: &geminiUsageMetadata{
-			PromptTokenCount:     5,
-			CandidatesTokenCount: 4,
+			PromptTokenCount:     usageCount(5),
+			CandidatesTokenCount: usageCount(4),
 			TotalTokenCount:      9,
 		},
 	}
@@ -1164,8 +1165,8 @@ func TestIntegration_VertexAI_ChatCompletion_BearerAuth(t *testing.T) {
 			},
 		},
 		UsageMetadata: &geminiUsageMetadata{
-			PromptTokenCount:     5,
-			CandidatesTokenCount: 4,
+			PromptTokenCount:     usageCount(5),
+			CandidatesTokenCount: usageCount(4),
 			TotalTokenCount:      9,
 		},
 	}
@@ -1196,8 +1197,8 @@ func TestIntegration_VertexAI_ChatCompletion_BearerAuth(t *testing.T) {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		semaphore: make(chan struct{}, 10),
-		headers:   map[string]string{},
+		slots:   admission.New("gemini-test", 10, 0),
+		headers: map[string]string{},
 	}
 
 	resp, err := p.ChatCompletion(context.Background(), basicRequest())
@@ -1273,8 +1274,8 @@ func TestIntegration_VertexAI_StreamChatCompletion_BearerAuth(t *testing.T) {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		semaphore: make(chan struct{}, 10),
-		headers:   map[string]string{},
+		slots:   admission.New("gemini-test", 10, 0),
+		headers: map[string]string{},
 	}
 
 	req := basicRequest()
@@ -1344,8 +1345,8 @@ func TestIntegration_VertexAI_NoKeyQueryParam(t *testing.T) {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		semaphore: make(chan struct{}, 10),
-		headers:   map[string]string{},
+		slots:   admission.New("gemini-test", 10, 0),
+		headers: map[string]string{},
 	}
 
 	_, err := p.ChatCompletion(context.Background(), basicRequest())

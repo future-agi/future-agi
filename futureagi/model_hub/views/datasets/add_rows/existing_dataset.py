@@ -39,7 +39,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None)
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (

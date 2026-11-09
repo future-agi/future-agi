@@ -1,0 +1,46 @@
+# GitHub's remote MCP server with a personal access token as the bearer.
+schema: "connector-manifest/v1#provider"
+app: github
+id: remote-pat
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://github.blog/changelog/2025-09-04-remote-github-mcp-server-is-now-generally-available/
+transport:
+  kind: http
+  url: https://api.githubcopilot.com/mcp/
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal access token
+      help: "A GitHub personal access token. The server can use many GitHub APIs, so grant only the permissions the agent needs."
+      helpUrl: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+  - fact: transport.variant
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+  - fact: auth.credentialParts
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+x-omega: { oss: exclude }

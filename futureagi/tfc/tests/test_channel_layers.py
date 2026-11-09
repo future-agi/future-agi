@@ -238,10 +238,17 @@ def test_memory_layer_probe_needs_no_broker():
     with (
         _probe_settings({}),
         patch.object(setup_checks, "_tcp_up", return_value=True) as tcp_up,
+        patch.object(setup_checks.requests, "post") as post,
     ):
+        post.return_value.status_code = 200
         assert setup_checks._channel_layer_up()
-    # Only the relay endpoint is contacted: no AMQP broker, no Redis.
-    tcp_up.assert_called_once_with("backend", 80)
+    # Only the signed HTTP relay is contacted: no AMQP broker, no Redis.
+    tcp_up.assert_not_called()
+    assert post.call_count == 1
+    assert post.call_args.args == ("http://backend/call-websocket/",)
+    assert "X-Relay-Signature" in post.call_args.kwargs["headers"]
+    assert "X-Api-Key" not in post.call_args.kwargs["headers"]
+    assert post.call_args.kwargs["allow_redirects"] is False
 
 
 def test_rabbitmq_layer_probe_checks_its_broker(rabbitmq_installed):

@@ -31,10 +31,17 @@ import { canonicalEntries } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import EvalResultDisplay from "./EvalResultDisplay";
+import DecisionCallPanel from "src/sections/common/DecisionJudges/DecisionCallPanel";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 import { unwrapCellValue } from "./datasetCellValue";
+import {
+  lockedOutputVariables,
+  virtualOutputOf,
+  virtualOutputValueOf,
+  withLockedOutput,
+} from "./virtualOutputModel";
 import { buildTree } from "./columnTree";
 import RequiredMark from "src/components/RequiredMark";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
@@ -668,6 +675,9 @@ const DatasetTestMode = React.forwardRef(
     {
       templateId,
       model = "turing_large",
+      // W1: a decision judge's question and the eval's prompt as edited
+      // ({decision, rule_prompt, threshold}); sent with the Test.
+      decisionTest = null,
       variables = [],
       codeParams = {},
       onTestResult,
@@ -730,6 +740,22 @@ const DatasetTestMode = React.forwardRef(
       setMapping,
     });
 
+    // L7c g7 (mapping:variable-mapping, test:editor): in an experiment host
+    // the variables that read the reply stay on the virtual Output column
+    // (each run's own reply, the only one the scorer reads); Test stands in
+    // the host's sample column on the row on screen.
+    const virtualOutput = useMemo(
+      () => virtualOutputOf(extraColumns),
+      [extraColumns],
+    );
+    const lockedVars = useMemo(
+      () => lockedOutputVariables(variables, virtualOutput),
+      [variables, virtualOutput],
+    );
+    useEffect(() => {
+      setMapping((prev) => withLockedOutput(prev, lockedVars, virtualOutput));
+    }, [lockedVars, virtualOutput, mapping]);
+
     // Search + expand
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
@@ -737,6 +763,8 @@ const DatasetTestMode = React.forwardRef(
     // Eval result
     const [isRunning, setIsRunning] = useState(false);
     const [result, setResult] = useState(null);
+    // W1: the decision call behind the last Test (or the refusal).
+    const [decisionCall, setDecisionCall] = useState(null);
     const [error, setError] = useState(null);
     const [resultFormat, setResultFormat] = useState("markdown");
     // Async error localization — playground returns before the localizer
@@ -1131,6 +1159,7 @@ const DatasetTestMode = React.forwardRef(
 
       setIsRunning(true);
       setResult(null);
+      setDecisionCall(null);
       setError(null);
 
       try {
@@ -1159,6 +1188,22 @@ const DatasetTestMode = React.forwardRef(
           // Supports nested paths (e.g. "col.key" → resolve from cell JSON).
           for (const variable of variables) {
             const mappedColName = mapping[variable];
+            if (
+              virtualOutput &&
+              mappedColName === virtualOutput.name &&
+              currentRow
+            ) {
+              const sample = virtualOutputValueOf(
+                virtualOutput,
+                currentRow,
+                unwrapCellValue,
+              );
+              if (sample !== undefined) {
+                evalMapping[variable] = sample;
+                inputDataTypes[variable] = "text";
+              }
+              continue;
+            }
             if (mappedColName && currentRow) {
               let baseName = mappedColName;
               let jsonPath = null;
@@ -1264,6 +1309,7 @@ const DatasetTestMode = React.forwardRef(
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
                   : {}),
+                ...(decisionTest && !isComposite ? decisionTest : {}),
                 image_urls: imageUrls.length > 0 ? imageUrls : undefined,
                 // Send data_injection flags from contextOptions — same pattern
                 // as EvalPickerConfigFull (tracing tab) so the BE knows which
@@ -1303,6 +1349,7 @@ const DatasetTestMode = React.forwardRef(
                 compositeResult: data.result,
               }
             : data.result;
+          setDecisionCall(data.result?.metadata?.decision ?? null);
           setResult(nextResult);
           onTestResult?.(true, nextResult);
           if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
@@ -1314,10 +1361,21 @@ const DatasetTestMode = React.forwardRef(
           onTestResult?.(false, errMsg);
         }
       } catch (err) {
-        const errMsg = getSafeActionErrorMessage(
+        // L7c g7 (byok:settings-page): a refusal in words, without its
+        // machine code ("provider_not_configured: Add your ... key").
+        const code = err?.response?.data?.code;
+        const raw = getSafeActionErrorMessage(
           err,
           "Failed to run evaluation. Please retry.",
         );
+        const errMsg =
+          code && String(raw).startsWith(`${code}:`)
+            ? String(raw)
+                .slice(code.length + 1)
+                .trim()
+            : raw;
+        // W1: the gateway's refusal of a decision call (status, code).
+        setDecisionCall(err?.response?.data?.decision ?? null);
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1339,6 +1397,8 @@ const DatasetTestMode = React.forwardRef(
       compositeAdhocConfig,
       model,
       executeCompositeAdhoc,
+      decisionTest,
+      virtualOutput,
     ]);
 
     // Readiness: dataset selected + (all variables mapped OR a non-template
@@ -1514,6 +1574,7 @@ const DatasetTestMode = React.forwardRef(
               onClick={() => {
                 setCurrentRowIndex((i) => Math.max(0, i - 1));
                 setResult(null);
+                setDecisionCall(null);
                 setError(null);
                 onClearResult?.();
               }}
@@ -1527,6 +1588,7 @@ const DatasetTestMode = React.forwardRef(
               onClick={() => {
                 setCurrentRowIndex((i) => Math.min(totalRows - 1, i + 1));
                 setResult(null);
+                setDecisionCall(null);
                 setError(null);
                 onClearResult?.();
               }}
@@ -1849,19 +1911,48 @@ const DatasetTestMode = React.forwardRef(
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
-                  <ColumnTreeSelect
-                    columnNames={columnNames}
-                    value={mapping[variable] || ""}
-                    onChange={(val) =>
-                      setMapping((prev) => ({
-                        ...prev,
-                        [variable]: val || "",
-                      }))
-                    }
-                    isUnmapped={isUnmapped}
-                    disabled={!isWorkbenchMode && loadingData}
-                    disabledTooltip="Columns are being fetched"
-                  />
+                  {lockedVars.includes(variable) ? (
+                    <Box
+                      data-testid="mapping-run-output"
+                      sx={{
+                        flex: 1,
+                        minWidth: 0,
+                        px: 1.5,
+                        py: 0.5,
+                        border: "1px solid",
+                        borderColor: "divider",
+                        borderRadius: "6px",
+                        bgcolor: "background.neutral",
+                      }}
+                    >
+                      <Typography variant="caption" fontWeight={500}>
+                        {virtualOutput.name}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: "block" }}
+                      >
+                        {virtualOutput.sampleName
+                          ? `Each run's reply · Test uses ${virtualOutput.sampleName} on this row`
+                          : "Each run's reply"}
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <ColumnTreeSelect
+                      columnNames={columnNames}
+                      value={mapping[variable] || ""}
+                      onChange={(val) =>
+                        setMapping((prev) => ({
+                          ...prev,
+                          [variable]: val || "",
+                        }))
+                      }
+                      isUnmapped={isUnmapped}
+                      disabled={!isWorkbenchMode && loadingData}
+                      disabledTooltip="Columns are being fetched"
+                    />
+                  )}
                 </Box>
               );
             })}
@@ -1925,6 +2016,13 @@ const DatasetTestMode = React.forwardRef(
           />
         )}
 
+        {/* W1: a decision judge's own call (or the gateway's refusal) */}
+        {decisionCall && !isRunning && (
+          <Box sx={{ mt: 1 }}>
+            <DecisionCallPanel decision={decisionCall} />
+          </Box>
+        )}
+
         {/* Error */}
         {error && !isRunning && (
           <Box
@@ -1950,6 +2048,7 @@ DatasetTestMode.displayName = "DatasetTestMode";
 
 DatasetTestMode.propTypes = {
   templateId: PropTypes.string,
+  decisionTest: PropTypes.object,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
   onTestResult: PropTypes.func,

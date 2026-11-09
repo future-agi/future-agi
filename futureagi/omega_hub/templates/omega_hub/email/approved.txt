@@ -1,0 +1,13 @@
+Published as {{ ref }}@{{ version }}.
+
+{{ entry_url }}
+
+{% if disclosure_changed %}The reviewer confirmed this disclosure, which differs from your draft. Only this text is shown on the Hub:
+{% else %}The reviewer confirmed your disclosure:
+{% endif %}
+Summary: {{ disclosure.summary }}
+Network: {{ disclosure.network }}
+Files: {{ disclosure.files }}
+Shell: {{ disclosure.shell }}
+Keeps running: {{ disclosure.background }}
+Credentials: {{ disclosure.credentials }}

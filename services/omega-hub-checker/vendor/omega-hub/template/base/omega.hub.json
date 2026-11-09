@@ -1,0 +1,31 @@
+{
+  "$schema": "../../packages/hub/schema/omega.hub.schema.json",
+  "schema": "omega-hub/v1",
+  "id": "{{id}}",
+  "title": "{{title}}",
+  "tagline": "{{tagline}}",
+  "kind": "{{kind}}",
+  "cover": { "emoji": "{{emoji}}", "from": "{{from}}", "to": "{{to}}" },
+  "author": { "github": "{{author}}", "kind": "community" },
+  "tags": {{tags}},
+  "difficulty": "starter",
+  "license": "Apache-2.0",
+  "added": "{{added}}",
+  "models": {
+    "keyless": "scripted",
+    "live": [
+      { "model": "openai:gpt-4o-mini", "keys": ["OPENAI_API_KEY"] },
+      { "model": "anthropic:claude-sonnet-4-6", "keys": ["ANTHROPIC_API_KEY"] },
+      { "model": "vertex:gemini-3.5-flash", "keys": ["OMEGA_VERTEX_CREDS"] }
+    ],
+    "maxCalls": 2
+  },
+  "keys": [
+    { "name": "OPENAI_API_KEY", "why": "The agent's model on OpenAI.", "get": "https://platform.openai.com/api-keys", "for": "live", "secret": true },
+    { "name": "ANTHROPIC_API_KEY", "why": "The agent's model on Anthropic.", "get": "https://console.anthropic.com/settings/keys", "for": "live", "secret": true },
+    { "name": "OMEGA_VERTEX_CREDS", "why": "Path to a Vertex AI service-account file.", "get": "https://cloud.google.com/vertex-ai/docs/start/cloud-environment", "for": "live", "secret": true }
+  ],
+  "run": { "keyless": ["node", "--import", "tsx", "main.ts"] },
+  "test": "main.test.ts",
+  "demo": { "cast": "demo.cast" }
+}

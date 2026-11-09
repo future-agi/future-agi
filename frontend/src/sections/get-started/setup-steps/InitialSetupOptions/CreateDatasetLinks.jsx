@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Button, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
@@ -106,7 +107,7 @@ const CreateDatasetLinks = ({
               width: "100%",
             }}
           >
-            <iframe
+            <ExternalContentFrame
               src={showDemoModal?.link.replace("share", "embed")}
               title={showDemoModal?.title}
               frameBorder="0"

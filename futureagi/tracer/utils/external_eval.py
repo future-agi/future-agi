@@ -1,17 +1,19 @@
 import structlog
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.views.eval_runner import EvaluationRunner
 from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
 from tracer.models.external_eval_config import (
     ExternalEvalConfig,
     PlatformChoices,
     StatusChoices,
 )
-from tfc.constants.api_calls import APICallStatusChoices
+
+logger = structlog.get_logger(__name__)
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -93,7 +95,9 @@ def _log_and_deduct_cost_for_external_eval(
         try:
             from ee.usage.utils.event_properties import token_usage_properties
         except ImportError:
-            token_usage_properties = lambda token_usage: {}
+
+            def token_usage_properties(token_usage):
+                return {}
 
         if emit is not None and UsageEvent is not None:
             emit(
@@ -201,6 +205,7 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
     )
     runner.eval_template = eval_template
     from evaluations.engine.registry import get_eval_class
+    from sdk.utils.evaluations import external_platform_runtime_config
 
     eval_class = get_eval_class(eval_type_id)
 
@@ -208,7 +213,9 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
         config=config.config or {},
         eval_class=eval_class,
         model=config.model,
-        runtime_config=config.config,
+        # With the Choices score override SDK configure-evaluations validated,
+        # also when it is nested in "params".
+        runtime_config=external_platform_runtime_config(config.config),
     )
 
     param_keys = []
@@ -279,6 +286,7 @@ def _send_eval_result(config: ExternalEvalConfig, value: str, reason: str):
 
 def _send_langfuse_eval_result(config: ExternalEvalConfig, value, reason: str):
     from langfuse import Langfuse  # lazy
+
     langfuse = Langfuse(
         secret_key=config.credentials.get("langfuse_secret_key"),
         public_key=config.credentials.get("langfuse_public_key"),
@@ -309,5 +317,10 @@ def _process_results_langfuse(value):
             return 0
     elif isinstance(value, int | float):
         return float(value)
+    elif isinstance(value, dict):
+        score = value.get("score")
+        if isinstance(score, int | float) and not isinstance(score, bool):
+            return float(value["score"])
+        raise ValueError("Choices result must contain a numeric score.")
     else:
         raise ValueError(f"Invalid value type: {type(value)}")

@@ -1,14 +1,7 @@
 import React from "react";
-import { Helmet } from "react-helmet-async";
 import ProviderManagementSection from "src/sections/gateway/providers/ProviderManagementSection";
 
-const GatewayProviders = () => (
-  <>
-    <Helmet>
-      <title>Gateway Providers | Future AGI</title>
-    </Helmet>
-    <ProviderManagementSection />
-  </>
-);
+// The page frame sets the browser-tab title.
+const GatewayProviders = () => <ProviderManagementSection />;
 
 export default GatewayProviders;

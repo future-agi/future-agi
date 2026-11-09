@@ -264,16 +264,16 @@ def _canonicalize_dashboard_query_config(query_config):
     return next_config, changed
 
 
-def _migrate_json_field(apps, model_name, field_name, canonicalizer, stats):
+def _migrate_json_field(apps, model_name, field_name, canonicalizer, stats, alias):
     Model = apps.get_model("tracer", model_name)
-    for obj in Model.objects.iterator(chunk_size=500):
+    for obj in Model.objects.using(alias).iterator(chunk_size=500):
         try:
             current_value = getattr(obj, field_name)
             next_value, changed = canonicalizer(current_value)
             if not changed:
                 continue
             setattr(obj, field_name, next_value)
-            obj.save(update_fields=[field_name])
+            obj.save(using=alias, update_fields=[field_name])
             stats["updated"] += 1
         except Exception as exc:  # pragma: no cover - defensive migration logging
             stats["failed"] += 1
@@ -286,19 +286,20 @@ def _migrate_json_field(apps, model_name, field_name, canonicalizer, stats):
 
 
 def forwards(apps, schema_editor):
+    alias = schema_editor.connection.alias
     stats = {"updated": 0, "failed": 0}
 
     _migrate_json_field(
-        apps, "SavedView", "config", _canonicalize_saved_view_config, stats
+        apps, "SavedView", "config", _canonicalize_saved_view_config, stats, alias
     )
     _migrate_json_field(
-        apps, "EvalTask", "filters", _canonicalize_filter_wrapper, stats
+        apps, "EvalTask", "filters", _canonicalize_filter_wrapper, stats, alias
     )
     _migrate_json_field(
-        apps, "UserAlertMonitor", "filters", _canonicalize_filter_wrapper, stats
+        apps, "UserAlertMonitor", "filters", _canonicalize_filter_wrapper, stats, alias
     )
     _migrate_json_field(
-        apps, "CustomEvalConfig", "filters", _canonicalize_filter_wrapper, stats
+        apps, "CustomEvalConfig", "filters", _canonicalize_filter_wrapper, stats, alias
     )
     _migrate_json_field(
         apps,
@@ -306,6 +307,7 @@ def forwards(apps, schema_editor):
         "query_config",
         _canonicalize_dashboard_query_config,
         stats,
+        alias,
     )
 
     print(

@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: asana
+version: 1.0.0
+name: Asana
+description: "Tasks, projects and work in Asana."
+vendor:
+  name: Asana
+  domains: [asana.com]
+eeCategory: productivity
+group: other
+categories: [productivity, project-management]
+tags: [tasks, projects]
+docsUrl: https://developers.asana.com/docs/integrating-with-asanas-mcp-server
+archetype: issue-tracker
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.asana.com/docs/integrating-with-asanas-mcp-server
+    fetchedAt: 2026-10-21

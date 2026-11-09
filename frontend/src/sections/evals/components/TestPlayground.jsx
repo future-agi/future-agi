@@ -1,5 +1,6 @@
 import {
   Box,
+  ButtonBase,
   Chip,
   CircularProgress,
   IconButton,
@@ -15,6 +16,7 @@ import PropTypes from "prop-types";
 import React, {
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useRef,
   useState,
@@ -24,6 +26,7 @@ import { useSearchParams } from "react-router-dom";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import axios, { endpoints } from "src/utils/axios";
 import { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
@@ -43,7 +46,7 @@ import {
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import EvalResultDisplay from "./EvalResultDisplay";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
-import VersionBadge from "./VersionBadge";
+import { RECORDED_VERSION_TOOLTIP } from "../Helpers/evalVersionCopy";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import {
@@ -704,6 +707,7 @@ const TestPlayground = React.forwardRef(
     },
     ref,
   ) => {
+    const mainTabsId = useId();
     const [activeMainTab, setActiveMainTab] = useState("test"); // "test" or "versions"
     const [activeTab, setActiveTab] = useState("Custom");
     const { data: versionsData } = useEvalVersions(templateId);
@@ -1125,94 +1129,46 @@ const TestPlayground = React.forwardRef(
         }}
       >
         {/* Header - Test Evaluations + Versions (only if saved) */}
-        <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
-          <Box
-            onClick={() => setActiveMainTab("test")}
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 0.75,
-              px: 1,
-              py: 0.5,
-              cursor: "pointer",
-              borderBottom:
-                activeMainTab === "test"
-                  ? "2px solid"
-                  : "2px solid transparent",
-              borderColor:
-                activeMainTab === "test" ? "primary.main" : "transparent",
-            }}
-          >
-            <Iconify
-              icon="lucide:play"
-              width={14}
-              sx={{
-                color:
-                  activeMainTab === "test" ? "primary.main" : "text.secondary",
-              }}
-            />
-            <Typography
-              variant="body2"
-              sx={{
-                fontSize: "12px",
-                fontWeight: activeMainTab === "test" ? 500 : 400,
-                color:
-                  activeMainTab === "test" ? "primary.main" : "text.secondary",
-              }}
-            >
-              Test Evaluation
-            </Typography>
-          </Box>
+        <Tabs
+          value={activeMainTab}
+          onChange={(_, value) => setActiveMainTab(value)}
+          sx={{ mb: 1.5, flexShrink: 0 }}
+        >
+          <Tab
+            value="test"
+            id={`${mainTabsId}-test`}
+            aria-controls={`${mainTabsId}-test-panel`}
+            label="Test Evaluation"
+            icon={<Iconify icon="lucide:play" width={14} />}
+            iconPosition="start"
+          />
           {(templateId || showVersions) && (
-            <Box
-              onClick={() => setActiveMainTab("versions")}
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 0.75,
-                px: 1,
-                py: 0.5,
-                cursor: "pointer",
-                borderBottom:
-                  activeMainTab === "versions"
-                    ? "2px solid"
-                    : "2px solid transparent",
-                borderColor:
-                  activeMainTab === "versions" ? "primary.main" : "transparent",
-              }}
-            >
-              <Iconify
-                icon="iconamoon:history"
-                width={14}
-                sx={{
-                  color:
-                    activeMainTab === "versions"
-                      ? "primary.main"
-                      : "text.secondary",
-                }}
-              />
-              <Typography
-                variant="body2"
-                sx={{
-                  fontSize: "12px",
-                  fontWeight: activeMainTab === "versions" ? 500 : 400,
-                  color:
-                    activeMainTab === "versions"
-                      ? "primary.main"
-                      : "text.secondary",
-                }}
-              >
-                Versions
-              </Typography>
-            </Box>
+            <Tab
+              value="versions"
+              id={`${mainTabsId}-versions`}
+              aria-controls={`${mainTabsId}-versions-panel`}
+              label="Versions"
+              icon={<Iconify icon="iconamoon:history" width={14} />}
+              iconPosition="start"
+            />
           )}
-        </Box>
+        </Tabs>
 
         {activeMainTab === "test" ? (
-          <>
+          <Box
+            role="tabpanel"
+            id={`${mainTabsId}-test-panel`}
+            aria-labelledby={`${mainTabsId}-test`}
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              flex: 1,
+              minHeight: 0,
+            }}
+          >
             {/* Source tabs + Map Variables - same row */}
             <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
-              <Tabs
+              <SegmentedTabs
                 value={activeTab}
                 onChange={(_, val) => {
                   setActiveTab(val);
@@ -1221,57 +1177,18 @@ const TestPlayground = React.forwardRef(
                   setInputValues({});
                   onSourceTabChange?.();
                 }}
-                TabIndicatorProps={{ style: { display: "none" } }}
+                variant="scrollable"
+                scrollButtons="auto"
                 sx={{
-                  minHeight: 28,
-                  "& .MuiTab-root": {
-                    minHeight: 28,
-                    px: 1.5,
-                    py: 0,
-                    mr: "0px !important",
-                    textTransform: "none",
-                    fontSize: "12px",
-                    borderRadius: "6px",
+                  "& .MuiTab-root:not(.Mui-selected)": {
+                    color: "text.secondary",
                   },
-                  border: "1px solid",
-                  borderColor: "divider",
-                  p: "2px",
-                  borderRadius: "8px",
-                  width: "fit-content",
-                  bgcolor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.04)"
-                      : "background.neutral",
                 }}
               >
                 {SOURCE_TABS.map((tab) => (
-                  <Tab
-                    key={tab}
-                    value={tab}
-                    label={tab}
-                    sx={{
-                      bgcolor:
-                        activeTab === tab
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        activeTab === tab
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: activeTab === tab ? 600 : 400,
-                      color:
-                        activeTab === tab ? "text.primary" : "text.disabled",
-                    }}
-                  />
+                  <Tab key={tab} value={tab} label={tab} />
                 ))}
-              </Tabs>
+              </SegmentedTabs>
             </Box>
 
             {/* Tab content */}
@@ -1592,10 +1509,15 @@ const TestPlayground = React.forwardRef(
                   </Box>
                 )}
             </Box>
-          </>
+          </Box>
         ) : (
           /* =================== VERSIONS TAB =================== */
-          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          <Box
+            role="tabpanel"
+            id={`${mainTabsId}-versions-panel`}
+            aria-labelledby={`${mainTabsId}-versions`}
+            sx={{ flex: 1, minHeight: 0, overflow: "auto" }}
+          >
             {!templateId ? (
               <Typography
                 variant="body2"
@@ -1680,18 +1602,28 @@ const TestPlayground = React.forwardRef(
                         onMouseEnter={() => setHoveredVersionId(v.id)}
                         onMouseLeave={() => setHoveredVersionId(null)}
                       >
-                        {/* Version badge + connecting line */}
-                        <Box
+                        {/* Native badge activation bubbles to the existing row
+                            handler; metadata and Actions stay outside it. */}
+                        <ButtonBase
+                          aria-current={isSelected ? "true" : undefined}
                           sx={{
                             display: "flex",
                             flexDirection: "column",
                             alignItems: "center",
+                            justifyContent: "flex-start",
+                            alignSelf: "stretch",
                             width: 28,
                             flexShrink: 0,
                             pt: 0.25,
+                            "&:focus-visible, &.Mui-focusVisible": {
+                              outline: (theme) =>
+                                `2px solid ${theme.palette.border.focus}`,
+                              outlineOffset: "-2px",
+                            },
                           }}
                         >
                           <Box
+                            component="span"
                             sx={{
                               width: 26,
                               height: 26,
@@ -1715,6 +1647,7 @@ const TestPlayground = React.forwardRef(
                             }}
                           >
                             <Typography
+                              component="span"
                               sx={{
                                 fontSize: "11px",
                                 fontWeight: 600,
@@ -1731,6 +1664,7 @@ const TestPlayground = React.forwardRef(
                           </Box>
                           {!isLast && (
                             <Box
+                              component="span"
                               sx={{
                                 width: 1.5,
                                 flex: 1,
@@ -1741,7 +1675,7 @@ const TestPlayground = React.forwardRef(
                               }}
                             />
                           )}
-                        </Box>
+                        </ButtonBase>
 
                         {/* Content */}
                         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -1764,6 +1698,7 @@ const TestPlayground = React.forwardRef(
                             </Typography>
                             {isDefault && (
                               <Box
+                                title={RECORDED_VERSION_TOOLTIP}
                                 sx={{
                                   px: 0.75,
                                   py: 0.125,
@@ -1776,7 +1711,7 @@ const TestPlayground = React.forwardRef(
                                   lineHeight: 1.4,
                                 }}
                               >
-                                Default
+                                Recorded default
                               </Box>
                             )}
                             {isSelected && !isDefault && (
@@ -1846,37 +1781,44 @@ const TestPlayground = React.forwardRef(
                           )}
                         </Box>
 
-                        {/* Three-dot menu - always visible */}
-                        <Tooltip title="Actions" arrow placement="left">
-                          <IconButton
-                            size="small"
-                            disabled={!canEditEvals}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleVersionMenuOpen(e, v);
-                            }}
-                            sx={{
-                              width: 28,
-                              height: 28,
-                              flexShrink: 0,
-                              mt: 0.25,
-                              opacity: isHovered || versionMenuAnchor ? 1 : 0.4,
-                              transition: "opacity 0.15s",
-                              "&:hover": {
-                                backgroundColor: (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.1)"
-                                    : "rgba(0,0,0,0.06)",
-                              },
-                            }}
-                          >
-                            <Iconify
-                              icon="solar:menu-dots-bold"
-                              width={16}
-                              sx={{ color: "text.secondary" }}
-                            />
-                          </IconButton>
-                        </Tooltip>
+                        {/* Three-dot menu. Hidden for system evals: they are
+                            read-only (Restore asks for an edit and save that
+                            cannot happen), and Set as Default works only on
+                            user templates. Their versions come from the
+                            platform's seed. */}
+                        {!isSystemEval && (
+                          <Tooltip title="Actions" arrow placement="left">
+                            <IconButton
+                              size="small"
+                              disabled={!canEditEvals}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleVersionMenuOpen(e, v);
+                              }}
+                              sx={{
+                                width: 28,
+                                height: 28,
+                                flexShrink: 0,
+                                mt: 0.25,
+                                opacity:
+                                  isHovered || versionMenuAnchor ? 1 : 0.4,
+                                transition: "opacity 0.15s",
+                                "&:hover": {
+                                  backgroundColor: (theme) =>
+                                    theme.palette.mode === "dark"
+                                      ? "rgba(255,255,255,0.1)"
+                                      : "rgba(0,0,0,0.06)",
+                                },
+                              }}
+                            >
+                              <Iconify
+                                icon="solar:menu-dots-bold"
+                                width={16}
+                                sx={{ color: "text.secondary" }}
+                              />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                       </Box>
                     );
                   })}

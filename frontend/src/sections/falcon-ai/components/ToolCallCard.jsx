@@ -42,6 +42,8 @@ export default function ToolCallCard({ toolCall }) {
   // Support both snake_case (WebSocket streaming) and camelCase (API history)
   const call_id = toolCall.call_id;
   const tool_name = toolCall.tool_name;
+  // IT-R3 G2 P4 (additive): `Looked up experiments`, not the raw tool name.
+  const tool_label = toolCall.tool_label;
   const tool_description = toolCall.tool_description;
   const params = toolCall.params;
   const status = toolCall.status;
@@ -92,16 +94,18 @@ export default function ToolCallCard({ toolCall }) {
 
         <Typography
           variant="body2"
+          title={tool_label ? tool_name : undefined}
           sx={{
-            fontFamily:
-              "'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace",
+            fontFamily: tool_label
+              ? undefined
+              : "'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace",
             fontWeight: 500,
             fontSize: 12.5,
             flex: 1,
             color: "text.secondary",
           }}
         >
-          {tool_name}
+          {tool_label || tool_name}
         </Typography>
 
         {isRunning && (
@@ -318,6 +322,7 @@ ToolCallCard.propTypes = {
   toolCall: PropTypes.shape({
     call_id: PropTypes.string,
     tool_name: PropTypes.string,
+    tool_label: PropTypes.string,
     tool_description: PropTypes.string,
     params: PropTypes.object,
     status: PropTypes.string,

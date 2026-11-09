@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   Box,
@@ -20,15 +21,11 @@ import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailD
 
 const EMPTY_AGG = {
   total_traces: 0,
-  avg_score: null,
-  avg_turns: null,
+  avg_score: 0,
+  avg_turns: 0,
   p50_latency: 0,
   p95_latency: 0,
 };
-
-// The API sends null when nothing was measured; a zero there would read as data.
-const formatOrDash = (value, digits) =>
-  value == null ? "—" : value.toFixed(digits);
 
 const TRACES_GRID_THEME_PARAMS = {
   wrapperBorder: { width: 0 },
@@ -36,14 +33,11 @@ const TRACES_GRID_THEME_PARAMS = {
 };
 
 // ── Aggregate bar (no Failing / Passing) ────────────────────────────────────
-function AggregateBar({ agg, showTurns }) {
+function AggregateBar({ agg }) {
   const items = [
     { label: "Total traces", value: agg.total_traces.toLocaleString() },
-    { label: "Avg score", value: formatOrDash(agg.avg_score, 2) },
-    // Turns only mean something for a call or conversation.
-    ...(showTurns
-      ? [{ label: "Avg turns", value: formatOrDash(agg.avg_turns, 1) }]
-      : []),
+    { label: "Avg score", value: agg.avg_score.toFixed(2) },
+    { label: "Avg turns", value: agg.avg_turns.toFixed(1) },
     { label: "P50 latency", value: `${(agg.p50_latency / 1000).toFixed(1)}s` },
     { label: "P95 latency", value: `${(agg.p95_latency / 1000).toFixed(1)}s` },
   ];
@@ -52,7 +46,7 @@ function AggregateBar({ agg, showTurns }) {
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: `repeat(${items.length}, 1fr)`,
+        gridTemplateColumns: "repeat(5, 1fr)",
         gap: 1,
         mb: 1.5,
       }}
@@ -79,10 +73,7 @@ function AggregateBar({ agg, showTurns }) {
     </Box>
   );
 }
-AggregateBar.propTypes = {
-  agg: PropTypes.object.isRequired,
-  showTurns: PropTypes.bool,
-};
+AggregateBar.propTypes = { agg: PropTypes.object.isRequired };
 
 // ── Score cell renderer — full-cell fill, green ≥ 70%, red < 70% ─────────────
 function scoreColors(pct, isDark) {
@@ -206,8 +197,7 @@ function TracesGrid({ rows, onRowClick }) {
         field: "cost",
         width: 90,
         sortable: true,
-        valueFormatter: (p) =>
-          p.value != null ? `$${p.value.toFixed(4)}` : "—",
+        valueFormatter: (p) => formatExactMoney(p.value),
         cellStyle: { fontSize: "12px", textAlign: "right" },
         headerClass: "ag-right-aligned-header",
       },
@@ -330,10 +320,7 @@ export default function TracesTab({ error }) {
 
   return (
     <Stack gap={2}>
-      <AggregateBar
-        agg={agg}
-        showTurns={isVoiceProject && agg.avg_turns != null}
-      />
+      <AggregateBar agg={agg} />
 
       <Box>
         <TracesGrid rows={rows} onRowClick={setDrawerTraceId} />

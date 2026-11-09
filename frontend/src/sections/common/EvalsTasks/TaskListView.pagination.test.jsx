@@ -352,7 +352,11 @@ describe("TaskListView server pagination", () => {
       expect(screen.getByTestId("task-page")).toHaveTextContent("0"),
     );
     expect(await screen.findByText("Task zero")).toBeInTheDocument();
-    expect(screen.getByTestId("task-total")).toHaveTextContent("25");
+    // Page zero's cached row can render before its post-delete refetch updates
+    // the count. Seeing that row alone is not the completion signal.
+    await waitFor(() =>
+      expect(screen.getByTestId("task-total")).toHaveTextContent("25"),
+    );
     expect(axiosPostMock).toHaveBeenCalledWith("/delete-tasks", {
       eval_task_ids: ["task-final"],
     });

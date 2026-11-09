@@ -95,6 +95,8 @@ describe("UploadLimitNotification", () => {
               features: {
                 monitors: -1,
                 has_scim: true,
+                has_project_rbac: true,
+                has_custom_roles: true,
               },
             },
           ],
@@ -147,6 +149,11 @@ describe("UploadLimitNotification", () => {
     expect(screen.getByText("Usage-based")).toBeInTheDocument();
     expect(screen.getByText("No monthly platform fee")).toBeInTheDocument();
     expect(mocks.get).toHaveBeenCalledWith("/usage/v2/plans-and-addons/");
+    // The custom plan card lists the enterprise entitlements, but never one
+    // whose capability is not built (ruling 383: SCIM, project RBAC).
+    expect(await screen.findByText("Custom Roles")).toBeInTheDocument();
+    expect(screen.queryByText(/scim/i)).toBeNull();
+    expect(screen.queryByText(/project rbac/i)).toBeNull();
     await waitFor(() => expect(mocks.navigate).not.toHaveBeenCalled());
   });
 });

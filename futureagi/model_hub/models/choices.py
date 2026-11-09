@@ -3,7 +3,6 @@ import io
 import json
 import mimetypes
 import re
-import traceback
 import wave
 from datetime import datetime
 from enum import Enum
@@ -11,10 +10,8 @@ from urllib.parse import urlparse
 
 import pandas as pd
 import structlog
-from PIL import Image
-
-logger = structlog.get_logger(__name__)
 from django.db import models
+from PIL import Image
 
 from agentic_eval.core_evals.fi_evals.eval_type import (
     FunctionEvalTypeId,
@@ -24,8 +21,10 @@ from agentic_eval.core_evals.fi_evals.eval_type import (
 )
 from tfc.utils.ssrf_guard import safe_fetch
 
+logger = structlog.get_logger(__name__)
 
-class ModalityType(str, Enum):
+
+class ModalityType(str, Enum):  # noqa: UP042 - preserve existing Enum stringification
     """Modality filter values for prompt API endpoints."""
 
     CHAT = "chat"
@@ -1382,63 +1381,68 @@ class LiteLlmModelProvider(Enum):
 
 
 class ProviderLogoUrls(Enum):
-    OPENAI = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png"
-    ANTHROPIC = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/claude-ai-icon.png"
-    AZURE = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/azure-icon.png"
-    AZURE_AI = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/azure-icon.png"
-    VERTEX_AI = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    PALM = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/palm.png"
-    GEMINI = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/google-gemini-icon.png"
-    COHERE = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/cohere-small.png"
-    HUGGINGFACE = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/hugginface.png"
-    TEXT_COMPLETION_OPENAI = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png"
-    VERTEX_AI_EMBEDDING_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    TOGETHER_AI = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/together-small.png"
-    REPLICATE = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/replicate-small.svg"
-    CEREBRAS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/Cerebras.jpg"
-    VERTEX_AI_ANTHROPIC_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    COHERE_CHAT = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/cohere-small.png"
-    FRIENDLIAI = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/friendliai-small.jpeg"
-    FIREWORKS_AI = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/fireworks-small.jpeg"
-    VERTEX_AI_MISTRAL_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    ANYSCALE = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/anyscale-small.png"
-    TEXT_COMPLETION_CODESTRAL = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/mistral-ai-icon.png"
-    NLP_CLOUD = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/NLP+Cloud.png"
-    OPENROUTER = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openrouter.png"
-    CLOUDFLARE = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/cloudflare-icon.png"
-    DEEPSEEK = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/deep-seek-small.png"
-    ALEPH_ALPHA = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/aleph-alpha-small.jpeg"
-    FIREWORKS_AI_EMBEDDING_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/fireworks-small.jpeg"
-    MISTRAL = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/mistral-ai-icon.png"
-    BEDROCK = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/bedrock-small.svg"
-    OLLAMA = (
-        "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/ollama.png"
-    )
-    DEEPINFRA = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/deepinfram-small.jpeg"
-    DATABRICKS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/databricks-small.png"
-    VERTEX_AI_TEXT_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    VERTEX_AI_IMAGE_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    VERTEX_AI_CODE_TEXT_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    VERTEX_AI_LLAMA_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    VERTEX_AI_LANGUAGE_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    VERTEX_AI_VISION_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    VOYAGE = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/Voyage+ai.png"
-    VERTEX_AI_AI21_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    GROQ = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/groq-small.png"
-    CODESTRAL = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/mistral-ai-icon.png"
-    PERPLEXITY = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/perplexity-ai-icon.png"
-    AI21 = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/ai21-small.png"
-    SAGEMAKER = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/Sagemaker.png"
-    VERTEX_AI_CHAT_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    VERTEX_AI_CODE_CHAT_MODELS = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
-    ELEVENLABS = "https://fi-content-dev.s3.ap-south-1.amazonaws.com/provider-logos/elevenlabs-small.png"
-    DEEPGRAM = "https://fi-content-dev.s3.ap-south-1.amazonaws.com/provider-logos/deepgram-small.png"
-    INWORLD = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/inworld-small.png"
-    RIME = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/rime-small.png"
-    NEUPHONIC = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/neuphonic-small.png"
-    HUME = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/hume-small.png"
-    CARTESIA = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/cartesia-small.png"
-    LMNT = "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/lmnt-small.png"
+    """Display artwork served by the FA frontend origin, never a provider CDN.
+
+    Keep these root-relative paths aligned with localProviderLogo.js. Provenance
+    and checksums live in frontend/public/assets/provider-logos/manifest.json.
+    API clients resolve these display paths against the application origin.
+    """
+
+    OPENAI = "/icons/settings/openai.png"
+    ANTHROPIC = "/icons/settings/anthropic.png"
+    AZURE = "/icons/settings/azure.png"
+    AZURE_AI = "/icons/settings/azure.png"
+    VERTEX_AI = "/assets/provider-logos/vertex-ai.png"
+    PALM = "/assets/provider-logos/palm.png"
+    GEMINI = "/icons/settings/google.png"
+    COHERE = "/icons/settings/cohere.png"
+    HUGGINGFACE = "/icons/settings/huggingface.png"
+    TEXT_COMPLETION_OPENAI = "/icons/settings/openai.png"
+    VERTEX_AI_EMBEDDING_MODELS = "/assets/provider-logos/vertex-ai.png"
+    TOGETHER_AI = "/icons/settings/together_ai.png"
+    REPLICATE = "/assets/provider-logos/replicate-small.svg"
+    CEREBRAS = "/assets/provider-logos/Cerebras.jpg"
+    VERTEX_AI_ANTHROPIC_MODELS = "/assets/provider-logos/vertex-ai.png"
+    COHERE_CHAT = "/icons/settings/cohere.png"
+    FRIENDLIAI = "/assets/provider-logos/friendliai-small.jpeg"
+    FIREWORKS_AI = "/assets/provider-logos/fireworks-small.jpeg"
+    VERTEX_AI_MISTRAL_MODELS = "/assets/provider-logos/vertex-ai.png"
+    ANYSCALE = "/assets/provider-logos/anyscale-small.png"
+    TEXT_COMPLETION_CODESTRAL = "/icons/settings/mistral.png"
+    NLP_CLOUD = "/assets/provider-logos/nlp-cloud.png"
+    OPENROUTER = "/assets/provider-logos/openrouter.png"
+    CLOUDFLARE = "/assets/provider-logos/cloudflare-icon.png"
+    DEEPSEEK = "/assets/provider-logos/deep-seek-small.png"
+    ALEPH_ALPHA = "/assets/provider-logos/aleph-alpha-small.jpeg"
+    FIREWORKS_AI_EMBEDDING_MODELS = "/assets/provider-logos/fireworks-small.jpeg"
+    MISTRAL = "/icons/settings/mistral.png"
+    BEDROCK = "/assets/provider-logos/bedrock-small.svg"
+    OLLAMA = "/assets/provider-logos/ollama.png"
+    DEEPINFRA = "/assets/provider-logos/deepinfram-small.jpeg"
+    DATABRICKS = "/assets/provider-logos/databricks-small.png"
+    VERTEX_AI_TEXT_MODELS = "/assets/provider-logos/vertex-ai.png"
+    VERTEX_AI_IMAGE_MODELS = "/assets/provider-logos/vertex-ai.png"
+    VERTEX_AI_CODE_TEXT_MODELS = "/assets/provider-logos/vertex-ai.png"
+    VERTEX_AI_LLAMA_MODELS = "/assets/provider-logos/vertex-ai.png"
+    VERTEX_AI_LANGUAGE_MODELS = "/assets/provider-logos/vertex-ai.png"
+    VERTEX_AI_VISION_MODELS = "/assets/provider-logos/vertex-ai.png"
+    VOYAGE = "/assets/provider-logos/voyage-ai.png"
+    VERTEX_AI_AI21_MODELS = "/assets/provider-logos/vertex-ai.png"
+    GROQ = "/icons/settings/groq.png"
+    CODESTRAL = "/icons/settings/mistral.png"
+    PERPLEXITY = "/icons/settings/perplexity.png"
+    AI21 = "/assets/provider-logos/ai21-small.png"
+    SAGEMAKER = "/assets/provider-logos/Sagemaker.png"
+    VERTEX_AI_CHAT_MODELS = "/assets/provider-logos/vertex-ai.png"
+    VERTEX_AI_CODE_CHAT_MODELS = "/assets/provider-logos/vertex-ai.png"
+    ELEVENLABS = "/assets/provider-logos/elevenlabs.svg"
+    DEEPGRAM = "/assets/provider-logos/deepgram.svg"
+    INWORLD = "/assets/provider-logos/inworld-small.png"
+    RIME = "/assets/provider-logos/rime-small.png"
+    NEUPHONIC = "/assets/provider-logos/neuphonic-small.png"
+    HUME = "/assets/provider-logos/hume-small.png"
+    CARTESIA = "/assets/provider-logos/cartesia-small.png"
+    LMNT = "/assets/provider-logos/lmnt-small.png"
 
     @classmethod
     def get_url_by_provider(cls, provider_name):

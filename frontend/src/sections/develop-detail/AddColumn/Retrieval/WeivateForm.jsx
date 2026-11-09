@@ -1,6 +1,5 @@
 import { Box, Typography } from "@mui/material";
 import React from "react";
-import { FormSelectField } from "src/components/FormSelectField";
 import HelperText from "../../Common/HelperText";
 import SecretSelect from "src/sections/common/SecretSelect/SecretSelect";
 import { RetrievalFormItemWrapper } from "./RetrievalComponents";
@@ -96,20 +95,6 @@ const WeivateForm = ({ control, allColumns }) => {
         </RetrievalFormItemWrapper>
         <RetrievalFormItemWrapper>
           <EmbeddingConfigField control={control} />
-        </RetrievalFormItemWrapper>
-        <RetrievalFormItemWrapper>
-          <FormSelectField
-            label="Search Type"
-            size="small"
-            control={control}
-            fieldName="searchType"
-            fullWidth
-            options={[
-              { label: "Sematic Search", value: "semantic_search" },
-              { label: "Hybrid", value: "hybrid" },
-            ]}
-            helperText={<HelperText text="The type of search to perform" />}
-          />
         </RetrievalFormItemWrapper>
         <RetrievalFormItemWrapper>
           <FormTextFieldV2

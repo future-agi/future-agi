@@ -1,0 +1,3212 @@
+{
+  "ai_tools.tools.tracing.explore_trace": [
+    [
+      "module.run",
+      "if getattr(context, 'background_analysis', None) is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run",
+      "getattr(context, 'background_analysis', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run.if(getattr(context, 'background_analysis', None) is not None).then",
+      "return run_background_tool(self, raw_params, context)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run",
+      "return super().run(raw_params, context)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(context, 'background_analysis', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(guard is not None).then",
+      "do require_tool_parameters(params, guard, 'explore_trace_legacy')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.checkpoint",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.checkpoint.if(guard is not None).then",
+      "do guard.check()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do checkpoint()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do checkpoint()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do checkpoint()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do checkpoint()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do checkpoint()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do checkpoint()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "except Trace.DoesNotExist",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.except(Trace.DoesNotExist)",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.except(Trace.DoesNotExist).if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.except(Trace.DoesNotExist)",
+      "return ToolResult.not_found('Trace', str(params.trace_id))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(guard is not None).then",
+      "do validate_trace_spans(spans, guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if not spans",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(not spans).then",
+      "return ToolResult(content=section('Trace Exploration', f'Trace `{params.trace_id}` has no spans.'), data={'trace_id': str(params.trace_id), 'total_spans': 0})",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(s, 'parent_span_id', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(s, 'parent_span_id', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if pid and str(pid) in span_map",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "pid and str(pid) in span_map",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(pid and str(pid) in span_map).then",
+      "do child_ids.add(str(s.id))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if sid not in child_ids",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if pid",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(pid).then",
+      "if parent_node",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(pid).then.if(parent_node).then",
+      "do parent_node['children'].append({'span': s, 'children': []})",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(pid).then.if(parent_node).else",
+      "if pid_str not in tree",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(pid).then.if(parent_node).else.if(pid_str not in tree).then",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(pid).then.if(parent_node).else.if(pid_str not in tree).then.if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do self._sort_children(node)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if chauffeur_report.get('sub_flows')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(chauffeur_report.get('sub_flows')).then",
+      "chauffeur_report.get('trace_overview', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(chauffeur_report.get('sub_flows')).then",
+      "sf.get('name', 'Unnamed')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(chauffeur_report.get('sub_flows')).then",
+      "sf.get('spans', [])",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(chauffeur_report.get('sub_flows')).then",
+      "sf.get('summary', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(chauffeur_report.get('sub_flows')).then",
+      "if sf.get('flags')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(s, 'name', '') or ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(s, 'name', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(s, 'observation_type', '') or ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(s, 'observation_type', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(s, 'status', '') or ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(s, 'status', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "return ToolResult(content=content, data={'trace_id': str(params.trace_id), 'total_spans': len(spans), 'sub_flows': chauffeur_report.get('sub_flows', []), 'trace_overview': chauffeur_report.get('trace_overview', '')})",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "chauffeur_report.get('sub_flows', [])",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "chauffeur_report.get('trace_overview', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._find_node",
+      "if sid == target_id",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._find_node.if(sid == target_id).then",
+      "return node",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._find_node",
+      "if found",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._find_node.if(found).then",
+      "return found",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._find_node",
+      "return None",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._find_in_children",
+      "node.get('children', [])",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._find_in_children",
+      "if str(child['span'].id) == target_id",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._find_in_children.if(str(child['span'].id) == target_id).then",
+      "return child",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._find_in_children",
+      "if found",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._find_in_children.if(found).then",
+      "return found",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._find_in_children",
+      "return None",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._sort_children",
+      "do node['children'].sort(key=lambda n: getattr(n['span'], 'start_time', None) or getattr(n['span'], 'created_at', None))",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._sort_children",
+      "getattr(n['span'], 'start_time', None) or getattr(n['span'], 'created_at', None)",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._sort_children",
+      "getattr(n['span'], 'start_time', None)",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._sort_children",
+      "getattr(n['span'], 'created_at', None)",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._sort_children",
+      "do self._sort_children(child)",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "getattr(span, 'name', '') or ''",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "getattr(span, 'name', '')",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "getattr(span, 'observation_type', '') or ''",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "getattr(span, 'observation_type', '')",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "getattr(span, 'status', '') or ''",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "getattr(span, 'status', '')",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "getattr(span, 'latency_ms', None)",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "getattr(span, 'model', '') or ''",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "getattr(span, 'model', '')",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "f' ({latency}ms)' if latency else ''",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "f' [{status}]' if status else ''",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "f' model={model}' if model else ''",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "do lines.append(f'{path_str}  [{stype}] {name}{st}{lat}{mdl}  (ID: {sid})')",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline.walk",
+      "do walk(child, path + [idx])",
+      "lookup-or-tree-control"
+    ],
+    [
+      "module._build_outline",
+      "getattr(n['span'], 'start_time', None) or getattr(n['span'], 'created_at', None)",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module._build_outline",
+      "getattr(n['span'], 'start_time', None)",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module._build_outline",
+      "getattr(n['span'], 'created_at', None)",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module._build_outline",
+      "do walk(root, [i])",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module._build_outline",
+      "return '\\n'.join(lines)",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module._build_execution_summary",
+      "if spans",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.if(spans).then",
+      "getattr(spans[0], 'input', '') or ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.if(spans).then",
+      "getattr(spans[0], 'input', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.if(spans).then",
+      "if not isinstance(first_input, str)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.if(spans).then.if(not isinstance(first_input, str)).then",
+      "except Exception",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.if(spans).then",
+      "do lines.append(f'USER QUERY: {first_input}')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.if(spans).then",
+      "do lines.append('')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "getattr(span, 'name', '') or ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "getattr(span, 'name', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "getattr(span, 'observation_type', '') or ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "getattr(span, 'observation_type', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "getattr(span, 'input', '') or ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "getattr(span, 'input', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "getattr(span, 'output', '') or ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "getattr(span, 'output', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "getattr(span, 'metadata', {}) or {}",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "getattr(span, 'metadata', {})",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "do outline_lines.append(f'{path_str}  {name}  [Span ID: {sid}]')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "do detail_lines.append(f'STEP {step_counter[0]} [Path {path_str}]:')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "do detail_lines.append(f'Span ID: {sid}')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "do detail_lines.append(f'Span Name: {name}')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "do detail_lines.append(f'Span Type: {stype}')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "if sinput",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk.if(sinput).then",
+      "if len(sinput_str) > 2000",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk.if(sinput).then.if(len(sinput_str) > 2000).then",
+      ":1500",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk.if(sinput).then",
+      "do detail_lines.append(f'Input: {sinput_str}')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "if soutput",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk.if(soutput).then",
+      "if len(soutput_str) > 2000",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk.if(soutput).then.if(len(soutput_str) > 2000).then",
+      ":1500",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk.if(soutput).then",
+      "do detail_lines.append(f'Output: {soutput_str}')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "if smetadata",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk.if(smetadata).then",
+      "v and k in ['tool_result', 'tool_call', 'expected_format', 'goal', 'subtasks']",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk.if(smetadata).then",
+      "if relevant",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk.if(smetadata).then.if(relevant).then",
+      "do detail_lines.append(f'Metadata: {json.dumps(relevant, indent=2)}')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "do detail_lines.append('=' * 50)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "do detail_lines.append('')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary.walk",
+      "do walk(child, path + [idx])",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary",
+      "getattr(n['span'], 'start_time', None) or getattr(n['span'], 'created_at', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary",
+      "getattr(n['span'], 'start_time', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary",
+      "getattr(n['span'], 'created_at', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary",
+      "do walk(root, [i])",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary",
+      "do lines.append('OUTLINE (Path \u2192 Span):')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary",
+      "do lines.extend(outline_lines)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary",
+      "do lines.append('')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary",
+      "do lines.append('DETAILS (Follow paths to reference spans):')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary",
+      "do lines.extend(detail_lines)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._build_execution_summary",
+      "return '\\n'.join(lines)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "os.environ.get('BEDROCK_HAIKU_ARN', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "guard or current_guard()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if(guard is not None).then",
+      "return parse_chauffeur_report(raw, guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "if unwrapped",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if(unwrapped).then",
+      "except json.JSONDecodeError",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "if not parsed",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "if not parsed",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if(not parsed).then",
+      "if match",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if(not parsed).then.if(match).then",
+      "except (json.JSONDecodeError, ValueError)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if(not parsed).then",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if(not parsed).then.if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if(not parsed).then",
+      "return {'sub_flows': [], 'trace_overview': ''}",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "if 'sub_flows' in parsed",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if('sub_flows' in parsed).then",
+      "return {'sub_flows': parsed['sub_flows'], 'trace_overview': parsed.get('trace_overview', '')}",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if('sub_flows' in parsed).then",
+      "parsed.get('trace_overview', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if('sub_flows' in parsed).else",
+      "if 'span_groups' in parsed",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if('sub_flows' in parsed).else.if('span_groups' in parsed).then",
+      "do sub_flows.append({'name': g.get('signal', 'unnamed'), 'spans': g.get('spans', []), 'summary': g.get('signal', ''), 'flags': []})",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if('sub_flows' in parsed).else.if('span_groups' in parsed).then",
+      "g.get('signal', 'unnamed')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if('sub_flows' in parsed).else.if('span_groups' in parsed).then",
+      "g.get('spans', [])",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if('sub_flows' in parsed).else.if('span_groups' in parsed).then",
+      "g.get('signal', '')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if('sub_flows' in parsed).else.if('span_groups' in parsed).then",
+      "return {'sub_flows': sub_flows, 'trace_overview': ''}",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "return {'sub_flows': [], 'trace_overview': ''}",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur",
+      "except Exception",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.except(Exception)",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.except(Exception).if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.except(Exception)",
+      "do logger.warning(f'Chauffeur analysis failed: {e}')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._run_chauffeur.except(Exception)",
+      "return {'sub_flows': [], 'trace_overview': ''}",
+      "background-refusal-or-validated-success"
+    ]
+  ],
+  "ai_tools.tools.tracing.read_trace_span": [
+    [
+      "module._format_content",
+      "if raw is None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._format_content.if(raw is None).then",
+      "return ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._format_content",
+      "if len(text) <= max_len",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._format_content.if(len(text) <= max_len).then",
+      "return text",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._format_content",
+      ":max_len - 500",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._format_content",
+      "-400:",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._format_content",
+      "return f'{head}\\n\\n... [{omitted} chars omitted] ...\\n\\n{tail}'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run",
+      "if getattr(context, 'background_analysis', None) is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run",
+      "getattr(context, 'background_analysis', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run.if(getattr(context, 'background_analysis', None) is not None).then",
+      "return run_background_tool(self, raw_params, context)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run",
+      "return super().run(raw_params, context)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(context, 'background_analysis', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(guard is not None).then",
+      "do require_tool_parameters(params, guard, 'read_trace_span')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.checkpoint",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.checkpoint.if(guard is not None).then",
+      "do guard.check()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do checkpoint()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do checkpoint()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do checkpoint()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do checkpoint()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "do Trace.objects.get(id=params.trace_id, project__organization=context.organization)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "except Trace.DoesNotExist",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.except(Trace.DoesNotExist)",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.except(Trace.DoesNotExist).if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.except(Trace.DoesNotExist)",
+      "return ToolResult.not_found('Trace', str(params.trace_id))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if params.span_id in valid_ids",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if not span and params.span_id in valid_names",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "not span and params.span_id in valid_names",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if not span",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if not span",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(not span).then",
+      "if params.span_id.lower() == name.lower()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(not span).then",
+      "if guard is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(not span).then.if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(not span).then",
+      "s[1] or '(unnamed)'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(not span).then",
+      ":20",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(not span).then",
+      "return ToolResult.error(f'Span `{params.span_id}` not found in trace `{params.trace_id}`.\\n\\nValid span IDs for this trace:\\n' + '\\n'.join(hint_lines), error_code='NOT_FOUND')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "span.name or '\u2014'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "span.observation_type or '\u2014'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "span.status or '\u2014'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "span.model or '\u2014'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "f'{span.latency_ms}ms' if span.latency_ms else '\u2014'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "str(span.total_tokens) if span.total_tokens else '\u2014'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "f'`{span.parent_span_id}`' if span.parent_span_id else 'root'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "span.name or span.id",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "50000 if params.exact else LARGE_SPAN_THRESHOLD",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute.if(guard is not None).then",
+      "do validate_span_content(span, max_len, guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if span.input",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if span.output",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if span.metadata and str(span.metadata) != '{}'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "span.metadata and str(span.metadata) != '{}'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if span.span_events and str(span.span_events) != '[]'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "span.span_events and str(span.span_events) != '[]'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "return ToolResult(content=content, data=data)",
+      "background-refusal-or-validated-success"
+    ]
+  ],
+  "ai_tools.tools.tracing.submit_trace_finding": [
+    [
+      "module.run",
+      "if getattr(context, 'background_analysis', None) is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run",
+      "getattr(context, 'background_analysis', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run.if(getattr(context, 'background_analysis', None) is not None).then",
+      "return run_background_tool(self, raw_params, context)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run",
+      "return super().run(raw_params, context)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(context, 'background_analysis', None)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.if(guard is not None).then",
+      "do require_tool_parameters(params, guard, 'submit_trace_finding')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if current_attempt() is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.if(current_attempt() is not None).then",
+      "return self._execute_owned(params, context)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "Project.objects.filter(id=root[1], organization=context.organization).first() if root else None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "if project is None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.if(project is None).then",
+      "return ToolResult.not_found('Trace', str(params.trace_id))",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "if result.is_error",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "do result.data.pop('analysis_status', None)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "return result",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "except ResultOwnershipError",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.except(ResultOwnershipError)",
+      "return ToolResult.validation_error('A generation-owned analysis task is required.')",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "getattr(context, 'background_analysis', None)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(guard is not None).then",
+      "do require_tool_parameters(params, guard, 'submit_trace_finding')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._execute_owned.checkpoint",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.checkpoint.if(guard is not None).then",
+      "do guard.check()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(guard is not None).then",
+      "do validate_submission(params, guard)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if params.confidence < 0.7",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(params.confidence < 0.7).then",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(params.confidence < 0.7).then.if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(params.confidence < 0.7).then",
+      "return ToolResult(content=section('Finding Rejected', f'Confidence {params.confidence:.2f} is below the 0.7 threshold. Only submit findings you are confident about.'), data={'status': 'rejected', 'reason': 'confidence_too_low'}, is_error=True, error_code='VALIDATION_ERROR')",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if impact_upper not in ('HIGH', 'MEDIUM', 'LOW')",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(impact_upper not in ('HIGH', 'MEDIUM', 'LOW')).then",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(impact_upper not in ('HIGH', 'MEDIUM', 'LOW')).then.if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(impact_upper not in ('HIGH', 'MEDIUM', 'LOW')).then",
+      "return ToolResult.validation_error(f\"Invalid impact '{params.impact}'. Must be HIGH, MEDIUM, or LOW.\")",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "except Trace.DoesNotExist",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.except(Trace.DoesNotExist)",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.except(Trace.DoesNotExist).if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.except(Trace.DoesNotExist)",
+      "return ToolResult.not_found('Trace', str(params.trace_id))",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if params.analysis_id",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(params.analysis_id).then",
+      "except TraceErrorAnalysis.DoesNotExist",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(params.analysis_id).then.except(TraceErrorAnalysis.DoesNotExist)",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(params.analysis_id).then.except(TraceErrorAnalysis.DoesNotExist).if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if analysis is None and current_attempt() is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "analysis is None and current_attempt() is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if analysis is None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do TraceErrorDetail.drafts.create(analysis=analysis, error_id=error_id, category=params.category, impact=impact_upper, urgency_to_fix=params.urgency_to_fix.upper(), location_spans=params.location_spans, evidence_snippets=params.evidence_snippets, description=params.description, root_causes=params.root_causes, recommendation=params.recommendation, immediate_fix=params.immediate_fix, trace_impact=params.trace_impact, trace_assessment=None, memory_enhanced=False)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if impact_upper == 'HIGH'",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if impact_upper == 'HIGH'",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(impact_upper == 'HIGH').else",
+      "if impact_upper == 'MEDIUM'",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(impact_upper == 'HIGH').else.if(impact_upper == 'MEDIUM').else",
+      "if impact_upper == 'LOW'",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(impact_upper == 'HIGH').else",
+      "if impact_upper == 'MEDIUM' and analysis.recommended_priority == 'LOW'",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(impact_upper == 'HIGH').else",
+      "impact_upper == 'MEDIUM' and analysis.recommended_priority == 'LOW'",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do analysis.save(update_fields=['total_errors', 'high_impact_errors', 'medium_impact_errors', 'low_impact_errors', 'recommended_priority'])",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "return ToolResult(content=section('Finding Submitted', info), data={'status': 'accepted', 'analysis_status': 'running', 'error_id': error_id, 'analysis_id': str(analysis.id), 'total_errors': analysis.total_errors})",
+      "generation-owned-write-or-foreground-only"
+    ]
+  ],
+  "ai_tools.tools.tracing.submit_trace_scores": [
+    [
+      "module.run",
+      "if getattr(context, 'background_analysis', None) is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run",
+      "getattr(context, 'background_analysis', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run.if(getattr(context, 'background_analysis', None) is not None).then",
+      "return run_background_tool(self, raw_params, context)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run",
+      "return super().run(raw_params, context)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "getattr(context, 'background_analysis', None)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.if(guard is not None).then",
+      "do require_tool_parameters(params, guard, 'submit_trace_scores')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute",
+      "if current_attempt() is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.if(current_attempt() is not None).then",
+      "return self._execute_owned(params, context)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "Project.objects.filter(id=root[1], organization=context.organization).first() if root else None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "if project is None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.if(project is None).then",
+      "return ToolResult.not_found('Trace', str(params.trace_id))",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "if result.is_error",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "do result.data.pop('analysis_status', None)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "do TraceErrorAnalysisDB().ingest_trace_error_embeddings(str(params.trace_id))",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "if guard is None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.if(guard is None).then",
+      "do cluster_project_errors.delay(str(project.id))",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "except Exception",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.except(Exception)",
+      "do logger.warning('analysis_completed_export_failed', trace_id=str(params.trace_id))",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "return result",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute",
+      "except ResultOwnershipError",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module.execute.except(ResultOwnershipError)",
+      "return ToolResult.validation_error('A generation-owned analysis task is required.')",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "getattr(context, 'background_analysis', None)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(guard is not None).then",
+      "do require_tool_parameters(params, guard, 'submit_trace_scores')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._execute_owned.checkpoint",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.checkpoint.if(guard is not None).then",
+      "do guard.check()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do checkpoint()",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(guard is not None).then",
+      "do validate_submission(params, guard, scores=True)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if priority not in ('HIGH', 'MEDIUM', 'LOW')",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(priority not in ('HIGH', 'MEDIUM', 'LOW')).then",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(priority not in ('HIGH', 'MEDIUM', 'LOW')).then.if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(priority not in ('HIGH', 'MEDIUM', 'LOW')).then",
+      "return ToolResult.validation_error(f\"Invalid recommended_priority '{params.recommended_priority}'. Must be HIGH, MEDIUM, or LOW.\")",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "root[1] if root else None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "Project.objects.filter(id=project_id, organization=context.organization).first() if project_id else None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if project is None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(project is None).then",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(project is None).then.if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(project is None).then",
+      "return ToolResult.not_found('Trace', str(params.trace_id))",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if params.analysis_id",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(params.analysis_id).then",
+      "except TraceErrorAnalysis.DoesNotExist",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(params.analysis_id).then.except(TraceErrorAnalysis.DoesNotExist)",
+      "if guard is not None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(params.analysis_id).then.except(TraceErrorAnalysis.DoesNotExist).if(guard is not None).then",
+      "do reject_chauffeur(guard)",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if analysis is None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if analysis is None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "do analysis.save(update_fields=['overall_score', 'factual_grounding_score', 'factual_grounding_reason', 'privacy_and_safety_score', 'privacy_and_safety_reason', 'instruction_adherence_score', 'instruction_adherence_reason', 'optimal_plan_execution_score', 'optimal_plan_execution_reason', 'insights', 'recommended_priority'])",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "if guard is None",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned.if(guard is None).then",
+      "do deep_analysis_state.clear(str(params.trace_id))",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "'Scores Saved; Publication Pending' if current_attempt() else 'Completed'",
+      "generation-owned-write-or-foreground-only"
+    ],
+    [
+      "module._execute_owned",
+      "return ToolResult(content=section('Trace Scores Submitted', info), data={'status': 'accepted', 'analysis_id': str(analysis.id), 'overall_score': params.overall_score, 'total_errors': analysis.total_errors, 'clustering_triggered': False, 'analysis_status': 'running'})",
+      "generation-owned-write-or-foreground-only"
+    ]
+  ],
+  "ai_tools/formatting.py": [
+    [
+      "module.format_datetime",
+      "if dt is None",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime.if(dt is None).then",
+      "return '\u2014'",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime",
+      "if dt.tzinfo is None",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime",
+      "if seconds < 0",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime.if(seconds < 0).then",
+      "return dt.strftime('%Y-%m-%d %H:%M UTC')",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime",
+      "if seconds < 60",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime.if(seconds < 60).then",
+      "return 'just now'",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime",
+      "if seconds < 3600",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime.if(seconds < 3600).then",
+      "return f'{minutes}m ago'",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime",
+      "if seconds < 86400",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime.if(seconds < 86400).then",
+      "return f'{hours}h ago'",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime",
+      "if seconds < 604800",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime.if(seconds < 604800).then",
+      "return f'{days}d ago'",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_datetime",
+      "return dt.strftime('%Y-%m-%d %H:%M UTC')",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_number",
+      "if val is None",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_number.if(val is None).then",
+      "return '\u2014'",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_number",
+      "return f'{float(val):.{decimals}f}'",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_number",
+      "except (ValueError, TypeError)",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.format_number.except((ValueError, TypeError))",
+      "return str(val)",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.section",
+      "return f'## {title}\\n\\n{content}'",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.key_value_block",
+      "if value is not None",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.key_value_block.if(value is not None).then",
+      "do lines.append(f'**{label}:** {value}')",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.key_value_block",
+      "return '\\n'.join(lines)",
+      "presentation-or-optional-data"
+    ]
+  ],
+  "agentic_eval/core/utils/json_utils.py": [
+    [
+      "module.strip_code_fence",
+      "if not text",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.strip_code_fence.if(not text).then",
+      "return ''",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.strip_code_fence",
+      "if match",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.strip_code_fence.if(match).then",
+      "return match.group(1).strip()",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.strip_code_fence",
+      "if stripped.startswith('```')",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.strip_code_fence.if(stripped.startswith('```')).then",
+      "return re.sub('^```[ \\\\t]*[a-zA-Z0-9_-]*[ \\\\t]*\\\\n?', '', stripped).strip()",
+      "presentation-or-optional-data"
+    ],
+    [
+      "module.strip_code_fence",
+      "return stripped",
+      "presentation-or-optional-data"
+    ]
+  ],
+  "ee/agenthub/traceerroragent/background_tools.py": [
+    [
+      "module.chauffeur_content",
+      "getattr(guard, 'completion_witness', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_content",
+      "if witness is None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_content",
+      "do guard.check()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_content",
+      "do guard.check()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_content",
+      "if client.last_finish_reason not in NORMAL_FINISHES or not content",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_content",
+      "client.last_finish_reason not in NORMAL_FINISHES or not content",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_content",
+      "return content",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_content",
+      "except BaseException",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.reject_chauffeur",
+      "getattr(guard, 'completion_witness', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.reject_chauffeur",
+      "if witness is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.reject_chauffeur",
+      "do guard.check()",
+      "background-refusal-or-validated-success"
+    ]
+  ],
+  "ee/agenthub/traceerroragent/background_tool_validation.py": [
+    [
+      "module._text",
+      "return isinstance(value, str) and bool(value.strip())",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._text",
+      "isinstance(value, str) and bool(value.strip())",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._strings",
+      "return isinstance(value, list) and (bool(value) or not nonempty) and all((_text(item) for item in value))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._strings",
+      "isinstance(value, list) and (bool(value) or not nonempty) and all((_text(item) for item in value))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._strings",
+      "bool(value) or not nonempty",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.parse_chauffeur_report",
+      "return chauffeur_report(raw, guard, decode=True)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_chauffeur_report",
+      "return chauffeur_report(report, guard, span_ids=span_ids)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans",
+      "if not spans",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans.if(not spans).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans",
+      "if len(set(ids)) != len(ids) or any((not _text(sid) for sid in ids))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans",
+      "len(set(ids)) != len(ids) or any((not _text(sid) for sid in ids))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans.if(len(set(ids)) != len(ids) or any((not _text(sid) for sid in ids))).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans",
+      "str(span.parent_span_id) if getattr(span, 'parent_span_id', None) else None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans",
+      "getattr(span, 'parent_span_id', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans",
+      "if current in visited or current not in parents",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans",
+      "current in visited or current not in parents",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans.if(current in visited or current not in parents).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans",
+      "do visited.add(current)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans",
+      "getattr(span, field, None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans",
+      "if value",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans.if(value).then",
+      "if not isinstance(value, str)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans.if(value).then.if(not isinstance(value, str)).then",
+      "do json.dumps(value, ensure_ascii=False, allow_nan=False)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans.if(value).then",
+      "if len(str(value)) > 2000",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans.if(value).then.if(len(str(value)) > 2000).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans.if(value).then",
+      "except (TypeError, ValueError)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_trace_spans.if(value).then.except((TypeError, ValueError))",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_submission",
+      "if scores",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_submission.if(scores).then",
+      "if not _text(params.insights) or any((not _text(getattr(params, f'{dimension}_reason')) for dimension in reasons))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_submission.if(scores).then",
+      "not _text(params.insights) or any((not _text(getattr(params, f'{dimension}_reason')) for dimension in reasons))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_submission.if(scores).then.if(not _text(params.insights) or any((not _text(getattr(params, f'{dimension}_reason')) for dimension in reasons))).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_submission.if(scores).then",
+      "if type(value) not in (int, float) or not 1 <= value <= 5",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_submission.if(scores).then",
+      "type(value) not in (int, float) or not 1 <= value <= 5",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_submission.if(scores).then.if(type(value) not in (int, float) or not 1 <= value <= 5).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_submission.if(scores).else",
+      "if any((not _text(getattr(params, field)) for field in ('category', 'description', 'recommendation'))) or any((not _strings(getattr(params, field)) for field in ('location_spans', 'evidence_snippets', 'root_causes')))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_submission.if(scores).else",
+      "any((not _text(getattr(params, field)) for field in ('category', 'description', 'recommendation'))) or any((not _strings(getattr(params, field)) for field in ('location_spans', 'evidence_snippets', 'root_causes')))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_submission.if(scores).else.if(any((not _text(getattr(params, field)) for field in ('category', 'description', 'recommendation'))) or any((not _strings(getattr(params, field)) for field in ('location_spans', 'evidence_snippets', 'root_causes')))).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_span_content",
+      "getattr(span, 'input', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_span_content",
+      "getattr(span, 'output', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_span_content",
+      "getattr(span, 'metadata', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_span_content",
+      "getattr(span, 'span_events', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_span_content",
+      "if value and str(value).strip() not in ('', '{}', '[]')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_span_content",
+      "value and str(value).strip() not in ('', '{}', '[]')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_span_content.if(value and str(value).strip() not in ('', '{}', '[]')).then",
+      "if len(str(value)) > limit",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_span_content.if(value and str(value).strip() not in ('', '{}', '[]')).then.if(len(str(value)) > limit).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_span_content",
+      "if not useful",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_span_content.if(not useful).then",
+      "do reject_chauffeur(guard)",
+      "background-refusal-or-validated-success"
+    ]
+  ],
+  "ee/agenthub/traceerroragent/background_payload_consumers.py": [
+    [
+      "module.__getattr__",
+      "return self._fields[field]",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._view",
+      "if type(value) is dict",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._view.if(type(value) is dict).then",
+      "return Evidence(MappingProxyType({k: _view(v) for k, v in value.items()}))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._view",
+      "if type(value) is list",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._view.if(type(value) is list).then",
+      "return tuple((_view(v) for v in value))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._view",
+      "return value",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.evidence",
+      "return _view(require_payload(payload, owner, kind))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.save_publication",
+      "if not isinstance(payload, ValidatedPayload)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.save_publication.if(not isinstance(payload, ValidatedPayload)).then",
+      "do refuse(None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.save_publication",
+      "data.get('memory_context', {})",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.save_publication",
+      "if data.get('grouped_errors', [])",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.save_publication",
+      "data.get('grouped_errors', [])",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.save_publication.if(data.get('grouped_errors', [])).then",
+      "do refuse(payload._witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.save_publication",
+      "memory.get('episodic_memory_used', False)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.save_publication",
+      "do details.drafts.create(analysis=analysis, error_id=error.error_id, cluster_id=error.cluster_id, category=error.category, impact=error.impact, urgency_to_fix=error.urgency_to_fix, location_spans=list(error.location_spans), evidence_snippets=list(error.evidence_snippets), description=error.description, root_causes=list(error.root_causes), recommendation=error.recommendation, immediate_fix=error.immediate_fix, trace_impact=error.trace_impact, trace_assessment=None, llm_analysis=None, memory_enhanced=False)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.save_publication",
+      "return analysis",
+      "background-refusal-or-validated-success"
+    ]
+  ],
+  "ee/agenthub/traceerroragent/background_payload_judge.py": [
+    [
+      "module.execute_judge_tool",
+      "if name == 'submit_finding'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool.if(name == 'submit_finding').then",
+      "do judge.errors.append(error)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool.if(name == 'submit_finding').then",
+      "return {'status': 'accepted', 'error_id': error['error_id']}",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool",
+      "if name == 'submit_scores'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool.if(name == 'submit_scores').then",
+      "return {'status': 'accepted'}",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool",
+      "if name == 'submit_summary'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool.if(name == 'submit_summary').then",
+      "if data['error_count'] != len(judge.errors)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool.if(name == 'submit_summary').then.if(data['error_count'] != len(judge.errors)).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool.if(name == 'submit_summary').then",
+      "return {'status': 'accepted', 'investigation_complete': True}",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool",
+      "if name not in handlers",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool.if(name not in handlers).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool",
+      "if not result or 'error' in result or result.get('status') == 'rejected'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool",
+      "not result or 'error' in result or result.get('status') == 'rejected'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool.if(not result or 'error' in result or result.get('status') == 'rejected').then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool",
+      "return result",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.execute_judge_tool",
+      "except BaseException",
+      "background-refusal-or-validated-success"
+    ]
+  ],
+  "ee/agenthub/traceerroragent/background_payload_reports.py": [
+    [
+      "module.chauffeur_report",
+      "if isinstance(raw, ValidatedPayload)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_report.if(isinstance(raw, ValidatedPayload)).else",
+      "if 'span_groups' in data",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_report",
+      "if span_ids is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_report.if(span_ids is not None).then",
+      "if covered != set(span_ids)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_report.if(span_ids is not None).then.if(covered != set(span_ids)).then",
+      "do refuse(owner)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.chauffeur_report",
+      "return validate_payload(data, CHAUFFEUR, owner, 'chauffeur')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.reader_report",
+      "return require_payload(checked, owner, 'reader')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.judge_arguments",
+      "if schema is None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.judge_arguments.if(schema is None).then",
+      "do refuse(owner)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.judge_arguments",
+      "return validate_payload(raw, schema, owner, 'judge-tool:' + name, decode=decode)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.judge_report",
+      "if data['summary']['error_count'] != len(data['errors'])",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.judge_report.if(data['summary']['error_count'] != len(data['errors'])).then",
+      "do refuse(owner)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.judge_report",
+      "return report",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.publication_result",
+      "if any((result.get(key) != data[key] for key in ('errors', 'scores', 'summary')))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.publication_result.if(any((result.get(key) != data[key] for key in ('errors', 'scores', 'summary')))).then",
+      "do refuse(owner)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.publication_result",
+      "return ValidatedPayload(json.dumps({**result, **data}, allow_nan=False), owner, 'publication', _SEAL)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.falcon_report",
+      "if type(result) is not dict or 'content' not in result",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.falcon_report",
+      "type(result) is not dict or 'content' not in result",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.falcon_report.if(type(result) is not dict or 'content' not in result).then",
+      "do refuse(owner)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.falcon_report",
+      "return require_falcon_text(result['content'], owner)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validated_errors",
+      "getattr(agent, '_validated_model_result', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validated_errors",
+      "if not isinstance(report, ValidatedPayload)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validated_errors.if(not isinstance(report, ValidatedPayload)).then",
+      "do refuse(None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validated_errors",
+      "return evidence(report, report._witness, 'judge').errors",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_publication",
+      "if current_attempt() is None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_publication.if(current_attempt() is None).then",
+      "return result",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_publication",
+      "if not isinstance(result, ValidatedPayload)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_publication.if(not isinstance(result, ValidatedPayload)).then",
+      "do refuse(None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_publication",
+      "if getattr(result._witness, 'payload_identity', None) != current_attempt()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_publication",
+      "getattr(result._witness, 'payload_identity', None)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_publication.if(getattr(result._witness, 'payload_identity', None) != current_attempt()).then",
+      "do refuse(result._witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_publication",
+      "do result._witness.require()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_publication",
+      "return require_payload(result, result._witness, 'publication')",
+      "background-refusal-or-validated-success"
+    ]
+  ],
+  "ee/agenthub/traceerroragent/background_payload_schemas.py": [
+    [
+      "module.obj",
+      "return {'type': 'object', 'properties': properties, 'required': list(properties) if required is None else required, 'additionalProperties': False}",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.obj",
+      "list(properties) if required is None else required",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.array",
+      "return {'type': 'array', 'items': items, 'minItems': 0 if empty else 1}",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.array",
+      "0 if empty else 1",
+      "background-refusal-or-validated-success"
+    ]
+  ],
+  "ee/agenthub/traceerroragent/background_payload_tools.py": [
+    [
+      "module.__getattr__",
+      "if field in data",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__getattr__.if(field in data).then",
+      "return data[field]",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__getattr__",
+      "if field == 'exact'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__getattr__.if(field == 'exact').then",
+      "return False",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__getattr__",
+      "if field == 'analysis_id'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__getattr__.if(field == 'analysis_id').then",
+      "return None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_tool_parameters",
+      "if not isinstance(params, ToolParameters)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_tool_parameters.if(not isinstance(params, ToolParameters)).then",
+      "do refuse(guard)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_tool_parameters",
+      "do require_payload(params.payload, guard, 'tool:' + name)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run_background_tool",
+      "if background_tool_denial(tool, context) is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run_background_tool.if(background_tool_denial(tool, context) is not None).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run_background_tool",
+      "do guard.check()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run_background_tool",
+      "do guard.check()",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run_background_tool",
+      "if result.is_error or not result.content",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run_background_tool",
+      "result.is_error or not result.content",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run_background_tool.if(result.is_error or not result.content).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run_background_tool",
+      "return result",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.run_background_tool",
+      "except BaseException",
+      "background-refusal-or-validated-success"
+    ]
+  ],
+  "ee/agenthub/traceerroragent/background_payload_wire.py": [
+    [
+      "module.background_tool_definitions",
+      "if name not in TOOL_SCHEMAS",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.background_tool_definitions.if(name not in TOOL_SCHEMAS).then",
+      "do refuse(owner)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.background_tool_definitions",
+      "do definitions.append({**tool, 'function': {**tool['function'], 'parameters': TOOL_SCHEMAS[name]}})",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.background_tool_definitions",
+      "return json.loads(json.dumps(definitions))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._identical",
+      "return json.dumps(left, sort_keys=True, allow_nan=False) == json.dumps(right, sort_keys=True, allow_nan=False)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._identical",
+      "except (TypeError, ValueError)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._identical.except((TypeError, ValueError))",
+      "return False",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._state",
+      "if not hasattr(witness, 'wire_calls')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._state",
+      "return witness",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "if witness.wire_pending",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire.if(witness.wire_pending).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "if dialect == 'openai'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire.if(dialect == 'openai').then",
+      "message.get('tool_calls') or []",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "if type(call_id) is not str or not call_id.strip() or call_id in witness.wire_calls or any((c.call_id == call_id for c in batch))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "type(call_id) is not str or not call_id.strip() or call_id in witness.wire_calls or any((c.call_id == call_id for c in batch))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire.if(type(call_id) is not str or not call_id.strip() or call_id in witness.wire_calls or any((c.call_id == call_id for c in batch))).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "if name not in TOOL_SCHEMAS",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire.if(name not in TOOL_SCHEMAS).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "if decode and type(arguments) is not str",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "decode and type(arguments) is not str",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire.if(decode and type(arguments) is not str).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "do batch.append(WireCall(call_id, name, payload))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "if content is not None and content != ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "content is not None and content != ''",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire.if(content is not None and content != '').then",
+      "do witness.wire_text.append(text)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire.if(content is not None and content != '').else",
+      "if not batch",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire.if(content is not None and content != '').else.if(not batch).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "do witness.wire_pending.append(call.call_id)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_falcon_wire",
+      "except BaseException",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch",
+      "do _state(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch",
+      "if not witness.wire_pending",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch.if(not witness.wire_pending).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch",
+      "if call.name != tool.name or not _identical(data, decoded) or call.consumed",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch",
+      "call.name != tool.name or not _identical(data, decoded) or call.consumed",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch.if(call.name != tool.name or not _identical(data, decoded) or call.consumed).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch",
+      "if not call.consumed",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch.if(not call.consumed).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch",
+      "return result",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch",
+      "except BaseException",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.install_falcon_dispatch",
+      "do _ACTIVE.reset(token)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.consume_tool_payload",
+      "if active is None or active[0] is not witness",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.consume_tool_payload",
+      "active is None or active[0] is not witness",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.consume_tool_payload.if(active is None or active[0] is not witness).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.consume_tool_payload",
+      "if call.name != tool.name or call.consumed or (not _identical(data, decoded))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.consume_tool_payload",
+      "call.name != tool.name or call.consumed or (not _identical(data, decoded))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.consume_tool_payload.if(call.name != tool.name or call.consumed or (not _identical(data, decoded))).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.consume_tool_payload",
+      "return call.payload",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_falcon_text",
+      "if witness.wire_pending or any((not c.consumed for c in witness.wire_calls.values()))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_falcon_text",
+      "witness.wire_pending or any((not c.consumed for c in witness.wire_calls.values()))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_falcon_text.if(witness.wire_pending or any((not c.consumed for c in witness.wire_calls.values()))).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_falcon_text",
+      "if text != original or not original",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_falcon_text",
+      "text != original or not original",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_falcon_text.if(text != original or not original).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_falcon_text",
+      "return validate_payload(original, TEXT, witness, 'falcon')",
+      "background-refusal-or-validated-success"
+    ]
+  ],
+  "ee/agenthub/traceerroragent/background_payloads.py": [
+    [
+      "module.refuse",
+      "getattr(owner, 'completion_witness', owner)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.refuse",
+      "if witness is not None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.witness_for",
+      "getattr(owner, 'completion_witness', owner)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.witness_for",
+      "if witness is None or not hasattr(witness, 'failed') or witness.failed",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.witness_for",
+      "witness is None or not hasattr(witness, 'failed') or witness.failed",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.witness_for.if(witness is None or not hasattr(witness, 'failed') or witness.failed).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.witness_for",
+      "return witness",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__init__",
+      "if seal is not _SEAL",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__init__.if(seal is not _SEAL).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__init__",
+      "do object.__setattr__(self, '_json', text)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__init__",
+      "do object.__setattr__(self, '_witness', witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__init__",
+      "do object.__setattr__(self, 'kind', kind)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__getitem__",
+      "return json.loads(self._json)[key]",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__iter__",
+      "return iter(json.loads(self._json))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.__len__",
+      "return len(json.loads(self._json))",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_payload",
+      "if not isinstance(value, ValidatedPayload) or value._witness is not witness or value.kind != kind",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_payload",
+      "not isinstance(value, ValidatedPayload) or value._witness is not witness or value.kind != kind",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_payload.if(not isinstance(value, ValidatedPayload) or value._witness is not witness or value.kind != kind).then",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.require_payload",
+      "return json.loads(value._json)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._pairs",
+      "if key in result",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._pairs",
+      "return result",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._finite_float",
+      "if not math.isfinite(value)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._finite_float",
+      "return value",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.original_json",
+      "if not isinstance(raw, str)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.original_json",
+      "if text.startswith('```')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.original_json.if(text.startswith('```')).then",
+      "if match is None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.original_json",
+      "if type(value) is not dict",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.original_json",
+      "return value",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check",
+      "if '$ref' in schema",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if('$ref' in schema).then",
+      "if not schema['$ref'].startswith(prefix)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if('$ref' in schema).then",
+      "return _check(value, root['$defs'][schema['$ref'][len(prefix):]], root)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if('$ref' in schema).then",
+      "len(prefix):",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check",
+      "if 'anyOf' in schema",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if('anyOf' in schema).then",
+      "do _check(value, choice, root)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if('anyOf' in schema).then",
+      "return None",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if('anyOf' in schema).then",
+      "except (ValueError, TypeError, KeyError)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check",
+      "if type(value) not in types[kind]",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check",
+      "if 'enum' in schema and value not in schema['enum']",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check",
+      "'enum' in schema and value not in schema['enum']",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check",
+      "if kind == 'object'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').then",
+      "if set(value) - set(props) or set(schema.get('required', ())) - set(value)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').then",
+      "set(value) - set(props) or set(schema.get('required', ())) - set(value)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').then",
+      "schema.get('required', ())",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').then",
+      "do _check(item, props[key], root)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else",
+      "if kind == 'array'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').then",
+      "if len(value) < schema.get('minItems', 1)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').then",
+      "schema.get('minItems', 1)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').then",
+      "do _check(item, schema['items'], root)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else",
+      "if kind == 'string'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').then",
+      "if not value.strip() and schema.get('minLength', 1)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').then",
+      "not value.strip() and schema.get('minLength', 1)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').then",
+      "schema.get('minLength', 1)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').then",
+      "if schema.get('format') == 'uuid'",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').then.if(schema.get('format') == 'uuid').then",
+      "do UUID(value)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').then.if(schema.get('format') == 'uuid').else",
+      "if 'format' in schema",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').else",
+      "if kind in ('number', 'integer')",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').else.if(kind in ('number', 'integer')).then",
+      "if not math.isfinite(value) or value < schema.get('minimum', -math.inf) or value > schema.get('maximum', math.inf)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').else.if(kind in ('number', 'integer')).then",
+      "not math.isfinite(value) or value < schema.get('minimum', -math.inf) or value > schema.get('maximum', math.inf)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').else.if(kind in ('number', 'integer')).then",
+      "schema.get('minimum', -math.inf)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module._check.if(kind == 'object').else.if(kind == 'array').else.if(kind == 'string').else.if(kind in ('number', 'integer')).then",
+      "schema.get('maximum', math.inf)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_payload",
+      "original_json(raw) if decode else raw",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_payload",
+      "do _check(value, schema, schema)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_payload",
+      "except (ValueError, TypeError, KeyError, OverflowError, RecursionError)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_payload.except((ValueError, TypeError, KeyError, OverflowError, RecursionError))",
+      "do refuse(witness)",
+      "background-refusal-or-validated-success"
+    ],
+    [
+      "module.validate_payload",
+      "return ValidatedPayload(text, witness, kind, _SEAL)",
+      "background-refusal-or-validated-success"
+    ]
+  ]
+}

@@ -5,11 +5,11 @@ Provides a simple HTTP endpoint for executing untrusted code in nsjail sandboxes
 Falls back to subprocess isolation when nsjail is not available: each run is a
 child in its own session and private temp dir, with an empty environment and
 CPU, address-space, process, file-size and open-file limits; the session is
-killed when the run ends or times out. Where the kernel has Landlock network
-rules (Linux 6.7+), a run may open TCP connections only to
-CODE_EXECUTOR_EGRESS_PORTS (80 and 443) and listen on none; elsewhere it
-reaches every port the server can. The fallback does not isolate the
-filesystem beyond what the server's own (unprivileged) user can reach.
+killed when the run ends or times out. Both modes require the kernel egress
+policy: public destinations on CODE_EXECUTOR_EGRESS_PORTS (80 and 443), with
+internal destinations refused. A policy setup failure refuses execution.
+Fallback evals use a dedicated unprivileged uid; the fallback does not isolate
+the filesystem beyond what that uid can reach.
 Concurrent runs share that user, and a process that starts a session of its
 own outlives its run (RLIMIT_NPROC caps how many can).
 
@@ -30,6 +30,7 @@ Returns:
 
 import ctypes
 import json
+import logging
 import os
 import shutil
 import signal
@@ -39,6 +40,12 @@ import tempfile
 import time
 
 import falcon
+from egress_guard import EVAL_UID
+from egress_guard import verify_egress as prepare_egress
+
+EGRESS_GUARD = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "egress_guard.py"
+)
 
 # Check if nsjail is available
 NSJAIL_PATH = shutil.which("nsjail")
@@ -107,32 +114,33 @@ def _landlock_abi() -> int:
     return max(abi, 0)
 
 
-# TCP ports a fallback run may connect to. It shares the server's network, so
-# it would otherwise reach the Temporal dev server (7233, no authentication),
-# Postgres, ClickHouse, Redis, object storage, the API and the gateway.
+# One port policy for BOTH modes. Landlock remains defense in depth; it is
+# not the address boundary and its absence never permits unrestricted egress.
 FALLBACK_EGRESS_PORTS = _egress_ports_setting()
-# Landlock's TCP rules came with ABI 4 (Linux 6.7). Without them a fallback
-# run reaches every port.
 LANDLOCK_TCP_RULES = _landlock_abi() >= 4
 
 
-def _egress_ports() -> list | None:
-    """The ports runs may connect to; None when they reach every one."""
-    if NSJAIL_AVAILABLE or not LANDLOCK_TCP_RULES:
-        return None
+def _egress_ports() -> list:
     return list(FALLBACK_EGRESS_PORTS)
 
 
-def _warn_if_egress_is_open() -> None:
-    if not NSJAIL_AVAILABLE and not LANDLOCK_TCP_RULES:
-        print(
-            "code-executor: this kernel has no Landlock network rules (Linux "
-            "6.7+), so code evals can connect to every port this container can",
-            file=sys.stderr,
-        )
+def _prepare_network() -> dict | None:
+    try:
+        prepare_egress(FALLBACK_EGRESS_PORTS)
+    except Exception:
+        # Deliberately omit exception text, config values and child output.
+        logging.getLogger(__name__).error("EGRESS_POLICY_UNAVAILABLE")
+        return {
+            "status": "error",
+            "error_code": "EGRESS_POLICY_UNAVAILABLE",
+            "data": "Cannot apply eval network policy",
+        }
+    return None
 
 
-_warn_if_egress_is_open()
+def _network_command(argv: list) -> list:
+    return [PYTHON_PATH, "-I", EGRESS_GUARD] + argv
+
 
 # Sets the limits (never above an inherited hard limit) and, unless its port
 # list is "-", allows TCP connections to those ports only and no TCP listening
@@ -180,6 +188,9 @@ os.execv(sys.argv[8], sys.argv[8:])
 
 def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
     """Execute Python code inside nsjail sandbox."""
+    refusal = _prepare_network()
+    if refusal is not None:
+        return refusal
     script = _build_python_script(code, input_data)
 
     # Write script to /sandbox/scripts (NOT /tmp, which gets overlaid by tmpfs inside nsjail)
@@ -203,16 +214,17 @@ def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
             "64",  # Max open files (needs more for network)
             "--time_limit",
             str(timeout),  # Wall clock limit
-            "-N",  # Allow network access — code can fetch URLs
+            "-N",  # Share ONLY the network protected by prepare_egress.
+            "--user",
+            str(EVAL_UID),
+            "--group",
+            str(EVAL_UID),
             "-R",
             "/",  # Bind-mount root read-only (includes /sandbox/scripts)
             "-T",
             "/tmp:size=16777216",  # Writable tmpfs at /tmp (16MB)
             "--",
-            PYTHON_PATH,
-            "-I",
-            script_path,
-        ]
+        ] + _network_command([PYTHON_PATH, "-I", script_path])
 
         result = subprocess.run(
             cmd,
@@ -274,11 +286,16 @@ def _run_contained(
     caps it, the server never buffers more than MAX_OUTPUT_BYTES, and the run
     cannot swap them for something else.
     """
+    refusal = _prepare_network()
+    if refusal is not None:
+        return refusal
     run_dir = tempfile.mkdtemp(prefix="eval-")
     try:
         script_path = os.path.join(run_dir, f"eval{suffix}")
         with open(script_path, "w") as f:
             f.write(script)
+        os.chmod(script_path, 0o444)
+        os.chown(run_dir, EVAL_UID, EVAL_UID)
         limits = [
             timeout,  # RLIMIT_CPU, seconds
             address_space_mb * MB,  # RLIMIT_AS
@@ -295,18 +312,24 @@ def _run_contained(
                 [PYTHON_PATH, "-I", "-c", _LIMITS_LAUNCHER]
                 + [str(limit) for limit in limits]
                 + [
-                    ",".join(str(port) for port in FALLBACK_EGRESS_PORTS)
+                    # DNS may fall back from UDP to TCP. nftables still limits
+                    # port 53 to the exact resolv.conf resolver destinations.
+                    ",".join(str(port) for port in sorted({53, *FALLBACK_EGRESS_PORTS}))
                     if LANDLOCK_TCP_RULES
                     else "-"
                 ]
-                + argv
-                + [script_path],
+                + _network_command(argv + [script_path]),
                 stdin=subprocess.DEVNULL,
                 stdout=out,
                 stderr=err,
                 cwd=run_dir,
                 env={**FALLBACK_ENV, "HOME": run_dir, "TMPDIR": run_dir},
                 close_fds=True,
+                user=EVAL_UID,
+                group=EVAL_UID,
+                # An already-unprivileged server cannot call setgroups, even
+                # to clear it. Init has verified its inherited groups instead.
+                **({} if os.geteuid() == EVAL_UID else {"extra_groups": []}),
                 start_new_session=True,
             )
             try:
@@ -365,6 +388,9 @@ def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
             FALLBACK_NODE_AS_MB,
         )
 
+    refusal = _prepare_network()
+    if refusal is not None:
+        return refusal
     os.makedirs("/sandbox/scripts", exist_ok=True)
     script_path = f"/sandbox/scripts/eval_{os.getpid()}_{id(code)}.js"
     with open(script_path, "w") as f:
@@ -383,16 +409,17 @@ def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
             "64",
             "--time_limit",
             str(timeout),
-            "-N",  # Allow network
+            "-N",  # Share ONLY the network protected by prepare_egress.
+            "--user",
+            str(EVAL_UID),
+            "--group",
+            str(EVAL_UID),
             "-R",
             "/",
             "-T",
             "/tmp:size=16777216",
             "--",
-            NODE_PATH,
-            "--max-old-space-size=64",
-            script_path,
-        ]
+        ] + _network_command([NODE_PATH, "--max-old-space-size=64", script_path])
 
         result = subprocess.run(
             cmd,
@@ -500,7 +527,7 @@ if __name__ == "__main__":
 def _build_js_script(code: str, input_data: dict) -> str:
     """Build JS eval script."""
     input_json = json.dumps(input_data, default=str)
-    escaped = (
+    _escaped = (
         code.replace("\\", "\\\\")
         .replace("'", "\\'")
         .replace("\n", "\\n")
@@ -577,12 +604,17 @@ class ExecuteResource:
 
 class HealthResource:
     def on_get(self, req, resp):
+        refusal = _prepare_network()
+        if refusal is not None:
+            resp.status = falcon.HTTP_503
+            resp.media = refusal
+            return
         resp.media = {
             "status": "ok",
             "nsjail": NSJAIL_AVAILABLE,
             "python": PYTHON_PATH,
             "node": NODE_PATH,
-            # null: runs can connect to every port.
+            # Configured policy; execution refuses if it cannot be installed.
             "egress_ports": _egress_ports(),
         }
 

@@ -13,11 +13,13 @@ import { CELL_TYPES } from "../Renderers/common";
 // global `text.disabled` token, measured at 3.465:1 dark / 2.545:1 light against the
 // composited chip background. The repair is scoped to the span list through the existing
 // `context.entityType === "span"` seam in CustomTraceRenderer; shared STATUS_CONFIG,
-// the trace list and every other StatusChip consumer keep their prior styling.
+// the trace list and other consumers use the shared default. The design-system
+// foundation now replaces that disabled-looking default with status.neutral.fg
+// and maps OK/ERROR to status.success/danger. Keep the opt-in seam, exact labels,
+// null handling and disabled behavior while asserting those new semantic roles.
 //
-// These are jsdom token-resolution tests: they prove WHICH palette token reaches the chip
-// in each context. The actual ≥4.5:1 contrast on the rendered grid background is proved
-// separately by the Chrome harness recorded on the ticket (AC-01..AC-03), not here.
+// These are jsdom token-resolution tests, not rendered contrast measurements.
+// The separate design-system contrast check verifies the pinned role colors.
 
 const hexToRgb = (hex) => {
   const h = hex.replace("#", "");
@@ -40,6 +42,7 @@ const tokens = (mode) => {
   return {
     disabled: hexToRgb(p.text.disabled),
     secondary: hexToRgb(p.text.secondary),
+    neutral: hexToRgb(p.status.neutral.fg),
   };
 };
 
@@ -71,14 +74,14 @@ describe("TH-4088 span-list neutral status readability", () => {
       expect(chipColor(container)).toBe(tokens(mode).secondary);
     });
 
-    it("UNSET on the trace list keeps text.disabled (sibling isolation, AC-12)", () => {
+    it("UNSET on the trace list uses the shared neutral role", () => {
       const { container } = render(
         <CustomTraceRenderer {...statusParams("UNSET", "trace")} />,
         {
           theme: themeFor(mode),
         },
       );
-      expect(chipColor(container)).toBe(tokens(mode).disabled);
+      expect(chipColor(container)).toBe(tokens(mode).neutral);
     });
   });
 
@@ -91,8 +94,12 @@ describe("TH-4088 span-list neutral status readability", () => {
       <CustomTraceRenderer {...statusParams("ERROR", "span")} />,
       { theme },
     );
-    expect(chipColor(ok.container)).toBe(hexToRgb(theme.palette.green[500]));
-    expect(chipColor(err.container)).toBe(hexToRgb(theme.palette.red[500]));
+    expect(chipColor(ok.container)).toBe(
+      hexToRgb(theme.palette.status.success.fg),
+    );
+    expect(chipColor(err.container)).toBe(
+      hexToRgb(theme.palette.status.danger.fg),
+    );
     expect(chipRoot(ok.container).textContent).toBe("OK");
     expect(chipRoot(err.container).textContent).toBe("ERROR");
   });
@@ -138,13 +145,43 @@ describe("TH-4088 span-list neutral status readability", () => {
     expect(chipColor(container)).toBe(tokens("dark").disabled);
   });
 
-  it("a direct StatusChip without the opt-in prop is unchanged (R4 default)", () => {
+  it.each(["light", "dark"])(
+    "a caller override is isolated to neutral chips in %s",
+    (mode) => {
+      const theme = themeFor(mode);
+      const neutral = render(
+        <StatusChip
+          status="UNSET"
+          label="UNSET"
+          neutralTextColor="text.primary"
+        />,
+        { theme },
+      );
+      const success = render(
+        <StatusChip
+          status="pass"
+          label="Passed"
+          neutralTextColor="text.primary"
+        />,
+        { theme },
+      );
+      expect(chipColor(neutral.container)).toBe(
+        hexToRgb(theme.palette.text.primary),
+      );
+      expect(chipColor(neutral.container)).not.toBe(tokens(mode).neutral);
+      expect(chipColor(success.container)).toBe(
+        hexToRgb(theme.palette.status.success.fg),
+      );
+    },
+  );
+
+  it("a direct StatusChip without an override uses the canonical neutral role", () => {
     const theme = themeFor("light");
     const { container } = render(
       <ThemeProvider theme={theme}>
         <StatusChip status="UNSET" label="UNSET" />
       </ThemeProvider>,
     );
-    expect(chipColor(container)).toBe(tokens("light").disabled);
+    expect(chipColor(container)).toBe(tokens("light").neutral);
   });
 });

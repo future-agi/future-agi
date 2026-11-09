@@ -6,15 +6,18 @@ from rest_framework import serializers
 from model_hub.constants import MAX_EMPTY_DATASET_ROWS
 from model_hub.models.choices import ModelTypes
 from model_hub.serializers.experiments import _ExtraFieldsMixin
+from model_hub.serializers.manual_dataset import ManualDatasetSchemaRequestSerializer
 from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
     OptimizeDatasetSerializer,
 )
+from model_hub.serializers.pagination import PageSizeField
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
 from model_hub.services.dataset_validators import MAX_PAGE_SIZE as DATASET_MAX_PAGE_SIZE
 from model_hub.utils.SQL_queries import EVAL_TEMPLATE_SORT_COLUMNS
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
+from tfc.utils.pagination import MAX_PAGE_SIZE
 from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 from tracer.serializers.filters import (
     SortParamField,
@@ -769,7 +772,7 @@ class LegacyKnowledgeBaseFilesRequestSerializer(serializers.Serializer):
         default=list,
     )
     page_number = serializers.IntegerField(required=False, default=0)
-    page_size = serializers.IntegerField(required=False, default=10)
+    page_size = PageSizeField(required=False, default=10, max_value=MAX_PAGE_SIZE)
 
     def validate_sort(self, value):
         """Reject a null/empty ``column_id`` here so it fails with the same 400
@@ -857,7 +860,9 @@ class LegacyKnowledgeBaseTableQuerySerializer(StrictInputSerializer):
     search = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     sort = LegacyKnowledgeBaseSortQueryParamField(required=False, default=list)
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)
-    page_size = serializers.IntegerField(required=False, default=10, min_value=1)
+    page_size = PageSizeField(
+        required=False, default=10, min_value=1, max_value=MAX_PAGE_SIZE
+    )
 
 
 class LegacyKnowledgeBaseSdkCodeResultSerializer(serializers.Serializer):
@@ -1013,7 +1018,9 @@ class OptimizeDatasetFilterListQueryParamField(serializers.CharField):
 class OptimizeDatasetListQuerySerializer(StrictInputSerializer):
     filters = OptimizeDatasetFilterListQueryParamField(required=False, default=list)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
-    limit = serializers.IntegerField(required=False, default=15, min_value=1)
+    limit = PageSizeField(
+        required=False, default=15, min_value=1, max_value=MAX_PAGE_SIZE
+    )
 
 
 class OptimizeDatasetKnowledgeBaseRequestSerializer(StrictInputSerializer):
@@ -1030,7 +1037,9 @@ class OptimizeDatasetKnowledgeBaseRequestSerializer(StrictInputSerializer):
 
 class OptimizeDatasetPageRequestSerializer(StrictInputSerializer):
     page = serializers.IntegerField(required=False, default=1, min_value=1)
-    limit = serializers.IntegerField(required=False, default=10, min_value=1)
+    limit = PageSizeField(
+        required=False, default=10, min_value=1, max_value=MAX_PAGE_SIZE
+    )
 
 
 class OptimizeDatasetColumnConfigUpdateRequestSerializer(StrictInputSerializer):
@@ -1236,6 +1245,73 @@ class PerformanceReportCreateResponseSerializer(serializers.Serializer):
     result = PerformanceReportSerializer()
 
 
+# Hugging Face models a vector-DB column may embed with. Server-owned: model
+# serving's /infer/huggingface loader refuses anything else, so this mirrors
+# model_serving/app/config/settings.py APPROVED_HUGGINGFACE_MODELS (the
+# authoritative check, with the citations) and fails the request early.
+APPROVED_HUGGINGFACE_EMBEDDING_MODELS = frozenset(
+    {
+        "all-mpnet-base-v2",
+        "all-MiniLM-L6-v2",
+        "sentence-transformers/all-mpnet-base-v2",
+        "sentence-transformers/all-MiniLM-L6-v2",
+    }
+)
+# embedding_config types whose model is loaded from Hugging Face.
+_HUGGINGFACE_EMBEDDING_TYPES = frozenset({"huggingface", "sentence_transformers"})
+_EMBEDDING_CONFIG_KEYS = frozenset({"type", "model"})
+HUGGINGFACE_EMBEDDING_MODEL_NOT_APPROVED = (
+    "Hugging Face embedding model is not approved. Approved models: "
+    + ", ".join(sorted(APPROVED_HUGGINGFACE_EMBEDDING_MODELS))
+    + "."
+)
+
+
+def huggingface_embedding_model_refusal(embedding_config):
+    """The refusal message if ``embedding_config`` picks a Hugging Face
+    model off the allowlist, else None.
+
+    Shared by the request check below and by vector-DB execution, which
+    runs saved configs (column metadata, conditional branches) that never
+    pass through a request serializer. A missing model uses the approved
+    all-mpnet-base-v2 default.
+    """
+    if not isinstance(embedding_config, dict):
+        return None
+    embedding_type = embedding_config.get("type")
+    if (
+        not isinstance(embedding_type, str)
+        or embedding_type not in _HUGGINGFACE_EMBEDDING_TYPES
+        or "model" not in embedding_config
+    ):
+        return None
+    model = embedding_config["model"]
+    if isinstance(model, str) and model in APPROVED_HUGGINGFACE_EMBEDDING_MODELS:
+        return None
+    return HUGGINGFACE_EMBEDDING_MODEL_NOT_APPROVED
+
+
+def validate_embedding_config(value):
+    """Refuse an embedding_config that would pick an unapproved HF model."""
+    if value is None:
+        return value
+    if not isinstance(value, dict):
+        raise serializers.ValidationError("embedding_config must be an object.")
+    unexpected = sorted(set(value) - _EMBEDDING_CONFIG_KEYS)
+    if unexpected:
+        raise serializers.ValidationError(
+            f"Unsupported embedding_config keys: {', '.join(unexpected)}."
+        )
+    # A list or dict type would make the membership test below raise
+    # TypeError (an HTTP 500); any non-string type fails every row anyway.
+    if "type" in value and not isinstance(value["type"], str):
+        raise serializers.ValidationError("embedding_config.type must be a string.")
+    refusal = huggingface_embedding_model_refusal(value)
+    if refusal:
+        raise serializers.ValidationError(refusal)
+    return value
+
+
 class VectorDBColumnRequestSerializer(serializers.Serializer):
     column_id = serializers.UUIDField()
     new_column_name = serializers.CharField(required=False, allow_blank=True)
@@ -1245,7 +1321,7 @@ class VectorDBColumnRequestSerializer(serializers.Serializer):
     url = serializers.CharField(required=False, allow_blank=True)
     search_type = serializers.CharField(required=False, allow_blank=True)
     key = serializers.CharField(required=False, allow_blank=True)
-    limit = serializers.IntegerField(required=False)
+    limit = PageSizeField(required=False, max_value=MAX_PAGE_SIZE)
     index_name = serializers.CharField(required=False, allow_blank=True)
     top_k = serializers.IntegerField(required=False)
     namespace = serializers.CharField(required=False, allow_blank=True)
@@ -1253,6 +1329,9 @@ class VectorDBColumnRequestSerializer(serializers.Serializer):
     concurrency = serializers.IntegerField(required=False, default=5)
     query_key = serializers.CharField(required=False, allow_blank=True)
     vector_length = serializers.IntegerField(required=False)
+
+    def validate_embedding_config(self, value):
+        return validate_embedding_config(value)
 
 
 class ExtractJsonColumnRequestSerializer(serializers.Serializer):
@@ -1299,6 +1378,16 @@ class ConditionalColumnRequestSerializer(serializers.Serializer):
 class RerunOperationRequestSerializer(serializers.Serializer):
     operation_type = serializers.CharField()
     config = serializers.JSONField(required=False)
+
+    scope = serializers.ChoiceField(
+        choices=["all", "changed", "failed"], required=False, default="all"
+    )
+
+    def validate_config(self, value):
+        # A vector_db rerun takes embedding_config from here over the stored one.
+        if isinstance(value, dict) and "embedding_config" in value:
+            validate_embedding_config(value["embedding_config"])
+        return value
 
 
 class OperationConfigResultSerializer(serializers.Serializer):
@@ -3029,7 +3118,7 @@ class EvalTemplateNamesRequestSerializer(serializers.Serializer):
 
 
 class LegacyEvalTemplatesRequestSerializer(serializers.Serializer):
-    page_size = serializers.IntegerField(required=False, default=10)
+    page_size = PageSizeField(required=False, default=10, max_value=MAX_PAGE_SIZE)
     current_page_index = serializers.IntegerField(required=False, default=0)
     search_text = serializers.CharField(required=False, allow_blank=True, default="")
     sort = serializers.ListField(
@@ -3055,6 +3144,7 @@ class LegacyEvalTemplatesRequestSerializer(serializers.Serializer):
 
 class HuggingFaceDatasetConfigRequestSerializer(serializers.Serializer):
     dataset_path = serializers.CharField()
+    revision = serializers.CharField(required=False, allow_blank=True, max_length=200)
 
 
 class HuggingFaceDatasetListRequestSerializer(serializers.Serializer):
@@ -3073,6 +3163,7 @@ class HuggingFaceDatasetCreateRequestSerializer(serializers.Serializer):
     huggingface_dataset_name = serializers.CharField()
     huggingface_dataset_config = serializers.CharField(required=False, allow_blank=True)
     huggingface_dataset_split = serializers.CharField()
+    revision = serializers.CharField(required=False, allow_blank=True, max_length=200)
 
 
 class HuggingFaceAddRowsRequestSerializer(serializers.Serializer):
@@ -3080,6 +3171,7 @@ class HuggingFaceAddRowsRequestSerializer(serializers.Serializer):
     huggingface_dataset_name = serializers.CharField()
     huggingface_dataset_config = serializers.CharField()
     huggingface_dataset_split = serializers.CharField()
+    revision = serializers.CharField(required=False, allow_blank=True, max_length=200)
 
 
 class CompareDatasetStatsRequestSerializer(serializers.Serializer):
@@ -3209,14 +3301,8 @@ class CreateEmptyDatasetRequestSerializer(serializers.Serializer):
         return canonical
 
 
-class ManualDatasetCreateRequestSerializer(serializers.Serializer):
-    dataset_name = serializers.CharField()
-    number_of_rows = serializers.IntegerField(required=False, min_value=1, default=1)
-    number_of_columns = serializers.IntegerField(
-        required=False,
-        min_value=1,
-        default=1,
-    )
+class ManualDatasetCreateRequestSerializer(ManualDatasetSchemaRequestSerializer):
+    pass
 
 
 class DatasetAddColumnsRequestSerializer(serializers.Serializer):
@@ -3232,10 +3318,21 @@ class DatasetCellDataRequestSerializer(serializers.Serializer):
     column_ids = serializers.ListField(child=serializers.UUIDField())
 
 
+# The role a user column plays in a dataset (stored per column in
+# Dataset.column_config[<column id>]["role"]); "none" or null clears it.
+DATASET_COLUMN_ROLES = ("input", "expected", "metadata")
+DATASET_COLUMN_ROLE_INPUTS = (*DATASET_COLUMN_ROLES, "none")
+
+
 class DatasetStaticColumnRequestSerializer(serializers.Serializer):
     new_column_name = serializers.CharField()
     column_type = serializers.CharField()
     source = serializers.CharField(required=False, allow_blank=True)
+    role = serializers.ChoiceField(
+        choices=DATASET_COLUMN_ROLE_INPUTS,
+        required=False,
+        allow_null=True,
+    )
 
 
 class DatasetMultipleStaticColumnsRequestSerializer(serializers.Serializer):
@@ -3251,41 +3348,20 @@ class DatasetSdkRowsRequestSerializer(serializers.Serializer):
     dataset_id = serializers.UUIDField(required=False, allow_null=True)
 
 
-class DatasetRowCellRequestSerializer(StrictInputSerializer):
+class DatasetRowCellRequestSerializer(serializers.Serializer):
     column_name = serializers.CharField()
     value = JsonValueField(required=False, allow_null=True)
 
-    class Meta:
-        swagger_schema_fields = {"additionalProperties": False}
 
-
-class DatasetRowRequestSerializer(StrictInputSerializer):
+class DatasetRowRequestSerializer(serializers.Serializer):
     id = serializers.UUIDField(required=False)
-    order = serializers.IntegerField(
-        required=False,
-        help_text="Legacy input accepted for compatibility; rows are appended in request order.",
-    )
     # A row without cells is valid and creates an empty row; the endpoint has
     # always accepted ``{"rows": [{}]}`` so the contract must keep it optional.
     cells = DatasetRowCellRequestSerializer(many=True, required=False, default=list)
 
-    class Meta:
-        swagger_schema_fields = {"additionalProperties": False}
 
-    def validate_cells(self, cells):
-        names = [cell["column_name"] for cell in cells]
-        if len(names) != len(set(names)):
-            raise serializers.ValidationError(
-                "Each column may appear only once per row."
-            )
-        return cells
-
-
-class DatasetAddRowsRequestSerializer(StrictInputSerializer):
+class DatasetAddRowsRequestSerializer(serializers.Serializer):
     rows = DatasetRowRequestSerializer(many=True, allow_empty=False)
-
-    class Meta:
-        swagger_schema_fields = {"additionalProperties": False}
 
 
 class DatasetAddRowsFromExistingRequestSerializer(serializers.Serializer):
@@ -3304,8 +3380,60 @@ class DatasetBehaviorRequestSerializer(serializers.Serializer):
         required=False,
         default=list,
     )
+    # {<column id>: {is_visible?, is_frozen?, role?}}; role is one of
+    # DATASET_COLUMN_ROLE_INPUTS ("none" or null clears it).
     column_config = serializers.JSONField(required=False, default=dict)
+    # Merged into the stored dataset_config (keys not sent are kept).
     dataset_config = serializers.JSONField(required=False, default=dict)
+    experiment_default_eval_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        help_text=(
+            "The dataset evals new experiments preselect: the whole set, "
+            "[] clears it. Omit to leave the defaults unchanged."
+        ),
+    )
+
+    def validate_column_config(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Expected an object keyed by column id.")
+        for column_id, config in value.items():
+            if not isinstance(config, dict):
+                raise serializers.ValidationError(
+                    {column_id: "Expected an object of column settings."}
+                )
+            role = config.get("role")
+            if role is not None and role not in DATASET_COLUMN_ROLE_INPUTS:
+                raise serializers.ValidationError(
+                    {
+                        column_id: (
+                            "role must be one of "
+                            f"{', '.join(DATASET_COLUMN_ROLE_INPUTS)} or null."
+                        )
+                    }
+                )
+        return value
+
+    # The dataset_config keys this endpoint stores. Any other key is refused
+    # (400 naming it), never answered 200 and dropped.
+    DATASET_CONFIG_KEYS = ("dismiss_banner",)
+
+    def validate_dataset_config(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Expected an object.")
+        unknown = sorted(
+            str(key) for key in value if key not in self.DATASET_CONFIG_KEYS
+        )
+        if unknown:
+            raise serializers.ValidationError(
+                f"Not a setting this endpoint saves: {', '.join(unknown)}. "
+                f"dataset_config accepts {', '.join(self.DATASET_CONFIG_KEYS)}."
+            )
+        if "dismiss_banner" in value and not isinstance(value["dismiss_banner"], bool):
+            raise serializers.ValidationError(
+                {"dismiss_banner": "Expected true or false."}
+            )
+        return value
 
 
 class DatasetCellValueField(serializers.Field):
@@ -3326,6 +3454,11 @@ class DatasetUpdateCellValueRequestSerializer(StrictInputSerializer):
     row_id = serializers.UUIDField()
     column_id = serializers.UUIDField()
     new_value = DatasetCellValueField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        from model_hub.services.dataset_schema import validate_cell_edit
+
+        return validate_cell_edit(attrs)
 
 
 class DatasetUpdateColumnTypeRequestSerializer(serializers.Serializer):
@@ -3367,6 +3500,10 @@ class UserEvalMutationRequestSerializer(serializers.Serializer):
         default=None,
     )
 
+    pinned_version_id = serializers.CharField(
+        required=False, allow_null=True, max_length=36
+    )
+
 
 class UserEvalUpdateRequestSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=50, required=False, allow_blank=True)
@@ -3388,7 +3525,9 @@ class UserEvalUpdateRequestSerializer(serializers.Serializer):
         allow_null=True,
         default=None,
     )
-    pinned_version_id = serializers.UUIDField(required=False, allow_null=True)
+    pinned_version_id = serializers.CharField(
+        required=False, allow_null=True, max_length=36
+    )
 
 
 class StartEvalsProcessRequestSerializer(serializers.Serializer):

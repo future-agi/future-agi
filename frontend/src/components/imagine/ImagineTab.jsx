@@ -20,6 +20,9 @@ import { enqueueSnackbar } from "notistack";
 import { useCreateSavedView } from "src/api/project/saved-views";
 import useImagineStore from "./useImagineStore";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
+import { captureFalconRequest } from "src/sections/falcon-ai/store/falconRequestGuard";
+import useFalconDeferredAction from "src/sections/falcon-ai/hooks/useFalconDeferredAction";
+import { getConversation } from "src/sections/falcon-ai/hooks/useFalconAPI";
 import WidgetCanvas from "./WidgetCanvas";
 import ImagineChatPanel from "./ImagineChatPanel";
 import SuggestedPrompts from "./SuggestedPrompts";
@@ -48,20 +51,25 @@ export default function ImagineTab({
   const [showChat, setShowChat] = useState(!readOnly);
 
   const chatRef = useRef(null);
+  const schedule = useFalconDeferredAction();
+  // Bind saved props when selected, not when a later widget update reruns the
+  // hydration effect. Recovery must not make an old saved conversation current.
+  const savedScope = useMemo(
+    () => captureFalconRequest(),
+    [savedViewId, savedConversationId, traceId, projectId],
+  );
   const { mutate: createSavedView, isPending: isSaving } =
     useCreateSavedView(projectId);
 
   // Load saved widgets when tab changes (savedViewId changes)
   const prevViewIdRef = useRef(savedViewId);
   useEffect(() => {
+    if (!savedScope()) return;
     const viewChanged = savedViewId !== prevViewIdRef.current;
     prevViewIdRef.current = savedViewId;
 
     if (savedWidgets?.length && (viewChanged || widgets.length === 0)) {
       replaceAll(savedWidgets);
-    }
-    if (savedConversationId) {
-      useImagineStore.getState().setConversationId(savedConversationId);
     }
     if (savedViewId) {
       useImagineStore.getState().setSavedViewId(savedViewId);
@@ -72,16 +80,36 @@ export default function ImagineTab({
     savedConversationId,
     widgets.length,
     replaceAll,
+    savedScope,
   ]);
 
+  // Saved-view props can outlive recovery in a parent/query cache, including
+  // across remounts. An ID alone is not proof of access in the current scope.
+  useEffect(() => {
+    if (!savedConversationId || !savedScope()) return undefined;
+    const isCurrent = captureFalconRequest({ conversation: true });
+    let active = true;
+    getConversation(savedConversationId)
+      .then(() => {
+        if (!active || !savedScope() || !isCurrent()) return;
+        useImagineStore.getState().setConversationId(savedConversationId);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [savedConversationId, savedScope]);
+
   // Handle prompt chip selection — sends directly to chat
-  const handlePromptSelect = useCallback((text) => {
-    setShowChat(true);
-    // Small delay to let chat panel mount if it was hidden
-    setTimeout(() => {
-      chatRef.current?.send(text);
-    }, 100);
-  }, []);
+  const handlePromptSelect = useCallback(
+    (text) => {
+      setShowChat(true);
+      // Small delay to let chat panel mount if it was hidden. Scope is captured
+      // now; capturing it inside ImagineChatPanel.send would be too late.
+      schedule(() => chatRef.current?.send(text), 100, { conversation: true });
+    },
+    [schedule],
+  );
 
   // Horizontal resize handler
   const handleResizeStart = useCallback(

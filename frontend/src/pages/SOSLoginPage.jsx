@@ -1,10 +1,11 @@
 import { Typography } from "@mui/material";
 import React, { useEffect, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import { useAuthRedirectParams } from "src/auth/auth-url-intake";
 import { ShowComponent } from "src/components/show";
 
 const SOSLoginPage = () => {
-  const [searchParams] = useSearchParams();
+  const searchParams = useAuthRedirectParams();
 
   const access = searchParams.get("access");
   const refresh = searchParams.get("refresh");
@@ -22,6 +23,7 @@ const SOSLoginPage = () => {
 
     // Refresh the page after setting localStorage
     refreshTimeoutRef.current = setTimeout(() => {
+      searchParams.clear();
       navigate("/dashboard/develop");
     }, 1000); // Small delay to show the loading message
 
@@ -30,7 +32,7 @@ const SOSLoginPage = () => {
         clearTimeout(refreshTimeoutRef.current);
       }
     };
-  }, [access, refresh, navigate]);
+  }, [access, refresh, navigate, searchParams]);
 
   return (
     <div

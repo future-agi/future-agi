@@ -1,0 +1,322 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:model-prices-v1",
+  "title": "Fixed Offer Prices",
+  "description": "Independent public fixed-price chat/Messages catalogue projection. This is not models-feed-v1, an account entitlement, a provider qualification, a tenant BYOK quote, an admission guarantee for tools, or an invoice.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "content_version",
+    "currency",
+    "quote_scope",
+    "one_key_markup_bps",
+    "byok_gateway_fee_bps",
+    "coverage",
+    "rules",
+    "sources",
+    "offers"
+  ],
+  "properties": {
+    "schema_version": { "const": "model-prices-v1" },
+    "content_version": { "$ref": "#/$defs/digest" },
+    "currency": { "const": "USD" },
+    "quote_scope": { "const": "fixed_chat_card_only" },
+    "one_key_markup_bps": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000,
+      "description": "Effective configured one-key markup; the default is 500 basis points (5%)."
+    },
+    "byok_gateway_fee_bps": { "const": 0 },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chat_completions", "messages", "eligibility", "excluded"],
+      "properties": {
+        "chat_completions": { "const": true },
+        "messages": { "const": true },
+        "eligibility": {
+          "const": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification"
+        },
+        "excluded": {
+          "const": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rate_meaning",
+        "prompt_totals",
+        "cache_rates",
+        "reasoning",
+        "reported_cost",
+        "settlement_rounding",
+        "admission",
+        "byok",
+        "source_snapshot"
+      ],
+      "properties": {
+        "rate_meaning": {
+          "const": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines"
+        },
+        "prompt_totals": {
+          "const": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input"
+        },
+        "cache_rates": {
+          "const": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens"
+        },
+        "reasoning": {
+          "const": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion"
+        },
+        "reported_cost": {
+          "const": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero"
+        },
+        "settlement_rounding": {
+          "const": "snap_USD_times_1e6_to_1e-6_micro; half_up_upstream_per_attempt; half_up_markup_on_integer_upstream; sum_billable_attempts"
+        },
+        "admission": {
+          "const": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound"
+        },
+        "byok": {
+          "const": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published"
+        },
+        "source_snapshot": {
+          "const": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "offers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/offer" }
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "name": { "type": "string", "minLength": 1 },
+    "sourceKind": { "enum": ["openrouter", "openai_compatible", "price_card"] },
+    "rate": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "description": "Canonical nonnegative USD per stated unit; never a rounded invoice amount."
+    },
+    "nullableRate": {
+      "anyOf": [{ "$ref": "#/$defs/rate" }, { "type": "null" }]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_id", "catalog_source", "snapshot_id"],
+      "properties": {
+        "provider_id": { "$ref": "#/$defs/name" },
+        "catalog_source": { "$ref": "#/$defs/sourceKind" },
+        "snapshot_id": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "unit",
+        "rule",
+        "card_rate_usd",
+        "provider_rate_usd",
+        "nominal_one_key_rate_usd"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "uncached_input",
+            "output",
+            "cache_read",
+            "cache_write",
+            "reasoning",
+            "request",
+            "web_search"
+          ]
+        },
+        "unit": { "enum": ["token", "request", "search_request"] },
+        "rule": { "type": "string" },
+        "card_rate_usd": { "$ref": "#/$defs/nullableRate" },
+        "provider_rate_usd": { "$ref": "#/$defs/nullableRate" },
+        "nominal_one_key_rate_usd": { "$ref": "#/$defs/nullableRate" }
+      }
+    },
+    "quoted": {
+      "properties": {
+        "card_rate_usd": { "$ref": "#/$defs/rate" },
+        "provider_rate_usd": { "$ref": "#/$defs/rate" },
+        "nominal_one_key_rate_usd": { "$ref": "#/$defs/rate" }
+      }
+    },
+    "offer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_id",
+        "catalog_source",
+        "model_id",
+        "endpoint_id",
+        "upstream_provider",
+        "endpoint_status",
+        "explicit_free",
+        "dimensions"
+      ],
+      "properties": {
+        "provider_id": { "$ref": "#/$defs/name" },
+        "catalog_source": { "$ref": "#/$defs/sourceKind" },
+        "model_id": { "$ref": "#/$defs/name" },
+        "endpoint_id": {
+          "type": "string",
+          "description": "Empty only for a listing priced directly, without a source endpoint table."
+        },
+        "upstream_provider": { "type": "string" },
+        "endpoint_status": {
+          "type": "integer",
+          "description": "Source status. Serving may select a degraded/down fallback when no healthy endpoint remains; this is not live qualification."
+        },
+        "expires_at": { "type": "string", "format": "date" },
+        "explicit_free": { "type": "boolean" },
+        "dimensions": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "prefixItems": [
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "$ref": "#/$defs/quoted" }
+              ],
+              "properties": {
+                "name": { "const": "uncached_input" },
+                "unit": { "const": "token" },
+                "rule": { "const": "prompt_minus_cache_unless_exclusive" }
+              }
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "$ref": "#/$defs/quoted" }
+              ],
+              "properties": {
+                "name": { "const": "output" },
+                "unit": { "const": "token" },
+                "rule": {
+                  "const": "completion_minus_separately_priced_reasoning"
+                }
+              }
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "$ref": "#/$defs/quoted" }
+              ],
+              "properties": {
+                "name": { "const": "cache_read" },
+                "unit": { "const": "token" },
+                "rule": {
+                  "enum": ["fallback_to_prompt", "replaces_included_prompt"]
+                }
+              }
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "$ref": "#/$defs/quoted" }
+              ],
+              "properties": {
+                "name": { "const": "cache_write" },
+                "unit": { "const": "token" },
+                "rule": {
+                  "enum": ["fallback_to_prompt", "replaces_included_prompt"]
+                }
+              }
+            },
+            {
+              "$ref": "#/$defs/dimension",
+              "properties": {
+                "name": { "const": "reasoning" },
+                "unit": { "const": "token" },
+                "rule": {
+                  "enum": ["included_in_output", "replaces_clamped_completion"]
+                }
+              },
+              "if": {
+                "properties": { "rule": { "const": "included_in_output" } }
+              },
+              "then": {
+                "properties": {
+                  "card_rate_usd": { "const": "0" },
+                  "provider_rate_usd": { "type": "null" },
+                  "nominal_one_key_rate_usd": { "type": "null" }
+                }
+              },
+              "else": {
+                "$ref": "#/$defs/quoted",
+                "properties": { "card_rate_usd": { "not": { "const": "0" } } }
+              }
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/dimension" },
+                { "$ref": "#/$defs/quoted" }
+              ],
+              "properties": {
+                "name": { "const": "request" },
+                "unit": { "const": "request" },
+                "rule": { "const": "once_per_billable_attempt" }
+              }
+            },
+            {
+              "$ref": "#/$defs/dimension",
+              "properties": {
+                "name": { "const": "web_search" },
+                "unit": { "const": "search_request" },
+                "rule": {
+                  "enum": ["not_quoted", "per_reported_search_request"]
+                }
+              },
+              "if": { "properties": { "rule": { "const": "not_quoted" } } },
+              "then": {
+                "properties": {
+                  "card_rate_usd": { "type": "null" },
+                  "provider_rate_usd": { "type": "null" },
+                  "nominal_one_key_rate_usd": { "type": "null" }
+                }
+              },
+              "else": {
+                "$ref": "#/$defs/quoted",
+                "properties": { "card_rate_usd": { "not": { "const": "0" } } }
+              }
+            }
+          ]
+        }
+      },
+      "if": { "properties": { "explicit_free": { "const": true } } },
+      "then": {
+        "properties": {
+          "catalog_source": { "const": "openrouter" },
+          "model_id": { "pattern": "(^openrouter/free$|:free$)" },
+          "dimensions": {
+            "items": {
+              "properties": {
+                "card_rate_usd": { "enum": ["0", null] },
+                "provider_rate_usd": { "enum": ["0", null] },
+                "nominal_one_key_rate_usd": { "enum": ["0", null] }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

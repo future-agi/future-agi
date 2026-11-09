@@ -16,34 +16,31 @@ class RevokeApiKeyInput(PydanticBaseModel):
 class RevokeApiKeyTool(BaseTool):
     name = "revoke_api_key"
     description = (
-        "Revokes (disables) an API key so it can no longer be used for authentication. "
-        "Requires Owner or Admin permissions."
+        "Revokes (disables) one of your own personal API keys so it can no longer "
+        "be used for authentication."
     )
     category = "users"
     input_model = RevokeApiKeyInput
 
     def execute(self, params: RevokeApiKeyInput, context: ToolContext) -> ToolResult:
 
+        from accounts.api_key_revocation import publish_key_revocation
         from accounts.models.user import OrgApiKey
         from accounts.models.workspace import OrganizationRoles
 
         org = context.organization
         actor = context.user
 
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
+        from accounts.api_key_policy import live_membership
+
+        if live_membership(actor.pk, org.pk) is None:
             return ToolResult.error(
-                "You do not have permission to revoke API keys. "
-                "Only Owner or Admin roles can revoke API keys.",
-                error_code="PERMISSION_DENIED",
+                "Active membership is required.", error_code="PERMISSION_DENIED"
             )
 
         try:
             api_key = OrgApiKey.no_workspace_objects.get(
-                id=params.key_id, organization=org
+                id=params.key_id, organization=org, user=actor, type="user"
             )
         except OrgApiKey.DoesNotExist:
             return ToolResult.not_found("API Key", str(params.key_id))
@@ -59,6 +56,8 @@ class RevokeApiKeyTool(BaseTool):
 
         api_key.enabled = False
         api_key.save()
+        # Without this, fi-collector keeps accepting the key until its cache expires.
+        publish_key_revocation(api_key)
 
         info = key_value_block(
             [

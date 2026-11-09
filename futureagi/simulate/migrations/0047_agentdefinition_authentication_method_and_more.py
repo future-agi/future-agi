@@ -7,12 +7,12 @@ from simulate.models.agent_definition import AgentDefinitionAuthenticationChoice
 def populate_languages_and_auth_method_in_configuration_snapshot(apps, schema_editor):
     AgentVersion = apps.get_model('simulate','AgentVersion')
     AgentDefinition = apps.get_model('simulate','AgentDefinition')
-    for agent_definition in AgentDefinition.objects.all():
+    for agent_definition in AgentDefinition.objects.using(schema_editor.connection.alias).all():
         if agent_definition.language:
             agent_definition.languages = [agent_definition.language]
-            agent_definition.save()
+            agent_definition.save(using=schema_editor.connection.alias)
 
-    for version in AgentVersion.objects.all():
+    for version in AgentVersion.objects.using(schema_editor.connection.alias).all():
         snapshot = version.configuration_snapshot
         language = snapshot.get("language")
         if language:
@@ -20,7 +20,7 @@ def populate_languages_and_auth_method_in_configuration_snapshot(apps, schema_ed
         else:
             snapshot["languages"] = ["en"]
         snapshot['authentication_method'] = AgentDefinitionAuthenticationChoices.API_KEY
-        version.save()
+        version.save(using=schema_editor.connection.alias)
 
 
 class Migration(migrations.Migration):

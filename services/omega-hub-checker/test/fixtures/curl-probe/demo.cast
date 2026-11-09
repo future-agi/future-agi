@@ -1,0 +1,2 @@
+{"version":2,"width":100,"height":6,"title":"curl-probe (keyless)","env":{"TERM":"xterm-256color"}}
+[0.468,"o","fetch: stopped\r\nnet.connect: stopped\r\nnet.connect in a Worker: stopped\r\ndns.resolve4: stopped\r\ncurl: stopped\r\nnode child: stopped\r\n"]

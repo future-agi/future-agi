@@ -1,7 +1,20 @@
 from rest_framework import serializers
 
 from agentcc.models.custom_property import AgentccCustomPropertySchema
+from agentcc.models.project import AgentccProject
 from agentcc.validators import validate_safe_agentcc_name
+
+# NG-41: nothing reads a property's Default (the gateway does not fill it,
+# ingestion does not, the logs API does not), so a new one is refused rather
+# than stored as if it applied. A Default saved before this stays as it is,
+# readable; an edit may keep it unchanged or clear it (null). Required and
+# Allowed Values are not affected: POST custom-properties/validate/ applies
+# them.
+PROPERTY_RULE_NOT_ENFORCED = "property_rule_not_enforced"
+DEFAULT_NOT_APPLIED_MESSAGE = (
+    "A default value is not applied to requests: the gateway and the request "
+    "logs never fill it in. Leave default_value empty (null)."
+)
 
 
 class AgentccCustomPropertySchemaSerializer(serializers.ModelSerializer):
@@ -26,6 +39,54 @@ class AgentccCustomPropertySchemaSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            "required": {
+                "help_text": (
+                    "Checked by POST custom-properties/validate/; the gateway "
+                    "does not apply it to requests."
+                )
+            },
+            "allowed_values": {
+                "help_text": (
+                    "For enum properties. Checked by POST "
+                    "custom-properties/validate/; the gateway does not apply "
+                    "it to requests."
+                )
+            },
+            "default_value": {
+                "help_text": (
+                    "Not applied anywhere. A new non-null value answers 400 "
+                    "property_rule_not_enforced; a value saved before stays "
+                    "readable and may be kept unchanged or cleared with null."
+                )
+            },
+        }
+
+    def get_fields(self):
+        """The writable project is one of the organization's own projects
+        (``context["organization"]``), on top of the default manager's
+        workspace scope, which applies only when a workspace is resolved.
+        Without an organization no project is accepted. A foreign id is
+        answered as a missing one."""
+        fields = super().get_fields()
+        project = fields.get("project")
+        if project is not None and not project.read_only:
+            organization = self.context.get("organization")
+            projects = AgentccProject._default_manager.all()
+            project.queryset = (
+                projects.filter(organization=organization)
+                if organization is not None
+                else projects.none()
+            )
+        return fields
+
+    def validate_default_value(self, value):
+        stored = getattr(self.instance, "default_value", None)
+        if value is not None and (self.instance is None or value != stored):
+            raise serializers.ValidationError(
+                DEFAULT_NOT_APPLIED_MESSAGE, code=PROPERTY_RULE_NOT_ENFORCED
+            )
+        return value
 
     def validate_allowed_values(self, value):
         if not isinstance(value, list):
@@ -106,4 +167,4 @@ class AgentccCustomPropertySchemaSerializer(serializers.ModelSerializer):
         try:
             return validate_safe_agentcc_name(value)
         except ValueError as exc:
-            raise serializers.ValidationError(str(exc))
+            raise serializers.ValidationError(str(exc)) from exc

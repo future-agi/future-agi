@@ -3,7 +3,16 @@ module.exports = {
     browser: true,
     es2021: true,
   },
-  ignorePatterns: ["**/*.d.ts", "src/generated/**"],
+  // The Deployments sample is a customer's TypeScript project (downloaded and
+  // deployed as it is), not this app's code; scripts/type-tests holds TypeScript
+  // compile fixtures for tsc. This config has no TypeScript parser, so ESLint
+  // (and lint-staged's eslint --fix) must skip both.
+  ignorePatterns: [
+    "**/*.d.ts",
+    "src/generated/**",
+    "src/sections/omega/deployments/sample/project/**",
+    "scripts/type-tests/**",
+  ],
   extends: [
     "eslint:recommended",
     "plugin:react/recommended",

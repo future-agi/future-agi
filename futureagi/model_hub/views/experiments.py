@@ -11,12 +11,13 @@ import pandas as pd
 import structlog
 from django.db import DatabaseError, connection, transaction
 from django.db.models import Count, Exists, Max, OuterRef, Prefetch, Q
-from django.http import FileResponse
+from django.http import FileResponse, Http404
 from django_filters import rest_framework as django_filters
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import generics, status
+from rest_framework.exceptions import APIException
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
@@ -31,8 +32,18 @@ from model_hub.models.choices import (
     SourceChoices,
     StatusType,
 )
-from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.develop_dataset import (
+    Cell,
+    Column,
+    Dataset,
+    KnowledgeBaseFile,
+    Row,
+)
+from model_hub.models.evals_metric import (
+    EXTERNAL_EVAL_TYPE,
+    EvalTemplate,
+    UserEvalMetric,
+)
 from model_hub.models.experiments import (
     ExperimentAgentConfig,
     ExperimentComparison,
@@ -48,7 +59,6 @@ from model_hub.serializers.contracts import (
     ExperimentComparisonWeightsRequestSerializer,
     ExperimentRerunRequestSerializer,
     ExperimentTableRowsQuerySerializer,
-    ModelHubEmptyRequestSerializer,
     ModelHubErrorResponseSerializer,
     UserEvalMutationRequestSerializer,
 )
@@ -65,7 +75,6 @@ from model_hub.serializers.experiment_contracts import (
     ExperimentNameValidationResponseSerializer,
     ExperimentRowDiffResponseSerializer,
     ExperimentStatsResponseSerializer,
-    ExperimentStopResponseSerializer,
     ExperimentStringResultResponseSerializer,
     ExperimentTableRowsResponseSerializer,
     ExperimentV2DetailResponseSerializer,
@@ -82,6 +91,7 @@ from model_hub.serializers.experiments import (
     ExperimentsTableUpdateSerializer,
     ExperimentUpdateV2Serializer,
 )
+from model_hub.services import experiment_target_admission as target_admission
 from model_hub.services.bounded_dataset_read import (
     DATASET_ROW_ADJACENCY_MAX_ROWS,
     BoundedDatasetPageDepthExceeded,
@@ -98,14 +108,36 @@ from model_hub.services.dataset_table_snapshot import (
     assert_dataset_table_cells_within_limits,
     assert_dataset_table_response_within_limits,
 )
+from model_hub.services.experiment_eval_pins import (
+    PIN_UNSET,
+    pinned_config,
+    resolve_eval_entries,
+)
+from model_hub.services.experiment_submit import (
+    Submission,
+    matching_submission,
+    stage_submission,
+    submit_transaction,
+)
+from model_hub.services.external_metrics import (
+    EXTERNAL_TEMPLATE_REFUSAL,
+    ExternalMetricExecutionError,
+    exclude_external,
+    external_execution_refusal,
+)
 from model_hub.services.lifecycle import bulk_soft_delete
 from model_hub.tasks.experiment_runner import process_experiments
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
+from model_hub.utils.experiment_reference_scope import (
+    validate_eval_references,
+    validate_prompt_references,
+)
 from model_hub.utils.function_eval_params import (
     has_function_params_schema,
     normalize_eval_runtime_config,
 )
 from model_hub.utils.utils import get_diff
+from model_hub.utils.workspace_scope import request_workspace
 from model_hub.views.experiment_runner import ExperimentRunner
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.utils.api_contracts import validated_request
@@ -114,6 +146,7 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import calculate_column_average
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.tenant_scope import caller_workspace, scope_to_caller, workspace_scope_q
 
 logger = structlog.get_logger(__name__)
 
@@ -154,7 +187,9 @@ _DEFAULT_EXPERIMENT_COMPARISON_WEIGHTS = {
 def _request_workspace_filter(request, field_name="dataset__workspace"):
     workspace = getattr(request, "workspace", None) or get_current_workspace()
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
     if getattr(workspace, "is_default", False):
         return (
             Q(**{field_name: workspace})
@@ -192,15 +227,138 @@ def _scoped_dataset_queryset(request, organization=None):
 
 
 def _scoped_eval_metric_queryset(request, dataset, organization=None):
+    """Dataset metrics the request may attach to an experiment for execution.
+
+    External metrics (SRV-5) are scored by the caller and never executed, so
+    they are never part of this set; ``_validate_legacy_experiment_payload``
+    refuses them by name before it uses this queryset.
+    """
     organization = organization or getattr(request, "organization", None)
     if organization is None:
         organization = request.user.organization
-    return UserEvalMetric.objects.filter(
-        _request_workspace_filter(request, "workspace"),
-        organization=organization,
-        dataset=dataset,
-        deleted=False,
+    return exclude_external(
+        UserEvalMetric.objects.filter(
+            _request_workspace_filter(request, "workspace"),
+            organization=organization,
+            dataset=dataset,
+            deleted=False,
+        )
     )
+
+
+def _request_graph_versions(request):
+    """Graph versions whose graph is in the request's organization and workspace."""
+    from agent_playground.models.graph_version import GraphVersion
+
+    return scope_to_caller(
+        GraphVersion.no_workspace_objects.select_related("graph"),
+        request,
+        organization_field="graph__organization",
+        workspace_field="graph__workspace",
+    )
+
+
+def _request_prompt_versions(request):
+    """Prompt versions whose template is in the request's organization and
+    workspace."""
+    return scope_to_caller(
+        PromptVersion.objects.select_related("original_template"),
+        request,
+        organization_field="original_template__organization",
+        workspace_field="original_template__workspace",
+    )
+
+
+def _accessible_eval_templates(organization, workspace):
+    """Eval templates usable from ``organization`` and ``workspace``: system
+    templates, and the organization's user templates in ``workspace`` or in no
+    workspace."""
+    from model_hub.services.eval_group import filter_eval_templates_for_group_scope
+
+    return filter_eval_templates_for_group_scope(
+        EvalTemplate.no_workspace_objects.all(), organization, workspace
+    )
+
+
+def _usable_external_template(organization, workspace, template_id):
+    """Whether ``template_id`` names an external (SRV-5) template usable from
+    ``organization`` and ``workspace``: the scope of
+    ``_accessible_eval_templates`` before it drops external templates. Another
+    organization's or workspace's external template is not usable, so its id
+    is answered like an id that does not exist."""
+    from model_hub.services.eval_group import _accessible_eval_template_filter
+
+    return EvalTemplate.no_workspace_objects.filter(
+        _accessible_eval_template_filter(organization, workspace),
+        id=template_id,
+        eval_type=EXTERNAL_EVAL_TYPE,
+    ).exists()
+
+
+def _require_knowledge_base(kb_id, organization, workspace):
+    """Raise ValueError unless ``kb_id`` names a knowledge base file of
+    ``organization`` in ``workspace``. No ``kb_id`` passes."""
+    if not kb_id:
+        return
+    if not KnowledgeBaseFile.no_workspace_objects.filter(
+        workspace_scope_q(workspace), id=kb_id, organization=organization
+    ).exists():
+        raise ValueError("Knowledge base not found.")
+
+
+def _require_eval_metric_entries(
+    eval_entries, organization, workspace, *, existing_metrics=None
+):
+    """Validate template/KB scope before resolving pins and before any write.
+
+    New/changed templates require current organization/workspace access. A
+    stored unchanged template is kept only if its pin is also unchanged (the
+    subsequent resolver checks that). New/changed KBs require workspace scope;
+    unchanged KBs still require organization ownership on every write.
+    """
+    existing_metrics = existing_metrics or {}
+    accessible_templates = _accessible_eval_templates(organization, workspace)
+    for entry in eval_entries:
+        metric = existing_metrics.get(str(entry.get("id")))
+        same_template = metric is not None and str(metric.template_id) == str(
+            entry["template_id"]
+        )
+        if (
+            not same_template
+            and not accessible_templates.filter(id=entry["template_id"]).exists()
+        ):
+            raise EvalTemplate.DoesNotExist("Eval template not found.")
+        kb_id = entry.get("kb_id")
+        if metric is None or str(metric.kb_id or "") != str(kb_id or ""):
+            _require_knowledge_base(kb_id, organization, workspace)
+        elif (
+            kb_id
+            and not KnowledgeBaseFile.no_workspace_objects.filter(
+                id=kb_id, organization=organization
+            ).exists()
+        ):
+            raise ValueError("Knowledge base not found.")
+
+
+def _resolve_experiment_eval_entries(
+    eval_entries, organization, workspace, *, existing_metrics=None
+):
+    """Validate all references, then pins, then Choices score overrides,
+    before any create/update writes."""
+    _require_eval_metric_entries(
+        eval_entries, organization, workspace, existing_metrics=existing_metrics
+    )
+    resolved = resolve_eval_entries(
+        eval_entries,
+        organization,
+        accessible_templates=_accessible_eval_templates(organization, workspace),
+        existing_metrics=existing_metrics,
+    )
+    from model_hub.utils.scoring import validate_choice_score_override
+
+    for entry, (template, _pin) in zip(eval_entries, resolved, strict=True):
+        validate_choice_score_override(template, entry.get("config"))
+    return resolved
 
 
 def _bounded_experiment_read_error(*, status_code, code, detail):
@@ -235,6 +393,16 @@ def _validate_legacy_experiment_payload(request, validated_data, *, experiment=N
     metrics = list(validated_data.get("user_eval_template_ids") or [])
     if metrics:
         metric_ids = [metric.id for metric in metrics]
+        # Checked against the scoped dataset so the message only names
+        # metrics the caller can see; the callers turn this into a 400.
+        refusal = external_execution_refusal(
+            metric_ids,
+            queryset=UserEvalMetric.objects.filter(
+                dataset=scoped_dataset, deleted=False
+            ),
+        )
+        if refusal:
+            raise ExternalMetricExecutionError(refusal)
         scoped_metrics = list(
             _scoped_eval_metric_queryset(request, scoped_dataset)
             .filter(id__in=metric_ids)
@@ -573,6 +741,8 @@ class ExperimentsTableView(APIView):
                 )
 
             return self._gm.success_response("Experiment created successfully.")
+        except ExternalMetricExecutionError as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error in creating experiment: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_CREATE_EXP"))
@@ -645,6 +815,8 @@ class ExperimentsTableView(APIView):
                     )
 
             return self._gm.success_response("Experiment updated successfully.")
+        except ExternalMetricExecutionError as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error in updating experiment: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_UPDATE_EXP"))
@@ -1549,12 +1721,9 @@ class DatasetExperimentsView(APIView):
 
             if column_config_only:
                 # Determine experiment-level output format (uniform across all prompt configs)
-                try:
-                    experiment_output_format = (experiment.prompt_config or [{}])[
-                        0
-                    ].get("output_format", "text")
-                except Exception:
-                    experiment_output_format = "text"
+                experiment_output_format = _rows_output_format(
+                    experiment, is_v2, deadline
+                )
 
                 response_data = {
                     "column_config": column_config,
@@ -1569,12 +1738,7 @@ class DatasetExperimentsView(APIView):
             table_data = [cells_by_row[rid] for rid in row_ids_list]
 
             # Determine experiment-level output format (uniform across all prompt configs)
-            try:
-                experiment_output_format = (experiment.prompt_config or [{}])[0].get(
-                    "output_format", "text"
-                )
-            except Exception:
-                experiment_output_format = "text"
+            experiment_output_format = _rows_output_format(experiment, is_v2, deadline)
 
             deadline.before_query()
             descriptions = {
@@ -1910,10 +2074,11 @@ class GetRowDiffV2View(APIView):
             )
 
 
-class ExperimentListAPIView(BaseModelViewSetMixin, generics.ListAPIView):
+class ExperimentListAPIView(generics.ListAPIView):
     _gm = GeneralMethods()
     serializer_class = ExperimentListSerializer
-    queryset = ExperimentsTable.objects.all()
+    # Only names the model; every request builds its own scoped queryset.
+    queryset = ExperimentsTable.objects.none()
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ExperimentFilter
@@ -1922,8 +2087,10 @@ class ExperimentListAPIView(BaseModelViewSetMixin, generics.ListAPIView):
     search_fields = ["name", "status"]
 
     def get_queryset(self):
-        # Get base queryset with automatic filtering from mixin
-        queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return ExperimentsTable.objects.none()
+        # Experiments inherit tenancy through their dataset, not a direct field.
+        queryset = _scoped_experiment_queryset(self.request)
         dataset_id = self.request.query_params.get("dataset_id")
         if dataset_id:
             queryset = queryset.filter(dataset_id=dataset_id)
@@ -1938,6 +2105,8 @@ class ExperimentListAPIView(BaseModelViewSetMixin, generics.ListAPIView):
                 return self.get_paginated_response(serializer.data)
             serializer = self.get_serializer(queryset, many=True)
             return self._gm.success_response(serializer.data)
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching experiment: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_EXPs"))
@@ -1956,12 +2125,16 @@ class ExperimentStatsView(APIView):
             getattr(request, "organization", None) or request.user.organization
         )
         try:
-            experiment = ExperimentsTable.objects.prefetch_related(
-                "experiments_datasets",
-                "experiments_datasets__columns",
-                "user_eval_template_ids",
-                "dataset",
-            ).get(id=experiment_id)
+            experiment = (
+                _scoped_experiment_queryset(request, organization)
+                .prefetch_related(
+                    "experiments_datasets",
+                    "experiments_datasets__columns",
+                    "user_eval_template_ids",
+                    "dataset",
+                )
+                .get(id=experiment_id)
+            )
 
             # Enforce organization isolation
             if experiment.dataset.organization_id != organization.id:
@@ -2330,7 +2503,7 @@ class ExperimentStatsView(APIView):
             )
 
         except ExperimentsTable.DoesNotExist:
-            return self._gm.bad_request(get_error_message("EXPERIMENT_NOT_FOUND"))
+            return self._gm.not_found(get_error_message("EXPERIMENT_NOT_FOUND"))
         except Exception as e:
             logger.exception(f"Error in fetching experiment's details: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_EXP_DATA"))
@@ -2351,13 +2524,17 @@ class ExperimentStatsV2View(APIView):
             getattr(request, "organization", None) or request.user.organization
         )
         try:
-            experiment = ExperimentsTable.objects.prefetch_related(
-                "experiment_datasets",
-                "experiment_datasets__columns",
-                "user_eval_template_ids",
-                "dataset",
-                "snapshot_dataset",
-            ).get(id=experiment_id)
+            experiment = (
+                _scoped_experiment_queryset(request, organization)
+                .prefetch_related(
+                    "experiment_datasets",
+                    "experiment_datasets__columns",
+                    "user_eval_template_ids",
+                    "dataset",
+                    "snapshot_dataset",
+                )
+                .get(id=experiment_id)
+            )
 
             # Enforce organization isolation
             if experiment.dataset.organization_id != organization.id:
@@ -2686,7 +2863,7 @@ class ExperimentStatsV2View(APIView):
             )
 
         except ExperimentsTable.DoesNotExist:
-            return self._gm.bad_request(get_error_message("EXPERIMENT_NOT_FOUND"))
+            return self._gm.not_found(get_error_message("EXPERIMENT_NOT_FOUND"))
         except Exception as e:
             logger.exception(f"Error in fetching v2 experiment stats: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_EXP_DATA"))
@@ -2708,7 +2885,8 @@ class ExperimentEvaluationStatsView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             experiment = (
-                ExperimentsTable.objects.prefetch_related(
+                _scoped_experiment_queryset(request, organization)
+                .prefetch_related(
                     "experiments_datasets__columns",
                     "experiment_datasets__columns",
                     "user_eval_template_ids",
@@ -3371,7 +3549,7 @@ class RunAdditionalEvaluationsView(APIView):
             eval_template_ids = [
                 str(eval_id) for eval_id in request.validated_data["eval_template_ids"]
             ]
-            metrics = UserEvalMetric.objects.filter(
+            scoped_metrics = UserEvalMetric.objects.filter(
                 _request_workspace_filter(request, "workspace"),
                 id__in=eval_template_ids,
                 dataset=experiment.dataset,
@@ -3380,6 +3558,14 @@ class RunAdditionalEvaluationsView(APIView):
             ).filter(
                 Q(source_id__in=["", str(experiment.id)]) | Q(source_id__isnull=True)
             )
+            # External metrics (SRV-5) are scored by the caller: refuse them
+            # before any write (source_id, columns, status, workflow).
+            refusal = external_execution_refusal(
+                eval_template_ids, queryset=scoped_metrics
+            )
+            if refusal:
+                return self._gm.bad_request(refusal)
+            metrics = exclude_external(scoped_metrics)
             metric_instances = list(metrics)
             found_metric_ids = {str(metric.id) for metric in metric_instances}
             missing_metric_ids = set(eval_template_ids) - found_metric_ids
@@ -3452,15 +3638,34 @@ class AddExperimentEvalView(APIView):
             save_as_template = validated_data.get("save_as_template", False)
             run = validated_data.get("run", False)
             try:
-                experiment = ExperimentsTable.objects.select_related("dataset").get(
-                    id=experiment_id,
-                    dataset__organization=organization,
-                    deleted=False,
+                experiment = (
+                    _scoped_experiment_queryset(request, organization)
+                    .select_related("dataset")
+                    .get(
+                        id=experiment_id,
+                        dataset__organization=organization,
+                        deleted=False,
+                    )
                 )
             except ExperimentsTable.DoesNotExist:
                 return self._gm.not_found("Experiment not found")
 
+            # Templates are resolved among the system templates and this
+            # organization's templates in the request's workspace.
+            accessible_templates = _accessible_eval_templates(
+                organization, caller_workspace(request)
+            )
             template_id = validated_data.get("template_id")
+            # Refused before save_as_template can copy its config into a new,
+            # non-external template, and before any metric or column exists.
+            # Only a template the caller may use is refused here; any other id
+            # is answered below like an id that does not exist.
+            if _usable_external_template(
+                organization, caller_workspace(request), template_id
+            ):
+                return self._gm.bad_request(EXTERNAL_TEMPLATE_REFUSAL)
+            workspace = request_workspace(request)
+            validate_eval_references([validated_data], organization, workspace)
             # Save as template if requested
             if UserEvalMetric.objects.filter(
                 name=validated_data.get("name"),
@@ -3471,7 +3676,7 @@ class AddExperimentEvalView(APIView):
                 return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
 
             if save_as_template:
-                template = EvalTemplate.no_workspace_objects.get(
+                template = accessible_templates.get(
                     id=validated_data.get("template_id")
                 )
                 if (
@@ -3497,6 +3702,7 @@ class AddExperimentEvalView(APIView):
                     choices=template.choices,
                     multi_choice=template.multi_choice,
                     organization=organization,
+                    workspace=workspace,
                     owner=OwnerChoices.USER.value,
                     output_type_normalized=template.output_type_normalized,
                     choice_scores=template.choice_scores,
@@ -3520,7 +3726,7 @@ class AddExperimentEvalView(APIView):
                 template_id = new_template.id
 
             logger.info(f"CONFIG: {validated_data.get('config')}")
-            selected_template = EvalTemplate.no_workspace_objects.get(id=template_id)
+            selected_template = accessible_templates.get(id=template_id)
             try:
                 normalized_config = normalize_eval_runtime_config(
                     selected_template.config, validated_data.get("config", {})
@@ -3536,6 +3742,8 @@ class AddExperimentEvalView(APIView):
                 name=validated_data.get("name"),
                 organization=organization,
                 dataset_id=eval_dataset.id,
+                workspace=workspace,
+                kb_id=validated_data.get("kb_id"),
                 template_id=template_id,
                 config=normalized_config,
                 status=StatusType.EXPERIMENT_EVALUATION.value,
@@ -3591,6 +3799,8 @@ class AddExperimentEvalView(APIView):
                 }
             )
 
+        except Http404 as e:
+            return self._gm.not_found(str(e))
         except Exception as e:
             logger.exception(f"Error in adding additional eval: {str(e)}")
             return self._gm.bad_request(
@@ -3610,18 +3820,23 @@ class ExperimentComparisonDetailsView(APIView):
     )
     def get(self, request, experiment_id):
         try:
-            # Get the latest comparison per dataset for this experiment
-            latest_ids = (
+            # Comparisons of this experiment, kept only when the experiment's
+            # dataset is in the request's organization and workspace.
+            experiment_comparisons = scope_to_caller(
                 ExperimentComparison.objects.filter(
                     experiment_id=experiment_id, deleted=False
-                )
-                .values("experiment_dataset_id")
+                ),
+                request,
+                organization_field="experiment__dataset__organization",
+                workspace_field="experiment__dataset__workspace",
+            )
+            # Get the latest comparison per dataset for this experiment
+            latest_ids = (
+                experiment_comparisons.values("experiment_dataset_id")
                 .annotate(latest_id=Max("updated_at"))
                 .values_list("latest_id", flat=True)
             )
-            comparisons = ExperimentComparison.objects.filter(
-                experiment_id=experiment_id,
-                deleted=False,
+            comparisons = experiment_comparisons.filter(
                 updated_at__in=latest_ids,
             ).order_by("rank")
 
@@ -3813,13 +4028,24 @@ class DownloadExperimentsView(APIView):
     )
     def get(self, request, experiment_id, *args, **kwargs):
         try:
-            # Get dataset and verify it exists
-            experiment = ExperimentsTable.objects.prefetch_related(
-                "experiments_datasets",
-                "experiments_datasets__columns",
-                "experiments_datasets__columns__cell_set",
-                "user_eval_template_ids",
-            ).get(id=experiment_id)
+            # Only an experiment of the caller's organization and workspace
+            # (through its dataset): the unscoped lookup let any signed-in
+            # user download another organization's experiment as CSV. Another
+            # organization's (or a deleted) experiment answers 404, as the
+            # experiment's other reads do.
+            experiment = (
+                _scoped_experiment_queryset(request)
+                .prefetch_related(
+                    "experiments_datasets",
+                    "experiments_datasets__columns",
+                    "experiments_datasets__columns__cell_set",
+                    "user_eval_template_ids",
+                )
+                .filter(id=experiment_id)
+                .first()
+            )
+            if experiment is None:
+                return self._gm.not_found("Experiment not found")
 
             # Get all columns in the correct order
             # Allowed column source types to display from the dataset.
@@ -3983,22 +4209,36 @@ class ExperimentsTableV2View(APIView):
         },
         reject_unknown_fields=True,
     )
+    # shared-edit(F01): Commit every creation write before dispatching execution.
+    @submit_transaction
     def post(self, request):
         data = request.validated_data
         organization = (
             getattr(request, "organization", None) or request.user.organization
         )
-
         try:
             # Validate dataset belongs to org
             try:
-                dataset = Dataset.objects.get(
+                dataset = _scoped_dataset_queryset(request, organization).get(
                     id=data["dataset_id"],
-                    organization=organization,
-                    deleted=False,
                 )
             except Dataset.DoesNotExist:
                 return self._gm.not_found("Dataset not found")
+
+            # Check caller and effective execution scope before any creation write.
+            target_admission.create_entries_admitted(
+                data["prompt_config"],
+                graph_versions=_request_graph_versions(request),
+                dataset=dataset,
+                user=request.user,
+            )
+
+            from model_hub.services.experiment_run_scope import prepare_run_scope
+
+            # shared-edit(F05): Resolve rows only after dataset admission.
+            run_scope = prepare_run_scope(
+                dataset, data, organization, getattr(request, "workspace", None)
+            )
 
             # Validate column belongs to dataset (optional)
             column = None
@@ -4012,9 +4252,38 @@ class ExperimentsTableV2View(APIView):
                 except Column.DoesNotExist:
                     return self._gm.not_found("Column not found in dataset")
 
-            # Check duplicate name
-            if experiment_name_exists(data["name"], dataset):
+            # shared-edit(F01): Serialize same-dataset creates and exact retries.
+            try:
+                dataset = (
+                    _scoped_dataset_queryset(request, organization)
+                    .select_for_update(of=("self",))
+                    .get(id=dataset.id)
+                )
+            except Dataset.DoesNotExist:
+                return self._gm.not_found("Dataset not found")
+            existing = (
+                _scoped_experiment_queryset(request, organization)
+                .select_for_update(of=("self",))
+                .filter(name=data["name"], dataset=dataset)
+                .first()
+            )
+            if existing:
+                if matching_submission(existing, data, "create"):
+                    return Submission(
+                        str(existing.id),
+                        self._gm.success_response(
+                            f"Experiment created successfully. experiment_id={existing.id}"
+                        ),
+                    )
                 return self._gm.bad_request(get_error_message("EXPERIMENT_NAME_EXISTS"))
+
+            workspace = request_workspace(request)
+            validate_eval_references(
+                data.get("user_eval_metrics", []), organization, workspace
+            )
+            validate_prompt_references(
+                data.get("prompt_config", []), organization, workspace
+            )
 
             # Validate UI-selected prompt/agent versions BEFORE creating
             # experiment/snapshot to fail fast and avoid wasted compute.
@@ -4031,7 +4300,7 @@ class ExperimentsTableV2View(APIView):
 
                     if is_agent:
                         try:
-                            gv = GV.no_workspace_objects.select_related("graph").get(
+                            gv = _request_graph_versions(request).get(
                                 id=entry["agent_version"]
                             )
                         except GV.DoesNotExist:
@@ -4051,9 +4320,9 @@ class ExperimentsTableV2View(APIView):
                         validated_agent_versions[entry["agent_version"]] = gv
                     else:
                         try:
-                            prompt_version = PromptVersion.objects.select_related(
-                                "original_template"
-                            ).get(id=entry["prompt_version"])
+                            prompt_version = _request_prompt_versions(request).get(
+                                id=entry["prompt_version"]
+                            )
                         except PromptVersion.DoesNotExist:
                             return self._gm.bad_request(
                                 f"PromptVersion {entry['prompt_version']} not found."
@@ -4074,20 +4343,39 @@ class ExperimentsTableV2View(APIView):
                             prompt_version
                         )
 
-            # Create experiment
-            experiment = ExperimentsTable.objects.create(
-                name=data["name"],
-                dataset=dataset,
-                column=column,
-                experiment_type=experiment_type,
-                prompt_config=[],  # Deprecated — configs stored in EPC/EAC
-                user=request.user,
+            # Validate template/KB organization and workspace scope FIRST,
+            # then resolve every pin, before creating any experiment or snapshot.
+            resolved_evals = _resolve_experiment_eval_entries(
+                data.get("user_eval_metrics") or [],
+                organization,
+                getattr(request, "workspace", None),
             )
 
-            # Create dataset snapshot
-            snapshot_dataset, column_mapping, row_mapping = create_dataset_snapshot(
-                dataset, experiment
-            )
+            # hook(F02): validate native graph configuration before any write.
+            from model_hub.services import experiment_native_graph as native_graph
+
+            native_graph.validate_nodes(request, validated_agent_versions.values())
+
+            # Keep experiment and snapshot creation atomic if selected rows changed.
+            with transaction.atomic():
+                experiment = ExperimentsTable.objects.create(
+                    name=data["name"],
+                    dataset=dataset,
+                    column=column,
+                    experiment_type=experiment_type,
+                    prompt_config=[],  # Deprecated — configs stored in EPC/EAC
+                    user=request.user,
+                    run_scope=run_scope,
+                    run_metadata=data.get("metadata", {}),
+                    run_policy={
+                        key: data[key]
+                        for key in ("error_policy", "limits")
+                        if key in data
+                    },
+                )
+                snapshot_dataset, column_mapping, row_mapping = create_dataset_snapshot(
+                    dataset, experiment
+                )
 
             # Point experiment.column to the snapshot copy of the target column
             if column and column.id in column_mapping:
@@ -4104,11 +4392,9 @@ class ExperimentsTableV2View(APIView):
 
                 if is_agent:
                     # Agent entry → one EDT + one EAC
-                    from agent_playground.models.graph_version import GraphVersion as GV
-
                     gv = validated_agent_versions.get(entry["agent_version"])
                     if not gv:
-                        gv = GV.no_workspace_objects.select_related("graph").get(
+                        gv = _request_graph_versions(request).get(
                             id=entry["agent_version"]
                         )
 
@@ -4122,10 +4408,11 @@ class ExperimentsTableV2View(APIView):
                         status=StatusType.NOT_STARTED.value,
                     )
 
+                    # The graph and version come from the loaded version.
                     eac = ExperimentAgentConfig.objects.create(
                         experiment_dataset=edt,
-                        graph_id=entry["agent_id"],
-                        graph_version_id=entry["agent_version"],
+                        graph_id=gv.graph_id,
+                        graph_version_id=gv.id,
                         name=agent_name,
                         order=order,
                     )
@@ -4170,9 +4457,9 @@ class ExperimentsTableV2View(APIView):
                             entry["prompt_version"]
                         )
                         if not prompt_version:
-                            prompt_version = PromptVersion.objects.select_related(
-                                "original_template"
-                            ).get(id=entry["prompt_version"])
+                            prompt_version = _request_prompt_versions(request).get(
+                                id=entry["prompt_version"]
+                            )
                         prompt_template = prompt_version.original_template
 
                     # Resolve voice_input_column for STT
@@ -4253,6 +4540,7 @@ class ExperimentsTableV2View(APIView):
                     user=request.user,
                     column_mapping=column_mapping,
                     workspace=getattr(request, "workspace", None),
+                    resolved=resolved_evals,
                 )
                 experiment.user_eval_template_ids.set(created_metrics)
 
@@ -4266,35 +4554,20 @@ class ExperimentsTableV2View(APIView):
             # Build canonical column ordering for the snapshot
             _build_and_save_v2_column_order(experiment, snapshot_dataset)
 
-            # Start V2 Temporal workflow
-            try:
-                from tfc.temporal.experiments import start_experiment_v2_workflow
-
-                workflow_id = start_experiment_v2_workflow(
-                    experiment_id=str(experiment.id),
-                    max_concurrent_rows=10,
-                )
-                logger.info(
-                    "Started V2 Temporal workflow for experiment",
-                    workflow_id=workflow_id,
-                    experiment_id=str(experiment.id),
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to start V2 Temporal workflow for experiment",
-                    experiment_id=str(experiment.id),
-                    error=str(e),
-                )
-
-            # Carry the id in the message: the response contract is
-            # {status, result: str}, and without the id a caller that just
-            # created an experiment has no handle to poll it with. Keeping it
-            # inside `result` avoids changing the published response shape.
-            return self._gm.success_response(
-                f"Experiment created successfully. experiment_id={experiment.id}"
+            # shared-edit(F01): Persist admission intent; never swallow dispatch failure.
+            stage_submission(experiment, data, "create", max_concurrent_rows=10)
+            return Submission(
+                str(experiment.id),
+                self._gm.success_response(
+                    f"Experiment created successfully. experiment_id={experiment.id}"
+                ),
             )
 
-        except ValueError as e:
+        except target_admission.AgentTargetNotQualified as error:
+            return target_admission.refusal_response(error)
+        except Http404 as e:
+            return self._gm.not_found(str(e))
+        except (EvalTemplate.DoesNotExist, ValueError) as e:
             return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error creating V2 experiment: {str(e)}")
@@ -4324,7 +4597,7 @@ class ExperimentsTableV2View(APIView):
         )
 
         try:
-            experiment = ExperimentsTable.objects.get(
+            experiment = _scoped_experiment_queryset(request, organization).get(
                 id=experiment_id,
                 dataset__organization=organization,
                 deleted=False,
@@ -4333,6 +4606,42 @@ class ExperimentsTableV2View(APIView):
             return self._gm.not_found("Experiment not found")
 
         try:
+            workspace = request_workspace(request)
+            validate_eval_references(
+                data.get("user_eval_metrics", []), organization, workspace
+            )
+            validate_prompt_references(
+                data.get("prompt_config", []), organization, workspace
+            )
+            if data.get("append_only"):
+                from model_hub.services.experiment_append_variant import (
+                    append_variant_response,
+                )
+
+                return append_variant_response(self, request, experiment_id, data)
+
+            # Validate incoming graph/version bindings before column/config writes.
+            target_admission.update_entries_admitted(
+                experiment,
+                data.get("prompt_config"),
+                graph_versions=_request_graph_versions(request),
+            )
+
+            # Eval templates and version pins resolve before anything changes:
+            # a template the org cannot use or a pin that names no version is
+            # a 400 with the experiment (column, prompts, evals) intact.
+            resolved_evals = None
+            if "user_eval_metrics" in data:
+                resolved_evals = _resolve_experiment_eval_entries(
+                    data["user_eval_metrics"],
+                    organization,
+                    getattr(request, "workspace", None),
+                    existing_metrics={
+                        str(metric.id): metric
+                        for metric in experiment.user_eval_template_ids.all()
+                    },
+                )
+
             # --- Update column_id with change detection ---
             column_changed = False
             if "column_id" in data:
@@ -4373,6 +4682,7 @@ class ExperimentsTableV2View(APIView):
                 rerun_prompt_ids, rerun_agent_ids = _diff_and_update_configs(
                     experiment,
                     data["prompt_config"],
+                    request=request,
                 )
 
                 # Pre-create eval columns for NEW EDTs so the FE can
@@ -4392,6 +4702,7 @@ class ExperimentsTableV2View(APIView):
                     organization,
                     request.user,
                     workspace=getattr(request, "workspace", None),
+                    resolved=resolved_evals,
                 )
 
             # --- Trigger selective re-run only if diffs found actual changes ---
@@ -4437,7 +4748,11 @@ class ExperimentsTableV2View(APIView):
             )
             return self._gm.success_response(exp_serializer.data)
 
-        except ValueError as e:
+        except target_admission.AgentTargetNotQualified as error:
+            return target_admission.refusal_response(error)
+        except Http404 as e:
+            return self._gm.not_found(str(e))
+        except (EvalTemplate.DoesNotExist, ValueError) as e:
             return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error updating V2 experiment: {str(e)}")
@@ -4621,6 +4936,9 @@ def _validate_eval_metric_mapping(template, config):
     )
     if missing_keys:
         raise ValueError(f"Missing required mapping keys: {', '.join(missing_keys)}")
+    from model_hub.utils.scoring import validate_choice_score_override
+
+    validate_choice_score_override(template, config)
 
 
 def _with_default_reason_column(config):
@@ -4637,13 +4955,17 @@ def _create_eval_metrics_inline(
     user,
     column_mapping=None,
     workspace=None,
+    resolved=None,
 ):
     """Create UserEvalMetric records inline during experiment creation/update.
 
     Matches AddExperimentEvalView pattern (views/experiments.py:2024-2034):
     - Sets status=EXPERIMENT_EVALUATION
     - Sets source_id=experiment.id
-    - Uses EvalTemplate.no_workspace_objects for template lookup
+    - Resolves each template among the system templates and the
+      organization's templates in ``workspace`` or in no workspace
+    - Accepts a kb_id only for a knowledge base file of the organization in
+      ``workspace``
 
     Args:
         eval_entries: List of validated eval config dicts (from EvalMetricEntrySerializer).
@@ -4654,14 +4976,23 @@ def _create_eval_metrics_inline(
         column_mapping: Optional dict {original_col_id: snapshot_column} for translating
             mapping UUIDs from original dataset to snapshot dataset.
         workspace: The workspace from the request header.
+        resolved: Optional ``[(template, pin)]`` from ``resolve_eval_entries``
+            (the create view resolves before writing); resolved here if absent.
+            The template must be one the organization can use, and the pin is
+            stored on ``pinned_version`` (the runners read it).
 
     Returns:
         List of created UserEvalMetric instances.
     """
+    validate_eval_references(eval_entries, organization, workspace)
+    if resolved is None:
+        resolved = _resolve_experiment_eval_entries(
+            eval_entries, organization, workspace
+        )
+    # Also enforce scope for callers passing pre-resolved template/pin pairs.
+    _require_eval_metric_entries(eval_entries, organization, workspace)
     created = []
-    for entry in eval_entries:
-        template = EvalTemplate.no_workspace_objects.get(id=entry["template_id"])
-
+    for entry, (template, pin) in zip(eval_entries, resolved, strict=True):
         config = _with_default_reason_column(entry["config"])
         # Translate original column UUIDs in mapping to snapshot column UUIDs
         if column_mapping and config.get("mapping"):
@@ -4671,6 +5002,7 @@ def _create_eval_metrics_inline(
             }
 
         _validate_eval_metric_mapping(template, config)
+        config = pinned_config(config, pin)
 
         metric = UserEvalMetric.objects.create(
             name=entry["name"],
@@ -4688,6 +5020,7 @@ def _create_eval_metrics_inline(
             # Per-binding weight overrides for composite evals. Ignored
             # for single-template metrics. See Phase 7 wiring plan.
             composite_weight_overrides=entry.get("composite_weight_overrides"),
+            pinned_version=None if pin is PIN_UNSET else pin,
         )
         created.append(metric)
     return created
@@ -4854,17 +5187,9 @@ def _has_prompt_config_changed(
         return True
     if epc.model != model_name:
         return True
-    if json.dumps(epc.model_config or {}, sort_keys=True) != json.dumps(
-        model_config or {}, sort_keys=True
-    ):
-        return True
-    if json.dumps(epc.model_params or {}, sort_keys=True) != json.dumps(
-        per_model_params or {}, sort_keys=True
-    ):
-        return True
-    if json.dumps(epc.configuration or {}, sort_keys=True) != json.dumps(
-        configuration or {}, sort_keys=True
-    ):
+    from model_hub.services.experiment_config_resolver import prompt_settings_changed
+
+    if prompt_settings_changed(epc, model_config, per_model_params, configuration):
         return True
     if epc.output_format != output_format:
         return True
@@ -4915,13 +5240,19 @@ def _update_epc_fields(
     epc.save()
 
 
-def _diff_and_update_configs(experiment, new_entries):
+def _diff_and_update_configs(
+    experiment, new_entries, request=None, *, append_only=False
+):
     """Diff old EPC/EAC configs with new entries using ID-based matching.
 
     For each entry in new_entries:
     - Has id → EXISTING config: compare fields, update in-place if changed
     - No id → NEW config: create EDT + EPC/EAC + pre-create columns
     - Old IDs not in update → REMOVED: soft-delete EDT + columns
+
+    Agent versions, prompt templates and prompt versions are looked up in
+    ``request``'s organization and workspace; an agent version must belong to
+    the entry's agent.
 
     Returns:
         (rerun_prompt_ids, rerun_agent_ids) — IDs of changed/new configs to re-run.
@@ -4930,6 +5261,9 @@ def _diff_and_update_configs(experiment, new_entries):
 
     experiment_type = experiment.experiment_type
     snapshot_dataset = experiment.snapshot_dataset
+    organization = experiment.dataset.organization
+    workspace = experiment.dataset.workspace
+    validate_prompt_references(new_entries, organization, workspace)
 
     # Build ID maps for existing configs
     old_epcs = ExperimentPromptConfig.objects.filter(
@@ -4946,8 +5280,10 @@ def _diff_and_update_configs(experiment, new_entries):
         ).select_related("experiment_dataset")
         old_eac_by_id = {str(eac.id): eac for eac in old_eacs}
 
-    seen_epc_ids = set()
-    seen_eac_ids = set()
+    if append_only and any(entry.get("id") for entry in new_entries):
+        raise ValueError("Append-only updates cannot modify existing configs.")
+    seen_epc_ids = set(old_epc_by_id) if append_only else set()
+    seen_eac_ids = set(old_eac_by_id) if append_only else set()
     rerun_prompt_ids = []
     rerun_agent_ids = []
 
@@ -4973,11 +5309,11 @@ def _diff_and_update_configs(experiment, new_entries):
                     eac.graph_version_id
                 ) != str(entry["agent_version"])
                 if changed:
-                    from agent_playground.models.graph_version import GraphVersion as GV
-
-                    gv = GV.no_workspace_objects.select_related("graph").get(
-                        id=entry["agent_version"]
-                    )
+                    gv = _request_graph_versions(request).get(id=entry["agent_version"])
+                    if str(gv.graph_id) != str(entry["agent_id"]):
+                        raise ValueError(
+                            "Selected agent version does not belong to the selected agent."
+                        )
                     if gv.status == "draft":
                         raise ValueError(
                             f"Agent '{gv.graph.name} v{gv.version_number}' is in draft state and cannot be used in experiments."
@@ -4995,12 +5331,13 @@ def _diff_and_update_configs(experiment, new_entries):
                     rerun_agent_ids.append(entry_id)
             else:
                 # NEW agent → create EDT + EAC + output columns
-                from agent_playground.models.graph_version import GraphVersion as GV
                 from model_hub.views.experiment_runner import ExperimentRunner
 
-                gv = GV.no_workspace_objects.select_related("graph").get(
-                    id=entry["agent_version"]
-                )
+                gv = _request_graph_versions(request).get(id=entry["agent_version"])
+                if str(gv.graph_id) != str(entry["agent_id"]):
+                    raise ValueError(
+                        "Selected agent version does not belong to the selected agent."
+                    )
                 if gv.status == "draft":
                     raise ValueError(
                         f"Agent '{gv.graph.name} v{gv.version_number}' is in draft state and cannot be used in experiments."
@@ -5067,12 +5404,16 @@ def _diff_and_update_configs(experiment, new_entries):
             prompt_template = None
             prompt_version = None
             if experiment_type == "llm" and entry.get("prompt_id"):
-                prompt_template = PromptTemplate.objects.filter(
-                    id=entry["prompt_id"],
+                prompt_template = scope_to_caller(
+                    PromptTemplate.objects.filter(id=entry["prompt_id"]), request
                 ).first()
-                prompt_version = PromptVersion.objects.filter(
-                    id=entry["prompt_version"],
-                ).first()
+                prompt_version = (
+                    _request_prompt_versions(request)
+                    .filter(
+                        id=entry["prompt_version"],
+                    )
+                    .first()
+                )
                 if prompt_version and prompt_version.is_draft:
                     raise ValueError(
                         f"Prompt '{prompt_template.name if prompt_template else ''} {prompt_version.template_version}' is in draft state and cannot be used in experiments."
@@ -5191,8 +5532,16 @@ def _diff_and_update_configs(experiment, new_entries):
     return rerun_prompt_ids, rerun_agent_ids
 
 
-def _has_eval_changed(metric, entry, translated_mapping):
-    """Check if any field on an eval metric has changed."""
+def _has_eval_changed(metric, entry, translated_mapping, pin=PIN_UNSET):
+    """Check if any field on an eval metric has changed.
+
+    ``pin`` is the entry's resolved version pin (``PIN_UNSET`` when the
+    entry states none, which keeps the stored pin).
+    """
+    if pin is not PIN_UNSET and str(getattr(pin, "id", "") or "") != str(
+        metric.pinned_version_id or ""
+    ):
+        return True
     old_mapping = (metric.config or {}).get("mapping", {})
     old_config_inner = (metric.config or {}).get("config", {})
     new_config_inner = (entry.get("config") or {}).get("config", {})
@@ -5207,6 +5556,13 @@ def _has_eval_changed(metric, entry, translated_mapping):
         new_config_inner, sort_keys=True
     ):
         return True
+    from evaluations.engine.instance import choice_score_override
+
+    # The Choices score override the scorer applies (run_config, then top level).
+    if choice_score_override(metric.config) != choice_score_override(
+        entry.get("config")
+    ):
+        return True
     if (metric.model or "") != (entry.get("model") or ""):
         return True
     if bool(metric.error_localizer) != bool(entry.get("error_localizer", False)):
@@ -5219,7 +5575,7 @@ def _has_eval_changed(metric, entry, translated_mapping):
 
 
 def _diff_and_update_evals(
-    experiment, new_eval_entries, organization, user, workspace=None
+    experiment, new_eval_entries, organization, user, workspace=None, resolved=None
 ):
     """Diff old vs new eval configs using ID-based matching.
 
@@ -5228,8 +5584,20 @@ def _diff_and_update_evals(
     - No id → NEW metric: create via _create_eval_metrics_inline
     - Old IDs not in update → REMOVED: soft-delete columns, remove from M2M
 
+    ``resolved`` comes from ``_resolve_experiment_eval_entries`` before the
+    caller's writes, or is resolved here before any metric is written. Scope
+    validation runs first, then pins resolve from workspace-accessible templates.
+
+    New/changed template_id and kb_id values require current scope. An unchanged
+    stored template and pin are kept even if template access was revoked; a pin
+    change requires current template access and a version belonging to it.
+    Unchanged kb_id values still require organization ownership on every write.
+    Each entry replaces its config and pin; an entry naming no pin uses the
+    template default (None), and pin changes count in change detection.
+
     Updates the experiment's M2M relationship and returns IDs of evals to re-run.
     """
+    validate_eval_references(new_eval_entries, organization, workspace)
     old_metrics = list(experiment.user_eval_template_ids.all())
     old_by_id = {str(m.id): m for m in old_metrics}
 
@@ -5240,7 +5608,18 @@ def _diff_and_update_evals(
     rerun_ids = []
     seen_ids = set()
 
-    for entry in new_eval_entries:
+    # Validate scope, then resolve every pin before any metric is written.
+    if resolved is None:
+        resolved = _resolve_experiment_eval_entries(
+            new_eval_entries, organization, workspace, existing_metrics=old_by_id
+        )
+    else:
+        # Pre-resolved callers must still verify KB ownership on every write.
+        _require_eval_metric_entries(
+            new_eval_entries, organization, workspace, existing_metrics=old_by_id
+        )
+
+    for entry, (template, pin) in zip(new_eval_entries, resolved, strict=True):
         entry_id = str(entry["id"]) if entry.get("id") else None
 
         if entry_id and entry_id in old_by_id:
@@ -5252,19 +5631,29 @@ def _diff_and_update_evals(
             # FE gets snapshot UUIDs from GET detail, so incoming mapping
             # is already in snapshot UUIDs — no translation needed.
             incoming_mapping = (entry.get("config") or {}).get("mapping", {})
-            template = EvalTemplate.no_workspace_objects.get(id=entry["template_id"])
-            _validate_eval_metric_mapping(template, {"mapping": incoming_mapping})
+            # The pre-write resolver retains the stored template/pin only
+            # when both are unchanged; all new references are scoped. KB scope
+            # (or unchanged KB organization ownership) was checked there too.
+            _validate_eval_metric_mapping(
+                template, {**(entry.get("config") or {}), "mapping": incoming_mapping}
+            )
 
-            if _has_eval_changed(metric, entry, incoming_mapping):
+            # An omitted pin clears it, and pin changes trigger a re-run.
+            if pin is PIN_UNSET:
+                pin = None
+
+            if _has_eval_changed(metric, entry, incoming_mapping, pin=pin):
                 # Update in-place — same metric ID → same column source_ids → no duplicates
                 new_config = _with_default_reason_column(entry["config"])
                 new_config["mapping"] = incoming_mapping
+                new_config = pinned_config(new_config, pin)
                 metric.name = entry["name"]
                 metric.template_id = entry["template_id"]
                 metric.config = new_config
                 metric.model = entry.get("model", "")
                 metric.error_localizer = entry.get("error_localizer", False)
                 metric.kb_id = entry.get("kb_id")
+                metric.pinned_version = pin
                 metric.save()
                 rerun_ids.append(entry_id)
         else:
@@ -5277,6 +5666,7 @@ def _diff_and_update_evals(
                 user,
                 column_mapping=column_mapping,
                 workspace=workspace,
+                resolved=[(template, pin)],
             )
             new_metric = metrics[0]
             seen_ids.add(str(new_metric.id))
@@ -5373,6 +5763,24 @@ def get_v2_output_format(experiment):
     return epc.output_format if epc else "string"
 
 
+def _rows_output_format(experiment, is_v2, deadline=None):
+    """Experiment-level output format reported by the rows view.
+
+    V2 experiments keep their configs in ExperimentPromptConfig and save the
+    deprecated ``prompt_config`` JSON as ``[]``, so reading that JSON reported
+    "text" for every V2 experiment and the Data tab never offered Show Diff.
+    ``deadline``, when given, is checked before the V2 query.
+    """
+    if is_v2:
+        if deadline is not None:
+            deadline.before_query()
+        return get_v2_output_format(experiment)
+    try:
+        return (experiment.prompt_config or [{}])[0].get("output_format", "text")
+    except Exception:
+        return "text"
+
+
 def get_working_dataset(experiment):
     """Return snapshot_dataset for V2 experiments."""
     if not experiment.snapshot_dataset:
@@ -5405,12 +5813,10 @@ class ExperimentJsonSchemaView(APIView):
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            experiment = ExperimentsTable.objects.select_related(
-                "dataset", "snapshot_dataset"
-            ).get(
-                id=experiment_id,
-                dataset__organization=organization,
-                deleted=False,
+            experiment = (
+                _scoped_experiment_queryset(request, organization)
+                .select_related("dataset", "snapshot_dataset")
+                .get(id=experiment_id)
             )
             dataset = get_working_dataset(experiment)
             result = get_json_column_schemas(dataset)
@@ -5451,12 +5857,10 @@ class ExperimentDerivedVariablesView(APIView):
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            experiment = ExperimentsTable.objects.select_related(
-                "dataset", "snapshot_dataset"
-            ).get(
-                id=experiment_id,
-                dataset__organization=organization,
-                deleted=False,
+            experiment = (
+                _scoped_experiment_queryset(request, organization)
+                .select_related("dataset", "snapshot_dataset")
+                .get(id=experiment_id)
             )
             dataset = get_working_dataset(experiment)
             result = get_dataset_derived_variables(str(dataset.id), organization)
@@ -5574,29 +5978,50 @@ class ExperimentRerunV2View(APIView):
             if missing_experiment_ids:
                 return self._gm.not_found("Experiment not found")
 
+            # Validate the entire batch's stored targets before any status write.
+            target_admission.experiments_admitted(found_experiment_ids, request=request)
+
             experiments.update(status=StatusType.QUEUED.value)
 
             from tfc.temporal.experiments import start_experiment_v2_workflow
 
+            confirmed_experiment_ids = set()
             for experiment in experiments:
                 try:
-                    start_experiment_v2_workflow(
+                    workflow_id = start_experiment_v2_workflow(
                         experiment_id=str(experiment.id),
                         max_concurrent_rows=max_concurrent_rows,
                     )
+                    if not isinstance(workflow_id, str) or not workflow_id.strip():
+                        continue
+                    confirmed_experiment_ids.add(str(experiment.id))
                     logger.info(f"Started V2 workflow for experiment {experiment.id}")
+                except target_admission.AgentTargetNotQualified:
+                    raise
                 except Exception as e:
                     logger.exception(
                         f"Failed V2 workflow for experiment {experiment.id}: {e}"
                     )
 
-            return self._gm.success_response("Re-Run has started for the experiments.")
+            if (
+                found_experiment_ids
+                and confirmed_experiment_ids == found_experiment_ids
+            ):
+                return self._gm.success_response(
+                    "Re-Run has started for the experiments."
+                )
 
+        except target_admission.AgentTargetNotQualified as error:
+            return target_admission.refusal_response(error)
         except Exception as e:
             logger.exception(f"Error in re-run experiment: {str(e)}")
-            return self._gm.internal_server_error_response(
-                get_error_message("FAILED_TO_RE_RUN_EXP")
-            )
+
+        # An unconfirmed batch does not undo any starts already admitted, and
+        # a start acknowledgment is not workflow completion. Do not retry here.
+        return self._gm.internal_server_error_response(
+            "Re-run admission was not confirmed for every experiment. "
+            "Check execution status before retrying."
+        )
 
 
 class ExperimentRerunCellsV2View(APIView):
@@ -5647,6 +6072,12 @@ class ExperimentRerunCellsV2View(APIView):
             user_eval_metric_ids = [
                 str(metric_id) for metric_id in data.get("user_eval_metric_ids", [])
             ]
+            refusal = external_execution_refusal(
+                user_eval_metric_ids,
+                queryset=UserEvalMetric.all_objects.filter(organization=organization),
+            )
+            if refusal:
+                return self._gm.bad_request(refusal)
             failed_only = data.get("failed_only", False)
 
             snapshot_dataset_id = str(experiment.snapshot_dataset_id)
@@ -5711,6 +6142,15 @@ class ExperimentRerunCellsV2View(APIView):
                         for edt in edts
                         if hasattr(edt, "agent_config") and edt.agent_config is not None
                     ]
+
+                    # Validate selected persisted targets before any reset.
+                    target_admission.agent_configs_admitted(
+                        eac_ids,
+                        experiment_id=experiment.id,
+                        request=request,
+                        dataset_id=snapshot_dataset_id,
+                        row_ids=row_ids,
+                    )
 
                     # Find output + dependent eval columns
                     output_col_ids = list(columns.values_list("id", flat=True))
@@ -6077,6 +6517,14 @@ class ExperimentRerunCellsV2View(APIView):
             if not epc_ids and not eac_ids:
                 return self._gm.bad_request("No valid prompt or agent configs found.")
 
+            # Validate selected persisted targets before any reset.
+            target_admission.agent_configs_admitted(
+                eac_ids,
+                experiment_id=experiment.id,
+                request=request,
+                dataset_id=snapshot_dataset_id,
+            )
+
             # Build row_ids: union of all specific row_ids from cells
             # If there are source_ids without specific cells (full column reruns),
             # leave row_ids empty so setup activity processes all rows.
@@ -6096,10 +6544,14 @@ class ExperimentRerunCellsV2View(APIView):
             )
             output_column_ids = list(output_columns.values_list("id", flat=True))
 
-            # Find dependent eval columns (source_id pattern: "{edt_id}-sourceid-{metric_id}")
+            # Find dependent eval columns: "{edt_id}-{output_id}-sourceid-{metric_id}",
+            # or "{edt_id}-sourceid-{metric_id}" for earlier tables and tag columns.
             eval_col_q = Q()
             for edt_id_str in all_edt_ids:
-                eval_col_q |= Q(source_id__startswith=f"{edt_id_str}-sourceid-")
+                eval_col_q |= Q(
+                    source_id__startswith=f"{edt_id_str}-",
+                    source_id__contains="-sourceid-",
+                )
             eval_columns = Column.objects.filter(
                 eval_col_q,
                 source__in=[
@@ -6168,81 +6620,48 @@ class ExperimentRerunCellsV2View(APIView):
                 {"message": "Cell rerun has started.", "workflow_id": workflow_id},
             )
 
+        except target_admission.AgentTargetNotQualified as error:
+            return target_admission.refusal_response(error)
         except Exception as e:
             logger.exception(f"Error in rerun-cells: {e}")
             return self._gm.internal_server_error_response(str(e))
 
 
 class ExperimentStopV2View(APIView):
-    """Stop a running V2 experiment.
+    """Stop selected variants cooperatively without discarding completed cells."""
 
-    Cancels all Temporal workflows (main + reruns). DB cleanup (marking
-    RUNNING cells as ERROR, columns/EDTs as FAILED, experiment as CANCELLED)
-    is handled by each workflow's CancelledError handler via the
-    stop_experiment_cleanup_activity.
-    """
+    from model_hub.serializers.experiment_contracts import (
+        ExperimentStopResponseSerializer,
+    )
+    from model_hub.serializers.experiment_run_control import (
+        ExperimentRunControlResponseSerializer,
+        ExperimentRunSelectionSerializer,
+    )
 
-    _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
     @validated_request(
-        request_serializer=ModelHubEmptyRequestSerializer,
-        responses={200: ExperimentStopResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        request_serializer=ExperimentRunSelectionSerializer,
+        responses={
+            200: ExperimentStopResponseSerializer,
+            202: ExperimentRunControlResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, experiment_id):
-        try:
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-            experiment = (
-                _scoped_experiment_queryset(request, organization)
-                .filter(id=experiment_id)
-                .first()
-            )
+        from model_hub.services.experiment_legacy_stop import legacy_stop_response
+        from model_hub.services.experiment_run_control_gate import (
+            ensure_run_control_enabled,
+        )
+        from model_hub.views.experiment_run_control import control_response
 
-            if not experiment:
-                return self._gm.not_found("Experiment not found")
-
-            if experiment.status not in (
-                StatusType.RUNNING.value,
-                StatusType.QUEUED.value,
-            ):
-                return self._gm.bad_request(
-                    f"Experiment is not running. Current status: {experiment.status}"
-                )
-
-            # Immediately mark experiment as CANCELLED so the UI reflects
-            # the stopped state without waiting for Temporal cleanup.
-            experiment.status = StatusType.CANCELLED.value
-            experiment.save(update_fields=["status"])
-
-            from tfc.temporal.experiments import cancel_all_experiment_workflows
-
-            cancel_result = cancel_all_experiment_workflows(str(experiment.id))
-
-            logger.info(
-                f"Stop experiment {experiment.id}: "
-                f"main={cancel_result['main_cancelled']}, "
-                f"reruns={cancel_result['rerun_cancelled']}"
-            )
-
-            return self._gm.success_response(
-                {
-                    "message": "Experiment stopped.",
-                    "experiment_id": str(experiment.id),
-                    "workflows_cancelled": {
-                        "main": cancel_result["main_cancelled"],
-                        "reruns": cancel_result["rerun_cancelled"],
-                    },
-                }
-            )
-
-        except Exception as e:
-            logger.exception(f"Error stopping experiment {experiment_id}: {e}")
-            return self._gm.internal_server_error_response(
-                "Unable to stop experiment. Please try again."
-            )
+        legacy = legacy_stop_response(request, experiment_id)
+        if legacy is not None:
+            return legacy
+        # F06: a stop that names run_ids is selected-run control (default OFF).
+        ensure_run_control_enabled()
+        return control_response(request, experiment_id, stopped=True)
 
 
 class ExperimentNameSuggestionView(APIView):

@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from common.utils.page_limits import PageSizeIntegerField
 from tracer.models.project import Project
 from tracer.serializers.filters import (
     OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
@@ -103,6 +104,31 @@ class ProjectListResponseSerializer(serializers.Serializer):
     result = ProjectListResultSerializer()
 
 
+class ProjectTableRowSerializer(ProjectSerializer):
+    """A ``GET /tracer/project/`` row: the project and its annotated counts."""
+
+    trace_count = serializers.IntegerField()
+    run_count = serializers.IntegerField()
+
+    class Meta(ProjectSerializer.Meta):
+        fields = ProjectSerializer.Meta.fields + ["trace_count", "run_count"]
+
+
+class ProjectTableResultSerializer(serializers.Serializer):
+    projects = ProjectTableRowSerializer(many=True, read_only=True)
+    total_count = serializers.IntegerField()
+
+
+class ProjectTableApiResponseSerializer(serializers.Serializer):
+    """Wire contract for ``GET /tracer/project/`` (``ProjectView.list``)."""
+
+    status = serializers.BooleanField(default=True)
+    result = ProjectTableResultSerializer()
+
+    class Meta:
+        ref_name = None
+
+
 class ProjectListQuerySerializer(StrictInputSerializer):
     """Zero-based bounded query contract for the project table and pickers."""
 
@@ -134,14 +160,12 @@ class ProjectListQuerySerializer(StrictInputSerializer):
 
 
 class ProjectViewSetListQuerySerializer(ProjectListQuerySerializer):
-    """GET /tracer/project/ historically had no page_size ceiling.
+    """GET /tracer/project/ supports pages up to the shared read ceiling.
 
-    `list_projects` keeps the bounded contract on ProjectListQuerySerializer.
-    Documenting this ViewSet list must not start rejecting callers that already
-    passed page_size above 100.
+    `list_projects` retains its narrower ProjectListQuerySerializer contract.
     """
 
-    page_size = serializers.IntegerField(
+    page_size = PageSizeIntegerField(
         required=False,
         default=20,
         min_value=1,

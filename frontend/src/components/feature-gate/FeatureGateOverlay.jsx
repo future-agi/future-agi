@@ -34,11 +34,12 @@ const PreviewSkeleton = () => (
   </Stack>
 );
 
+// The wall never shows a product screenshot behind its card: a preview image
+// reads as the user's own data (a sample chat history did, ruling 491). The
+// backdrop is the caller's children or neutral skeleton blocks, and the card
+// carries only the eyebrow its caller names.
 const FeatureGateOverlay = ({
-  image,
-  imageDark,
-  imageAlt = "Feature preview",
-  eyebrow = "Cloud feature",
+  eyebrow,
   title,
   description,
   steps = [],
@@ -52,34 +53,14 @@ const FeatureGateOverlay = ({
   blurFrom = "38%",
   minHeight = 480,
   maxCardWidth = 480,
+  plain = false,
   children,
   sx,
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const resolvedImage = isDark ? imageDark || image : image;
-  const usingSkeleton = !children && !resolvedImage;
-  const effectiveBlurFrom = usingSkeleton ? 0 : blurFrom;
-
-  let backdrop = <PreviewSkeleton />;
-  if (children) {
-    backdrop = children;
-  } else if (resolvedImage) {
-    backdrop = (
-      <Box
-        component="img"
-        src={resolvedImage}
-        alt={imageAlt}
-        draggable={false}
-        sx={{
-          display: "block",
-          width: "100%",
-          height: "auto",
-          objectPosition: "top center",
-        }}
-      />
-    );
-  }
+  const effectiveBlurFrom = children ? blurFrom : 0;
+  const backdrop = children || <PreviewSkeleton />;
 
   return (
     <Box
@@ -96,22 +77,25 @@ const FeatureGateOverlay = ({
         ...sx,
       }}
     >
-      <Box
-        aria-hidden
-        sx={{
-          width: "100%",
-          height: "100%",
-          minHeight,
-          pointerEvents: "none",
-          userSelect: "none",
-        }}
-      >
-        {backdrop}
-      </Box>
+      {!plain && (
+        <Box
+          aria-hidden
+          sx={{
+            width: "100%",
+            height: "100%",
+            minHeight,
+            pointerEvents: "none",
+            userSelect: "none",
+          }}
+        >
+          {backdrop}
+        </Box>
+      )}
 
       <Box
         aria-hidden
         sx={{
+          display: plain ? "none" : "block",
           position: "absolute",
           left: 0,
           right: 0,
@@ -287,9 +271,6 @@ const FeatureGateOverlay = ({
 };
 
 FeatureGateOverlay.propTypes = {
-  image: PropTypes.string,
-  imageDark: PropTypes.string,
-  imageAlt: PropTypes.string,
   eyebrow: PropTypes.string,
   title: PropTypes.string,
   description: PropTypes.node,
@@ -304,6 +285,8 @@ FeatureGateOverlay.propTypes = {
   blurFrom: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   minHeight: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   maxCardWidth: PropTypes.number,
+  // No preview backdrop or blur: just the card on a neutral surface.
+  plain: PropTypes.bool,
   children: PropTypes.node,
   sx: PropTypes.object,
 };

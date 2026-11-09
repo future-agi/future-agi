@@ -25,6 +25,7 @@ type toolGuardRateCounter struct {
 // directly on MCP tool call requests and results.
 type ToolGuard struct {
 	blockedTools     []string
+	separator        string // the gateway's legacy name separator (mcp.separator)
 	allowedServers   []string
 	validateInputs   bool
 	validateOutputs  bool
@@ -50,6 +51,7 @@ func NewToolGuard(cfg map[string]interface{}) *ToolGuard {
 
 	// Handle blocked_tools — can be []string or []interface{}.
 	g.blockedTools = extractStringSlice(cfg, "blocked_tools")
+	g.separator, _ = cfg["separator"].(string)
 	g.allowedServers = extractStringSlice(cfg, "allowed_servers")
 
 	if v, ok := cfg["validate_inputs"]; ok {
@@ -135,7 +137,7 @@ func (g *ToolGuard) CheckPre(toolName, serverID string, arguments map[string]int
 	}
 
 	// Check blocked tools (match both namespaced and original name).
-	if g.isBlockedTool(toolName) {
+	if g.isBlockedTool(toolName, serverID) {
 		return fmt.Sprintf("tool %q is blocked", toolName)
 	}
 
@@ -216,17 +218,78 @@ func (g *ToolGuard) checkToolRateLimit(toolName string) bool {
 	return newCount <= int64(limit)
 }
 
-func (g *ToolGuard) isBlockedTool(name string) bool {
+// isBlockedTool reports whether a call's exposed name is blocked (bug 22).
+// An entry matches the exact exposed name, or the upstream tool the name
+// stands for on the calling server: a bare tool name, or
+// <server_id><separator><tool> with the configured separator (default "_").
+// The exposed name stands for these upstream tools on server s: the rest of
+// s<separator>tool (the legacy name), of s__tool (a virtual server's), of
+// s_<account>__tool (an account member s@<account>, split at the first "__"
+// after the label; lane M10 rejects a label that would make this split
+// ambiguous), and the name itself (flat naming). Never a bare suffix: "exec"
+// does not block "github_my_exec". Some exposed names cannot be read back to
+// their upstream tool: a name an override chose, a name capped with a hash
+// (over 64 characters), and a name normalization changed. They match
+// exactly only here, so the scanner must also judge a call by the upstream
+// tool it resolved to, with BlocksUpstreamTool (lane M10's IR-9).
+func (g *ToolGuard) isBlockedTool(name, serverID string) bool {
+	sep := g.sep()
 	for _, blocked := range g.blockedTools {
 		if blocked == name {
 			return true
 		}
-		// Also match without namespace prefix (e.g., "exec_command" matches "server_exec_command").
-		if strings.HasSuffix(name, "_"+blocked) {
+	}
+	if serverID == "" {
+		return false
+	}
+	tools := []string{name} // the upstream names the exposed name can stand for
+	for _, s := range []string{"__", sep} {
+		if tool, ok := strings.CutPrefix(name, serverID+s); ok && tool != "" {
+			tools = append(tools, tool)
+		}
+	}
+	if rest, ok := strings.CutPrefix(name, serverID+"_"); ok && !strings.HasPrefix(rest, "_") {
+		if _, tool, ok := strings.Cut(rest, "__"); ok && tool != "" {
+			tools = append(tools, tool)
+		}
+	}
+	for _, blocked := range g.blockedTools {
+		for _, tool := range tools {
+			if blocked == tool || blocked == serverID+sep+tool {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// BlocksUpstreamTool reports whether blocked_tools blocks the upstream tool
+// a call resolved to, tool on server serverID, whatever name the call
+// exposed it under (an override's, an account member's, a hash-capped or a
+// normalized one): an entry that is the bare tool name,
+// <server_id><separator><tool> with the configured separator, or the
+// virtual-server name <server_id>__<tool>. Never a bare suffix. It only
+// checks: no rate-limit count, no other guard check. It is for the scanner,
+// with cc.Upstream.ServerID and cc.Tool.UpstreamName: lane M10's IR-9 adds
+// that call to hook_scan_args.go.
+func (g *ToolGuard) BlocksUpstreamTool(serverID, tool string) bool {
+	if serverID == "" || tool == "" {
+		return false
+	}
+	for _, blocked := range g.blockedTools {
+		if blocked == tool || blocked == serverID+g.sep()+tool || blocked == serverID+"__"+tool {
 			return true
 		}
 	}
 	return false
+}
+
+// sep is the configured legacy name separator, "_" by default.
+func (g *ToolGuard) sep() string {
+	if g.separator == "" {
+		return "_"
+	}
+	return g.separator
 }
 
 func (g *ToolGuard) isAllowedServer(serverID string) bool {

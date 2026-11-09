@@ -1,7 +1,7 @@
 import structlog
 from django.db import transaction
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -80,7 +80,9 @@ class ReplaySessionView(ViewSet):
             project__deleted=False,
         )
 
-    @uses_db(DATABASE_FOR_REPLAY_SESSION_LIST, feature_key="feature:replay_session_list")
+    @uses_db(
+        DATABASE_FOR_REPLAY_SESSION_LIST, feature_key="feature:replay_session_list"
+    )
     def list(self, request: Request) -> Response:
         """
         List replay sessions for a project with pagination.
@@ -112,6 +114,8 @@ class ReplaySessionView(ViewSet):
             return paginator.get_paginated_response(serializer.data)
 
         except NotFound:
+            raise
+        except APIException:
             raise
         except Exception as e:
             logger.exception("Error listing replay sessions", error=str(e))
@@ -275,9 +279,9 @@ class ReplaySessionView(ViewSet):
                     replay_session.ids or [],
                     replay_session.select_all,
                 )
-                if _is_voice_trace_query(trace_query):
+                if _is_voice_trace_query(trace_query, project_id=str(project.id)):
                     original_voice_config = _extract_voice_trace_original_config(
-                        trace_query
+                        trace_query, project_id=str(project.id)
                     )
 
             with transaction.atomic():

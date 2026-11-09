@@ -49,7 +49,7 @@ def _programs() -> dict[str, dict[str, str]]:
     }
 
 
-def test_standalone_compose_is_three_containers_plus_two_profiles() -> None:
+def test_standalone_compose_is_four_containers_plus_two_profiles() -> None:
     services = _compose(STANDALONE_COMPOSE)["services"]
     assert set(services) == {
         "app",
@@ -57,10 +57,21 @@ def test_standalone_compose_is_three_containers_plus_two_profiles() -> None:
         "clickhouse",
         "serving",
         "code-executor",
+        "hub-checker",
+        "hub-runner",
     }
     assert services["serving"]["profiles"] == ["ml"]
-    assert services["code-executor"]["profiles"] == ["sandbox"]
-    assert services["code-executor"]["privileged"] is True
+    assert "profiles" not in services["code-executor"]
+    assert "privileged" not in services["code-executor"]
+    assert services["code-executor"]["user"] == "65534:65534"
+    assert services["code-executor"]["cap_drop"] == ["ALL"]
+    assert services["code-executor"]["cap_add"] == ["NET_ADMIN"]
+    # The Omega Hub: its checker and the checker's gVisor runner daemon.
+    assert services["hub-checker"]["profiles"] == ["hub"]
+    assert services["hub-runner"]["profiles"] == ["hub"]
+    assert services["hub-runner"]["privileged"] is True
+    assert "privileged" not in services["hub-checker"]
+    assert "ports" not in services["hub-runner"]
     for name in ("app", "postgres", "clickhouse"):
         assert "profiles" not in services[name]
     # Datastores stay on the compose network.
@@ -69,11 +80,11 @@ def test_standalone_compose_is_three_containers_plus_two_profiles() -> None:
     assert "rabbitmq" not in STANDALONE_COMPOSE.read_text(encoding="utf-8").lower()
 
 
-def test_no_privileged_service_is_published_beyond_the_host() -> None:
-    """code-executor runs whatever code it is sent, without authentication."""
+def test_code_executor_and_privileged_services_are_host_only() -> None:
+    """The executor accepts unauthenticated code even without privileged mode."""
     for compose in (STANDALONE_COMPOSE, DISTRIBUTED_COMPOSE):
         for name, service in _compose(compose)["services"].items():
-            if not service.get("privileged"):
+            if name != "code-executor" and not service.get("privileged"):
                 continue
             for mapping in service.get("ports", []):
                 assert mapping.startswith("127.0.0.1:"), (
@@ -163,7 +174,9 @@ def test_standalone_app_service_contract() -> None:
     assert env["TEMPORAL_HOST"] == "127.0.0.1:7233"
     # The worker flag belongs to the API process only, not `compose exec`.
     assert "FI_EMBEDDED_TEMPORAL_WORKER" not in env
-    assert "code-executor:127.0.0.1" in app["extra_hosts"]
+    # The default executor is a dedicated service, not the app's loopback sandbox.
+    assert "code-executor:127.0.0.1" not in app.get("extra_hosts", [])
+    assert env["CODE_EXECUTOR_URL"] == "${CODE_EXECUTOR_URL:-http://code-executor:8060}"
     assert app["stop_grace_period"] == "60s"
     # The image's HEALTHCHECK command, with its proxy-free opener.
     assert "test" not in app["healthcheck"]
@@ -408,6 +421,43 @@ def test_the_gateway_loads_keys_from_the_app_and_sends_it_request_logs() -> None
     assert gateway["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"] == private
     assert backend["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"] == private
 
+    # The dev-only admin-token opt-in reaches the gateway and the API alike:
+    # the E2E stack runs the compose default, and an API that refused it
+    # would answer the gateway's key and org-config syncs 403.
+    insecure = "${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}"
+    assert app["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"] == insecure
+    assert gateway["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"] == insecure
+    assert backend["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"] == insecure
+
+
+def test_the_gateway_reaches_its_own_backend_through_the_egress_guard() -> None:
+    """Release round 6B, fix (e) (the RF13 review's P2). The API fills an org
+    FutureAGI eval check's base_url with its own BASE_URL, http://localhost:8000
+    on a self-hosted install, and the gateway dials an org check's base_url
+    through its egress guard, which refuses loopback unless
+    mcp.egress.private_allow lists it. The gateway's config file is the one the
+    operator mounts, so supervisord lists the API's in-container address for
+    the gateway: with guardrails on, such a check reaches the API instead of
+    failing (agentcc-gateway internal/guardrails/orgfactory
+    standalone_backend_test.go drives that list through the egress guard)."""
+    gateway = _programs()["gateway"]
+    env = dict(re.findall(r'([A-Z][A-Z0-9_]*)="([^"]*)"', gateway["environment"]))
+    allowed = env["AGENTCC_MCP_EGRESS_PRIVATE_ALLOW"].split(",")
+    api = _programs()["api"]["command"]
+    port = re.search(r"--port (\d+)", api).group(1)
+    assert allowed == [f"localhost:{port}", f"127.0.0.1:{port}"]
+    # The API's default BASE_URL on a self-hosted install is the first entry.
+    settings = (ROOT / "futureagi" / "tfc" / "settings" / "settings.py").read_text(
+        encoding="utf-8"
+    )
+    assert f'else "http://{allowed[0]}"' in settings
+    # Only the API's own port: the rest of the loopback interface (Temporal,
+    # Redis, the sandbox, ClickHouse's ports) stays refused.
+    assert all(entry.endswith(f":{port}") for entry in allowed)
+    # The app's in-container callers already use that address.
+    app = _compose(STANDALONE_COMPOSE)["services"]["app"]["environment"]
+    assert app["AGENTCC_CONTROL_PLANE_URL"] == f"http://{allowed[1]}"
+
 
 @pytest.mark.parametrize("configured", ["", "from-dot-env"])
 def test_start_makes_a_webhook_secret_only_when_none_is_set(
@@ -429,6 +479,200 @@ def test_start_makes_a_webhook_secret_only_when_none_is_set(
         assert result.stdout == configured
     else:
         assert re.fullmatch(r"[0-9a-f]{64}", result.stdout)
+
+
+@pytest.mark.parametrize(
+    "configured, allow_insecure, replaced",
+    [
+        pytest.param("", "", True, id="empty"),
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", "", True, id="compose-default"
+        ),
+        pytest.param("CHANGEME-set-by-bin-install", "", True, id="placeholder"),
+        pytest.param("a" * 64, "", False, id="from-dot-env"),
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", "1", False, id="dev-opt-in"
+        ),
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", "TRUE", False, id="dev-opt-in-true"
+        ),
+    ],
+)
+def test_start_replaces_an_empty_or_published_admin_token(
+    configured, allow_insecure, replaced
+) -> None:
+    """The gateway refuses to start on the compose default and, sharing the
+    app container, would take the API and UI down with it; the API's admin
+    endpoints refuse it too. The token holds no state, so bin/start makes one
+    for this start, for both ends, unless .env has one or the dev opt-in is on."""
+    section = _start_section("admin_token_needs_replacing() {", "fi\n")
+    out = _run_start_section(
+        section,
+        {
+            "AGENTCC_ADMIN_TOKEN": configured,
+            "AGENTCC_CONTROL_PLANE_TOKEN": configured,
+            "AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN": allow_insecure,
+        },
+        'printf "\\n%s %s" "$AGENTCC_ADMIN_TOKEN" "$AGENTCC_CONTROL_PLANE_TOKEN"',
+    )
+    log, tokens = out.rsplit("\n", 1)
+    admin, control_plane = tokens.split(" ")
+    if replaced:
+        assert re.fullmatch(r"[0-9a-f]{64}", admin)
+        assert control_plane == admin
+        assert "random one for this start" in log
+        # Never printed: it is the admin credential.
+        assert admin not in log
+    else:
+        assert (admin, control_plane) == (configured, configured)
+        assert "random one" not in log
+
+
+def _gateway_published_defaults() -> list[str]:
+    """publishedAdminTokens, the gateway's list of defaults published in this
+    repository (read as futureagi/agentcc/tests/test_admin_token_parity.py
+    reads it)."""
+    source = (
+        ROOT / "agentcc-gateway" / "internal" / "config" / "admin_token.go"
+    ).read_text(encoding="utf-8")
+    block = re.search(
+        r"^var publishedAdminTokens = \[\]string\{\n(.*?)^\}", source, re.M | re.S
+    )
+    assert block, "publishedAdminTokens not found in admin_token.go"
+    values = re.findall(r'"([^"]*)"', re.sub(r"//[^\n]*", "", block.group(1)))
+    assert "local-dev-only-shared-secret-replace-me" in values
+    return values
+
+
+def _run_internal_key_section(configured: str, allow_insecure: str = "") -> tuple:
+    import subprocess
+
+    section = _start_section("internal_key_needs_replacing() {", "\nfi\n")
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'set -euo pipefail\n{section}\nprintf "\\n%s" "$AGENTCC_INTERNAL_API_KEY"',
+        ],
+        env={
+            "PATH": os.environ["PATH"],
+            "AGENTCC_INTERNAL_API_KEY": configured,
+            "AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN": allow_insecure,
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    log, key = result.stdout.rsplit("\n", 1)
+    return log + result.stderr, key
+
+
+@pytest.mark.parametrize(
+    "configured, allow_insecure, replaced",
+    [
+        pytest.param("", "", True, id="empty"),
+        pytest.param("  \t", "", True, id="blank"),
+        pytest.param(
+            "local-dev-only-shared-secret-replace-me", "", True, id="compose-default"
+        ),
+        pytest.param(
+            "  Local-Dev-Only-Shared-Secret-Replace-Me-2026\n",
+            "",
+            True,
+            id="compose-default-padded",
+        ),
+        pytest.param("CHANGEME-set-by-bin-install", "", True, id="placeholder"),
+        pytest.param("changeme-0123456789", "", True, id="placeholder-lower"),
+        pytest.param(
+            "fi-internal-dev-key-change-in-prod", "", True, id="futureagi-env-example"
+        ),
+        # The command, not its output: .env does not run commands.
+        pytest.param("$(openssl rand -hex 32)", "", True, id="unrun-command"),
+        pytest.param("`OpenSSL rand -base64 48`", "", True, id="unrun-backquoted"),
+        pytest.param("<hex32>", "", False, id="bin-install-hex32"),
+        pytest.param("<alnum48>", "", False, id="helm-alnum48"),
+        pytest.param("k3y", "", False, id="short-operator-key"),
+        pytest.param(
+            "local-dev-only-shared-secret-replace-me", "1", False, id="dev-opt-in"
+        ),
+        pytest.param(
+            "local-dev-only-shared-secret-replace-me",
+            "TRUE",
+            False,
+            id="dev-opt-in-true",
+        ),
+    ],
+)
+def test_start_replaces_an_empty_placeholder_or_published_internal_key(
+    configured, allow_insecure, replaced
+) -> None:
+    """The app calls the gateway in this container with
+    AGENTCC_INTERNAL_API_KEY, and the gateway seeds it as an internal key, one
+    that may use the providers the operator configured. The compose file falls
+    back to a default published in this repository, and the gateway refuses to
+    start on that (taking the API and UI down with it). Nothing derives state
+    from the key, so bin/start makes one for this start unless .env has a real
+    one or the dev opt-in is on. It never prints the key."""
+    import secrets
+    import string
+
+    if configured == "<hex32>":
+        configured = secrets.token_hex(32)
+    elif configured == "<alnum48>":
+        alphabet = string.ascii_letters + string.digits
+        configured = "".join(secrets.choice(alphabet) for _ in range(48))
+
+    log, key = _run_internal_key_section(configured, allow_insecure)
+
+    if replaced:
+        assert re.fullmatch(r"[0-9a-f]{64}", key)
+        assert "AGENTCC_INTERNAL_API_KEY" in log
+        assert "random one for this start" in log
+        assert key not in log
+        if len(configured.strip()) > 4:
+            assert configured.strip() not in log
+            assert configured.strip().lower() not in log.lower()
+    else:
+        assert key == configured
+        assert "AGENTCC_INTERNAL_API_KEY" not in log
+        assert configured not in log
+
+
+def test_start_replaces_every_internal_key_the_gateway_refuses() -> None:
+    """The gateway refuses (outside hosted) an internal key that contains a
+    default published with it; in this container that would take the API and
+    UI down too. bin/start replaces every such key first."""
+    for published in _gateway_published_defaults():
+        for configured in (published, f"prod-{published.upper()}-2026"):
+            log, key = _run_internal_key_section(configured)
+            assert re.fullmatch(r"[0-9a-f]{64}", key), configured
+            assert key not in log and published not in log.lower()
+
+
+def test_install_docs_never_put_a_command_substitution_in_env() -> None:
+    """Compose reads .env as text, so AGENTCC_INTERNAL_API_KEY=$(openssl rand
+    -hex 32) there is that literal string, one anyone who reads these docs
+    knows. The docs say to run the command and paste its output."""
+    for path in (
+        ROOT / "INSTALLATION.md",
+        ROOT / ".env.example",
+        ROOT / "futureagi" / ".env.example",
+        ROOT / "deploy" / "env-reference.toml",
+    ):
+        text = path.read_text(encoding="utf-8")
+        found = re.findall(r"\b[A-Z][A-Z0-9_]*=\$\(openssl rand[^)]*\)", text)
+        assert not found, f"{path.relative_to(ROOT)}: {found}"
+
+
+def test_start_hands_the_internal_key_to_programs_through_the_environment() -> None:
+    """Command lines are world-readable: the key reaches the API and the
+    gateway through the environment supervisord inherits, set before it starts."""
+    start = (STANDALONE / "bin" / "start").read_text(encoding="utf-8")
+    section = _start_section("internal_key_needs_replacing() {", "\nfi\n")
+    assert "export AGENTCC_INTERNAL_API_KEY" in section
+    assert start.index(section) < start.index("exec supervisord")
+    for name, program in _programs().items():
+        assert "INTERNAL_API_KEY" not in program["command"], name
 
 
 def test_supervisor_keeps_secrets_off_command_lines_and_out_of_tmp() -> None:
@@ -595,6 +839,32 @@ def test_sandbox_profile_routes_code_evals_to_nsjail(
         ["bash", str(script)], env=env, capture_output=True, text=True, check=True
     )
     assert result.stdout.splitlines()[-1] == expected
+
+
+@pytest.mark.parametrize(
+    "profiles, configured, expected",
+    [
+        ("", "", ""),
+        ("ml,sandbox", "", ""),
+        ("hub", "", "1"),
+        ("sandbox,hub", "", "1"),
+        ("hubx", "", ""),
+        ("hub", "0", "0"),
+        ("", "1", "1"),
+    ],
+)
+def test_hub_profile_turns_on_the_omega_products(
+    profiles, configured, expected
+) -> None:
+    """COMPOSE_PROFILES=hub runs the Hub's checker, so the UI shows the Omega
+    products; an explicit VITE_OMEGA_CONSOLE wins."""
+    section = _start_section('case ",${COMPOSE_PROFILES:-}," in\n  *,hub,*)', "esac\n")
+    out = _run_start_section(
+        section,
+        {"COMPOSE_PROFILES": profiles, "VITE_OMEGA_CONSOLE": configured},
+        'printf %s "${VITE_OMEGA_CONSOLE:-}"',
+    )
+    assert out.rsplit("\n", 1)[-1] == expected
 
 
 @pytest.mark.parametrize(
@@ -784,7 +1054,7 @@ STANDALONE_OWN_BACKEND_ENV = {
     "TEMPORAL_HOST": "the Temporal dev server runs in the app container",
     "TEMPORAL_NAMESPACE": "the in-container Temporal serves the default one",
     "WEBSOCKET_ENDPOINT": "the API runs in the app container",
-    "CODE_EXECUTOR_URL": "bin/start points it at the nsjail executor when asked",
+    "CODE_EXECUTOR_URL": "overridable URL defaulting to the dedicated nsjail executor",
     # Choices of the setup.
     "FI_CDC_MODE": "Standalone syncs through the outbox, Distributed through PeerDB",
     "CODE_EXECUTOR_LOCAL_FALLBACK": "the API process holds every secret and /data",
@@ -894,7 +1164,7 @@ def test_cdc_defaults_cover_schedules_and_an_adopted_peerdb() -> None:
     assert params["takeover_peerdb"].default is True
 
 
-# --- code-executor fallback (no nsjail), as run in the standalone install --------
+# --- code-executor fallback (no nsjail), the legacy built-in runner -------------
 
 
 def _load_executor(monkeypatch):
@@ -1156,7 +1426,7 @@ def test_execute_clamps_the_requested_timeout(executor, monkeypatch, timeout, ex
 def test_a_javascript_eval_without_node_says_how_to_run_it(
     executor, monkeypatch
 ) -> None:
-    """The standalone image ships no Node.js; the `sandbox` profile's nsjail
+    """The standalone app image ships no Node.js; the default dedicated nsjail
     executor has it (futureagi/code-executor/Dockerfile.base)."""
     monkeypatch.setattr(executor, "NODE_PATH", None)
 

@@ -34,6 +34,7 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useCreateWorkspace } from "src/api/workspaces/create";
 import { useSnackbar } from "notistack";
 import { useOrganization } from "src/contexts/OrganizationContext";
+import { isPrototypeMode } from "src/utils/prototype";
 
 const SelectionHeader = (props) => {
   const onCheckboxClick = (e) => {
@@ -98,7 +99,13 @@ const WorkSpaceManagement = () => {
   const queryClient = useQueryClient();
   const { enqueueSnackbar } = useSnackbar();
   const { orgLevel } = useOrganization();
-  const canCreateWorkspace = typeof orgLevel === "number" && orgLevel >= 8;
+  // L7c g1 (settings:pages): the prototype mocks no workspace creation, so
+  // the button is absent there rather than a door that does nothing.
+  const canCreateWorkspace =
+    typeof orgLevel === "number" && orgLevel >= 8 && !isPrototypeMode();
+  // L7c g1 (settings:pages): no workspace invite is mocked either, so the
+  // prototype has no row selection whose only action is Share invite.
+  const canInvite = !isPrototypeMode();
   const gridApiRef = useRef(null);
   const overlayTimeoutRef = useRef(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -374,7 +381,7 @@ const WorkSpaceManagement = () => {
             }}
           />
           <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
-            {(selectedAll || toggledNodes.length > 0) && (
+            {canInvite && (selectedAll || toggledNodes.length > 0) && (
               <StyledBox>
                 <Box sx={{ display: "flex", alignItems: "center" }}>
                   <StyledTypography>{selectedCount} Selected</StyledTypography>
@@ -441,7 +448,7 @@ const WorkSpaceManagement = () => {
           </Box>
         </Box>
 
-        {inviteOpen && (
+        {canInvite && inviteOpen && (
           <AllActionForm
             openActionForm={{ action: "invite-workspace-user" }}
             onClose={() => setInviteOpen(null)}
@@ -456,8 +463,12 @@ const WorkSpaceManagement = () => {
             ref={gridApiRef}
             columnDefs={columnDefs}
             otherGridOption={{
-              rowSelection: { mode: "multiRow" },
-              selectionColumnDef: selectionColumnDef,
+              ...(canInvite
+                ? {
+                    rowSelection: { mode: "multiRow" },
+                    selectionColumnDef: selectionColumnDef,
+                  }
+                : {}),
               onCellClicked: (params) => {
                 if (
                   params?.column?.getColId() ===

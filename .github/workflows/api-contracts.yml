@@ -40,6 +40,7 @@ on:
       - "futureagi/tracer/views/**"
       - "futureagi/model_hub/utils/annotation_queue_helpers.py"
       - "futureagi/tfc/utils/api_contracts.py"
+      - "futureagi/tfc/utils/success_envelope.py"
       - "futureagi/tfc/utils/general_methods.py"
       - "futureagi/tracer/services/clickhouse/query_builders/**"
       - "futureagi/tracer/utils/filter_operators.py"
@@ -89,6 +90,7 @@ on:
       - "futureagi/tracer/views/**"
       - "futureagi/model_hub/utils/annotation_queue_helpers.py"
       - "futureagi/tfc/utils/api_contracts.py"
+      - "futureagi/tfc/utils/success_envelope.py"
       - "futureagi/tfc/utils/general_methods.py"
       - "futureagi/tracer/services/clickhouse/query_builders/**"
       - "futureagi/tracer/utils/filter_operators.py"
@@ -352,6 +354,7 @@ jobs:
           ee/usage/tests/test_events_schema.py
           ee/cloud/tests/test_billing_api.py
           tfc/tests/test_api_contracts.py
+          tfc/tests/test_api_success_envelope.py
           tfc/tests/test_accounts_api_contract_debt.py
           tfc/tests/test_core_api_contract_debt.py
           tfc/tests/test_model_hub_api_contract_debt.py

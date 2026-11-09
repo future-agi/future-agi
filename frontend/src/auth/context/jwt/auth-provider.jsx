@@ -5,6 +5,7 @@ import { useMemo, useEffect, useReducer, useCallback } from "react";
 import axios, { endpoints } from "src/utils/axios";
 import axiosPackage from "axios";
 import { HOST_API } from "src/config-global";
+import { clearOnboardingRecovery } from "src/auth/auth-url-intake";
 
 import { AuthContext } from "./auth-context";
 import {
@@ -19,6 +20,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { setUser } from "@sentry/react";
 import logger from "src/utils/logger";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
+import { forgetKey as forgetCodePanelKey } from "src/sections/omega/code/keyStore";
 import {
   SS_KEY_ORG_DISPLAY_NAME,
   SS_KEY_ORG_ID,
@@ -122,6 +124,9 @@ export function AuthProvider({ children }) {
 
         const user = response.data;
 
+        // Org-less sessions need the same per-tab isolation marker as org users.
+        sessionStorage.setItem(SS_KEY_USER_ID, user?.id);
+
         // Org-less user (removed from org) — still authenticated but flagged
         if (user?.requires_org_setup) {
           setSession(accessToken, null);
@@ -133,9 +138,6 @@ export function AuthProvider({ children }) {
           });
           return;
         }
-
-        // Store user ID in sessionStorage for cross-tab user detection
-        sessionStorage.setItem(SS_KEY_USER_ID, user?.id);
 
         setSession(accessToken, pinResolvedOrganization(user));
         if (user?.remember_me) {
@@ -195,6 +197,7 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const handleStorageChange = (event) => {
       if (event.key === SAML_AUTH_GENERATION_KEY) {
+        clearOnboardingRecovery();
         queryClient.clear();
         SESSION_KEYS_TO_CLEAR.forEach((key) => sessionStorage.removeItem(key));
         dispatch({ type: "LOGOUT" });
@@ -210,6 +213,7 @@ export function AuthProvider({ children }) {
 
       // Token was cleared (logout in another tab)
       if (!newToken) {
+        clearOnboardingRecovery();
         logger.info("Token cleared in another tab, logging out this tab");
         queryClient.clear();
         sessionStorage.removeItem(SS_KEY_USER_ID);
@@ -222,6 +226,7 @@ export function AuthProvider({ children }) {
       const newUserId = decodeTokenUserId(newToken);
 
       if (currentUserId && newUserId && currentUserId !== newUserId) {
+        clearOnboardingRecovery();
         // Different user logged in from another tab
         logger.warn(
           "Different user detected in another tab. Forcing logout to prevent data leakage.",
@@ -331,6 +336,7 @@ export function AuthProvider({ children }) {
   // LOGOUT
   const logout = useCallback(async () => {
     try {
+      clearOnboardingRecovery();
       const accessToken = localStorage.getItem(STORAGE_KEY);
       setSession(null);
       clearTokens();
@@ -340,6 +346,9 @@ export function AuthProvider({ children }) {
       sessionStorage.removeItem(SS_KEY_USER_ID);
       localStorage.removeItem("initial-render"); // Clear flag so next login triggers redirect logic
       useFalconStore.getState().resetAll();
+      // The personal API key an Omega code panel holds in this tab's memory
+      // is the signed-out person's: the next one to sign in here never gets it.
+      forgetCodePanelKey();
       dispatch({
         type: "LOGOUT",
       });

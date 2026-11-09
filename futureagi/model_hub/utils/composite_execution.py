@@ -10,12 +10,12 @@ so aggregation semantics stay consistent across surfaces.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from evaluations.engine.instance import resolve_pass_threshold
 from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate
 from model_hub.types import CompositeChildResult
 from model_hub.utils.composite_aggregation import (
@@ -23,7 +23,6 @@ from model_hub.utils.composite_aggregation import (
     aggregate_scores,
     aggregate_summaries,
 )
-from evaluations.engine.instance import resolve_pass_threshold
 from model_hub.utils.scoring import determine_pass_fail, score_eval_output
 
 logger = logging.getLogger(__name__)
@@ -41,6 +40,7 @@ class CompositeRunOutcome:
     summary: str | None
     error_localizer_results: dict | None
     log_id: str | None = field(default=None)
+    jury_report: dict | None = field(default=None)
 
 
 def resolve_child_weights(
@@ -210,6 +210,7 @@ def _log_composite_usage(
     try:
         from sdk.utils.helpers import _get_api_call_type
         from tfc.constants.api_calls import APICallStatusChoices
+
         try:
             from ee.usage.models.usage import APICallLog, APICallType
         except ImportError:
@@ -350,6 +351,27 @@ def execute_composite_children_sync(
     - Providing resolved (non-template) mapping values. For dataset-row
       callers that means inputs already pulled from cells.
     """
+    if (parent.config or {}).get("jury"):
+        from model_hub.services.composite_jury import execute_jury
+
+        return execute_jury(
+            parent=parent,
+            child_links=child_links,
+            mapping=mapping,
+            org=org,
+            workspace=workspace,
+            config=config or {},
+            model=model,
+            input_data_types=input_data_types or {},
+            row_context=row_context,
+            span_context=span_context,
+            trace_context=trace_context,
+            session_context=session_context,
+            call_context=call_context,
+            error_localizer=error_localizer,
+            source=source,
+        )
+
     _start_time = time.time()
     weights = resolve_child_weights(child_links, weight_overrides)
 

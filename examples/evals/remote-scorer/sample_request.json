@@ -1,0 +1,12 @@
+{
+  "scorer": {
+    "id": "6f1d2c3b-0a9e-4d8c-8b7a-1e2f3a4b5c6d",
+    "name": "order_id_scorer",
+    "version": "v1"
+  },
+  "run": { "id": "a1000000-0000-4000-8000-00000000002b", "label": "#2B" },
+  "row": { "id": "b1000000-0000-4000-8000-00000000000c", "label": "Row 12" },
+  "inputs": { "question": "Where is my order A-1234?" },
+  "output": "Your order A-1234 left our warehouse on Monday and arrives Thursday.",
+  "trace_id": null
+}

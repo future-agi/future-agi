@@ -1,24 +1,28 @@
 /* eslint-disable react/prop-types */
 import React from "react";
+import { Stack, Card, CardContent, MenuItem, Typography } from "@mui/material";
 import {
-  Stack,
-  TextField,
-  IconButton,
-  Button,
-  Card,
-  CardContent,
-  MenuItem,
-} from "@mui/material";
-import Iconify from "src/components/iconify";
+  AdminButton as Button,
+  AdminIconButton as IconButton,
+  AdminTextField as TextField,
+} from "../components/GatewayWriteControls";
+import { useConfirmRemoval } from "../hooks/useConfirmRemoval";
 import { useAvailableModels } from "../hooks/useAvailableModels";
+import { Glyph } from "./ui";
+import FallbackChainWarning from "../fallbacks/FallbackChainWarning";
+import {
+  MAX_MODEL_FALLBACKS,
+  FALLBACK_LIMIT_MESSAGE,
+} from "../fallbacks/fallbackLimits";
 
 const FallbackChainEditor = ({
   primaryModel,
   fallbacks,
   onChange,
-  onRemoveChain,
-  models: modelsProp,
+  onRemoveChain = undefined,
+  models: modelsProp = undefined,
 }) => {
+  const [requestRemoval, confirmation] = useConfirmRemoval();
   const dynamicModels = useAvailableModels();
   const models = modelsProp || dynamicModels;
   const handlePrimaryChange = (e) => {
@@ -31,7 +35,9 @@ const FallbackChainEditor = ({
     onChange(primaryModel, updated);
   };
 
+  const atLimit = fallbacks.length >= MAX_MODEL_FALLBACKS;
   const handleAddFallback = () => {
+    if (atLimit) return;
     onChange(primaryModel, [...fallbacks, ""]);
   };
 
@@ -42,6 +48,7 @@ const FallbackChainEditor = ({
 
   return (
     <Card variant="outlined" sx={{ mb: 1 }}>
+      {confirmation}
       <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
         <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
           <TextField
@@ -61,11 +68,7 @@ const FallbackChainEditor = ({
 
           {fallbacks.map((fb, i) => (
             <React.Fragment key={i}>
-              <Iconify
-                icon="mdi:arrow-right"
-                width={20}
-                sx={{ color: "text.secondary" }}
-              />
+              <Glyph name="arrow" sx={{ color: "text.secondary" }} />
               <TextField
                 select
                 size="small"
@@ -80,8 +83,16 @@ const FallbackChainEditor = ({
                   </MenuItem>
                 ))}
               </TextField>
-              <IconButton size="small" onClick={() => handleRemoveFallback(i)}>
-                <Iconify icon="mdi:close" width={16} />
+              <IconButton
+                size="small"
+                aria-label={`Remove fallback ${i + 1}`}
+                onClick={() =>
+                  requestRemoval(`Fallback ${fb} from ${primaryModel}`, () =>
+                    handleRemoveFallback(i),
+                  )
+                }
+              >
+                <Glyph name="close" />
               </IconButton>
             </React.Fragment>
           ))}
@@ -89,7 +100,8 @@ const FallbackChainEditor = ({
           <Button
             size="small"
             onClick={handleAddFallback}
-            startIcon={<Iconify icon="mdi:plus" width={16} />}
+            disabled={atLimit}
+            startIcon={<Glyph name="add" />}
           >
             Add
           </Button>
@@ -97,17 +109,27 @@ const FallbackChainEditor = ({
           {onRemoveChain && (
             <IconButton
               size="small"
-              onClick={onRemoveChain}
+              aria-label={`Remove fallback chain ${primaryModel}`}
+              onClick={() =>
+                requestRemoval(`Fallback chain ${primaryModel}`, onRemoveChain)
+              }
               sx={{ ml: "auto" }}
             >
-              <Iconify
-                icon="mdi:delete-outline"
-                width={18}
-                color="error.main"
-              />
+              <Glyph name="delete" sx={{ color: "error.main" }} />
             </IconButton>
           )}
         </Stack>
+        <FallbackChainWarning
+          fallbacks={fallbacks}
+          onTrim={() =>
+            onChange(primaryModel, fallbacks.slice(0, MAX_MODEL_FALLBACKS))
+          }
+        />
+        {atLimit && (
+          <Typography variant="caption" color="text.secondary" role="status">
+            {FALLBACK_LIMIT_MESSAGE}
+          </Typography>
+        )}
       </CardContent>
     </Card>
   );

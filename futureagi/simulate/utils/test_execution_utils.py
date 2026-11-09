@@ -8,25 +8,15 @@ from datetime import datetime
 
 from django.db import connection, models
 
-from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.agent_version import AgentVersion
-from simulate.models.hosted_harness import HostedHarnessJob
 from simulate.utils.persona_filtering import (
     UnsupportedPersonaFilter,
     apply_persona_filter,
     is_persona_filter_column,
 )
+from simulate.utils.scenario_rows import org_columns, org_rows
 from simulate.utils.sql_query import get_grouped_call_execution_metrics_query
-from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
-
-
-def eval_source(test_execution_id: uuid.UUID, default: str = "simulate") -> str:
-    """Where a call's evals are logged from: a fix's check runs have a source of their own."""
-    is_check_run = HostedHarnessJob.no_workspace_objects.filter(
-        test_execution_id=test_execution_id, fix_run__isnull=False
-    ).exists()
-    return FIX_CHECK_RUN_EVAL_SOURCE if is_check_run else default
 
 
 class TestExecutionUtils:
@@ -1309,7 +1299,9 @@ def canonical_scenario_column_name(raw_name):
     return "Ideal Outcome" if raw_name == "outcome" else raw_name
 
 
-def reconcile_scenario_column_order(*, scenarios, call_executions, column_order):
+def reconcile_scenario_column_order(
+    *, scenarios, call_executions, column_order, organization_id
+):
     """Collapse per-dataset scenario columns into one entry per canonical name.
 
     Each scenario has its own dataset, and each dataset has its own ``Column``
@@ -1329,6 +1321,12 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
         call_executions: ``CallExecution`` queryset, used only for the fallback
             that recovers columns from the first call's dataset row.
         column_order: the current persisted column order (list of dicts).
+        organization_id: the execution's own organization. Columns and the
+            fallback row are read only from live data of its datasets: the
+            fallback row id comes from caller-written ``call_metadata``, so
+            another organization's row, or a soft-deleted one, reads exactly
+            like a row id that names nothing (T6 #7d). Required, so no caller
+            can skip the scope.
 
     Returns:
         ``(column_order, changed)`` - the reconciled order and whether it
@@ -1378,7 +1376,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
     if norm_all_col_ids:
         norm_columns_by_id = {
             str(col.id): col
-            for col in Column.objects.filter(id__in=norm_all_col_ids, deleted=False)
+            for col in org_columns(organization_id).filter(id__in=norm_all_col_ids)
         }
         for scenario in scenarios:
             if not (scenario.dataset and scenario.dataset.column_order):
@@ -1401,11 +1399,14 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
         )
         if fb_row_id:
             fb_row = (
-                Row.all_objects.filter(id=fb_row_id).select_related("dataset").first()
+                org_rows(organization_id)
+                .filter(id=fb_row_id)
+                .select_related("dataset")
+                .first()
             )
             if fb_row and fb_row.dataset and fb_row.dataset.column_order:
-                for col_obj in Column.all_objects.filter(
-                    id__in=fb_row.dataset.column_order, deleted=False
+                for col_obj in org_columns(organization_id).filter(
+                    id__in=fb_row.dataset.column_order
                 ):
                     _register_scenario_column(col_obj, None, str(fb_row.dataset.id))
 
@@ -1414,7 +1415,10 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
     non_scenario_columns = [
         col
         for col in column_order
-        if not (isinstance(col, dict) and col.get("type") == "scenario_dataset_column")
+        if not (
+            isinstance(col, dict)
+            and col.get("type") == "scenario_dataset_column"
+        )
     ]
     if first_scenario_idx is None:
         # No scenario columns yet: place them before the first evaluation
@@ -1433,7 +1437,8 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
             1
             for col in column_order[:first_scenario_idx]
             if not (
-                isinstance(col, dict) and col.get("type") == "scenario_dataset_column"
+                isinstance(col, dict)
+                and col.get("type") == "scenario_dataset_column"
             )
         )
 

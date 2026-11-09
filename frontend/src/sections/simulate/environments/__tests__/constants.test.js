@@ -81,10 +81,11 @@ describe("hostedPlatforms", () => {
       "vapi",
       "retell",
       "other",
-      "bland",
-      "elevenlabs",
       "livekit",
     ]);
+    // No coming-soon hosted voice platform is listed (Bland and ElevenLabs
+    // are not connectors, so they are absent, not shown disabled).
+    expect(comingSoonIds(HOSTED_PLATFORMS_BY_TYPE.voice)).toEqual([]);
     expect(HOSTED_PLATFORMS_BY_TYPE.text.map((p) => p.id)).toEqual([
       "retell_chat",
       "openai_assistants",

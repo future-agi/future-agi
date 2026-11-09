@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Typography } from "@mui/material";
 import React from "react";
 import HeaderContent from "./HeaderContent";
@@ -54,7 +55,7 @@ const CreateFirstEvaluation = ({ setCurrentLabel }) => {
               width: "100%",
             }}
           >
-            <iframe
+            <ExternalContentFrame
               src={iframeVideoLinks}
               title="Evaluation: Future AGI"
               frameBorder="0"

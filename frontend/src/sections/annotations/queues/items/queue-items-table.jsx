@@ -60,6 +60,8 @@ function getPreviewText(preview) {
 
   switch (preview.type) {
     case "dataset_row":
+      // Experiment-review items carry their own label (Row 42 · #4A vs #3A).
+      if (preview.label) return preview.label;
       return `${preview.dataset_name || "Dataset"} - Row ${preview.row_order ?? ""}`;
     case "trace":
       return preview.name || preview.input_preview || "Trace";

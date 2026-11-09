@@ -2,6 +2,7 @@ import re
 
 from rest_framework import serializers
 
+from common.utils.page_limits import PageSizeIntegerField
 from simulate.models.agent_definition import (
     AgentDefinition,
     AgentDefinitionAuthenticationChoices,
@@ -34,7 +35,7 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
         required=False, allow_blank=True, allow_null=True, default=None
     )
     api_key = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True, default=None
+        required=False, allow_blank=True, allow_null=True, default=None, max_length=255
     )
     assistant_id = serializers.CharField(
         required=False, allow_blank=True, allow_null=True, default=None
@@ -300,7 +301,9 @@ class AgentDefinitionEditRequestSerializer(serializers.Serializer):
         required=False, allow_blank=True, allow_null=True
     )
     provider = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    api_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    api_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=255
+    )
     assistant_id = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
@@ -425,7 +428,7 @@ class AgentDefinitionFilterSerializer(serializers.Serializer):
     )
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
-    limit = serializers.IntegerField(required=False, min_value=1)
+    limit = PageSizeIntegerField(required=False, min_value=1)
 
 
 class AgentRunsQuerySerializer(serializers.Serializer):

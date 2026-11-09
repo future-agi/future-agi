@@ -1,5 +1,9 @@
 import axios from "src/utils/axios";
 import {
+  clearOnboardingRecovery,
+  readAuthRedirectParams,
+} from "./auth-url-intake";
+import {
   SS_KEY_ORG_DISPLAY_NAME,
   SS_KEY_ORG_ID,
   SS_KEY_ORG_LEVEL,
@@ -44,10 +48,11 @@ export function isSafeSamlNext(next) {
 }
 
 export function bootstrapSamlSession() {
-  const query = new URLSearchParams(window.location.search);
+  const query = readAuthRedirectParams();
   const token = query.get("sso_token");
   if (!token || query.get("auth") !== "saml") return false;
 
+  clearOnboardingRecovery();
   const generation = crypto.randomUUID();
   sessionStorage.setItem(SAML_AUTH_GENERATION_KEY, generation);
   localStorage.setItem(SAML_AUTH_GENERATION_KEY, generation);
@@ -71,5 +76,6 @@ export function bootstrapSamlSession() {
   }
 
   history.replaceState(null, "", location.pathname);
+  query.clear();
   return true;
 }

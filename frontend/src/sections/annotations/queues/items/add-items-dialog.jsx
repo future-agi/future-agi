@@ -1,3 +1,7 @@
+import {
+  formatExactMoney,
+  multiplyMoneyValues,
+} from "src/sections/common/format/money";
 import PropTypes from "prop-types";
 import React, {
   useState,
@@ -1122,7 +1126,8 @@ function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
             gap: 1.5,
           }}
         >
-          {SOURCE_TYPES.map((src) => (
+          {/* L7b absent-sweep: only sources that work are listed. */}
+          {SOURCE_TYPES.filter((src) => src.enabled).map((src) => (
             <Box
               key={src.value}
               onClick={src.enabled ? () => onSelect(src.value) : undefined}
@@ -1173,13 +1178,6 @@ function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
                 <Typography variant="caption" color="text.secondary">
                   {src.description}
                 </Typography>
-                {!src.enabled && (
-                  <Chip
-                    label="Coming soon"
-                    size="small"
-                    sx={{ ml: 1, height: 20, fontSize: 10 }}
-                  />
-                )}
               </Box>
               {src.enabled && (
                 <Iconify
@@ -4022,23 +4020,19 @@ function formatMilliseconds(value) {
 }
 
 function formatCurrencyCents(value) {
-  if (value === null || value === undefined || value === "") return "-";
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
-  return `$${formatNumber(numeric / 100, {
-    minimumFractionDigits: numeric ? 2 : 0,
-    maximumFractionDigits: 4,
-  })}`;
+  return formatExactMoney(multiplyMoneyValues(value, "0.01"), {
+    missing: "-",
+    grouping: true,
+    minimumFractionDigits: Number(value) === 0 ? 0 : 2,
+  });
 }
 
 function formatCurrencyDollars(value) {
-  if (value === null || value === undefined || value === "") return "-";
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
-  return `$${formatNumber(numeric, {
-    minimumFractionDigits: numeric ? 2 : 0,
-    maximumFractionDigits: 4,
-  })}`;
+  return formatExactMoney(value, {
+    missing: "-",
+    grouping: true,
+    minimumFractionDigits: Number(value) === 0 ? 0 : 2,
+  });
 }
 
 function formatGenericSimulationValue(value) {

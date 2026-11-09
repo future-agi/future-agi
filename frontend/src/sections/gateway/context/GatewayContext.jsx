@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet } from "react-router-dom";
 import axiosInstance, { endpoints } from "src/utils/axios";
 
+import { useManagedModelsStatus } from "../models/hooks/useManagedModels";
+
 export const GatewayContext = createContext(null);
 
 export function normalizeGateway(gateway) {
@@ -40,6 +42,12 @@ export const GatewayProvider = ({ children }) => {
   // Single gateway — always use the first (and only) one
   const gateway = gateways[0] || null;
 
+  // Whether this deployment offers managed models: false until the managed
+  // models status says it does, so a page leaves its managed sentences out
+  // while the status loads, cannot be read, or says none are offered.
+  const managedStatus = useManagedModelsStatus();
+  const managedOffered = managedStatus.data?.available === true;
+
   const refreshGateways = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["agentcc-gateways"] });
   }, [queryClient]);
@@ -55,8 +63,9 @@ export const GatewayProvider = ({ children }) => {
       refreshGateways,
       isLoading,
       error,
+      managedOffered,
     }),
-    [gateway, gateways, refreshGateways, isLoading, error],
+    [gateway, gateways, refreshGateways, isLoading, error, managedOffered],
   );
 
   return (

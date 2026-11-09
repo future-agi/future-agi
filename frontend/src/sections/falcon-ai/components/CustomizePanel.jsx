@@ -20,6 +20,7 @@ import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { importWithRecovery } from "src/utils/chunkRecovery";
 import CustomTooltip from "src/components/tooltip";
 import {
   listSkills,
@@ -29,6 +30,7 @@ import {
   discoverConnectorTools,
 } from "../hooks/useFalconAPI";
 import useFalconStore from "../store/useFalconStore";
+import { captureFalconRequest } from "../store/falconRequestGuard";
 import ToolsSkeleton from "./ToolsSkeleton";
 import ConnectorDetailError from "./ConnectorDetailError";
 import { useConnectorToolPermissions } from "../hooks/useConnectorToolPermissions";
@@ -790,17 +792,20 @@ function SkillDetailPanel({
       setError("At least one trigger phrase is required");
       return;
     }
+    const isCurrent = captureFalconRequest();
     setSaving(true);
     setError(null);
     try {
-      const { createSkill, updateSkill } = await import(
-        "../hooks/useFalconAPI"
+      const { createSkill, updateSkill } = await importWithRecovery(
+        () => import("../hooks/useFalconAPI"),
       );
+      if (!isCurrent()) return;
       if (skill?.id && !skill.is_builtin && !skill.is_system) {
         await updateSkill(skill.id, form);
       } else {
         await createSkill(form);
       }
+      if (!isCurrent()) return;
       onSaved?.();
     } catch (err) {
       setError(
@@ -816,10 +821,15 @@ function SkillDetailPanel({
 
   const handleDelete = async () => {
     if (!skill?.id || isSystem) return;
+    const isCurrent = captureFalconRequest();
     setSaving(true);
     try {
-      const { deleteSkill } = await import("../hooks/useFalconAPI");
+      const { deleteSkill } = await importWithRecovery(
+        () => import("../hooks/useFalconAPI"),
+      );
+      if (!isCurrent()) return;
       await deleteSkill(skill.id);
+      if (!isCurrent()) return;
       onSaved?.();
     } catch {
       /* silent */
@@ -1384,8 +1394,8 @@ function ConnectorDetailPanel({
     setSaving(true);
     setError(null);
     try {
-      const { createConnector, updateConnector } = await import(
-        "../hooks/useFalconAPI"
+      const { createConnector, updateConnector } = await importWithRecovery(
+        () => import("../hooks/useFalconAPI"),
       );
       const payload = { ...form };
       // Don't send empty optional fields
@@ -1406,8 +1416,8 @@ function ConnectorDetailPanel({
       // After creating/updating, auto-trigger authentication
       if (connectorData?.id) {
         try {
-          const { authenticateConnector } = await import(
-            "../hooks/useFalconAPI"
+          const { authenticateConnector } = await importWithRecovery(
+            () => import("../hooks/useFalconAPI"),
           );
           const authResult = await authenticateConnector(connectorData.id);
           const authUrl =
@@ -2233,9 +2243,11 @@ export default function CustomizePanel() {
 
   // ---- Load data ----
   const loadSkills = useCallback(async () => {
+    const isCurrent = captureFalconRequest();
     setLoadingSkills(true);
     try {
       const data = await listSkills();
+      if (!isCurrent()) return;
       const results = data.results || data || [];
       const skillList = Array.isArray(results) ? results : [];
       setSkills(skillList);
@@ -2302,7 +2314,9 @@ export default function CustomizePanel() {
       // render what it is for.
       setConnectorDetailLoading(selectedTab === "connectors");
       try {
-        const api = await import("../hooks/useFalconAPI");
+        const api = await importWithRecovery(
+          () => import("../hooks/useFalconAPI"),
+        );
         if (selectedTab === "skills") {
           const resp = await api.getSkill(item.id);
           if (isStale()) return;
@@ -2429,7 +2443,9 @@ export default function CustomizePanel() {
   const handleReauth = useCallback(
     async (connectorId) => {
       try {
-        const { authenticateConnector } = await import("../hooks/useFalconAPI");
+        const { authenticateConnector } = await importWithRecovery(
+          () => import("../hooks/useFalconAPI"),
+        );
         const result = await authenticateConnector(connectorId);
         // Check for OAuth authorization URL (API may return camelCase or snake_case)
         const authUrl =

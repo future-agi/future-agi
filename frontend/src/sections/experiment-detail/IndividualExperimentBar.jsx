@@ -13,7 +13,13 @@ const IndividualExperimentBar = ({ rightSection }) => {
   const navigate = useNavigate();
   const { individualExperimentId } = useParams();
 
-  const currentTab = location.pathname.split("/").pop();
+  // The page is first rendered at /individual-experiment/:id (before the
+  // redirect to /data) and /summary has no tab, so only a known tab value is
+  // passed to Tabs; MUI logs an error for any other value.
+  const lastSegment = location.pathname.split("/").pop();
+  const currentTab = TabOptions.some((tab) => tab.value === lastSegment)
+    ? lastSegment
+    : false;
 
   const theme = useTheme();
 

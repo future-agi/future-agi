@@ -101,7 +101,7 @@ def _metric_write(request, organization, workspace, monitor=None):
         data["workspace"] = workspace.id
         data["created_by"] = request.user.id
     serializer = UserAlertMonitorSerializer(
-        monitor, data=data, partial=monitor is not None
+        monitor, data=data, partial=monitor is not None, context={"request": request}
     )
     if not serializer.is_valid():
         raise FeedAlertError(serializer.errors)

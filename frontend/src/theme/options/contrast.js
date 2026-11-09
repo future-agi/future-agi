@@ -1,34 +1,18 @@
-import { grey } from "../palette";
-import { customShadows } from "../custom-shadows";
+import { dsPalette } from "../ds-tokens";
 
-// ----------------------------------------------------------------------
-
+// Bold contrast keeps stronger panel boundaries, not decorative elevation.
 export function createContrast(contrast, mode) {
-  const theme = {
-    ...(contrast === "bold" &&
-      mode === "light" && {
-        palette: {
-          background: {
-            default: grey[200],
-          },
-        },
-      }),
-  };
-
-  const components = {
-    ...(contrast === "bold" && {
-      MuiCard: {
-        styleOverrides: {
-          root: {
-            boxShadow: customShadows(mode).z1,
-          },
-        },
-      },
-    }),
-  };
-
+  const p = dsPalette(mode);
   return {
-    ...theme,
-    components,
+    components:
+      contrast === "bold"
+        ? {
+            MuiCard: {
+              styleOverrides: {
+                root: { boxShadow: "none", borderColor: p.border.strong },
+              },
+            },
+          }
+        : {},
   };
 }

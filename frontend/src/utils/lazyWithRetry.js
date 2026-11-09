@@ -5,71 +5,19 @@ import {
   CHUNK_IMPORT_TIMEOUT_MS,
 } from "src/config/runtime_limits";
 
-const RELOAD_KEY = "chunk_reload_attempted";
+import {
+  canRecoverChunk,
+  getChunkReloadScope,
+  isChunkError,
+  rememberChunkError,
+  requestChunkReload,
+} from "./chunkRecovery";
 
-function getReloadScope() {
-  try {
-    const entrypoint =
-      document.querySelector('script[type="module"][src]')?.src || "app";
-    return `${entrypoint}|${window.location.pathname}${window.location.search}`;
-  } catch {
-    return "app";
-  }
-}
-
-function hasReloadAttempt() {
-  try {
-    const raw = sessionStorage.getItem(RELOAD_KEY);
-    if (!raw) return false;
-
-    // Preserve the guard written by older builds, but migrate it to the current
-    // entrypoint + URL scope. That stops an already-looping tab while allowing
-    // a later deployment or route to perform its own single recovery reload.
-    if (raw === "1") {
-      sessionStorage.setItem(
-        RELOAD_KEY,
-        JSON.stringify({ scope: getReloadScope(), attemptedAt: Date.now() }),
-      );
-      return true;
-    }
-
-    const attempt = JSON.parse(raw);
-    if (attempt?.scope === getReloadScope()) return true;
-
-    sessionStorage.removeItem(RELOAD_KEY);
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-function markReloadAttempt() {
-  try {
-    sessionStorage.setItem(
-      RELOAD_KEY,
-      JSON.stringify({ scope: getReloadScope(), attemptedAt: Date.now() }),
-    );
-    return true;
-  } catch {
-    // If storage is unavailable, reloading cannot be bounded safely. Surface
-    // the error boundary instead of risking an infinite reload loop.
-    return false;
-  }
-}
-
-export function clearChunkReloadAttempt() {
-  try {
-    sessionStorage.removeItem(RELOAD_KEY);
-  } catch {
-    // Storage can be unavailable in private/test contexts.
-  }
-}
-
-export function requestChunkReload() {
-  if (hasReloadAttempt() || !markReloadAttempt()) return false;
-  window.location.reload();
-  return true;
-}
+export {
+  clearChunkReloadAttempt,
+  isChunkError,
+  requestChunkReload,
+} from "./chunkRecovery";
 
 function persistentChunkError(message) {
   const error = new Error(message);
@@ -106,7 +54,7 @@ function importWithTimeout(importPromise) {
  *
  * After a deployment, old chunks may no longer exist on the server.
  * This wrapper:
- *   1. Retries the import up to `maxRetries` times with cache-busting query params
+ *   1. Retries the import up to `maxRetries` times while its route is current
  *   2. On final failure, does a silent one-time page reload (uses sessionStorage
  *      to prevent infinite loops)
  *   3. No version banners or update notifications — completely invisible to users
@@ -122,7 +70,12 @@ export default function lazyWithRetry(
 }
 
 // Exported for unit testing the post-deploy recovery logic directly.
-export async function retryImport(importFn, retriesLeft, attempt = 1) {
+export async function retryImport(
+  importFn,
+  retriesLeft,
+  attempt = 1,
+  scope = getChunkReloadScope(),
+) {
   try {
     const module = await importWithTimeout(importFn());
 
@@ -138,14 +91,7 @@ export async function retryImport(importFn, retriesLeft, attempt = 1) {
     // skip the retry loop and go straight to a one-time silent reload (a fresh
     // document gets a fresh module map and a fresh index.html).
     if (!module || typeof module.default === "undefined") {
-      if (requestChunkReload()) {
-        // Never-resolving promise so React keeps the Suspense fallback while
-        // the page reloads, instead of surfacing the bad module to lazy().
-        return new Promise(() => {});
-      }
-      // Reload already attempted this session — surface a recognized chunk
-      // error (matched by isChunkError/ignoreErrors) rather than letting React
-      // throw the opaque "reading 'default'" TypeError, and avoid a reload loop.
+      // Use the same route-aware recovery below as rejected imports.
       throw persistentChunkError(
         "Failed to fetch dynamically imported module (resolved without a default export)",
       );
@@ -157,16 +103,22 @@ export async function retryImport(importFn, retriesLeft, attempt = 1) {
     // naturally for a new deployment or route, and explicit Retry clears it.
     return module;
   } catch (error) {
+    // Capture ownership once, not when a retry finally fails on a newer route.
+    // The boundary receives the same error and must honor that ownership too.
+    rememberChunkError(error, scope);
+    if (!canRecoverChunk(scope, error)) throw error;
+
     if (retriesLeft > 0 && isChunkError(error) && !error?.skipChunkRetry) {
       // Wait briefly — CDN may need time to propagate new chunks
       await new Promise((resolve) =>
         setTimeout(resolve, CHUNK_IMPORT_RETRY_BASE_DELAY_MS * attempt),
       );
-      return retryImport(importFn, retriesLeft - 1, attempt + 1);
+      if (!canRecoverChunk(scope, error)) throw error;
+      return retryImport(importFn, retriesLeft - 1, attempt + 1, scope);
     }
 
     // All retries exhausted — try a silent one-time page reload
-    if (isChunkError(error) && requestChunkReload()) {
+    if (isChunkError(error) && requestChunkReload(error)) {
       // Return a never-resolving promise to prevent React error boundary
       // while the page reloads
       return new Promise(() => {});
@@ -175,17 +127,4 @@ export async function retryImport(importFn, retriesLeft, attempt = 1) {
     // Not a chunk error or reload already attempted — throw original error
     throw error;
   }
-}
-
-export function isChunkError(error) {
-  if (!error) return false;
-  const msg = error?.message || "";
-  return (
-    msg.includes("Failed to fetch dynamically imported module") ||
-    msg.includes("Loading chunk") ||
-    msg.includes("Loading CSS chunk") ||
-    msg.includes("Unable to preload CSS") ||
-    msg.includes("is not a valid JavaScript MIME type") ||
-    error?.name === "ChunkLoadError"
-  );
 }

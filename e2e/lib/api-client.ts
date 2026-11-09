@@ -1,4 +1,5 @@
 import type { APIRequestContext } from '@playwright/test';
+import { requirePublicationAdmission } from './value-free';
 
 export interface Tokens { access: string; refresh: string }
 
@@ -23,8 +24,10 @@ export class ApiClient {
     });
   }
 
-  private async send<T>(method: 'get' | 'post' | 'patch' | 'delete', path: string,
+  private async send<T>(method: 'get' | 'post' | 'put' | 'patch' | 'delete', path: string,
                         opts: { params?: Record<string, string | number>; data?: unknown } = {}): Promise<T> {
+    // HR-JRN-01 structural S3: in value-free mode, no request before the publication is admitted (lib/value-free.ts).
+    await requirePublicationAdmission('the API client');
     const res = await this.req[method](`${this.baseURL}${path}`, {
       headers: this.headers,
       params: opts.params,
@@ -39,6 +42,7 @@ export class ApiClient {
 
   get<T>(path: string, params?: Record<string, string | number>) { return this.send<T>('get', path, { params }); }
   post<T>(path: string, data?: unknown) { return this.send<T>('post', path, { data }); }
+  put<T>(path: string, data?: unknown) { return this.send<T>('put', path, { data }); }
   patch<T>(path: string, data?: unknown) { return this.send<T>('patch', path, { data }); }
   delete(path: string) { return this.send<void>('delete', path); }
 }

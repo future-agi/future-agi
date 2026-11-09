@@ -14,6 +14,7 @@ from typing import Any
 from django.utils import timezone
 
 from simulate.models import HostedHarnessAttempt
+from tfc.logging import credential_scrub
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_storage_client
 
@@ -30,6 +31,8 @@ _PROCESS_LOG_COMMAND = (
     "-type f -name '*.log' 2>/dev/null | sort); do "
     'echo "===== $f ====="; tail -400 "$f"; done'
 )
+_GRANT_ID = re.compile(r"fit_[0-9a-f]{32}")
+_SERVICE_GRANT = re.compile(r"fe1\.[A-Za-z0-9_-]{40,}\.[A-Za-z0-9_-]{43}")
 _BEARER_TOKEN = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+")
 _QUERY_TOKEN = re.compile(r"(?i)([?&](?:access_)?token=)[^&\s]+")
 _ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -133,10 +136,30 @@ def _redact(text: str, secret_fragments: Iterable[str]) -> str:
     redacted = _normalize_log_text(text)
     for secret in secret_fragments:
         redacted = redacted.replace(secret, "[REDACTED]")
+    redacted = _GRANT_ID.sub("[REDACTED]", redacted)
+    redacted = _SERVICE_GRANT.sub("[REDACTED]", redacted)
     redacted = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", redacted)
     redacted = _BEARER_TOKEN.sub(r"\1[REDACTED]", redacted)
     redacted = _QUERY_TOKEN.sub(r"\1[REDACTED]", redacted)
     return _SENSITIVE_ASSIGNMENT.sub(r"\1[REDACTED]", redacted)
+
+
+def _scrub_collected(text: str, fragments: Iterable[str]) -> str:
+    """Preserve legacy masking, then scrub held spellings and provider patterns."""
+    try:
+        failed = credential_scrub.MARKER_FORMAT.format("scrub-failed")
+        result = _redact(text, fragments)
+        result = credential_scrub.redact_known_values(
+            result, fragments, marker="[REDACTED]"
+        )
+        if type(result) is not str or result == failed:
+            return failed
+        result = credential_scrub.scrub_text(result)
+        if type(result) is not str or result == failed:
+            return failed
+        return result
+    except Exception:  # noqa: BLE001 - unsafe diagnostics must never escape
+        return "[hidden: scrub-failed]"
 
 
 def _tail_utf8(text: str, limit: int) -> str:
@@ -204,27 +227,29 @@ def poll_sandbox_diagnostics(
 
     command_status = getattr(command, "status", None)
     exit_code = getattr(command, "exit_code", None)
-    entrypoint_log = ""
+    raw_entrypoint_log = ""
     if command_id:
         try:
-            entrypoint_log = _command_logs(sandbox, session_id, command_id)
+            raw_entrypoint_log = _command_logs(sandbox, session_id, command_id)
         except Exception as exc:  # noqa: BLE001 - a child log can still be captured
             errors.append(f"entrypoint:{type(exc).__name__}")
 
-    process_logs = ""
+    raw_process_logs = ""
     try:
         result = sandbox.process.exec(_PROCESS_LOG_COMMAND, timeout=30)
-        process_logs = getattr(result, "result", "") or ""
+        raw_process_logs = getattr(result, "result", "") or ""
     except Exception as exc:  # noqa: BLE001 - entrypoint output can still be captured
         errors.append(f"processes:{type(exc).__name__}")
 
-    fragments = _secret_fragments(secret_values)
-    entrypoint_log = _tail_utf8(
-        _redact(entrypoint_log, fragments), _ENTRYPOINT_LOG_LIMIT_BYTES
-    )
-    process_logs = _tail_utf8(
-        _redact(process_logs, fragments), _PROCESS_LOG_LIMIT_BYTES
-    )
+    try:
+        fragments = _secret_fragments(secret_values)
+    except Exception:  # noqa: BLE001 - diagnostics cannot change the harness verdict
+        entrypoint_log = process_logs = "[hidden: scrub-failed]"
+    else:
+        entrypoint_log = _scrub_collected(raw_entrypoint_log, fragments)
+        process_logs = _scrub_collected(raw_process_logs, fragments)
+    entrypoint_log = _tail_utf8(entrypoint_log, _ENTRYPOINT_LOG_LIMIT_BYTES)
+    process_logs = _tail_utf8(process_logs, _PROCESS_LOG_LIMIT_BYTES)
     capture = SandboxDiagnostics(
         entrypoint_log=entrypoint_log,
         process_logs=process_logs,

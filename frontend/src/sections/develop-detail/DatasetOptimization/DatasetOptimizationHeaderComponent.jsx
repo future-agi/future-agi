@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import {
   Box,
   Button,
@@ -235,9 +236,13 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
               backgroundColor: modelDeprecated ? "warning.lighter" : "blue.o10",
               color: modelDeprecated ? "warning.dark" : "blue.500",
               ":hover": {
-                backgroundColor: modelDeprecated ? "warning.lighter" : "blue.o10",
+                backgroundColor: modelDeprecated
+                  ? "warning.lighter"
+                  : "blue.o10",
               },
-              "& .MuiChip-icon": { color: modelDeprecated ? "warning.dark" : "blue.500" },
+              "& .MuiChip-icon": {
+                color: modelDeprecated ? "warning.dark" : "blue.500",
+              },
             }}
             icon={
               modelDeprecated ? (
@@ -248,7 +253,7 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
               ) : providerLogo ? (
                 <Image
                   ratio="1/1"
-                  src={providerLogo}
+                  src={localProviderLogo(optimization)}
                   alt={model}
                   style={{ width: "16px", height: "16px" }}
                 />

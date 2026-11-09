@@ -12,6 +12,7 @@ import { LoadingScreen } from "src/components/loading-screen";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
+import WorkspaceSharingCard from "src/sections/common/Access/WorkspaceSharingCard";
 
 export default function WorkspaceGeneral() {
   const { workspaceId } = useParams();
@@ -143,6 +144,7 @@ export default function WorkspaceGeneral() {
             </Button>
           </Box>
         )}
+        <WorkspaceSharingCard workspaceId={workspaceId} />
       </Box>
     </>
   );

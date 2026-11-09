@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import copy
 import gzip
 import hashlib
@@ -354,30 +353,6 @@ def _sandbox_collector_url() -> str:
     ).strip()
 
 
-def platform_model_gateway() -> tuple[str, str]:
-    """The sandbox-reachable AgentCC URL and the platform-owned key a sandbox's model calls use."""
-    url = str(
-        os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
-        or os.environ.get("AGENTCC_BASE_URL")
-        or ""
-    ).strip()
-    # Prefer a separately scoped authoring key, while preserving compatibility
-    # with deployments that use the platform-owned internal key for both lanes.
-    key = str(
-        os.environ.get("AGENTCC_HARNESS_API_KEY")
-        or os.environ.get("AGENTCC_INTERNAL_API_KEY")
-        or ""
-    ).strip()
-    if not (url and key):
-        raise HostedHarnessError(
-            "agentcc_not_configured",
-            "hosted runs reach every model through AgentCC; configure a sandbox-reachable "
-            "AgentCC URL and a platform-owned harness or internal API key",
-            status_code=503,
-        )
-    return url.rstrip("/"), key
-
-
 def _platform_simulator_material() -> dict[str, str]:
     """Return control-process-only simulator config.
 
@@ -396,10 +371,28 @@ def _platform_simulator_material() -> dict[str, str]:
         os.environ.get("SIMULATOR_LLM_MODEL") or "vertex_ai/gemini-3.8-flash"
     ).strip()
     backend = str(os.environ.get("ALK_HARNESS") or "claude").strip()
-    agentcc_url, agentcc_key = platform_model_gateway()
+    agentcc_url = str(
+        os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
+        or os.environ.get("AGENTCC_BASE_URL")
+        or ""
+    ).strip()
+    # Prefer a separately scoped authoring key, while preserving compatibility
+    # with deployments that use the platform-owned internal key for both lanes.
+    agentcc_key = str(
+        os.environ.get("AGENTCC_HARNESS_API_KEY")
+        or os.environ.get("AGENTCC_INTERNAL_API_KEY")
+        or ""
+    ).strip()
     agentcc_model = str(
         os.environ.get("ALK_HOSTED_AGENTCC_MODEL") or "vertex_ai/gemini-3.7-flash"
     ).strip()
+    if not (agentcc_url and agentcc_key):
+        raise HostedHarnessError(
+            "agentcc_not_configured",
+            "hosted runs reach every model through AgentCC; configure a sandbox-reachable "
+            "AgentCC URL and a platform-owned harness or internal API key",
+            status_code=503,
+        )
     unsupported_speech = sorted(
         {
             str(os.environ.get(name) or "").strip().lower()
@@ -891,97 +884,6 @@ def guest_failure_cause(tail: str) -> str:
     return cause[:400]
 
 
-# Where git reaches GitHub repositories.
-GITHUB_GIT_URL = "https://github.com"
-
-
-def run_git(
-    command: list[str], environment: Mapping[str, str], token: str
-) -> tuple[int, str]:
-    """Run one git command; on failure its output comes back with the token redacted."""
-    completed = subprocess.run(
-        command,
-        env=dict(environment),
-        capture_output=True,
-        text=True,
-        timeout=300,
-        check=False,
-    )
-    detail = completed.stderr or completed.stdout or "git failed"
-    if token:
-        detail = detail.replace(token, "[REDACTED]")
-    return completed.returncode, detail
-
-
-def github_checkout(
-    repository: str, revision: str, checkout: Path, token: str
-) -> dict[str, str]:
-    """Fetch one revision of a GitHub repository into ``checkout`` and check it out. The
-    installation token, when there is one, travels as a header and is never written to disk.
-    Returns git's environment for further calls on the checkout."""
-    if shutil.which("git") is None:
-        # The default backend image ships without git (with perl it is
-        # ~81 MB unpacked). futureagi/Dockerfile.oss --build-arg
-        # WITH_GIT=true puts it back for GitHub sources.
-        raise HostedHarnessError(
-            "git_unavailable",
-            "git is not installed in this backend image; rebuild it with "
-            "--build-arg WITH_GIT=true to use GitHub sources",
-            status_code=501,
-            retryable=False,
-        )
-    environment = {
-        **os.environ,
-        "GIT_TERMINAL_PROMPT": "0",
-        "GIT_CONFIG_COUNT": "1" if token else "0",
-    }
-    if token:
-        # GitHub's git endpoint takes an installation token as Basic x-access-token; it
-        # refuses Bearer, and git then reports a prompt it may not show.
-        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-        environment.update(
-            {
-                "GIT_CONFIG_KEY_0": "http.extraHeader",
-                "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
-            }
-        )
-    commands = [
-        ["git", "init", str(checkout)],
-        [
-            "git",
-            "-C",
-            str(checkout),
-            "remote",
-            "add",
-            "origin",
-            f"{GITHUB_GIT_URL}/{repository}.git",
-        ],
-        ["git", "-C", str(checkout), "fetch", "--depth", "1", "origin", revision],
-        ["git", "-C", str(checkout), "checkout", "--detach", "FETCH_HEAD"],
-    ]
-    for command in commands:
-        returncode, detail = run_git(command, environment, token)
-        if returncode:
-            lowered = detail.lower()
-            if (
-                "repository not found" in lowered
-                or "could not read username" in lowered
-            ):
-                raise HostedHarnessError(
-                    "github_repository_not_found",
-                    f"repository {repository} was not found, or it is "
-                    "private and the GitHub App is not installed on it",
-                    status_code=422,
-                )
-            raise HostedHarnessError(
-                "github_clone_failed",
-                detail.strip()[:500],
-                status_code=502,
-                retryable=True,
-            )
-    return environment
-
-
 class HostedSourceAcquirer:
     _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
     _REF = re.compile(r"^[A-Za-z0-9._/-]+$")
@@ -1006,6 +908,17 @@ class HostedSourceAcquirer:
             )
         if ".." in ref or not self._REF.fullmatch(ref):
             raise HostedHarnessError("github_ref_invalid", "invalid GitHub ref")
+        if shutil.which("git") is None:
+            # The default backend image ships without git (with perl it is
+            # ~81 MB unpacked). futureagi/Dockerfile.oss --build-arg
+            # WITH_GIT=true puts it back for GitHub sources.
+            raise HostedHarnessError(
+                "git_unavailable",
+                "git is not installed in this backend image; rebuild it with "
+                "--build-arg WITH_GIT=true to use GitHub sources",
+                status_code=501,
+                retryable=False,
+            )
         credential = nullcontext("")
         if source.get("visibility") == "private":
             installation_id = str(source.get("installation_id") or "")
@@ -1016,10 +929,73 @@ class HostedSourceAcquirer:
             credential as token,
             tempfile.TemporaryDirectory(prefix=f"harness-source-{job.id}-") as temp,
         ):
-            checkout = Path(temp) / "source"
-            github_checkout(
-                repository, str(source.get("commit_sha") or ref), checkout, token
-            )
+            root = Path(temp)
+            checkout = root / "source"
+            environment = {
+                **os.environ,
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_CONFIG_COUNT": "1" if token else "0",
+            }
+            if token:
+                environment.update(
+                    {
+                        "GIT_CONFIG_KEY_0": "http.extraHeader",
+                        "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {token}",
+                    }
+                )
+            commands = [
+                ["git", "init", str(checkout)],
+                [
+                    "git",
+                    "-C",
+                    str(checkout),
+                    "remote",
+                    "add",
+                    "origin",
+                    f"https://github.com/{repository}.git",
+                ],
+                [
+                    "git",
+                    "-C",
+                    str(checkout),
+                    "fetch",
+                    "--depth",
+                    "1",
+                    "origin",
+                    str(source.get("commit_sha") or ref),
+                ],
+                ["git", "-C", str(checkout), "checkout", "--detach", "FETCH_HEAD"],
+            ]
+            for command in commands:
+                completed = subprocess.run(
+                    command,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    check=False,
+                )
+                if completed.returncode:
+                    detail = completed.stderr or completed.stdout or "git failed"
+                    if token:
+                        detail = detail.replace(token, "[REDACTED]")
+                    lowered = detail.lower()
+                    if (
+                        "repository not found" in lowered
+                        or "could not read username" in lowered
+                    ):
+                        raise HostedHarnessError(
+                            "github_repository_not_found",
+                            f"repository {source.get('repository')} was not found, or it is "
+                            "private and the GitHub App is not installed on it",
+                            status_code=422,
+                        )
+                    raise HostedHarnessError(
+                        "github_clone_failed",
+                        detail.strip()[:500],
+                        status_code=502,
+                        retryable=True,
+                    )
             completed = subprocess.run(
                 ["git", "-C", str(checkout), "rev-parse", "HEAD"],
                 capture_output=True,
@@ -1251,6 +1227,8 @@ class _ExportRefused(Exception):
 class _ExportPlan:
     """What the launch writes once the guard has finished; the default writes nothing."""
 
+    state: str = "OFF"
+    reason: str | None = None
     project_name: str | None = None
     collector_url: str | None = None
     export: str | None = None
@@ -1411,6 +1389,18 @@ def _plan_observability_export(
 ) -> _ExportPlan:
     """Decide the export without writing anything; any failure means no export."""
     try:
+        from tracer.services.collector_ingest import (
+            DISABLED_REASON,
+            SANDBOX_EXPORT_STATE,
+            get_or_create_export_credentials,
+        )
+
+        if SANDBOX_EXPORT_STATE == "OFF":
+            # One structured OFF log, no hidden project or stored credential minted.
+            get_or_create_export_credentials(
+                organization_id=None, workspace_id=None, agent_definition_id=None
+            )
+            return _ExportPlan(state="OFF", reason=DISABLED_REASON)
         return _decide_observability_export(
             job,
             payload,
@@ -1534,7 +1524,17 @@ def attach_observability_export_secret_refs(
 
 
 def _ingest_key_values(organization_id: Any) -> tuple[str, ...]:
-    """Every ingest key's two values, switched off, deleted or not; read and never created."""
+    """Every ingest key's two values, switched off, deleted or not; read and never created.
+
+    The secret column holds no plaintext once a row is sealed (READINESS L03), so the
+    secret is read back from the row's encrypted copy (ingest keys keep one,
+    ``accounts.api_key_lookup.RECOVERABLE_TYPES``). A copy that cannot be opened raises
+    ``ApiSecretNotRecoverable``: the caller then keeps no diagnostics, because this
+    secret could not be redacted from them. A hash-only row is never handed to a
+    sandbox (``get_or_create_export_credentials`` fails closed on it), so only its
+    api_key is held.
+    """
+    from accounts.api_secrets import decrypt_secret, stored_plaintext
     from accounts.models.user import OrgApiKey
 
     # A key switched off or deleted mid-run may still be in a sandbox that another worker
@@ -1542,8 +1542,14 @@ def _ingest_key_values(organization_id: Any) -> tuple[str, ...]:
     # request's workspace.
     rows = OrgApiKey._base_manager.filter(
         organization_id=organization_id, type="ingest"
-    ).values_list("api_key", "secret_key")
-    return tuple(value for row in rows for value in row if value)
+    ).values_list("api_key", "secret_key", "secret_key_hash", "secret_key_ciphertext")
+    values = []
+    for api_key, plaintext, stored_hash, ciphertext in rows:
+        secret = stored_plaintext(stored_hash, plaintext)
+        if not secret and ciphertext:
+            secret = decrypt_secret(ciphertext)
+        values.extend(value for value in (api_key, secret) if value)
+    return tuple(values)
 
 
 _MAX_EGRESS_DOMAINS = 20
@@ -3467,26 +3473,29 @@ class HostedHarnessGateway:
             < _DIAGNOSTICS_POLL_INTERVAL_SECONDS
         ):
             return None
-        secret_values = cached_attempt_redaction_values(attempt.id)
-        if secret_values is None:
-            try:
+        from accounts.services.service_grants import redaction_fragments
+
+        try:
+            # Re-derive on every capture, including warm caches: another worker
+            # may have issued a grant since this worker last saw the attempt.
+            grant_values = tuple(redaction_fragments(attempt.id))
+            secret_values = cached_attempt_redaction_values(attempt.id)
+            if secret_values is None:
                 target_secrets = PlatformSecretResolver().resolve(attempt.job)
                 simulator_secrets = resolve_platform_simulator_secrets()
-                secret_values = cache_attempt_redaction_values(
-                    attempt.id,
-                    redaction_values(
-                        {**target_secrets, **simulator_secrets},
-                        extra=_ingest_key_values(attempt.job.organization_id),
-                    ),
+                secret_values = redaction_values(
+                    {**target_secrets, **simulator_secrets},
+                    # Preserve legacy-run redaction until their rows are scrubbed.
+                    extra=_ingest_key_values(attempt.job.organization_id),
                 )
-            except Exception as exc:  # noqa: BLE001 - unsafe logs must not be persisted
-                attempt.diagnostics_error = f"redaction:{type(exc).__name__}"
-                attempt.save(update_fields=["diagnostics_error", "updated_at"])
-                logger.exception(
-                    "could not resolve diagnostics redaction inputs attempt=%s",
-                    attempt.id,
-                )
-                return None
+            secret_values = cache_attempt_redaction_values(
+                attempt.id, tuple(dict.fromkeys((*secret_values, *grant_values)))
+            )
+        except Exception as exc:  # noqa: BLE001 - unsafe logs must not be persisted
+            attempt.diagnostics_error = f"redaction:{type(exc).__name__}"
+            attempt.save(update_fields=["diagnostics_error", "updated_at"])
+            logger.warning("diagnostics redaction unavailable attempt=%s", attempt.id)
+            return None
         try:
             return poll_sandbox_diagnostics(
                 attempt,
@@ -6185,8 +6194,8 @@ def store_authoring_archive(
             locked.state = HostedHarnessJob.State.ADMITTED
             update_fields.extend(["stage_outputs", "current_stage", "state"])
         locked.save(update_fields=update_fields)
-    for name in update_fields:
-        setattr(job, name, getattr(locked, name))
+    for field in update_fields:
+        setattr(job, field, getattr(locked, field))
     return object_key
 
 

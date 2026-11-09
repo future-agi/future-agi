@@ -16,6 +16,10 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
     params_with_defaults_for_response,
 )
+from model_hub.utils.workspace_scope import (
+    explicit_workspace_filter,
+    knowledge_base_id_for,
+)
 from model_hub.views.utils.utils import (
     fetch_required_keys_for_eval_template,
     fetch_specific_mapping_for_specific_eval_template,
@@ -77,7 +81,13 @@ def _accessible_eval_template_filter(organization, workspace):
 
 
 def filter_eval_templates_for_group_scope(queryset, organization, workspace):
-    return queryset.filter(_accessible_eval_template_filter(organization, workspace))
+    # External templates (SRV-5) are scored by the caller and never executed,
+    # so they are never added to a group or applied from one.
+    from model_hub.models.evals_metric import EXTERNAL_EVAL_TYPE
+
+    return queryset.filter(
+        _accessible_eval_template_filter(organization, workspace)
+    ).exclude(eval_type=EXTERNAL_EVAL_TYPE)
 
 
 def get_accessible_eval_templates_by_ids(eval_template_ids, organization, workspace):
@@ -518,10 +528,15 @@ def apply_eval_group_to_dataset(
     if not dataset_id:
         raise Exception("Dataset id is required")
 
+    organization = get_current_organization() or user.organization
     try:
-        dataset = Dataset.objects.get(id=dataset_id)
+        dataset = Dataset.no_workspace_objects.filter(
+            explicit_workspace_filter(workspace), organization=organization, deleted=False,
+        ).get(id=dataset_id)
     except Dataset.DoesNotExist as e:
-        raise Exception("Dataset not found") from e
+        raise ValueError("Dataset not found") from e
+    if filters.get("kb_id") and knowledge_base_id_for(organization, workspace, filters["kb_id"]) is None:
+        raise ValueError("Knowledge base not found")
 
     eval_templates = _get_eval_templates_for_group(eval_group, deselected_evals)
 

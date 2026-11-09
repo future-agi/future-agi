@@ -145,9 +145,6 @@ def _queue_event(event: ErrorFeedIssueEvent) -> None:
                     pk=state.pk
                 )
             )
-            is_occurrences = rule.trigger_type == FeedAlertTrigger.OCCURRENCES_CROSSED
-            if is_occurrences and state.occurrences_high_water >= rule.trigger_value:
-                continue
             if (
                 state.last_queued_at
                 and event.created_at
@@ -168,11 +165,7 @@ def _queue_event(event: ErrorFeedIssueEvent) -> None:
             if created:
                 state.last_event = event
                 state.last_queued_at = event.created_at
-                fields = ["last_event", "last_queued_at", "updated_at"]
-                if is_occurrences:
-                    state.occurrences_high_water = event.after.get("occurrences", 0)
-                    fields.append("occurrences_high_water")
-                state.save(update_fields=fields)
+                state.save(update_fields=["last_event", "last_queued_at", "updated_at"])
         event.processed_at = timezone.now()
         event.save(update_fields=["processed_at", "updated_at"])
 

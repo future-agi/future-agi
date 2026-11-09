@@ -42,12 +42,10 @@ dependencies = [
     "humanize",
     "pydantic>=2.11.10",  # Use latest with thread-safety fixes
     "jsonpath-ng",
-    # >=3.10.3 clears the high-severity findings of TH-8370: remote code
-    # execution and unsafe pickle loading from a downloaded corpus, plus the
-    # path traversal and SSRF in nltk.download. The corpora the backend loads
-    # (stopwords, punkt_tab, averaged_perceptron_tagger_eng, wordnet) are
-    # unchanged, so bin/install_nltk_data.py keeps its revision and checksums.
-    "nltk>=3.10.3",
+    # T6 reviewed candidate: keep the backend, serving and executor aligned.
+    # Corpus formats remain compatible with bin/install_nltk_data.py's pinned
+    # archives. RestrictedPython containment remains a separate requirement.
+    "nltk==3.10.4",
     "retrying",
     # 1.84.0 is the first release to close CVE-2026-35030 and CVE-2026-49468
     # (auth bypass / privilege escalation / RCE); the 1.83.x fixes leave the
@@ -196,6 +194,9 @@ dependencies = [
     # pairs with the ffmpeg binary kept in the runtime image stage.
     "pydub",
     "audioop-lts>=0.2.2; python_version >= '3.13'",  # pydub on newer Python
+    # The Public Suffix List for webhook URL checks (webhooks/config.py); it came
+    # only through presidio-analyzer in the pii extra, so a base image had none.
+    "tldextract>=5.1",
     "livekit-api>=1.0.0",
     "livekit>=1.0.0",
     "retell-sdk",

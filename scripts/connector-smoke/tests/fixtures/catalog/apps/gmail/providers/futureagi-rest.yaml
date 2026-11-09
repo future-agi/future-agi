@@ -1,0 +1,85 @@
+# Fixture for the live-smoke runner's tests (scripts/connector-smoke), not
+# catalog data. Facts are illustrative; upstream.spec.sha256 pins
+# tests/fixtures/live/gmail-discovery.json, what the fake server serves.
+schema: "connector-manifest/v1#provider"
+app: gmail
+id: futureagi-rest
+version: 1.0.0
+kind: rest
+publisher: futureagi
+vendorStatus:
+  label: ga
+  source: https://developers.google.com/workspace/gmail/api
+transport:
+  kind: http
+  url: "https://{connectorsHost}/gmail/mcp"
+  variant: streamable
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://accounts.google.com/o/oauth2/v2/auth
+    tokenUrl: https://oauth2.googleapis.com/token
+    scopes:
+      - https://www.googleapis.com/auth/gmail.readonly
+      - https://www.googleapis.com/auth/gmail.compose
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    extraAuthorizeParams:
+      access_type: offline
+      prompt: consent
+      include_granted_scopes: "true"
+    refresh: { supported: true, rotates: false }
+    revocation:
+      url: https://oauth2.googleapis.com/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered]
+    clientGroup: google
+    review:
+      program: google_restricted_scopes
+      leadTime: P6W
+      source: https://support.google.com/cloud/answer/13463817
+  verify:
+    {
+      http:
+        {
+          method: GET,
+          url: https://gmail.googleapis.com/gmail/v1/users/me/profile,
+        },
+    }
+tools:
+  source: operations
+  defaultPosture: ask
+  generated: tools.generated.json
+retry: { "on": [429, 503], honorRetryAfter: true }
+pricing: { model: free }
+upstream:
+  spec:
+    url: https://gmail.googleapis.com/$discovery/rest?version=v1
+    format: google-discovery
+    sha256: 02e8a60b3bbd7289fe472694d798ceb9dc36fccc623569118afd1ef88a8dfc4d
+    licence: Google APIs Terms of Service
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.tokenUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.scopes
+    url: https://developers.google.com/workspace/gmail/api/auth/scopes
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.revocation.url
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-19
+  - fact: auth.verify.http.url
+    url: https://developers.google.com/workspace/gmail/api/reference/rest/v1/users/getProfile
+    fetchedAt: 2026-10-20

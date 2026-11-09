@@ -1,0 +1,6 @@
+{
+  "issuer": "https://app.example.com",
+  "subject": "7c9e2b1d-4a6f-4d8e-b0c1-3e5f7a9b1d2c",
+  "organizationId": "5d1e7f3a-2c4b-4e6d-8f9a-1b2c3d4e5f60",
+  "workspaceId": "3f6c1e2a-8b4d-4c6e-9a1f-2b7d5e8c0a14"
+}

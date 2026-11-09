@@ -16,7 +16,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import CallExecution, RunTest, TestExecution
-from simulate.selectors.runs import user_executions
 from simulate.serializers.preview_pagination import (
     SimulationCallPreviewCursorQuerySerializer,
     SimulationPreviewCursorQuerySerializer,
@@ -191,7 +190,7 @@ class RunTestPreviewExecutionsView(_SimulationPreviewBaseView):
             )
             _set_statement_timeout(deadline)
             return paginate_preview_snapshot(
-                user_executions().filter(run_test=run_test),
+                TestExecution.objects.filter(run_test=run_test, deleted=False),
                 kind=self.preview_kind,
                 parent_id=parent_id,
                 scope_id=None,

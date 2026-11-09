@@ -94,8 +94,11 @@ const KeyConfigDrawerChild = ({
 
   const filteredCustomModels = useMemo(() => {
     const search = searchDebounce.toLowerCase();
+    // The list answers snake_case (`user_model_id`), like Settings reads it.
     return (customModalsData?.results || []).filter((model) =>
-      model.userModelId?.toLowerCase().includes(search),
+      String(model.userModelId ?? model.user_model_id ?? "")
+        .toLowerCase()
+        .includes(search),
     );
   }, [searchDebounce, customModalsData]);
 

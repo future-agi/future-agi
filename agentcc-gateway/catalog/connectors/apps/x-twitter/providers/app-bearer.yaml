@@ -1,0 +1,53 @@
+# X's hosted MCP server (xmcp) over the X API, with an X app's App-only
+# Bearer token in the Authorization header. App-only access reaches the
+# read-only endpoints and has no user context, so this provider cannot act
+# as anyone: no posting, bookmarks or Articles. X's user-context OAuth needs
+# the customer's own X developer app, and api.x.com/mcp advertises no MCP
+# OAuth discovery, so it is not offered here. Each call is an X API request,
+# billed to the app's pay-per-use credits.
+schema: "connector-manifest/v1#provider"
+app: x-twitter
+id: app-bearer
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.x.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: App-only Bearer token
+      help: "Your X app's App-only Bearer token (X Developer Portal > your app > Keys and tokens). Read-only endpoints; calls spend the app's X API credits."
+      helpUrl: https://docs.x.com/tools/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  notes: "Each tool call is an X API request, billed per use to the X app's credits."
+  source: https://docs.x.com/x-api/getting-started/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.x.com/tools/mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.x.com/tools/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.x.com/tools/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.x.com/tools/mcp
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

@@ -22,10 +22,11 @@ spec:
         {{- with $e.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with $e.podAnnotations }}
       annotations:
+        container.apparmor.security.beta.kubernetes.io/code-executor: unconfined
+        {{- with omit $e.podAnnotations "container.apparmor.security.beta.kubernetes.io/code-executor" }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       # No service account token and no platform secrets: eval code runs here.
       serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
@@ -60,13 +61,37 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml $e.resources | nindent 12 }}
-          # nsjail creates Linux namespaces for each run, which needs a
-          # privileged container. Each run gets its own PID, mount, user, IPC,
-          # UTS and cgroup namespaces, rlimits and a read-only root, and runs
-          # as uid 0 with every capability dropped. There is no seccomp filter,
-          # and the run shares the pod's network (server.py passes nsjail -N).
+          # File capabilities enable only the fixed init launcher. It sets
+          # no_new_privs and drops ALL capabilities before execing the server.
+          # nsjail creates its mount isolation inside an unprivileged user namespace.
           securityContext:
-            privileged: true
+            privileged: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: true
+            capabilities:
+              drop: [ALL]
+              add: [NET_ADMIN]
+            seccompProfile:
+              type: Unconfined
+          volumeMounts:
+            - name: executor-tmp
+              mountPath: /tmp
+            - name: executor-scripts
+              mountPath: /sandbox/scripts
+      securityContext:
+        fsGroup: 65534
+      volumes:
+        - name: executor-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+        - name: executor-scripts
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service

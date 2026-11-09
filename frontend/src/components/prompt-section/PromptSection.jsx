@@ -84,10 +84,11 @@ export const PromptSection = ({
         });
       }
 
-      // Add indexed options for images-type columns (maxImagesCount comes from jsonSchemas)
+      // Add indexed options for images-type columns (json-schema sends
+      // max_images_count)
       const imagesSchema = jsonSchemas?.[col?.field];
-      if (col?.dataType === "images" && imagesSchema?.maxImagesCount) {
-        for (let idx = 0; idx < imagesSchema.maxImagesCount; idx++) {
+      if (col?.dataType === "images" && imagesSchema?.max_images_count) {
+        for (let idx = 0; idx < imagesSchema.max_images_count; idx++) {
           expandedOptions.push({
             ...col,
             headerName: `${col.headerName}[${idx}]`,

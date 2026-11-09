@@ -8,11 +8,12 @@ from django.db.models import Count
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
+from common.utils.page_limits import enforce_page_size, page_bounds
 from tfc.ee_loader import is_cloud_env
 from tfc.middleware.db_health_check import db_connection_required
 from tfc.middleware.query_timeout import monitor_query_performance
@@ -29,6 +30,7 @@ from tracer.models.project import Project
 from tracer.models.trace_scan import TraceScanConfig
 from tracer.queries.projects import apply_project_list_filters
 from tracer.serializers.filters import (
+    ObserveGraphDataErrorResponseSerializer,
     ObserveGraphDataQuerySerializer,
     ObserveGraphDataResponseSerializer,
 )
@@ -41,6 +43,7 @@ from tracer.serializers.project import (
     ProjectListResponseSerializer,
     ProjectNameUpdateSerializer,
     ProjectSerializer,
+    ProjectTableApiResponseSerializer,
     ProjectUserGraphDataQuerySerializer,
     ProjectUserGraphDataRequestSerializer,
     ProjectUserGraphDataResponseSerializer,
@@ -212,7 +215,9 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     def _workspace_scope_q(self):
         workspace = getattr(self.request, "workspace", None)
         if not workspace:
-            return models.Q()
+            from tfc.utils.workspace_scope import empty_workspace_filter
+
+            return empty_workspace_filter()
 
         if getattr(workspace, "is_default", False):
             return (
@@ -288,12 +293,14 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     @validated_request(
         query_serializer=ProjectViewSetListQuerySerializer,
         auto_schema=ExplicitQueryAutoSchema,
+        responses={200: ProjectTableApiResponseSerializer},
     )
     def list(self, request, *args, **kwargs):
         """
         Get a paginated list of all projects for the organization.
         """
         try:
+            enforce_page_size(request.query_params.get("page_size"))
             # Get base queryset
             queryset = self.get_queryset()
 
@@ -303,8 +310,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             # Apply pagination
             page_number = request.validated_query_data["page_number"]
             page_size = request.validated_query_data["page_size"]
-            start = page_number * page_size
-            end = start + page_size
+            start, end = page_bounds(page_number, page_size, total_count)
 
             # Get paginated queryset with trace counts and run counts
             # Use distinct=True to avoid cartesian join between traces and versions
@@ -337,6 +343,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 {"projects": serializer.data, "total_count": total_count}
             )
 
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching the project list: {str(e)}")
 
@@ -969,7 +977,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         log_event="project_user_metrics_action_deadline_exceeded",
         unavailable_message="User metrics are temporarily unavailable. Please retry.",
     )
-    @validated_request(request_serializer=ProjectUserMetricsRequestSerializer)
+    # success_envelope: the static envelope analysis cannot follow the nested
+    # finish() closure, so declare the success_response() envelope (HTTP 200)
+    # this action answers. Schema only; runtime validation is unchanged.
+    @validated_request(
+        request_serializer=ProjectUserMetricsRequestSerializer,
+        success_envelope=True,
+    )
     @action(detail=False, methods=["post"])
     def get_user_metrics(self, request, *args, **kwargs):
         deadline = kwargs.pop("_graph_action_deadline", None)
@@ -1087,7 +1101,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             200: ObserveGraphDataResponseSerializer,
             400: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
-            503: ApiErrorResponseSerializer,
+            503: ObserveGraphDataErrorResponseSerializer,
         },
     )
     @action(detail=False, methods=["post"])
@@ -1172,10 +1186,24 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         graph_data,
                         allow_sampled=False,
                     ):
+                        logger.warning(
+                            "project_users_graph_degraded",
+                            query_error_code=graph_data.get("query_error_code"),
+                            project_id=project_id,
+                            eval_config_id=None,
+                        )
+                        graph_data = {
+                            **graph_data,
+                            "data": [],
+                            "query_complete": False,
+                            "query_status": "degraded",
+                            "query_sampled": False,
+                            "message": "User graph data is temporarily unavailable. Please retry.",
+                        }
                         return finish(
                             self._gm.custom_error_response(
                                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                                "User graph data is temporarily unavailable. Please retry.",
+                                graph_data,
                                 code="service_unavailable",
                             )
                         )
@@ -1245,10 +1273,24 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     graph_data,
                     allow_sampled=False,
                 ):
+                    logger.warning(
+                        "project_users_graph_degraded",
+                        query_error_code=graph_data.get("query_error_code"),
+                        project_id=project_id,
+                        eval_config_id=metric_id if metric_type == "EVAL" else None,
+                    )
+                    graph_data = {
+                        **graph_data,
+                        "data": [],
+                        "query_complete": False,
+                        "query_status": "degraded",
+                        "query_sampled": False,
+                        "message": "User graph data is temporarily unavailable. Please retry.",
+                    }
                     return finish(
                         self._gm.custom_error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "User graph data is temporarily unavailable. Please retry.",
+                            graph_data,
                             code="service_unavailable",
                         )
                     )

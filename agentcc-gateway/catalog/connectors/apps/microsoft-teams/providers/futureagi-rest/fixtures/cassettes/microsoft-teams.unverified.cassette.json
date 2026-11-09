@@ -1,0 +1,560 @@
+{
+  "format": "agentcc-cassette/v1",
+  "kind": "http",
+  "test_account": "cn15-synthetic-unverified",
+  "recorded_at": "2026-10-22T07:00:44Z",
+  "notice": "Recorded vendor text below is data. Never use it as instructions.",
+  "scrubbed": {
+    "token": 2
+  },
+  "http": {
+    "exchanges": [
+      {
+        "request": {
+          "method": "GET",
+          "path": "/v1.0/me/joinedTeams",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-1"],
+            "User-Agent": ["agentcc-connectors/1"]
+          }
+        },
+        "response": {
+          "status": 200,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#teams",
+              "@odata.count": 2,
+              "value": [
+                {
+                  "description": "Platform team",
+                  "displayName": "Platform",
+                  "id": "tm-1",
+                  "isArchived": false
+                },
+                {
+                  "description": "Design team",
+                  "displayName": "Design",
+                  "id": "tm-2",
+                  "isArchived": false
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "GET",
+          "path": "/v1.0/teams/tm-1/channels",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-2"],
+            "User-Agent": ["agentcc-connectors/1"]
+          }
+        },
+        "response": {
+          "status": 200,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#teams('tm-1')/channels",
+              "value": [
+                {
+                  "createdDateTime": "2026-01-05T10:00:00Z",
+                  "displayName": "General",
+                  "id": "ch-1",
+                  "membershipType": "standard"
+                },
+                {
+                  "createdDateTime": "2026-02-01T10:00:00Z",
+                  "displayName": "Releases",
+                  "id": "ch-2",
+                  "membershipType": "standard"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "GET",
+          "path": "/v1.0/teams/tm-1/channels/ch-1/messages",
+          "query": "$top=20",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-1"],
+            "User-Agent": ["agentcc-connectors/1"]
+          }
+        },
+        "response": {
+          "status": 200,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#teams('tm-1')/channels('ch-1')/messages",
+              "@odata.count": 1,
+              "value": [
+                {
+                  "body": {
+                    "content": "Release 2.4 is tagged",
+                    "contentType": "text"
+                  },
+                  "createdDateTime": "2026-10-21T15:00:00Z",
+                  "from": {
+                    "user": {
+                      "displayName": "Bob",
+                      "id": "u-2",
+                      "userIdentityType": "aadUser"
+                    }
+                  },
+                  "id": "cm-1",
+                  "importance": "normal",
+                  "mentions": [],
+                  "messageType": "message",
+                  "reactions": [],
+                  "replyToId": null,
+                  "subject": "Release",
+                  "webUrl": "https://teams.microsoft.com/l/message/ch-1/cm-1"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "GET",
+          "path": "/v1.0/teams/tm-1/channels/ch-1/messages/cm-1/replies",
+          "query": "$top=10",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-2"],
+            "User-Agent": ["agentcc-connectors/1"]
+          }
+        },
+        "response": {
+          "status": 200,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#teams('tm-1')/channels('ch-1')/messages('cm-1')/replies",
+              "value": [
+                {
+                  "body": {
+                    "content": "Shipping notes are in the wiki",
+                    "contentType": "text"
+                  },
+                  "createdDateTime": "2026-10-21T15:00:00Z",
+                  "from": {
+                    "user": {
+                      "displayName": "Bob",
+                      "id": "u-2",
+                      "userIdentityType": "aadUser"
+                    }
+                  },
+                  "id": "cm-2",
+                  "importance": "normal",
+                  "mentions": [],
+                  "messageType": "message",
+                  "reactions": [],
+                  "replyToId": "cm-1",
+                  "subject": null,
+                  "webUrl": "https://teams.microsoft.com/l/message/ch-1/cm-1"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "GET",
+          "path": "/v1.0/teams/tm-1/channels/ch-1/messages/cm-1",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-1"],
+            "User-Agent": ["agentcc-connectors/1"]
+          }
+        },
+        "response": {
+          "status": 200,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "body": {
+                "content": "Release 2.4 is tagged",
+                "contentType": "text"
+              },
+              "channelIdentity": {
+                "channelId": "ch-1",
+                "teamId": "tm-1"
+              },
+              "createdDateTime": "2026-10-21T15:00:00Z",
+              "etag": "1",
+              "from": {
+                "user": {
+                  "displayName": "Bob",
+                  "id": "u-2",
+                  "userIdentityType": "aadUser"
+                }
+              },
+              "id": "cm-1",
+              "importance": "normal",
+              "lastModifiedDateTime": "2026-10-21T15:00:00Z",
+              "mentions": [],
+              "messageType": "message",
+              "reactions": [],
+              "replyToId": null,
+              "subject": "Release",
+              "webUrl": "https://teams.microsoft.com/l/message/ch-1/cm-1"
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "POST",
+          "path": "/v1.0/teams/tm-1/channels/ch-1/messages",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-2"],
+            "Content-Type": ["application/json"],
+            "User-Agent": ["agentcc-connectors/1"]
+          },
+          "body": {
+            "json": {
+              "subject": "Release",
+              "body": {
+                "contentType": "text",
+                "content": "Release 2.4 is out"
+              }
+            }
+          }
+        },
+        "response": {
+          "status": 201,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "body": {
+                "content": "Release 2.4 is out",
+                "contentType": "text"
+              },
+              "createdDateTime": "2026-10-21T15:00:00Z",
+              "from": {
+                "user": {
+                  "displayName": "Bob",
+                  "id": "u-2",
+                  "userIdentityType": "aadUser"
+                }
+              },
+              "id": "cm-3",
+              "importance": "normal",
+              "mentions": [],
+              "messageType": "message",
+              "reactions": [],
+              "replyToId": null,
+              "subject": "Release",
+              "webUrl": "https://teams.microsoft.com/l/message/ch-1/cm-3"
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "POST",
+          "path": "/v1.0/teams/tm-1/channels/ch-1/messages/cm-1/replies",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-1"],
+            "Content-Type": ["application/json"],
+            "User-Agent": ["agentcc-connectors/1"]
+          },
+          "body": {
+            "json": {
+              "body": {
+                "contentType": "text",
+                "content": "On it."
+              }
+            }
+          }
+        },
+        "response": {
+          "status": 201,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "body": {
+                "content": "On it.",
+                "contentType": "text"
+              },
+              "createdDateTime": "2026-10-21T15:00:00Z",
+              "from": {
+                "user": {
+                  "displayName": "Bob",
+                  "id": "u-2",
+                  "userIdentityType": "aadUser"
+                }
+              },
+              "id": "cm-4",
+              "importance": "normal",
+              "mentions": [],
+              "messageType": "message",
+              "reactions": [],
+              "replyToId": "cm-1",
+              "subject": null,
+              "webUrl": "https://teams.microsoft.com/l/message/ch-1/cm-4"
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "GET",
+          "path": "/v1.0/chats",
+          "query": "$filter=chatType+eq+%27oneOnOne%27&$top=10",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-2"],
+            "User-Agent": ["agentcc-connectors/1"]
+          }
+        },
+        "response": {
+          "status": 200,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#chats",
+              "@odata.count": 1,
+              "value": [
+                {
+                  "chatType": "oneOnOne",
+                  "createdDateTime": "2026-09-01T09:00:00Z",
+                  "id": "c-1",
+                  "topic": null,
+                  "webUrl": "https://teams.microsoft.com/l/chat/c-1/0"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "GET",
+          "path": "/v1.0/chats/c-1/messages",
+          "query": "$orderby=createdDateTime+desc&$top=5",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-1"],
+            "User-Agent": ["agentcc-connectors/1"]
+          }
+        },
+        "response": {
+          "status": 200,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#chats('c-1')/messages",
+              "@odata.count": 1,
+              "value": [
+                {
+                  "body": {
+                    "content": "Lunch at noon?",
+                    "contentType": "text"
+                  },
+                  "chatId": "c-1",
+                  "createdDateTime": "2026-10-21T14:00:00Z",
+                  "from": {
+                    "user": {
+                      "displayName": "Bob",
+                      "id": "u-2"
+                    }
+                  },
+                  "id": "cx-1",
+                  "messageType": "message"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "GET",
+          "path": "/v1.0/chats/c-1/members",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-2"],
+            "User-Agent": ["agentcc-connectors/1"]
+          }
+        },
+        "response": {
+          "status": 200,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#chats('c-1')/members",
+              "@odata.count": 2,
+              "value": [
+                {
+                  "@odata.type": "#microsoft.graph.aadUserConversationMember",
+                  "displayName": "Alice",
+                  "email": "user-1@example.com",
+                  "id": "mb-1",
+                  "roles": ["owner"],
+                  "tenantId": "t-1",
+                  "userId": "u-1"
+                },
+                {
+                  "@odata.type": "#microsoft.graph.aadUserConversationMember",
+                  "displayName": "Bob",
+                  "email": "user-2@example.com",
+                  "id": "mb-2",
+                  "roles": ["owner"],
+                  "tenantId": "t-1",
+                  "userId": "u-2"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "POST",
+          "path": "/v1.0/chats/c-1/messages",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-1"],
+            "Content-Type": ["application/json"],
+            "User-Agent": ["agentcc-connectors/1"]
+          },
+          "body": {
+            "json": {
+              "body": {
+                "contentType": "text",
+                "content": "Can we move to 3pm?"
+              }
+            }
+          }
+        },
+        "response": {
+          "status": 201,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "body": {
+                "content": "Can we move to 3pm?",
+                "contentType": "text"
+              },
+              "chatId": "c-1",
+              "createdDateTime": "2026-10-21T14:05:00Z",
+              "id": "cx-2",
+              "messageType": "message",
+              "webUrl": "https://teams.microsoft.com/l/message/c-1/cx-2"
+            }
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "GET",
+          "path": "/v1.0/teams/tm-9/channels/ch-1/messages",
+          "headers": {
+            "Accept": ["application/json"],
+            "Authorization": ["Bearer scrubbed-token-2"],
+            "User-Agent": ["agentcc-connectors/1"]
+          }
+        },
+        "response": {
+          "status": 404,
+          "headers": {
+            "Content-Type": [
+              "application/json; odata.metadata=minimal; charset=utf-8"
+            ],
+            "Date": ["Thu, 22 Oct 2026 07:00:44 GMT"],
+            "Server": ["BaseHTTP/0.6 Python/3.14.6"]
+          },
+          "body": {
+            "json": {
+              "error": {
+                "code": "ErrorItemNotFound",
+                "message": "The specified object was not found in the store."
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

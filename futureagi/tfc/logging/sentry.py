@@ -21,6 +21,12 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from .checkout import (
+    find_checkout_values,
+    scrub_checkout_event,
+    scrub_checkout_payload,
+)
+
 # Environment detection
 ENV_TYPE = os.getenv("ENV_TYPE", "local")
 IS_PRODUCTION = ENV_TYPE in ("prod", "production")
@@ -118,6 +124,33 @@ SENSITIVE_KEY_SUBSTRINGS = (
 )
 _REDACTED = "[Filtered]"
 
+# Request paths whose body carries an MCP server's or a connector's secret in
+# clear: the MCP credential vault's create and rotate, the catalogue add and
+# the connection probe. The secret travels under names (``value``,
+# ``credential``, ``auth``) the key scrubber above cannot tell from ordinary
+# ones, so a report of such a request carries neither its body nor any frame's
+# local variables. Matched as substrings of the request URL, as the telemetry
+# paths are.
+MCP_SECRET_PATH_MARKERS = (
+    "/agentcc/mcp/credentials/",
+    "/agentcc/connectors/apps/",
+    "/agentcc/mcp/probe/",
+)
+
+# Exact names (case-insensitive) that hold an MCP or connector secret, or a
+# raw gateway key, in clear in the app's own agentcc code: the vault's
+# ``value`` (its writes and the push's assembly), the catalogue add's
+# ``credential``, and a new gateway key as ``raw_key`` and as ``key`` in the
+# gateway's answer to its create (auth_bridge.provision_key, which the API
+# keys page and the Omega EE agent key mint both call), nested in a dict as
+# well. Redacted in the variables of agentcc frames only, wherever the request
+# came from (a push runs from many routes and from tasks); elsewhere these are
+# ordinary names.
+AGENTCC_SECRET_NAMES = frozenset(
+    {"value", "credential", "credentials", "raw_key", "key"}
+)
+_AGENTCC_MODULE_PREFIX = "agentcc."
+
 # Sample rates - configurable via env, lower in production to reduce costs
 # Production: 10% sampling, Staging: 100% sampling
 TRACES_SAMPLE_RATE = float(
@@ -159,6 +192,62 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     return value
 
 
+def _scrub_names(value: Any, names: frozenset, depth: int = 0) -> Any:
+    """Recursively redact values under keys named exactly as one of ``names``."""
+    if depth > 6:
+        return value
+    if isinstance(value, dict):
+        return {
+            k: (
+                _REDACTED
+                if isinstance(k, str) and k.lower() in names
+                else _scrub_names(v, names, depth + 1)
+            )
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_scrub_names(v, names, depth + 1) for v in value]
+    return value
+
+
+def _stack_frames(event: dict):
+    """Every stack frame an event carries: its exceptions' and, with
+    attach_stacktrace on, its threads' (a logged error's stack)."""
+    for section in ("exception", "threads"):
+        container = event.get(section)
+        if not isinstance(container, dict):
+            continue
+        for value in container.get("values") or []:
+            if not isinstance(value, dict):
+                continue
+            stacktrace = value.get("stacktrace")
+            if not isinstance(stacktrace, dict):
+                continue
+            for frame in stacktrace.get("frames") or []:
+                if isinstance(frame, dict):
+                    yield frame
+
+
+def _is_mcp_secret_url(url: object) -> bool:
+    """True when ``url`` is one of the routes whose body carries an MCP or
+    connector secret (``MCP_SECRET_PATH_MARKERS``)."""
+    if not url:
+        return False
+    return any(marker in str(url) for marker in MCP_SECRET_PATH_MARKERS)
+
+
+def _strip_mcp_secret_request(event: dict) -> dict:
+    """Drop the request body and every frame's variables from a report of a
+    request to an MCP secret route; any other event is left as it is."""
+    request = event.get("request")
+    if not isinstance(request, dict) or not _is_mcp_secret_url(request.get("url")):
+        return event
+    request.pop("data", None)
+    for frame in _stack_frames(event):
+        frame.pop("vars", None)
+    return event
+
+
 def _scrub_event(event: dict) -> None:
     """
     Redact obvious secrets/PII in-place before the event leaves the process.
@@ -190,17 +279,16 @@ def _scrub_event(event: dict) -> None:
     # uncaught error in the ACS candidate-store path leaves the raw assertion
     # in the view's stack frame; redact those vars the same way as request data
     # so the assertion body never leaves the process (review finding 1, B7).
-    exception = event.get("exception")
-    if isinstance(exception, dict):
-        for value in exception.get("values") or []:
-            if not isinstance(value, dict):
-                continue
-            stacktrace = value.get("stacktrace")
-            if not isinstance(stacktrace, dict):
-                continue
-            for frame in stacktrace.get("frames") or []:
-                if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
-                    frame["vars"] = _scrub(frame["vars"])
+    # The app's agentcc frames also lose the names that hold an MCP or
+    # connector secret there (AGENTCC_SECRET_NAMES), and a logged error's
+    # stack (attach_stacktrace) is scrubbed like an exception's.
+    for frame in _stack_frames(event):
+        if not isinstance(frame.get("vars"), dict):
+            continue
+        frame["vars"] = _scrub(frame["vars"])
+        module = frame.get("module")
+        if isinstance(module, str) and module.startswith(_AGENTCC_MODULE_PREFIX):
+            frame["vars"] = _scrub_names(frame["vars"], AGENTCC_SECRET_NAMES)
 
 
 def _event_message(event: dict) -> str:
@@ -282,7 +370,11 @@ def _get_before_send() -> Callable:
     """
 
     def before_send(event: dict, hint: dict) -> dict | None:
+        # Snapshot before body/local removal can delete the only URL carrier.
+        # Discovery reads original names without rewriting schema-sensitive keys.
+        checkout_values = find_checkout_values(event)
         event = _scrub_deployment_telemetry_event(event)
+        event = _strip_mcp_secret_request(event)
 
         # 1. Infrastructure logger noise - never actionable as an issue.
         logger_name = event.get("logger") or ""
@@ -315,16 +407,26 @@ def _get_before_send() -> Callable:
         if message and any(s in message for s in IGNORED_MESSAGE_SUBSTRINGS):
             return None
 
-        # 4. Scrub secrets/PII from the surviving event.
+        # 4. Preserve field names until schema-sensitive scrubbing has run:
+        # checkout correlation can rename raw_key/key and other secret fields.
         try:
             _scrub_event(event)
         except Exception:
             # Never let scrubbing failures drop a real error.
             pass
 
-        return event
+        return scrub_checkout_event(None, None, event, values=checkout_values)
 
     return before_send
+
+
+def _before_send_transaction(event: dict, hint: dict) -> dict:
+    """The before_send_transaction hook: a transaction carries its request's
+    body too, so the telemetry and MCP secret routes lose it here as well."""
+    checkout_values = find_checkout_values(event)
+    event = _scrub_deployment_telemetry_event(event)
+    event = _strip_mcp_secret_request(event)
+    return scrub_checkout_payload(event, values=checkout_values)
 
 
 def _get_traces_sampler() -> Callable:
@@ -506,8 +608,9 @@ def init_sentry(
             in_app_exclude=["celery", "kombu", "temporalio", "django"],
             # Hooks
             before_send=_get_before_send(),
-            before_send_transaction=lambda event, hint: (
-                _scrub_deployment_telemetry_event(event)
+            before_send_transaction=_before_send_transaction,
+            before_breadcrumb=lambda breadcrumb, hint: scrub_checkout_payload(
+                breadcrumb
             ),
             # Debug mode in staging for troubleshooting
             debug=IS_STAGING,

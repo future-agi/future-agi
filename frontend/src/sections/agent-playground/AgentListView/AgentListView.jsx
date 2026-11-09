@@ -26,6 +26,12 @@ import {
   useDeleteGraphs,
 } from "../../../api/agent-playground/agent-playground";
 
+import { isPrototypeMode } from "src/utils/prototype";
+
+// L7c merge (walk sv2-run-cd d02): Create Agent posts an unmocked
+// /agent-playground/graphs/ and opens a builder with no version, so the
+// prototype build offers no Create Agent (the seeded Support Agent stays).
+
 const PAGE_SIZE_DEFAULT = 25;
 
 const mapGraph = (graph) => {
@@ -435,32 +441,34 @@ export default function AgentListView({ embedded = false }) {
             >
               View Docs
             </Button>
-            <CustomTooltip
-              show={!canCreateAgent}
-              type=""
-              size="small"
-              title="You don't have permission to create agents."
-              arrow
-            >
-              <span>
-                <LoadingButton
-                  variant="contained"
-                  color="primary"
-                  size="small"
-                  loading={isCreatingAgent}
-                  onClick={() => createAgent()}
-                  disabled={!canCreateAgent}
-                  startIcon={
-                    <SvgColor
-                      src="/assets/icons/ic_add.svg"
-                      sx={{ height: 20, width: 20 }}
-                    />
-                  }
-                >
-                  Create Agent
-                </LoadingButton>
-              </span>
-            </CustomTooltip>
+            {isPrototypeMode() ? null : (
+              <CustomTooltip
+                show={!canCreateAgent}
+                type=""
+                size="small"
+                title="You don't have permission to create agents."
+                arrow
+              >
+                <span>
+                  <LoadingButton
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    loading={isCreatingAgent}
+                    onClick={() => createAgent()}
+                    disabled={!canCreateAgent}
+                    startIcon={
+                      <SvgColor
+                        src="/assets/icons/ic_add.svg"
+                        sx={{ height: 20, width: 20 }}
+                      />
+                    }
+                  >
+                    Create Agent
+                  </LoadingButton>
+                </span>
+              </CustomTooltip>
+            )}
           </Box>
         )}
       </Box>

@@ -148,4 +148,11 @@ def test_sqs_failed_sync_keeps_checkpoint(integration_connection, sqs, sender_fa
     assert connection.status == ConnectionStatus.ERROR
     sync_log = SyncLog.objects.get(connection=connection)
     assert sync_log.status == SyncStatus.FAILED
-    assert "SQS" in sync_log.error_message
+    # The acting tree stores only the sanitised export failure: the fixed
+    # sentence and its category, never vendor codes or raw exception text.
+    assert sync_log.error_details["kind"] == "unexpected"
+    assert sync_log.error_message.startswith(
+        "The export to Message Queue stopped on an unexpected error."
+    )
+    for vendor_text in ("SQS", "InternalError", "InvalidMessageContents"):
+        assert vendor_text not in sync_log.error_message

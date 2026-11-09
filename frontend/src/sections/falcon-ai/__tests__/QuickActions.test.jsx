@@ -16,6 +16,12 @@ vi.mock("src/components/iconify", () => ({
   default: MockIconify,
 }));
 
+// The real app keeps its five chips; prototype starters are removed by 749.
+const mode = vi.hoisted(() => ({ prototype: false }));
+vi.mock("src/utils/prototype", () => ({
+  isPrototypeMode: () => mode.prototype,
+}));
+
 describe("QuickActions", () => {
   it("renders 5 quick action chips", () => {
     render(<QuickActions onAction={vi.fn()} />);
@@ -40,6 +46,26 @@ describe("QuickActions", () => {
     const sent = onAction.mock.calls[0][0];
     expect(sent).toMatch(/Build a dataset from my traces/i);
     expect(sent.length).toBeGreaterThan(80);
+  });
+
+  // Ruling 749 removes the prototype-only comparison starter, not real actions.
+  it("shows no quick actions in prototype mode (749)", () => {
+    mode.prototype = true;
+    const onAction = vi.fn();
+    render(<QuickActions onAction={onAction} />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    [
+      "Analyse my error feed",
+      "Create an Imagine view",
+      "Build a dataset",
+      "Create an evaluation",
+      "Run simulation for my agent",
+    ].forEach((label) => expect(screen.queryByText(label)).toBeNull());
+    expect(
+      screen.queryByText("Is my latest agent better than the previous one?"),
+    ).toBeNull();
+    expect(onAction).not.toHaveBeenCalled();
+    mode.prototype = false;
   });
 
   it("handles missing onAction prop gracefully", () => {

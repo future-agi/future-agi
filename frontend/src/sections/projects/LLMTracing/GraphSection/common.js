@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import _ from "lodash";
 
 const yAxisUnitGroups = {
@@ -32,7 +33,7 @@ export const formatYAxisValue = (value, selectedGraphProperty) => {
   const key = _.toLower(selectedGraphProperty);
 
   const formatRules = {
-    cost: (v) => Number(v).toFixed(6),
+    cost: (v) => formatExactMoney(v, { prefix: "", minimumFractionDigits: 6 }),
   };
 
   const formatter = formatRules[key] || ((v) => v.toString());

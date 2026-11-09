@@ -1,0 +1,282 @@
+{
+  "note": "Claim sets for registry-705-claims.test.js. Each case replaces every WORKS slot (XP, RES, IN, ORG, GRID, EVAL, COLLAB, SRC) of madeReal.js, in the module the launch switch imports and in its source text, with exactly these entries. flows lists e2e/FLOWS.md headings the case adds (FIXTURE-E2E-* walks exist only here). moduleOnly puts a claim in the module but outside the marked source; leak adds an id to the set the switch reads that no slot claims. rejects lists what the contract must report. The real slots are never edited.",
+  "valid": {
+    "t-in-upload": {
+      "why": "T-IN (feat/dsx-works-t-in at c1c6f8c45a): Create from a local file, proven by the two-organization walk DATA-E2E-003.",
+      "claims": {
+        "IN": [
+          {
+            "id": "dataset.upload",
+            "comment": "DATA-E2E-003: two-organization CSV upload and readback."
+          }
+        ]
+      },
+      "flows": [
+        "### DATA-E2E-003 — a file upload persists exact rows within its organization and workspace"
+      ],
+      "shows": ["dataset.upload"]
+    },
+    "collab-comments-host": {
+      "why": "A comments claim shows its surface and the shared Row view Activity host, and frees their deep-link keys.",
+      "claims": {
+        "COLLAB": [
+          {
+            "id": "dataset.collab.comments",
+            "comment": "FIXTURE-E2E-001: two-organization comment thread."
+          }
+        ]
+      },
+      "flows": ["### FIXTURE-E2E-001 — fixture walk (injected; not a flow)"],
+      "shows": ["dataset.collab.comments", "dataset.rowTab.activity"]
+    },
+    "xp-child-under-basic": {
+      "why": "An experiments child shows only under its shown parent, so only with experimentsBasic.",
+      "claims": {
+        "XP": [
+          {
+            "id": "exp.new.scope",
+            "comment": "FIXTURE-E2E-002: two-organization scoped run."
+          }
+        ]
+      },
+      "flows": ["### FIXTURE-E2E-002 — fixture walk (injected; not a flow)"],
+      "shows": ["exp.new.scope"],
+      "showsOnlyWithBasic": true
+    },
+    "grid-splits-with-path": {
+      "why": "A claim and the DSX prototype endpoint it backs, both with the walk.",
+      "claims": {
+        "GRID": [
+          {
+            "id": "dataset.splits",
+            "comment": "FIXTURE-E2E-003: two-organization splits."
+          }
+        ]
+      },
+      "paths": {
+        "GRID": [
+          {
+            "id": "/model-hub/datasets/{dataset_id}/splits/",
+            "comment": "FIXTURE-E2E-003: two-organization splits."
+          }
+        ]
+      },
+      "flows": ["### FIXTURE-E2E-003 — fixture walk (injected; not a flow)"],
+      "shows": ["dataset.splits"]
+    }
+  },
+  "invalid": {
+    "unknown-id": {
+      "claims": {
+        "IN": [
+          {
+            "id": "dataset.uploadCsv",
+            "comment": "DATA-E2E-003: two-organization CSV upload and readback."
+          }
+        ]
+      },
+      "flows": [
+        "### DATA-E2E-003 — a file upload persists exact rows within its organization and workspace"
+      ],
+      "rejects": [
+        { "code": "unknown-id", "slot": "IN", "value": "dataset.uploadCsv" }
+      ]
+    },
+    "duplicate-across-slots": {
+      "claims": {
+        "IN": [
+          {
+            "id": "dataset.upload",
+            "comment": "DATA-E2E-003: two-organization CSV upload and readback."
+          }
+        ],
+        "ORG": [
+          {
+            "id": "dataset.upload",
+            "comment": "DATA-E2E-003: two-organization CSV upload and readback."
+          }
+        ]
+      },
+      "flows": [
+        "### DATA-E2E-003 — a file upload persists exact rows within its organization and workspace"
+      ],
+      "rejects": [
+        {
+          "code": "wrong-slot",
+          "slot": "ORG",
+          "value": "dataset.upload",
+          "detail": "IN"
+        },
+        {
+          "code": "duplicate",
+          "slot": "ORG",
+          "value": "dataset.upload",
+          "detail": "IN"
+        }
+      ]
+    },
+    "results-activation-id": {
+      "claims": {
+        "RES": [
+          {
+            "id": "exp.results.matrix",
+            "comment": "FIXTURE-E2E-001: two-organization results matrix."
+          }
+        ]
+      },
+      "flows": ["### FIXTURE-E2E-001 — fixture walk (injected; not a flow)"],
+      "rejects": [
+        { "code": "results-id", "slot": "RES", "value": "exp.results.matrix" }
+      ]
+    },
+    "missing-walk-id": {
+      "claims": {
+        "IN": [
+          {
+            "id": "dataset.upload",
+            "comment": "two-organization CSV upload and readback."
+          }
+        ]
+      },
+      "rejects": [
+        { "code": "missing-walk", "slot": "IN", "value": "dataset.upload" }
+      ]
+    },
+    "walk-id-not-in-flows": {
+      "claims": {
+        "IN": [
+          {
+            "id": "dataset.upload",
+            "comment": "DATA-E2E-999: two-organization CSV upload and readback."
+          }
+        ]
+      },
+      "rejects": [
+        {
+          "code": "unknown-walk",
+          "slot": "IN",
+          "value": "dataset.upload",
+          "detail": "DATA-E2E-999"
+        }
+      ]
+    },
+    "legacy-claimed-id": {
+      "claims": {
+        "ORG": [
+          {
+            "id": "list.real",
+            "comment": "FIXTURE-E2E-001: two-organization dataset list."
+          }
+        ]
+      },
+      "flows": ["### FIXTURE-E2E-001 — fixture walk (injected; not a flow)"],
+      "rejects": [
+        {
+          "code": "wrong-slot",
+          "slot": "ORG",
+          "value": "list.real",
+          "detail": "L1"
+        },
+        { "code": "legacy-id", "slot": "ORG", "value": "list.real" }
+      ]
+    },
+    "shared-host-claimed": {
+      "claims": {
+        "COLLAB": [
+          {
+            "id": "dataset.rowTab.activity",
+            "comment": "FIXTURE-E2E-001: two-organization activity."
+          }
+        ]
+      },
+      "flows": ["### FIXTURE-E2E-001 — fixture walk (injected; not a flow)"],
+      "rejects": [
+        {
+          "code": "shared-host",
+          "slot": "COLLAB",
+          "value": "dataset.rowTab.activity"
+        }
+      ]
+    },
+    "path-without-claim": {
+      "paths": {
+        "GRID": [
+          {
+            "id": "/model-hub/datasets/{dataset_id}/splits/",
+            "comment": "FIXTURE-E2E-003: two-organization splits."
+          }
+        ]
+      },
+      "flows": ["### FIXTURE-E2E-003 — fixture walk (injected; not a flow)"],
+      "rejects": [{ "code": "path-without-claim", "slot": "GRID" }]
+    },
+    "path-not-a-prototype-endpoint": {
+      "claims": {
+        "GRID": [
+          {
+            "id": "dataset.splits",
+            "comment": "FIXTURE-E2E-003: two-organization splits."
+          }
+        ]
+      },
+      "paths": {
+        "GRID": [
+          {
+            "id": "/model-hub/datasets/{dataset_id}/splitz/",
+            "comment": "FIXTURE-E2E-003: two-organization splits."
+          }
+        ]
+      },
+      "flows": ["### FIXTURE-E2E-003 — fixture walk (injected; not a flow)"],
+      "rejects": [
+        {
+          "code": "unknown-path",
+          "slot": "GRID",
+          "value": "/model-hub/datasets/{dataset_id}/splitz/"
+        }
+      ]
+    },
+    "claim-outside-markers": {
+      "moduleOnly": { "IN": ["dataset.fromProduction"] },
+      "rejects": [
+        { "code": "outside-markers", "slot": "IN", "value": "claims" },
+        {
+          "code": "missing-walk",
+          "slot": "IN",
+          "value": "dataset.fromProduction"
+        }
+      ]
+    },
+    "repeated-marker": {
+      "sourceExtra": [
+        "  // BEGIN IN claims (append only; include the two-tenant walk id)"
+      ],
+      "rejects": [{ "code": "markers", "slot": "IN", "value": "claims" }]
+    },
+    "unrelated-surface-shown": {
+      "why": "The switch reads an id no slot claims: the dataset switcher shows though nothing proved it.",
+      "claims": {
+        "IN": [
+          {
+            "id": "dataset.upload",
+            "comment": "DATA-E2E-003: two-organization CSV upload and readback."
+          }
+        ]
+      },
+      "flows": [
+        "### DATA-E2E-003 — a file upload persists exact rows within its organization and workspace"
+      ],
+      "leak": ["dataset.switcher"],
+      "rejects": [
+        {
+          "code": "live-set",
+          "slot": "claims",
+          "value": ["dataset.switcher"],
+          "detail": []
+        }
+      ],
+      "drifts": ["dataset.switcher"],
+      "optionDrifts": ["header:switch-dataset"]
+    }
+  }
+}

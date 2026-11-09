@@ -1,3 +1,4 @@
+import { getGatewayAuthenticationErrorMessage } from "src/utils/errorUtils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
@@ -58,9 +59,14 @@ export function useCreateOrgConfig() {
       notifyOrgConfigResult(result, "Config saved and activated");
     },
     onError: (err) => {
-      enqueueSnackbar(err?.message || "Failed to save config", {
-        variant: "error",
-      });
+      enqueueSnackbar(
+        getGatewayAuthenticationErrorMessage(err) ||
+          err?.message ||
+          "Failed to save config",
+        {
+          variant: "error",
+        },
+      );
     },
   });
 }
@@ -83,9 +89,14 @@ export function useActivateOrgConfig() {
       notifyOrgConfigResult(result, "Rolled back to selected version");
     },
     onError: (err) => {
-      enqueueSnackbar(err?.message || "Failed to activate config", {
-        variant: "error",
-      });
+      enqueueSnackbar(
+        getGatewayAuthenticationErrorMessage(err) ||
+          err?.message ||
+          "Failed to activate config",
+        {
+          variant: "error",
+        },
+      );
     },
   });
 }

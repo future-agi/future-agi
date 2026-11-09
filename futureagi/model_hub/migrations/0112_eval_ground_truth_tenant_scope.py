@@ -20,7 +20,7 @@ def backfill_then_strip_template_config(apps, _schema_editor):
     batch: list = []
 
     qs = (
-        EvalTemplate.objects
+        EvalTemplate.objects.using(_schema_editor.connection.alias)
         .filter(config__has_key="ground_truth")
         .only("id", "config")
         .iterator(chunk_size=batch_size)
@@ -32,7 +32,7 @@ def backfill_then_strip_template_config(apps, _schema_editor):
             continue
         gt_id = gt_cfg.get("ground_truth_id")
         if gt_id:
-            EvalGroundTruth.objects.filter(id=gt_id, deleted=False).update(
+            EvalGroundTruth.objects.using(_schema_editor.connection.alias).filter(id=gt_id, deleted=False).update(
                 is_active=True,
                 enabled=bool(gt_cfg.get("enabled", True)),
                 max_examples=int(gt_cfg.get("max_examples") or 3),
@@ -42,10 +42,10 @@ def backfill_then_strip_template_config(apps, _schema_editor):
         tmpl.config = cfg
         batch.append(tmpl)
         if len(batch) >= batch_size:
-            EvalTemplate.objects.bulk_update(batch, fields=["config"])
+            EvalTemplate.objects.using(_schema_editor.connection.alias).bulk_update(batch, fields=["config"])
             batch.clear()
     if batch:
-        EvalTemplate.objects.bulk_update(batch, fields=["config"])
+        EvalTemplate.objects.using(_schema_editor.connection.alias).bulk_update(batch, fields=["config"])
 
 
 class Migration(migrations.Migration):

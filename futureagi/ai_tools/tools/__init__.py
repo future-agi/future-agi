@@ -23,6 +23,7 @@ from ai_tools.tools.evaluations import evaluate_with_agent  # noqa: F401
 from ai_tools.tools.tracing import analyze_error_cluster  # noqa: F401
 from ai_tools.tools.tracing import analyze_project_traces  # noqa: F401
 from ai_tools.tools.tracing import error_feed_alert_rules  # noqa: F401
+
 # tracing/explore_trace.py now registers as ``explore_trace_legacy`` (the
 # Chauffeur read-all-spans + Haiku summary). The short name ``explore_trace``
 # belongs to the eval-context navigator in web/trace_explorer.py.
@@ -34,7 +35,6 @@ from ai_tools.tools.tracing import submit_trace_scores  # noqa: F401
 
 # Organization, workspace, member and API key administration (17)
 from ai_tools.tools.users import add_workspace_member  # noqa: F401
-from ai_tools.tools.users import create_api_key  # noqa: F401
 from ai_tools.tools.users import create_workspace  # noqa: F401
 from ai_tools.tools.users import deactivate_user  # noqa: F401
 from ai_tools.tools.users import get_organization  # noqa: F401

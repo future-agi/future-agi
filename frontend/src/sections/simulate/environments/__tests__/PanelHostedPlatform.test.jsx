@@ -1,6 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render as baseRender, screen, fireEvent, waitFor } from "src/utils/test-utils";
+import {
+  render as baseRender,
+  screen,
+  fireEvent,
+  waitFor,
+} from "src/utils/test-utils";
 
 const navigate = vi.fn();
 let keySeq = 0;
@@ -26,7 +31,18 @@ const { preflightHarnessJob, createHarnessJob } = await import(
   "src/api/harness/harness"
 );
 const { enqueueSnackbar } = await import("notistack");
-const { default: PanelHostedPlatform } = await import("../panels/PanelHostedPlatform");
+const { default: PanelHostedPlatform } = await import(
+  "../panels/PanelHostedPlatform"
+);
+const { default: vapiMark } = await import(
+  "src/assets/brand-logos/vapi.svg?raw"
+);
+const { default: retellMark } = await import(
+  "src/assets/brand-logos/retell.svg?raw"
+);
+const { default: livekitMark } = await import(
+  "src/assets/brand-logos/livekit.svg?raw"
+);
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "../store/useEnvironmentsStore"
 );
@@ -36,24 +52,49 @@ const PASS = {
   credentials: {
     scanned_files: 0,
     detected_connectors: ["vapi"],
-    requirements: [{ environment_name: "VAPI_API_KEY", purpose: "target_provider", required: true, status: "configured" }],
+    requirements: [
+      {
+        environment_name: "VAPI_API_KEY",
+        purpose: "target_provider",
+        required: true,
+        status: "configured",
+      },
+    ],
     credential_choices: [],
-    probe: [{ provider: "vapi_target", label: "Vapi agent", aliases: ["VAPI_API_KEY"], ok: true, message: "Agent found" }],
+    probe: [
+      {
+        provider: "vapi_target",
+        label: "Vapi agent",
+        aliases: ["VAPI_API_KEY"],
+        ok: true,
+        message: "Agent found",
+      },
+    ],
   },
 };
 
 const render = (ui) => {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return baseRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return baseRender(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
 };
 
 const fillCreds = () => {
-  fireEvent.change(screen.getByPlaceholderText("asst_9f2c…"), { target: { value: "asst_x" } });
-  fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "sk-x" } });
+  fireEvent.change(screen.getByPlaceholderText("asst_9f2c…"), {
+    target: { value: "asst_x" },
+  });
+  fireEvent.change(screen.getByPlaceholderText("sk-…"), {
+    target: { value: "sk-x" },
+  });
 };
 
-const runPreflight = () => fireEvent.click(screen.getByRole("button", { name: "Run preflight" }));
-const buildBtn = () => screen.getByRole("button", { name: /Build environment/ });
+const runPreflight = () =>
+  fireEvent.click(screen.getByRole("button", { name: "Run preflight" }));
+const buildBtn = () =>
+  screen.getByRole("button", { name: /Build environment/ });
 
 beforeEach(() => {
   resetEnvironmentsStore();
@@ -66,16 +107,18 @@ beforeEach(() => {
 const createdBody = () => createHarnessJob.mock.calls[0][0];
 
 describe("PanelHostedPlatform", () => {
-  it("renders five agent-type chips, three coming soon", () => {
+  it("renders five agent-type chips, three coming soon, and no coming-soon voice platform", () => {
     render(<PanelHostedPlatform />);
     expect(screen.getByText("Voice")).toBeInTheDocument();
     expect(screen.getByText("Chat")).toBeInTheDocument();
     expect(screen.getByText("Computer use")).toBeInTheDocument();
     expect(screen.getByText("Robotics")).toBeInTheDocument();
-    // 3 coming-soon agent types (Code / Computer use / Robotics) + the 2
-    // coming-soon voice platforms (Bland, ElevenLabs — neither a live hosted
-    // connector yet, so a submit would 400).
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(5);
+    // 3 coming-soon agent types (Code / Computer use / Robotics). Bland and
+    // ElevenLabs are not hosted connectors, so they are absent from the
+    // voice roster rather than shown as coming-soon chips.
+    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(3);
+    expect(screen.queryByLabelText("Bland.ai")).toBeNull();
+    expect(screen.queryByLabelText("ElevenLabs")).toBeNull();
   });
 
   it("keeps Voice selected when a coming-soon type is clicked", () => {
@@ -84,21 +127,30 @@ describe("PanelHostedPlatform", () => {
     expect(screen.getByLabelText("Vapi")).toBeInTheDocument();
   });
 
-  it("shows the voice roster with wordmarks and named marks", () => {
+  it("shows the voice roster with each brand's catalog mark and its name", () => {
     render(<PanelHostedPlatform />);
-    expect(screen.queryByText("Vapi")).toBeNull();
-    expect(screen.queryByText("Retell AI")).toBeNull();
-    expect(screen.getByLabelText("Vapi")).toBeInTheDocument();
-    expect(screen.getByLabelText("Retell AI")).toBeInTheDocument();
-    expect(screen.getByText("Bland.ai")).toBeInTheDocument();
-    expect(screen.getByText("ElevenLabs")).toBeInTheDocument();
-    expect(screen.getByText("LiveKit")).toBeInTheDocument();
+    // One mark per brand across the product: the same bundled files as the
+    // experiment run-source catalog (Vapi's V, Retell's dot ring).
+    const shapeOf = (name) =>
+      screen.getByLabelText(name).querySelector("path").getAttribute("d");
+    const fileShape = (svg) => svg.match(/ d="([^"]+)"/)[1];
+    expect(shapeOf("Vapi")).toBe(fileShape(vapiMark));
+    expect(shapeOf("Retell AI")).toBe(fileShape(retellMark));
+    expect(shapeOf("LiveKit")).toBe(fileShape(livekitMark));
+    // Marks are symbols, so every chip keeps its name.
+    ["Vapi", "Retell AI", "LiveKit"].forEach((n) =>
+      expect(screen.getByText(n)).toBeInTheDocument(),
+    );
   });
 
   it("switches to the chat roster and clears the id/key fields", () => {
     render(<PanelHostedPlatform />);
-    fireEvent.change(screen.getByPlaceholderText("asst_9f2c…"), { target: { value: "asst_x" } });
-    fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "sk-x" } });
+    fireEvent.change(screen.getByPlaceholderText("asst_9f2c…"), {
+      target: { value: "asst_x" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("sk-…"), {
+      target: { value: "sk-x" },
+    });
     fireEvent.click(screen.getByText("Chat"));
 
     // Chat defaults to Retell (the only chat connector); OpenAI Assistants is a
@@ -136,20 +188,29 @@ describe("PanelHostedPlatform", () => {
     // is required.
     expect(screen.queryByText("Web simulation (WebRTC)")).toBeNull();
     expect(screen.getByText("Contact Number")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Run preflight" }),
+    ).toBeDisabled();
   });
 
   it("Others: a letters-only contact number never unlocks preflight", () => {
     render(<PanelHostedPlatform />);
     fireEvent.click(screen.getByText("Others"));
-    fireEvent.change(screen.getByPlaceholderText("You are a friendly returns agent for Acme…"), {
-      target: { value: "You are a returns agent." },
-    });
-    const number = screen.getByPlaceholderText("Number to call for the simulation");
+    fireEvent.change(
+      screen.getByPlaceholderText("You are a friendly returns agent for Acme…"),
+      {
+        target: { value: "You are a returns agent." },
+      },
+    );
+    const number = screen.getByPlaceholderText(
+      "Number to call for the simulation",
+    );
 
     fireEvent.change(number, { target: { value: "abc e" } });
     expect(number).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Run preflight" }),
+    ).toBeDisabled();
 
     fireEvent.change(number, { target: { value: "9258565747" } });
     expect(number).toHaveValue("9258565747");
@@ -172,8 +233,12 @@ describe("PanelHostedPlatform", () => {
       ["You are a friendly returns agent for Acme…", "You handle returns."],
     ];
     fields.forEach(([placeholder, value]) => {
-      expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
-      fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value } });
+      expect(
+        screen.getByRole("button", { name: "Run preflight" }),
+      ).toBeDisabled();
+      fireEvent.change(screen.getByPlaceholderText(placeholder), {
+        target: { value },
+      });
     });
     expect(screen.getByRole("button", { name: "Run preflight" })).toBeEnabled();
   });
@@ -186,14 +251,24 @@ describe("PanelHostedPlatform", () => {
     fireEvent.change(screen.getByPlaceholderText("returns-line-agent"), {
       target: { value: "returns-agent" },
     });
-    fireEvent.change(screen.getByPlaceholderText("wss://your-project.livekit.cloud"), {
-      target: { value: "wss://demo.livekit.cloud" },
+    fireEvent.change(
+      screen.getByPlaceholderText("wss://your-project.livekit.cloud"),
+      {
+        target: { value: "wss://demo.livekit.cloud" },
+      },
+    );
+    fireEvent.change(screen.getByPlaceholderText("sk-…"), {
+      target: { value: "lk-key" },
     });
-    fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "lk-key" } });
-    fireEvent.change(screen.getByPlaceholderText("secret…"), { target: { value: "lk-secret" } });
-    fireEvent.change(screen.getByPlaceholderText("You are a friendly returns agent for Acme…"), {
-      target: { value: "You handle returns." },
+    fireEvent.change(screen.getByPlaceholderText("secret…"), {
+      target: { value: "lk-secret" },
     });
+    fireEvent.change(
+      screen.getByPlaceholderText("You are a friendly returns agent for Acme…"),
+      {
+        target: { value: "You handle returns." },
+      },
+    );
     runPreflight();
 
     await waitFor(() =>
@@ -211,7 +286,10 @@ describe("PanelHostedPlatform", () => {
             },
             secret_refs: {},
           }),
-          credential_values: { LIVEKIT_API_KEY: "lk-key", LIVEKIT_API_SECRET: "lk-secret" },
+          credential_values: {
+            LIVEKIT_API_KEY: "lk-key",
+            LIVEKIT_API_SECRET: "lk-secret",
+          },
         }),
       ),
     );
@@ -219,14 +297,19 @@ describe("PanelHostedPlatform", () => {
     await waitFor(() => expect(buildBtn()).toBeEnabled());
     fireEvent.click(buildBtn());
     await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments/job-lk"),
+      expect(navigate).toHaveBeenCalledWith(
+        "/dashboard/simulate/environments/job-lk",
+      ),
     );
     expect(createdBody().credential_values).toEqual({
       LIVEKIT_API_KEY: "lk-key",
       LIVEKIT_API_SECRET: "lk-secret",
     });
     const staged = useEnvironmentsStore.getState().draft;
-    expect(staged).toMatchObject({ provider: "livekit", agentId: "returns-agent" });
+    expect(staged).toMatchObject({
+      provider: "livekit",
+      agentId: "returns-agent",
+    });
     expect(staged.apiKey).toBeUndefined();
     expect(staged.apiSecret).toBeUndefined();
     expect(JSON.stringify(useEnvironmentsStore.getState())).not.toContain("lk-secret");
@@ -234,9 +317,13 @@ describe("PanelHostedPlatform", () => {
 
   it("gates both actions until both credential fields are filled", () => {
     render(<PanelHostedPlatform />);
-    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Run preflight" }),
+    ).toBeDisabled();
     expect(buildBtn()).toBeDisabled();
-    expect(screen.getByText("Run preflight to check your setup before building")).toBeInTheDocument();
+    expect(
+      screen.getByText("Run preflight to check your setup before building"),
+    ).toBeInTheDocument();
 
     fillCreds();
     expect(screen.getByRole("button", { name: "Run preflight" })).toBeEnabled();
@@ -263,7 +350,9 @@ describe("PanelHostedPlatform", () => {
     fireEvent.click(buildBtn());
 
     await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments/job-plat"),
+      expect(navigate).toHaveBeenCalledWith(
+        "/dashboard/simulate/environments/job-plat",
+      ),
     );
     expect(createdBody().credential_values).toEqual({ VAPI_API_KEY: "sk-x" });
     const staged = useEnvironmentsStore.getState().draft;
@@ -343,8 +432,12 @@ describe("PanelHostedPlatform", () => {
     runPreflight();
     await waitFor(() => expect(buildBtn()).toBeEnabled());
 
-    fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "sk-y" } });
+    fireEvent.change(screen.getByPlaceholderText("sk-…"), {
+      target: { value: "sk-y" },
+    });
     expect(buildBtn()).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Run preflight" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Run preflight" }),
+    ).toBeInTheDocument();
   });
 });

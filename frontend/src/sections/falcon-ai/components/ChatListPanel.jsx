@@ -12,6 +12,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
+import { captureFalconRequest } from "../store/falconRequestGuard";
 import {
   fetchConversations,
   getConversation,
@@ -209,11 +210,28 @@ export default function ChatListPanel() {
   const loadingRef = useRef(false);
   const scrollRef = useRef(null);
 
+  // Local pagination/search state must be invalidated along with store history.
+  useEffect(
+    () =>
+      useFalconStore.subscribe((state, previous) => {
+        if (state.resetGeneration === previous.resetGeneration) return;
+        clearTimeout(searchTimerRef.current);
+        loadingRef.current = false;
+        setLoading(false);
+        setHasMore(true);
+        setSearch("");
+        setMenuAnchor(null);
+        setMenuConvId(null);
+      }),
+    [],
+  );
+
   // ── Fetch ────────────────────────────────────────────────────────────
   const loadConversations = useCallback(
     async (offset = 0, searchQuery = "", append = false) => {
       if (loadingRef.current) return;
-      loadingRef.current = true;
+      const isCurrent = captureFalconRequest();
+      loadingRef.current = isCurrent;
       setLoading(true);
       try {
         const data = await fetchConversations({
@@ -221,6 +239,7 @@ export default function ChatListPanel() {
           offset,
           search: searchQuery,
         });
+        if (!isCurrent() || loadingRef.current !== isCurrent) return;
         const results = data.results || [];
         if (append) {
           const current = useFalconStore.getState().conversations || [];
@@ -234,8 +253,10 @@ export default function ChatListPanel() {
       } catch {
         /* silent */
       } finally {
-        setLoading(false);
-        loadingRef.current = false;
+        if (loadingRef.current === isCurrent) {
+          setLoading(false);
+          loadingRef.current = false;
+        }
       }
     },
     [setConversations],
@@ -247,7 +268,9 @@ export default function ChatListPanel() {
 
   useEffect(() => {
     clearTimeout(searchTimerRef.current);
+    const isCurrent = captureFalconRequest();
     searchTimerRef.current = setTimeout(() => {
+      if (!isCurrent()) return;
       setHasMore(true);
       loadConversations(0, search);
     }, 300);
@@ -275,11 +298,13 @@ export default function ChatListPanel() {
   const handleSelect = useCallback(
     async (id) => {
       setCurrentConversation(id);
+      const isCurrent = captureFalconRequest({ conversation: true });
       useFalconStore.getState().setShowCustomize(false);
       if (isOnFalconPage)
         navigate(`/dashboard/falcon-ai/${id}`, { replace: true });
       try {
         const data = await getConversation(id);
+        if (!isCurrent()) return;
         const conv = data.result || data;
         // Normalize camelCase API response to snake_case for components
         const msgs = (conv.messages || []).map((m) => ({
@@ -291,6 +316,7 @@ export default function ChatListPanel() {
         setMessages(msgs);
         try {
           const s = await checkStreamStatus(id);
+          if (!isCurrent()) return;
           if (["running", "done"].includes(s.result?.stream_status))
             setStreaming(true, null);
         } catch {
@@ -321,8 +347,10 @@ export default function ChatListPanel() {
 
   const handleDelete = async () => {
     if (!menuConvId) return;
+    const isCurrent = captureFalconRequest({ conversation: true });
     try {
       await deleteConversation(menuConvId);
+      if (!isCurrent()) return;
       setConversations(conversations.filter((c) => c.id !== menuConvId));
       if (currentConversationId === menuConvId) handleNewChat();
     } catch {
@@ -336,8 +364,10 @@ export default function ChatListPanel() {
     const conv = conversations.find((c) => c.id === menuConvId);
     const newTitle = window.prompt("Rename conversation", conv?.title || "");
     if (newTitle && newTitle !== conv?.title) {
+      const isCurrent = captureFalconRequest();
       try {
         await renameConversation(menuConvId, newTitle);
+        if (!isCurrent()) return;
         setConversations(
           conversations.map((c) =>
             c.id === menuConvId ? { ...c, title: newTitle } : c,

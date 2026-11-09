@@ -1,0 +1,49 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#provider"
+app: stripe
+id: stripe-mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: ga, source: https://docs.stripe.com/mcp }
+transport: { kind: http, url: https://mcp.stripe.com }
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Restricted API key
+tools:
+  source: upstream_mcp
+  defaultPosture: ask
+  items:
+    - name: stripe_api_read
+      description: Call any Stripe API GET endpoint.
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: true
+      generic: true
+    - name: stripe_api_write
+      description: "Call any Stripe API POST, PATCH, PUT or DELETE endpoint."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: true
+        idempotentHint: false
+        openWorldHint: true
+      posture: deny
+      generic: true
+pricing: { model: vendor_plan }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.stripe.com/mcp
+    fetchedAt: 2026-10-19

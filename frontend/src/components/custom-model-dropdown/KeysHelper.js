@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 export const editorOptions = {
   selectOnLineNumbers: true,
   roundedSelection: false,
@@ -130,7 +131,8 @@ export const normalizeProviderStatus = (provider = {}) => ({
     provider.displayName || provider.display_name || provider.provider || "",
   hasKey: provider.hasKey ?? provider.has_key ?? false,
   maskedKey: provider.maskedKey ?? provider.masked_key ?? null,
-  logoUrl: provider.logoUrl ?? provider.logo_url ?? "",
+  logoUrl: localProviderLogo(provider),
+  logo_url: localProviderLogo(provider),
 });
 
 export const getFilterOptions = ({

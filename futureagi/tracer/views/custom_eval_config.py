@@ -4,17 +4,18 @@ import traceback
 import structlog
 from django.db import close_old_connections
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.serializers.develop_optimisation import EvalTemplateSerializer
 from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.tenant_scope import caller_organization, scope_to_caller
 from tracer.db_routing import DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger
@@ -26,8 +27,22 @@ from tracer.serializers.custom_eval_config import (
     GetCustomEvalTemplateSerializer,
     RunEvaluationSerializer,
 )
-from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.utils.eval import evaluate_observation_span
+
+logger = structlog.get_logger(__name__)
+
+
+def _in_caller_workspace(queryset, request):
+    """Project-owned rows in the caller's live accessible workspace.
+
+    Missing organization/workspace or revoked access grants no rows.
+    """
+    return scope_to_caller(
+        queryset,
+        request,
+        organization_field="project__organization",
+        workspace_field="project__workspace",
+    )
 
 
 class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
@@ -37,8 +52,14 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
 
     def get_queryset(self):
         custom_eval_config_id = self.kwargs.get("pk")
-        # Get base queryset with automatic filtering from mixin
-        queryset = super().get_queryset()
+        from tfc.utils.tenant_scope import scope_to_caller
+
+        queryset = scope_to_caller(
+            CustomEvalConfig.no_workspace_objects.filter(deleted=False),
+            self.request,
+            organization_field="project__organization",
+            workspace_field="project__workspace",
+        )
 
         if custom_eval_config_id:
             queryset = queryset.filter(id=custom_eval_config_id)
@@ -57,13 +78,18 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
 
         return queryset
 
+    def _template_queryset(self, request):
+        from tracer.serializers.relation_scope import eval_template_queryset
+
+        return eval_template_queryset(request)
+
     def create(self, request, *args, **kwargs):
         try:
             data = request.data
 
             eval_template_id = str(data.get("eval_template"))
             try:
-                eval_template = EvalTemplate.no_workspace_objects.get(
+                eval_template = self._template_queryset(request).get(
                     id=eval_template_id
                 )
             except EvalTemplate.DoesNotExist:
@@ -103,11 +129,8 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
         try:
             custom_eval_config_id = kwargs.get("pk")
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
-                    id=custom_eval_config_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    deleted=False,
+                custom_eval_config = self.get_queryset().get(
+                    id=custom_eval_config_id, deleted=False
                 )
             except CustomEvalConfig.DoesNotExist:
                 return self._gm.bad_request(
@@ -119,7 +142,7 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             eval_template_id = str(data.get("eval_template", "")) or None
             if eval_template_id:
                 try:
-                    eval_template = EvalTemplate.no_workspace_objects.get(
+                    eval_template = self._template_queryset(request).get(
                         id=eval_template_id
                     )
                 except EvalTemplate.DoesNotExist:
@@ -176,13 +199,16 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             if not isinstance(eval_tags, list):
                 return self._gm.bad_request("eval_tags must be a list")
 
+            organization = caller_organization(request)
+            # No organization: no project is the caller's, so the answer is
+            # the one an unknown project gets.
+            projects = (
+                Project.objects.filter(organization=organization)
+                if organization is not None
+                else Project.objects.none()
+            )
             try:
-                Project.objects.get(
-                    name=project_name,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    trace_type=project_type,
-                )
+                projects.get(name=project_name, trace_type=project_type)
 
             except Project.DoesNotExist:
                 return self._gm.success_response(
@@ -203,8 +229,7 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
 
                     eval_query = Q(
                         project__name=project_name,
-                        project__organization=getattr(request, "organization", None)
-                        or request.user.organization,
+                        project__organization=organization,
                         name=custom_eval_name,
                     ) & (
                         ~Q(mapping__exact=json_mapping)
@@ -266,16 +291,11 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             # still goes through the router for EvalGroup (likely landing
             # on `default`) and remains a pre-existing N+1. We do NOT fix
             # that here — fixing the serializer is a separate refactor.
-            queryset = (
+            queryset = _in_caller_workspace(
                 CustomEvalConfig.objects.db_manager(
                     DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
-                )
-                .filter(
-                    deleted=False,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
-                .all()
+                ).filter(deleted=False),
+                request,
             )
             project_id = query_data.get("project_id")
             if project_id:
@@ -303,24 +323,20 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             serializer.is_valid(raise_exception=True)
 
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
-                    id=serializer.validated_data.get("custom_eval_config_id"),
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
+                custom_eval_config = _in_caller_workspace(
+                    CustomEvalConfig.objects.all(), request
+                ).get(id=serializer.validated_data.get("custom_eval_config_id"))
             except CustomEvalConfig.DoesNotExist:
-                return self._gm.bad_request(
+                return self._gm.not_found(
                     f"Custom eval config with id {serializer.validated_data.get('custom_eval_config_id')} does not exist"
                 )
 
             try:
-                project_version = ProjectVersion.objects.get(
-                    id=serializer.validated_data.get("project_version_id"),
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
+                project_version = _in_caller_workspace(
+                    ProjectVersion.objects.all(), request
+                ).get(id=serializer.validated_data.get("project_version_id"))
             except ProjectVersion.DoesNotExist:
-                return self._gm.bad_request(
+                return self._gm.not_found(
                     f"Project version with id {serializer.validated_data.get('project_version_id')} does not exist"
                 )
 
@@ -378,12 +394,10 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             # joined on the FK; substitute the PK ``__in`` form using the
             # collected CH span ids (EvalLogger.observation_span_id is the
             # underlying column the FK resolves to).
-            soft_delete_eval_results(
-                EvalLogger.objects.filter(
-                    observation_span_id__in=span_ids,
-                    custom_eval_config=custom_eval_config,
-                )
-            )
+            EvalLogger.objects.filter(
+                observation_span_id__in=span_ids,
+                custom_eval_config=custom_eval_config,
+            ).update(deleted=True, deleted_at=timezone.now())
 
             for span_id in span_ids:
                 evaluate_observation_span.delay(
@@ -407,19 +421,25 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             serializer.is_valid(raise_exception=True)
 
             eval_template_name = serializer.validated_data.get("eval_template_name")
+            not_found = {"is_user_eval_template": False, "eval_template": None}
+
+            # A user template always belongs to an organization: a caller with
+            # none has no user templates (organization=None would match the
+            # templates that have no organization).
+            organization = caller_organization(request)
+            if organization is None:
+                return self._gm.success_response(not_found)
 
             try:
                 eval_template = EvalTemplate.objects.get(
                     name=eval_template_name,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    organization=organization,
                     owner=OwnerChoices.USER.value,
                 )
                 serializer = EvalTemplateSerializer(eval_template)
 
             except EvalTemplate.DoesNotExist:
-                result = {"is_user_eval_template": False, "eval_template": None}
-                return self._gm.success_response(result)
+                return self._gm.success_response(not_found)
 
             result = {"is_user_eval_template": True, "eval_template": serializer.data}
             return self._gm.success_response(result)
