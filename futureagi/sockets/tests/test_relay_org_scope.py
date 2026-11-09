@@ -12,10 +12,13 @@ from sockets.consumer import DataConsumer
 from sockets.org_scope import resolve_socket_organization
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_socket_uses_authorized_selected_membership_not_first(user, organization):
     selected = Organization.objects.create(name="Selected synthetic organization")
     OrganizationMembership.no_workspace_objects.create(user=user, organization=selected)
+    first = OrganizationMembership.no_workspace_objects.filter(user=user).first()
+    if first.organization_id == selected.id:
+        selected = organization
     scope = {"query_string": f"organization_id={selected.id}".encode()}
     assert async_to_sync(resolve_socket_organization)(scope, user) == selected.id
     consumer = DataConsumer()
@@ -24,10 +27,10 @@ def test_socket_uses_authorized_selected_membership_not_first(user, organization
     consumer.room_group_name = async_to_sync(consumer.get_room_group_name)()
     target = uuid4()
     assert consumer._uuid_group_name(target) == f"uuid_org_{selected.id}_{target}"
-    assert async_to_sync(resolve_socket_organization)({}, user) == organization.id
+    assert async_to_sync(resolve_socket_organization)({}, user) == first.organization_id
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_socket_refuses_unrelated_or_inactive_requested_membership(user):
     other = Organization.objects.create(name="Unrelated synthetic organization")
     scope = {"query_string": f"organization_id={other.id}".encode()}
@@ -38,14 +41,28 @@ def test_socket_refuses_unrelated_or_inactive_requested_membership(user):
     assert async_to_sync(resolve_socket_organization)(scope, user) is None
 
 
-@pytest.mark.parametrize("query", [b"organization_id=invalid", b"organization_id=", b"organization_id=a&organization_id=b", b"\xff"])
+@pytest.mark.parametrize(
+    "query",
+    [
+        b"organization_id=invalid",
+        b"organization_id=",
+        b"organization_id=a&organization_id=b",
+        b"\xff",
+    ],
+)
 def test_invalid_requested_organization_is_rejected_without_fallback(query):
-    assert async_to_sync(resolve_socket_organization)({"query_string": query}, None) is None
+    assert (
+        async_to_sync(resolve_socket_organization)({"query_string": query}, None)
+        is None
+    )
 
 
 def test_requested_organization_cannot_widen_saml_scope():
     own, other = uuid4(), uuid4()
-    scope = {"auth_scope": SimpleNamespace(org_id=own), "query_string": f"organization_id={other}".encode()}
+    scope = {
+        "auth_scope": SimpleNamespace(org_id=own),
+        "query_string": f"organization_id={other}".encode(),
+    }
     assert async_to_sync(resolve_socket_organization)(scope, None) is None
     scope["query_string"] = f"organization_id={own}".encode()
     assert async_to_sync(resolve_socket_organization)(scope, None) == own

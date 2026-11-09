@@ -289,7 +289,10 @@ def test_malformed_endpoint_is_a_contained_notification_failure():
     assert result["status"] == "error"
     keys.get.assert_not_called()
     logger.error.assert_called_once_with(
-        "websocket_relay_failed", error_type="ValueError", status_code=None, validation_fields=[]
+        "websocket_relay_failed",
+        error_type="ValueError",
+        status_code=None,
+        validation_fields=[],
     )
 
 

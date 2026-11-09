@@ -1127,10 +1127,10 @@ export type ${jsonAlias} = JsonValueApi;`,
     zod = assertReplaceRegexInNamedBlock(
       zod,
       "export const CallWebsocketCreateBody =",
-      /\}\);/,
+      /\}\)/,
       `}).refine((value) => !value.send_to_uuid || value.uuid != null, {
   path: ["uuid"], message: "A UUID is required for targeted delivery."
-});`,
+})`,
       "CallWebsocketCreateBody conditional target UUID",
     );
 

@@ -11517,17 +11517,24 @@ export const ApiTracesSpanAttributeValuesListResponse = zod.object({
 
 export const callWebsocketCreateBodySendToUuidDefault = false;
 
-export const CallWebsocketCreateBody = zod.object({
-  message: zod.record(zod.string(), jsonValueSchema),
-  send_to_uuid: zod.boolean().default(callWebsocketCreateBodySendToUuidDefault),
-  uuid: zod
-    .string()
-    .uuid()
-    .nullish()
-    .describe(
-      "Required for targeted delivery; omit or use null for broadcasts.",
-    ),
-});
+export const CallWebsocketCreateBody = zod
+  .object({
+    message: zod.record(zod.string(), jsonValueSchema),
+    send_to_uuid: zod
+      .boolean()
+      .default(callWebsocketCreateBodySendToUuidDefault),
+    uuid: zod
+      .string()
+      .uuid()
+      .nullish()
+      .describe(
+        "Required for targeted delivery; omit or use null for broadcasts.",
+      ),
+  })
+  .refine((value) => !value.send_to_uuid || value.uuid != null, {
+    path: ["uuid"],
+    message: "A UUID is required for targeted delivery.",
+  });
 
 export const callWebsocketCreateResponseStatusDefault = true;
 

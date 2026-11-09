@@ -56811,6 +56811,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+      "x-required-when": {
+        send_to_uuid: {
+          value: true,
+          fields: ["uuid"],
+        },
+      },
     },
     CallWebsocketResponse: {
       required: ["result"],

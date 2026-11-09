@@ -41,7 +41,8 @@ for (const [name, accepts] of [
 
     it.each([{}, { uuid: null }, { uuid: "" }, { uuid: "not-a-uuid" }])(
       "rejects targeted delivery without a valid UUID (%j)",
-      (extra) => expect(accepts({ message, send_to_uuid: true, ...extra })).toBe(false),
+      (extra) =>
+        expect(accepts({ message, send_to_uuid: true, ...extra })).toBe(false),
     );
 
     it.each([null, [], [1], "text", 42, true])(
@@ -52,7 +53,7 @@ for (const [name, accepts] of [
 }
 
 it("generated relay parser preserves heterogeneous message values", () => {
-  expect(CallWebsocketCreateBody.parse({ message, uuid: null }).message).toEqual(
-    message,
-  );
+  expect(
+    CallWebsocketCreateBody.parse({ message, uuid: null }).message,
+  ).toEqual(message);
 });

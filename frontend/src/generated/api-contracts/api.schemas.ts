@@ -5337,12 +5337,12 @@ export interface SpanAttributeValuesResponseApi {
 
 export type CallWebsocketRequestApiMessage = { [key: string]: JsonValueApi };
 
-export interface CallWebsocketRequestApi {
+export type CallWebsocketRequestApi = {
   message: CallWebsocketRequestApiMessage;
-  send_to_uuid?: boolean;
-  /** Required for targeted delivery; omit or use null for broadcasts. */
-  uuid?: string | null;
-}
+} & (
+  | { send_to_uuid: true; uuid: string }
+  | { send_to_uuid?: false; uuid?: string | null }
+);
 
 export interface CallWebsocketResponseApi {
   status?: boolean;
