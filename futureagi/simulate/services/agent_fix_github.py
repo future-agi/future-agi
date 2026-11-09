@@ -8,6 +8,7 @@ from math import floor
 from pathlib import Path
 from textwrap import shorten
 from typing import Any
+from urllib.parse import quote
 
 import requests
 import structlog
@@ -44,9 +45,9 @@ _LIMITED_NOTE = (
 def open_pull_request(
     candidate: AgentFixCandidate, *, user: Any, override_reason: str = ""
 ) -> str:
-    """Open the candidate's pull request once and return its URL. Refused when the branch
-    it targets moved since the fix's commit, whatever the reason given: the fix proved its
-    change on that commit alone."""
+    """Open the candidate's pull request once and return its URL. Refused when the ref the
+    agent runs from (its branch or tag) moved since the fix's commit, whatever the reason
+    given: the fix proved its change on that commit alone."""
     require_shippable(candidate, override_reason=override_reason)
     if candidate.pull_request_url:
         return candidate.pull_request_url
@@ -84,11 +85,13 @@ def open_pull_request(
         )
     patch = load_object(candidate.patch_object_key) or b""
     branch = f"futureagi/fix-{str(fix_run.id)[:8]}-{candidate.attempt}"
+    ref = str(source.get("ref") or "")
     with GitHubAppTokenProvider.from_settings().credential(installation_id) as token:
-        base = _base_branch(repository, str(source.get("ref") or ""), token)
-        head = _branch_head(repository, base, token)
-        if head != commit:
-            raise base_moved(f"{base} @ {commit[:7]}", f"{base} @ {head[:7]}")
+        base = _base_branch(repository, ref, token)
+        head = _ref_head(repository, ref, base, token)
+        if head is not None and head != commit:
+            name = short_ref(ref) if ref.startswith("refs/tags/") else base
+            raise base_moved(f"{name} @ {commit[:7]}", f"{name} @ {head[:7]}")
         # Before the push: the commit carries the reason, so a retry pushes the same commit.
         record_override(candidate, reason=override_reason, user=user)
         title, body = _description(candidate)
@@ -254,8 +257,17 @@ def _base_branch(repository: str, ref: str, token: str) -> str:
     return _api("GET", f"/repos/{repository}", token).json()["default_branch"]
 
 
-def _branch_head(repository: str, branch: str, token: str) -> str:
-    """The commit ``branch`` points at on GitHub now."""
+def _ref_head(repository: str, ref: str, branch: str, token: str) -> str | None:
+    """The commit the agent's ref points at on GitHub now: a tag's commit, else the head
+    of ``branch``, the branch it runs from. None for a ref pinned to a commit, which never
+    moves."""
+    name = short_ref(ref)
+    if name and _COMMIT.fullmatch(name):
+        return None
+    if ref.startswith("refs/tags/"):
+        return _api("GET", f"/repos/{repository}/commits/{quote(name)}", token).json()[
+            "sha"
+        ]
     return _api("GET", f"/repos/{repository}/git/ref/heads/{branch}", token).json()[
         "object"
     ]["sha"]

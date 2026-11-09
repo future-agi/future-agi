@@ -1299,19 +1299,29 @@ class TestUserApi:
         )
         return SimpleNamespace(bare=bare, commit=commit)
 
-    def _ship(self, auth_client, fix_run, candidate, replies, *, head=None, **body):
+    def _ship(
+        self, auth_client, fix_run, candidate, replies, *, head=None, tag=None, **body
+    ):
         """POST pull-request with ``body`` and GitHub's API answering ``replies`` in turn.
-        The target branch's head is the fix's commit unless ``head`` says otherwise."""
+        A branch's head and a tag's commit are the fix's commit unless ``head`` or ``tag``
+        says otherwise; the repository's default branch is main."""
         calls = []
         source = HostedHarnessJob.no_workspace_objects.get(id=fix_run.source_run_id)
         commit = (source.payload.get("source") or {}).get("commit_sha")
+        reads = {
+            "/git/ref/heads/": {"object": {"sha": head or commit}},
+            "/commits/": {"sha": tag or commit},
+        }
 
         def answer(method, url, **kwargs):
-            if method == "GET" and "/git/ref/heads/" in url:
-                sha = head or commit
-                return SimpleNamespace(
-                    status_code=200, json=lambda: {"object": {"sha": sha}}, text=""
+            if method == "GET":
+                found = next(
+                    (body for part, body in reads.items() if part in url), None
                 )
+                if found is None and url.endswith("/repos/acme/agent"):
+                    found = {"default_branch": "main"}
+                if found is not None:
+                    return SimpleNamespace(status_code=200, json=lambda: found, text="")
             calls.append((method, url, kwargs))
             status, body = replies.pop(0)
             return SimpleNamespace(
@@ -1929,6 +1939,47 @@ class TestUserApi:
         environment.refresh_from_db()
         assert environment.agent_version_id == shipped.agent_version_id
         assert self._override(auth_client, fix_run)["reason"] == ""
+
+    def _pin(self, source_run, ref):
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=source_run.agent_version_id
+        )
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            source={**runtime.source, "ref": ref}
+        )
+
+    @pytest.mark.parametrize("pin", ["refs/tags/v1", "commit"])
+    def test_a_github_agent_pinned_to_a_tag_or_commit_ships_while_main_moves(
+        self, auth_client, source_run, github, pin
+    ):
+        self._pin(source_run, github.commit if pin == "commit" else pin)
+        fix_run, candidate = self._proven(source_run, "github")
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client,
+            fix_run,
+            candidate,
+            [(201, {"html_url": self.PULL})],
+            head="f" * 40,
+        )
+
+        assert response.status_code == 200, response.content
+        assert sent["json"]["base"] == "main"
+
+    def test_a_github_agent_pinned_to_a_tag_that_moved_is_not_shipped(
+        self, auth_client, source_run, github
+    ):
+        self._pin(source_run, "refs/tags/v1")
+        fix_run, candidate = self._proven(source_run, "github")
+
+        response, calls = self._ship(auth_client, fix_run, candidate, [], tag="e" * 40)
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            409,
+            "fix_base_moved",
+            [],
+        )
+        assert "v1 @ eeeeeee" in response.json()["message"]
 
     @pytest.mark.parametrize("reason", ["", "the regression is a flaky check"])
     def test_a_github_fix_is_not_shipped_when_its_branch_moved(
