@@ -159,10 +159,11 @@ describe("CallWorkersPanel", () => {
     [{ depth: 2, parallel: 0 }, true],
     [{ depth: 1, parallel: 1 }, true],
   ])(
-    "says what multi-agent testing covers only when a call went past it (%o)",
+    "says what multi-agent testing covers on every multi-agent call, and adds when a call went past it (%o)",
     (shape, shown) => {
       result = { data: timeline(shape), isLoading: false, isError: false };
       render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getByTestId("supported-boundary")).toBeTruthy();
       expect(screen.queryByTestId("beyond-boundary") !== null).toBe(shown);
     },
   );
