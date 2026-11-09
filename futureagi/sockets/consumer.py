@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
@@ -171,7 +173,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
 
     async def disconnect(self, close_code):
         # Cleanup base group
-        if hasattr(self, "room_group_name"):
+        if getattr(self, "room_group_name", None):
             await self.channel_layer.group_discard(
                 self.room_group_name, self.channel_name
             )
@@ -200,6 +202,11 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             pass
 
     def _uuid_group_name(self, uuid):
+        try:
+            uuid = str(UUID(str(uuid)))
+        except ValueError:
+            # Preserve non-UUID subscriptions used by older socket clients.
+            pass
         auth_scope = self.scope.get("auth_scope")
         if auth_scope is not None:
             return f"uuid_org_{auth_scope.org_id}_{uuid}"

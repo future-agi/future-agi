@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import requests
 from asgiref.sync import sync_to_async
+from asgiref.testing import ApplicationCommunicator
 from channels.layers import get_channel_layer
-from channels.testing import WebsocketCommunicator
 from django.test import override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -36,19 +36,50 @@ MESSAGES = [
         id="usage-rate-resource-and-credit-notification",
     ),
     pytest.param(
-        {"type": "run_prompt", "uuid": TARGET, "chunk": "hello", "chunk_pos": "0", "streaming_status": "running", "current_activity": None},
+        {
+            "type": "run_prompt",
+            "uuid": TARGET,
+            "chunk": "hello",
+            "chunk_pos": "0",
+            "streaming_status": "running",
+            "current_activity": None,
+        },
         True,
         id="llm-stream-chunk",
     ),
     pytest.param(
-        {"type": "generate_prompt", "generation_id": TARGET, "current_activity": "generate_initial_prompt", "status": "completed", "prompt": "Synthetic prompt"},
+        {
+            "type": "generate_prompt",
+            "generation_id": TARGET,
+            "current_activity": "generate_initial_prompt",
+            "status": "completed",
+            "prompt": "Synthetic prompt",
+        },
         True,
         id="prompt-generation",
     ),
     pytest.param(
-        {"type": "run_prompt", "template_id": TARGET, "session_uuid": TARGET, "version": "1", "streaming_status": "started", "output_format": {"type": "json", "fields": ["answer"]}},
+        {
+            "type": "run_prompt",
+            "template_id": TARGET,
+            "session_uuid": TARGET,
+            "version": "1",
+            "streaming_status": "started",
+            "output_format": {"type": "json", "fields": ["answer"]},
+        },
         True,
         id="template-streaming",
+    ),
+    pytest.param(
+        {
+            "type": "billing_banner",
+            "severity": "warning",
+            "message": "Synthetic credit notice",
+            "action": {"label": "Review usage", "url": "/usage"},
+            "dismissible": True,
+        },
+        False,
+        id="billing-banner",
     ),
 ]
 
@@ -70,7 +101,9 @@ def post_relay(payload):
     request.organization = SimpleNamespace(id=ORG)
     force_authenticate(
         request,
-        user=SimpleNamespace(is_authenticated=True, organization=SimpleNamespace(id=OTHER_ORG)),
+        user=SimpleNamespace(
+            is_authenticated=True, organization=SimpleNamespace(id=OTHER_ORG)
+        ),
     )
     return CallWebsocketView.as_view()(request)
 
@@ -85,11 +118,23 @@ def relay_http(url, *, json, **kwargs):
 
 
 async def connect_socket(org_id):
-    socket = WebsocketCommunicator(DataConsumer.as_asgi(), "/ws/connect/")
-    socket.scope["user"] = SimpleNamespace(id=org_id, organization_id=org_id)
-    connected, _ = await socket.connect()
-    assert connected
+    socket = ApplicationCommunicator(
+        DataConsumer.as_asgi(),
+        {
+            "type": "websocket",
+            "path": "/ws/connect/",
+            "user": SimpleNamespace(id=org_id, organization_id=org_id),
+        },
+    )
+    await socket.send_input({"type": "websocket.connect"})
+    assert (await socket.receive_output())["type"] == "websocket.accept"
     return socket
+
+
+async def receive_message(socket):
+    event = await socket.receive_output()
+    assert event["type"] == "websocket.send"
+    return json.loads(event["text"])
 
 
 @pytest.mark.parametrize("message,targeted", MESSAGES)
@@ -103,37 +148,59 @@ def test_helper_messages_reach_only_authenticated_organization(message, targeted
         other = await connect_socket(OTHER_ORG)
         try:
             for socket in (own, other):
-                await socket.send_json_to({"type": "subscribe", "uuid": TARGET})
-                assert (await socket.receive_json_from())["type"] == "subscription_confirmed"
+                await socket.send_input(
+                    {
+                        "type": "websocket.receive",
+                        "text": json.dumps({"type": "subscribe", "uuid": TARGET}),
+                    }
+                )
+                assert (await receive_message(socket))[
+                    "type"
+                ] == "subscription_confirmed"
             with (
                 patch("model_hub.utils.OrgApiKey.no_workspace_objects") as keys,
                 patch("model_hub.utils.requests.post", side_effect=relay_http) as post,
             ):
-                keys.get.return_value = SimpleNamespace(api_key="synthetic-key", secret_key="synthetic-secret")
-                result = await sync_to_async(call_websocket)(ORG, message, send_to_uuid=targeted, uuid=TARGET if targeted else None)
+                keys.get.return_value = SimpleNamespace(
+                    api_key="synthetic-key", secret_key="synthetic-secret"
+                )
+                result = await sync_to_async(call_websocket)(
+                    ORG,
+                    message,
+                    send_to_uuid=targeted,
+                    uuid=TARGET if targeted else None,
+                )
             assert result["status"] is True, result
             payload = post.call_args.kwargs["json"]
             assert "organization_id" not in payload
             if not targeted:
                 assert "uuid" not in payload
-            assert await own.receive_json_from() == message
+            assert await receive_message(own) == message
             assert await other.receive_nothing(timeout=0.1)
         finally:
-            await own.disconnect()
-            await other.disconnect()
+            for socket in (own, other):
+                await socket.send_input({"type": "websocket.disconnect", "code": 1000})
+                await socket.wait()
 
     with patch("sockets.consumer.resolve_socket_organization", side_effect=resolve_org):
         asyncio.run(run())
 
 
-@pytest.mark.parametrize("extra", [{}, {"uuid": None}, {"send_to_uuid": False, "uuid": None}])
+@pytest.mark.parametrize(
+    "extra", [{}, {"uuid": None}, {"send_to_uuid": False, "uuid": None}]
+)
 def test_broadcast_accepts_missing_and_legacy_null_uuid(extra):
     async def run():
         layer = get_channel_layer()
         channel = await layer.new_channel()
         await layer.group_add(f"org_{ORG}", channel)
-        message = {"alert_title": "Limit reached", "nested": {"items": [1, None, False]}}
-        response = await sync_to_async(post_relay)({"message": message, "organization_id": OTHER_ORG, **extra})
+        message = {
+            "alert_title": "Limit reached",
+            "nested": {"items": [1, None, False]},
+        }
+        response = await sync_to_async(post_relay)(
+            {"message": message, "organization_id": OTHER_ORG, **extra}
+        )
         assert response.status_code == 200, response.data
         event = await asyncio.wait_for(layer.receive(channel), timeout=1)
         assert event == {"type": "send_data", "data": message}
@@ -149,7 +216,9 @@ def test_non_object_messages_are_rejected(message):
     layer.assert_not_called()
 
 
-@pytest.mark.parametrize("extra", [{}, {"uuid": None}, {"uuid": ""}, {"uuid": "not-a-uuid"}])
+@pytest.mark.parametrize(
+    "extra", [{}, {"uuid": None}, {"uuid": ""}, {"uuid": "not-a-uuid"}]
+)
 def test_targeted_delivery_requires_uuid(extra):
     with patch("tfc.views.socket.get_channel_layer") as layer:
         response = post_relay({"message": {}, "send_to_uuid": True, **extra})
@@ -158,7 +227,9 @@ def test_targeted_delivery_requires_uuid(extra):
 
 
 def test_relay_requires_authentication():
-    request = APIRequestFactory().post("/call-websocket/", {"message": {}}, format="json")
+    request = APIRequestFactory().post(
+        "/call-websocket/", {"message": {}}, format="json"
+    )
     with patch("tfc.views.socket.get_channel_layer") as layer:
         response = CallWebsocketView.as_view()(request)
     assert response.status_code in (401, 403)
@@ -171,10 +242,14 @@ def test_enqueue_failure_is_not_reported_as_success(targeted):
         patch("tfc.views.socket.get_channel_layer") as layer,
         patch("tfc.views.socket.logger") as logger,
     ):
-        layer.return_value.group_send = AsyncMock(side_effect=ConnectionError("private delivery detail"))
+        layer.return_value.group_send = AsyncMock(
+            side_effect=ConnectionError("private delivery detail")
+        )
         response = post_relay({"message": {}, "send_to_uuid": targeted, "uuid": TARGET})
     assert response.status_code == 400
-    logger.error.assert_called_once_with("websocket_relay_delivery_failed", error_type="ConnectionError")
+    logger.error.assert_called_once_with(
+        "websocket_relay_delivery_failed", error_type="ConnectionError"
+    )
     assert "private delivery detail" not in str(response.data)
 
 
@@ -185,7 +260,9 @@ def test_notification_failures_are_contained_and_sanitized(failure):
         patch("model_hub.utils.requests.post") as post,
         patch("model_hub.utils.logger") as logger,
     ):
-        keys.get.return_value = SimpleNamespace(api_key="synthetic-key", secret_key="synthetic-secret")
+        keys.get.return_value = SimpleNamespace(
+            api_key="synthetic-key", secret_key="synthetic-secret"
+        )
         if failure == "lookup":
             keys.get.side_effect = RuntimeError("private lookup detail")
         elif failure == "create":
@@ -202,16 +279,45 @@ def test_notification_failures_are_contained_and_sanitized(failure):
         post.assert_not_called()
 
 
+@override_settings(WEBSOCKET_ENDPOINT="http://[invalid")
+def test_malformed_endpoint_is_a_contained_notification_failure():
+    with (
+        patch("model_hub.utils.OrgApiKey.no_workspace_objects") as keys,
+        patch("model_hub.utils.logger") as logger,
+    ):
+        result = call_websocket(ORG, {})
+    assert result["status"] == "error"
+    keys.get.assert_not_called()
+    logger.error.assert_called_once_with(
+        "websocket_relay_failed", error_type="ValueError", status_code=None, validation_fields=[]
+    )
+
+
 def test_http_validation_log_contains_only_status_and_known_field_names():
     response = requests.Response()
     response.status_code = 400
-    response._content = json.dumps({"result": {"uuid": ["private validation text"], "message": ["private message"], "private-field": ["secret"]}}).encode()
+    response._content = json.dumps(
+        {
+            "result": {
+                "uuid": ["private validation text"],
+                "message": ["private message"],
+                "private-field": ["secret"],
+            }
+        }
+    ).encode()
     with (
         patch("model_hub.utils.OrgApiKey.no_workspace_objects") as keys,
         patch("model_hub.utils.requests.post", return_value=response),
         patch("model_hub.utils.logger") as logger,
     ):
-        keys.get.return_value = SimpleNamespace(api_key="synthetic-key", secret_key="synthetic-secret")
+        keys.get.return_value = SimpleNamespace(
+            api_key="synthetic-key", secret_key="synthetic-secret"
+        )
         result = call_websocket(ORG, {})
     assert result["status"] == "error"
-    logger.error.assert_called_once_with("websocket_relay_failed", error_type="HTTPError", status_code=400, validation_fields=["message", "uuid"])
+    logger.error.assert_called_once_with(
+        "websocket_relay_failed",
+        error_type="HTTPError",
+        status_code=400,
+        validation_fields=["message", "uuid"],
+    )

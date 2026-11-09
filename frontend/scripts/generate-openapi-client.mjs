@@ -1083,11 +1083,56 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
+    // The relay carries heterogeneous notification objects, including nulls.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export type CallWebsocketRequestApiMessage =",
+      "{ [key: string]: unknown }",
+      "JsonValueApi",
+      "CallWebsocketRequestApi.message JSON values",
+    );
+    schemas = assertReplaceRegexInNamedBlock(
+      schemas,
+      "export interface CallWebsocketRequestApi {",
+      /export interface CallWebsocketRequestApi \{[\s\S]*?\n\}/,
+      `export type CallWebsocketRequestApi = {
+  message: CallWebsocketRequestApiMessage;
+} & (
+  | { send_to_uuid: true; uuid: string }
+  | { send_to_uuid?: false; uuid?: string | null }
+);`,
+      "CallWebsocketRequestApi conditional target UUID",
+    );
+
     fs.writeFileSync(schemasOutputPath, schemas);
   }
 
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
+
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const CallWebsocketCreateBody =",
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\)/g,
+      "jsonValueSchema",
+      "CallWebsocketCreateBody.message JSON values",
+    );
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const CallWebsocketCreateBody =",
+      '"uuid": zod.string().uuid().optional()',
+      '"uuid": zod.string().uuid().nullish()',
+      "CallWebsocketCreateBody.uuid nullable",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const CallWebsocketCreateBody =",
+      /\}\);/,
+      `}).refine((value) => !value.send_to_uuid || value.uuid != null, {
+  path: ["uuid"], message: "A UUID is required for targeted delivery."
+});`,
+      "CallWebsocketCreateBody conditional target UUID",
+    );
 
     for (const field of new Set(
       Object.values(interruptionNullableFields).flat(),

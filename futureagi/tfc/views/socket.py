@@ -47,5 +47,7 @@ class CallWebsocketView(APIView):
             )
             return self._gm.success_response("Message sent to websocket")
         except Exception as exc:
-            logger.error("websocket_relay_delivery_failed", error_type=type(exc).__name__)
+            logger.error(
+                "websocket_relay_delivery_failed", error_type=type(exc).__name__
+            )
             return self._gm.bad_request("Unable to send message to Websocket")

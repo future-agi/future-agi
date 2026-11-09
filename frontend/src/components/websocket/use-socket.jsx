@@ -30,6 +30,8 @@ export const WebSocketProvider = ({ children }) => {
   const reconnectTimeoutRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
   const accessToken = useRef(null);
+  const socketOrganizationId = useRef(null);
+  const organizationId = user?.organization?.id;
   const createWebSocketConnectionRef = useRef(null);
   const messageListenersRef = useRef(new Set());
 
@@ -151,10 +153,13 @@ export const WebSocketProvider = ({ children }) => {
     const isSecure = HOST_API.includes("https");
     const wsHost = HOST_API.replace(/^https?:\/\//, "").replace(/\/+$/, "");
     const protocol = isSecure ? "wss" : "ws";
-    const wsUrl = `${protocol}://${wsHost}/ws/connect/?token=${accessToken.current}`;
+    const query = new URLSearchParams({ token: accessToken.current });
+    if (organizationId) query.set("organization_id", organizationId);
+    const wsUrl = `${protocol}://${wsHost}/ws/connect/?${query}`;
 
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
+    socketOrganizationId.current = organizationId;
 
     // Create and store event handlers
     const openHandler = () => {
@@ -270,6 +275,7 @@ export const WebSocketProvider = ({ children }) => {
     socket.addEventListener("close", closeHandler);
   }, [
     authenticated,
+    organizationId,
     closeConnection,
     navigate,
     startHeartbeat,
@@ -310,7 +316,8 @@ export const WebSocketProvider = ({ children }) => {
 
       if (
         !socketRef.current ||
-        socketRef.current.readyState !== WebSocket.OPEN
+        socketRef.current.readyState !== WebSocket.OPEN ||
+        socketOrganizationId.current !== organizationId
       ) {
         createWebSocketConnection();
       }
@@ -321,6 +328,7 @@ export const WebSocketProvider = ({ children }) => {
   }, [
     authenticated,
     user?.accessToken,
+    organizationId,
     createWebSocketConnection,
     closeConnection,
   ]);

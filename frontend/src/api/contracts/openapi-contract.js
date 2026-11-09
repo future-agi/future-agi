@@ -332,6 +332,15 @@ function objectSchemaToZod(schema, options) {
   } else {
     compiled = compiled.passthrough();
   }
+  // Swagger 2 cannot express conditional required/non-null fields natively.
+  for (const [trigger, rule] of Object.entries(schema["x-required-when"] || {})) {
+    for (const field of rule.fields) {
+      compiled = compiled.refine(
+        (value) => value[trigger] !== rule.value || value[field] != null,
+        { path: [field], message: `Required when ${trigger} is ${rule.value}.` },
+      );
+    }
+  }
   return compiled;
 }
 

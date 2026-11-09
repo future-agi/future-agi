@@ -278,6 +278,11 @@ class CallWebsocketRequestSerializer(serializers.Serializer):
         help_text="Required for targeted delivery; omit or use null for broadcasts.",
     )
 
+    class Meta:
+        swagger_schema_fields = {
+            "x-required-when": {"send_to_uuid": {"value": True, "fields": ["uuid"]}}
+        }
+
     def validate(self, attrs):
         if attrs.get("send_to_uuid") and attrs.get("uuid") is None:
             raise serializers.ValidationError(

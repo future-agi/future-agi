@@ -31,25 +31,27 @@ def _relay_validation_fields(response):
     details = body.get("details") or body.get("result")
     if not isinstance(details, dict):
         return []
-    return sorted(set(details) & {"message", "uuid", "send_to_uuid", "non_field_errors"})
+    return sorted(
+        set(details) & {"message", "uuid", "send_to_uuid", "non_field_errors"}
+    )
 
 
 # Function to send message to websocket to avoid RunTimeError
 def call_websocket(organization_id, message, send_to_uuid=False, uuid=None):
-    url = settings.WEBSOCKET_ENDPOINT
-    if is_forbidden_vendor_endpoint(url):
-        # The relay authenticates with the org's system API key and secret.
-        logger.error("websocket_relay_refused_vendor_endpoint")
-        return {
-            "status": "error",
-            "message": "WEBSOCKET_ENDPOINT must point at this install's backend",
-        }
-    payload = {"message": message, "send_to_uuid": send_to_uuid}
-    if send_to_uuid:
-        payload["uuid"] = str(uuid) if uuid is not None else None
-
     response = None
     try:
+        url = settings.WEBSOCKET_ENDPOINT
+        if is_forbidden_vendor_endpoint(url):
+            # The relay authenticates with the org's system API key and secret.
+            logger.error("websocket_relay_refused_vendor_endpoint")
+            return {
+                "status": "error",
+                "message": "WEBSOCKET_ENDPOINT must point at this install's backend",
+            }
+        payload = {"message": message, "send_to_uuid": send_to_uuid}
+        if send_to_uuid:
+            payload["uuid"] = str(uuid) if uuid is not None else None
+
         # Key lookup/creation is part of best-effort notification too: failures
         # must not replace an already-computed usage refusal or streaming result.
         try:

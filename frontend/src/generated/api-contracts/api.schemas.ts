@@ -5335,11 +5335,13 @@ export interface SpanAttributeValuesResponseApi {
   query_window_end: string;
 }
 
+export type CallWebsocketRequestApiMessage = { [key: string]: JsonValueApi };
+
 export interface CallWebsocketRequestApi {
-  /** @minLength 1 */
-  message: string;
+  message: CallWebsocketRequestApiMessage;
   send_to_uuid?: boolean;
-  uuid?: string;
+  /** Required for targeted delivery; omit or use null for broadcasts. */
+  uuid?: string | null;
 }
 
 export interface CallWebsocketResponseApi {
