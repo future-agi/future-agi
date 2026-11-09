@@ -71,6 +71,23 @@ PRODUCTION_ONLY = {
     ],
 }
 
+# The agent's own tools service: the build stands it up from the agent's source, so its tools reach the test world.
+OWN_TOOLS_SERVICE = {
+    "tool_entrypoints": [
+        {"tool": "get_deal", "mode": "service", "service": "tools-api"},
+        {"tool": "apply_discount", "mode": "service", "service": "tools-api"},
+    ],
+    "dependencies": [
+        {
+            "kind": "service",
+            "name": "tools-api",
+            "engine": "",
+            "reached": {"host": "tools-api", "port": 8080, "dsn_env": "TOOLS_API_URL"},
+            "used_by": ["get_deal", "apply_discount"],
+        }
+    ],
+}
+
 
 @pytest.fixture(autouse=True)
 def readiness_on(settings):
@@ -456,6 +473,52 @@ class TestRows:
         assert (message["status"], message["reason_code"]) == ("untested", "not_run")
         assert message["fix"]["type"] == "recheck"
         assert message["fix"]["recheck"]["scope"] == "pair"
+
+    def test_the_agent_s_own_tools_service_is_not_production(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "rd-own-service")
+        _certify(environment, storage)
+        _built(environment, contract=OWN_TOOLS_SERVICE)
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["reason_code"] != "production_only"
+        assert routing["status"] != "blocked"
+
+    def test_a_service_no_tool_entrypoint_serves_is_still_production(
+        self, user, workspace, storage
+    ):
+        contract = {
+            **OWN_TOOLS_SERVICE,
+            "tool_entrypoints": [
+                {"tool": "get_deal", "mode": "service", "service": "tools-api"},
+                {"tool": "apply_discount", "mode": "in_process"},
+            ],
+            "dependencies": [
+                *OWN_TOOLS_SERVICE["dependencies"],
+                {
+                    "kind": "service",
+                    "name": "billing",
+                    "engine": "",
+                    "reached": {"host": "billing.example"},
+                    "used_by": ["apply_discount"],
+                },
+            ],
+        }
+        environment = _environment(user, workspace, storage, "rd-other-service")
+        _certify(environment, storage)
+        _built(environment, contract=contract)
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "blocked",
+            "production_only",
+        )
+        assert routing["targets"] == [
+            {"kind": "tool", "name": "apply_discount", "result": "failed"}
+        ]
 
     def test_production_only_reads_blocked_in_nikhils_words(
         self, user, workspace, storage
