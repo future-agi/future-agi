@@ -897,6 +897,35 @@ class TestNewerChoiceWins:
         assert environment.agent_version_id == a3.id
         assert _activations(a2)[str(environment.id)] == "superseded"
 
+    def test_a_superseded_move_s_check_is_stopped(self, user, workspace, storage):
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-newer-stop")
+        a3 = _a3(environment, a1)
+        move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
+        first = _move_job(environment, a2)
+
+        move_agent_default(environment, a3.id, expected_default_id=a1.id, user=user)
+
+        first.refresh_from_db()
+        assert first.cancel_requested_at is not None
+        assert first.cancel_reason == "superseded_move"
+
+    def test_a_check_job_carries_no_held_back_set(self, user, workspace, storage):
+        from simulate.selectors.held_back import HELD_BACK_METADATA_KEY
+
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-no-held")
+        payload = environment.payload
+        payload.setdefault("metadata", {})[HELD_BACK_METADATA_KEY] = {
+            "suite_version_id": "00000000-0000-0000-0000-000000000000",
+            "scenario_keys": ["k"],
+        }
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload=payload
+        )
+        environment.refresh_from_db()
+        move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
+
+        assert HELD_BACK_METADATA_KEY not in _job_metadata(_move_job(environment, a2))
+
     def test_of_two_waiting_moves_the_later_one_lands(self, user, workspace, storage):
         environment, a1, a2 = _with_a2(user, workspace, storage, "pv-newer-waiting")
         a3 = _a3(environment, a1)
@@ -1147,7 +1176,7 @@ def _age(job, minutes, *, launched=None):
 
 
 class TestDeadline:
-    def test_a_check_past_its_deadline_is_stopped_and_fails_the_pairing(
+    def test_a_check_past_its_deadline_is_stopped_and_runs_go_ahead(
         self,
         user,
         workspace,
@@ -1175,18 +1204,17 @@ class TestDeadline:
 
         assert done.state == "canceled"
         assert done.cancel_reason == validation.CHECK_TIMED_OUT
-        assert _job_metadata(job)["validation_outcome"] == "failed"
+        # A check that ran out of time is ours: it never fails the pairing.
+        assert _job_metadata(job)["validation_outcome"] == "unavailable"
         row = _row(environment)
-        assert (row.state, row.error["code"], row.error["source"]) == (
-            "failed",
-            "validation_timed_out",
-            "validation",
+        assert row.state == "pending"
+        last = row.error["last_attempt"]
+        assert (last["code"], last["cause"]) == (
+            validation.CHECK_UNAVAILABLE,
+            validation.CHECK_TIMED_OUT,
         )
-        with pytest.raises(HostedHarnessError) as refused:
-            _run(environment, key="after-timeout")
-        assert refused.value.code == "pair_failed"
-        assert refused.value.details["reason_code"] == "validation_timed_out"
-        assert "did not finish within 45 minutes" in refused.value.message
+        run = _run(environment, key="after-timeout")
+        assert run is not None
         again = _start(environment)
         assert again.state == "validating" and again.job.id != job.id
 
