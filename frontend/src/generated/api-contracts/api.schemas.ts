@@ -31061,6 +31061,7 @@ export const ObservationSpanApiObservationType = {
   guardrail: "guardrail",
   evaluator: "evaluator",
   conversation: "conversation",
+  internal: "internal",
 } as const;
 
 export type ObservationSpanApiInput = { [key: string]: unknown };
@@ -35636,6 +35637,9 @@ export interface AutoReloadSettingsRequestApi {
   autoreload_enabled: boolean;
   autoreload_walletamount: string;
   autoreload_walletthreshold: string;
+  autoreload_maxcharge?: string;
+  autoreload_consent?: boolean;
+  autoreload_charge_now?: boolean;
 }
 
 export type AutoReloadUpdateResponseApiStatus =

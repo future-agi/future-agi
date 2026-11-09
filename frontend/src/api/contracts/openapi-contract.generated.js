@@ -54751,6 +54751,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "decimal",
         },
+        autoreload_maxcharge: {
+          title: "Autoreload maxcharge",
+          type: "string",
+          format: "decimal",
+          "x-nullable": true,
+        },
+        autoreload_consent: {
+          title: "Autoreload consent",
+          type: "boolean",
+          default: false,
+        },
+        autoreload_charge_now: {
+          title: "Autoreload charge now",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     AutoReloadSettingsResponse: {
@@ -75232,6 +75248,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "guardrail",
             "evaluator",
             "conversation",
+            "internal",
           ],
         },
         start_time: {
