@@ -464,6 +464,25 @@ func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model 
 	return nil, failedID, "", firstErr
 }
 
+// effectiveProviderLock selects the org's policy without changing the shared
+// gateway resolver. An omitted policy inherits the gateway configuration.
+func (h *Handlers) effectiveProviderLock(orgCfg *tenant.OrgConfig) *routing.ProviderLockResolver {
+	if orgCfg == nil || orgCfg.Routing == nil || orgCfg.Routing.ProviderLock == nil {
+		return h.providerLockResolver
+	}
+	cfg := orgCfg.Routing.ProviderLock
+	if !cfg.Enabled {
+		// The global resolver constructor enables an empty config by default;
+		// an explicitly disabled org policy must not take that default.
+		return nil
+	}
+	return routing.NewProviderLockResolver(config.ProviderLockConfig{
+		Enabled:          cfg.Enabled,
+		AllowedProviders: cfg.AllowedProviders,
+		DenyProviders:    cfg.DenyProviders,
+	})
+}
+
 func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover {
 	if orgCfg != nil && orgCfg.Routing != nil && (orgCfg.Routing.FallbackEnabled || (orgCfg.Routing.Failover != nil && orgCfg.Routing.Failover.Enabled)) {
 		foCfg := h.buildOrgFailoverConfig(orgCfg.Routing)
@@ -1117,10 +1136,11 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	// 2. Provider locking — bypasses all routing if set.
 	var providerLocked bool
 	var lockedProvider providers.Provider
-	if h.providerLockResolver.IsEnabled() {
-		lockTarget := h.providerLockResolver.ExtractLock(rc, r.Header)
+	providerLockResolver := h.effectiveProviderLock(orgCfg)
+	if providerLockResolver.IsEnabled() {
+		lockTarget := providerLockResolver.ExtractLock(rc, r.Header)
 		if lockTarget != "" {
-			if err := h.providerLockResolver.Validate(lockTarget); err != nil {
+			if err := providerLockResolver.Validate(lockTarget); err != nil {
 				models.WriteError(w, models.ErrForbidden(err.Error()))
 				return
 			}
