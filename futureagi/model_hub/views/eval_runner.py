@@ -47,6 +47,11 @@ from model_hub.models.develop_dataset import (
     KnowledgeBaseFile,
     Row,
 )
+from model_hub.utils.eval_metadata import (
+    EvaluationMetadataUnavailable,
+    read_evaluation_column_types,
+    read_evaluation_workspace,
+)
 from model_hub.models.evals_metric import (
     EvalTemplate,
     EvalTemplateVersion,
@@ -1306,10 +1311,7 @@ class EvaluationRunner:
                     if base_col_id:
                         base_column_ids.append(base_col_id)
 
-            cols = Column.objects.filter(id__in=base_column_ids).values(
-                "id", "data_type"
-            )
-            col_map = {str(col["id"]): col["data_type"] for col in cols}
+            col_map = read_evaluation_column_types(base_column_ids)
             api_call_log_row = self._handle_api_call(row, mappings, config)
             (
                 eval_result,
@@ -1414,6 +1416,16 @@ class EvaluationRunner:
                     ),
                 )
 
+        except EvaluationMetadataUnavailable as error:
+            # Keep the existing terminal cell status, but distinguish an outage
+            # from a failed evaluator. No provider, usage or reason-cell writes
+            # have happened, and callers must not replay the whole evaluation.
+            logger.warning("evaluation_metadata_unavailable", error_code=error.code)
+            return (
+                {"reason": str(error), "error_code": error.code},
+                CellStatus.ERROR.value,
+                CellStatus.ERROR.value,
+            )
         except Exception as e:
             # Expected, handled validation failures (a required input was not
             # mapped/provided, or the eval targets a cell that already errored)
@@ -1541,6 +1553,9 @@ class EvaluationRunner:
         if log_and_deduct_cost_for_api_request is None:
             return None
 
+        # Resolve the lazy relation before entering logging/billing. Only this
+        # read is replayable; the logger and provider must run at most once.
+        workspace = read_evaluation_workspace(row)
         api_call_log_row = log_and_deduct_cost_for_api_request(
             org if org else self.user_eval_metric.organization,
             api_call_type,
@@ -1555,7 +1570,7 @@ class EvaluationRunner:
                     else None
                 )
             ),
-            workspace=row.dataset.workspace,
+            workspace=workspace,
         )
 
         if not api_call_log_row:
