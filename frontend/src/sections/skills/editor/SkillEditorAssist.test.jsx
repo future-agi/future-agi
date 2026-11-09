@@ -4,7 +4,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import SkillEditorView from './SkillEditorView';
 
-const api = vi.hoisted(() => ({ scope: 'org:workspace:owner', save: vi.fn(), preview: vi.fn(), create: vi.fn(), apply: vi.fn(), snapshot: null, assistEnabled: true }));
+const api = vi.hoisted(() => ({ scope: 'org:workspace:owner', save: vi.fn(), preview: vi.fn(), previewSeen: vi.fn(), create: vi.fn(), apply: vi.fn(), snapshot: null, assistEnabled: true }));
+let previewReached;
 const files = [{ path: 'SKILL.md', content: 'Saved approved policy' }];
 const initial = { files, note: '', revision: 4, baseVersion: 1 };
 const skill = { id: 'skill', name: 'policy', latestVersion: 1, permissions: { canRunTests: true } };
@@ -24,7 +25,7 @@ vi.mock('src/api/skills/testing', () => ({
   isActiveSkillJob: (status) => ['queued', 'running', 'cancelling'].includes(status),
 }));
 vi.mock('src/api/skills/assist', () => ({
-  usePreviewSkillAssist: () => mutation(api.preview), useCreateSkillAssist: () => mutation(api.create),
+  usePreviewSkillAssist: () => mutation(async (input) => { api.previewSeen(input); return api.preview(input); }), useCreateSkillAssist: () => mutation(api.create),
   useApplySkillAssist: () => mutation(api.apply), useCancelSkillAssist: () => mutation(),
   useSkillAssist: (_skillId, id) => query(id ? { id, kind: 'draft', status: 'completed', baseRevision: api.snapshot.revision, baseDigest: api.snapshot.expectedDigest, proposal: { files: [{ path: 'SKILL.md', content: 'Reviewed AI proposal' }] }, missingInformation: ['Confirm the actual refund window.'], exposedCaseIds: [], payloadExpired: false } : null),
 }));
@@ -40,6 +41,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('crypto', webcrypto);
   api.scope = 'org:workspace:owner'; api.snapshot = null; api.assistEnabled = true;
+  previewReached = new Promise((resolve) => { api.previewSeen.mockImplementation(resolve); });
   api.save.mockImplementation(async (input) => ({ ...input, revision: input.revision + 1 }));
   api.preview.mockImplementation(async (input) => { api.snapshot = input; return plan; });
   api.create.mockResolvedValue({ id: 'proposal' });
@@ -59,7 +61,14 @@ async function mount() {
   return view;
 }
 const preview = () => fireEvent.click(screen.getByRole('button', { name: 'Preview data and spend' }));
+async function waitForPreviewRequest() {
+  // Real WebCrypto runs off-thread. Synchronize on the requested operation, not
+  // Testing Library's one-second query deadline under a loaded full-suite worker.
+  await act(async () => { await previewReached; });
+  expect(api.preview).toHaveBeenCalledTimes(1);
+}
 async function generate() {
+  await waitForPreviewRequest();
   await screen.findByText('Confirm outbound processing');
   fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed the outbound data/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Generate proposal' }));
@@ -76,6 +85,7 @@ it('flushes an older save plus later local edits before preparing assistance', a
   preview();
   expect(api.preview).not.toHaveBeenCalled();
   await act(async () => { finish({ ...initial, revision: 5, files: [{ path: 'SKILL.md', content: 'Older edit' }] }); });
+  await waitForPreviewRequest();
   await screen.findByText('Confirm outbound processing');
   expect(api.save).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 5, files: [{ path: 'SKILL.md', content: 'Latest edit' }] }));
   expect(api.preview).toHaveBeenCalledWith(expect.objectContaining({ revision: 6, expectedDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) }));
@@ -97,11 +107,26 @@ it('marks an in-flight preview stale on the next local edit without losing input
   api.preview.mockImplementationOnce((input) => { api.snapshot = input; return new Promise((resolve) => { finish = resolve; }); });
   await mount();
   preview();
-  await waitFor(() => expect(api.preview).toHaveBeenCalled());
+  await waitForPreviewRequest();
   fireEvent.change(screen.getByLabelText('File content'), { target: { value: 'Changed while previewing' } });
   await act(async () => { finish(plan); });
   expect(await screen.findByText(/For earlier content/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed the outbound data/ }));
+  expect(screen.getByRole('button', { name: 'Generate proposal' })).toBeDisabled();
+  expect(api.create).not.toHaveBeenCalled();
+});
+
+it('does not authorize processing just because the preview request was sent', async () => {
+  let finish;
+  api.preview.mockImplementationOnce((input) => { api.snapshot = input; return new Promise((resolve) => { finish = resolve; }); });
+  await mount();
+  preview();
+  await waitForPreviewRequest();
+  expect(screen.queryByText('Confirm outbound processing')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Generate proposal' })).not.toBeInTheDocument();
+  expect(api.create).not.toHaveBeenCalled();
+  await act(async () => { finish(plan); });
+  expect(await screen.findByText('Confirm outbound processing')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Generate proposal' })).toBeDisabled();
   expect(api.create).not.toHaveBeenCalled();
 });
@@ -125,7 +150,7 @@ it('does not repopulate assistance after switching the session scope during prev
   api.preview.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
   const view = await mount();
   preview();
-  await waitFor(() => expect(api.preview).toHaveBeenCalled());
+  await waitForPreviewRequest();
   api.scope = 'org:other-workspace:other-owner';
   view.rerender(tree());
   await screen.findByLabelText('Task and use / non-use boundary');
