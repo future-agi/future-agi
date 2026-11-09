@@ -14387,6 +14387,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           500: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
+          503: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -16602,6 +16605,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ModelHubErrorResponse",
           },
           500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {
@@ -40102,6 +40108,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/ProjectDetailResponse",
           },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -40144,10 +40156,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
       delete: {
         operationId: "tracer_project_delete",
         runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {},
         responses: {
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -40158,7 +40176,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       patch: {
         operationId: "tracer_project_update_tags",
         runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/Project",
         },
@@ -40166,6 +40184,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/Project",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",

@@ -25787,6 +25787,12 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -30216,6 +30222,12 @@
                         }
                     },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -71341,6 +71353,18 @@
                             "$ref": "#/definitions/ProjectDetailResponse"
                         }
                     },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -71423,6 +71447,18 @@
                     "204": {
                         "description": ""
                     },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -71432,7 +71468,8 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -71464,6 +71501,18 @@
                             "$ref": "#/definitions/Project"
                         }
                     },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -71473,7 +71522,8 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {

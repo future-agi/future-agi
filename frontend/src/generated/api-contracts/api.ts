@@ -31199,9 +31199,14 @@ export type modelHubDatasetJsonSchemaListResponse500 = {
   status: 500;
 };
 
+export type modelHubDatasetJsonSchemaListResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
 export type modelHubDatasetJsonSchemaListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDatasetJsonSchemaListResponseSuccess =
@@ -31214,6 +31219,7 @@ export type modelHubDatasetJsonSchemaListResponseError = (
   | modelHubDatasetJsonSchemaListResponse404
   | modelHubDatasetJsonSchemaListResponse409
   | modelHubDatasetJsonSchemaListResponse500
+  | modelHubDatasetJsonSchemaListResponse503
   | modelHubDatasetJsonSchemaListResponseDefault
 ) & {
   headers: Headers;
@@ -36112,9 +36118,14 @@ export type modelHubDevelopsDownloadDatasetListResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsDownloadDatasetListResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
 export type modelHubDevelopsDownloadDatasetListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsDownloadDatasetListResponseSuccess =
@@ -36127,6 +36138,7 @@ export type modelHubDevelopsDownloadDatasetListResponseError = (
   | modelHubDevelopsDownloadDatasetListResponse404
   | modelHubDevelopsDownloadDatasetListResponse409
   | modelHubDevelopsDownloadDatasetListResponse500
+  | modelHubDevelopsDownloadDatasetListResponse503
   | modelHubDevelopsDownloadDatasetListResponseDefault
 ) & {
   headers: Headers;
@@ -81886,18 +81898,31 @@ export type tracerProjectReadResponse200 = {
   status: 200;
 };
 
+export type tracerProjectReadResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerProjectReadResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
 export type tracerProjectReadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 503>;
 };
 
 export type tracerProjectReadResponseSuccess = tracerProjectReadResponse200 & {
   headers: Headers;
 };
-export type tracerProjectReadResponseError =
-  tracerProjectReadResponseDefault & {
-    headers: Headers;
-  };
+export type tracerProjectReadResponseError = (
+  | tracerProjectReadResponse404
+  | tracerProjectReadResponse503
+  | tracerProjectReadResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerProjectReadResponse =
   | tracerProjectReadResponseSuccess
@@ -82011,19 +82036,32 @@ export type tracerProjectDeleteResponse204 = {
   status: 204;
 };
 
+export type tracerProjectDeleteResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerProjectDeleteResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
 export type tracerProjectDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
+  status: Exclude<HTTPStatusCodes, 204 | 404 | 503>;
 };
 
 export type tracerProjectDeleteResponseSuccess =
   tracerProjectDeleteResponse204 & {
     headers: Headers;
   };
-export type tracerProjectDeleteResponseError =
-  tracerProjectDeleteResponseDefault & {
-    headers: Headers;
-  };
+export type tracerProjectDeleteResponseError = (
+  | tracerProjectDeleteResponse404
+  | tracerProjectDeleteResponse503
+  | tracerProjectDeleteResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerProjectDeleteResponse =
   | tracerProjectDeleteResponseSuccess
@@ -82051,19 +82089,32 @@ export type tracerProjectUpdateTagsResponse200 = {
   status: 200;
 };
 
+export type tracerProjectUpdateTagsResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerProjectUpdateTagsResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
 export type tracerProjectUpdateTagsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 503>;
 };
 
 export type tracerProjectUpdateTagsResponseSuccess =
   tracerProjectUpdateTagsResponse200 & {
     headers: Headers;
   };
-export type tracerProjectUpdateTagsResponseError =
-  tracerProjectUpdateTagsResponseDefault & {
-    headers: Headers;
-  };
+export type tracerProjectUpdateTagsResponseError = (
+  | tracerProjectUpdateTagsResponse404
+  | tracerProjectUpdateTagsResponse503
+  | tracerProjectUpdateTagsResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerProjectUpdateTagsResponse =
   | tracerProjectUpdateTagsResponseSuccess

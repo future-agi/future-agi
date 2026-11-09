@@ -55,7 +55,9 @@ def make_resource(endpoint, organization, workspace, *, deleted=False):
 
 
 @pytest.mark.parametrize("endpoint", ENDPOINTS)
-@pytest.mark.parametrize("absence", ["missing", "deleted", "other_org", "other_workspace"])
+@pytest.mark.parametrize(
+    "absence", ["missing", "deleted", "other_org", "other_workspace"]
+)
 def test_invisible_resource_returns_quiet_standard_404(
     auth_client, organization, workspace, user, endpoint, absence, caplog
 ):
@@ -143,11 +145,15 @@ def test_unexpected_processing_failure_remains_observable_500(
 
     assert response.status_code == 500
     assert "synthetic private" not in response.content.decode()
-    assert any(record.exc_info for record in caplog.records if record.levelno >= logging.ERROR)
+    assert any(
+        record.exc_info for record in caplog.records if record.levelno >= logging.ERROR
+    )
 
 
 @pytest.mark.parametrize("endpoint", ["schema", "download"])
-def test_visible_dataset_retains_schema_and_csv(auth_client, organization, workspace, endpoint):
+def test_visible_dataset_retains_schema_and_csv(
+    auth_client, organization, workspace, endpoint
+):
     dataset = make_resource(endpoint, organization, workspace)
     column = Column.objects.create(
         dataset=dataset,
@@ -172,7 +178,9 @@ def test_visible_dataset_retains_schema_and_csv(auth_client, organization, works
 
 
 @pytest.mark.parametrize("sampling_rate", [None, 0.25])
-def test_visible_project_retains_sampling_rate(auth_client, organization, workspace, sampling_rate):
+def test_visible_project_retains_sampling_rate(
+    auth_client, organization, workspace, sampling_rate
+):
     project = make_resource("retrieve", organization, workspace)
     if sampling_rate is not None:
         TraceScanConfig.objects.create(project=project, sampling_rate=sampling_rate)

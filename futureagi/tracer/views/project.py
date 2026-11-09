@@ -886,9 +886,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.bad_request("tags must be a list")
         project.tags = tags
         project.save(update_fields=["tags", "updated_at"])
-        return self._gm.success_response(
-            {"id": str(project.id), "tags": project.tags}
-        )
+        return self._gm.success_response({"id": str(project.id), "tags": project.tags})
 
     @validated_request(
         query_serializer=ProjectGraphDataQuerySerializer,
