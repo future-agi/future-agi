@@ -321,7 +321,7 @@ const EvalsListView = () => {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [sorting, setSorting] = useState([{ id: "lastUpdated", desc: true }]);
-  const [rowSelection, setRowSelection] = useState({});
+  const [selectedIds, setSelectedIds] = useState([]);
   const [filters, setFilters] = useState(null);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [displayAnchorEl, setDisplayAnchorEl] = useState(null);
@@ -500,13 +500,33 @@ const EvalsListView = () => {
     !chartsLoading &&
     (chartsTransportError || (Boolean(chartsRead) && !chartsRenderable));
 
-  // Selected rows
-  const selectedItems = useMemo(() => {
-    return Object.keys(rowSelection)
-      .filter((key) => rowSelection[key])
-      .map((key) => items[parseInt(key, 10)])
-      .filter(Boolean);
-  }, [rowSelection, items]);
+  // Persist UUIDs, not page-local indexes, so cached pages and refreshed rows
+  // cannot transfer a selection. Adapt to DataTable's positional API here only.
+  const rowSelection = useMemo(() => {
+    const selection = {};
+    items.forEach((item, index) => {
+      if (selectedIds.includes(item.id)) selection[index] = true;
+    });
+    return selection;
+  }, [items, selectedIds]);
+
+  const handleRowSelectionChange = useCallback(
+    (selection) => {
+      setSelectedIds(
+        Object.keys(selection)
+          .filter((key) => selection[key])
+          .map((key) => items[parseInt(key, 10)]?.id)
+          .filter(Boolean),
+      );
+    },
+    [items],
+  );
+
+  // Only visible, explicitly selected identities participate in bulk actions.
+  const selectedItems = useMemo(
+    () => items.filter((item) => selectedIds.includes(item.id)),
+    [items, selectedIds],
+  );
 
   // Column definitions — TanStack format
   const columns = useMemo(
@@ -786,7 +806,7 @@ const EvalsListView = () => {
   }, [panelFilters]);
 
   const handleCancelSelection = useCallback(() => {
-    setRowSelection({});
+    setSelectedIds([]);
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
@@ -1052,7 +1072,7 @@ const EvalsListView = () => {
         sorting={sorting}
         onSortingChange={setSorting}
         rowSelection={rowSelection}
-        onRowSelectionChange={setRowSelection}
+        onRowSelectionChange={handleRowSelectionChange}
         columnVisibility={columnVisibility}
         onColumnVisibilityChange={handleColumnVisibilityChange}
         onRowClick={(row) => navigate(`/dashboard/evaluations/${row.id}`)}
