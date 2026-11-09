@@ -7,12 +7,15 @@ is the policy. Candidates come from ``tracer.selectors.eval_tasks.stranded``.
 from __future__ import annotations
 
 import structlog
+from django.core.cache import cache
+from django.db import transaction
 
 from tfc.temporal.eval_tasks.types import ReapInput
-from tracer.models.eval_task import EvalTask, EvalTaskStatus
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.selectors.eval_tasks.stranded import (
     find_stranded_tasks,
     only_unreclaimable_claims_remain,
+    sweepable_statuses,
 )
 from tracer.services.eval_tasks.reaper import (
     effective_stale_seconds,
@@ -20,6 +23,9 @@ from tracer.services.eval_tasks.reaper import (
 )
 
 logger = structlog.get_logger(__name__)
+
+# A scheduling hint only; losing it restarts the idle ring, never changes safety.
+_SWEEP_POSITION_KEY = "eval-task-sweep:position:v1"
 
 # Same poison cap the workflow's own reap uses (``ReapInput.max_attempts``), so
 # a row that keeps dying is failed after the same number of reclaims however it
@@ -119,6 +125,7 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         "restarted": False,
         "progressing": False,
         "deferred": False,
+        "skipped": False,
     }
     if describe_eval_task_workflow_sync(task.id) == WF_PROGRESSING:
         # Reported, not merely skipped: a healthy draining task is a candidate
@@ -128,42 +135,69 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         outcome["progressing"] = True
         return outcome
 
-    outcome["requeued"], outcome["failed"] = reap_stale_running(
-        task,
-        # Through the same helper as the workflow's own reap, carrying the
-        # same evidence: the describe above just answered that no execution
-        # owns this task. ``SWEEP_STALE_RUNNING_SECONDS`` declares its minimum
-        # as ``LONGEST_RUNNING_ENTRY_SECONDS + 1`` — the blind floor — so both
-        # branches of ``effective_stale_seconds`` agree at every value an
-        # operator can set; the flag records the evidence, it does not lower
-        # the threshold.
-        older_than_seconds=effective_stale_seconds(
-            stale_running_seconds, workflow_confirmed_stopped=True
-        ),
-        max_attempts=_MAX_ENTRY_ATTEMPTS,
-    )
+    # Pause/delete updates lock this same task row. Read desired state under
+    # that lock before touching entries, not from the pre-describe candidate.
+    with transaction.atomic():
+        current = (
+            EvalTask.no_workspace_objects.select_for_update()
+            .filter(id=task.id, status__in=sweepable_statuses())
+            .first()
+        )
+        if current is None:
+            outcome["skipped"] = True
+            return outcome
+        task = current
+        outcome["requeued"], outcome["failed"] = reap_stale_running(
+            task,
+            older_than_seconds=effective_stale_seconds(
+                stale_running_seconds, workflow_confirmed_stopped=True
+            ),
+            max_attempts=_MAX_ENTRY_ATTEMPTS,
+        )
 
     try:
-        # Checked before the FAILED flip below, so an opted-in failed task that
-        # has to wait is left failed rather than made pending with nothing to
-        # run.
         if only_unreclaimable_claims_remain(
             task, reclaimable_after_seconds=RESTART_REAP_SECONDS
         ):
             outcome["deferred"] = True
             return outcome
 
-        if task.status == EvalTaskStatus.FAILED:
-            # A failed row makes ``get_eval_task_state_activity`` report the
-            # task inactive, so a restart would exit on its first state check.
-            # Clear it the way Resume does, guarded so a concurrent pause or
-            # delete wins.
-            changed = EvalTask.objects.filter(
-                id=task.id, status=EvalTaskStatus.FAILED
-            ).update(status=EvalTaskStatus.PENDING)
-            if not changed:
+        with transaction.atomic():
+            current = (
+                EvalTask.no_workspace_objects.select_for_update()
+                .filter(id=task.id, status__in=sweepable_statuses())
+                .first()
+            )
+            if current is None:
+                outcome["skipped"] = True
                 return outcome
-            task.status = EvalTaskStatus.PENDING
+            task = current
+            if task.run_type == RunType.CONTINUOUS:
+                # The workflow's PENDING -> RUNNING activity stamps start_time
+                # with now. That is also the reconciler's coverage floor: on a
+                # recovery it would skip never-dispatched arrivals, or clamp a
+                # partial catch-up slice straight to now. Transition here with
+                # the original floor instead, so that activity is a no-op.
+                # Keep the cursor intact, including NULL, and preserve results.
+                task.start_time = task.start_time or task.created_at
+                task.status = EvalTaskStatus.RUNNING
+                EvalTask.no_workspace_objects.filter(id=task.id).update(
+                    status=task.status, start_time=task.start_time
+                )
+            elif task.status == EvalTaskStatus.FAILED:
+                task.status = EvalTaskStatus.PENDING
+                EvalTask.no_workspace_objects.filter(id=task.id).update(
+                    status=task.status
+                )
+
+        # Commit state before dispatch (the worker must see it), then recheck
+        # immediately. A later pause still wins the workflow's guarded status
+        # transition and active-state checks; never replace an execution.
+        if not EvalTask.no_workspace_objects.filter(
+            id=task.id, status=task.status
+        ).exists():
+            outcome["skipped"] = True
+            return outcome
 
         # The describe above is the evidence the restarted run's first reap
         # needs, and it has answered: nothing owns the task. Handed over
@@ -188,8 +222,20 @@ def recover_stranded_tasks(*, limit: int, stale_running_seconds: int) -> dict:
     Each absorbed failure is logged with its traceback, because the counts
     alone say that something failed and never why.
     """
-    tasks = find_stranded_tasks(limit=limit)
+    try:
+        position = cache.get(_SWEEP_POSITION_KEY) or {}
+    except Exception:
+        logger.warning("eval_task_sweep_position_read_failed", exc_info=True)
+        position = {}
+    tasks = find_stranded_tasks(
+        limit=limit,
+        idle_after=position.get("idle_after"),
+        idle_first=position.get("idle_first", False),
+    )
     counts = {
+        "backlog_candidates": 0,
+        "idle_continuous_candidates": 0,
+        "skipped": 0,
         "progressing": 0,
         "restarted": 0,
         "deferred": 0,
@@ -198,6 +244,10 @@ def recover_stranded_tasks(*, limit: int, stale_running_seconds: int) -> dict:
         "errors": 0,
     }
     for task in tasks:
+        kind = task.sweep_candidate_kind
+        counts[f"{kind}_candidates"] += 1
+        if kind == "idle_continuous":
+            position["idle_after"] = str(task.id)
         try:
             outcome = recover_task(task, stale_running_seconds=stale_running_seconds)
         except RecoveryInterrupted as exc:
@@ -221,11 +271,17 @@ def recover_stranded_tasks(*, limit: int, stale_running_seconds: int) -> dict:
                 exc_info=exc,
             )
             continue
+        counts["skipped"] += int(outcome["skipped"])
         counts["progressing"] += int(outcome["progressing"])
         counts["restarted"] += int(outcome["restarted"])
         counts["deferred"] += int(outcome["deferred"])
         counts["entries_requeued"] += outcome["requeued"]
         counts["entries_poisoned"] += outcome["failed"]
+    position["idle_first"] = not position.get("idle_first", False)
+    try:
+        cache.set(_SWEEP_POSITION_KEY, position, timeout=None)
+    except Exception:
+        logger.warning("eval_task_sweep_position_write_failed", exc_info=True)
     return {"candidates": len(tasks), **counts}
 
 

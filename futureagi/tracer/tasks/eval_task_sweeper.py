@@ -13,8 +13,8 @@ that makes a stranded task visible at all.
 
 Per tick, bounded and idempotent:
 
-* take tasks in a sweepable status that still have undrained entries, oldest
-  activity first, capped at ``EVAL_TASK_SWEEP_MAX_TASKS``
+* share ``EVAL_TASK_SWEEP_MAX_TASKS`` between tasks with undrained entries
+  (oldest activity first) and idle continuous tasks (a rotating liveness check)
   (``tracer.selectors.eval_tasks.stranded``);
 * ask Temporal whether a workflow is progressing, and leave that task alone if
   one is — a healthy task costs one describe and nothing else;
@@ -86,6 +86,9 @@ def sweep_stranded_eval_tasks():
         logger.info("eval_task_sweep_disabled")
         return {
             "candidates": 0,
+            "backlog_candidates": 0,
+            "idle_continuous_candidates": 0,
+            "skipped": 0,
             "progressing": 0,
             "restarted": 0,
             "deferred": 0,
