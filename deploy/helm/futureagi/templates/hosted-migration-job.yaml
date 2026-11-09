@@ -4,6 +4,11 @@
 {{- $component := dict "SERVICE_TYPE" "bootstrap" "STARTUP_DB_MUTATION_MODE" "operator" "NO_STARTUP_DB_MUTATIONS" "false" "REGISTER_TEMPORAL_SCHEDULES" "false" -}}
 # Intentionally NO Helm/Argo hook: selecting a profile never mutates a database.
 # Render/apply this Job separately for each approved phase. No arbitrary command.
+# Backfill --quiesced asserts AGENTCC_WEBHOOK_AT_REST_STALE_WORKER_FENCE:
+# fence all AgentccWebhook readers/writers, drain, confirm stale workers terminated
+# BEFORE 0075; keep fenced through 0076/0077. Only new-code workers may start after
+# completion under separate ops approval. This Job does not establish the fence.
+# Schema stops at 0046; only backfill applies 0075-0077; check refuses pending work.
 apiVersion: batch/v1
 kind: Job
 metadata:

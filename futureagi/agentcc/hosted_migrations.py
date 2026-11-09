@@ -2,8 +2,19 @@
 
 Selecting a hosted profile never invokes this module. Ops must independently
 approve the synthetic rehearsal, backup, direct connection and quiet window.
-Runtime rollout, key rotation and worker resumption are intentionally not SQL
-phases and cannot be inferred from a successful command.
+Schema stops at SCHEMA_BOUNDARY (0046_org_config_db_defaults); backfill alone
+runs the remaining migrations to all app leaves, including RELEASE_BOUNDARY
+and webhook 0075_webhook_credential_columns, 0076_encrypt_webhook_credentials,
+and 0077_remove_webhook_plaintext. Check refuses any pending plan. No phase
+reverses migrations; schema rerun after backfill is a no-op.
+
+Backfill requires AGENTCC_WEBHOOK_AT_REST_STALE_WORKER_FENCE: fence all
+AgentccWebhook readers/writers, drain, and confirm stale workers terminated
+BEFORE applying 0075. Keep the fence through 0076 and 0077; only new-code workers
+may start afterwards, under separate ops approval. The command's --quiesced
+assertion includes this fence, with --compatible-runtime-revision binding the
+approved new code. Runtime rollout, key rotation and worker resumption are
+intentionally not SQL phases and cannot be inferred from a successful command.
 """
 
 from django.core.management.base import CommandError
@@ -11,7 +22,7 @@ from django.core.management.base import CommandError
 SCHEMA_BOUNDARY = ("prism", "0046_org_config_db_defaults")
 # The single prism leaf this image installs: the hosted phases refuse an
 # image whose prism graph ends anywhere else.
-RELEASE_BOUNDARY = ("prism", "0071_merge_request_log_consent_and_mcp")
+RELEASE_BOUNDARY = ("prism", "0080_checkout_actor_identifier")
 PHASES = ("schema", "backfill", "check")
 
 

@@ -3,9 +3,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from django.core.management.base import CommandError
+from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import MigrationLoader
 
 from agentcc.hosted_migrations import (
+    PHASES,
     RELEASE_BOUNDARY,
     SCHEMA_BOUNDARY,
     phase_targets,
@@ -15,9 +17,11 @@ from agentcc.hosted_migrations import (
 
 def test_hosted_phases_bind_actual_installed_graph():
     loader = MigrationLoader(None, ignore_no_migrations=True)
-    assert phase_targets(loader, "schema") == [SCHEMA_BOUNDARY]
-    assert RELEASE_BOUNDARY in phase_targets(loader, "backfill")
-    assert len([node for node in loader.graph.leaf_nodes() if node[0] == "prism"]) == 1
+    # Compare with disk, not a mock graph whose leaf copies the stale constant.
+    assert loader.graph.leaf_nodes("prism") == [RELEASE_BOUNDARY]
+    for phase in PHASES:
+        expected = [SCHEMA_BOUNDARY] if phase == "schema" else loader.graph.leaf_nodes()
+        assert phase_targets(loader, phase) == expected
     ancestry = set(loader.graph.forwards_plan(RELEASE_BOUNDARY))
     for name in (
         "0030_request_log_v2",
@@ -33,6 +37,65 @@ def test_hosted_phases_bind_actual_installed_graph():
         "0057_mcp_credential_origin",
     ):
         assert ("prism", name) in ancestry
+
+
+WEBHOOK_FENCED_MIGRATIONS = (
+    ("prism", "0075_webhook_credential_columns"),
+    ("prism", "0076_encrypt_webhook_credentials"),
+    ("prism", "0077_remove_webhook_plaintext"),
+)
+
+
+def test_hosted_real_graph_applies_webhook_migrations_only_in_backfill():
+    loader = MigrationLoader(None, ignore_no_migrations=True)
+    # The real planner only needs its loader; do not open a DB/recorder.
+    executor = MigrationExecutor.__new__(MigrationExecutor)
+    executor.loader = loader
+
+    schema_plan = executor.migration_plan(phase_targets(loader, "schema"))
+    validate_plan(loader, schema_plan, "schema")
+    schema_keys = {
+        (migration.app_label, migration.name) for migration, _ in schema_plan
+    }
+    assert SCHEMA_BOUNDARY == ("prism", "0046_org_config_db_defaults")
+    assert set(WEBHOOK_FENCED_MIGRATIONS).isdisjoint(schema_keys)
+    assert all(not backwards for _, backwards in schema_plan)
+    loader.applied_migrations = dict.fromkeys(schema_keys)
+
+    backfill_plan = executor.migration_plan(phase_targets(loader, "backfill"))
+    validate_plan(loader, backfill_plan, "backfill")
+    backfill_keys = [
+        (migration.app_label, migration.name) for migration, _ in backfill_plan
+    ]
+    assert [key for key in backfill_keys if key in WEBHOOK_FENCED_MIGRATIONS] == list(
+        WEBHOOK_FENCED_MIGRATIONS
+    )
+    assert RELEASE_BOUNDARY in backfill_keys
+    assert all(not backwards for _, backwards in backfill_plan)
+    with pytest.raises(CommandError, match="not fully applied"):
+        validate_plan(
+            loader, executor.migration_plan(phase_targets(loader, "check")), "check"
+        )
+
+    loader.applied_migrations.update(dict.fromkeys(backfill_keys))
+    assert phase_targets(loader, "schema") == []
+    for phase in PHASES:
+        plan = executor.migration_plan(phase_targets(loader, phase))
+        assert plan == []
+        validate_plan(loader, plan, phase)
+
+
+@pytest.mark.parametrize("phase", ("schema", "check"))
+@pytest.mark.parametrize("migration_key", WEBHOOK_FENCED_MIGRATIONS)
+def test_only_backfill_accepts_fenced_webhook_plan(phase, migration_key):
+    loader = MigrationLoader(None, ignore_no_migrations=True)
+    loader.applied_migrations = {
+        SCHEMA_BOUNDARY: loader.disk_migrations[SCHEMA_BOUNDARY]
+    }
+    plan = [(loader.disk_migrations[migration_key], False)]
+    with pytest.raises(CommandError):
+        validate_plan(loader, plan, phase)
+    validate_plan(loader, plan, "backfill")
 
 
 def test_hosted_phase_never_crosses_encryption_before_runtime_overlap():

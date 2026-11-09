@@ -18,7 +18,13 @@ from agentcc.hosted_migration_progress import (
     schema_deadline_seconds,
     schema_phase_deadline,
 )
-from agentcc.hosted_migrations import PHASES, phase_targets, validate_plan
+from agentcc.hosted_migrations import (
+    PHASES,
+    RELEASE_BOUNDARY,
+    SCHEMA_BOUNDARY,
+    phase_targets,
+    validate_plan,
+)
 from agentcc.hosted_seed_state import verify_seed_state
 from agentcc.services.gateway_key_operator import (
     KEY_PHASES,
@@ -28,7 +34,15 @@ from agentcc.services.gateway_key_operator import (
 
 
 class Command(BaseCommand):
-    help = "Plan/check hosted schema or backfill phases; --apply requires explicit operator assertions"
+    help = (
+        f"Forward-only hosted phases: schema stops at {SCHEMA_BOUNDARY[1]}; "
+        f"backfill targets all app leaves (prism: {RELEASE_BOUNDARY[1]}) and alone "
+        "applies webhook migrations 0075-0077; check refuses any pending plan. "
+        "Schema rerun after backfill is a no-op. --apply requires explicit "
+        "operator assertions; backfill requires "
+        "AGENTCC_WEBHOOK_AT_REST_STALE_WORKER_FENCE (see --quiesced). "
+        "No phase authorizes worker resumption."
+    )
     requires_system_checks = []
 
     def add_arguments(self, parser):
@@ -36,8 +50,22 @@ class Command(BaseCommand):
         add_key_arguments(parser)
         add_schema_deadline_argument(parser)
         parser.add_argument("--apply", action="store_true")
-        parser.add_argument("--quiesced", action="store_true")
-        parser.add_argument("--compatible-runtime-revision", default="")
+        parser.add_argument(
+            "--quiesced",
+            action="store_true",
+            help=(
+                "Assert approved write/worker/schedule quiescence. For backfill, "
+                "also assert AGENTCC_WEBHOOK_AT_REST_STALE_WORKER_FENCE: fence all "
+                "AgentccWebhook readers/writers, drain, and confirm stale workers "
+                "terminated before 0075. Keep fenced through 0076/0077; only "
+                "new-code workers may start afterwards under separate ops approval."
+            ),
+        )
+        parser.add_argument(
+            "--compatible-runtime-revision",
+            default="",
+            help="Bind the reviewed compatible new-code revision; not permission to resume workers.",
+        )
 
     def handle(self, *args, **options):
         from model_hub.apps import explicit_management_mutation_authorized
