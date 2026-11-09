@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -1209,7 +1210,9 @@ def save_drafts(
             None,
         )
         if validation_available(locked) and (
-            expected_review_digest or any_decision(locked)
+            expected_review_digest
+            or any_decision(locked)
+            or settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE
         ):
             raise version_error(
                 "validation_required",

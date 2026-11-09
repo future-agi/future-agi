@@ -739,6 +739,20 @@ def test_save_with_digest_and_no_candidates_needs_validation(
     )
 
 
+def test_once_validate_before_save_is_required_a_plain_save_is_refused(
+    user, workspace, storage, auth_client, settings
+):
+    """The cut-over for when the web review drawer ships: every save must go through Validate."""
+    settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = True
+    environment = _with_world(user, workspace, "cand-required", storage)
+    _two_actors(auth_client, environment)
+    refused = _plain_save(auth_client, environment)
+    assert (
+        refused.status_code == 409 and refused.json()["error"] == "validation_required"
+    )
+    assert drafts.open_draft(environment, "environment") is not None
+
+
 def test_plain_drafts_save_works_as_today(user, workspace, storage, auth_client):
     environment = _with_world(user, workspace, "cand-plain", storage)
     _two_actors(auth_client, environment)
