@@ -16487,7 +16487,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -16912,7 +16912,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -17059,7 +17059,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -17894,6 +17894,9 @@ export interface AgentFixEngineReportApi {
   summary?: string;
   failure?: AgentFixEngineFailureApi;
   winner_candidate_id?: string;
+  /** @maxItems 50 */
+  lost_models?: string[];
+  last_error?: string;
 }
 
 export interface AgentFixEngineStateApi {
@@ -24808,6 +24811,8 @@ export interface CallExecutionRerunApi {
   call_execution_ids?: string[];
   /** Whether to rerun all call executions in the test execution */
   select_all?: boolean;
+  /** Resume an interrupted run: re-run only the calls that did not finish, as a new attempt of the same run. Takes no call ids and no select_all. */
+  unfinished_only?: boolean;
   /** Fresh job-scoped environment for a repository-backed harness rerun. Values are forwarded to the sandbox and are not persisted. */
   environment_values?: CallExecutionRerunApiEnvironmentValues;
 }
@@ -24977,6 +24982,9 @@ export const SimulateRunV3EvaluationResultApiStatus = {
   skipped: "skipped",
 } as const;
 
+/**
+ * Any valid JSON value.
+ */
 export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
 
 export interface SimulateRunV3EvaluationResultApi {
@@ -24985,6 +24993,7 @@ export interface SimulateRunV3EvaluationResultApi {
   /** @minLength 1 */
   name: string;
   type: string;
+  /** Any valid JSON value. */
   value: SimulateRunV3EvaluationResultApiValue;
   score: number;
   passed: boolean;
@@ -25893,6 +25902,19 @@ export interface RunAnalyticsV3ResponseApi {
   trends: TrendApi[];
 }
 
+export interface RunResumeEntryApi {
+  at: string;
+  by: string;
+  calls: number;
+}
+
+export interface RunResumeApi {
+  resumable: boolean;
+  finished: number;
+  unfinished: number;
+  history: RunResumeEntryApi[];
+}
+
 export interface RunSummaryApi {
   total: number;
   outcomes: OutcomeCountsApi;
@@ -25902,6 +25924,11 @@ export interface RunSummaryApi {
   latency: MetricStatsApi;
   tokens: TotalMetricStatsApi;
   cost_cents: TotalMetricStatsApi;
+}
+
+export interface RunFixRunApi {
+  id: string;
+  label: string;
 }
 
 export interface RunExecutionApi {
@@ -25925,7 +25952,9 @@ export interface RunExecutionApi {
   trials?: number;
   /** @minLength 1 */
   agent_type: string;
+  resume: RunResumeApi;
   summary: RunSummaryApi;
+  fix_run?: RunFixRunApi;
 }
 
 export interface SimulateRunV3ScoringCountsApi {
@@ -26029,9 +26058,7 @@ export interface RunCallApi {
   cost_cents: number;
   cost_breakdown_cents: CostBreakdownApi;
   csat: number;
-  /** @minLength 1 */
   ended_reason: string;
-  /** @minLength 1 */
   error_message: string;
   evaluations: SimulateRunV3EvaluationResultApi[];
   scoring_status: RunCallApiScoringStatus;
@@ -31288,6 +31315,7 @@ export const ObservationSpanApiObservationType = {
   guardrail: "guardrail",
   evaluator: "evaluator",
   conversation: "conversation",
+  internal: "internal",
 } as const;
 
 export type ObservationSpanApiInput = { [key: string]: unknown };
