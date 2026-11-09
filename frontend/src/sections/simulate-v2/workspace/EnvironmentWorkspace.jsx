@@ -1230,9 +1230,10 @@ export default function EnvironmentWorkspace() {
     setCapsChecking(true);
     setTimeout(
       () => {
-        /* A check that fails on our side (?check=unavailable shows it) or
-           runs past its limit (?check=timeout): nothing about the pairing
-           is learned, so it counts against nothing and runs aren't held. */
+        /* A check that fails on our side (?check=unavailable shows it):
+           nothing about the pairing is learned, so it counts against
+           nothing and runs aren't held. One that runs past its limit
+           (?check=timeout) fails the pairing: runs are refused. */
         const knob = new URLSearchParams(window.location.search).get("check");
         if (knob === "unavailable" || knob === "timeout") {
           const timedOut = knob === "timeout";
@@ -1248,9 +1249,9 @@ export default function EnvironmentWorkspace() {
           setCapsChecking(false);
           enqueueSnackbar(
             timedOut
-              ? `The check didn't finish within ${PAIR_CHECK_LIMIT_MIN} minutes — runs aren't held. Re-check to try again.`
+              ? `The check didn't finish within ${PAIR_CHECK_LIMIT_MIN} minutes — runs of this pairing are refused until a check passes.`
               : "The check couldn't run on our side — runs aren't held. Try again later.",
-            { variant: "info" },
+            { variant: timedOut ? "error" : "info" },
           );
           return;
         }

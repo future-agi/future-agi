@@ -5,7 +5,6 @@ import {
   Button,
   Chip,
   Collapse,
-  Radio,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -224,30 +223,19 @@ export default function RunPlanDialog({
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [limits, setLimits] = useState(() => runLimitsOf(env, envState));
   const [showLimits, setShowLimits] = useState(false);
-  /* Blocked cases are never run silently (TH-8880): Repair, run the reviewed
-     eligible cases, or — where it's allowed — observe only. */
-  const [blockedChoice, setBlockedChoice] = useState(null);
-  const subsetOk = blockedChoice === "eligible" || blockedChoice === "observe";
+  /* Blocked cases are held back, never run (Karthik's run readiness): the
+     button names the choice — "Run 6 of 10" — and the 4 left out are
+     recorded on the run as not run (TH-8880). */
   const blockedN = compat?.scope?.blocked?.length || 0;
-  /* After a failed check the whole pairing is refused — no subset to pick. */
-  const pairFailed = compat?.validation?.state === "failed";
-  const blockingRows = (compat?.rows || []).filter((r) => r.blocks);
-  /* Observing a case changes nothing for a tool that would write to
-     production, a tool the agent lacks, or answers it could read. */
-  const observeWhy = blockingRows.some((r) => r.id === "toolRouting")
-    ? "Not for a tool that reaches production — observing would let it write for real."
-    : blockingRows.some((r) => r.id === "toolsNeeded")
-      ? "The agent doesn't have the tool those cases call — observing can't add it."
-      : blockingRows.some((r) => r.id === "grading")
-        ? "The agent could read the answers — observing can't make a pass mean anything."
-        : null;
+  /* After a failed or timed-out check the whole pairing is refused. */
+  const pairFailed = ["failed", "timed_out"].includes(
+    compat?.validation?.state,
+  );
+  const allHeld = blockedN > 0 && !compat.scope.runnable;
   /* A stop that can't be confirmed is said before a paid run (TH-8890). */
-  /* What the run takes once a choice is made: the reviewed eligible cases,
-     or all of them observed. The requested count stays the denominator. */
-  const runCount =
-    blockedN > 0 && blockedChoice === "eligible"
-      ? compat.scope.runnable
-      : shownCount;
+  /* What the run takes: the cases not held back. The requested count stays
+     the denominator. */
+  const runCount = blockedN > 0 ? compat.scope.runnable : shownCount;
   /* The cases left out, grouped by what blocks them. */
   const leftOut = Object.entries(
     (compat?.scope?.blocked || []).reduce((m, b) => {
@@ -279,7 +267,6 @@ export default function RunPlanDialog({
     setShowBreakdown(false);
     setLimits(runLimitsOf(env, envState));
     setShowLimits(false);
-    setBlockedChoice(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -384,7 +371,8 @@ export default function RunPlanDialog({
     { user: me, userUsed: ledger.user },
   );
   /* Runs of a pairing wait while its check runs and are refused after it
-     failed; a check unavailable on our side, or timed out, holds nothing. */
+     failed or timed out; a check unavailable on our side holds nothing. With
+     every selected case held back there's no run to start. */
   const pairHold = !compat
     ? null
     : checkingCompat
@@ -397,7 +385,12 @@ export default function RunPlanDialog({
             title: "Refused — this pairing's last check failed",
             line: "Fix what it found and re-check.",
           }
-        : null;
+        : allHeld
+          ? {
+              title: "No run — every selected case is held back",
+              line: "Fix it, or select cases it doesn't hold back.",
+            }
+          : null;
   const canStart = check.canStart && !pairHold;
   /* The estimate can be over the admin's per-run limit however the limit is
      set — then the most attempts that fit is the useful suggestion. */
@@ -489,93 +482,10 @@ export default function RunPlanDialog({
               checking={checkingCompat}
               excluded={breakdown?.excluded || 0}
             >
-              {blockedN > 0 && !pairFailed && (
-                <Stack spacing={1}>
-                  {blockedN > 0 && (
-                    <>
-                      <Stack direction="row" alignItems="baseline" spacing={1}>
-                        <Typography
-                          sx={{ typography: "s2", fontWeight: 600, flex: 1 }}
-                        >
-                          {compat.scope.runnable || !observeWhy
-                            ? `${blockedN} of ${compat.scope.requested} can't run with this agent — how to go on`
-                            : `None of the ${compat.scope.requested} can run with this agent yet — fix the blockers above`}
-                        </Typography>
-                      </Stack>
-                      {[
-                        {
-                          id: "eligible",
-                          label: `Run the ${compat.scope.runnable} that can`,
-                          short: `· ${blockedN} recorded as not run`,
-                          note: `Left out, recorded as not run — ${leftOut}. ${compat.scope.runnable} evaluated of ${compat.scope.requested} requested.`,
-                          disabled: !compat.scope.runnable,
-                        },
-                        {
-                          id: "observe",
-                          label: "Observation only",
-                          short: observeWhy
-                            ? "· not for a tool that reaches production"
-                            : "· all run, not graded on state",
-                          note:
-                            observeWhy ||
-                            "Every case runs, but controlled state checks are unavailable — the result is labelled observed, not graded on state.",
-                          disabled: !!observeWhy,
-                        },
-                      ]
-                        /* Nothing eligible: that way on isn't offered. */
-                        .filter(
-                          (o) => o.id !== "eligible" || compat.scope.runnable,
-                        )
-                        .map((o) => (
-                          /* One line each; the full consequence on hover. */
-                          <Tooltip
-                            key={o.id}
-                            arrow
-                            placement="top-start"
-                            title={o.note}
-                          >
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              spacing={0.75}
-                              onClick={() =>
-                                !o.disabled && setBlockedChoice(o.id)
-                              }
-                              sx={{
-                                cursor: o.disabled ? "default" : "pointer",
-                                opacity: o.disabled ? 0.6 : 1,
-                              }}
-                            >
-                              <Radio
-                                size="small"
-                                checked={blockedChoice === o.id}
-                                disabled={o.disabled}
-                                tabIndex={-1}
-                                sx={{ p: 0 }}
-                                inputProps={{ "aria-label": o.label }}
-                              />
-                              <Typography
-                                noWrap
-                                sx={{ typography: "s2", minWidth: 0 }}
-                              >
-                                {o.label}
-                                <Box
-                                  component="span"
-                                  sx={{
-                                    color: "text.tertiary",
-                                    ml: 0.75,
-                                    typography: "s3",
-                                  }}
-                                >
-                                  {o.short}
-                                </Box>
-                              </Typography>
-                            </Stack>
-                          </Tooltip>
-                        ))}
-                    </>
-                  )}
-                </Stack>
+              {allHeld && !pairFailed && (
+                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                  {`No run: every selected case is held back (${leftOut}). Fix it, or select cases it doesn't hold back.`}
+                </Typography>
               )}
             </ReadyToRun>
           )}
@@ -955,35 +865,36 @@ export default function RunPlanDialog({
             </Box>
           </Stack>
 
-          {/* ── what's in and out (TH-8880): selected · will run · blocked —
-              once a way on is chosen; before that the panel above says it. ── */}
-          {blockedN > 0 && !suite && blockedChoice && (
-            <Typography
-              sx={{
-                typography: "s3",
-                color: "text.tertiary",
-                mt: -1,
-                fontVariantNumeric: "tabular-nums",
-              }}
+          {/* ── what's in and out (TH-8880): selected · will run · held back,
+              recorded as not run; what holds them back on hover. ── */}
+          {blockedN > 0 && !suite && !pairFailed && !allHeld && (
+            <Tooltip
+              arrow
+              placement="top-start"
+              title={`Held back and recorded as not run — ${leftOut}. ${compat.scope.runnable} evaluated of ${compat.scope.requested} requested.`}
             >
-              {[
-                `${compat.scope.requested} selected`,
-                blockedChoice === "observe"
-                  ? `${compat.scope.requested} will run, observed`
-                  : blockedChoice === "eligible"
-                    ? `${compat.scope.runnable} will run`
-                    : `${compat.scope.runnable} can run`,
-                blockedChoice === "observe"
-                  ? null
-                  : `${blockedN} blocked (${compat.scope.blocked[0]?.by.join(", ").toLowerCase()})`,
-                compat.scope.untested.length
-                  ? `${compat.scope.untested.length} ${waitingWordOf(compat)}`
-                  : null,
-                breakdown?.excluded ? `${breakdown.excluded} excluded` : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </Typography>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  mt: -1,
+                  fontVariantNumeric: "tabular-nums",
+                  alignSelf: "flex-start",
+                }}
+              >
+                {[
+                  `${compat.scope.requested} selected`,
+                  `${compat.scope.runnable} will run`,
+                  `${blockedN} held back (${compat.scope.blocked[0]?.by.join(", ").toLowerCase()}), recorded as not run`,
+                  compat.scope.untested.length
+                    ? `${compat.scope.untested.length} ${waitingWordOf(compat)}`
+                    : null,
+                  breakdown?.excluded ? `${breakdown.excluded} excluded` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Typography>
+            </Tooltip>
           )}
           {/* ── what's in and out, counted before any ID is resolved ── */}
           {breakdown && !suite && !blockedN && (
@@ -1561,7 +1472,6 @@ export default function RunPlanDialog({
               variant="contained"
               disabled={
                 !canStart ||
-                (blockedN > 0 && !subsetOk) ||
                 submit === "sending" ||
                 submit === "timeout"
               }
@@ -1591,23 +1501,13 @@ export default function RunPlanDialog({
                   estimate,
                   limits,
                   compatSubset:
-                    blockedN > 0 && blockedChoice === "eligible"
+                    blockedN > 0
                       ? {
                           ids: compat.scope.eligibleIds,
                           requested: compat.scope.requested,
                           blocked: compat.scope.blocked.map((b) => b.id),
                         }
-                      : blockedN > 0 && blockedChoice === "observe"
-                        ? {
-                            ids: [
-                              ...compat.scope.eligibleIds,
-                              ...compat.scope.blocked.map((b) => b.id),
-                            ],
-                            requested: compat.scope.requested,
-                            blocked: [],
-                            observation: true,
-                          }
-                        : null,
+                      : null,
                 });
               }}
             >
@@ -1615,7 +1515,9 @@ export default function RunPlanDialog({
                 ? "Starting…"
                 : submit === "rejected"
                   ? "Try again"
-                  : "Start run"}
+                  : blockedN > 0 && compat.scope.runnable && !pairFailed
+                    ? `Run ${compat.scope.runnable} of ${compat.scope.requested}`
+                    : "Start run"}
             </Button>
           </span>
         </Tooltip>

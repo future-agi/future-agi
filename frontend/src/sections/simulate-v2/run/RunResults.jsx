@@ -1711,7 +1711,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                           v === "unavailable"
                             ? "Last check unavailable on our side — it held nothing."
                             : v === "timed_out"
-                              ? "Last check didn't finish in time — it held nothing."
+                              ? "Last check didn't finish within 45 minutes."
                             : v === "stale"
                               ? `Stale: ${c.staleWhy}.`
                               : null,

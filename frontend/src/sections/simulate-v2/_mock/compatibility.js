@@ -1022,11 +1022,11 @@ export const PAIR_CHECK_LIMIT_MIN = 45;
 
 /*
   The pairing's last check, as a run reads it: ready, stale, failed (runs
-  of the pairing are refused until a check passes), unavailable — the check
-  failed on our side (the test world couldn't be prepared) — or timed out
-  (it didn't finish within PAIR_CHECK_LIMIT_MIN). Neither of the last two
-  counts against the pairing or holds runs. "validating" is the live state,
-  passed in by the caller.
+  of the pairing are refused until a check passes), timed out (it didn't
+  finish within PAIR_CHECK_LIMIT_MIN, which fails the pairing the same way),
+  or unavailable — the check failed on our side (the test world couldn't be
+  prepared), so it counts against nothing and holds no run. "validating" is
+  the live state, passed in by the caller.
 */
 const validationOf = (v, test, testedAt, rows, staleWhy) => {
   const off = v.checkUnavailable;

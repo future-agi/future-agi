@@ -37,7 +37,7 @@ export default function ReadyToRun({
   const open = areas.filter((a) => a.status !== "ready");
   const ready = areas.filter((a) => a.status === "ready");
   /* The pairing's check, said once above the areas: running (runs wait),
-     failed (runs refused), unavailable on our side or timed out (nothing
+     failed or timed out (runs refused), unavailable on our side (nothing
      held), or stale. */
   const pair = `agent ${report.identity?.agentVersion || "v1"} on environment ${report.identity?.worldVersion || "v1"}`;
   const val = report.validation;
@@ -55,8 +55,8 @@ export default function ReadyToRun({
           }
         : state === "timed_out"
           ? {
-              dot: "cancelled",
-              text: `The last check (${ago(val.at)}) didn't finish within ${PAIR_CHECK_LIMIT_MIN} minutes, so nothing was learned about this pairing. Runs aren't held — re-check to try again.`,
+              dot: "failed",
+              text: `The last check (${ago(val.at)}) didn't finish within ${PAIR_CHECK_LIMIT_MIN} minutes, so it failed. Runs of this pairing are refused until a check passes.`,
             }
         : state === "unavailable"
           ? {
