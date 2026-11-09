@@ -303,6 +303,31 @@ export function simpleGroupSelectionText(policy) {
   return `Up to ${total.toLocaleString()} ${units} in total: ${groups}`;
 }
 
+// Short label for list cells. A saved policy, not the legacy sampling_rate,
+// decides what a cohort task evaluates; never show its default 100%.
+export function compactSamplingLabel(policy, samplingRate) {
+  if (!policy) {
+    const rate = samplingRate == null ? NaN : Number(samplingRate);
+    return Number.isFinite(rate) ? `${rate}%` : "—";
+  }
+  if (!isSimpleSamplingPolicy(policy)) return "Advanced";
+  const units = pickNames(policy.sampling_unit);
+  const live = policy.mode === "live";
+  if (policy.strata.length) {
+    if (live) return `Per-group % of ${units}`;
+    const total = policy.strata.reduce(
+      (sum, rule) => sum + Number(rule.target_n),
+      Number(policy.default.target_n),
+    );
+    return Number.isSafeInteger(total)
+      ? `Up to ${total.toLocaleString()} ${units}`
+      : `Per-group ${units}`;
+  }
+  return live
+    ? `${policy.default.rate}% of ${units}`
+    : `${Number(policy.default.target_n).toLocaleString()} ${units}`;
+}
+
 export const simpleSelectionText = (policy, rowType) => {
   const units = pickNames(policy.sampling_unit);
   const amount = policy.strata?.length

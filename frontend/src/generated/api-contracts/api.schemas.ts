@@ -28415,6 +28415,7 @@ export interface _EvalTaskListRowResponseApi {
   created_at: string;
   evals_applied: string[];
   sampling_rate: number;
+  sampling_policy?: EvalTaskDetailsSamplingPolicyApi;
   last_run: string;
 }
 

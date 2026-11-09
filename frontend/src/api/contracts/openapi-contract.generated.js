@@ -131563,6 +131563,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           "x-nullable": true,
         },
+        sampling_policy: {
+          $ref: "#/definitions/EvalTaskDetailsSamplingPolicy",
+        },
         last_run: {
           title: "Last run",
           type: "string",
