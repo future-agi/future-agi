@@ -256,3 +256,4 @@ pre-commit run --all-files --verbose
 - 📚 [Full Setup Guide](PRE_COMMIT_SETUP.md)
 - 🔧 [Configuration](.pre-commit-config.yaml)
 - 💬 Ask in team Slack channel
+
