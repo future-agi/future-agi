@@ -36005,7 +36005,9 @@ export const simulateApiAgentFixEngineReportBodyLostModelsMax = 50;
 
 export const SimulateApiAgentFixEngineReportBody = zod.object({
   stage: zod.string().min(1).max(simulateApiAgentFixEngineReportBodyStageMax),
-  step: zod.enum(["reproduce", "search", "verify", "done"]).optional(),
+  step: zod
+    .enum(["variations", "reproduce", "search", "verify", "done"])
+    .optional(),
   plan: zod
     .object({
       target: zod
@@ -36182,6 +36184,11 @@ export const simulateApiAgentFixRunsListResponseResultsItemRequestProtectedScena
 export const simulateApiAgentFixRunsListResponseResultsItemRequestHeldBackScenarioKeysDefault =
   [];
 
+export const simulateApiAgentFixRunsListResponseResultsItemRequestVariationsPendingDefault =
+  false;
+export const simulateApiAgentFixRunsListResponseResultsItemRequestVariationParentsDefault =
+  {};
+
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMax = 32767;
 
@@ -36234,6 +36241,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
           "out_of_budget",
           "stopped",
           "failed",
+          "too_few_cases",
         ])
         .optional(),
       stage: zod
@@ -36241,7 +36249,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
         .max(simulateApiAgentFixRunsListResponseResultsItemStageMax)
         .optional(),
       step: zod
-        .enum(["reproduce", "search", "verify", "done"])
+        .enum(["variations", "reproduce", "search", "verify", "done"])
         .optional()
         .describe("A finished fix is done, whatever the engine last said."),
       plan: zod.object({
@@ -36298,6 +36306,16 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
         locked_paths: zod.array(zod.string().min(1)),
         budget_credits: zod.number(),
         max_minutes: zod.number(),
+        variations_pending: zod
+          .boolean()
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestVariationsPendingDefault,
+          ),
+        variation_parents: zod
+          .record(zod.string(), zod.string().min(1))
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestVariationParentsDefault,
+          ),
       }),
       spent_credits: zod.number(),
       committed_credits: zod.number(),
@@ -36523,9 +36541,15 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     budget_credits_max: zod.number(),
     max_minutes_max: zod.number(),
     scenarios_min: zod.number(),
+    cases_min: zod.number(),
+    variations_per_case: zod.number(),
     scenarios_max: zod.number(),
   }),
   blocked: zod.object({
+    code: zod.string().min(1),
+    message: zod.string().min(1),
+  }),
+  variations_blocked: zod.object({
     code: zod.string().min(1),
     message: zod.string().min(1),
   }),
@@ -36562,6 +36586,11 @@ export const simulateApiAgentFixRunsReadResponseRequestProtectedScenarioKeysDefa
   [];
 export const simulateApiAgentFixRunsReadResponseRequestHeldBackScenarioKeysDefault =
   [];
+
+export const simulateApiAgentFixRunsReadResponseRequestVariationsPendingDefault =
+  false;
+export const simulateApiAgentFixRunsReadResponseRequestVariationParentsDefault =
+  {};
 
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767;
@@ -36608,6 +36637,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       "out_of_budget",
       "stopped",
       "failed",
+      "too_few_cases",
     ])
     .optional(),
   stage: zod
@@ -36615,7 +36645,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     .max(simulateApiAgentFixRunsReadResponseStageMax)
     .optional(),
   step: zod
-    .enum(["reproduce", "search", "verify", "done"])
+    .enum(["variations", "reproduce", "search", "verify", "done"])
     .optional()
     .describe("A finished fix is done, whatever the engine last said."),
   plan: zod.object({
@@ -36662,6 +36692,16 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     locked_paths: zod.array(zod.string().min(1)),
     budget_credits: zod.number(),
     max_minutes: zod.number(),
+    variations_pending: zod
+      .boolean()
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestVariationsPendingDefault,
+      ),
+    variation_parents: zod
+      .record(zod.string(), zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestVariationParentsDefault,
+      ),
   }),
   spent_credits: zod.number(),
   committed_credits: zod.number(),
@@ -36881,6 +36921,11 @@ export const simulateApiAgentFixRunsStopResponseRequestProtectedScenarioKeysDefa
 export const simulateApiAgentFixRunsStopResponseRequestHeldBackScenarioKeysDefault =
   [];
 
+export const simulateApiAgentFixRunsStopResponseRequestVariationsPendingDefault =
+  false;
+export const simulateApiAgentFixRunsStopResponseRequestVariationParentsDefault =
+  {};
+
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax = 32767;
 
@@ -36926,6 +36971,7 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
       "out_of_budget",
       "stopped",
       "failed",
+      "too_few_cases",
     ])
     .optional(),
   stage: zod
@@ -36933,7 +36979,7 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     .max(simulateApiAgentFixRunsStopResponseStageMax)
     .optional(),
   step: zod
-    .enum(["reproduce", "search", "verify", "done"])
+    .enum(["variations", "reproduce", "search", "verify", "done"])
     .optional()
     .describe("A finished fix is done, whatever the engine last said."),
   plan: zod.object({
@@ -36980,6 +37026,16 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     locked_paths: zod.array(zod.string().min(1)),
     budget_credits: zod.number(),
     max_minutes: zod.number(),
+    variations_pending: zod
+      .boolean()
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestVariationsPendingDefault,
+      ),
+    variation_parents: zod
+      .record(zod.string(), zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestVariationParentsDefault,
+      ),
   }),
   spent_credits: zod.number(),
   committed_credits: zod.number(),
