@@ -13,7 +13,7 @@ export const samplingFieldLabel = ({ source = "span", key = "" } = {}) =>
 export const unitIdentityText = (policy) =>
   [
     policy.sampling_unit === "attribute"
-      ? `Custom identity: ${policy.unit_attribute?.key ? samplingFieldLabel(policy.unit_attribute) : "project-configured contact attribute"}.`
+      ? `Custom identity: ${policy.unit_attribute?.key ? samplingFieldLabel(policy.unit_attribute) : "the project’s contact attribute"}.`
       : `Pick ${pickNames(policy.sampling_unit)} together.`,
     policy.missing_id === "row"
       ? "Rows without an ID are sampled individually."

@@ -87,6 +87,20 @@ def test_canonical_policy_resolves_project_attribute_at_save():
     )
 
 
+def test_attribute_sampling_without_project_contact_attribute_names_the_fix():
+    # "Leave empty" only falls back to a configured project contact attribute.
+    with pytest.raises(InvalidSamplingPolicy, match="Choose a custom ID attribute"):
+        validate_policy(
+            policy(sampling_unit="attribute"), now=NOW, contact_attribute=""
+        )
+    explicit = validate_policy(
+        policy(sampling_unit="attribute", unit_attribute={"key": "contact.id"}),
+        now=NOW,
+        contact_attribute="",
+    )
+    assert explicit["unit_attribute"] == {"source": "span", "key": "contact.id"}
+
+
 @pytest.mark.parametrize(
     "rule,n,expected",
     [

@@ -829,7 +829,9 @@ describe("two-choice task data selection", () => {
           expect(figure).toHaveTextContent("end users of your application");
         if (unit === "attribute")
           expect(
-            screen.getByText(/project’s configured contact attribute/),
+            screen.getByText(
+              /project’s contact attribute \(if one is set in project settings\)/,
+            ),
           ).toBeVisible();
       }
     },

@@ -196,6 +196,13 @@ def validate_policy(
             "Sampling units cannot be finer than evaluation rows."
         )
     if unit == "attribute":
+        if not policy.get("unit_attribute") and not contact_attribute:
+            # The editor offers "leave empty" only as a fallback to the project's
+            # configured contact attribute; without one there is no identity.
+            raise InvalidSamplingPolicy(
+                "Choose a custom ID attribute: this project has no contact "
+                "attribute configured in its settings."
+            )
         policy["unit_attribute"] = attribute(
             policy.get("unit_attribute") or {"key": contact_attribute}
         )

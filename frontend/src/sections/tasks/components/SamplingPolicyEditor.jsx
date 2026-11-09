@@ -223,14 +223,14 @@ export default function SamplingPolicyEditor({ control, getValues }) {
               <summary>
                 {policy.unit_attribute?.key
                   ? `Custom ID: ${policy.unit_attribute.key}`
-                  : "Use the project’s configured contact attribute · change attribute"}
+                  : "Use the project’s contact attribute (if one is set in project settings) · change attribute"}
               </summary>
               <Box sx={{ mt: 1 }}>
                 <SamplingFieldPicker
                   project={project}
                   label="Custom ID attribute"
                   value={policy.unit_attribute}
-                  helperText="Leave empty to use the project’s configured contact attribute."
+                  helperText="Leave empty only if this project has a contact attribute set in its settings; otherwise choose the attribute that identifies a contact."
                   onChange={(attribute) => {
                     const next = { ...policy };
                     if (attribute.key) next.unit_attribute = attribute;
