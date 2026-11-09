@@ -349,6 +349,10 @@ func (r *PGResolver) validateKey(ctx context.Context, apiKey, secretKey string, 
 		}
 		return nil, fmt.Errorf("validate key: %w", err)
 	}
+	// A coding agent's key reads as an invalid key here, whichever statement read it.
+	if keyType == keyTypeCodingAgent {
+		return nil, nil
+	}
 
 	effectiveWorkspace := ""
 	if workspaceID != nil {
