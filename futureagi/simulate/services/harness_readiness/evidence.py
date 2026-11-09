@@ -423,6 +423,7 @@ _UNOBSERVED_REASONS = {
     "reaches_outside": "its contract says it leaves the test world, so it was not asked",
     "not_called": "asked, but not called",
     "request_failed": "asked, but the agent did not answer",
+    "not_asked": "not asked: the check's time for tool requests ran out",
     "no_world_record": "the agent runs it itself, so the test world keeps no record of"
     " the call",
 }
