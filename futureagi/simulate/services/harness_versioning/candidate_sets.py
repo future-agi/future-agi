@@ -117,19 +117,17 @@ def set_bundle(
 
 
 def unavailable_on_our_side(entry: CandidateSet, bundle: Any) -> bool:
-    """Whether this set's check ended on our side for a cause that would end a new check the same way."""
-    return bool(
-        entry.get("check_unavailable")
-        and bundle is not None
-        and validation.repeats_unavailable(bundle)
-    )
+    """Whether this set's check ended on our side for a cause that would end a new check the same way: read from the
+    pairing's own last attempt, so the person never has to Validate a second time only to learn it."""
+    return bool(bundle is not None and validation.repeats_unavailable(bundle))
 
 
 def validation_state(
     environment: HostedHarnessJob, entry: CandidateSet | None = None
 ) -> dict[str, Any] | None:
     """Where the live set's validation stands: `validating`, `retry` (a job ended before any check ran), `ready`,
-    `failed`, or `superseded` once the defaults moved under it. A failed validation names the actions that failed and
+    `failed`, `check_unavailable` (the check ended on our side for a cause that repeats; the set may save
+    uncertified), or `superseded` once the defaults moved under it. A failed validation names the actions that failed and
     the scenarios that need one of them on every path; a ready one names the scenarios certifying dropped.
     """
     entry = entry or live_set(environment)
