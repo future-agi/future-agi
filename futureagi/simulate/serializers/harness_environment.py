@@ -1113,6 +1113,16 @@ class HarnessActorWriteSerializer(serializers.Serializer):
     expected_revision = serializers.IntegerField(
         required=False, allow_null=True, min_value=0
     )
+    # Actions this edit gives the actor that only one other actor holds, confirmed as shared by both.
+    share_actions = serializers.ListField(
+        child=serializers.CharField(max_length=200),
+        required=False,
+        max_length=100,
+        help_text=(
+            "Actions the edit gives that only one other actor holds today, confirmed as shared; without it such an "
+            "edit is refused with permission_conflict (409) and each conflict."
+        ),
+    )
 
 
 class HarnessActorLimitsWriteSerializer(serializers.Serializer):

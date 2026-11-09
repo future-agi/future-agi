@@ -238,7 +238,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
           setEditing(null);
           edit.reset();
         }}
-        onSave={(actor) => {
+        onSave={(actor, shareActions) => {
           // A new save clears the refusal, so what it refreshed has to stay.
           setEditing(form);
           edit.mutate(
@@ -247,6 +247,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
               actor,
               actorId: form.actor.id,
               revision: form.revision,
+              shareActions,
             },
             { onSuccess: () => setEditing(null) },
           );
