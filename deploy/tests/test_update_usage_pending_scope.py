@@ -303,6 +303,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
             '0122_merge_sampling_and_alert_issue_state': set(),
             '0123_merge_20261104_0743': set(),
             '0131_merge_20261104_1308': set(),
+            '0132_merge_sampling_and_sql_workbench_dev_merge': set(),
         }
         for revision in REVISIONS:
             state=baseline_state(revision); env=scope_environment(state)
