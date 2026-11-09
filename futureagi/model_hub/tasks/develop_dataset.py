@@ -11,6 +11,7 @@ import numpy as np
 import structlog
 
 from accounts.models.organization import Organization
+from model_hub.utils.compare_cleanup import cleanup_compare_folder
 
 # Activity-aware stub: invocations raise a Temporal non-retryable
 # ApplicationError (these tasks run inside Temporal evaluation activities).
@@ -43,7 +44,6 @@ from model_hub.models.develop_dataset import (
     Row,
 )
 from model_hub.serializers.develop_dataset import ColumnSerializer
-from model_hub.utils.compare_cleanup import cleanup_compare_folder
 from model_hub.utils.kb_helpers import is_kb_deleted_or_cancelled
 from model_hub.utils.kb_indexer import KB_TABLE_NAME, KBIndexer
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager

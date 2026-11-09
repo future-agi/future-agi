@@ -261,6 +261,7 @@ from model_hub.utils.annotation_queue_helpers import (
     TEXT_FILTER_LOOKUPS,
     or_text_filter_q,
 )
+from model_hub.utils.compare_cleanup import cleanup_compare_folder
 from model_hub.utils.eval_reasons import (
     MIN_ROWS_FOR_CRITICAL_ISSUES,
     get_explanation_summary,
@@ -286,7 +287,6 @@ from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.utils.utils import contains_sql, get_diff
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.run_prompt import PROVIDERS_WITH_JSON
-from model_hub.utils.compare_cleanup import cleanup_compare_folder
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.evals import process_eval_for_single_row
 from model_hub.views.utils.utils import (
