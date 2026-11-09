@@ -1,4 +1,4 @@
-"""Complete 19/24-pending-migration A9 intersection regression, without Django.
+"""Complete 21/26-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -20,6 +20,7 @@ from deploy.tests.test_update_usage_reference import ROOT, REVISIONS, source
 LATEST = (
     ('accounts','0029_demotracepublication_demoseedrequest'),
     ('accounts','0030_queue_existing_demo_trace_publications'),
+    ('accounts','0031_orgapikey_coding_agent'),
     ('usage','0030_add_jev_evaluator_call_type'),
     ('tracer','0116_insight_reports'),
     ('tracer','0117_instant_eval_scale'),
@@ -37,6 +38,7 @@ LATEST = (
     ('tracer','0129_project_analysis_source_generation_db_default'),
     ('tracer','0130_observationspan_internal_type'),
     ('simulate','0102_agent_fix_engine_notes'),
+    ('simulate','0103_harness_job_verify_of'),
 )
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
@@ -218,7 +220,7 @@ def pending_plan(identities,env):
 class CompleteUsagePendingIntersectionTests(unittest.TestCase):
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
         registry=p.load_high_volume_registry()
-        for revision,identities,count in ((REVISIONS[1],LATEST,19),(REVISIONS[0],LATEST+FLOOR_ONLY,24)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,21),(REVISIONS[0],LATEST+FLOOR_ONLY,26)):
             with self.subTest(revision=revision):
                 # Additions, not edited applied migrations. This deliberately
                 # breaks if the shipping plan changes without refreshing coverage.
@@ -238,12 +240,12 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 identities_in_order=[dict(app_label=m.app_label,name=m.name) for m in plan]
                 selected=p.select_reference_registry(registry,scopes,plan=identities_in_order)
                 expected={'tracer_trace','tracer_observation_span','tracer_eval_task'}
-                if count==24: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
+                if count==26: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                 self.assertEqual({row['table'] for row in selected},expected)
-                if count==19:
+                if count==21:
                     references=[dict(engine=row['database'],table='public.'+row['table']) for row in selected]
                     certified=q.reference_scope(identities_in_order,scopes,references)
-                    self.assertEqual(len(certified),19)
+                    self.assertEqual(len(certified),21)
                     physical=[(table['engine'],table['table']) for scope in certified for table in scope['tables']]
                     self.assertEqual(len(physical),len(set(physical)))
                     self.assertEqual(len(physical),3)
