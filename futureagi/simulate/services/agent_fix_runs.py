@@ -10,32 +10,44 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from model_hub.models.develop_dataset import Row
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
+    HarnessSuiteMember,
     HostedHarnessJob,
+    HostedHarnessScenario,
+    Scenarios,
 )
 from simulate.pydantic_schemas.agent_fix import (
     HELD_BACK_VERIFIED_MIN,
+    VARIATIONS_PER_CASE,
     FixRequest,
     Surface,
 )
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     default_max_minutes,
+    fewest_failing_cases,
     is_retryable,
     launch_blocker,
     overridable_regressions,
     recent_lost_models,
     scenario_results,
+    variations_blocker,
+    written_variations,
 )
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.harness_agent_versions import discard_agent_version
-from simulate.services.harness_usage import require_agent_fix_usage
+from simulate.services.harness_usage import (
+    require_agent_fix_usage,
+    require_harness_authoring,
+)
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     request_cancellation,
 )
+from simulate.services.hosted_harness_conversation import CHAT_CHECKPOINT_MAX_SCENARIOS
 from simulate.temporal.client import (
     cancel_agent_fix_workflow,
     cancel_hosted_harness_gateway_workflow,
@@ -50,23 +62,39 @@ HELD_BACK_SHARE = 3
 HELD_BACK_MIN_CASES = HELD_BACK_VERIFIED_MIN * HELD_BACK_SHARE
 
 
-def split_held_back(seed: str, failing: Mapping[str, list[str]]) -> list[str]:
+def split_held_back(
+    seed: str,
+    failing: Mapping[str, list[str]],
+    parents: Mapping[str, str] | None = None,
+) -> list[str]:
     """The failing cases the worker never sees, so the verdict can prove the fix holds beyond
     the cases it was made on: one in three, picked by a stable hash of ``seed`` and the key,
-    and never the last case left to search on for a failing sub-goal. None below twelve."""
+    and never the last cases left to search on for a failing sub-goal. None below twelve.
+
+    A variation (a key of ``parents``) goes with the case it varies: a case and its
+    variations are held back together or not at all."""
+    parents = parents or {}
     cases = [key for key, names in failing.items() if names]
     if len(cases) < HELD_BACK_MIN_CASES:
         return []
+    families: dict[str, list[str]] = {}
+    for key in cases:
+        families.setdefault(parents.get(key, key), []).append(key)
+    quota = len(cases) // HELD_BACK_SHARE
     searched = Counter(name for key in cases for name in failing[key])
     held: list[str] = []
-    for key in sorted(
-        cases, key=lambda key: sha256(f"{seed}:{key}".encode()).hexdigest()
+    for parent in sorted(
+        families, key=lambda key: sha256(f"{seed}:{key}".encode()).hexdigest()
     ):
-        if len(held) == len(cases) // HELD_BACK_SHARE:
+        if len(held) == quota:
             break
-        if all(searched[name] > 1 for name in failing[key]):
-            held.append(key)
-            searched.subtract(failing[key])
+        family = families[parent]
+        names = Counter(name for key in family for name in failing[key])
+        if len(held) + len(family) <= quota and all(
+            searched[name] > count for name, count in names.items()
+        ):
+            held.extend(family)
+            searched.subtract(names)
     return held
 
 
@@ -132,15 +160,24 @@ def launch_fix_run(
             status_code=422,
         )
     failing_cases = sum(1 for names in by_scenario.values() if names)
-    if failing_cases < settings.AGENT_FIX_MIN_FAILING_CASES:
+    # Below the floor the fix first writes variations of each failing case.
+    variations = failing_cases < settings.AGENT_FIX_MIN_FAILING_CASES
+    if failing_cases < fewest_failing_cases():
         raise HostedHarnessError(
             "fix_targets_too_few",
             f"a fix needs at least {settings.AGENT_FIX_MIN_FAILING_CASES} failing cases "
-            f"to be proven; these have {failing_cases}",
+            f"to be proven; these have {failing_cases}, too few to reach it even with "
+            f"{VARIATIONS_PER_CASE} variations of each",
             status_code=422,
         )
+    if variations:
+        if blocked := variations_blocker(source_run):
+            raise blocked
+        _require_variation_room(source_run, failing_cases)
     if max_minutes is None:
-        max_minutes = default_max_minutes(len(ran))
+        max_minutes = default_max_minutes(
+            len(ran) + (VARIATIONS_PER_CASE * failing_cases if variations else 0)
+        )
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
         protected_scenario_keys=list(protected_scenario_keys),
@@ -150,9 +187,13 @@ def launch_fix_run(
         locked_paths=locked_paths,
         budget_usd=budget_usd,
         max_minutes=max_minutes,
+        variations_pending=variations,
     )
     # The engine's model calls bill AI credits. Each check run checks its call rail when it starts.
     require_agent_fix_usage(str(environment.organization_id))
+    if variations:
+        # The builder's turn that writes the variations bills as authoring.
+        require_harness_authoring(str(environment.organization_id))
     return _create_fix_run(
         source_run,
         base_version_id=base_version_id,
@@ -161,9 +202,37 @@ def launch_fix_run(
     )
 
 
+def _require_variation_room(source_run: HostedHarnessJob, failing_cases: int) -> None:
+    """Refuse variations that would not fit: the builder saves the environment's suite with
+    them, the fix's suite holds the run's suite with them, and one run plays every failing
+    case and its variations once."""
+    added = VARIATIONS_PER_CASE * failing_cases
+    suites = (source_run.suite_version_id, source_run.environment.suite_version_id)
+    largest = max(
+        HarnessSuiteMember.no_workspace_objects.filter(suite_version_id=one).count()
+        for one in suites
+    )
+    if largest + added > CHAT_CHECKPOINT_MAX_SCENARIOS:
+        raise HostedHarnessError(
+            "scenario_limit_exceeded",
+            f"the {added} variations would take the suite past"
+            f" {CHAT_CHECKPOINT_MAX_SCENARIOS} scenarios",
+            status_code=422,
+        )
+    max_executions = int(getattr(settings, "HARNESS_MAX_EXECUTIONS_PER_RUN", 200))
+    if failing_cases + added > max_executions:
+        raise HostedHarnessError(
+            "run_too_large",
+            f"the run on the failing cases and their variations would pass"
+            f" {max_executions} executions",
+            status_code=422,
+        )
+
+
 def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     """Start a failed fix again: a new fix with its request, linked to it, so the check runs
-    it finished are reused instead of paid for twice."""
+    it finished are reused instead of paid for twice. A fix that wrote variations keeps
+    them, on the same suite version."""
     if not is_retryable(failed):
         raise HostedHarnessError(
             "fix_not_retryable",
@@ -188,6 +257,7 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
         base_version_id=failed.base_agent_version_id,
         request=failed.request,
         user=user,
+        suite_version_id=failed.suite_version_id,
         retried_from=failed,
         engine_notes={"lost_models": lost_models, "last_error": None}
         if lost_models
@@ -201,6 +271,7 @@ def _create_fix_run(
     base_version_id: Any,
     request: dict[str, Any],
     user: Any,
+    suite_version_id: Any = None,
     retried_from: AgentFixRun | None = None,
     engine_notes: dict[str, Any] | None = None,
 ) -> AgentFixRun:
@@ -214,6 +285,7 @@ def _create_fix_run(
                 environment=environment,
                 source_run=source_run,
                 base_agent_version_id=base_version_id,
+                suite_version_id=suite_version_id,
                 retried_from=retried_from,
                 created_by=user,
                 request=request,
@@ -283,8 +355,9 @@ def close_fix_run(
     failure: dict[str, str] | None = None,
 ) -> AgentFixRun:
     """Move a fix run to its ending once. The sandbox's token stops working, open
-    check runs are canceled, and rejected candidates are set aside (never deleted). The
-    cleanup runs on every call, so a close that failed halfway finishes on the next."""
+    check runs are canceled, rejected candidates are set aside (never deleted), and the
+    dataset rows its variations' runs added are removed. The cleanup runs on every call,
+    so a close that failed halfway finishes on the next."""
     with transaction.atomic():
         locked = AgentFixRun.no_workspace_objects.select_for_update().get(id=fix_run_id)
         if locked.state in AgentFixRun.ACTIVE_STATES:
@@ -304,6 +377,7 @@ def close_fix_run(
             logger.info("agent_fix_run_closed", fix_run=str(locked.id), state=state)
     _cancel_open_check_runs(locked)
     _set_aside_rejected(locked)
+    _drop_variation_rows(locked)
     return locked
 
 
@@ -336,6 +410,52 @@ def _set_aside_rejected(fix_run: AgentFixRun) -> None:
             logger.info(
                 "agent_fix_candidate_kept", candidate=str(candidate.id), reason=exc.code
             )
+
+
+def _drop_variation_rows(fix_run: AgentFixRun) -> None:
+    """Remove the dataset rows a run of the fix's variations added, so the environment's
+    dataset is as it was. Each variation is unbound too: a later run of it (a retry's)
+    binds a row of its own. Fail open: the fix's ending stands, and the next close of it
+    tries again."""
+    variations = written_variations(fix_run.suite_version)
+    if not variations:
+        return
+    try:
+        with transaction.atomic():
+            bound = list(
+                HostedHarnessScenario._base_manager.filter(
+                    job_id=fix_run.environment_id,
+                    scenario_key__in=variations,
+                    scenario__isnull=False,
+                )
+            )
+            if not bound:
+                return
+            now = timezone.now()
+            rows = [one.dataset_row_id for one in bound if one.dataset_row_id]
+            Row.all_objects.filter(id__in=rows).update(deleted=True, deleted_at=now)
+            # A legacy environment gave each persona a scenario of its own.
+            Scenarios.all_objects.filter(
+                id__in=[one.scenario_id for one in bound if not one.dataset_row_id]
+            ).update(deleted=True, deleted_at=now)
+            for scenario in Scenarios.all_objects.filter(
+                id__in={one.scenario_id for one in bound if one.dataset_row_id}
+            ).select_related("dataset"):
+                scenario.metadata = {
+                    **(scenario.metadata or {}),
+                    "persona_count": scenario.dataset.row_set.filter(
+                        deleted=False
+                    ).count(),
+                }
+                scenario.save(update_fields=["metadata", "updated_at"])
+            HostedHarnessScenario._base_manager.filter(
+                id__in=[one.id for one in bound]
+            ).update(scenario=None, dataset_row=None, updated_at=now)
+        logger.info(
+            "agent_fix_variation_rows_dropped", fix_run=str(fix_run.id), rows=len(bound)
+        )
+    except Exception:
+        logger.exception("agent_fix_variation_rows_kept", fix_run=str(fix_run.id))
 
 
 def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> None:

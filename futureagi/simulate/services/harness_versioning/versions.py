@@ -1450,9 +1450,13 @@ def move_default(
         if piece == "agent":
             return _move_agent_default(locked, version_id, expected_default_id, user)
         require_no_rebuild(locked, piece=piece)
-        version = model.no_workspace_objects.filter(
+        versions = model.no_workspace_objects.filter(
             job=locked, id=version_id, status=VersionStatus.ACTIVE
-        ).first()
+        )
+        if piece == "suite":
+            # A suite version private to a fix never becomes the default.
+            versions = versions.filter(fix_run__isnull=True)
+        version = versions.first()
         if version is None:
             raise _not_pickable(piece)
         current = getattr(locked, f"{piece}_version")

@@ -378,7 +378,9 @@ def create_selected_harness_run(
             idempotency_key = f"coding-agent:{coding_agent_key_id}:{idempotency_key}"
         idempotency_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
         child_idempotency_key = run_idempotency_key(environment, idempotency_key)
-        resolved = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)
+        resolved = resolve_run_pins(
+            environment, rerun_of=rerun_of, picks=picks, fix_run=fix_run
+        )
         if resolved is not None:
             # A repeated request is answered before anything is written.
             replayed = _replayed_run(
@@ -817,13 +819,15 @@ def resolve_run_pins(
     *,
     rerun_of: HostedHarnessJob | None = None,
     picks: VersionPicks | None = None,
+    fix_run: Any = None,
 ) -> ResolvedPins | None:
     """The versions a new run would be pinned to, when versioning pins runs.
 
     Per piece a pick wins, then a rerun's kept pin, then the environment's default. A
     rerun keeps its source's pins when they can run: they are the defaults, their
     bundle is cached, or certifying is on; otherwise it runs the defaults. Picks that
-    cannot run are refused rather than run as the defaults.
+    cannot run are refused rather than run as the defaults. Only a check run of
+    ``fix_run`` may pick the suite version private to it.
     """
     from simulate.services.harness_versioning.assembly import (
         bundle_ready,
@@ -875,7 +879,7 @@ def resolve_run_pins(
             )
     ids = _pin_ids(source)
     if chosen:
-        _check_picks(environment, picks, defaults)
+        _check_picks(environment, picks, defaults, fix_run=fix_run)
         picked = tuple(
             pick or kept for pick, kept in zip(picks.ids(), ids, strict=True)
         )
@@ -1043,11 +1047,16 @@ def agent_version_pickable(environment: HostedHarnessJob, agent_id: Any) -> bool
 
 
 def _check_picks(
-    environment: HostedHarnessJob, picks: VersionPicks, defaults: tuple[Any, Any, Any]
+    environment: HostedHarnessJob,
+    picks: VersionPicks,
+    defaults: tuple[Any, Any, Any],
+    *,
+    fix_run: Any = None,
 ) -> None:
     """Refuse a pick that is not one of this environment's runnable versions.
 
-    A pick of the default is the default, so a dialog that sends it back always runs.
+    A pick of the default is the default, so a dialog that sends it back always runs. A
+    suite version private to a fix is the pick of that fix's check runs alone.
     """
     from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
     from simulate.models.harness_versioning import VersionStatus
@@ -1059,9 +1068,12 @@ def _check_picks(
         ("suite", HarnessSuiteVersion, suite_id, defaults[2]),
     ):
         if pick and pick != default:
-            if not model.no_workspace_objects.filter(
+            versions = model.no_workspace_objects.filter(
                 job=environment, id=pick, status=VersionStatus.ACTIVE
-            ).exists():
+            )
+            if piece == "suite" and pick != getattr(fix_run, "suite_version_id", None):
+                versions = versions.filter(fix_run__isnull=True)
+            if not versions.exists():
                 raise _not_pickable(piece)
     if not agent_id or agent_id == defaults[0]:
         return

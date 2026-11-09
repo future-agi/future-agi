@@ -140,7 +140,9 @@ class VersionedSourceAgent:
             "picks": VersionPicks(
                 agent_version_id=agent_version_id,
                 environment_version_id=source_run.environment_version_id,
-                suite_version_id=source_run.suite_version_id,
+                # The fix's own suite once it wrote variations, else the failed run's.
+                suite_version_id=fix_run.suite_version_id
+                or source_run.suite_version_id,
             )
         }
 
