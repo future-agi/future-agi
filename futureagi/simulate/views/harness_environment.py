@@ -41,9 +41,12 @@ from simulate.serializers.harness_environment import (
     HarnessCompareSerializer,
     HarnessDefaultMoveSerializer,
     HarnessDefaultMoveValidatingSerializer,
+    HarnessDraftReviewSerializer,
     HarnessDraftSaveResponseSerializer,
     HarnessDraftSaveSerializer,
     HarnessDraftsSerializer,
+    HarnessDraftValidateResponseSerializer,
+    HarnessDraftValidateSerializer,
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
     HarnessEnvironmentDetailSerializer,
@@ -58,6 +61,7 @@ from simulate.serializers.harness_environment import (
     HarnessNudgeAnswerSerializer,
     HarnessNudgeListQuerySerializer,
     HarnessNudgeSerializer,
+    HarnessReviewDecisionsSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
     HarnessSuiteMemberSerializer,
@@ -649,16 +653,27 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return self._not_found()
         return Response(list_drafts(job))
 
+    @validated_request(responses={200: HarnessDraftReviewSerializer})
+    @action(detail=True, methods=["get"], url_path="drafts/review")
+    def drafts_review(self, request, pk=None):
+        """Every change the open drafts make, item by item, with the decision taken on each. No writes."""
+        from simulate.services.harness_versioning.review import draft_review
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(draft_review(job))
+
     @validated_request(
-        request_serializer=HarnessDraftSaveSerializer,
-        responses={200: HarnessDraftSaveResponseSerializer},
+        request_serializer=HarnessReviewDecisionsSerializer,
+        responses={200: HarnessDraftReviewSerializer},
         reject_unknown_fields=True,
     )
-    @action(detail=True, methods=["post"], url_path=r"drafts/save")
-    def save_drafts(self, request, pk=None):
-        """Make every named draft live together; returns the new defaults and every
-        version."""
-        from simulate.services.harness_versioning.drafts import SaveRequest, save_drafts
+    @action(detail=True, methods=["post"], url_path="drafts/review/decisions")
+    def drafts_review_decisions(self, request, pk=None):
+        """Accept or reject changes, one by id, all of a kind, or every remaining one; returns the review."""
+        from simulate.services.harness_versioning.review import record_decisions
 
         version_reads.require_versioning()
         job = self._job(request, pk)
@@ -666,12 +681,81 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return self._not_found()
         body = request.validated_data
         return Response(
+            record_decisions(
+                job,
+                body["decisions"],
+                expected_revisions=body["expected_revisions"],
+                user=request.user,
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessDraftValidateSerializer,
+        responses={
+            200: HarnessDraftValidateResponseSerializer,
+            202: HarnessDraftValidateResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="drafts/validate")
+    def validate_drafts(self, request, pk=None):
+        """Build candidate versions from the reviewed drafts and start validating them; 202 while it runs."""
+        from simulate.services.harness_versioning.candidates import validate_drafts
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        result, running = validate_drafts(
+            job,
+            expected_revisions=body["expected_revisions"],
+            expected_review_digest=body.get("expected_review_digest"),
+            user=request.user,
+        )
+        return Response(
+            result, status=status.HTTP_202_ACCEPTED if running else status.HTTP_200_OK
+        )
+
+    @validated_request(
+        request_serializer=HarnessDraftSaveSerializer,
+        responses={200: HarnessDraftSaveResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path=r"drafts/save")
+    def save_drafts(self, request, pk=None):
+        """Make every named draft, or the validated candidates, live together; returns the new defaults and every
+        version."""
+        from simulate.services.harness_versioning.candidate_promotion import (
+            promote_candidates,
+        )
+        from simulate.services.harness_versioning.drafts import SaveRequest, save_drafts
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        if "candidates" in body:
+            return Response(
+                promote_candidates(
+                    job,
+                    {name: str(value) for name, value in body["candidates"].items()},
+                    expected_review_digest=body.get("expected_review_digest"),
+                    name=body.get("name") or "",
+                    idempotency_key=body["idempotency_key"],
+                    user=request.user,
+                )
+            )
+        return Response(
             save_drafts(
                 job,
                 {
                     one["piece"]: SaveRequest(
                         expected_parent_id=one["expected_parent_id"],
                         expected_revision=one.get("expected_revision"),
+                        expected_review_digest=body.get("expected_review_digest"),
+                        name=body.get("name") or "",
                     )
                     for one in body["drafts"]
                 },

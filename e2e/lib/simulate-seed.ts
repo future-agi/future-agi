@@ -259,3 +259,41 @@ export function seedHarnessEnvironment(opts: {
     },
   ) as HarnessEnvironmentSeed;
 }
+
+/** The chat-cited rule `seedReviewDraft` writes into an Environment draft. */
+export interface ReviewDraftSeed {
+  messageId: string;
+  rule: string;
+  amendment: string;
+}
+
+function runReviewSeed<T>(operation: string, env: Record<string, string>): T {
+  const suffix = seedSuffix();
+  return runSeedScript(
+    resolveBackendContainer(),
+    fileURLToPath(new URL('./harness_review_seed.py', import.meta.url)),
+    `review-seed-${suffix}.py`,
+    { ...env, SEED_OPERATION: operation, SEED_SUFFIX: suffix },
+  ) as T;
+}
+
+/**
+ * Writes a rule into the Environment's draft the way a builder-chat turn does: the
+ * person's message, then `record_draft` citing it, with the rule's amendment line. Run
+ * it on an Environment from `seedHarnessEnvironment`. See e2e/lib/harness_review_seed.py.
+ */
+export function seedReviewDraft(opts: { environmentId: string; userEmail: string }): ReviewDraftSeed {
+  return runReviewSeed<ReviewDraftSeed>('chat_rule', {
+    SEED_ENVIRONMENT_ID: opts.environmentId,
+    SEED_USER_EMAIL: opts.userEmail,
+  });
+}
+
+/**
+ * Stands in for the pair validation job's success on the Environment's live candidate
+ * set (the stack has no sandbox to run it): a ready bundle with a certified sealed
+ * archive for that pairing.
+ */
+export function certifyCandidates(opts: { environmentId: string }): { bundleId: string } {
+  return runReviewSeed<{ bundleId: string }>('certify_candidates', { SEED_ENVIRONMENT_ID: opts.environmentId });
+}

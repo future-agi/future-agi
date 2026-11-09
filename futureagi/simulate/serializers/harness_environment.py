@@ -606,7 +606,12 @@ class HarnessVersionSerializer(serializers.Serializer):
 
     id = serializers.UUIDField()
     label = serializers.CharField(allow_null=True)
-    status = serializers.ChoiceField(choices=("draft", "active", "discarded"))
+    name = serializers.CharField(
+        allow_null=True, help_text="The name a person gave the version, if any."
+    )
+    status = serializers.ChoiceField(
+        choices=("draft", "candidate", "active", "discarded")
+    )
     is_default = serializers.BooleanField()
     created_at = serializers.DateTimeField()
     created_by = HarnessVersionPersonSerializer(allow_null=True)
@@ -672,6 +677,22 @@ class HarnessVersionSerializer(serializers.Serializer):
         help_text=(
             "An environment version's five release checks; null for other versions."
             " Ready only once all five passed; a pairing still needs its own readiness."
+        ),
+    )
+    candidate_state = serializers.ChoiceField(
+        choices=(
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+        ),
+        allow_null=True,
+        help_text=(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside;"
+            " null for every other version."
         ),
     )
 
@@ -769,7 +790,7 @@ class HarnessPairValidationSerializer(serializers.Serializer):
     )
     job_id = serializers.UUIDField(allow_null=True)
     purpose = serializers.ChoiceField(
-        choices=["agent_move", "recheck"], allow_null=True
+        choices=["agent_move", "recheck", "save"], allow_null=True
     )
     finished_at = serializers.DateTimeField(allow_null=True)
     error = serializers.DictField(allow_null=True)
@@ -806,12 +827,196 @@ class HarnessDraftItemSerializer(HarnessVersionSerializer):
     )
 
 
+class HarnessValidationErrorSerializer(serializers.Serializer):
+    code = serializers.CharField(allow_blank=True)
+    message = serializers.CharField(allow_blank=True)
+    failed_actions = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="Each action whose check failed, with the reason.",
+    )
+
+
+class HarnessDraftValidationSerializer(serializers.Serializer):
+    """Where the validation of the reviewed changes stands."""
+
+    state = serializers.ChoiceField(
+        choices=(
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "unavailable",
+        ),
+        help_text=(
+            "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause"
+            " that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check."
+        ),
+    )
+    job_id = serializers.CharField(
+        required=False, allow_null=True, help_text="The validation job, while one runs."
+    )
+    error = HarnessValidationErrorSerializer(required=False, allow_null=True)
+    affected_scenarios = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Scenarios that need a failed action on every path.",
+    )
+    dropped_scenarios = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Scenarios certifying left out of the suite.",
+    )
+
+
+class HarnessCandidatesSerializer(serializers.Serializer):
+    environment_version_id = serializers.UUIDField()
+    suite_version_id = serializers.UUIDField()
+
+
 class HarnessDraftsSerializer(serializers.Serializer):
-    """The environment's open drafts, and drafts an update set aside."""
+    """The environment's open drafts, drafts an update set aside, and the validation of the reviewed changes."""
 
     environment = HarnessDraftItemSerializer(allow_null=True)
     suite = HarnessDraftItemSerializer(allow_null=True)
     set_aside = HarnessDraftItemSerializer(many=True)
+    validation = HarnessDraftValidationSerializer(allow_null=True)
+    candidates = HarnessCandidatesSerializer(
+        allow_null=True,
+        help_text="The versions Validate built; send them to Save once validation is ready.",
+    )
+
+
+class HarnessDraftValidateSerializer(StrictInputSerializer):
+    expected_revisions = serializers.DictField(
+        child=serializers.IntegerField(),
+        help_text="Per piece, the draft revision the person reviewed.",
+    )
+    expected_review_digest = serializers.CharField(
+        required=False,
+        help_text="The review digest the person saw; required once any change is decided.",
+    )
+
+
+class HarnessDraftValidateResponseSerializer(serializers.Serializer):
+    validation = HarnessDraftValidationSerializer()
+    candidates = HarnessCandidatesSerializer(allow_null=True)
+
+
+class HarnessReviewChangeSerializer(serializers.Serializer):
+    """One item the drafts change, as an RFC 6902 patch with the values it read, and the decision taken on it."""
+
+    id = serializers.CharField()
+    piece = serializers.ChoiceField(choices=("environment", "suite"))
+    kind = serializers.ChoiceField(
+        choices=(
+            "tool",
+            "rule",
+            "contract_field",
+            "sub_goal",
+            "actor",
+            "world_state",
+            "source",
+            "scenario",
+            "file",
+        )
+    )
+    key = serializers.CharField()
+    document = serializers.CharField()
+    action = serializers.ChoiceField(choices=("added", "removed", "changed"))
+    fields = serializers.ListField(child=serializers.CharField())
+    patch = serializers.ListField(child=serializers.DictField())
+    base_digest = serializers.CharField(allow_null=True)
+    draft_digest = serializers.CharField(allow_null=True)
+    summary = serializers.CharField()
+    decision = serializers.ChoiceField(
+        choices=("accepted", "rejected"), allow_null=True
+    )
+    affects = serializers.JSONField(
+        help_text="The scenario keys this change touches, or `all`."
+    )
+    sources = serializers.ListField(
+        child=serializers.DictField(),
+        help_text=(
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's"
+            " message, or a file and its row)."
+        ),
+    )
+    depends_on = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Changes this one needs; accepting it means accepting them.",
+    )
+    graded = serializers.BooleanField(
+        help_text="The change alters what trials are graded on."
+    )
+    revalidate = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="The scenarios to prove again once this change is saved.",
+    )
+    rows = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        allow_null=True,
+        help_text="A world state change: rows added, removed and changed per table; null when it cannot be read.",
+    )
+
+
+class HarnessReviewDraftSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    revision = serializers.IntegerField()
+    parent_id = serializers.CharField(allow_blank=True)
+
+
+class HarnessReviewCountsSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    accepted = serializers.IntegerField()
+    rejected = serializers.IntegerField()
+    undecided = serializers.IntegerField()
+
+
+class HarnessDraftReviewSerializer(serializers.Serializer):
+    """Every change the open drafts make, for the person to accept or reject before Save."""
+
+    drafts = serializers.DictField(child=HarnessReviewDraftSerializer())
+    changes = HarnessReviewChangeSerializer(many=True)
+    counts = HarnessReviewCountsSerializer()
+    review_digest = serializers.CharField(
+        help_text="Send back on Save; a review that moved is refused."
+    )
+    can_save = serializers.BooleanField()
+
+
+class HarnessReviewDecisionSerializer(StrictInputSerializer):
+    id = serializers.CharField(
+        required=False, help_text="One change; omit with `kind` or `remaining`."
+    )
+    kind = serializers.ChoiceField(
+        choices=(
+            "tool",
+            "rule",
+            "contract_field",
+            "sub_goal",
+            "actor",
+            "world_state",
+            "source",
+            "scenario",
+            "file",
+        ),
+        required=False,
+    )
+    remaining = serializers.BooleanField(
+        required=False, help_text="Every change not yet decided."
+    )
+    decision = serializers.ChoiceField(choices=("accepted", "rejected"))
+
+
+class HarnessReviewDecisionsSerializer(StrictInputSerializer):
+    expected_revisions = serializers.DictField(
+        child=serializers.IntegerField(),
+        help_text="Per piece, the draft revision the person reviewed.",
+    )
+    decisions = HarnessReviewDecisionSerializer(many=True)
 
 
 class HarnessDraftSaveItemSerializer(StrictInputSerializer):
@@ -825,7 +1030,27 @@ class HarnessDraftSaveItemSerializer(StrictInputSerializer):
 
 
 class HarnessDraftSaveSerializer(serializers.Serializer):
-    drafts = HarnessDraftSaveItemSerializer(many=True, min_length=1, max_length=2)
+    drafts = HarnessDraftSaveItemSerializer(
+        many=True,
+        min_length=1,
+        max_length=2,
+        required=False,
+        help_text="Save the drafts as they are.",
+    )
+    candidates = HarnessCandidatesSerializer(
+        required=False,
+        help_text="Save the versions Validate built, once their validation is ready.",
+    )
+    expected_review_digest = serializers.CharField(
+        required=False,
+        help_text="The review digest the person saw; Save refuses a review that moved since.",
+    )
+    name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=80,
+        help_text="A name for the new version; never an identity.",
+    )
     idempotency_key = serializers.RegexField(
         r"^[A-Za-z0-9_-]+$",
         max_length=128,
@@ -837,6 +1062,11 @@ class HarnessDraftSaveSerializer(serializers.Serializer):
         if len(set(pieces)) != len(pieces):
             raise serializers.ValidationError("Each piece may be saved once.")
         return value
+
+    def validate(self, attrs):
+        if ("drafts" in attrs) == ("candidates" in attrs):
+            raise serializers.ValidationError("Give drafts or candidates.")
+        return attrs
 
 
 class HarnessDraftSaveResponseSerializer(serializers.Serializer):

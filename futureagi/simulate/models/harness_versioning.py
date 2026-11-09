@@ -19,6 +19,8 @@ from tfc.utils.base_model import BaseModel
 
 class VersionStatus(models.TextChoices):
     DRAFT = "draft", "Draft"
+    # Built from a reviewed draft and waiting for its validation; never a default and never runnable.
+    CANDIDATE = "candidate", "Candidate"
     ACTIVE = "active", "Active"
     DISCARDED = "discarded", "Discarded"
 
@@ -47,6 +49,8 @@ class DiscardReason(models.TextChoices):
     USER = "user", "User"
     SET_ASIDE_BY_REBUILD = "set_aside_by_rebuild", "Set aside by rebuild"
     REBUILD_RESTORED = "rebuild_restored", "Rebuild restored"
+    SUPERSEDED = "superseded", "Superseded"
+    EXPIRED = "expired", "Expired"
 
 
 class _HarnessPieceVersion(BaseModel):
@@ -86,6 +90,8 @@ class _HarnessPieceVersion(BaseModel):
         related_name="children",
     )
     summary = models.CharField(max_length=1024, blank=True, default="")
+    # A name a person gave the version when saving it. Never an identity: it may repeat and may change.
+    name = models.CharField(max_length=80, blank=True, default="", db_default="")
     diff = models.JSONField(null=True, blank=True)
     # Secret-safe snapshots of this piece's stage outputs, served without the object store.
     documents = models.JSONField(default=dict, blank=True)

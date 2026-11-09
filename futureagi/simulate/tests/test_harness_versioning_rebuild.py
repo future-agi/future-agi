@@ -34,7 +34,11 @@ from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
-from simulate.tests.test_harness_nudges import NEW_VALUE, _activated, _answer
+from simulate.tests.test_harness_nudges import (
+    NEW_VALUE,
+    _activated,
+    _answer,
+)
 from simulate.tests.test_harness_nudges import (  # noqa: F401 - fixture
     started as started,
 )
@@ -1081,7 +1085,7 @@ class TestLanding:
             documents={**(e1.documents or {}), "contract": REFUND}
         )
         world = {"tools": [], "tables": {"orders": 1}}
-        files = drafts._piece_files
+        files = drafts.piece_files
 
         def with_world(locked, piece, version):
             found = files(locked, piece, version)
@@ -1089,7 +1093,7 @@ class TestLanding:
                 found = {**found, "manifest.json": json.dumps(world).encode()}
             return found
 
-        with patch.object(drafts, "_piece_files", with_world):
+        with patch.object(drafts, "piece_files", with_world):
             nudge = _turn(
                 environment,
                 nudge,
@@ -2620,11 +2624,11 @@ class TestAgentDefault:
             pair = default_pair(*args)
             return replace(pair, revision="sha256:" + "9" * 64)
 
-        default_pair = versions._default_pair
+        default_pair = versions.pair_archive
 
         def move_by_hand():
             revisions.append(environment_authoring_revision(environment))
-            with patch.object(versions, "_default_pair", side_effect=recomposed):
+            with patch.object(versions, "pair_archive", side_effect=recomposed):
                 move_default(environment, "agent", a1.id, expected_default_id=a2.id)
             environment.refresh_from_db()
             revisions.append(environment_authoring_revision(environment))
