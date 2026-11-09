@@ -1,5 +1,6 @@
 """Expected resource absence must not mask backend failures or emit tracebacks."""
 
+import json
 import logging
 import uuid
 
@@ -89,6 +90,61 @@ def test_invisible_resource_returns_quiet_standard_404(
     assert "Synthetic" not in response.content.decode()
     assert not [entry for entry in logs if entry["log_level"] in {"error", "critical"}]
     assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+
+@pytest.mark.parametrize("endpoint", ["retrieve", "destroy", "tags"])
+@pytest.mark.parametrize(
+    "resource_id", ["not-a-uuid", "00000000-0000-0000-0000-00000000000z"]
+)
+def test_malformed_project_id_returns_quiet_standard_400(
+    auth_client, endpoint, resource_id, caplog, settings
+):
+    settings.DEBUG = False
+    auth_client.raise_request_exception = False
+
+    with capture_logs() as logs, caplog.at_level(logging.ERROR):
+        response = request_resource(auth_client, endpoint, resource_id)
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["status"] is False
+    assert body["type"] == "validation_error"
+    assert body["code"] == "invalid"
+    assert body["detail"] == body["message"] == body["result"]
+    assert resource_id not in response.content.decode()
+    assert not [entry for entry in logs if entry["log_level"] in {"error", "critical"}]
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+
+@pytest.mark.parametrize("payload", [[], ["qa"], "qa", 42, True, None])
+def test_non_object_project_tags_body_returns_quiet_400_without_mutation(
+    auth_client, organization, workspace, payload, caplog, settings
+):
+    project = make_resource("tags", organization, workspace)
+    project.tags = ["original"]
+    project.save(update_fields=["tags"])
+    updated_at = project.updated_at
+    settings.DEBUG = False
+    auth_client.raise_request_exception = False
+
+    with capture_logs() as logs, caplog.at_level(logging.ERROR):
+        response = auth_client.patch(
+            f"/tracer/project/{project.id}/tags/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["status"] is False
+    assert body["type"] == "validation_error"
+    assert body["detail"] == body["message"] == body["result"]
+    assert not [entry for entry in logs if entry["log_level"] in {"error", "critical"}]
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+    project.refresh_from_db()
+    assert project.tags == ["original"]
+    assert project.updated_at == updated_at
+    assert project.deleted is False
 
 
 @pytest.mark.parametrize("endpoint", ENDPOINTS)

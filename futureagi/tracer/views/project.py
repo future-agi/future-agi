@@ -6,7 +6,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Count
 from django.utils import timezone
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -255,6 +255,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         project_id = self.kwargs.get("pk")
 
         if project_id:
+            # Validate before ORM filtering, which raises a non-DRF ValidationError.
+            project_id = serializers.UUIDField().run_validation(project_id)
             return queryset.filter(id=project_id)
 
         # Apply filters
@@ -384,6 +386,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     @validated_request(
         responses={
             200: ProjectDetailResponseSerializer,
+            400: ApiErrorResponseSerializer,
             404: ApiErrorResponseSerializer,
             503: ApiErrorResponseSerializer,
         }
@@ -432,7 +435,11 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.bad_request(get_error_message("FAILED_TO_DELETE_PROJECT"))
 
     @validated_request(
-        responses={404: ApiErrorResponseSerializer, 503: ApiErrorResponseSerializer}
+        responses={
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        }
     )
     def destroy(self, request, *args, **kwargs):
         project = self.get_object()
@@ -873,12 +880,18 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             )
 
     @validated_request(
-        responses={404: ApiErrorResponseSerializer, 503: ApiErrorResponseSerializer}
+        responses={
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        }
     )
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
         """Update tags for a project."""
         project = self.get_object()
+        if not isinstance(request.data, dict):
+            return self._gm.bad_request("Request body must be an object")
         tags = request.data.get("tags")
         if tags is None:
             return self._gm.bad_request("tags field is required")
