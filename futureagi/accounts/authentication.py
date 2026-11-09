@@ -1195,7 +1195,7 @@ def custom_exception_handler(exc, context):
 
     from tfc.ee_gating import FeatureUnavailable
 
-    if isinstance(exc, (OperationalError, InterfaceError)):
+    if isinstance(exc, OperationalError | InterfaceError):
         logger.warning(
             "api_database_unavailable", **_database_unavailable_metadata(exc)
         )

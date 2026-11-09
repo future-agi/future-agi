@@ -3205,9 +3205,9 @@ class PerformanceSummaryView(APIView):
 
                 # Get overall score if available
                 if call_execution.overall_score is not None:
-                    scenario_performance[scenario_id]["total_score"] += (
-                        call_execution.overall_score
-                    )
+                    scenario_performance[scenario_id][
+                        "total_score"
+                    ] += call_execution.overall_score
                     scenario_performance[scenario_id]["scores"].append(
                         call_execution.overall_score
                     )

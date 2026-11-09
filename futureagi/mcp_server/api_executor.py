@@ -235,7 +235,7 @@ class DjangoAPIExecutor:
                             (key == "id" or key.endswith("_id") or key == "status")
                             and (
                                 value is None
-                                or isinstance(value, (str, int, float, bool))
+                                or isinstance(value, str | int | float | bool)
                             )
                             and len(str(value)) <= 200
                         ):
