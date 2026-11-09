@@ -21,6 +21,7 @@ import {
   useDevelopCellHeight,
   useDevelopFilterStoreShallow,
   useDevelopSearchStore,
+  useDevelopSelectedRowsStore,
 } from "../states";
 import { useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -87,6 +88,11 @@ const DevelopBarLeftSection = ({
   );
 
   const setSearchExtended = (value) => {
+    if (value === useDevelopSearchStore.getState().search) return;
+    // Clear both grid and store before the new query becomes observable, not
+    // after the debounce. The store reset also clears inverted exclusions.
+    gridApi.current?.deselectAll();
+    useDevelopSelectedRowsStore.getState().resetSelectedRows();
     setSearch(value);
     debouncedSearch();
   };

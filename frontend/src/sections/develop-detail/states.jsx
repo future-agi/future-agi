@@ -1,6 +1,7 @@
 import { getRandomId } from "src/utils/utils";
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
+import { compareFilterChange } from "./DataTab/DevelopFilters/common";
 
 function readShowSummary() {
   try {
@@ -248,9 +249,33 @@ export const useEditCellStore = create((set) => ({
 export const useDevelopSelectedRowsStore = create((set) => ({
   toggledNodes: [],
   selectAll: false,
-  setToggledNodes: (value) => set(() => ({ toggledNodes: value })),
-  setSelectAll: (value) => set(() => ({ selectAll: value })),
-  resetSelectedRows: () => set(() => ({ selectedRows: [], selectAll: false })),
+  selectionScope: null,
+  selectionRevision: 0,
+  queryEpoch: 0,
+  setToggledNodes: (value) => set((state) => ({
+    toggledNodes: value, selectionScope: null, selectionRevision: state.selectionRevision + 1,
+  })),
+  setSelectAll: (value) => set((state) => ({
+    selectAll: value, selectionScope: null, selectionRevision: state.selectionRevision + 1,
+  })),
+  setSelection: ({ selectAll, toggledNodes }, selectionScope) => set((state) => {
+    if (state.selectAll === selectAll &&
+        JSON.stringify(state.toggledNodes) === JSON.stringify(toggledNodes) &&
+        JSON.stringify(state.selectionScope) === JSON.stringify(selectionScope)) return state;
+    return {
+      selectAll, toggledNodes: [...toggledNodes],
+      selectionScope: JSON.parse(JSON.stringify(selectionScope)),
+      selectionRevision: state.selectionRevision + 1,
+    };
+  }),
+  resetSelectedRows: () => set((state) => ({
+    toggledNodes: [], selectAll: false, selectionScope: null,
+    selectionRevision: state.selectionRevision + 1,
+  })),
+  invalidateSelectionScope: () => set((state) => ({
+    toggledNodes: [], selectAll: false, selectionScope: null,
+    selectionRevision: state.selectionRevision + 1, queryEpoch: state.queryEpoch + 1,
+  })),
 }));
 
 export const useDevelopFilterStore = create((set) => ({
@@ -263,19 +288,31 @@ export const useDevelopFilterStore = create((set) => ({
     }),
   filters: [{ ...DefaultFilter, id: getRandomId() }],
   setFilters: (value) =>
-    set((state) => ({
-      filters: typeof value === "function" ? value(state.filters) : value,
-    })),
+    set((state) => {
+      const filters = typeof value === "function" ? value(state.filters) : value;
+      // compareFilterChange returns true when the effective API filters match.
+      if (!compareFilterChange(state.filters, filters)) {
+        useDevelopSelectedRowsStore.getState().invalidateSelectionScope();
+      }
+      return { filters };
+    }),
   resetFilters: () =>
-    set(() => ({
-      filters: [{ ...DefaultFilter, id: getRandomId() }],
-      isDevelopFilterOpen: false,
-    })),
+    set((state) => {
+      const filters = [{ ...DefaultFilter, id: getRandomId() }];
+      if (!compareFilterChange(state.filters, filters)) {
+        useDevelopSelectedRowsStore.getState().invalidateSelectionScope();
+      }
+      return { filters, isDevelopFilterOpen: false };
+    }),
 }));
 
 export const useDevelopSearchStore = create((set) => ({
   search: "",
-  setSearch: (value) => set(() => ({ search: value })),
+  setSearch: (value) => set((state) => {
+    if (state.search === value) return state;
+    useDevelopSelectedRowsStore.getState().invalidateSelectionScope();
+    return { search: value };
+  }),
 }));
 
 export const useCompositeEvalStore = create((set) => ({
@@ -374,8 +411,7 @@ export const resetAllStates = () => {
   useEditCellStore.getState().setEditCell(null);
 
   // Reset selection states
-  useDevelopSelectedRowsStore.getState().setToggledNodes([]);
-  useDevelopSelectedRowsStore.getState().setSelectAll(false);
+  useDevelopSelectedRowsStore.getState().invalidateSelectionScope();
 
   // Reset filter states
   useDevelopFilterStore.getState().setDevelopFilterOpen(false);
