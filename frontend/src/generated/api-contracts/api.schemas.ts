@@ -25375,6 +25375,7 @@ export const ActorDecisionApiPlay = {
   waiting: "waiting",
   timeout: "timeout",
   problem: "problem",
+  not_triggered: "not_triggered",
 } as const;
 
 /**
@@ -25396,7 +25397,7 @@ export interface ActorDecisionApi {
    */
   channel?: string;
   /**
-   * For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.
+   * For `problem`: no_world_door or not_listed: the scenario's problem, never the agent's.
    * @minLength 1
    */
   problem?: string;

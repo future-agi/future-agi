@@ -154355,7 +154355,8 @@
                         "history",
                         "waiting",
                         "timeout",
-                        "problem"
+                        "problem",
+                        "not_triggered"
                     ]
                 },
                 "action": {
@@ -154381,7 +154382,7 @@
                 },
                 "problem": {
                     "title": "Problem",
-                    "description": "For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.",
+                    "description": "For `problem`: no_world_door or not_listed: the scenario's problem, never the agent's.",
                     "type": "string",
                     "minLength": 1
                 },

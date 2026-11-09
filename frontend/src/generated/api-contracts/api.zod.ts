@@ -53559,6 +53559,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             "waiting",
             "timeout",
             "problem",
+            "not_triggered",
           ]),
           action: zod.string().min(1).optional(),
           arguments: zod
@@ -53577,7 +53578,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             .min(1)
             .optional()
             .describe(
-              "For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.",
+              "For `problem`: no_world_door or not_listed: the scenario's problem, never the agent's.",
             ),
           why: zod.string().optional(),
           status: zod.number().optional(),
