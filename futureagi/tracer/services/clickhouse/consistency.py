@@ -167,6 +167,18 @@ class ConsistencyChecker:
                             "is_deleted",
                             "version",
                         }
+                    elif table.name == "tracer_eval_logger_v2":
+                        # Native evals resolve their project through the target
+                        # trace/span/session; the packaged DDL has no project_id.
+                        required = {
+                            "id",
+                            "trace_id",
+                            "observation_span_id",
+                            "trace_session_id",
+                            "custom_eval_config_id",
+                            "is_deleted",
+                            "_version",
+                        }
                     else:
                         required = {"id", "project_id", "is_deleted", "_version"}
                     actual = columns.get(table.name)

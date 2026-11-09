@@ -17,6 +17,15 @@ NATIVE_COLUMNS = {
     "spans": {"id", "project_id", "is_deleted", "_version"},
     "trace_sessions": {"trace_session_id", "project_id", "is_deleted", "version"},
 }
+NATIVE_EVAL_COLUMNS = {
+    "id",
+    "trace_id",
+    "observation_span_id",
+    "trace_session_id",
+    "custom_eval_config_id",
+    "is_deleted",
+    "_version",
+}
 
 
 @pytest.fixture
@@ -103,7 +112,7 @@ class TestSchemaAwareHealth:
     def test_native_eval_has_no_cdc_probe(self, configure, settings):
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
         native = fake_client(
-            {**NATIVE_COLUMNS, "tracer_eval_logger_v2": NATIVE_COLUMNS["traces"]}
+            {**NATIVE_COLUMNS, "tracer_eval_logger_v2": NATIVE_EVAL_COLUMNS}
         )
         checker = configure(fake_client({}), native, retired=True)
         health = checker.get_health_status()
@@ -304,6 +313,7 @@ def create_native(client):
     folder = Path(apply_schema.__file__).parent / "schema"
     for filename, table in (
         ("002_spans_v2.sql", "spans"),
+        ("011_eval_logger_v2.sql", "tracer_eval_logger_v2"),
         ("015_traces_and_trace_dict.sql", "traces"),
         ("018_trace_sessions.sql", "trace_sessions"),
     ):
@@ -318,6 +328,52 @@ def create_native(client):
 
 @pytest.mark.integration
 class TestRealClickHouseHealth:
+    @pytest.mark.parametrize(
+        "column,column_type",
+        [
+            ("trace_id", "Nullable(UUID)"),
+            ("observation_span_id", "Nullable(String)"),
+            ("trace_session_id", "Nullable(UUID)"),
+        ],
+    )
+    def test_native_eval_packaged_schema_and_missing_column_recovery(
+        self, configure, real_clients, settings, caplog, column, column_type
+    ):
+        _, native, clients = real_clients
+        create_native(native)
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+        checker = configure(*clients, retired=True)
+        columns = {
+            row[0] for row in native.execute("DESCRIBE TABLE tracer_eval_logger_v2")
+        }
+        assert "project_id" not in columns
+        assert NATIVE_EVAL_COLUMNS <= columns
+        health = checker.get_health_status()
+        assert health.status == "healthy"
+        assert health.details["checks"]["native.tracer_eval_logger_v2"] == "ready"
+        assert health.cdc_lag == {}
+        assert response().data["status"] == "healthy"
+
+        # Remove a real target column (and its dependent skip index), not a
+        # fabricated project_id. No data probe should run on this broken schema.
+        native.execute(f"ALTER TABLE tracer_eval_logger_v2 DROP INDEX idx_{column}")
+        native.execute(f"ALTER TABLE tracer_eval_logger_v2 DROP COLUMN {column}")
+        health = checker.get_health_status()
+        assert health.status == "unhealthy"
+        assert (
+            health.details["checks"]["native.tracer_eval_logger_v2"]
+            == "missing_required_columns"
+        )
+        assert response().data["status"] == "unhealthy"
+
+        native.execute(
+            f"ALTER TABLE tracer_eval_logger_v2 ADD COLUMN {column} {column_type}"
+        )
+        assert checker.get_health_status().status == "healthy"
+        assert response().data["status"] == "healthy"
+        assert "UNKNOWN_TABLE" not in caplog.text
+        assert "UNKNOWN_IDENTIFIER" not in caplog.text
+
     def test_retired_trace_tables_are_not_queried_and_missing_eval_is_unhealthy(
         self, configure, real_clients, caplog
     ):
