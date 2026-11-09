@@ -21362,7 +21362,7 @@ export interface HarnessSubGoalApi {
   /**
    * @minLength 1
    * @maxLength 255
-   * @pattern ^(task|worker:\S+)$
+   * @pattern ^(task|worker:.*\S.*)$
    */
   subject?: string;
 }

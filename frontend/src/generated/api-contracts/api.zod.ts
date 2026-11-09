@@ -44035,7 +44035,7 @@ export const simulateApiHarnessAttemptsResultsBodySubGoalsItemNameMax = 255;
 export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax = 255;
 
 export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp =
-  new RegExp("^(task|worker:\\S+)$");
+  new RegExp("^(task|worker:.*\\S.*)$");
 export const simulateApiHarnessAttemptsResultsBodyCallDurationMsMin = 0;
 
 export const simulateApiHarnessAttemptsResultsBodyCallTurnsMin = 0;

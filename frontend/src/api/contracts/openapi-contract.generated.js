@@ -104679,7 +104679,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         subject: {
           title: "Subject",
           type: "string",
-          pattern: "^(task|worker:\\S+)$",
+          pattern: "^(task|worker:.*\\S.*)$",
           maxLength: 255,
           minLength: 1,
         },
