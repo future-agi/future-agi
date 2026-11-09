@@ -410,8 +410,9 @@ def test_nomination_cannot_increase_publication_row_limit(rows):
         )
 
 
-@pytest.mark.parametrize("counts", [(1, 1, 0), (1, 0, 0)])
-def test_retirement_coverage_pushes_only_immutable_definition_keys(counts):
+@pytest.mark.parametrize("uncovered", [0, 1])
+def test_retirement_coverage_pushes_only_immutable_definition_keys(uncovered):
+    from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
     from tracer.services.derived_metrics.span_evidence import (
         require_retirement_evidence,
     )
@@ -420,9 +421,10 @@ def test_retirement_coverage_pushes_only_immutable_definition_keys(counts):
     definition = SimpleNamespace(metric_id=uuid4(), version=2, level="span")
     calls = []
 
+    # The coverage proof is one query returning the count of uncovered buckets.
     def execute(sql, params):
         calls.append((sql, params))
-        return [counts]
+        return [(uncovered,)]
 
     writer = SimpleNamespace(
         org_id=uuid4(),
@@ -430,7 +432,12 @@ def test_retirement_coverage_pushes_only_immutable_definition_keys(counts):
         lease=SimpleNamespace(project_id=head.project_id),
         store=SimpleNamespace(execute=execute),
     )
-    require_retirement_evidence(writer, head, [definition])
+    if uncovered:
+        # Fail closed: any uncovered bucket blocks retirement.
+        with pytest.raises(MetricAdmissionUnproven):
+            require_retirement_evidence(writer, head, [definition])
+    else:
+        require_retirement_evidence(writer, head, [definition])
     assert len(calls) == 1
     sql, params = calls[0]
     for table, prefix in (
