@@ -10260,7 +10260,7 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
         try:
             column_id = request.data.get("column_id")
             instruction = request.data.get("instruction")
-            model = request.data.get("language_model_id", "gpt-4")
+            model = request.data.get("language_model_id", "gpt-4o")
             concurrency = request.data.get("concurrency", 5)
             new_column_name = request.data.get("new_column_name")
 

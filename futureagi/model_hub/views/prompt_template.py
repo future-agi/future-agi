@@ -3755,7 +3755,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             first_configuration = first_prompt_config.get("configuration", {})
 
             # Get model configuration from prompt_config
-            model = first_configuration.get("model", "gpt-4")
+            model = first_configuration.get("model", "gpt-4o")
             temperature = first_configuration.get("temperature", 0.7)
 
             # Define available language options and their corresponding code templates

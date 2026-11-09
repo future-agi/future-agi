@@ -1273,7 +1273,7 @@ class ClassifyColumnRequestSerializer(serializers.Serializer):
 class ExtractEntitiesRequestSerializer(serializers.Serializer):
     column_id = serializers.UUIDField()
     instruction = serializers.CharField()
-    language_model_id = serializers.CharField(required=False, default="gpt-4")
+    language_model_id = serializers.CharField(required=False, default="gpt-4o")
     concurrency = serializers.IntegerField(required=False, default=5)
     new_column_name = serializers.CharField(required=False, allow_blank=True)
 

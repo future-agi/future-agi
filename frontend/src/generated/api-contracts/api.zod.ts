@@ -21127,7 +21127,7 @@ export const ModelHubDatasetsExtractEntitiesCreateParams = zod.object({
   dataset_id: zod.string(),
 });
 
-export const modelHubDatasetsExtractEntitiesCreateBodyLanguageModelIdDefault = `gpt-4`;
+export const modelHubDatasetsExtractEntitiesCreateBodyLanguageModelIdDefault = `gpt-4o`;
 
 export const modelHubDatasetsExtractEntitiesCreateBodyConcurrencyDefault = 5;
 
@@ -50970,7 +50970,7 @@ export const simulateScenariosCreateCreateBodyVoiceProviderMax = 100;
 export const simulateScenariosCreateCreateBodyVoiceNameDefault = `marissa`;
 export const simulateScenariosCreateCreateBodyVoiceNameMax = 100;
 
-export const simulateScenariosCreateCreateBodyModelDefault = `gpt-4`;
+export const simulateScenariosCreateCreateBodyModelDefault = `gpt-4o`;
 export const simulateScenariosCreateCreateBodyModelMax = 100;
 
 export const simulateScenariosCreateCreateBodyLlmTemperatureDefault = 0.7;

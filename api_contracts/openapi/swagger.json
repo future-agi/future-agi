@@ -116534,7 +116534,7 @@
                 "language_model_id": {
                     "title": "Language model id",
                     "type": "string",
-                    "default": "gpt-4",
+                    "default": "gpt-4o",
                     "minLength": 1
                 },
                 "concurrency": {
@@ -151266,7 +151266,7 @@
                 "model": {
                     "title": "Model",
                     "type": "string",
-                    "default": "gpt-4",
+                    "default": "gpt-4o",
                     "maxLength": 100,
                     "minLength": 1
                 },

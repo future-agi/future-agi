@@ -972,7 +972,7 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
             data = request.validated_data
             column_id = data.get("column_id")
             instruction = data.get("instruction")
-            model = data.get("language_model_id", "gpt-4")
+            model = data.get("language_model_id", "gpt-4o")
             concurrency = data.get("concurrency", 5)
             new_column_name = data.get("new_column_name")
 
@@ -1896,7 +1896,7 @@ class RerunOperationView(APIView):
                             ),
                             "language_model_id": metadata.get(
                                 "language_model_id",
-                                effective_metadata.get("language_model_id", "gpt-4"),
+                                effective_metadata.get("language_model_id", "gpt-4o"),
                             ),
                             "column_id": metadata.get(
                                 "column_id", effective_metadata.get("column_id")
@@ -2153,7 +2153,7 @@ class RerunOperationView(APIView):
             # Extract configuration from metadata
             source_column_id = metadata.get("column_id")
             instruction = metadata.get("instruction")
-            model = metadata.get("language_model_id", "gpt-4")
+            model = metadata.get("language_model_id", "gpt-4o")
             concurrency = metadata.get("concurrency", 5)
             if not all([source_column_id, instruction]):
                 return self._gm.bad_request(
@@ -3460,7 +3460,7 @@ class PreviewDatasetOperationView(APIView):
             value, value_infos = classifier._classify_cell(
                 cell=cell,
                 labels=config["labels"],
-                model=config.get("language_model_id", "gpt-4"),
+                model=config.get("language_model_id", "gpt-4o"),
             )
             results.append(
                 {
@@ -3488,7 +3488,7 @@ class PreviewDatasetOperationView(APIView):
             value, value_infos = extractor._extract_entities(
                 cell=cell,
                 instruction=config["instruction"],
-                model=config.get("language_model_id", "gpt-4"),
+                model=config.get("language_model_id", "gpt-4o"),
             )
             results.append(
                 {

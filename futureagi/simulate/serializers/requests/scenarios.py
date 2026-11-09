@@ -118,7 +118,7 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
     voice_name = serializers.CharField(
         max_length=100, required=False, default="marissa"
     )
-    model = serializers.CharField(max_length=100, required=False, default="gpt-4")
+    model = serializers.CharField(max_length=100, required=False, default="gpt-4o")
     llm_temperature = serializers.FloatField(required=False, default=0.7)
     initial_message = serializers.CharField(required=False, allow_blank=True)
     max_call_duration_in_minutes = serializers.IntegerField(required=False, default=30)
