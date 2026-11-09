@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import uuid
+from types import CodeType
 from unittest.mock import patch
 
 import pytest
@@ -53,12 +54,13 @@ from simulate.tests.test_harness_versioning_backfill import (
 )
 from simulate.tests.test_harness_versioning_backfill import _run as _backfill_run
 from simulate.tests.test_harness_versioning_backfill import (
-    storage as storage,  # noqa: F401 - fixture
+    storage as backfill_storage,
 )
 from simulate.tests.test_harness_versioning_picks import _ready, _second_agent
 from simulate.tests.test_harness_versioning_record import _authoring
 
 pytestmark = pytest.mark.django_db
+storage = backfill_storage
 
 BASE = "/simulate/api/harness-environments"
 URL = "wss://lk.example.test"
@@ -2698,7 +2700,37 @@ class TestAgentPin:
         assert environment.agent_version_id == first.agent_version_id
 
 
+def _frame_local_names(code: CodeType) -> set[str]:
+    names = {*code.co_varnames, *code.co_cellvars, *code.co_freevars}
+    # Python 3.11 gives comprehensions their own frames; 3.12+ may inline them.
+    # Inspect both representations instead of overlooking a secret-bearing frame.
+    for child in code.co_consts:
+        if isinstance(child, CodeType) and child.co_name in {
+            "<dictcomp>",
+            "<listcomp>",
+            "<setcomp>",
+            "<genexpr>",
+        }:
+            names.update(_frame_local_names(child))
+    return names
+
+
 class TestErrorTrackerScrubbing:
+    def test_comprehension_locals_are_checked_on_every_supported_python(self):
+        def safe(secret_values):
+            return {
+                name: secret_value
+                for name, secret_value in secret_values.items()
+                if secret_value
+            }
+
+        def unsafe(secret_values):
+            return {name: value for name, value in secret_values.items() if value}
+
+        assert "secret_value" in _frame_local_names(safe.__code__)
+        assert "value" in _frame_local_names(unsafe.__code__)
+        assert "secret_value" not in _frame_local_names(unsafe.__code__)
+
     def test_locals_holding_values_are_named_for_the_scrubber(self):
         from simulate.services.harness_credentials import mint_secret_refs
         from simulate.services.harness_provider import (
@@ -2769,11 +2801,13 @@ class TestErrorTrackerScrubbing:
         }
         for function, names in holders.items():
             code = function.__code__
-            assert set(names) <= {*code.co_varnames, *code.co_cellvars}, function
+            assert set(names) <= _frame_local_names(code), function
             assert all(_is_sensitive_key(name) for name in names), names
         for function in (HostedHarnessProvider.rerun_saved, stored_values_view):
-            assert "value" not in function.__code__.co_varnames, function
-        assert not {"content", "document"} & set(staged_files_view.__code__.co_varnames)
+            assert "value" not in _frame_local_names(function.__code__), function
+        assert not {"content", "document"} & _frame_local_names(
+            staged_files_view.__code__
+        )
         # The frame that raises credential_unavailable holds no value.
         assert service.credential_set.__code__.co_varnames == ("runtime",)
         scrubbed = {"secret_set": "x", "pinned_secrets": {"LIVEKIT_URL": "u"}}

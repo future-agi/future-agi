@@ -405,7 +405,7 @@ exclude = [
 ]
 
 [tool.django-stubs]
-django_settings_module = "tfc.settings"
+django_settings_module = "tfc.settings.settings"
 
 [dependency-groups]
 dev = [

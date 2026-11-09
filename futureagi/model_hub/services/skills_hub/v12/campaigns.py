@@ -1,7 +1,7 @@
 """Fixed-inventory, reviewed repository campaigns. No Git/network work runs here.
 
-The operational models are integration-owned. Missing models or the independent
-feature switch fail closed; importing this module never writes or enables a slice.
+The operational models are integrated; the independent feature switch still
+fails closed. Importing this module never writes or enables a slice.
 Plans and Git observations are client-reported, not remote attestations.
 """
 
@@ -10,13 +10,12 @@ from __future__ import annotations
 import copy
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import timedelta
-from typing import NoReturn
+from datetime import datetime, timedelta
+from typing import NoReturn, TypeVar
 from uuid import UUID, uuid4
 
-from django.apps import apps
 from django.conf import settings
 from django.db import models, transaction
 from django.utils import timezone
@@ -25,6 +24,8 @@ from accounts.models.workspace import Workspace
 from model_hub.models.skills_hub import HubSkill, HubSkillVersion
 from model_hub.models.skills_hub_v12 import (
     HubSkillContextBinding,
+    HubSkillContextCampaign,
+    HubSkillContextCampaignTarget,
     HubSkillContextOperation,
     HubSkillContextReceipt,
 )
@@ -137,18 +138,6 @@ def _admin(principal: SkillPrincipal) -> None:
         )
 
 
-def _models() -> tuple[type[models.Model], type[models.Model]]:
-    try:
-        return (
-            apps.get_model("model_hub", "HubSkillContextCampaign"),
-            apps.get_model("model_hub", "HubSkillContextCampaignTarget"),
-        )
-    except LookupError:
-        _fail(
-            "skills_unavailable", "Campaign persistence has not been integrated.", 503
-        )
-
-
 def _operation(
     principal: SkillPrincipal, operation: str, key: UUID, body: dict
 ) -> tuple[dict, str, dict | None]:
@@ -178,9 +167,8 @@ def _complete(lookup: dict, digest: str, response: dict, resource_id: UUID) -> d
 
 def _campaign(
     principal: SkillPrincipal, campaign_id: UUID, *, lock: bool = False
-) -> models.Model:
-    campaign_model, _ = _models()
-    query = campaign_model.objects.filter(**_scope(principal), pk=campaign_id)
+) -> HubSkillContextCampaign:
+    query = HubSkillContextCampaign.objects.filter(**_scope(principal), pk=campaign_id)
     if lock:
         query = query.select_for_update()
     campaign = query.first()
@@ -189,10 +177,13 @@ def _campaign(
     return campaign
 
 
-def _targets(principal: SkillPrincipal, campaign: models.Model) -> models.QuerySet:
-    _, target_model = _models()
+def _targets(
+    principal: SkillPrincipal, campaign: HubSkillContextCampaign
+) -> models.QuerySet[HubSkillContextCampaignTarget]:
     return (
-        target_model.objects.filter(**_scope(principal), campaign=campaign)
+        HubSkillContextCampaignTarget.objects.filter(
+            **_scope(principal), campaign=campaign
+        )
         .select_related("binding", "desired_version", "desired_version__skill")
         .order_by("binding_id")
     )
@@ -201,7 +192,7 @@ def _targets(principal: SkillPrincipal, campaign: models.Model) -> models.QueryS
 @contextmanager
 def _locked(
     principal: SkillPrincipal, campaign_id: UUID
-) -> Iterator[tuple[models.Model, list]]:
+) -> Iterator[tuple[HubSkillContextCampaign, list[HubSkillContextCampaignTarget]]]:
     _authorize(principal, write=True)
     with transaction.atomic():
         campaign = _campaign(principal, campaign_id)
@@ -225,20 +216,22 @@ def _locked(
         yield campaign, list(_targets(principal, campaign))
 
 
-def _target(targets: list, binding_id: UUID) -> models.Model:
+def _target(
+    targets: list[HubSkillContextCampaignTarget], binding_id: UUID
+) -> HubSkillContextCampaignTarget:
     for target in targets:
         if target.binding_id == _uuid(binding_id):
             return target
     _fail("resource_not_found", "Campaign target not found.", 404)
 
 
-def _revision(campaign: models.Model, revision: int) -> None:
+def _revision(campaign: HubSkillContextCampaign, revision: int) -> None:
     _integer(revision, 1)
     if campaign.revision != revision:
         _fail("campaign_conflict", "The campaign changed. Review it again.")
 
 
-def _live_target(target: models.Model) -> None:
+def _live_target(target: HubSkillContextCampaignTarget) -> None:
     binding, version = target.binding, target.desired_version
     if binding.retired_at or binding.context.deleted or binding.kind != "repository":
         _fail("target_plan_changed", "The repository binding is no longer available.")
@@ -251,22 +244,35 @@ def _live_target(target: models.Model) -> None:
         )
 
 
-def _plan_current(target: models.Model) -> None:
+def _repository_id(binding: HubSkillContextBinding) -> str:
+    repository = binding.repository
+    if not isinstance(repository, dict) or repository.get("provider") != "github":
+        _fail("target_plan_changed", "The repository identity is unavailable.")
+    repository_id = repository.get("repository_id")
+    if not isinstance(repository_id, str) or not repository_id:
+        _fail("target_plan_changed", "The repository identity is unavailable.")
+    return repository_id
+
+
+def _plan_current(target: HubSkillContextCampaignTarget) -> dict:
     _live_target(target)
     plan = target.plan
     binding = target.binding
-    if not plan or plan["blockers"]:
+    if not isinstance(plan, dict) or not plan or plan["blockers"]:
         _fail("target_plan_changed", "A complete unblocked plan is required.")
-    if plan["repository_id"] != binding.repository["repository_id"]:
+    if plan["repository_id"] != _repository_id(binding):
         _fail("target_plan_changed", "The repository identity changed.")
     if (
         "version" in binding.selector
         and binding.selector["version"] != target.desired_version.number
     ):
         _fail("target_plan_changed", "This binding is deliberately pinned. Exclude it.")
+    return plan
 
 
-def _manifest(campaign: models.Model, targets: list) -> str:
+def _manifest(
+    campaign: HubSkillContextCampaign, targets: list[HubSkillContextCampaignTarget]
+) -> str:
     return canonical_digest(
         {
             "schema": 1,
@@ -290,7 +296,7 @@ def _manifest(campaign: models.Model, targets: list) -> str:
     )
 
 
-def _summary(campaign: models.Model) -> dict:
+def _summary(campaign: HubSkillContextCampaign) -> dict:
     return {
         "id": str(campaign.pk),
         "name": campaign.name,
@@ -310,7 +316,7 @@ def _summary(campaign: models.Model) -> dict:
     }
 
 
-def _target_out(target: models.Model) -> dict:
+def _target_out(target: HubSkillContextCampaignTarget) -> dict:
     attempts = target.attempts
     latest = attempts[-1] if attempts else None
     confirmed = [row for row in attempts if row["state"] in {"pr_open", "merged"}]
@@ -339,7 +345,15 @@ def _target_out(target: models.Model) -> dict:
     }
 
 
-def _page(query: models.QuerySet, page: int, page_size: int, mapper) -> dict:
+CampaignRow = TypeVar("CampaignRow", bound=models.Model)
+
+
+def _page(
+    query: models.QuerySet[CampaignRow],
+    page: int,
+    page_size: int,
+    mapper: Callable[[CampaignRow], dict],
+) -> dict:
     _integer(page, 1)
     _integer(page_size, 1)
     if page_size > 100 or page > 10000:
@@ -360,9 +374,8 @@ def list_campaigns(
     *, principal: SkillPrincipal, page: int = 1, page_size: int = 25
 ) -> dict:
     _authorize(principal)
-    campaign_model, _ = _models()
     return _page(
-        campaign_model.objects.filter(**_scope(principal)).order_by(
+        HubSkillContextCampaign.objects.filter(**_scope(principal)).order_by(
             "-created_at", "id"
         ),
         page,
@@ -418,7 +431,6 @@ def create_campaign(
     )
     if replay is not None:
         return replay
-    campaign_model, target_model = _models()
     parent = (
         _campaign(principal, request["parent_campaign_id"])
         if request["parent_campaign_id"]
@@ -451,7 +463,8 @@ def create_campaign(
         .select_for_update(of=("self",))
     )
     versions = {str(item["binding_id"]): item["version"] for item in selected}
-    campaign = campaign_model.objects.create(
+    assert principal.user_id is not None  # The private principal was authorized.
+    campaign = HubSkillContextCampaign.objects.create(
         **_scope(principal),
         name=request["name"],
         target_ids=sorted(map(str, ids)),
@@ -478,7 +491,7 @@ def create_campaign(
         if version is None:
             _fail("resource_not_found", "A selected release is unavailable.", 404)
         require_distribution_eligibility(version)
-        target_model.objects.create(
+        HubSkillContextCampaignTarget.objects.create(
             **_scope(principal),
             campaign=campaign,
             binding=binding,
@@ -546,7 +559,7 @@ def validate_target_plan(plan: dict) -> dict:
         _text(blocker, 200)
     if not isinstance(plan["changes"], list) or len(plan["changes"]) > 500:
         _fail("invalid_campaign", "The change inventory exceeds its limit.", 400)
-    paths = set()
+    paths: set[str] = set()
     for change in plan["changes"]:
         _fields(change, _CHANGE_FIELDS)
         _safe_destination(change["path"])
@@ -615,7 +628,7 @@ def record_target_plan(
         if (
             plan["binding_revision"] != target.binding_revision
             or plan["desired_version_id"] != str(target.desired_version_id)
-            or plan["repository_id"] != target.binding.repository["repository_id"]
+            or plan["repository_id"] != _repository_id(target.binding)
         ):
             _fail("target_plan_changed", "The plan no longer matches its fixed target.")
         target.plan, target.plan_digest = plan, plan["plan_digest"]
@@ -670,11 +683,8 @@ def authorize_campaign(
             if decision["plan_digest"] != target.plan_digest:
                 _fail("target_plan_changed", "A target plan changed after review.")
             if decision["decision"] == "include":
-                _plan_current(target)
-                if (
-                    target.plan["local_review_required"]
-                    and not decision["reason"].strip()
-                ):
+                plan = _plan_current(target)
+                if plan["local_review_required"] and not decision["reason"].strip():
                     _fail(
                         "invalid_campaign",
                         "Record the local-instruction review for this target.",
@@ -749,7 +759,7 @@ def claim_campaign_target(
             _fail("campaign_conflict", "This target already has a merged pull request.")
         if (
             previous
-            and timezone.datetime.fromisoformat(previous["expires_at"]) > timezone.now()
+            and datetime.fromisoformat(previous["expires_at"]) > timezone.now()
             and previous["state"] == "claimed"
         ):
             _fail("campaign_conflict", "This target already has an active claim.")

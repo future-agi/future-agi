@@ -228,6 +228,69 @@ def report(actor, campaign, binding, claimed, state="unknown"):
     )
 
 
+@pytest.mark.parametrize("operation", ["plan", "authorize", "claim"])
+@pytest.mark.parametrize(
+    "repository",
+    [None, {}, {"provider": "github"}, {"provider": "gitlab", "repository_id": "100"}],
+)
+def test_unavailable_repository_identity_blocks_without_mutation(
+    enabled, actor, binding, release, operation, repository
+):
+    if operation == "claim":
+        campaign, value = prepare(actor, binding, release)
+    else:
+        campaign = create(actor, binding)
+        value = plan(binding, release)
+        if operation == "authorize":
+            service.record_target_plan(
+                principal=actor,
+                campaign_id=campaign["id"],
+                binding_id=binding.pk,
+                request=value,
+            )
+    before = service.get_campaign(principal=actor, campaign_id=campaign["id"])
+    target_before = HubSkillContextCampaignTarget.objects.get(
+        campaign_id=campaign["id"], binding=binding
+    )
+    # Nullable repository metadata can exist in retained rows. It must produce a
+    # reviewed-plan conflict, not a TypeError or permission to use another provider.
+    binding.repository = repository
+    binding.save(update_fields=["repository"])
+    with pytest.raises(SkillsHubError) as error:
+        if operation == "plan":
+            service.record_target_plan(
+                principal=actor,
+                campaign_id=campaign["id"],
+                binding_id=binding.pk,
+                request=value,
+            )
+        elif operation == "authorize":
+            service.authorize_campaign(
+                principal=actor,
+                campaign_id=campaign["id"],
+                revision=before["revision"],
+                expected_manifest_digest=before["manifest_digest"],
+                decisions=[
+                    {
+                        "binding_id": str(binding.pk),
+                        "plan_digest": value["plan_digest"],
+                        "decision": "include",
+                        "reason": "Reviewed retained instructions.",
+                    }
+                ],
+                acknowledge_repository_writes=True,
+            )
+        else:
+            claim(actor, campaign, binding, value)
+    assert error.value.code == "target_plan_changed"
+    assert error.value.status == 409
+    assert service.get_campaign(principal=actor, campaign_id=campaign["id"]) == before
+    target_after = HubSkillContextCampaignTarget.objects.get(pk=target_before.pk)
+    assert target_after.plan == target_before.plan
+    assert target_after.decision == target_before.decision
+    assert target_after.attempts == target_before.attempts
+
+
 def test_default_switch_blocks_before_persistence(actor, binding):
     with pytest.raises(SkillsHubError, match="not enabled") as error:
         create(actor, binding)
