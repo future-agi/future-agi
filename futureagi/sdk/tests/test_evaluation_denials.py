@@ -448,7 +448,9 @@ def test_composite_child_denial_has_no_score():
     assert result.output is None
 
 
+@pytest.mark.requires_ee
 def test_simulation_optimizer_does_not_fall_back_after_denial():
+    pytest.importorskip("optuna")  # optional agent-optimizer extra
     from ee.agenthub.fix_your_agent.fix_your_agent import SimulationEvaluator
     from ee.tests.test_direct_evaluator_scoring import _eval_template
 
