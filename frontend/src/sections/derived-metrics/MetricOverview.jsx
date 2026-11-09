@@ -71,26 +71,26 @@ PreviousPeriod.propTypes = { data: PropTypes.object.isRequired };
 export default function MetricOverview({ metric, scope, window }) {
   const args = {
     scope,
-    metricId: metric.id,
-    version: metric.definition?.version,
+    metricId: metric?.id,
+    version: metric?.definition?.version,
     params: window,
   };
   const available =
-    Boolean(metric.definition) && metric.definition.level !== "user";
+    Boolean(metric?.definition) && metric.definition.level !== "user";
   const kpi = useMetricKpi({ ...args, enabled: available });
   const trend = useMetricTrend({
     ...args,
     enabled: available,
     params: { ...window, points: 30 },
   });
-  if (metric.definition?.level === "user")
+  if (metric?.definition?.level === "user")
     return (
       <Alert severity="info">
         User-level metrics are not available yet. No user values or estimates
         have been calculated.
       </Alert>
     );
-  if (!metric.definition)
+  if (metric && !metric.definition)
     return <MetricStatusLine definition={metric.draft_definition} />;
   const data = kpi.data;
   const state = pointValueState(data?.current);
@@ -163,7 +163,7 @@ export default function MetricOverview({ metric, scope, window }) {
       )}
       <Box sx={{ pt: 3, borderTop: 1, borderColor: "divider" }}>
         <MetricReadNotice query={trend} label="Trend" />
-        {mismatch ? (
+        {mismatch && (
           <Alert
             severity="info"
             action={
@@ -181,17 +181,17 @@ export default function MetricOverview({ metric, scope, window }) {
             The metric updated between reads. Refresh to align the KPI and
             trend.
           </Alert>
-        ) : (
-          trend.data && (
-            <MetricTrendChart data={trend.data} name={metric.name} />
-          )
         )}
+        <MetricTrendChart
+          data={mismatch ? undefined : trend.data}
+          name={metric?.name}
+        />
       </Box>
     </Stack>
   );
 }
 MetricOverview.propTypes = {
-  metric: PropTypes.object.isRequired,
+  metric: PropTypes.object,
   scope: PropTypes.object.isRequired,
   window: PropTypes.object.isRequired,
 };

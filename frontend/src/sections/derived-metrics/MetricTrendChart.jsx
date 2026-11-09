@@ -24,6 +24,8 @@ import { metricTrendPoints } from "./metricPageValues";
 export default function MetricTrendChart({ data, name }) {
   const theme = useTheme();
   const [table, setTable] = useState(false);
+  // Keep the chosen view while reads are masked, without rendering stale data.
+  if (!data) return null;
   const points = metricTrendPoints(data.results);
   const hasValues = points.some((point) => point.y !== null);
   const now = new Date();
@@ -201,6 +203,6 @@ export default function MetricTrendChart({ data, name }) {
   );
 }
 MetricTrendChart.propTypes = {
-  data: PropTypes.object.isRequired,
-  name: PropTypes.string.isRequired,
+  data: PropTypes.object,
+  name: PropTypes.string,
 };

@@ -14,9 +14,10 @@ const root = process.cwd();
 const entry = join(root, "src/__metricPageReview.jsx");
 const fixtureImport =
   "/src/sections/derived-metrics/__tests__/metricPageFixtures.js";
-const mockTransport = `import {metric,kpi,trend,driver,field} from '${fixtureImport}';
+const mockTransport = `import {metric,kpi,trend,driver,field,percentileMetrics} from '${fixtureImport}';
+const selectedMetric=percentileMetrics.find(item=>location.pathname.endsWith('/'+item.id))||metric;
 export const endpoints={derivedMetrics:Object.fromEntries(['detail','kpi','trend','drivers','fields','history','refresh'].map(n=>[n,id=>'/metrics/'+id+'/'+n]))};
-const records={detail:metric,kpi,trend,fields:{results:[field]},drivers:{provenance:kpi.provenance,effective_window:kpi.effective_window,results:[driver,{...driver,unit_id:'session-b',influence:-0.027}],next_cursor:null},history:{results:[{kind:'version',created_at:'2026-11-01T00:00:00Z',status:'complete',definition:metric.definition,snapshot:null},{kind:'recalculation',created_at:'2026-11-01T02:00:00Z',status:'committed',definition:null,snapshot:null}],next_cursor:null}};
+const records={detail:selectedMetric,kpi,trend,fields:{results:[field]},drivers:{provenance:kpi.provenance,effective_window:kpi.effective_window,results:[driver,{...driver,unit_id:'session-b',influence:-0.027}],next_cursor:null},history:{results:[{kind:'version',created_at:'2026-11-01T00:00:00Z',status:'complete',definition:metric.definition,snapshot:null},{kind:'recalculation',created_at:'2026-11-01T02:00:00Z',status:'committed',definition:null,snapshot:null}],next_cursor:null}};
 export default {get:async url=>({data:structuredClone(records[url.split('/').at(-1)])}),post:async()=>({data:{status:'queued'}})};
 export const readQuery=async()=>{throw Error('Unexpected read-POST in visual fixture')};`;
 const page = `import React from 'react';import{createRoot}from'react-dom/client';import{BrowserRouter,Route,Routes}from'react-router-dom';import{QueryClient,QueryClientProvider}from'@tanstack/react-query';import{ThemeProvider,createTheme}from'@mui/material/styles';import{CssBaseline,Box,Typography}from'@mui/material';import{palette}from'src/theme/palette';import{typography}from'src/theme/typography';import{customShadows}from'src/theme/custom-shadows';import{shadows}from'src/theme/shadows';import{dsShape}from'src/theme/ds-tokens';import{componentsOverrides}from'src/theme/overrides';import MetricDetailPage from 'src/sections/derived-metrics/MetricDetailPage';
@@ -96,6 +97,35 @@ try {
         fullPage: true,
       });
       results.push(`${mode}/${tab}: rendered without horizontal overflow`);
+    }
+    for (const percentile of [50, 95]) {
+      await page.goto(
+        `http://127.0.0.1:4198/metric-review/metric-p${percentile}?mode=${mode}`,
+      );
+      await page.getByRole("tab", { name: "Definition", exact: true }).click();
+      await expect(
+        page.locator("dd").getByText(`P${percentile}`, { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("mean(duration)", { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByText(`Estimates P${percentile} of duration`, {
+          exact: false,
+        }),
+      ).toBeVisible();
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth > window.innerWidth,
+      );
+      if (overflow)
+        throw new Error(`Horizontal overflow in ${mode}/P${percentile}`);
+      await page.screenshot({
+        path: `/opt/regen/logs/page-${mode}-definition-p${percentile}.png`,
+        fullPage: true,
+      });
+      results.push(
+        `${mode}/P${percentile}: selected percentile and calculation visible without helper formula or overflow`,
+      );
     }
     await page.close();
   }

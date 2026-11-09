@@ -39,7 +39,7 @@ const contextFor = {
 };
 
 export default function MetricDrivers({ metric, scope, window }) {
-  const definition = metric.definition;
+  const definition = metric?.definition;
   const [cursors, setCursors] = useState([null]);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState(null);
@@ -47,7 +47,7 @@ export default function MetricDrivers({ metric, scope, window }) {
     Boolean(definition) && !["user", "span"].includes(definition.level);
   const args = {
     scope,
-    metricId: metric.id,
+    metricId: metric?.id,
     version: definition?.version,
     enabled: supported,
   };
@@ -64,6 +64,7 @@ export default function MetricDrivers({ metric, scope, window }) {
     params: { context: contextFor[definition?.level] || "sessions" },
   });
   const kpi = useMetricKpi({ ...args, params: window });
+  if (!metric) return null;
   if (definition?.level === "user")
     return (
       <Alert severity="info">
@@ -270,7 +271,7 @@ export default function MetricDrivers({ metric, scope, window }) {
   );
 }
 MetricDrivers.propTypes = {
-  metric: PropTypes.object.isRequired,
+  metric: PropTypes.object,
   scope: PropTypes.object.isRequired,
   window: PropTypes.object.isRequired,
 };

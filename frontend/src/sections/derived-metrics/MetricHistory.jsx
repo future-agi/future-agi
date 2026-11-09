@@ -37,9 +37,11 @@ export default function MetricHistory({ metric, scope }) {
   const [page, setPage] = useState(0);
   const query = useMetricHistory({
     scope,
-    metricId: metric.id,
+    metricId: metric?.id,
+    enabled: Boolean(metric),
     params: { limit: 30, ...(cursors[page] && { before: cursors[page] }) },
   });
+  if (!metric) return null;
   // B18 has no snapshot implementation. Even a serializer's grain support bit
   // is not proof the action exists. Do not call its placeholder write endpoint.
   const snapshotReason = metric.snapshot_supported
@@ -161,6 +163,6 @@ export default function MetricHistory({ metric, scope }) {
   );
 }
 MetricHistory.propTypes = {
-  metric: PropTypes.object.isRequired,
+  metric: PropTypes.object,
   scope: PropTypes.object.isRequired,
 };
