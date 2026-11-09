@@ -136778,8 +136778,7 @@
                 "source_run_id",
                 "target_scenario_keys",
                 "surfaces",
-                "budget_credits",
-                "max_minutes"
+                "budget_credits"
             ],
             "type": "object",
             "properties": {
