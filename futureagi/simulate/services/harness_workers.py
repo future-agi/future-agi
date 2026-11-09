@@ -139,8 +139,11 @@ def _digest(value: Any) -> str | None:
     return None if payload is None else json.dumps(payload, sort_keys=True, default=str)
 
 
-def _shown_by_spans(spans: list[WorkerEvent], rows: list[dict[str, Any]]) -> set[int]:
-    """The sealed rows a span already showed, by row index; each span stands for at most one row.
+def _shown_by_spans(
+    spans: list[WorkerEvent], rows: list[dict[str, Any]]
+) -> dict[int, WorkerEvent]:
+    """The sealed rows a span already showed, by row index, with the span event that showed each; each span stands
+    for at most one row.
 
     First, a row that names a span's id (its span id or runtime event id) is that span's call, for every row before
     any guess, and a row whose id names no span is another call. Then a row with no id is a span's call only when its
@@ -149,7 +152,10 @@ def _shown_by_spans(spans: list[WorkerEvent], rows: list[dict[str, Any]]) -> set
     A row that can't be told apart is kept, so it can show next to its span, but no call is dropped.
     """
     open_ = [one for one in spans if one["type"] in ("tool_call", "delegated")]
-    shown: set[int] = set()
+    returns = {
+        one.get("delegation_id"): one for one in spans if one["type"] == "returned"
+    }
+    shown: dict[int, WorkerEvent] = {}
     claimed: set[int] = set()
     for row in rows:
         if not row["ids"]:
@@ -162,7 +168,7 @@ def _shown_by_spans(spans: list[WorkerEvent], rows: list[dict[str, Any]]) -> set
                 and span.get("span_id") in row["ids"]
             ):
                 claimed.add(at)
-                shown.add(row["index"])
+                shown[row["index"]] = span
                 break
 
     def sig(span: WorkerEvent) -> str | None:
@@ -176,6 +182,13 @@ def _shown_by_spans(spans: list[WorkerEvent], rows: list[dict[str, Any]]) -> set
         if span["type"] != row["kind"] or span.get("worker_id") != row["worker_id"]:
             return False
         if row["kind"] == "tool_call" and span.get("tool") != row["tool"]:
+            return False
+        # Who handed the work out, where the row names who made it.
+        if (
+            row["kind"] == "delegated"
+            and row["by_known"]
+            and span.get("by") != row["by"]
+        ):
             return False
         checks = []
         if row["sig"] is not None and sig(span) is not None:
@@ -216,20 +229,35 @@ def _shown_by_spans(spans: list[WorkerEvent], rows: list[dict[str, Any]]) -> set
         # The same input is not the same call: a span stands for a row only when their outcomes agree too.
         left = list(paired_rows)
         for at in paired_spans:
-            match = next((row for row in left if _same_outcome(row, open_[at])), None)
+            ended = returns.get(open_[at].get("delegation_id"), {})
+            match = next(
+                (row for row in left if _same_outcome(row, open_[at], ended)), None
+            )
             if match is not None:
                 left.remove(match)
-                shown.add(match["index"])
+                shown[match["index"]] = open_[at]
     return shown
 
 
-def _same_outcome(row: dict[str, Any], span: WorkerEvent) -> bool:
-    """Whether a sealed row and a span agree on how the call ended, where both recorded it."""
-    if row["kind"] != "tool_call":
-        return True
-    if row.get("status") and span.get("status") and row["status"] != span["status"]:
+def _same_outcome(
+    row: dict[str, Any], span: WorkerEvent, returned: Mapping[str, Any]
+) -> bool:
+    """Whether a sealed row and a span agree on how the call or hand-off ended, where both recorded it. A hand-off's
+    end is its return."""
+    if row["kind"] == "tool_call":
+        status, mine, theirs = (
+            span.get("status"),
+            row.get("output"),
+            _digest(span.get("output")),
+        )
+    else:
+        status, mine, theirs = (
+            returned.get("status"),
+            row.get("result"),
+            returned.get("result"),
+        )
+    if row.get("status") and status and row["status"] != status:
         return False
-    mine, theirs = row.get("output"), _digest(span.get("output"))
     return mine is None or theirs is None or mine == theirs
 
 
@@ -396,6 +424,8 @@ def worker_timeline(
         return str((launcher_of(agent) or agent)["span_id"])
 
     events: list[WorkerEvent] = []
+    # Every id a span hand-off is known by, under its delegation id.
+    hand_off_ids: dict[str, set[str]] = {}
     delegating = set()
     for span in by_id.values():
         if span["span_id"] not in participants or agent_ancestor(span) is None:
@@ -405,6 +435,9 @@ def worker_timeline(
         if launcher is not None:
             delegating.add(launcher["span_id"])
         delegation_id = str((launcher or span)["span_id"])
+        hand_off_ids.setdefault(delegation_id, set()).update(
+            {delegation_id, str(span["span_id"])}
+        )
         maker = agent_ancestor(span)
         by = worker_of(maker)
         events.append(
@@ -542,6 +575,14 @@ def worker_timeline(
             str(match["id"]) if match is not None else _slug(by), label, match, by
         )
 
+    def traced_id(by: str, label: str) -> str | None:
+        """The worker id `traced_worker` gives, without adding the worker: matching a row against the spans
+        registers nothing, so a row the spans showed adds no worker."""
+        if _slug(by) in coordinators:
+            return None
+        match = declared_by_key.get(_slug(by)) or declared_by_key.get(_slug(label))
+        return f"{run_key}/{str(match['id']) if match is not None else _slug(by)}"
+
     def when(value: Any) -> str | None:
         if isinstance(value, (int, float)) and value > 0:
             return (
@@ -603,14 +644,26 @@ def worker_timeline(
                 "ids": ids_of(call),
                 "kind": "delegated" if target else "tool_call",
                 "worker_id": (
-                    traced_worker(target, target)
+                    traced_id(target, target)
                     if target
-                    else traced_worker(by, str(call.get("worker_label") or by))
+                    else traced_id(by, str(call.get("worker_label") or by))
                 ),
+                "by": (
+                    traced_id(by, str(call.get("worker_label") or by)) if by else None
+                ),
+                "by_known": bool(by),
                 "tool": str(call.get("name") or ""),
+                # A hand-off has an outcome only once it returned.
                 "status": (
-                    "error" if call.get("ok") is False or call.get("refused") else "ok"
+                    None
+                    if target and not call.get("ended_at")
+                    else (
+                        "error"
+                        if call.get("ok") is False or call.get("refused")
+                        else "ok"
+                    )
                 ),
+                "result": _summary(call.get("result")) if target else None,
                 "output": _digest(
                     call.get("result")
                     if call.get("result") is not None
@@ -637,9 +690,19 @@ def worker_timeline(
             }
         )
     shown = _shown_by_spans(events, sealed)
+    # Sealed rows are the same in every read, so an event keeps the row it stands for: a read without spans and a
+    # later one with them then join on it.
+    for index, span_event in shown.items():
+        span_event["row"] = index
+        if span_event["type"] == "delegated":
+            for one in events:
+                if one["type"] == "returned" and one.get(
+                    "delegation_id"
+                ) == span_event.get("delegation_id"):
+                    one["row"] = index
     for index, call in enumerate(rows):
         by = by_of(call)
-        if not by and not call.get("delegated_to"):
+        if (not by and not call.get("delegated_to")) or index in shown:
             continue
         # A hand-off whose launcher the runtime could not name was made by the agent the caller talks to.
         worker_id = (
@@ -651,8 +714,12 @@ def worker_timeline(
         )
         if index in transfers:
             target = transfers[index]
-            # Spans may have read this control pass as a hand-off: the recorded transfer replaces it.
-            ids = ids_of(call)
+            # Spans may have read this control pass as a hand-off, keyed on its launching call or its agent run: the
+            # recorded transfer replaces it, and what ran inside it now sits under the transfer.
+            recorded_ids = ids_of(call)
+            ids = recorded_ids | {
+                handed for handed, known in hand_off_ids.items() if known & recorded_ids
+            }
             from_spans = [
                 one
                 for one in events
@@ -674,6 +741,10 @@ def worker_timeline(
                 for key in ("span_id", "trace_id")
                 if from_spans and from_spans[0].get(key)
             }
+            for one in events:
+                for key in ("delegation_id", "parent_delegation_id"):
+                    if one.get(key) in ids:
+                        one[key] = own_id(call, index)
             events.append(
                 {
                     "type": "transferred",
@@ -684,6 +755,7 @@ def worker_timeline(
                     "delegation_id": own_id(call, index),
                     "at": started(call) or when(call.get("ended_at")),
                     "attribution": "reported",
+                    "row": index,
                     **placed_in(call),
                     **link,
                 }
@@ -698,8 +770,6 @@ def worker_timeline(
                 json.dumps(arguments) if isinstance(arguments, dict) else arguments,
                 argument=True,
             )
-            if index in shown:
-                continue
             delegation_id = own_id(call, index)
             events.append(
                 {
@@ -710,6 +780,7 @@ def worker_timeline(
                     "task": task,
                     "at": started(call),
                     "attribution": "reported",
+                    "row": index,
                     **placed_in(call),
                 }
             )
@@ -723,12 +794,11 @@ def worker_timeline(
                         "status": status,
                         "at": when(call.get("ended_at")),
                         "attribution": "reported",
+                        "row": index,
                     }
                 )
             continue
         tool = str(call.get("name") or "")
-        if index in shown:
-            continue
         event: WorkerEvent = {
             "type": "tool_call",
             "worker_id": worker_id,
@@ -742,6 +812,7 @@ def worker_timeline(
             ),
             "at": started(call) or when(call.get("ended_at")),
             "attribution": "reported",
+            "row": index,
         }
         place = placed_in(call)
         if "parent_delegation_id" in place:
@@ -923,22 +994,31 @@ _COLLECTION_RANK = {
 }
 
 
-def _event_key(one: Mapping[str, Any]) -> tuple[Any, ...]:
-    """Which call or hand-off an event is, across reads: its recorded id, else everything it recorded."""
+def _event_keys(one: Mapping[str, Any]) -> set[tuple[Any, ...]]:
+    """What says which call or hand-off an event is, across reads: its recorded id, the sealed row it stands for, and,
+    with neither id, everything it recorded. Two events from two reads are one when any of these is shared.
+    """
+    keys: set[tuple[Any, ...]] = set()
     ident = one.get("span_id") or one.get("runtime_event_id")
     if one["type"] != "tool_call":
         ident = one.get("delegation_id") or ident
     if ident:
-        return (one["type"], str(ident))
-    return (
-        one["type"],
-        one.get("worker_id"),
-        one.get("tool"),
-        one.get("at"),
-        _digest(one.get("input")),
-        one.get("task"),
-        one.get("result"),
-    )
+        keys.add((one["type"], str(ident)))
+    if one.get("row") is not None:
+        keys.add((one["type"], "row", one["row"]))
+    if not ident:
+        keys.add(
+            (
+                one["type"],
+                one.get("worker_id"),
+                one.get("tool"),
+                one.get("at"),
+                _digest(one.get("input")),
+                one.get("task"),
+                one.get("result"),
+            )
+        )
+    return keys
 
 
 def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
@@ -962,13 +1042,15 @@ def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
 
     best, other = (read, stored) if weight(read) >= weight(stored) else (stored, read)
     events = [dict(one) for one in best.get("events") or []]
-    # Counted, so two events alike in everything they recorded stay two.
-    held = Counter(_event_key(one) for one in events)
+    # Each held event matches at most one, so two events alike in everything they recorded stay two.
+    held = [_event_keys(one) for one in events]
     for one in other.get("events") or []:
-        if held[_event_key(one)]:
-            held[_event_key(one)] -= 1
-        else:
+        keys = _event_keys(one)
+        match = next((at for at, mine in enumerate(held) if mine & keys), None)
+        if match is None:
             events.append(dict(one))
+        else:
+            held[match] = set()
     _in_order(events)
     omitted = max(
         int(best.get("events_omitted") or 0), int(other.get("events_omitted") or 0)

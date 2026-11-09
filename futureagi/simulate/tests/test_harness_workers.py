@@ -2323,3 +2323,257 @@ def test_a_control_pass_the_spans_saw_only_as_a_tool_call_is_one_transfer():
         for one in events
         if "T" in (one.get("delegation_id"), one.get("span_id"))
     ] == [("transferred", "T")]
+
+
+# A coordinator handing work to a researcher through a launching tool span, for hand-off matching.
+_LAUNCHED = [
+    _span("root", None, "agent", "root", "2024-11-01T09:50:00", "2024-11-01T09:50:30"),
+    _span(
+        "t1",
+        "root",
+        "tool",
+        "ask_researcher",
+        "2024-11-01T09:50:01",
+        "2024-11-01T09:50:20",
+        input='{"input": "find x"}',
+    ),
+]
+_RESEARCH_DECLARED = [
+    {"id": "researcher", "name": "researcher"},
+    {"id": "writer", "name": "writer"},
+]
+
+
+def _hand_off_row(**fields):
+    return {
+        "name": "ask_researcher",
+        "arguments": {"input": "find x"},
+        "ok": True,
+        "result": "x found",
+        "at": _T0 + 1,
+        "ended_at": _T0 + 20,
+        "worker_id": "root",
+        "delegated_to": "researcher",
+        **fields,
+    }
+
+
+def test_a_sealed_hand_off_and_a_span_hand_off_that_ended_otherwise_are_both_kept():
+    spans = [
+        *_LAUNCHED,
+        _span(
+            "a1",
+            "t1",
+            "agent",
+            "researcher",
+            "2024-11-01T09:50:02",
+            "2024-11-01T09:50:19",
+            input="find x",
+            output="boom",
+            status="ERROR",
+        ),
+    ]
+    events = worker_timeline(
+        spans, _RESEARCH_DECLARED, run_key=RUN, traced_calls=[_hand_off_row()]
+    )["events"]
+    assert sorted(
+        (one["status"], one["result"]) for one in events if one["type"] == "returned"
+    ) == [("error", "boom"), ("ok", "x found")]
+
+
+def test_a_hand_off_by_one_agent_is_not_taken_for_another_agent_s_hand_off_of_the_same_task():
+    spans = [
+        _span(
+            "root", None, "agent", "root", "2024-11-01T09:50:00", "2024-11-01T09:50:30"
+        ),
+        _span(
+            "t0",
+            "root",
+            "tool",
+            "ask_writer",
+            "2024-11-01T09:50:00",
+            "2024-11-01T09:50:25",
+        ),
+        _span(
+            "w1", "t0", "agent", "writer", "2024-11-01T09:50:00", "2024-11-01T09:50:24"
+        ),
+        _span(
+            "t1",
+            "w1",
+            "tool",
+            "ask_researcher",
+            "2024-11-01T09:50:01",
+            "2024-11-01T09:50:20",
+            input='{"input": "find x"}',
+        ),
+        _span(
+            "a1",
+            "t1",
+            "agent",
+            "researcher",
+            "2024-11-01T09:50:02",
+            "2024-11-01T09:50:19",
+            input="find x",
+            output="x found",
+        ),
+    ]
+    rows = [_hand_off_row(at=_T0 + 1.5)]
+    events = worker_timeline(spans, _RESEARCH_DECLARED, run_key=RUN, traced_calls=rows)[
+        "events"
+    ]
+    assert sorted(
+        str(one.get("by"))
+        for one in events
+        if one["type"] == "delegated" and one["worker_id"] == f"{RUN}/researcher"
+    ) == ["None", f"{RUN}/writer"]
+
+
+def test_a_transfer_recorded_on_the_agent_run_replaces_the_hand_off_of_its_launching_tool():
+    spans = [
+        _span(
+            "root", None, "agent", "root", "2024-11-01T09:50:00", "2024-11-01T09:50:30"
+        ),
+        _span(
+            "t1",
+            "root",
+            "tool",
+            "transfer_to_researcher",
+            "2024-11-01T09:50:01",
+            "2024-11-01T09:50:20",
+        ),
+        _span(
+            "a1",
+            "t1",
+            "agent",
+            "researcher",
+            "2024-11-01T09:50:02",
+            "2024-11-01T09:50:19",
+        ),
+        _span(
+            "s1",
+            "a1",
+            "tool",
+            "search",
+            "2024-11-01T09:50:03",
+            "2024-11-01T09:50:04",
+            input='{"q": "a"}',
+        ),
+    ]
+    rows = [
+        {
+            "name": "researcher",
+            "arguments": {},
+            "ok": True,
+            "at": _T0 + 2,
+            "worker_id": "root",
+            "delegated_to": "researcher",
+            "runtime_ids": {"event_id": "a1"},
+            "span_id": "a1",
+            "kind": "transferred",
+            "relationship": "unknown",
+        }
+    ]
+    timeline = worker_timeline(
+        spans, _RESEARCH_DECLARED, run_key=RUN, traced_calls=rows
+    )
+    assert [
+        (one["type"], one.get("delegation_id"))
+        for one in timeline["events"]
+        if one["type"] != "tool_call"
+    ] == [("transferred", "a1")]
+    placed = _placed(timeline)
+    assert [(kind, name, parent) for kind, name, _, parent, _ in placed] == [
+        ("handoff", f"{RUN}/researcher", None),
+        ("tool_call", "search", "a1"),
+    ]
+
+
+def test_a_later_read_with_spans_does_not_repeat_a_call_the_first_read_took_from_its_row():
+    from simulate.services.harness_workers import kept_record
+
+    spans = [
+        *_LAUNCHED,
+        _span(
+            "a1",
+            "t1",
+            "agent",
+            "researcher",
+            "2024-11-01T09:50:02",
+            "2024-11-01T09:50:19",
+        ),
+        _span(
+            "s1",
+            "a1",
+            "tool",
+            "search",
+            "2024-11-01T09:50:03",
+            "2024-11-01T09:50:04",
+            input='{"q": "a"}',
+            output='"r"',
+        ),
+    ]
+    rows = [
+        {
+            "name": "search",
+            "arguments": {"q": "a"},
+            "ok": True,
+            "result": "r",
+            "at": _T0 + 3,
+            "worker_id": "researcher",
+        }
+    ]
+    first = worker_timeline([], _RESEARCH_DECLARED, run_key=RUN, traced_calls=rows)
+    later = worker_timeline(spans, _RESEARCH_DECLARED, run_key=RUN, traced_calls=rows)
+    for stored, read in ((first, later), (later, first)):
+        kept = kept_record(stored, read)
+        assert [
+            one["tool"] for one in kept["events"] if one["type"] == "tool_call"
+        ] == ["search"]
+
+
+def test_the_coordinator_s_own_calls_in_the_rows_do_not_make_it_a_worker():
+    spans = [
+        *_LAUNCHED,
+        _span(
+            "a1",
+            "t1",
+            "agent",
+            "researcher",
+            "2024-11-01T09:50:02",
+            "2024-11-01T09:50:19",
+        ),
+        _span(
+            "s1", "a1", "tool", "search", "2024-11-01T09:50:03", "2024-11-01T09:50:04"
+        ),
+        _span(
+            "s9",
+            "root",
+            "tool",
+            "send_reply",
+            "2024-11-01T09:50:25",
+            "2024-11-01T09:50:26",
+        ),
+    ]
+    rows = [
+        {
+            "name": "search",
+            "arguments": {},
+            "ok": True,
+            "at": _T0 + 3,
+            "worker_id": "researcher",
+            "span_id": "s1",
+        },
+        {
+            "name": "send_reply",
+            "arguments": {},
+            "ok": True,
+            "at": _T0 + 25,
+            "worker_id": "root",
+            "span_id": "s9",
+        },
+    ]
+    timeline = worker_timeline(
+        spans, _RESEARCH_DECLARED, run_key=RUN, traced_calls=rows
+    )
+    assert timeline["coordinator"] == {"name": "root"}
+    assert "root" not in {one["id"] for one in timeline["workers"]}

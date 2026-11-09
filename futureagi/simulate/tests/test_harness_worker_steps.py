@@ -734,3 +734,40 @@ def test_a_step_recorded_at_the_top_stays_at_the_top_while_its_maker_has_a_hand_
     placed = {s["key"]: (s["parent"], s["relationship"]) for s in steps}
     assert placed[2] == (None, "observed")
     assert placed[3] == (None, "observed")
+
+
+def test_a_step_sits_under_the_hand_off_its_recorded_id_names_whatever_its_time():
+    hand_off = {**HOTELS, "seq": 1}
+    back = {
+        "seq": 3,
+        "type": "returned",
+        "worker_id": "searcher",
+        "delegation_id": "A",
+        "at": at(5),
+    }
+    for call_at in (None, at(6)):
+        call = {
+            "seq": 2,
+            "type": "tool_call",
+            "worker_id": "searcher",
+            "delegation_id": "A",
+            "tool": "search",
+            "at": call_at,
+        }
+        events = [call, hand_off, back] if call_at is None else [hand_off, back, call]
+        steps = worker_steps(events)["steps"]
+        (step,) = [one for one in steps if one["kind"] == "tool_call"]
+        assert (step["parent"], step["relationship"]) == (1, "observed")
+
+
+def test_a_step_whose_recorded_hand_off_never_appears_is_unknown():
+    call = {
+        "seq": 1,
+        "type": "tool_call",
+        "worker_id": "searcher",
+        "delegation_id": "missing",
+        "tool": "search",
+        "at": at(2),
+    }
+    (step,) = worker_steps([call])["steps"]
+    assert (step["parent"], step["relationship"]) == (None, "unknown")

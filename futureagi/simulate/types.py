@@ -68,6 +68,8 @@ class WorkerEvent(TypedDict, total=False):
     parent_delegation_id: str
     runtime_event_id: str
     runtime_parent_event_id: str
+    # Internal: the sealed row this event came from or that a span showed, to join reads; never sent to the client.
+    row: int
     at: Required[str | None]
     attribution: Required[Literal["reported", "unattributed"]]
 

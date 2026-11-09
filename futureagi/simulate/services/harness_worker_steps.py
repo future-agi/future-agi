@@ -61,6 +61,15 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
     blocks: list[_Block] = []
 
     by_id: dict[str, _Block] = {}
+    # A step names its hand-off by id; it may come before the hand-off opens (no time) or after it returns (another
+    # clock), so it waits for that hand-off and joins it whatever the order.
+    events = list(events)
+    named = {
+        str(event["delegation_id"])
+        for event in events
+        if event["type"] in _HAND_OFF_TYPES and event.get("delegation_id")
+    }
+    waiting: dict[str, list[WorkerEvent]] = {}
 
     def open_for(event: WorkerEvent) -> _Block | None:
         """The open hand-off an event's recorded id names. Without one the record does not say, so the event stays
@@ -97,6 +106,7 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
             open_.setdefault(worker, []).append(block)
             if event.get("delegation_id"):
                 by_id[str(event["delegation_id"])] = block
+                block.items.extend(waiting.pop(str(event["delegation_id"]), []))
         elif event["type"] == "returned":
             block = open_for(event)
             if block is not None:
@@ -110,6 +120,19 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
                 root.items.append(orphan)
                 blocks.append(orphan)
         else:
+            recorded = str(event.get("delegation_id") or "")
+            if worker and recorded:
+                if recorded not in named:
+                    # It names a hand-off this record does not hold: where it ran is unknown.
+                    unknown.add(event.get("seq", -1))
+                    root.items.append(event)
+                elif recorded in by_id:
+                    by_id[recorded].items.append(event)
+                    if by_id[recorded].returned is None:
+                        by_id[recorded].reach(at)
+                else:
+                    waiting.setdefault(recorded, []).append(event)
+                continue
             # A call with no worker is the coordinator's own, even with control passed back to it.
             block = open_for(event) if worker else None
             recorded_top = event.get("relationship") == "observed" and not event.get(
