@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 from django.conf import settings
@@ -71,6 +71,7 @@ READ_ARGS = "--read-agent-only"
 # The "find the agents" command is settled on the agent-learning-kit side after the
 # reading; this is the one place it changes.
 SCAN_ARGS = "--find-agents"
+SECRETS_PATH = "/run/futureagi/secrets.json"
 COST_FILE = f"{READING_DIR}/cost.json"
 COST_MAX_BYTES = 1_048_576
 _OUTPUT_TAIL = 2000
@@ -112,7 +113,7 @@ def _launch_spec(provider: SandboxRuntimeProvider, labels: dict[str, str]):
         cpu_units, memory_mb, disk_gb = E2BSandboxRuntimeProvider.configured_resources()
     else:
         cpu_units, memory_mb, disk_gb = 2, 4096, 10
-    timeout = int(getattr(settings, "ALK_HOSTED_READING_TIMEOUT", 900))
+    timeout = int(getattr(settings, "ALK_HOSTED_READING_TIMEOUT", 2400))
     spec = SandboxLaunchSpec(
         cpu_units=cpu_units,
         memory_mb=memory_mb,
@@ -143,6 +144,7 @@ def _sandbox(source_archive: bytes, job_document: Mapping[str, Any], labels):
             json.dumps(job_document, sort_keys=True, separators=(",", ":")).encode(),
             "/work/job.json",
         )
+        sandbox.fs.upload_file(b"{}", SECRETS_PATH)
         overlay = _alk_source_overlay()
         if overlay is not None:
             sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -156,7 +158,7 @@ def _sandbox(source_archive: bytes, job_document: Mapping[str, Any], labels):
             )
             + "tar -xzf /work/source.tar.gz -C /work && rm /work/source.tar.gz && "
             "chown -R svc-control:svc-control /work/source && "
-            "chmod -R a-w /work/source && chmod 0600 /work/job.json",
+            f"chmod -R a-w /work/source && chmod 0600 /work/job.json {SECRETS_PATH}",
             timeout=_PREPARE_TIMEOUT,
         )
         if prepared.exit_code:
@@ -283,6 +285,9 @@ def reading_job_document(
             agent[name] = payload[name]
     return {
         "schema_version": "futureagi.harness-job.v1",
+        "job_id": str(runtime.agent_version_id),
+        "run_id": str(uuid4()),
+        "execution": "hosted",
         "source": _source_document(
             runtime.source_kind,
             runtime.source or {},
@@ -290,10 +295,10 @@ def reading_job_document(
         ),
         "agent": agent,
         "scenario_count": 1,
-        "artifacts": {"level": "standard"},
         **_job_defaults(),
         "metadata": {
             "name": definition.agent_name,
+            "agent_name": definition.agent_name,
             "authoring_key": definition.agent_name,
             "generic_harness_v1": True,
             "environment_value_names": sorted(name.upper() for name in names),
@@ -307,15 +312,19 @@ def reading_job_document(
 def scan_job_document(scan: AgentScan) -> dict[str, Any]:
     source = scan.source or {}
     kind = SourceKind.ARCHIVE if source.get("kind") == "archive" else SourceKind.GITHUB
+    name = str(source.get("repository") or "upload")
     return {
         "schema_version": "futureagi.harness-job.v1",
+        "job_id": str(scan.id),
+        "run_id": str(uuid4()),
+        "execution": "hosted",
         "source": _source_document(kind, source, source),
         "agent": {"connector": "auto", "config": {}, "secret_refs": {}},
         "scenario_count": 1,
-        "artifacts": {"level": "standard"},
         **_job_defaults(),
         "metadata": {
-            "name": str(source.get("repository") or "upload"),
+            "name": name,
+            "agent_name": name,
             "generic_harness_v1": True,
             "environment_value_names": [],
             "reading": "scan",
@@ -543,6 +552,7 @@ def scan_source(scan_id: UUID | str) -> None:
     if commit:
         source["commit_sha"] = commit
         AgentScan.no_workspace_objects.filter(id=scan.id).update(source=source)
+    scan.source = source
 
     def collect(run: SandboxRun):
         try:
