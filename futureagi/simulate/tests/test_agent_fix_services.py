@@ -2142,6 +2142,42 @@ class TestMakeDefault:
         candidate.refresh_from_db()
         return candidate
 
+    def test_a_busy_environment_refuses_the_ship_and_leaves_no_move_for_later(
+        self, environment, source_run, user
+    ):
+        from simulate.services.harness_versioning.rebuild import (
+            retry_deferred_activations,
+        )
+
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind="archive")
+        first = self._winner(source_run)
+        second = self._winner(source_run)
+        # An update is adding scenarios: a move now would wait for it.
+        payload = dict(environment.payload)
+        payload["metadata"] = {**payload["metadata"], "scenario_extend": {"n": 1}}
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload=payload
+        )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            make_candidate_default(second, user=user)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_environment_busy",
+            409,
+        )
+        # Meanwhile another fix ships; the update ends and deferred moves are retried.
+        payload["metadata"].pop("scenario_extend")
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload=payload
+        )
+        assert make_candidate_default(first, user=user) == "activated"
+        retry_deferred_activations(second.agent_version_id)
+        environment.refresh_from_db()
+        assert environment.agent_version_id == first.agent_version_id
+
     def test_a_fix_is_not_shipped_over_a_default_that_moved_since_its_base(
         self, environment, source_run, user
     ):

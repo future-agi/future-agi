@@ -1704,8 +1704,10 @@ def make_default(
 ) -> str:
     """Make a passed version the environment's default because a user asked for it.
 
-    With ``expected_default_id``, only from that default: another one is ``base_moved``.
-    Returns the outcome: ``activated``, ``already_default``, or why it did not move.
+    With ``expected_default_id``, only from that default: another one is ``base_moved``,
+    and a busy environment is left for the caller to ask again, since a deferred move
+    could not hold to that default. Returns the outcome: ``activated``,
+    ``already_default``, or why it did not move.
     """
     outcome = _activate_on(
         environment.id,
@@ -1714,7 +1716,8 @@ def make_default(
         user=user,
         expected_default_id=expected_default_id,
     )
-    _record_activation(version.id, {str(environment.id): outcome})
+    if expected_default_id is None or outcome != "environment_busy":
+        _record_activation(version.id, {str(environment.id): outcome})
     return outcome
 
 

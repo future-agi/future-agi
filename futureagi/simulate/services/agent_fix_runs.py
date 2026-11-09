@@ -527,6 +527,13 @@ def make_candidate_default(
     require_shippable(candidate, override_reason=override_reason)
     fix_run = candidate.fix_run
     outcome = agent_kind(fix_run.environment).make_default(candidate, user=user)
+    if outcome == "environment_busy":
+        raise HostedHarnessError(
+            "fix_environment_busy",
+            "The environment is being updated; make the version the default again when"
+            " the update ends",
+            status_code=409,
+        )
     if outcome == "base_moved":
         current = HostedHarnessJob.no_workspace_objects.select_related(
             "agent_version"
