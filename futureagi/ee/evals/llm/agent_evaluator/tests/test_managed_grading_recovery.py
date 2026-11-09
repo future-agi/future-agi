@@ -78,7 +78,9 @@ def managed_transport(monkeypatch, request):
             if response == "timeout":
                 raise httpx.ReadTimeout("synthetic timeout", request=request)
             if response == "connect":
-                raise httpx.ConnectError("synthetic connection failure", request=request)
+                raise httpx.ConnectError(
+                    "synthetic connection failure", request=request
+                )
             if isinstance(response, int):
                 return httpx.Response(
                     response,
