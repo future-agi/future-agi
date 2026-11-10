@@ -126,8 +126,8 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 				excluded[result.Target.ProviderID] = true
 				if lastErr == nil {
 					lastErr = &models.APIError{
-						Status: 503, Code: "circuit_open",
-						Message: "All provider circuits are open or at their probe limit",
+						Status: 503, Type: models.ErrTypeServer, Code: "circuit_open",
+						Message: "Provider circuit is open or at its probe limit",
 					}
 				}
 				continue

@@ -1738,7 +1738,6 @@ func TestRetryer_Backoff_CappedAtMaxDelay(t *testing.T) {
 	}
 }
 
-
 // 17. TestFailover_Execute_WithRetry — failover with retry: first provider fails
 // 500 twice (retry kicks in), then succeeds on a different provider.
 func TestFailover_Execute_WithRetry(t *testing.T) {
@@ -1844,14 +1843,14 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 
 	// Record failures below threshold — should stay closed.
 	for i := 0; i < cfg.FailureThreshold-1; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 		if cb.State() != StateClosed {
 			t.Fatalf("state after %d failures = %v, want %v", i+1, cb.State(), StateClosed)
 		}
 	}
 
 	// One more failure should trip the breaker open.
-	cb.RecordFailure(cb.generation,serverErr())
+	cb.RecordFailure(cb.generation, serverErr())
 	if cb.State() != StateOpen {
 		t.Fatalf("state after %d failures = %v, want %v", cfg.FailureThreshold, cb.State(), StateOpen)
 	}
@@ -1864,7 +1863,7 @@ func TestCircuitBreaker_AllowOpen(t *testing.T) {
 
 	// Trip the breaker.
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 	if cb.State() != StateOpen {
 		t.Fatalf("state = %v, want %v", cb.State(), StateOpen)
@@ -1881,7 +1880,7 @@ func TestCircuitBreaker_HalfOpenAfterCooldown(t *testing.T) {
 
 	// Trip the breaker.
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 	if cb.State() != StateOpen {
 		t.Fatalf("state = %v, want %v", cb.State(), StateOpen)
@@ -1906,7 +1905,7 @@ func TestCircuitBreaker_ClosesAfterSuccessThreshold(t *testing.T) {
 
 	// Trip the breaker.
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 
 	// Wait for cooldown, then call Allow() to move to half-open.
@@ -1938,7 +1937,7 @@ func TestCircuitBreaker_ReopensOnHalfOpenFailure(t *testing.T) {
 
 	// Trip the breaker.
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 
 	// Wait for cooldown, transition to half-open.
@@ -1949,7 +1948,7 @@ func TestCircuitBreaker_ReopensOnHalfOpenFailure(t *testing.T) {
 	}
 
 	// A single failure should re-open.
-	cb.RecordFailure(cb.generation,serverErr())
+	cb.RecordFailure(cb.generation, serverErr())
 	if cb.State() != StateOpen {
 		t.Fatalf("state after half-open failure = %v, want %v", cb.State(), StateOpen)
 	}
@@ -1962,7 +1961,7 @@ func TestCircuitBreaker_SuccessResetsClosed(t *testing.T) {
 
 	// Accumulate failures just below threshold.
 	for i := 0; i < cfg.FailureThreshold-1; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 
 	// A success should reset the failure counter.
@@ -1973,7 +1972,7 @@ func TestCircuitBreaker_SuccessResetsClosed(t *testing.T) {
 
 	// Now we should need FailureThreshold failures again to trip.
 	for i := 0; i < cfg.FailureThreshold-1; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 	if cb.State() != StateClosed {
 		t.Fatalf("state after %d failures (post-reset) = %v, want %v",
@@ -1981,7 +1980,7 @@ func TestCircuitBreaker_SuccessResetsClosed(t *testing.T) {
 	}
 
 	// One more failure should now trip it (total = FailureThreshold).
-	cb.RecordFailure(cb.generation,serverErr())
+	cb.RecordFailure(cb.generation, serverErr())
 	if cb.State() != StateOpen {
 		t.Fatalf("state after %d failures = %v, want %v",
 			cfg.FailureThreshold, cb.State(), StateOpen)
@@ -1995,7 +1994,7 @@ func TestCircuitBreaker_ClientErrorDoesNotCount(t *testing.T) {
 
 	// Record many 400 errors — should never trip the breaker.
 	for i := 0; i < cfg.FailureThreshold*3; i++ {
-		cb.RecordFailure(cb.generation,clientErr())
+		cb.RecordFailure(cb.generation, clientErr())
 	}
 	if cb.State() != StateClosed {
 		t.Fatalf("state = %v after client errors, want %v", cb.State(), StateClosed)
@@ -2013,7 +2012,7 @@ func TestCircuitBreaker_NonAPIErrorCounts(t *testing.T) {
 	// Use a plain error (simulates network/timeout errors).
 	networkErr := errors.New("connection refused")
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,networkErr)
+		cb.RecordFailure(cb.generation, networkErr)
 	}
 	if cb.State() != StateOpen {
 		t.Fatalf("state = %v after %d non-API errors, want %v",
@@ -2042,7 +2041,7 @@ func TestCircuitBreaker_StateChangeCallback(t *testing.T) {
 
 	// Trip the breaker: should fire (provider-1, false).
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 
 	// Wait for cooldown, which re-admits the provider: should fire (provider-1, true).
@@ -2158,7 +2157,7 @@ func TestCircuitBreaker_HalfOpenMaxProbes(t *testing.T) {
 
 	// Trip the breaker.
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 	if cb.State() != StateOpen {
 		t.Fatalf("circuit not open after %d failures", cfg.FailureThreshold)
@@ -2206,7 +2205,7 @@ func TestCircuitBreaker_ProbeCounterReset(t *testing.T) {
 
 	trip := func() {
 		for i := 0; i < cfg.FailureThreshold; i++ {
-			cb.RecordFailure(cb.generation,serverErr())
+			cb.RecordFailure(cb.generation, serverErr())
 		}
 		if cb.State() != StateOpen {
 			t.Fatalf("state after %d failures = %v, want %v", cfg.FailureThreshold, cb.State(), StateOpen)
@@ -2257,7 +2256,7 @@ func TestCircuitBreaker_ProbeCounterDecrementOnSuccess(t *testing.T) {
 
 	// Open the circuit.
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 
 	time.Sleep(cfg.Cooldown + 5*time.Millisecond)
@@ -2291,7 +2290,7 @@ func TestCircuitBreaker_HalfOpenNonBreakerErrorReleasesProbe(t *testing.T) {
 	cb := NewCircuitBreaker("provider-1", cfg, nil)
 
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 	time.Sleep(cfg.Cooldown + 5*time.Millisecond)
 
@@ -2299,7 +2298,7 @@ func TestCircuitBreaker_HalfOpenNonBreakerErrorReleasesProbe(t *testing.T) {
 	if _, allowed := cb.Allow(); !allowed {
 		t.Fatal("Allow() after cooldown = false, want true")
 	}
-	cb.RecordFailure(cb.generation,clientErr())
+	cb.RecordFailure(cb.generation, clientErr())
 	if cb.State() != StateHalfOpen {
 		t.Fatalf("state after a probe got a 400 = %v, want %v", cb.State(), StateHalfOpen)
 	}
@@ -2312,7 +2311,7 @@ func TestCircuitBreaker_HalfOpenNonBreakerErrorReleasesProbe(t *testing.T) {
 	if _, allowed := cb.Allow(); !allowed {
 		t.Fatal("Allow() after a successful probe = false, want true")
 	}
-	cb.RecordFailure(cb.generation,clientErr())
+	cb.RecordFailure(cb.generation, clientErr())
 	if _, allowed := cb.Allow(); !allowed {
 		t.Fatal("Allow() after the second probe got a 400 = false, want true: the probe slot leaked")
 	}
@@ -2327,7 +2326,7 @@ func TestCircuitBreaker_ReopenGivesNextCycleFullProbeBudget(t *testing.T) {
 	cb := NewCircuitBreaker("provider-1", cfg, nil)
 
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 	time.Sleep(cfg.Cooldown + 5*time.Millisecond)
 
@@ -2336,7 +2335,7 @@ func TestCircuitBreaker_ReopenGivesNextCycleFullProbeBudget(t *testing.T) {
 	if !allowed1 || !allowed2 {
 		t.Fatal("first two Allow() calls after cooldown should succeed")
 	}
-	cb.RecordFailure(cb.generation,serverErr()) // one probe fails; the other never reports back
+	cb.RecordFailure(cb.generation, serverErr()) // one probe fails; the other never reports back
 	if cb.State() != StateOpen {
 		t.Fatalf("state after a failed probe = %v, want %v", cb.State(), StateOpen)
 	}
@@ -2463,7 +2462,7 @@ func TestCBRegistry_ConcurrentGet(t *testing.T) {
 // 1. TestModelFallbacks_GetChain — returns configured fallback chain
 func TestModelFallbacks_GetChain(t *testing.T) {
 	mf := NewModelFallbacks(map[string][]string{
-		"gpt-4o":         {"claude-sonnet-4-20250514", "gemini-2.0-pro"},
+		"gpt-4o":                   {"claude-sonnet-4-20250514", "gemini-2.0-pro"},
 		"claude-sonnet-4-20250514": {"gpt-4o"},
 	})
 
@@ -3442,7 +3441,7 @@ func TestHealthMonitor_WithCircuitBreaker(t *testing.T) {
 	// Trip the circuit breaker.
 	cb := cbReg.Get("openai")
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(cb.generation,serverErr())
+		cb.RecordFailure(cb.generation, serverErr())
 	}
 
 	h = hm.GetHealth("openai")

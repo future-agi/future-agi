@@ -86,8 +86,9 @@ func TestChatCompletionHalfOpenProbeBurst(t *testing.T) {
 		}
 		return resp.StatusCode, string(body)
 	}
-	if status, _ := request(); status != http.StatusServiceUnavailable {
-		t.Fatalf("outage status=%d, want 503", status)
+	// The OpenAI adapter maps upstream 5xx responses to 502.
+	if status, _ := request(); status != http.StatusBadGateway {
+		t.Fatalf("outage status=%d, want 502", status)
 	}
 	recovering.Store(true)
 	deadline := time.Now().Add(2 * time.Second)
