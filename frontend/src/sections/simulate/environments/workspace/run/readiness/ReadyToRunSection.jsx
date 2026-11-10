@@ -50,8 +50,8 @@ const spinner = <CircularProgress size={12} color="inherit" />;
 function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
   const [open, setOpen] = useState(false);
   const { fix } = line;
-  // Checking the pair again is this line's whole fix: offer that, not a Fix
-  // that would only say "check again".
+  // Checking the pair again is this line's whole fix: its button says
+  // Re-check, not a Fix that would only say "check again".
   const recheckOnly = fix?.type === "recheck" && fix.recheck?.scope === "pair";
   return (
     // While a check runs these are the last results: dimmed, no Fix.
@@ -88,35 +88,31 @@ function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
             {line.affected ? ` · ${COPY.affected(line.affected)}` : ""}
           </Typography>
         </CustomTooltip>
-        {recheckOnly && (!checking || inFlight) && (
-          <Button
-            size="small"
-            variant="outlined"
-            disabled={busy}
-            startIcon={inFlight ? spinner : null}
-            onClick={onRecheck}
-            sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
-          >
-            {inFlight ? COPY.checking : COPY.recheck}
-          </Button>
-        )}
-        {fix && !recheckOnly && !checking && (
+        {fix && !checking && (
           <Button
             size="small"
             variant="outlined"
             onClick={() => setOpen((shown) => !shown)}
             sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
           >
-            {open ? COPY.hideFix : COPY.fix}
+            {open && COPY.hideFix}
+            {!open && (recheckOnly ? COPY.recheck : COPY.fix)}
           </Button>
         )}
       </Stack>
-      {open && fix && !recheckOnly && (!checking || inFlight) && (
+      {open && fix && (!checking || inFlight) && (
         <Stack spacing={1} sx={{ pt: 1, pl: 2.5 }}>
+          {/* A re-check line opens on its full reason and what it means;
+              a fix line on what to change. */}
           <Typography sx={{ typography: "s3", color: "text.primary" }}>
-            {fix.action}
+            {recheckOnly ? line.reason : fix.action}
           </Typography>
-          {fix.would && (
+          {recheckOnly && line.consequence && (
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {line.consequence}
+            </Typography>
+          )}
+          {!recheckOnly && fix.would && (
             <Typography sx={{ typography: "s3", color: "text.secondary" }}>
               {COPY.after(fix.would)}
             </Typography>
@@ -254,8 +250,15 @@ export default function ReadyToRunSection({
         </Button>
       </Stack>
       {note && (
-        <Stack direction="row" spacing={1} alignItems="center" sx={lineSx}>
-          <StatusBadge status={STATE_ROLE[noteState]} label="" variant="dot" />
+        // Dot and text spaced as a badge's own dot and label, so this text
+        // starts where the area names below start.
+        <Stack direction="row" spacing={0.75} alignItems="center" sx={lineSx}>
+          <StatusBadge
+            status={STATE_ROLE[noteState]}
+            label=""
+            variant="dot"
+            sx={{ gap: 0 }}
+          />
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
             {note}
           </Typography>
@@ -306,8 +309,13 @@ export default function ReadyToRunSection({
         </Stack>
       )}
       {readyLabels.length > 0 && (
-        <Stack direction="row" spacing={1} alignItems="center" sx={dimSx}>
-          <StatusBadge status="supported" label="" variant="dot" />
+        <Stack direction="row" spacing={0.75} alignItems="center" sx={dimSx}>
+          <StatusBadge
+            status="supported"
+            label=""
+            variant="dot"
+            sx={{ gap: 0 }}
+          />
           <Typography
             noWrap
             sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
