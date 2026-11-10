@@ -59,6 +59,7 @@ describe("provider format transitions", () => {
     await waitFor(() => expect(fetchMutate).toHaveBeenCalledWith(
       expect.objectContaining({ apiFormat: format }), expect.any(Object),
     ));
+    await userEvent.click(await screen.findByRole("button", { name: "Select All" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Add Provider" })).toBeEnabled());
     await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
     expect(updateMutate).toHaveBeenCalledWith(
