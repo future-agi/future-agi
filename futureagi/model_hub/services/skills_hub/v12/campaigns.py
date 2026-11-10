@@ -324,7 +324,9 @@ def _target_out(target: HubSkillContextCampaignTarget) -> dict:
     git_state = (
         confirmed[-1]["state"]
         if confirmed
-        else latest["state"] if latest else "not_started"
+        else latest["state"]
+        if latest
+        else "not_started"
     )
     return {
         "binding_id": str(target.binding_id),
