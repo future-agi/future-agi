@@ -7,6 +7,7 @@ import { loadContextReview } from './context-production';
 import { endpoints } from './endpoints';
 import { mapChecks, mapCompare } from './mappers';
 import { readSkillFile } from './index';
+import { operationStatus } from './operation-errors';
 
 // Leaf packets pin both sides of the transition, not whichever versions happen
 // to be latest when a reviewer opens the inbox.
@@ -64,7 +65,9 @@ export async function loadReleaseRequest(requestId, contextId, config) {
       // Packet detail intentionally disappears when evidence is no longer shared
       // or retained. The separately authorized metadata receipt remains readable.
       // A context-scoped route must still validate its subject; never bypass it.
-      if (contextId || error.response?.status !== 404) throw error;
+      const status = operationStatus(error);
+      const unavailableEvidence = [404, 410].includes(status) || (status === 403 && error.code === 'evidence_share_required');
+      if (contextId || !unavailableEvidence) throw error;
       const retained = skillV11Result(await axios.get(apiPath('/model-hub/skills/release-requests/{request_id}/receipt/', { request_id: requestId }), config));
       if (retained.request_id !== requestId) throw new Error('The release receipt does not match this request.');
       return { request: { id: requestId, status: 'released', revision: retained.revision }, receipt: mapReleaseReceipt(retained), canExecute: false };

@@ -33,10 +33,15 @@ it.each([{ request_id: 'other' }, { revision: 2 }])('rejects a receipt for a dif
   axios.get.mockImplementation((url, config) => url.endsWith('/receipt/') ? envelope({ ...receipt, ...patch }) : read(url, config));
   await expect(loadReleaseRequest('request', undefined, {})).rejects.toThrow('does not match');
 });
-it('reads only authorized metadata when expired evidence hides the packet detail', async () => {
+it.each([
+  { statusCode: 404, code: 'resource_not_found' },
+  { statusCode: 410, code: 'evidence_expired' },
+  { statusCode: 403, code: 'evidence_share_required' },
+  { response: { status: 404 } },
+])('reads only authorized metadata when evidence hides packet detail: %j', async (failure) => {
   axios.get.mockImplementation(async (url) => {
     if (url.endsWith('/receipt/')) return envelope(receipt);
-    throw Object.assign(new Error('Packet unavailable'), { response: { status: 404 } });
+    throw failure;
   });
   const result = await loadReleaseRequest('request', undefined, {});
   expect(result.receipt.requestId).toBe('request');
@@ -44,7 +49,7 @@ it('reads only authorized metadata when expired evidence hides the packet detail
   expect(axios.post).not.toHaveBeenCalled();
 });
 it.each([401, 403, 500])('does not replace an authorization or transport failure (%s) with a receipt read', async (status) => {
-  axios.get.mockRejectedValue(Object.assign(new Error('Unavailable'), { response: { status } }));
+  axios.get.mockRejectedValue(Object.assign(new Error('Unavailable'), { statusCode: status }));
   await expect(loadReleaseRequest('request', undefined, {})).rejects.toThrow('Unavailable');
   expect(axios.get).toHaveBeenCalledTimes(1);
 });
