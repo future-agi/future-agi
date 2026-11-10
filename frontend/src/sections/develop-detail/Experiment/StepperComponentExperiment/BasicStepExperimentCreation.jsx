@@ -21,7 +21,7 @@ const CustomRadioButtonForModelType = ({
       }}
       sx={{
         border: isSelected ? "1px solid" : "1px solid",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         padding: 1.5,
         cursor: "pointer",
         display: "flex",
@@ -29,14 +29,16 @@ const CustomRadioButtonForModelType = ({
         width: "160px",
         boxSizing: "border-box",
         borderColor: error
-          ? "red.500"
+          ? "status.danger.fg"
           : isSelected
-            ? "purple.500"
+            ? "text.primary"
             : "border.light",
 
         marginRight: 1.25,
         gap: 1.25,
-        backgroundColor: isSelected ? "purple.o10" : "background.paper",
+        backgroundColor: isSelected
+          ? "status.discovery.bg"
+          : "background.paper",
       }}
     >
       <Box
@@ -46,9 +48,11 @@ const CustomRadioButtonForModelType = ({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          backgroundColor: isSelected ? "purple.o10" : "background.default",
+          backgroundColor: isSelected
+            ? "status.discovery.bg"
+            : "background.default",
           padding: "6px",
-          borderRadius: 0.5,
+          borderRadius: "4px",
         }}
       >
         <SvgColor
@@ -141,7 +145,7 @@ const BasicStepExperimentCreation = ({
           )}
           {!isValidatingName && isNameValid && (
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               sx={{ color: "success.main", width: 16, height: 16 }}
             />
           )}
@@ -155,7 +159,7 @@ const BasicStepExperimentCreation = ({
           fontWeight={"fontWeightMedium"}
         >
           {title}
-          <Typography type="span" sx={{ color: "red.500" }}>
+          <Typography type="span" sx={{ color: "status.danger.fg" }}>
             *
           </Typography>
         </Typography>

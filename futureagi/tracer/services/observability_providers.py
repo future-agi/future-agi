@@ -274,6 +274,9 @@ class ObservabilityService:
         elif provider.provider == ProviderChoices.LIVEKIT:
             # LiveKit has no hosted call history; [] avoids a crash-loop.
             return []
+        elif provider.provider == ProviderChoices.OTHERS:
+            # A code agent's row has no hosted call history either.
+            return []
         else:
             raise NotImplementedError(f"Provider {provider.provider} not implemented.")
 

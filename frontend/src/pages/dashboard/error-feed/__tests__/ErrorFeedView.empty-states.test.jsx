@@ -172,8 +172,15 @@ describe("ErrorFeedView empty and failure states", () => {
     renderPage();
     expect(await screen.findByText(NO_PROJECTS_TITLE)).toBeInTheDocument();
 
-    fireEvent.mouseDown(screen.getByText("All Statuses"));
-    fireEvent.click(await screen.findByRole("option", { name: "Escalating" }));
+    fireEvent.click(screen.getByRole("button", { name: /filter/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Property" }));
+    fireEvent.click(
+      document.querySelector('[data-filter-property-option="status"]'),
+    );
+    fireEvent.click(
+      document.querySelector('[data-filter-value-trigger="status"]'),
+    );
+    fireEvent.click(await screen.findByRole("radio", { name: "Escalating" }));
 
     expect(await screen.findByText(NO_PROJECTS_TITLE)).toBeInTheDocument();
     expect(screen.queryByText(NO_ERRORS_TITLE)).not.toBeInTheDocument();

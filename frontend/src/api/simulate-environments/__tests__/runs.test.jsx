@@ -122,6 +122,25 @@ describe("executionToRun", () => {
     expect(run.total).toBe(8);
   });
 
+  it("carries the versions the run was pinned to", () => {
+    const run = executionToRun({
+      id: "ex-7",
+      status: "Completed",
+      pinned_agent_version: { id: "a4", label: "v4" },
+      environment_version: { id: "e2", label: "v2" },
+      suite_version: { id: "s3", label: "v3" },
+      agent_differs: true,
+    });
+    expect(run.pinnedAgentVersion).toEqual({ id: "a4", label: "v4" });
+    expect(run.environmentVersion).toEqual({ id: "e2", label: "v2" });
+    expect(run.suiteVersion).toEqual({ id: "s3", label: "v3" });
+    expect(run.agentDiffers).toBe(true);
+
+    const unpinned = executionToRun({ id: "ex-8", status: "Completed" });
+    expect(unpinned.environmentVersion).toBeNull();
+    expect(unpinned.agentDiffers).toBe(false);
+  });
+
   it("carries the run-level duration (seconds) the summary table shows", () => {
     const run = executionToRun({ id: "ex-6", status: "Completed", total_chats: 4, success_rate: 100, duration: 11.9 });
     expect(run.durationS).toBe(11.9);
@@ -131,7 +150,7 @@ describe("executionToRun", () => {
     const state = (status) => executionToRun({ id: "x", status, total_chats: 1 }).runState;
     expect(state("Pending")).toBe("queued");
     expect(state("Running")).toBe("running");
-    expect(state("Evaluating")).toBe("running");
+    expect(state("Evaluating")).toBe("grading");
     // Its own state so a stopped run reads as cancelling, not still running.
     expect(state("Cancelling")).toBe("cancelling");
     // Its own key so the table can show a finished run green without recolouring
@@ -151,6 +170,22 @@ describe("executionToRun", () => {
     expect(stoppable("Cancelling")).toBe(false);
     expect(stoppable("Completed")).toBe(false);
     expect(stoppable("Cancelled")).toBe(false);
+  });
+
+  it("marks only a run whose evals are being graded as grading", () => {
+    const grading = (status) =>
+      executionToRun({ id: "x", status, total_chats: 1 }).grading;
+    expect(grading("Evaluating")).toBe(true);
+    for (const status of [
+      "Pending",
+      "Running",
+      "Cancelling",
+      "Completed",
+      "Failed",
+      "Cancelled",
+    ]) {
+      expect(grading(status)).toBe(false);
+    }
   });
 
   it("reads a stopped run as cancelled, not failed", () => {

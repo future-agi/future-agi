@@ -66,7 +66,7 @@ const EmptyExecutionsState = () => {
         }}
       >
         <Iconify
-          icon="mdi:play-circle-outline"
+          icon="solar:play-circle-linear"
           width={32}
           height={32}
           color={theme.palette.info.main}
@@ -94,7 +94,7 @@ const EmptyExecutionsState = () => {
           isExecuting ? (
             <CircularProgress size={16} color="inherit" />
           ) : (
-            <Iconify icon="mdi:play" />
+            <Iconify icon="solar:play-linear" />
           )
         }
         onClick={() => executeSimulation()}
