@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -148,8 +150,24 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	return g
 }
 
-func (g *FutureAGIGuardrail) Name() string           { return g.name }
+func (g *FutureAGIGuardrail) Name() string            { return g.name }
 func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// RealtimeReady refuses unavailable checks before a speech provider is dialed.
+func (g *FutureAGIGuardrail) RealtimeReady() error {
+	u, err := url.Parse(g.baseURL)
+	if strings.TrimSpace(g.apiKey) == "" || strings.TrimSpace(g.secretKey) == "" || len(g.evalIDs) == 0 || err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || g.retry < 0 {
+		return errors.New("evaluation credentials, URL or ids are unavailable")
+	}
+	seen := make(map[string]bool)
+	for _, id := range g.evalIDs {
+		if strings.TrimSpace(id) == "" || seen[id] {
+			return errors.New("evaluation ids are invalid")
+		}
+		seen[id] = true
+	}
+	return nil
+}
 
 // Check evaluates text against the Future AGI evaluation API.
 func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
@@ -160,12 +178,14 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 		return &guardrails.CheckResult{
 			Pass:    true,
 			Message: "futureagi guardrail: missing api_key or secret_key, skipping",
+			Err:     errors.New("evaluation credentials are missing"),
 		}
 	}
 	if len(g.evalIDs) == 0 {
 		return &guardrails.CheckResult{
 			Pass:    true,
 			Message: "futureagi guardrail: missing eval_id, skipping",
+			Err:     errors.New("evaluation ids are missing"),
 		}
 	}
 
@@ -186,10 +206,50 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 			Pass:    false,
 			Score:   1.0,
 			Message: fmt.Sprintf("futureagi evaluation failed: %v", err),
+			Err:     err,
 		}
 	}
 
-	return parseResult(resp)
+	result := parseResult(resp)
+	if err := g.validateRealtimeResults(resp); err != nil {
+		result.Err = err
+	}
+	return result
+}
+
+// validateRealtimeResults keeps missing/indeterminate evaluations separate from
+// legacy HTTP score semantics. A single requested evaluation may omit its id.
+func (g *FutureAGIGuardrail) validateRealtimeResults(resp *evalResponse) error {
+	if resp == nil || len(resp.Result) != 1 {
+		return errors.New("evaluation result envelope is incomplete")
+	}
+	remaining := make(map[string]bool)
+	for _, id := range g.evalIDs {
+		remaining[id] = true
+	}
+	for _, evaluation := range resp.Result[0].Evaluations {
+		id := evaluation.EvalID
+		if id == "" && len(g.evalIDs) == 1 {
+			id = g.evalIDs[0]
+		}
+		if !remaining[id] {
+			return errors.New("evaluation identity is missing, duplicate or unexpected")
+		}
+		delete(remaining, id)
+		switch output := evaluation.Output.(type) {
+		case bool:
+		case string:
+			if !strings.EqualFold(output, "passed") && !strings.EqualFold(output, "failed") {
+				return errors.New("evaluation verdict is indeterminate")
+			}
+		default:
+			return errors.New("evaluation verdict is unavailable")
+		}
+	}
+	if len(remaining) != 0 {
+		return errors.New("evaluation results are missing")
+	}
+	return nil
 }
 
 // extractInputText concatenates all message contents from the request.
@@ -334,7 +394,7 @@ func (g *FutureAGIGuardrail) doRequest(ctx context.Context, url string, body []b
 // the failing eval's reason and details are surfaced.
 func parseResult(resp *evalResponse) *guardrails.CheckResult {
 	if resp == nil || len(resp.Result) == 0 {
-		return &guardrails.CheckResult{Pass: true, Message: "no evaluation results"}
+		return &guardrails.CheckResult{Pass: true, Message: "no evaluation results", Err: errors.New("no evaluation results")}
 	}
 
 	var firstEval *evaluation
@@ -358,7 +418,7 @@ func parseResult(resp *evalResponse) *guardrails.CheckResult {
 	if firstEval != nil {
 		return buildResult(firstEval, true, 0.0)
 	}
-	return &guardrails.CheckResult{Pass: true, Message: "no evaluation results"}
+	return &guardrails.CheckResult{Pass: true, Message: "no evaluation results", Err: errors.New("no evaluation results")}
 }
 
 func isFailedOutput(output interface{}) bool {

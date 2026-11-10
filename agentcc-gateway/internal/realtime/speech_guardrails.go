@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/websocket"
 
@@ -35,6 +36,8 @@ type speechText struct {
 	frames       []Frame
 	text         string
 	alternatives []string
+	utterances   []string
+	segments     []string
 }
 
 func NewSpeechGuardrails(ctx context.Context, policy *guardrails.RealtimePolicy, vendor string) *SpeechGuardrails {
@@ -67,15 +70,15 @@ func (g *SpeechGuardrails) release(id string, stage guardrails.Stage) ([]Frame, 
 	}
 	delete(g.pending, id)
 	g.bytes -= len(unit.text)
-	for _, text := range unit.alternatives {
+	for _, text := range append(append(append([]string{}, unit.alternatives...), unit.utterances...), unit.segments...) {
 		g.bytes -= len(text)
 	}
 	for _, f := range unit.frames {
 		g.bytes -= len(f.Data)
 		g.frames--
 	}
-	texts := unit.alternatives
-	if texts == nil {
+	texts := append(append(append([]string{}, unit.alternatives...), unit.segments...), unit.utterances...)
+	if unit.alternatives == nil {
 		texts = []string{unit.text}
 	}
 	for _, text := range texts {
@@ -100,7 +103,7 @@ func (g *SpeechGuardrails) Client(kind int, data []byte) ([]Frame, error) {
 		Continue   bool    `json:"continue"`
 		Cancel     bool    `json:"cancel"`
 	}
-	if kind != websocket.TextMessage || json.Unmarshal(data, &event) != nil {
+	if kind != websocket.TextMessage || validateSpeechJSON(data) != nil || json.Unmarshal(data, &event) != nil {
 		return nil, speechRefused()
 	}
 	if g.vendor == "deepgram" {
@@ -147,7 +150,7 @@ func (g *SpeechGuardrails) Provider(kind int, data []byte) ([]Frame, error) {
 		Channel      json.RawMessage `json:"channel"`
 		ChannelIndex []int           `json:"channel_index"`
 	}
-	if kind != websocket.TextMessage || json.Unmarshal(data, &event) != nil {
+	if kind != websocket.TextMessage || validateSpeechJSON(data) != nil || json.Unmarshal(data, &event) != nil {
 		return nil, speechRefused()
 	}
 	if g.vendor == "deepgram" {
@@ -174,6 +177,7 @@ func (g *SpeechGuardrails) Provider(kind int, data []byte) ([]Frame, error) {
 			unit := g.pending[id]
 			if unit.alternatives == nil {
 				unit.alternatives = make([]string, len(channel.Alternatives))
+				unit.utterances = make([]string, len(channel.Alternatives))
 			}
 			if len(unit.alternatives) != len(channel.Alternatives) {
 				return nil, speechRefused()
@@ -181,6 +185,20 @@ func (g *SpeechGuardrails) Provider(kind int, data []byte) ([]Frame, error) {
 			for i, alt := range channel.Alternatives {
 				unit.alternatives[i] += alt.Transcript
 				g.bytes += len(alt.Transcript)
+				// Final segments are words/phrases, not token deltas. Check each
+				// original segment and a word-separated utterance as well as the
+				// legacy concatenation, retaining cross-segment checks.
+				segment := strings.TrimSpace(alt.Transcript)
+				unit.segments = append(unit.segments, alt.Transcript)
+				g.bytes += len(alt.Transcript)
+				if segment != "" {
+					if unit.utterances[i] != "" {
+						unit.utterances[i] += " "
+						g.bytes++
+					}
+					unit.utterances[i] += segment
+					g.bytes += len(segment)
+				}
 			}
 			if g.bytes > maxGuardrailBytes {
 				return nil, speechRefused()

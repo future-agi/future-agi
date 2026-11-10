@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"math"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
@@ -121,6 +122,21 @@ func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePoli
 			}
 		}
 	}
+	for _, rules := range bound.rules {
+		for _, rule := range rules {
+			if rule.action != ActionBlock {
+				continue
+			}
+			if math.IsNaN(rule.threshold) || math.IsInf(rule.threshold, 0) || rule.threshold < 0 || rule.threshold > 1 {
+				return nil, realtimeUnsupported("configured guardrail threshold is invalid")
+			}
+			if ready, ok := rule.guardrail.(interface{ RealtimeReady() error }); ok {
+				if ready.RealtimeReady() != nil {
+					return nil, realtimeUnsupported("configured guardrail is unavailable for realtime checks")
+				}
+			}
+		}
+	}
 	return bound, nil
 }
 
@@ -187,6 +203,12 @@ func runRealtimeCheck(ctx context.Context, rule resolvedRule, input *CheckInput)
 		before, _ := json.Marshal(input)
 		result.result = rule.guardrail.Check(ctx, input)
 		after, _ := json.Marshal(input)
+		if result.result != nil {
+			result.err = result.result.Err
+			if math.IsNaN(result.result.Score) || math.IsInf(result.result.Score, 0) || result.result.Score < 0 || result.result.Score > 1 {
+				result.err = errors.New("guardrail returned an invalid score")
+			}
+		}
 		if result.result == nil || !bytes.Equal(before, after) {
 			result.err = errors.New("guardrail did not approve original wire content")
 		}

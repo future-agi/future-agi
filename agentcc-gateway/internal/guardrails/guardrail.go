@@ -37,6 +37,9 @@ type CheckInput struct {
 
 // CheckResult is the output of a guardrail check.
 type CheckResult struct {
+	// Err is an execution/unavailability result, not a scored content decision.
+	// Realtime blocking policies must refuse it regardless of score threshold.
+	Err     error                  `json:"-"`
 	Pass    bool                   // true = safe, false = triggered
 	Score   float64                // 0.0 = safe, 1.0 = max violation
 	Action  Action                 // what action to take if triggered

@@ -45,7 +45,7 @@ type speechFixture struct {
 }
 
 // All upstream traffic terminates at an owned loopback HTTP/WebSocket recorder.
-func newSpeechFixture(t *testing.T, vendor, stage, source, action string, replies []string) *speechFixture {
+func newSpeechFixture(t *testing.T, vendor, stage, source, action string, replies []string, configure ...func(*config.GuardrailsConfig, map[string]guardrails.Guardrail)) *speechFixture {
 	t.Helper()
 	f := &speechFixture{}
 	upgrader := websocket.Upgrader{}
@@ -110,6 +110,9 @@ func newSpeechFixture(t *testing.T, vendor, stage, source, action string, replie
 	}
 	if source == "key" {
 		policies.Register(keys.Lookup("sk-voice-test").ID, &config.KeyGuardrailPolicyConfig{Overrides: []config.KeyGuardrailOverride{{Name: "speech-test", Action: action}}})
+	}
+	for _, change := range configure {
+		change(&grCfg, checks)
 	}
 	gr := guardrails.NewEngine(grCfg, checks)
 	engine := pipeline.NewEngine(authplugin.New(keys, true), guardrails.NewPlugin(gr, checks, nil, policies, tenants))

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -76,13 +78,22 @@ func New(name string, cfg map[string]interface{}) *WebhookGuardrail {
 	return g
 }
 
-func (g *WebhookGuardrail) Name() string           { return g.name }
+func (g *WebhookGuardrail) Name() string            { return g.name }
 func (g *WebhookGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// RealtimeReady validates configuration without contacting the dependency.
+func (g *WebhookGuardrail) RealtimeReady() error {
+	u, err := url.Parse(g.url)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || g.retry < 0 {
+		return errors.New("webhook is not configured")
+	}
+	return nil
+}
 
 // Check calls the webhook endpoint.
 func (g *WebhookGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if g.url == "" {
-		return &guardrails.CheckResult{Pass: true}
+		return &guardrails.CheckResult{Pass: true, Err: errors.New("webhook URL is missing")}
 	}
 
 	payload := webhookRequest{
@@ -151,7 +162,15 @@ func (g *WebhookGuardrail) doRequest(ctx context.Context, body []byte) (*guardra
 		return nil, fmt.Errorf("failed to parse webhook response: %v", err)
 	}
 
+	// Keep availability separate from the legacy score/pass contract.
+	var fields map[string]json.RawMessage
+	var pass *bool
+	var unavailable error
+	if json.Unmarshal(respBody, &fields) != nil || json.Unmarshal(fields["pass"], &pass) != nil || pass == nil {
+		unavailable = errors.New("webhook did not return a boolean pass verdict")
+	}
 	return &guardrails.CheckResult{
+		Err:     unavailable,
 		Pass:    wr.Pass,
 		Score:   wr.Score,
 		Message: wr.Message,
@@ -162,6 +181,7 @@ func (g *WebhookGuardrail) doRequest(ctx context.Context, body []byte) (*guardra
 func errorResult(msg string) *guardrails.CheckResult {
 	return &guardrails.CheckResult{
 		Pass:    false,
+		Err:     errors.New(msg),
 		Score:   1.0,
 		Message: msg,
 	}

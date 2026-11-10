@@ -487,7 +487,11 @@ Each session binds the authenticated organization's managed checks and static ru
 then applies the key policy and authorized `X-Guardrail-Policy` override using the
 same precedence as chat. Reconnect after a policy change. A disabled guardrail plugin
 cannot silently ignore a configured blocking check: unavailable implementations
-refuse the session before connecting to the vendor.
+refuse the session before connecting to the vendor. Missing evaluation credentials,
+missing/duplicate evaluation IDs and an invalid webhook URL also refuse before
+vendor dial. External-provider adapters without an explicit validated realtime
+verdict contract are not supported for blocking speech checks; these configurations
+refuse admission rather than interpreting legacy fallback results as approvals.
 
 | Protocol | Inspectable direction and boundary |
 |---|---|
@@ -504,7 +508,10 @@ HTTP 403 with code `realtime_guardrail_unsupported` before any vendor connection
 interface alone does not enable an unguarded generic relay.
 
 Supported text units are checked synchronously before any held frame is released.
-A blocking decision, checker timeout/panic/missing result, or a rewrite that cannot
+Execution failure is separate from the score: a checker HTTP error, malformed or
+missing verdict, incomplete evaluation results or invalid score cannot approve
+speech, even with a threshold of 1. A genuine scored decision still follows the
+configured threshold. A blocking decision, checker timeout/panic/missing result, or a rewrite that cannot
 be applied to the original wire payload closes the client with WebSocket 1008 and
 reason `realtime_guardrail_blocked`, then terminates both connections. Realtime
 blocking checks fail closed even when ordinary chat is configured fail-open or the
@@ -514,7 +521,10 @@ units. Audio-only warning/log checks are not evaluated.
 Pending text plus frames are limited to 1 MiB and 1024 frames per session across all
 contexts. Exceeding either bound, malformed protected content, an unsupported event
 shape, or a changing alternative count closes with 1008
-`realtime_guardrail_unsupported`. Incomplete units are discarded on disconnect,
+`realtime_guardrail_unsupported`. Duplicate JSON keys and case aliases of protected
+protocol keys are rejected before checking or forwarding the original bytes.
+Deepgram final alternatives are checked both individually and as word-separated
+utterances; cross-segment concatenation checks are retained too. Incomplete units are discarded on disconnect,
 never flushed unchecked. These boundaries add latency: incremental transcripts and
 unapproved synthesis text are not streamed through. Checks are per completed unit,
 not across separate utterances/contexts, and do not claim to classify raw audio.
