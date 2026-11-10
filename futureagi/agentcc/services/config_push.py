@@ -13,6 +13,7 @@ from agentcc.contracts.gateway_admin import (
     AlertChannelConfig as GatewayAlertChannelConfig,
 )
 from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
+from agentcc.contracts.gateway_admin import GuardrailConfig as GatewayGuardrailConfig
 from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
 from agentcc.models import AgentccOrgConfig
@@ -201,6 +202,36 @@ def _guardrail_config(check):
     return config
 
 
+def validate_guardrail_representations(guardrails):
+    """Validate retained input, including collections not selected for projection."""
+    allowed = _contract_input_names(GatewayGuardrailConfig) | {"rules", "enabled"}
+    if not isinstance(guardrails, dict) or set(guardrails) - allowed:
+        raise OrgConfigRejected(
+            "The gateway cannot accept this config. Unsupported guardrail fields."
+        )
+    for field in ("checks", "rules"):
+        if field not in guardrails:
+            continue
+        collection = guardrails[field]
+        if field == "checks" and isinstance(collection, dict):
+            items = collection.items()
+        elif isinstance(collection, list):
+            items = (
+                (check.get("name") if isinstance(check, dict) else None, check)
+                for check in collection
+            )
+        else:
+            raise OrgConfigRejected(
+                "The gateway cannot accept this config. Invalid guardrail collection."
+            )
+        for name, check in items:
+            if not isinstance(check, dict) or not isinstance(name, str) or not name:
+                raise OrgConfigRejected(
+                    "The gateway cannot accept this config. Guardrail checks must be named objects."
+                )
+            _guardrail_config(check)
+
+
 def _transform_guardrails(guardrails_data, org_id=None):
     """
     Transform Django org-config guardrails (rules array) into gateway tenant
@@ -217,6 +248,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     if not guardrails_data:
         return guardrails_data
 
+    validate_guardrail_representations(guardrails_data)
     guardrails_data = copy.deepcopy(guardrails_data)
     raw_checks = guardrails_data.get("checks")
     rules = guardrails_data.get("rules")

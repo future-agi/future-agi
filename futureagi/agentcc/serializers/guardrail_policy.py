@@ -89,9 +89,9 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Check at index {i} must be a JSON object"
                 )
-            if "name" not in check:
+            if not isinstance(check.get("name"), str) or not check["name"]:
                 raise serializers.ValidationError(
-                    f"Check at index {i} must have a 'name' field"
+                    f"Check at index {i} must have a non-empty 'name' field"
                 )
             if not isinstance(check.get("config", {}), dict):
                 raise serializers.ValidationError(
