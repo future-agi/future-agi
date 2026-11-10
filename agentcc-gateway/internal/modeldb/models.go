@@ -16,4 +16,5 @@ func init() {
 	if err != nil {
 		log.Fatalf("failed to parse embedded litellm pricing data: %v", err)
 	}
+	addDecisionModels(BundledModels)
 }

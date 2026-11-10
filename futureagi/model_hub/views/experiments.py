@@ -3944,7 +3944,8 @@ class ExperimentsTableV2View(APIView):
 
         try:
             experiment = (
-                ExperimentsTable.objects.select_related("dataset")
+                _scoped_experiment_queryset(request, organization)
+                .select_related("dataset")
                 .prefetch_related(
                     Prefetch(
                         "experiment_datasets",

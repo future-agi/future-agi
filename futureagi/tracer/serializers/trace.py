@@ -21,6 +21,10 @@ from tracer.serializers.filters import (
     bounded_filter_list_query_param_field,
     filter_list_query_param_field,
 )
+from tracer.serializers.usage_coverage import (
+    CaptureCoverageSerializer,
+    CostCoverageSerializer,
+)
 from tracer.services.user_attribute_contract import unsupported_user_attribute_keys
 from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
 
@@ -209,6 +213,7 @@ class TraceListQuerySerializer(StrictInputSerializer):
 
 
 class TraceObserveListQuerySerializer(StrictInputSerializer):
+    sort_params = SortParamListQueryParamField(required=False, default=list)
     project_id = serializers.UUIDField(required=False)
     project_version_id = serializers.UUIDField(required=False)
     session_id = serializers.UUIDField(required=False)
@@ -265,6 +270,37 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
                 }
             )
         attrs["attribute_keys"] = list(attribute_keys)
+        if attrs.get("sort_params"):
+            from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+            from tracer.services.clickhouse.query_builders.trace_usage import (
+                USAGE_COLUMNS,
+            )
+            from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+                usage_column,
+            )
+
+            if (
+                not attrs.get("project_id")
+                or attrs.get("project_version_id")
+                or attrs.get("session_id")
+                or attrs.get("cursor")
+                or attrs.get("cursor_mode")
+                or len(attrs["sort_params"]) > len(USAGE_COLUMNS)
+                or any(
+                    item["column_id"] not in USAGE_COLUMNS
+                    for item in attrs["sort_params"]
+                )
+                or any(
+                    not BaseQueryBuilder.is_datetime_filter(item)
+                    and not usage_column(item)
+                    for item in attrs["filters"]
+                )
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "sort_params": "Usage sorting requires a project, numbered pages, and only date or usage filters. Clear the sort to use other filters."
+                    }
+                )
         return validate_cursor_exclusivity(self, attrs, page_field="page_number")
 
 
@@ -338,6 +374,18 @@ class TraceObserveColumnConfigSerializer(serializers.Serializer):
 
 
 class TraceObserveListResultSerializer(serializers.Serializer):
+    # The dynamic table must retain arbitrary eval/attribute columns. A typed,
+    # page-bounded sidecar gives generators a stable coverage contract without
+    # changing any existing cell type. Both identity coordinates are required:
+    # org-scoped pages can contain the same trace ID in different projects.
+    trace_capture_coverage = serializers.DictField(
+        child=serializers.DictField(child=CaptureCoverageSerializer()),
+        required=False,
+        help_text=(
+            "Capture coverage for returned rows only, keyed by project ID then trace ID. "
+            "Omitted entries retain legacy presentation; never implies complete capture."
+        ),
+    )
     metadata = TraceObserveListMetadataSerializer()
     # allow_null: real rows carry null cells (cost, latency on error traces).
     table = serializers.ListField(
@@ -414,6 +462,8 @@ class TraceSessionTableRowSerializer(_ExtraSessionCellsMixin, serializers.Serial
     created_at = serializers.DateTimeField(required=False, allow_null=True)
     duration = serializers.FloatField(required=False, allow_null=True)
     total_cost = serializers.FloatField(required=False, allow_null=True)
+    cost_coverage = CostCoverageSerializer(required=False)
+    capture_coverage = CaptureCoverageSerializer(required=False)
     total_tokens = serializers.IntegerField(required=False, allow_null=True)
     total_traces_count = serializers.IntegerField(required=False, allow_null=True)
     first_message = JsonValueField(required=False, allow_null=True)
@@ -577,19 +627,55 @@ _DETAIL_PROJECT_ID_HELP = (
 )
 
 
-class TraceDetailQuerySerializer(serializers.Serializer):
-    """Optional project pin for the trace-detail identity.
+_RUN_SCOPE_HELP = (
+    "A run the caller can read; opens the hidden simulation project of that "
+    "run's agent."
+)
+
+RUN_SCOPE_KEYS = frozenset({"test_execution_id", "call_execution_id"})
+
+
+class RunScopeQueryMixin(serializers.Serializer):
+    """The two optional run parameters of the by-id reads.
+
+    It subclasses ``Serializer`` because DRF collects declared fields only from
+    bases that carry them; a plain mixin would drop both fields.
+    """
+
+    test_execution_id = serializers.UUIDField(required=False, help_text=_RUN_SCOPE_HELP)
+    call_execution_id = serializers.UUIDField(required=False, help_text=_RUN_SCOPE_HELP)
+
+    @staticmethod
+    def reject_both(attrs):
+        if RUN_SCOPE_KEYS <= attrs.keys():
+            raise serializers.ValidationError(
+                {
+                    "call_execution_id": (
+                        "Send test_execution_id or call_execution_id, not both."
+                    )
+                }
+            )
+
+
+class TraceDetailQuerySerializer(RunScopeQueryMixin):
+    """Optional project pin and run for the trace-detail identity.
 
     Not strict: trace detail read no query params before the pin, so callers'
-    extra params (DRF's ``?format=json`` included) keep being ignored.
+    extra params (DRF's ``?format=json`` included) keep being ignored. The run
+    parameters are declared, so a malformed value or both at once is a 400.
     """
 
     project_id = serializers.UUIDField(
         required=False, help_text=_DETAIL_PROJECT_ID_HELP
     )
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        self.reject_both(attrs)
+        return attrs
 
-class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
+
+class TraceVoiceCallDetailQuerySerializer(RunScopeQueryMixin, StrictInputSerializer):
     """Strict compatibility contract for the voice-call detail identity."""
 
     trace_id = serializers.UUIDField(
@@ -606,6 +692,7 @@ class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        self.reject_both(attrs)
         trace_id = attrs.get("trace_id")
         legacy_trace_id = attrs.get("traceId")
         if trace_id is None and legacy_trace_id is None:
@@ -820,6 +907,7 @@ class TraceAgentGraphNodeSerializer(serializers.Serializer):
     avg_latency_ms = serializers.FloatField(min_value=0)
     total_tokens = serializers.IntegerField(min_value=0)
     total_cost = serializers.FloatField(min_value=0)
+    cost_coverage = CostCoverageSerializer(required=False)
     error_count = serializers.IntegerField(min_value=0)
     trace_count = serializers.IntegerField(min_value=0, allow_null=True)
     trace_count_exact = serializers.BooleanField(required=False)
@@ -834,6 +922,7 @@ class TraceAgentGraphEdgeSerializer(serializers.Serializer):
     avg_latency_ms = serializers.FloatField(min_value=0)
     total_tokens = serializers.IntegerField(min_value=0)
     total_cost = serializers.FloatField(min_value=0)
+    cost_coverage = CostCoverageSerializer(required=False)
     error_count = serializers.IntegerField(min_value=0)
     trace_count = serializers.IntegerField(min_value=0, allow_null=True)
     trace_count_exact = serializers.BooleanField(required=False)
@@ -965,6 +1054,7 @@ class UsersQuerySerializer(StrictInputSerializer):
 class UsersTableRowSerializer(serializers.Serializer):
     user_id = serializers.CharField(required=False, allow_null=True)
     total_cost = serializers.FloatField()
+    cost_coverage = CostCoverageSerializer(required=False)
     total_tokens = serializers.IntegerField(required=False, allow_null=True)
     input_tokens = serializers.IntegerField(required=False, allow_null=True)
     output_tokens = serializers.IntegerField(required=False, allow_null=True)
@@ -1058,6 +1148,8 @@ class TraceDetailResultSerializer(serializers.Serializer):
     trace = serializers.JSONField()
     observation_spans = TraceDetailSpanSerializer(many=True)
     summary = serializers.JSONField()
+    cost_coverage = CostCoverageSerializer(required=False)
+    capture_coverage = CaptureCoverageSerializer(required=False)
     graph = serializers.JSONField()
 
 

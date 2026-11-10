@@ -54,13 +54,14 @@ export default function EvalsStep({
   locked = false,
   backed = false,
   grading = false,
+  scenarioCount,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   // The id of the eval open for editing, or null.
   const [editingId, setEditingId] = useState(null);
   // The workspace routes away from this tab when there are no scenarios; this
   // is the backstop if it is ever rendered directly without them.
-  const needsScenarios = (envState?.scenarios?.length || 0) === 0;
+  const needsScenarios = (scenarioCount ?? (envState?.scenarios?.length || 0)) === 0;
 
   const store = useAppliedEvals(envState, patch);
   // Env-level "enable tool call evaluation". A backed env persists it through
@@ -195,59 +196,6 @@ export default function EvalsStep({
 
   return (
     <Box sx={{ p: 2 }}>
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        alignItems={{ sm: "flex-end" }}
-        spacing={2}
-        sx={{ mb: 3 }}
-      >
-        <Box flex={1}>
-          <Typography
-            sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}
-          >
-            {EVALS_COPY.heading}
-          </Typography>
-          <Typography
-            sx={{ typography: "s1", color: "text.secondary", maxWidth: 720 }}
-          >
-            {EVALS_COPY.intro}
-          </Typography>
-        </Box>
-        {/*
-          The header CTA only appears once Added has something in it. While it's
-          empty the empty-state card below already offers a prominent Add button
-          — two CTAs for one action read as noise.
-        */}
-        {appliedEvals.length > 0 && (
-          <Tooltip
-            arrow
-            title={
-              locked
-                ? LOCK_TOOLTIP
-                : needsScenarios
-                  ? EVALS_COPY.needsScenariosHint
-                  : ""
-            }
-          >
-            <span>
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                disabled={needsScenarios || locked}
-                onClick={() => setPickerOpen(true)}
-                startIcon={
-                  <Iconify icon="solar:add-circle-linear" width={15} />
-                }
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-              >
-                {EVALS_COPY.add}
-              </Button>
-            </span>
-          </Tooltip>
-        )}
-      </Stack>
-
       {/* Tool-call evaluation. Gated on a connected agent — tool calls are read
           from it during the run. */}
       <Stack
@@ -258,14 +206,14 @@ export default function EvalsStep({
           px: 2,
           py: 1.5,
           mb: 3,
-          borderRadius: 1,
+          borderRadius: "8px",
           border: "1px solid",
           borderColor: "divider",
         }}
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography
-            sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}
+            sx={{ typography: "s1", fontWeight: 500 }}
           >
             {EVALS_COPY.toolCall.title}
           </Typography>
@@ -335,6 +283,38 @@ export default function EvalsStep({
             ? EVALS_COPY.addedSubtitle
             : undefined
         }
+        action={
+          // Only once Added has something in it — while it's empty the
+          // empty-state card already offers a prominent Add button, and two
+          // CTAs for one action read as noise.
+          appliedEvals.length > 0 ? (
+            <Tooltip
+              arrow
+              title={
+                locked
+                  ? LOCK_TOOLTIP
+                  : needsScenarios
+                    ? EVALS_COPY.needsScenariosHint
+                    : ""
+              }
+            >
+              <span>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  disabled={needsScenarios || locked}
+                  onClick={() => setPickerOpen(true)}
+                  startIcon={
+                    <Iconify icon="solar:add-circle-linear" width={15} />
+                  }
+                >
+                  {EVALS_COPY.add}
+                </Button>
+              </span>
+            </Tooltip>
+          ) : undefined
+        }
       >
         {detailUnknown ? (
           detailQuery.isError ? (
@@ -396,7 +376,6 @@ export default function EvalsStep({
                         <Iconify icon="solar:arrow-right-linear" width={15} />
                       ) : null
                     }
-                    sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
                   >
                     {needsScenarios ? EVALS_COPY.addScenarios : EVALS_COPY.add}
                   </Button>
@@ -526,6 +505,7 @@ export default function EvalsStep({
 }
 
 EvalsStep.propTypes = {
+  scenarioCount: PropTypes.number,
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE.isRequired,
   patch: PropTypes.func.isRequired,

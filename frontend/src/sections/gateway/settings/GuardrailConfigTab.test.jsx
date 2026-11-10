@@ -10,6 +10,13 @@ vi.mock("src/utils/logger", () => ({
   },
 }));
 
+// The card is a plain Section panel now; the nearest ancestor holding a button is it.
+const closestWithButton = (el) => {
+  let node = el;
+  while (node && !within(node).queryByRole("button")) node = node.parentElement;
+  return node;
+};
+
 describe("GuardrailConfigTab", () => {
   it("shows keyword input and saves keyword-blocklist words", async () => {
     const onChange = vi.fn();
@@ -19,7 +26,7 @@ describe("GuardrailConfigTab", () => {
     );
 
     const keywordBlocklistLabel = screen.getByText("Keyword Blocklist");
-    const keywordBlocklistCard = keywordBlocklistLabel.closest(".MuiCard-root");
+    const keywordBlocklistCard = closestWithButton(keywordBlocklistLabel);
 
     expect(keywordBlocklistCard).not.toBeNull();
 
@@ -76,7 +83,7 @@ describe("GuardrailConfigTab", () => {
     );
 
     const keywordBlocklistLabel = screen.getByText("Keyword Blocklist");
-    const keywordBlocklistCard = keywordBlocklistLabel.closest(".MuiCard-root");
+    const keywordBlocklistCard = closestWithButton(keywordBlocklistLabel);
 
     expect(keywordBlocklistCard).not.toBeNull();
 

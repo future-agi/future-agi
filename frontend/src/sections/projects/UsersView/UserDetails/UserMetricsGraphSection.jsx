@@ -113,9 +113,9 @@ const UserMetricsGraphSection = () => {
                       chartType={chartType}
                       onToggleType={() => handleToggle(chart.id)}
                       totalTraces={
-                        chart.label.toLowerCase() === "cost"
+                        chart.totalLabel || (chart.label.toLowerCase() === "cost"
                           ? `$ ${chart.total}`
-                          : `${chart.total}`
+                          : `${chart.total}`)
                       }
                     />
                   }

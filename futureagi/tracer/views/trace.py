@@ -162,6 +162,7 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import (
     build_eval_rollup,
     count_column_metadata,
@@ -1178,15 +1179,16 @@ def _trace_session_queryset_for_request(request):
 
 def _soft_delete_trace_tree(traces):
     now = timezone.now()
-    trace_ids = [trace.id for trace in traces if trace]
+    traces = [trace for trace in traces if trace]
+    trace_ids = [trace.id for trace in traces]
     if not trace_ids:
         return []
 
     ObservationSpan.no_workspace_objects.filter(trace_id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
-    EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids).update(
-        deleted=True, deleted_at=now
+    soft_delete_eval_results(
+        EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids)
     )
     try:
         from tracer.models.trace_annotation import TraceAnnotation
@@ -1200,6 +1202,15 @@ def _soft_delete_trace_tree(traces):
     Trace.no_workspace_objects.filter(id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
+    from tracer.services.analysis_retention import retire_analysis_sources
+
+    for project_id in sorted({trace.project_id for trace in traces}):
+        selected = [trace for trace in traces if trace.project_id == project_id]
+        retire_analysis_sources(
+            project_id=project_id,
+            trace_ids=[trace.id for trace in selected],
+            session_ids=[trace.session_id for trace in selected if trace.session_id],
+        )
     return [str(trace_id) for trace_id in trace_ids]
 
 
@@ -2121,6 +2132,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         Query params:
         - project_id (optional) — the project the trace was opened from.
+        - test_execution_id or call_execution_id (optional) — a run the caller
+          can read; the hidden simulation project of that run's agent is read
+          in place of the caller's projects.
         """
         from tracer.services.clickhouse.v2.trace_detail_reads import (
             TraceDetailReadUnavailable,
@@ -2132,14 +2146,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 TraceDetailHandlerV2,
             )
 
+            query = getattr(request, "validated_query_data", {})
             handler = TraceDetailHandlerV2(
                 view=self,
                 request=request,
                 pk=trace_id,
                 analytics=V2AnalyticsQueryService(),
-                project_id=getattr(request, "validated_query_data", {}).get(
-                    "project_id"
-                ),
+                project_id=query.get("project_id"),
+                test_execution_id=query.get("test_execution_id"),
+                call_execution_id=query.get("call_execution_id"),
             )
             return self._gm.success_response(handler.fetch())
         except Trace.DoesNotExist:
@@ -3968,6 +3983,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         Query params:
         - trace_id or legacy traceId (required) — UUID of the voice call trace.
         - project_id (optional) — the project the call was opened from.
+        - test_execution_id or call_execution_id (optional) — a run the caller
+          can read; the hidden simulation project of that run's agent is read
+          in place of the caller's projects.
         """
         trace_id = ""
         try:
@@ -3978,17 +3996,36 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # authorized projects, so a colliding public trace id cannot select
             # another tenant via an arbitrary LIMIT 1.  A project_id pins the
             # read to the project the call was opened from; outside the
-            # caller's scope it resolves like a missing trace.
-            project_scope = _project_queryset_for_request(request)
+            # caller's scope it resolves like a missing trace. A run the caller
+            # can read replaces the caller's projects with the hidden project
+            # of that run's agent.
             pinned_project_id = request.validated_query_data.get("project_id")
-            if pinned_project_id:
-                project_scope = project_scope.filter(id=pinned_project_id)
-            project_ids = [
-                str(project_id)
-                for project_id in project_scope.values_list("id", flat=True).order_by(
-                    "id"
-                )[:4097]
-            ]
+            test_execution_id = request.validated_query_data.get("test_execution_id")
+            call_execution_id = request.validated_query_data.get("call_execution_id")
+            run_scope = None
+            if test_execution_id is not None or call_execution_id is not None:
+                from tracer.services.simulation_project import (
+                    run_scope_project_ids,
+                    simulation_scope_for_run,
+                )
+
+                run_scope = simulation_scope_for_run(
+                    request,
+                    test_execution_id=test_execution_id,
+                    call_execution_id=call_execution_id,
+                )
+            if run_scope is not None:
+                project_ids = run_scope_project_ids(run_scope, pinned_project_id)
+            else:
+                project_scope = _project_queryset_for_request(request)
+                if pinned_project_id:
+                    project_scope = project_scope.filter(id=pinned_project_id)
+                project_ids = [
+                    str(project_id)
+                    for project_id in project_scope.values_list(
+                        "id", flat=True
+                    ).order_by("id")[:4097]
+                ]
             eval_configs_by_project: dict[str, list[CustomEvalConfig]] = {}
 
             def resolve_eval_config_ids(selected_project_id: str) -> list[str]:
@@ -4625,7 +4662,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         builder paired with the V2 query service supplied by its endpoint.
         """
         from tracer.services.clickhouse.v2.query_builders.trace_list import (
-            TraceListQueryBuilderV2,
+            apply_trace_rollup,
         )
 
         read_deadline = read_deadline or ReadDeadline.start(TRACE_LIST_WALL_DEADLINE_MS)
@@ -4797,7 +4834,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Cursor pagination is unavailable for this query shape.",
             )
         cursor_enabled = cursor_requested and cursor_supported
-        builder = TraceListQueryBuilderV2(
+        from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+            ObserveTraceListQueryBuilderV2,
+        )
+
+        builder = ObserveTraceListQueryBuilderV2(
             project_id=None if org_scope else str(project_id),
             project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
@@ -4809,7 +4850,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_count_mode=True,
         )
         pin_filter_seed_witness_slack(builder, cursor_state)
-        requires_cursor = builder.requires_cursor_for_long_filtered_read()
+        usage_sort = validated_data.get("sort_params") or []
+        requires_cursor = (
+            not usage_sort and builder.requires_cursor_for_long_filtered_read()
+        )
         if requires_cursor and not cursor_supported:
             # A long filtered request must never escape to the legacy broad
             # query merely because its filter shape cannot carry a cursor.
@@ -4867,7 +4911,25 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Trace data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
             )
-        if builder.supports_bounded_filter_scan():
+        if usage_sort:
+            query, params = builder.build_usage_sorted_query(usage_sort)
+            result = analytics.execute_ch_query(
+                query,
+                params,
+                timeout_ms=read_deadline.remaining_ms(),
+                settings=page_read_settings,
+            )
+            count_query, count_params = builder.build_usage_sorted_query(
+                usage_sort, count_only=True
+            )
+            count_result = analytics.execute_ch_query(
+                count_query,
+                count_params,
+                timeout_ms=read_deadline.remaining_ms(),
+                settings=page_read_settings,
+            )
+            total_count = count_result.data[0]["total"]
+        elif builder.supports_bounded_filter_scan():
             from tracer.selectors.trace_filter_reads import read_bounded_filter_page
             from tracer.services.clickhouse.query_service import QueryResult
 
@@ -5186,6 +5248,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     root_identities=builder.content_root_identities_for_rows(
                         chunk_rows
                     ),
+                    # Whole-trace usage and the first LLM span's content, for
+                    # traces whose root carries neither (OpenRouter Broadcast).
+                    include_trace_rollup=True,
                 )
             except ValueError:
                 # Never publish a cursor checkpoint for roots that cannot be
@@ -5379,6 +5444,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 ),
                 {},
             )
+            apply_trace_rollup(row, content)
             raw_meta = content.get("metadata", "{}")
             if isinstance(raw_meta, str):
                 try:
@@ -5564,11 +5630,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             column_config, annotation_labels
         )
 
-        # Format response matching PG format
+        # Format response matching PG format. Keep the typed sidecar separate
+        # from arbitrary attributes/eval columns, which may use the same names.
+        trace_capture_coverage = {}
         table_data = []
         for row in result.data:
             trace_id = str(row.get("trace_id", ""))
-            raw_cost = row.get("cost")
+            raw_cost = row.get("cost", 0)
             entry = {
                 "trace_id": trace_id,
                 "project_id": (
@@ -5587,11 +5655,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "prompt_tokens": row.get("prompt_tokens"),
                 "completion_tokens": row.get("completion_tokens"),
                 "cost": (
-                    round(raw_cost, 6)
+                    raw_cost
                     if isinstance(raw_cost, (int, float))
                     and not isinstance(raw_cost, bool)
                     and math.isfinite(raw_cost)
-                    else 0
+                    else (None if raw_cost is None else 0)
                 ),
                 "trace_name": row.get("trace_name") or row.get("span_name") or "",
                 "start_time": row.get("start_time"),
@@ -5603,6 +5671,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     (str(row.get("project_id") or project_id or ""), trace_id)
                 ),
             }
+
+            if row.get("capture_coverage") is not None:
+                trace_capture_coverage.setdefault(entry["project_id"], {})[trace_id] = (
+                    row["capture_coverage"]
+                )
 
             # Add eval metrics
             trace_evals = eval_map.get(trace_id, {})
@@ -5821,6 +5894,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "metadata": metadata,
             "table": _sanitize_nonfinite_floats(table_data),
             "config": column_config,
+            **(
+                {"trace_capture_coverage": trace_capture_coverage}
+                if trace_capture_coverage
+                else {}
+            ),
         }
 
         return self._gm.success_response(response)

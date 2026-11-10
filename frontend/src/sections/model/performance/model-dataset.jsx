@@ -2,7 +2,6 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
-  Card,
   Divider,
   Grid,
   Table,
@@ -13,6 +12,7 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import React, { useState } from "react";
 import { useGetModelDataset } from "src/api/model/dataset";
 import { useBoolean } from "src/hooks/use-boolean";
@@ -37,7 +37,7 @@ export default function ModelDataset({ model }) {
 
   return (
     <>
-      <Card>
+      <Section variant="panel">
         <Box sx={{ my: 2, mx: 2 }}>
           <Grid container>
             <Grid item xs>
@@ -61,9 +61,9 @@ export default function ModelDataset({ model }) {
             {model?.baselineModelVersion} {model?.baselineModelBatch}
           </Typography>
         </Box>
-      </Card>
+      </Section>
 
-      <Card sx={{ mt: 2 }}>
+      <Section variant="panel" sx={{ mt: 2 }}>
         <Box sx={{ my: 2, mx: 2 }}>
           <Grid container>
             <Grid item xs>
@@ -113,11 +113,11 @@ export default function ModelDataset({ model }) {
             </TableBody>
           </Table>
         </TableContainer>
-      </Card>
+      </Section>
 
-      <Card sx={{ mt: 2 }}>
+      <Section variant="panel" sx={{ mt: 2 }}>
         <DatasetSummary dataset={selectedRow?.row} model={model} />
-      </Card>
+      </Section>
 
       <BaselineDialog dialog={baselineDialog} model={model} />
     </>

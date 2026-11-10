@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Chip, Typography } from "@mui/material";
+import { Box, Button, Chip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
@@ -8,6 +8,7 @@ import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { EVAL_STATUS, getEvalNonScoreStatus } from "src/utils/evalStatus";
 
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
@@ -90,27 +91,11 @@ const isPassedEval = (ev) => {
   return label === "pass" || label === "passed" || label === "true";
 };
 
-/** Score → colored background + text — traffic-light pattern */
-export function scoreColor(score) {
-  if (score == null)
-    return {
-      bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
-      text: "text.disabled",
-    };
-  if (score >= 80)
-    return {
-      bg: (theme) => alpha(theme.palette.success.main, 0.08),
-      text: "success.dark",
-    };
-  if (score >= 50)
-    return {
-      bg: (theme) => alpha(theme.palette.warning.main, 0.08),
-      text: "warning.dark",
-    };
-  return {
-    bg: (theme) => alpha(theme.palette.error.main, 0.08),
-    text: "error.main",
-  };
+/** Score (0-100) → status role: 80 and up passes, below 50 fails. */
+function scoreRole(score) {
+  if (score >= 80) return "success";
+  if (score >= 50) return "warning";
+  return "danger";
 }
 
 // Resizable columns. Until the user drags a header edge the table keeps its
@@ -145,10 +130,10 @@ function writeColWidths(storageKey, widths) {
 }
 
 /** Per-column sx for the header and every row. */
-function columnLayout(colWidths, showSpanColumn) {
+function columnLayout(colWidths, showSpanColumn, showActions) {
   const percent = {
     name: showSpanColumn ? "30%" : "60%",
-    score: "15%",
+    score: showActions ? "15%" : "40%",
     span: "30%",
   };
   if (!colWidths) {
@@ -167,7 +152,10 @@ function columnLayout(colWidths, showSpanColumn) {
     // Wider than the drawer scrolls horizontally instead of squeezing.
     row: {
       minWidth:
-        CHEVRON_COL_WIDTH + dataWidth + ACTION_COL_MIN_WIDTH + ROW_PADDING_X,
+        CHEVRON_COL_WIDTH +
+        dataWidth +
+        (showActions ? ACTION_COL_MIN_WIDTH : 0) +
+        ROW_PADDING_X,
     },
     name: fixed("name"),
     score: fixed("score"),
@@ -183,9 +171,11 @@ const EvalTableRow = ({
   showSpanColumn,
   onFixWithFalcon,
   showFixWithFalcon,
+  showErrorLocalization = true,
   layout,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const showActions = !!onSelectSpan;
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
   // Every non-score state (queued / evaluating / skipped / errored) renders
@@ -196,17 +186,6 @@ const EvalTableRow = ({
     : hasError
       ? EVAL_STATUS.ERRORED
       : getEvalNonScoreStatus(ev?.status);
-  const sc = isSkipped
-    ? {
-        bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
-        text: "text.disabled",
-      }
-    : hasError
-      ? {
-          bg: (theme) => alpha(theme.palette.error.main, 0.08),
-          text: "error.main",
-        }
-      : scoreColor(ev.score);
   const evalName = ev.eval_name || ev.eval_config_id || "Eval";
   const explanation = ev.explanation || ev.eval_explanation;
   // Pass/Fail evals
@@ -247,6 +226,7 @@ const EvalTableRow = ({
   const initialStatus =
     ev.error_localizer_status || ev.errorLocalizerStatus || null;
   const hasErrorLocalization =
+    showErrorLocalization &&
     !isComposite &&
     (ev?.error_localizer === true ||
       !!initialAnalysis ||
@@ -281,7 +261,11 @@ const EvalTableRow = ({
         >
           {canExpand && (
             <Iconify
-              icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+              icon={
+                expanded
+                  ? "solar:alt-arrow-down-linear"
+                  : "solar:alt-arrow-right-linear"
+              }
               width={14}
               color="text.disabled"
             />
@@ -302,7 +286,7 @@ const EvalTableRow = ({
           }}
         >
           <OverflowTooltip title={evalName}>
-            <Typography noWrap sx={{ fontSize: 11.5, fontWeight: 500 }}>
+            <Typography noWrap sx={{ fontSize: 12, fontWeight: 500 }}>
               {evalName}
             </Typography>
           </OverflowTooltip>
@@ -312,22 +296,19 @@ const EvalTableRow = ({
               size="small"
               label="Removed"
               sx={{
-                height: 18,
                 flexShrink: 0,
-                fontSize: 10,
-                fontWeight: 600,
                 bgcolor: "background.neutral",
                 color: "text.subtitle",
-                "& .MuiChip-label": { px: 0.75 },
               }}
             />
           )}
         </Box>
 
         {/* Score — non-score states (queued/evaluating/skipped/errored) show
-            the shared indicator; choices render as violet chips; else a
-            colored badge */}
+            the shared indicator; choices render as plain text; pass/fail as a
+            status badge; else the score */}
         <Box
+          data-testid="eval-score-cell"
           sx={{
             ...layout.score,
             minHeight: 22,
@@ -343,32 +324,43 @@ const EvalTableRow = ({
             />
           ) : ev.score_items?.length ? (
             ev.score_items.map((item, i) => (
-              <OverflowTooltip key={i} title={item}>
-                <Chip
-                  label={item}
-                  size="small"
-                  variant="outlined"
-                  sx={{
-                    borderRadius: "4px",
-                    borderColor: "purple.500",
-                    color: "purple.500",
-                    typography: "s3",
-                  }}
-                />
-              </OverflowTooltip>
+              <React.Fragment key={i}>
+                <OverflowTooltip title={item}>
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", color: "text.primary" }}
+                  >
+                    {item}
+                  </Typography>
+                </OverflowTooltip>
+                {i < ev.score_items.length - 1 && (
+                  <Typography
+                    component="span"
+                    sx={{ typography: "s3", color: "text.disabled" }}
+                  >
+                    ·
+                  </Typography>
+                )}
+              </React.Fragment>
             ))
+          ) : passFailLabel != null ? (
+            <StatusBadge
+              role={ev.result ? "success" : "danger"}
+              label={scoreLabel}
+            />
+          ) : ev.score != null ? (
+            <StatusBadge
+              role={scoreRole(ev.score)}
+              label={scoreLabel}
+              variant="badge"
+              dot={false}
+            />
           ) : (
             <Typography
               sx={{
-                display: "inline-block",
-                fontSize: 11.5,
-                fontWeight: "fontWeightSemiBold",
-                color: sc.text,
-                bgcolor: sc.bg,
-                px: 0.75,
-                py: 0.15,
-                borderRadius: "3px",
-                minWidth: 36,
+                fontSize: 12,
+                color: "text.primary",
+                fontVariantNumeric: "tabular-nums",
               }}
             >
               {scoreLabel}
@@ -381,49 +373,39 @@ const EvalTableRow = ({
           <OverflowTooltip title={ev.spanName || ""}>
             <Typography
               noWrap
-              sx={{ ...layout.span, fontSize: 10.5, color: "text.secondary" }}
+              sx={{ ...layout.span, fontSize: 12, color: "text.secondary" }}
             >
               {ev.spanName || ""}
             </Typography>
           </OverflowTooltip>
         )}
 
-        {/* Action buttons */}
-        <Box
-          sx={{
-            ...layout.action,
-            display: "flex",
-            gap: 0.5,
-            justifyContent: "flex-end",
-          }}
-        >
-          {ev.spanId && onSelectSpan && (
-            <Box
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectSpan(ev.spanId);
-              }}
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "3px",
-                px: 0.5,
-                py: 0.15,
-                borderRadius: "3px",
-                cursor: "pointer",
-                fontSize: 10,
-                color: "text.disabled",
-                "&:hover": {
-                  color: "primary.main",
-                  bgcolor: "rgba(120,87,252,0.06)",
-                },
-              }}
-            >
-              <Iconify icon="mdi:eye-outline" width={12} />
-              <span>View span</span>
-            </Box>
-          )}
-        </Box>
+        {/* Action buttons — only where an eval can jump to its span */}
+        {showActions && (
+          <Box
+            data-testid="eval-actions-column"
+            sx={{
+              ...layout.action,
+              display: "flex",
+              gap: 0.5,
+              justifyContent: "flex-end",
+            }}
+          >
+            {ev.spanId && (
+              <Button
+                size="small"
+                variant="text"
+                startIcon={<Iconify icon="solar:eye-linear" width={12} />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectSpan(ev.spanId);
+                }}
+              >
+                View span
+              </Button>
+            )}
+          </Box>
+        )}
       </Box>
 
       {/* Expanded area — markdown explanation + error localization +
@@ -445,7 +427,7 @@ const EvalTableRow = ({
           {explanation && (
             <Box
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 color: "text.secondary",
                 lineHeight: 1.6,
                 "& p": { m: 0, mb: 0.5 },
@@ -455,8 +437,8 @@ const EvalTableRow = ({
                 "& code": {
                   bgcolor: (theme) => alpha(theme.palette.text.disabled, 0.15),
                   px: 0.5,
-                  borderRadius: "2px",
-                  fontSize: 10,
+                  borderRadius: "4px",
+                  fontSize: 12,
                 },
               }}
             >
@@ -488,7 +470,12 @@ const EvalTableRow = ({
           {/* Fix with Falcon — hidden for passed evals (nothing to fix);
               shown for failed and unscored rows whenever expanded. */}
           {showFixWithFalcon && !isPassedEval(ev) && (
-            <Box
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={
+                <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+              }
               onClick={(e) => {
                 e.stopPropagation();
                 if (onFixWithFalcon) {
@@ -497,30 +484,10 @@ const EvalTableRow = ({
                   defaultFixNotice();
                 }
               }}
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.5,
-                px: 0.75,
-                py: 0.25,
-                alignSelf: "flex-start",
-                border: "1px solid",
-                borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-                borderRadius: "4px",
-                cursor: "pointer",
-                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
-                "&:hover": {
-                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-                },
-              }}
+              sx={{ alignSelf: "flex-start" }}
             >
-              <Iconify icon="mdi:creation" width={12} color="primary.main" />
-              <Typography
-                sx={{ fontSize: 10, fontWeight: 600, color: "primary.main" }}
-              >
-                Fix with Falcon
-              </Typography>
-            </Box>
+              Fix with Falcon
+            </Button>
           )}
         </Box>
       )}
@@ -534,6 +501,7 @@ EvalTableRow.propTypes = {
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
   showFixWithFalcon: PropTypes.bool,
+  showErrorLocalization: PropTypes.bool,
   layout: PropTypes.object.isRequired,
 };
 
@@ -551,8 +519,12 @@ const EvalsTabView = ({
   onFixWithFalcon,
   showFixWithFalcon = true,
   showAddEvals = true,
+  showErrorLocalization = true,
 }) => {
   const [search, setSearch] = useState("");
+  // The action column only holds "View span", so a drawer that can't jump to
+  // a span gives its width to Score instead.
+  const showActions = !!onSelectSpan;
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
 
   const widthsKey = colWidthsStorageKey(showSpanColumn);
@@ -562,7 +534,7 @@ const EvalsTabView = ({
   const [colWidths, setColWidths] = useState(() =>
     readColWidths(widthsKey, columnKeys),
   );
-  const layout = columnLayout(colWidths, showSpanColumn);
+  const layout = columnLayout(colWidths, showSpanColumn, showActions);
   const headerRefs = useRef({});
   const stopDrag = useRef(null);
   useEffect(() => () => stopDrag.current?.(), []);
@@ -654,7 +626,7 @@ const EvalsTabView = ({
     return (
       <Box sx={{ textAlign: "center", py: 4, px: 2, color: "text.secondary" }}>
         <Iconify
-          icon="mdi:chart-box-outline"
+          icon="solar:chart-2-linear"
           width={32}
           sx={{ mb: 1, opacity: 0.4 }}
         />
@@ -693,13 +665,13 @@ const EvalsTabView = ({
               {totalFail > 0 && (
                 <Typography
                   sx={{
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "error.main",
                     fontWeight: 500,
                     bgcolor: (theme) => alpha(theme.palette.error.main, 0.08),
                     px: 0.5,
                     py: 0.1,
-                    borderRadius: "3px",
+                    borderRadius: "4px",
                   }}
                 >
                   {totalFail} failed
@@ -725,7 +697,7 @@ const EvalsTabView = ({
                         ? "warning.main"
                         : "error.main",
                   borderRadius: 2,
-                  transition: "width 300ms",
+                  transition: "width 200ms",
                 }}
               />
             </Box>
@@ -738,7 +710,12 @@ const EvalsTabView = ({
             eval with score=null and no Pass label still shows up as
             non-passing in the "X/N passed" text). */}
         {showFixWithFalcon && list.some((e) => !isPassedEval(e)) && (
-          <Box
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={
+              <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+            }
             onClick={() => {
               if (onFixWithFalcon) {
                 const failing = list.filter((e) => !isPassedEval(e));
@@ -751,31 +728,10 @@ const EvalsTabView = ({
                 defaultFixNotice();
               }
             }}
-            sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 0.5,
-              mt: 1,
-              px: 1,
-              py: 0.35,
-              border: "1px solid",
-              borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-              borderRadius: "6px",
-              cursor: "pointer",
-              bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
-              "&:hover": {
-                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-                borderColor: (theme) => alpha(theme.palette.primary.main, 0.5),
-              },
-            }}
+            sx={{ mt: 1 }}
           >
-            <Iconify icon="mdi:creation" width={14} color="primary.main" />
-            <Typography
-              sx={{ fontSize: 11, fontWeight: 600, color: "primary.main" }}
-            >
-              Fix with Falcon
-            </Typography>
-          </Box>
+            Fix with Falcon
+          </Button>
         )}
       </Box>
 
@@ -805,7 +761,11 @@ const EvalsTabView = ({
             borderRadius: "4px",
           }}
         >
-          <Iconify icon="mdi:magnify" width={12} color="text.disabled" />
+          <Iconify
+            icon="solar:magnifier-linear"
+            width={12}
+            color="text.disabled"
+          />
           <Box
             component="input"
             placeholder="Search evals..."
@@ -815,7 +775,7 @@ const EvalsTabView = ({
               border: "none",
               outline: "none",
               flex: 1,
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               bgcolor: "transparent",
               py: 0.15,
@@ -823,48 +783,50 @@ const EvalsTabView = ({
             }}
           />
         </Box>
-        {showAddEvals && <Box
-          sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 0.5,
-            px: 1,
-            py: 0.35,
-            border: "1px dashed",
-            borderColor: "divider",
-            borderRadius: "4px",
-            bgcolor: "background.paper",
-            flexShrink: 0,
-            opacity: 0.7,
-          }}
-        >
-          <Iconify
-            icon="mdi:plus-circle-outline"
-            width={13}
-            color="text.disabled"
-          />
-          <Typography
-            sx={{ fontSize: 11, fontWeight: 500, color: "text.disabled" }}
-          >
-            Add Evals
-          </Typography>
+        {showAddEvals && (
           <Box
             sx={{
-              px: 0.6,
-              py: 0.1,
-              borderRadius: "3px",
-              bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
-              color: "success.dark",
-              fontSize: 9,
-              fontWeight: 700,
-              letterSpacing: 0.2,
-              lineHeight: 1.5,
-              whiteSpace: "nowrap",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.5,
+              px: 1,
+              py: 0.35,
+              border: "1px dashed",
+              borderColor: "divider",
+              borderRadius: "4px",
+              bgcolor: "background.paper",
+              flexShrink: 0,
+              opacity: 0.7,
             }}
           >
-            Coming soon
+            <Iconify
+              icon="solar:add-circle-linear"
+              width={14}
+              color="text.disabled"
+            />
+            <Typography
+              sx={{ fontSize: 12, fontWeight: 500, color: "text.disabled" }}
+            >
+              Add Evals
+            </Typography>
+            <Box
+              sx={{
+                px: 0.6,
+                py: 0.1,
+                borderRadius: "4px",
+                bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
+                color: "success.dark",
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: 0.2,
+                lineHeight: 1.5,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Coming soon
+            </Box>
           </Box>
-        </Box>}
+        )}
       </Box>
 
       {/* Table */}
@@ -893,7 +855,7 @@ const EvalsTabView = ({
             sx={{
               ...layout.name,
               position: "relative",
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.secondary",
               display: "flex",
@@ -905,7 +867,7 @@ const EvalsTabView = ({
               overflow: "hidden",
             }}
           >
-            <Iconify icon="mdi:checkbox-marked-circle-outline" width={12} />
+            <Iconify icon="solar:check-circle-linear" width={12} />
             Evaluation metric
             {resizeHandle("name")}
           </Typography>
@@ -918,7 +880,7 @@ const EvalsTabView = ({
             sx={{
               ...layout.score,
               position: "relative",
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.secondary",
               pl: 0.5,
@@ -938,7 +900,7 @@ const EvalsTabView = ({
               sx={{
                 ...layout.span,
                 position: "relative",
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.secondary",
                 pl: 0.5,
@@ -949,7 +911,9 @@ const EvalsTabView = ({
               {resizeHandle("span")}
             </Typography>
           )}
-          <Box sx={layout.action} />
+          {showActions && (
+            <Box data-testid="eval-actions-column" sx={layout.action} />
+          )}
         </Box>
 
         {filtered.map((ev) => (
@@ -960,6 +924,7 @@ const EvalsTabView = ({
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
             showFixWithFalcon={showFixWithFalcon}
+            showErrorLocalization={showErrorLocalization}
             layout={layout}
           />
         ))}
@@ -976,6 +941,7 @@ EvalsTabView.propTypes = {
   onFixWithFalcon: PropTypes.func,
   showFixWithFalcon: PropTypes.bool,
   showAddEvals: PropTypes.bool,
+  showErrorLocalization: PropTypes.bool,
 };
 
 export default EvalsTabView;

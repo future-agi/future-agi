@@ -24,7 +24,7 @@ import CustomTooltip from "src/components/tooltip";
 import { FilterPanel } from "src/components/filter-panel";
 import { useRunCalls } from "src/api/simulate-environments/runDetail";
 import {
-  listMatchingScenarioKeys,
+  listMatchingCalls,
   uniqueScenarioKeys,
 } from "src/api/simulate-environments/rerunScenarios";
 import { AGENT_TYPES } from "src/sections/agents/constants";
@@ -48,15 +48,7 @@ import {
 } from "./traceTable.constants";
 
 const PAGE_SIZE = 50;
-const bannerButtonSx = {
-  typography: "s3",
-  fontWeight: 600,
-  minWidth: 0,
-  // Room around the label so the hover box doesn't sit tight on the text.
-  px: 1,
-  py: 0.25,
-  color: "primary.main",
-};
+const bannerButtonSx = { minWidth: 0 };
 // Room left under the table box for the pager row and the page's bottom gutter.
 const BELOW_TABLE_PX = 88;
 const PAGER_ROW_PX = 57;
@@ -77,6 +69,7 @@ export default function RunTraceTable({
   activePage = null,
   evalActions = null,
   onRerunScenarios = null,
+  onRerunInRun = null,
   runTrials = 1,
   rerunDisabledReason = null,
   onTickableChange,
@@ -292,10 +285,19 @@ export default function RunTraceTable({
           pageSelectable: pageIds.length > 0,
         }
       : null;
-  const resolveScenarioKeys = () =>
-    allMatching
-      ? listMatchingScenarioKeys(executionId, serverFilters, selection.idList)
-      : Promise.resolve(tickedKeys);
+  // The calls behind the selection, with their scenarios: a re-run in this run
+  // makes those calls again, a new simulation makes their scenarios again.
+  const resolveSelection = async () => {
+    const calls = allMatching
+      ? await listMatchingCalls(executionId, serverFilters, selection.idList)
+      : selection.idList
+          .map((id) => ({ id, sourceScenarioKey: keyByIdRef.current.get(id) }))
+          .filter((call) => call.sourceScenarioKey);
+    return {
+      keys: uniqueScenarioKeys(calls),
+      callIds: calls.map((call) => call.id),
+    };
+  };
   const banner = !hasSelection ? null : allMatching ? (
     <>
       <span>
@@ -536,7 +538,7 @@ export default function RunTraceTable({
             <Iconify
               icon="mage:filter"
               width={15}
-              sx={{ color: filterCount ? "primary.main" : "text.subtitle" }}
+              sx={{ color: filterCount ? "text.primary" : "text.subtitle" }}
             />
           }
           endIcon={
@@ -564,7 +566,7 @@ export default function RunTraceTable({
               >
                 ·
               </Box>
-              <Box component="span" sx={{ color: "primary.main" }}>
+              <Box component="span" sx={{ color: "text.primary" }}>
                 {filterCount - affectedCalls}
               </Box>
             </>
@@ -584,7 +586,6 @@ export default function RunTraceTable({
             setHandoffExpanded(false);
             setPage(1);
           }}
-          sx={{ typography: "s2", fontWeight: 600 }}
         />
       )}
     </Stack>
@@ -629,11 +630,17 @@ export default function RunTraceTable({
           allMatching={allMatching}
           runTrials={runTrials}
           disabledReason={rerunDisabledReason}
-          resolveScenarioKeys={resolveScenarioKeys}
-          // The selection stays until the new run opens (the run page starts
-          // fresh there), so a refused start leaves the ticks in place to try
-          // again.
+          resolveSelection={resolveSelection}
+          // A new simulation keeps the selection until the new run opens (the
+          // run page starts fresh there), so a refused start leaves the ticks
+          // in place to try again. A re-run in this run clears it once queued.
           onRerun={onRerunScenarios}
+          onRerunInRun={
+            onRerunInRun
+              ? (callIds) =>
+                  onRerunInRun(callIds, { onSuccess: selection.clear })
+              : null
+          }
           onClear={selection.clear}
         />
       )}
@@ -734,7 +741,7 @@ export default function RunTraceTable({
                         }
                       >
                         <Iconify
-                          icon="mdi:dots-vertical"
+                          icon="solar:menu-dots-vertical-linear"
                           width={16}
                           sx={{ color: "text.subtitle" }}
                         />
@@ -832,6 +839,9 @@ RunTraceTable.propTypes = {
   // Given, calls can be ticked and re-run as a new simulation: called with the
   // scenario keys and the trials picked.
   onRerunScenarios: PropTypes.func,
+  // Given, ticked calls can also be re-run inside this run: called with the
+  // call ids and `{ onSuccess }`.
+  onRerunInRun: PropTypes.func,
   runTrials: PropTypes.number,
   rerunDisabledReason: PropTypes.string,
   // Told whether the run has any call that can be ticked for a re-run.

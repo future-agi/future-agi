@@ -47,7 +47,7 @@ export default function InputMappingRow({
               readOnly: true,
               endAdornment: (
                 <Iconify
-                  icon="material-symbols:lock-outline"
+                  icon="solar:lock-linear"
                   color="text.secondary"
                   sx={{ width: 16, height: 16 }}
                 />
