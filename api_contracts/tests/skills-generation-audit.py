@@ -1,4 +1,4 @@
-"""Fail if Skills generation changes any pre-existing Swagger/MCP contract."""
+"""Reject Swagger/MCP drift beyond Skills and the exact EE billing reconciliation."""
 
 import argparse
 import json
@@ -32,13 +32,25 @@ def main():
     ref = comparison_base(args.base)
     path = "api_contracts/openapi/swagger.json"
     before, after = baseline(path, ref), current(path)
+    # This is an exact before/after pair, not a billing-route exclusion. Any
+    # further property, response, default or validation change still fails.
+    reconciled = current("api_contracts/tests/ee-autoreload-contract-delta.json")[
+        "swagger"
+    ]
     for group in ("paths", "definitions"):
         changed = [
             key
             for key, value in before[group].items()
             if after[group].get(key) != value
         ]
-        assert not changed, f"Changed existing {group}: {changed}"
+        accepted = [
+            key
+            for key in changed
+            if reconciled[group].get(key)
+            == {"before": before[group][key], "after": after[group].get(key)}
+        ]
+        unexpected = [key for key in changed if key not in accepted]
+        assert not unexpected, f"Changed existing {group}: {unexpected}"
         added = after[group].keys() - before[group].keys()
         assert all(
             (
@@ -49,7 +61,9 @@ def main():
             for key in added
         ), f"Unexpected added {group}: {sorted(added)}"
         print(
-            f"PASS: {len(before[group])} existing {group} unchanged; {len(added)} Skills additions"
+            f"PASS: {len(before[group]) - len(accepted)} existing {group} unchanged; "
+            f"{len(accepted)} exact EE billing reconciliations; "
+            f"{len(added)} Skills additions"
         )
     path = "futureagi/mcp_server/catalog/tools.generated.json"
     before, after = baseline(path, ref), current(path)

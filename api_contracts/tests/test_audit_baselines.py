@@ -1,5 +1,6 @@
 """Contract audits must ignore target-only changes, but reject branch drift."""
 
+import copy
 import json
 import shutil
 import subprocess
@@ -16,7 +17,11 @@ class AuditBaselineTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        for name in ("skills-generation-audit.py", "client-nullability-audit.mjs"):
+        for name in (
+            "skills-generation-audit.py",
+            "client-nullability-audit.mjs",
+            "ee-autoreload-contract-delta.json",
+        ):
             target = self.root / "api_contracts/tests" / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / "api_contracts/tests" / name, target)
@@ -120,6 +125,110 @@ class AuditBaselineTests(unittest.TestCase):
         result = self.audit("client-nullability-audit.mjs")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Non-null validation changed outside Skills", result.stderr)
+
+
+class BillingReconciliationTests(AuditBaselineTests):
+    def setUp(self):
+        super().setUp()
+        self.delta = json.loads(
+            (ROOT / "api_contracts/tests/ee-autoreload-contract-delta.json").read_text()
+        )
+        self.apply_billing("before")
+        self.commit("billing baseline")
+        self.git("update-ref", "refs/remotes/origin/dev", "HEAD")
+        self.apply_billing("after")
+
+    def apply_billing(self, side):
+        for group, entries in self.delta["swagger"].items():
+            for name, pair in entries.items():
+                self.schema[group][name] = copy.deepcopy(pair[side])
+        self.write_schema()
+        self.write(
+            "frontend/src/generated/api-contracts/api.zod.ts",
+            "export const ExistingResponse = zod.string();\n"
+            + "\n".join(
+                f"export const {pair[side]};" for pair in self.delta["zod"].values()
+            ),
+        )
+
+    def assert_rejected(self, name, message):
+        result = self.audit(name)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(message, result.stderr)
+
+    def test_exact_billing_pair_passes_both_audits(self):
+        for name in ("skills-generation-audit.py", "client-nullability-audit.mjs"):
+            result = self.audit(name)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("exact EE billing reconciliations", result.stdout)
+
+    def test_swagger_billing_mutations_still_fail(self):
+        baseline = copy.deepcopy(self.schema)
+        for mutation in ("default", "type", "required", "extra", "removed"):
+            with self.subTest(mutation=mutation):
+                self.schema = copy.deepcopy(baseline)
+                request = self.schema["definitions"]["AutoReloadSettingsRequest"]
+                if mutation == "default":
+                    request["properties"]["autoreload_charge_now"]["default"] = True
+                elif mutation == "type":
+                    request["properties"]["autoreload_maxcharge"]["type"] = "number"
+                elif mutation == "required":
+                    request["required"].append("autoreload_consent")
+                elif mutation == "extra":
+                    request["properties"]["unexpected"] = {"type": "string"}
+                else:
+                    del request["properties"]["autoreload_consent"]
+                self.write_schema()
+                self.assert_rejected(
+                    "skills-generation-audit.py", "Changed existing definitions"
+                )
+
+    def test_billing_response_change_still_fails(self):
+        route = self.schema["paths"]["/usage/update-auto-reload-settings/"]
+        route["post"]["responses"]["200"]["schema"] = {"type": "string"}
+        self.write_schema()
+        self.assert_rejected("skills-generation-audit.py", "Changed existing paths")
+
+    def test_zod_billing_mutations_still_fail(self):
+        name = "frontend/src/generated/api-contracts/api.zod.ts"
+        original = (self.root / name).read_text()
+        for old, new in (
+            ("default ( false )", "default ( true )"),
+            ("zod . string ( ) . optional ( )", "zod . number ( ) . optional ( )"),
+            (". optional ( )", ""),
+            ("autoreload_consent", "unexpected_consent"),
+        ):
+            with self.subTest(new=new):
+                self.write(name, original.replace(old, new))
+                self.assert_rejected(
+                    "client-nullability-audit.mjs",
+                    "Non-null validation changed outside Skills",
+                )
+
+    def test_different_before_shape_is_not_reconciled(self):
+        self.apply_billing("before")
+        request = self.schema["definitions"]["AutoReloadSettingsRequest"]
+        request["required"].remove("autoreload_enabled")
+        self.write_schema()
+        path = "frontend/src/generated/api-contracts/api.zod.ts"
+        self.write(path, (self.root / path).read_text().replace("boolean", "string"))
+        self.commit("different billing baseline")
+        self.git("update-ref", "refs/remotes/origin/dev", "HEAD")
+        self.apply_billing("after")
+        self.assert_rejected(
+            "skills-generation-audit.py", "Changed existing definitions"
+        )
+        self.assert_rejected(
+            "client-nullability-audit.mjs", "Non-null validation changed outside Skills"
+        )
+
+    def test_reconciled_target_needs_no_exception(self):
+        self.commit("target already includes billing")
+        self.git("update-ref", "refs/remotes/origin/dev", "HEAD")
+        for name in ("skills-generation-audit.py", "client-nullability-audit.mjs"):
+            result = self.audit(name)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("0 exact EE billing reconciliations", result.stdout)
 
 
 if __name__ == "__main__":

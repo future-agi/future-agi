@@ -13,9 +13,12 @@ const ts = require("typescript");
 const relative = "frontend/src/generated/api-contracts/api.zod.ts";
 // The target branch may contain newer, unrelated schema changes. Audit only
 // this PR's delta; an explicit revision/file still pins a reviewed baseline.
-const baseline = process.argv[2] || execFileSync(
-  "git", ["merge-base", "origin/dev", "HEAD"], { cwd: root, encoding: "utf8" },
-).trim();
+const baseline =
+  process.argv[2] ||
+  execFileSync("git", ["merge-base", "origin/dev", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+  }).trim();
 const before = fs.existsSync(baseline)
   ? fs.readFileSync(baseline, "utf8")
   : execFileSync("git", ["show", `${baseline}:${relative}`], {
@@ -170,7 +173,21 @@ if (process.argv[3])
       2,
     ),
   );
-assert.deepEqual(changed, [], "Non-null validation changed outside Skills");
+// Pin both sides of the EE billing delta; never skip an entire declaration.
+// New fields, changed defaults/types and a different baseline remain failures.
+const reconciled = JSON.parse(
+  fs.readFileSync(
+    path.join(root, "api_contracts/tests/ee-autoreload-contract-delta.json"),
+    "utf8",
+  ),
+).zod;
+const accepted = changed.filter(
+  (name) =>
+    reconciled[name]?.before === oldDeclarations.get(name) &&
+    reconciled[name]?.after === newDeclarations.get(name),
+);
+const unexpected = changed.filter((name) => !accepted.includes(name));
+assert.deepEqual(unexpected, [], "Non-null validation changed outside Skills");
 console.log(
-  `PASS: ${oldDeclarations.size} existing Zod declarations unchanged except nullability.`,
+  `PASS: ${oldDeclarations.size - accepted.length} existing Zod declarations unchanged except nullability; ${accepted.length} exact EE billing reconciliations.`,
 );
