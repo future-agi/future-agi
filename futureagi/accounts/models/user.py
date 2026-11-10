@@ -432,7 +432,8 @@ class OrgApiKey(BaseModel):
             # memory. Evict the pair actually stored with the persisted expiry.
             if update_fields is not None:
                 api_key, secret_key = (
-                    type(self).no_workspace_objects.using(self._state.db)
+                    type(self)
+                    .no_workspace_objects.using(self._state.db)
                     .filter(pk=self.pk)
                     .values_list("api_key", "secret_key")
                     .get()
