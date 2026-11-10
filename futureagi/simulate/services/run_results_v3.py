@@ -113,6 +113,7 @@ CALL_ROW_METADATA_KEYS = (
     "harness_outcome_status",
     "harness_scenario_key",
     "harness_trial_index",
+    STARTED_BY_KEY,
     *SCORING_META_KEYS,
 )
 
@@ -688,7 +689,7 @@ def build_call_rows(
             or row_dimensions.get("persona")
             or scenario_metadata.get("persona")
         )
-        if (call.call_metadata or {}).get(STARTED_BY_KEY) == STARTED_BY_TASK:
+        if metadata.get(STARTED_BY_KEY) == STARTED_BY_TASK:
             # A run the scenario's own task started has no person, whatever persona the row was provisioned with.
             persona_details = None
         persona = persona_details.get("name") if persona_details else None

@@ -410,7 +410,7 @@ class CallActorFacetValueSerializer(LabelledFacetValueSerializer):
 class RunFacetsSerializer(serializers.Serializer):
     goal = FacetValueSerializer(many=True)
     sub_goal = FacetValueSerializer(many=True)
-    call_actor = CallActorFacetValueSerializer(many=True, required=False)
+    actor = CallActorFacetValueSerializer(many=True, required=False)
     status = FacetValueSerializer(many=True)
 
 

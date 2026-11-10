@@ -1047,3 +1047,18 @@ class TestWhatACodingAgentReads:
 
         environment.refresh_from_db()
         assert held_back(environment) is None
+
+
+class TestActorRoutesRefuseACodingAgent:
+    def test_a_coding_agent_cannot_read_an_actor_in_a_held_back_scenario(
+        self, api_client, environment, keys
+    ):
+        hidden = ensure_held_back(environment).scenario_keys[0]
+        path = f"{BASE}/{environment.id}/actors/nobody/?scenario_key={hidden}"
+
+        coder = _as(api_client, keys.coder, "get", path)
+
+        # The actor routes are not on a coding agent's allow-list, so no actor read names a held-back case.
+        assert coder.status_code == 403, coder.content
+        assert coder.json()["code"] == "coding_agent_route_refused"
+        assert hidden not in coder.content.decode()

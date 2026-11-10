@@ -112096,7 +112096,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/FacetValue",
           },
         },
-        call_actor: {
+        actor: {
           type: "array",
           items: {
             $ref: "#/definitions/CallActorFacetValue",
