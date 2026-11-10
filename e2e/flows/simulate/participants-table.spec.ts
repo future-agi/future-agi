@@ -25,7 +25,7 @@ test('SIM-E2E-003: a multi-agent call shows its workers turn by turn, an unplace
       'seed one completed chat call with a stored Participants record and trial world changes',
       'open the call from its run',
       'open the Participants tab',
-      'open the first hand-off row and Open in Traces',
+      'open the first hand-off row and Open in Traces, then close the trace',
       'open the World changes tab',
     ],
     backendChecks: [
@@ -34,7 +34,7 @@ test('SIM-E2E-003: a multi-agent call shows its workers turn by turn, an unplace
     browserChecks: [
       'one table section per turn, each with its own request and only its own hand-off',
       'the unplaced hand-off carries the parent unknown chip, and only that one',
-      'a step read from a trace opens the Traces tab',
+      'a step read from a trace opens that trace, and closing it leaves the call on its Traces tab',
       "World changes lists the worker's refused attempt with its reason",
     ],
   }),
@@ -69,9 +69,12 @@ test('SIM-E2E-003: a multi-agent call shows its workers turn by turn, an unplace
     await expect(page.getByTestId('turn').nth(1).getByTestId('parent-unknown')).toHaveCount(1);
   });
 
-  await test.step('ui: a step read from a trace opens the Traces tab', async () => {
+  await test.step('ui: a step read from a trace opens that trace, over the Traces tab', async () => {
     await page.getByTestId('worker-row').first().click();
     await page.getByRole('button', { name: 'Open in Traces' }).first().click({ timeout: UI_READY });
+    // The trace opens in its own drawer, named by its id; closing it leaves the call on its Traces tab.
+    await expect(page.getByText(seed.traceId.slice(0, 24))).toBeVisible({ timeout: UI_READY });
+    await page.keyboard.press('Escape');
     await expect(page.getByRole('tab', { name: 'Traces', exact: true })).toHaveAttribute('aria-selected', 'true', { timeout: UI_READY });
   });
 

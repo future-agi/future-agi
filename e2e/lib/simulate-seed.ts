@@ -214,8 +214,11 @@ export interface ParticipantsSeed {
 }
 
 const PARTICIPANTS_SEED_SCRIPT = `
+import base64
 import json
 import os
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import timedelta
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
@@ -228,17 +231,52 @@ from accounts.models.workspace import Workspace
 from model_hub.models.choices import StatusType
 from simulate.models import AgentDefinition, HostedHarnessJob, RunTest, Scenarios
 from simulate.models.test_execution import CallExecution, TestExecution
+from simulate.services.agent_setup import store_agent
+from tracer.services.simulation_project import ensure_simulation_project
 
 
 def at(seconds):
     return f"2026-11-05T10:00:{seconds:02d}"
 
 
+def traced_source_agent(suffix):
+    return {
+        "schema_version": "1.0", "type": "chat", "kind": "source", "name": f"e2e_participants_{suffix}",
+        "provider_ref": None,
+        "behaviour": [{"id": "main", "shape": "external", "instructions": "Returns coordinator.",
+                       "tools": ["get_order"], "transitions": []}],
+        "tools": [{"name": "get_order", "description": "Look up an order.", "kind": "builtin",
+                   "parameters": {"type": "object", "properties": {"order_id": {}}, "required": ["order_id"]},
+                   "endpoint": None}],
+        "model": None, "voice": None, "telephony": [], "supports": [], "direction_answer": None, "gaps": [],
+        "instrumentation": "traceai", "extension": {}, "setup_hash": "sh1:" + "e" * 64,
+    }
+
+
+def send_span(project_id, trace_id, job_id, call_id):
+    row = {
+        "project_id": str(project_id), "observation_type": "agent",
+        "start_time": timezone.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+        "trace_id": trace_id, "id": uuid.uuid4().hex[:16], "parent_span_id": "", "name": "Returns coordinator",
+        "latency_ms": 12, "status": "OK",
+        "attrs_string": {"fi.simulator.call_execution_id": str(call_id)},
+        "resource_attrs": {"fi.simulation.job_id": str(job_id)},
+    }
+    url = f"http://{os.environ['CH_HOST']}:{os.environ.get('CH_HTTP_PORT', '8123')}/?" + urllib.parse.urlencode(
+        {"database": os.environ.get("CH_DATABASE", "default"), "query": "INSERT INTO spans FORMAT JSONEachRow"})
+    request = urllib.request.Request(url, data=json.dumps(row).encode(), method="POST")
+    user = os.environ.get("CH_USER") or os.environ.get("CH_USERNAME") or "default"
+    token = base64.b64encode(f"{user}:{os.environ.get('CH_PASSWORD', '')}".encode()).decode()
+    request.add_header("Authorization", f"Basic {token}")
+    urllib.request.urlopen(request, timeout=30).read()
+
+
 def main():
     organization = Organization.objects.get(id=os.environ["SEED_ORG_ID"])
     workspace = Workspace.objects.get(id=os.environ["SEED_WORKSPACE_ID"])
     suffix = os.environ["SEED_SUFFIX"]
-    trace_id = f"e2e-trace-{suffix}"
+    # A real trace id: the Traces tab lists the call's spans, and a step opens only a trace it lists.
+    trace_id = uuid.uuid4().hex
     agent = AgentDefinition.objects.create(
         agent_name=f"e2e-participants-agent-{suffix}",
         agent_type=AgentDefinition.AgentTypeChoices.TEXT,
@@ -258,6 +296,10 @@ def main():
         agent_definition=agent,
         status=StatusType.COMPLETED.value,
     )
+    # A connected agent that sends traces: the run reads its spans from the agent's own simulation project.
+    version = agent.create_version(description="", commit_message="first", status="active")
+    store_agent(agent_version_id=version.id, agent=traced_source_agent(suffix), sdk_version="0.2.3")
+    project = ensure_simulation_project(agent)
     run_test = RunTest.objects.create(
         name=f"e2e-participants-run-{suffix}",
         agent_definition=agent,
@@ -344,6 +386,8 @@ def main():
         completed_at=timezone.now(),
         call_metadata={"harness_workers": record, "harness_trial_state": trial_state},
     )
+    # The span the trace is: in the agent's project, marked with this run and this call, as the harness marks them.
+    send_span(project.id, trace_id, environment.id, call.id)
     print(json.dumps({
         "environmentId": str(environment.id),
         "runTestId": str(run_test.id),
