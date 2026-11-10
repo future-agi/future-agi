@@ -35,6 +35,7 @@ const OutputTypeConfig = ({
   // switching the fundamental output shape while still letting them tune it.
   categoryLocked = false,
   isJevModel = false,
+  modelLabel = "Jev",
 }) => {
   // Category radio is locked if either the whole component is disabled OR
   // categoryLocked is explicitly set.
@@ -486,8 +487,8 @@ const OutputTypeConfig = ({
             />
             {isJevModel && (
               <Typography variant="caption" color="text.secondary">
-                Jev selects one choice only. Your multi-choice setting is
-                preserved.
+                {modelLabel} selects one choice only. Your multi-choice setting
+                is preserved.
               </Typography>
             )}
           </Box>
@@ -509,6 +510,7 @@ OutputTypeConfig.propTypes = {
   disabled: PropTypes.bool,
   categoryLocked: PropTypes.bool,
   isJevModel: PropTypes.bool,
+  modelLabel: PropTypes.string,
 };
 
 export default OutputTypeConfig;
