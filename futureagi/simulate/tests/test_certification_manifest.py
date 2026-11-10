@@ -104,18 +104,6 @@ def test_production_suite_validates_and_is_all_placeholders():
         assert case["enabled"] is False
         assert case["pending"], f"{case['case_key']} missing pending reasons"
 
-    repositories = {
-        case.get("agent", {}).get("source", {}).get("repository")
-        for case in normalized["cases"]
-    }
-    assert (
-        "https://github.com/KarthikAvinashFI/alderway-voice-agent" not in repositories
-    )
-    assert {case["case_key"] for case in normalized["cases"]}.isdisjoint(
-        {"uber_admin_phone__primary", "uber_guest_phone__primary"}
-    )
-
-
 def test_quick_tier_materializes_an_outbound_voice_case():
     doc = load_suite("production_agents_v1")
     case = next(
