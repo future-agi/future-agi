@@ -79,9 +79,7 @@ def test_validation_error_never_repeats_url_or_server_reason():
     response.status_code = 404
     response.reason = "synthetic-header-secret"
     response._content = b"synthetic-response-secret"
-    with patch(
-        "model_hub.utils.utils.post_custom_endpoint", return_value=response
-    ):
+    with patch("model_hub.utils.utils.post_custom_endpoint", return_value=response):
         error = validate_model_working(
             "synthetic-model", {"config_json": {"api_base": url}}, "custom"
         )
