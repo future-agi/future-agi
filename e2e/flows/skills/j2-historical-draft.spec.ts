@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { test, expect } from '../../lib/scope-actors';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { E2E } from '../../lib/env';
+import { authInitScript } from '../../lib/auth';
 
 type File = { path: string; content: string };
 type Draft = { revision: number; base_version: number | null; files: File[]; digest: string; recovery_digest: string; note: string; context_spec: unknown; resolved_lock: unknown };
@@ -84,9 +85,16 @@ test('SKILLS-E2E-020: preserve unrelated personal work before editing historical
     revision: started.revision, base_version: 6, files: [{ path: 'AGENTS.md', content: '# Personal draft\nKeep my unfinished unrelated work.\n' }],
     description: 'Private work to preserve', note: 'Unrelated personal note',
   })).result;
-  const context = await scopeActors.openContext(browser, owner);
+  // Custom contexts do not inherit the project's video option. Record this
+  // owned context explicitly and initialize only the established public login.
+  const context = await browser.newContext({ baseURL: E2E.appUrl,
+    viewport: { width: 1440, height: 900 },
+    recordVideo: { dir: testInfo.outputPath('video'), size: { width: 1440, height: 900 } },
+  });
+  await context.addInitScript(authInitScript, { access: owner.tokens.access, refresh: owner.tokens.refresh,
+    organizationId: owner.organizationId, workspaceId: owner.workspaceId });
+  await context.addInitScript(orgId => sessionStorage.setItem('workspaceOrgId', orgId), owner.organizationId);
   const page = await context.newPage();
-  await page.setViewportSize({ width: 1440, height: 900 });
   page.setDefaultTimeout(READY);
   try {
     await page.goto(`${UI}${created.context_id}?version=4`);
