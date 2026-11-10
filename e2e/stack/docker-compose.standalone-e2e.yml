@@ -21,6 +21,8 @@ services:
     # The public API URL, as docker-compose.e2e.yml sets it for Distributed:
     # SAML checks the response Destination against BASE_URL/saml2_auth/acs/.
     environment:
+      # Same nonpersistent backend policy as the distributed E2E overlay.
+      GRANIAN_HTTP1_KEEP_ALIVE: "false"
       BASE_URL: http://localhost:${BACKEND_PORT:-8100}
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.

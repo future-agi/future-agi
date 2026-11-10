@@ -26,6 +26,9 @@ services:
         bind:
           create_host_path: false
     environment:
+      # E2E only: never reuse a backend socket at Granian's idle-close boundary.
+      # No transport retries: resets and incomplete responses must still fail.
+      GRANIAN_HTTP1_KEEP_ALIVE: "false"
       FI_HOST_UPDATE_STATUS_FILE: /run/futureagi-host-update/status.json
       # Synthetic slot pinned from api_contracts/host-update/fixtures.json.
       FI_HOST_UPDATE_STATUS_SLOT: "0123456789abcdef0123456789abcdef"
