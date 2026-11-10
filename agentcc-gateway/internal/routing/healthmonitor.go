@@ -79,6 +79,13 @@ func (hm *HealthMonitor) getOrCreate(providerID string) *providerStats {
 	return s
 }
 
+// RecordLatency keeps observations even while routing is disabled.
+func (hm *HealthMonitor) RecordLatency(providerID string, latency time.Duration) {
+	if hm != nil && hm.tracker != nil {
+		hm.tracker.Record(providerID, latency)
+	}
+}
+
 // RecordSuccess records a successful request for a provider.
 func (hm *HealthMonitor) RecordSuccess(providerID string) {
 	if hm == nil {

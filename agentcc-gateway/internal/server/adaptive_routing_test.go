@@ -1,0 +1,207 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
+)
+
+// Synthetic OpenAI-compatible upstreams exercise the real adapter and HTTP path.
+func adaptiveUpstream(t *testing.T, fail bool, delay time.Duration, calls *atomic.Int64) *httptest.Server {
+	t.Helper()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		calls.Add(1)
+		time.Sleep(delay)
+		w.Header().Set("Content-Type", "application/json")
+		if fail {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			io.WriteString(w, `{"error":{"message":"synthetic upstream unavailable","type":"server_error"}}`)
+			return
+		}
+		io.WriteString(w, `{"id":"synthetic-completion","object":"chat.completion","model":"adaptive-sample","choices":[{"index":0,"message":{"role":"assistant","content":"synthetic response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+	}))
+	t.Cleanup(upstream.Close)
+	return upstream
+}
+
+func adaptiveServer(t *testing.T, cfg *config.Config) (*Server, *httptest.Server) {
+	t.Helper()
+	cfg.Auth.Enabled = false
+	registry, err := providers.NewRegistry(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	srv.ready.Store(true)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	httpServer := httptest.NewServer(srv.httpServer.Handler)
+	t.Cleanup(httpServer.Close)
+	return srv, httpServer
+}
+
+func adaptiveRequest(t *testing.T, server *httptest.Server, model string) int {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"model": model,
+		"messages": []map[string]string{{"role": "user", "content": "synthetic probe"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := server.Client()
+	client.Timeout = 5 * time.Second
+	resp, err := client.Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("gateway returned unexpected status %d", resp.StatusCode)
+	}
+	return resp.StatusCode
+}
+
+func adaptiveRoutingConfig() config.RoutingConfig {
+	return config.RoutingConfig{
+		DefaultStrategy: "adaptive",
+		Targets: map[string][]config.RoutingTargetConfig{
+			"adaptive-sample": {{Provider: "fast"}, {Provider: "slow"}},
+		},
+		Adaptive: config.AdaptiveConfig{
+			Enabled: true, LearningRequests: 10, UpdateInterval: 5 * time.Millisecond,
+		},
+	}
+}
+
+func TestAdaptiveGatewayLearnsFromHTTP(t *testing.T) {
+	var fastCalls, slowCalls atomic.Int64
+	fast := adaptiveUpstream(t, false, time.Millisecond, &fastCalls)
+	slow := adaptiveUpstream(t, true, 10*time.Millisecond, &slowCalls)
+	cfg := config.DefaultConfig()
+	cfg.Providers = map[string]config.ProviderConfig{
+		"fast": {BaseURL: fast.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+		"slow": {BaseURL: slow.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+	}
+	cfg.Routing = adaptiveRoutingConfig()
+	srv, gateway := adaptiveServer(t, cfg)
+
+	// Prime both providers through the gateway, then cross the learning threshold.
+	for _, model := range []string{"fast/adaptive-sample", "slow/adaptive-sample"} {
+		adaptiveRequest(t, gateway, model)
+	}
+	for i := 0; i < 20; i++ {
+		adaptiveRequest(t, gateway, "adaptive-sample")
+	}
+	fastBefore, slowBefore := fastCalls.Load(), slowCalls.Load()
+	for i := 0; i < 200; i++ {
+		adaptiveRequest(t, gateway, "adaptive-sample")
+	}
+	fastCount, slowCount := fastCalls.Load()-fastBefore, slowCalls.Load()-slowBefore
+	t.Logf("HTTP adaptive sample: healthy=%d failing=%d strategy=%s", fastCount, slowCount, srv.registry.Router().Strategy())
+	if fastCount+slowCount != 200 || fastCount < 160 {
+		t.Fatalf("adaptive routing did not favor the healthy upstream: healthy=%d failing=%d", fastCount, slowCount)
+	}
+	if srv.registry.Router().Strategy() != "adaptive" {
+		t.Fatal("gateway silently substituted a different strategy")
+	}
+	for _, id := range []string{"fast", "slow"} {
+		health := srv.handlers.healthMonitor.GetHealth(id)
+		if health.RequestCount == 0 || health.LatencyEWMAMs == 0 {
+			t.Fatalf("provider %s has no live health/latency observations", id)
+		}
+	}
+}
+
+func TestAdaptiveReloadPreservesDisabledRoutingLatency(t *testing.T) {
+	var calls atomic.Int64
+	upstream := adaptiveUpstream(t, false, 10*time.Millisecond, &calls)
+	cfg := config.DefaultConfig()
+	cfg.Providers = map[string]config.ProviderConfig{
+		"fast": {BaseURL: upstream.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+	}
+	cfg.Routing = config.RoutingConfig{}
+	srv, gateway := adaptiveServer(t, cfg)
+	monitor := srv.handlers.healthMonitor
+	if srv.registry.Router() != nil {
+		t.Fatal("test must start with routing disabled")
+	}
+	for cycle := 0; cycle < 2; cycle++ {
+		if adaptiveRequest(t, gateway, "adaptive-sample") != http.StatusOK {
+			t.Fatal("synthetic completion failed")
+		}
+		before := monitor.GetHealth("fast")
+		if before.LatencyEWMAMs < 1 || before.RequestCount != int64(cycle+1) {
+			t.Fatalf("disabled routing lost observations: latency=%d requests=%d", before.LatencyEWMAMs, before.RequestCount)
+		}
+		cfg.Routing = config.RoutingConfig{DefaultStrategy: "adaptive"}
+		if err := srv.handlers.ReloadRouting(cfg, srv.registry); err != nil {
+			t.Fatal(err)
+		}
+		after := monitor.GetHealth("fast")
+		if srv.handlers.healthMonitor != monitor || after.LatencyEWMAMs != before.LatencyEWMAMs || after.RequestCount != before.RequestCount {
+			t.Fatal("enabling adaptive routing discarded observations")
+		}
+		cfg.Routing = config.RoutingConfig{}
+		if err := srv.handlers.ReloadRouting(cfg, srv.registry); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestAdaptiveReloadSharesLiveCircuitBreaker(t *testing.T) {
+	var fastCalls, slowCalls atomic.Int64
+	fast := adaptiveUpstream(t, false, time.Millisecond, &fastCalls)
+	slow := adaptiveUpstream(t, true, time.Millisecond, &slowCalls)
+	cfg := config.DefaultConfig()
+	cfg.Providers = map[string]config.ProviderConfig{
+		"fast": {BaseURL: fast.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+		"slow": {BaseURL: slow.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+	}
+	cfg.Routing = adaptiveRoutingConfig()
+	cfg.Routing.Adaptive.UpdateInterval = time.Hour
+	cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour}
+	cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2}
+	srv, gateway := adaptiveServer(t, cfg)
+	if err := srv.handlers.ReloadRouting(cfg, srv.registry); err != nil {
+		t.Fatal(err)
+	}
+	// Resolution picks fast; failover's next selection tries slow, opens its
+	// breaker and succeeds on fast. The monitor must see that same open breaker.
+	if adaptiveRequest(t, gateway, "adaptive-sample") != http.StatusOK || slowCalls.Load() == 0 {
+		t.Fatal("expected successful failover after a synthetic upstream failure")
+	}
+	health := srv.handlers.healthMonitor.GetHealth("slow")
+	if health.Healthy || health.CircuitState != "open" {
+		t.Fatalf("health monitor diverged from live failover breaker: healthy=%v circuit=%s", health.Healthy, health.CircuitState)
+	}
+	cfg.Routing.CircuitBreaker.Enabled = false
+	if err := srv.handlers.ReloadRouting(cfg, srv.registry); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.handlers.healthMonitor.GetHealth("slow").CircuitState; got != "n/a" {
+		t.Fatalf("disabled breaker retained stale state: %s", got)
+	}
+}

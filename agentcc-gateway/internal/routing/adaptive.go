@@ -25,6 +25,7 @@ type AdaptiveStrategy struct {
 	healthMon       *HealthMonitor
 	updateInterval  time.Duration
 	stopCh          chan struct{}
+	doneCh          chan struct{}
 	stopOnce        sync.Once
 	phase           atomic.Int32 // 0=learning, 1=active
 }
@@ -67,6 +68,7 @@ func NewAdaptiveStrategy(cfg config.AdaptiveConfig, tracker *LatencyTracker, hea
 		healthMon:       healthMon,
 		updateInterval:  updateInterval,
 		stopCh:          make(chan struct{}),
+		doneCh:          make(chan struct{}),
 	}
 
 	go a.updateLoop()
@@ -145,12 +147,14 @@ func (a *AdaptiveStrategy) GetPhase() string {
 	return "active"
 }
 
-// Stop shuts down the background update loop.
+// Stop waits for the background update loop to exit. Concurrent calls are safe.
 func (a *AdaptiveStrategy) Stop() {
 	a.stopOnce.Do(func() { close(a.stopCh) })
+	<-a.doneCh
 }
 
 func (a *AdaptiveStrategy) updateLoop() {
+	defer close(a.doneCh)
 	ticker := time.NewTicker(a.updateInterval)
 	defer ticker.Stop()
 	for {

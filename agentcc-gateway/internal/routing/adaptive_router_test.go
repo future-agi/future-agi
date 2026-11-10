@@ -122,6 +122,51 @@ func TestAdaptiveRouterReusesMonitorAfterRebuild(t *testing.T) {
 	replacement.Close()
 }
 
+func TestAdaptiveCloseWaitsForUpdater(t *testing.T) {
+	cfg := adaptiveTestConfig()
+	cfg.Adaptive.UpdateInterval = time.Millisecond
+	r, err := NewRouter(cfg, map[string]bool{}, map[string][]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	adaptive := r.defaultStrategy.(*AdaptiveStrategy)
+	// Block the real updater in GetAllHealth after it enters the active phase.
+	r.healthMonitor.mu.Lock()
+	adaptive.requestCount.Store(int64(cfg.Adaptive.LearningRequests))
+	deadline := time.Now().Add(5 * time.Second)
+	for adaptive.GetPhase() != "active" && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if adaptive.GetPhase() != "active" {
+		r.healthMonitor.mu.Unlock()
+		t.Fatal("background updater did not enter the active phase")
+	}
+	stopped := make(chan struct{})
+	go func() {
+		r.Close()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		r.healthMonitor.mu.Unlock()
+		t.Fatal("Close returned while the adaptive updater was still running")
+	case <-time.After(20 * time.Millisecond):
+	}
+	r.healthMonitor.mu.Unlock()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not finish after the updater was released")
+	}
+	select {
+	case <-adaptive.doneCh:
+	default:
+		t.Fatal("Close returned without joining the updater")
+	}
+	r.Close()
+}
+
 func TestAdaptiveRouterRejectsMonitorWithNoLatencyTracker(t *testing.T) {
 	cfg := adaptiveTestConfig()
 	monitor := NewHealthMonitor(nil, nil)

@@ -245,16 +245,6 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 		return fmt.Errorf("reload router: %w", err)
 	}
 
-	// The monitor is shared across routing reloads; refresh its breaker view
-	// once the replacement router is installed.
-	if h.healthMonitor != nil {
-		var activeBreaker *routing.CircuitBreakerRegistry
-		if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
-			activeBreaker = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
-		}
-		h.healthMonitor.SetCircuitBreakerRegistry(activeBreaker)
-	}
-
 	// Rebuild conditional router.
 	if len(cfg.Routing.ConditionalRoutes) > 0 {
 		cr, err := routing.NewConditionalRouter(cfg.Routing.ConditionalRoutes)
@@ -284,6 +274,8 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 	if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
 		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
 	}
+	// Observe the same breakers that the failover chain updates.
+	h.healthMonitor.SetCircuitBreakerRegistry(cbReg)
 
 	if registry.Router() != nil && cfg.Routing.Failover.Enabled {
 		fo := routing.NewFailover(cfg.Routing.Failover, registry.Router(), retryer, cbReg)
@@ -1217,15 +1209,12 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	// Note: x-agentcc-timeout-ms is set via setAgentccHeaders (before WriteHeader)
 	// using rc.Metadata["timeout_ms"] which was populated above.
 
-	// Record provider latency for routing (after response).
-	if router := h.registry.Router(); router != nil {
-		if d, ok := rc.Timings["provider"]; ok {
-			router.RecordLatency(rc.Provider, d)
-		}
-	}
-
-	// Record health metrics.
+	// Keep health and latency in the shared monitor, including before routing
+	// is enabled or while it is temporarily disabled by a config reload.
 	if h.healthMonitor != nil && rc.Provider != "" {
+		if d, ok := rc.Timings["provider"]; ok {
+			h.healthMonitor.RecordLatency(rc.Provider, d)
+		}
 		if len(rc.Errors) > 0 {
 			h.healthMonitor.RecordError(rc.Provider, rc.Errors[0])
 		} else {
