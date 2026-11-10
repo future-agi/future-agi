@@ -69,8 +69,13 @@ describe("ReadyToRunSection", () => {
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
 
     expect(screen.queryByRole("button", { name: "Fix" })).toBeNull();
+    // The line opens like the others, with its full reason and the action.
     const [, lineRecheck] = screen.getAllByRole("button", { name: "Re-check" });
     await userEvent.click(lineRecheck);
+    expect(recheck).not.toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Re-check this pair" }),
+    );
     expect(recheck).toHaveBeenCalledWith(picks);
   });
 
