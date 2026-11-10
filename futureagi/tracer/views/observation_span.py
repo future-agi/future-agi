@@ -172,6 +172,8 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
+from tracer.services.entity_tag_reads import enrich_entity_tags, tag_fields
+from tracer.services.entity_tags import TagReadUnavailable
 from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import count_column_metadata
 from tracer.services.filter_attestation import (
@@ -944,7 +946,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.custom_error_response(error_status, message, code=exc.code)
         except TraceDetailNotFound:
             return self._gm.bad_request(get_error_message("OBSERVATION_SPAN_NOT_FOUND"))
-        except TraceDetailReadUnavailable as exc:
+        except (TraceDetailReadUnavailable, TagReadUnavailable) as exc:
             logger.warning(
                 "span_detail_bounded_read_incomplete",
                 span_id=str(kwargs.get("pk") or ""),
@@ -1031,6 +1033,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
                 raise TraceDetailReadUnavailable("ambiguous_span_identity")
             row = matching_rows[0]
+        enrich_entity_tags([row], kind="span")
         provider = row.get("provider")
 
         # Parse JSON string fields from CH (stored as String columns)
@@ -1108,7 +1111,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             ),
             "status": row.get("status"),
             "status_message": row.get("status_message"),
-            "tags": _parse_json(row.get("tags"), default=[]),
+            **tag_fields(row),
             "metadata": metadata,
             "span_events": _parse_json(row.get("span_events"), default=[]),
             "provider": provider,
@@ -1683,7 +1686,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
         except Exception as exc:
-            if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
+            if (
+                isinstance(exc, TagReadUnavailable)
+                or is_read_budget_error(exc)
+                or is_clickhouse_query_error(exc)
+            ):
                 logger.warning(
                     "span_list_query_unavailable",
                     project_version_id=str(project_version_id),
@@ -2003,7 +2010,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if isinstance(
+                exc, TagReadUnavailable
+            ) or is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "observe_span_list_query_unavailable",
                     project_id=str(
@@ -2695,6 +2704,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "attrs_string",
                 "attrs_number",
                 "attrs_bool",
+                "tags",
+                "parent_span_id",
             ),
         ):
             return self._gm.custom_error_response(
@@ -2730,6 +2741,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # span resolves to the old curated row, and a missing/orphan id → all-None
         # (faithful to the old FK miss). Returns {id (str): {user_id,
         # user_id_type, user_id_hash}}.
+        enrich_entity_tags(result.data, kind="span", deadline=read_deadline)
+
         # Format response matching PG format
         table_data = []
         for row in result.data:
@@ -2749,6 +2762,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "project_id": str(row.get("project_id", "")),
                 "span_id": span_id,
                 **_span_identity_payload(row),
+                **tag_fields(row),
                 "input": bound_observe_list_value(row.get("input", "")),
                 "output": bound_observe_list_value(row.get("output", "")),
                 "trace_id": str(row.get("trace_id", "")),
@@ -3134,6 +3148,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         "attrs_string",
                         "attrs_number",
                         "attrs_bool",
+                        "tags",
+                        "parent_span_id",
                     ),
                 ):
                     return self._gm.custom_error_response(
@@ -3209,6 +3225,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             column_config, annotation_labels
         )
 
+        enrich_entity_tags(result.data, kind="span", deadline=read_deadline)
+
         # Format response matching PG format
         table_data = []
         for row in result.data:
@@ -3223,6 +3241,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "node_type": row.get("observation_type", ""),
                 "span_id": span_id,
                 **_span_identity_payload(row),
+                **tag_fields(row),
                 "input": row.get("input", ""),
                 "output": row.get("output", ""),
                 "trace_id": str(row.get("trace_id", "")),

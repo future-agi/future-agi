@@ -167,6 +167,8 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from tracer.services.entity_tag_reads import enrich_entity_tags, tag_fields
+from tracer.services.entity_tags import TagReadUnavailable
 from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import (
     build_eval_rollup,
@@ -2163,7 +2165,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(
                 f"error retrieving trace {get_error_message('ERROR_GETTING_TRACE')}"
             )
-        except TraceDetailReadUnavailable as exc:
+        except (TraceDetailReadUnavailable, TagReadUnavailable) as exc:
             logger.warning(
                 "trace_detail_bounded_read_incomplete",
                 trace_id=str(kwargs.get("pk") or ""),
@@ -2807,7 +2809,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Trace filter configuration is invalid")
         except Exception as exc:
-            if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
+            if (
+                isinstance(exc, TagReadUnavailable)
+                or is_read_budget_error(exc)
+                or is_clickhouse_query_error(exc)
+            ):
                 logger.warning(
                     "trace_list_query_unavailable",
                     project_version_id=str(
@@ -3776,7 +3782,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if isinstance(
+                exc, TagReadUnavailable
+            ) or is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "observe_trace_list_query_unavailable",
                     project_id=str(
@@ -4051,7 +4059,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
         except TraceDetailNotFound:
             return self._gm.not_found("trace_id not found")
-        except TraceDetailReadUnavailable as e:
+        except (TraceDetailReadUnavailable, TagReadUnavailable) as e:
             logger.warning(
                 "voice_call_detail_bounded_read_incomplete",
                 trace_id=trace_id,
@@ -4075,6 +4083,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
     def _voice_call_detail_clickhouse(self, request, trace_id, detail, eval_configs):
         """Return heavy voice-call detail fields from ClickHouse."""
+        enrich_entity_tags(list(detail.spans), kind="span")
         project_id = detail.project_id
         root_rows = [
             span
@@ -4167,6 +4176,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "trace_id": str(trace_id),
                 "name": "conversation",
                 "observation_type": "conversation",
+                **tag_fields(row),
                 "status": row.get("status"),
                 "start_time": (
                     str(row.get("start_time", "")) if row.get("start_time") else None
@@ -4236,7 +4246,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     ),
                     "span_attributes": child_span_attrs,
                     "metadata": _safe_parse_metadata(child.get("metadata_json")),
-                    "tags": child.get("tags") or [],
+                    **tag_fields(child),
                 }
             )
 
@@ -4383,6 +4393,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "id": str(trace_id),
             "trace_id": str(trace_id),
             "project_id": str(project_id),
+            **tag_fields(row),
             "provider_call_id": processed_log.get("call_id"),
             "recording": recording,
             "recording_available": self._recording_available(recording),
@@ -5427,6 +5438,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "attrs_bool",
                 "attributes_extra",
                 "trace_tags",
+                "tags",
             ),
         )
 
@@ -5627,6 +5639,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Format response matching PG format. Keep the typed sidecar separate
         # from arbitrary attributes/eval columns, which may use the same names.
+        enrich_entity_tags(result.data, kind="trace", deadline=read_deadline)
         trace_capture_coverage = {}
         table_data = []
         for row in result.data:
@@ -5661,7 +5674,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "status": row.get("status"),
                 "model": row.get("model"),
                 "provider": row.get("provider"),
-                "tags": row.get("trace_tags") or [],
+                **tag_fields(row),
                 "user_id": user_id_map.get(
                     (str(row.get("project_id") or project_id or ""), trace_id)
                 ),
@@ -5717,6 +5730,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 vals = sorted(values, key=_trace_attribute_value_token)
                 entry[key] = vals[0] if len(vals) == 1 else vals
 
+            entry.update(tag_fields(row))
             table_data.append(entry)
 
         try:
@@ -7100,6 +7114,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "input",
                 "output",
                 "trace_tags",
+                "tags",
                 "attrs_string",
                 "attrs_number",
                 "attrs_bool",
@@ -7160,6 +7175,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             column_config, annotation_labels
         )
 
+        enrich_entity_tags(result.data, kind="trace", deadline=read_deadline)
         # Format response to match existing PG format
         table_data = []
         for row in result.data:
@@ -7184,7 +7200,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     if str(row.get("trace_session_id", "")) == NIL_UUID
                     else row.get("trace_session_id")
                 ),
-                "tags": row.get("trace_tags") or [],
+                **tag_fields(row),
                 "user_id": user_id_map.get(
                     (str(row.get("project_id") or project_id), trace_id)
                 ),

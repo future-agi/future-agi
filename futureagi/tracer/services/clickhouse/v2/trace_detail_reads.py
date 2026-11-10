@@ -214,6 +214,9 @@ class TraceDetailReadBuilder:
                 latest_parent_span_id AS parent_span_id,
                 latest_name AS name,
                 latest_observation_type AS observation_type,
+                service_name,
+                toStartOfHour(grouped_start_time) AS start_hour,
+                toString(latest_version) AS _version,
                 grouped_start_time AS start_time,
                 latest_end_time AS end_time,
                 latest_input AS input,
@@ -243,6 +246,8 @@ class TraceDetailReadBuilder:
                     trace_id AS grouped_trace_id,
                     id AS grouped_id,
                     start_time AS grouped_start_time,
+                    service_name,
+                    max(_version) AS latest_version,
                     argMax(tuple(parent_span_id), _version).1
                         AS latest_parent_span_id,
                     argMax(name, _version) AS latest_name,
@@ -284,7 +289,7 @@ class TraceDetailReadBuilder:
                       toString(project_id), trace_id, id,
                       toUnixTimestamp64Micro(start_time)
                   ) IN %(detail_span_identities)s
-                GROUP BY project_id, trace_id, id, start_time
+                GROUP BY project_id, trace_id, id, start_time, observation_type, service_name
             ) AS latest_physical_spans
             WHERE latest_is_deleted = 0
             ORDER BY grouped_start_time ASC, grouped_id ASC

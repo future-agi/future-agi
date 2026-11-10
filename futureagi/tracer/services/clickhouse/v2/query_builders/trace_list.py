@@ -494,6 +494,7 @@ class _TraceRootReplayV2:
             ("attrs_bool", "attrs_bool"),
             ("attributes_extra", "attributes_extra"),
             ("metadata", "metadata"),
+            ("tags", "tags"),
         ]
 
     def _root_replay_content_extra_select(self) -> list[str]:

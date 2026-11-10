@@ -25,6 +25,7 @@ from tracer.services.clickhouse.application_read_policy import (
     UNLIMITED_STATEMENT_SETTINGS,
 )
 from tracer.services.clickhouse.v2 import physical_span_detail_reads as reads
+from tracer.tests.tag_read_fixtures import empty_tag_assignments  # noqa: F401
 from tracer.tests.test_span_physical_identity_latest import (
     OTHER_PROJECT,
     PROJECT,
@@ -71,6 +72,7 @@ def winner(**changes):
     return {
         "project_id": PROJECT,
         "trace_id": "trace",
+        "parent_span_id": "",
         "id": "span",
         "start_hour": HOUR,
         "start_time": WINNER,
@@ -665,7 +667,6 @@ def detail_engine(request):
     run, insert = request.getfixturevalue("engine")
     for definition in (
         "status_message String DEFAULT ''",
-        "tags Array(String)",
         "span_events String DEFAULT '[]'",
         "custom_eval_config_id Nullable(UUID)",
         "trace_session_id Nullable(UUID)",
@@ -757,7 +758,7 @@ def test_public_rmt_empty_and_null_payloads_belong_to_one_latest_winner(
         attrs_number={"zero": 99},
         attrs_bool={"flag": 1},
         attributes_extra='{"stale":true}',
-        tags=["old"],
+        tags='["old"]',
         status="error",
         cost=99,
     )
@@ -769,7 +770,7 @@ def test_public_rmt_empty_and_null_payloads_belong_to_one_latest_winner(
         attrs_number={"zero": 0},
         attrs_bool={"flag": 0},
         attributes_extra="{}",
-        tags=[],
+        tags="[]",
         status=None,
         cost=0,
     )

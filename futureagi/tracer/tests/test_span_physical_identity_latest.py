@@ -214,6 +214,7 @@ def engine(tmp_path):
         attrs_string Map(String, String), attrs_number Map(String, Float64),
         attrs_bool Map(String, UInt8), attributes_extra String DEFAULT '{}',
         input String DEFAULT '', output String DEFAULT '',
+        tags String DEFAULT '[]',
         is_deleted UInt8 DEFAULT 0, _version UInt64
     ) ENGINE = ReplacingMergeTree(_version, is_deleted)
       PARTITION BY toDate(start_time)

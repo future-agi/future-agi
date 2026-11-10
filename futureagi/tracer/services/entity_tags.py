@@ -28,6 +28,10 @@ class TagInputError(ValueError):
 class TagReadUnavailable(RuntimeError):
     """Incomplete/over-budget source or assignment input; never an empty result."""
 
+    @property
+    def code(self) -> str:
+        return str(self)
+
 
 def _encoded_size(value: object) -> int:
     try:

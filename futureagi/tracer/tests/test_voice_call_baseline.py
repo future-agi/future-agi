@@ -287,6 +287,9 @@ def _collector_row(readable: Any, *, project_id: str) -> dict:
         "id": format(readable.context.span_id, "016x"),
         "trace_id": str(uuid.UUID(int=readable.context.trace_id)),
         "parent_span_id": parent,
+        "service_name": readable.resource.attributes["service.name"],
+        "start_hour": start.replace(minute=0, second=0, microsecond=0),
+        "_version": str(ROW_VERSION),
         "name": readable.name,
         "observation_type": observation_type,
         "start_time": start,
@@ -694,6 +697,11 @@ def baseline():
     call = _load("vapi_call.json")
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(BaseDatabaseWrapper, "ensure_connection", _refuse)
+        from tracer.models.entity_tag_assignment import EntityTagAssignment
+
+        assignments = mock.MagicMock()
+        assignments.using.return_value.filter.return_value.values.return_value.__getitem__.return_value = []
+        patch.setattr(EntityTagAssignment, "objects", assignments)
         # The normaliser keeps the call object as raw_log and the transcript
         # step rewrites its messages in place; hand it a copy.
         top_span, readable = _run_top_span(patch, copy.deepcopy(call))

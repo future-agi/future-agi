@@ -36,6 +36,7 @@
   },
   "evaluation_data": null,
   "id": "5689f6d7-caaf-5e64-8dc9-6f526ccca69b",
+  "manual_tags": [],
   "message_count": 8,
   "messages": [
     {
@@ -124,10 +125,12 @@
       "end_time": "2026-09-01 10:00:24+00:00",
       "id": "eadf51448abc5d54",
       "latency_ms": 24000,
+      "manual_tags": [],
       "metadata": {},
       "name": "conversation",
       "observation_type": "conversation",
       "provider": "openai",
+      "source_tag_names": [],
       "span_attributes": {
         "ai_interruption_count": 0.0,
         "ai_interruption_rate": 0.0,
@@ -221,6 +224,18 @@
       },
       "start_time": "2026-09-01 10:00:00+00:00",
       "status": "OK",
+      "tag_revision": 0,
+      "tag_target": {
+        "expected_start_time": "2026-09-01T10:00:00.000000+00:00",
+        "expected_version": "1",
+        "observation_type": "conversation",
+        "project_id": "0b5e11e0-0000-4000-8000-0000000000b1",
+        "service_name": "fi-provider",
+        "span_id": "eadf51448abc5d54",
+        "start_hour": "2026-09-01T10:00:00+00:00",
+        "trace_id": "5689f6d7-caaf-5e64-8dc9-6f526ccca69b"
+      },
+      "tags": [],
       "trace_id": "5689f6d7-caaf-5e64-8dc9-6f526ccca69b"
     }
   ],
@@ -240,9 +255,22 @@
   "recording_url": "https://storage.example.com/recordings/baseline-call/mono.wav",
   "response_time_ms": null,
   "response_time_seconds": null,
+  "source_tag_names": [],
   "started_at": "2026-09-01T10:00:02.000Z",
   "status": "completed",
   "stereo_recording_url": "https://storage.example.com/recordings/baseline-call/stereo.wav",
+  "tag_revision": 0,
+  "tag_target": {
+    "expected_start_time": "2026-09-01T10:00:00.000000+00:00",
+    "expected_version": "1",
+    "observation_type": "conversation",
+    "project_id": "0b5e11e0-0000-4000-8000-0000000000b1",
+    "service_name": "fi-provider",
+    "span_id": "eadf51448abc5d54",
+    "start_hour": "2026-09-01T10:00:00+00:00",
+    "trace_id": "5689f6d7-caaf-5e64-8dc9-6f526ccca69b"
+  },
+  "tags": [],
   "talk_ratio": 1.3548387096774193,
   "trace_id": "5689f6d7-caaf-5e64-8dc9-6f526ccca69b",
   "transcript": [
