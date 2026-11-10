@@ -66,8 +66,11 @@ def check_event(event_name: str, event: dict) -> None:
             "release-please--"
         ):
             return
-        # Immutable event SHAs avoid a moving origin/main making a rerun empty.
-        head = pr["head"]["sha"]
+        # Use the immutable merge preview: a stale PR head can omit migrations
+        # already on main, while a moving origin/main can make a rerun empty.
+        head = pr.get("merge_commit_sha")
+        if not head:
+            raise ValueError("No PR merge preview is available; refresh and rerun.")
         base = previous_release(pr["base"]["sha"])
         body = pr.get("body") or ""
     elif event_name == "release":

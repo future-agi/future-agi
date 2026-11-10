@@ -78,6 +78,7 @@ class MigrationsCalloutTests(unittest.TestCase):
             "pull_request": {
                 "base": {"ref": "main", "sha": self.base_sha},
                 "head": {"ref": "release-please--branches--main", "sha": self.head_sha},
+                "merge_commit_sha": self.head_sha,
                 "body": f"{header}\n---\n\n{notes}\n\n---\n{footer}",
             }
         }
@@ -208,7 +209,27 @@ class MigrationsCalloutTests(unittest.TestCase):
     def test_missing_git_ref_fails_closed(self):
         self.prepare()
         event = self.pr(self.notes(callout=True))
-        event["pull_request"]["head"]["sha"] = "0" * 40
+        event["pull_request"]["merge_commit_sha"] = "0" * 40
+        self.check("pull_request", event, success=False)
+
+    def test_stale_pr_head_does_not_hide_migrations_already_on_main(self):
+        self.git("tag", "v1.52.0")
+        self.git("checkout", "-qb", "release-pr")
+        self.git("commit", "--allow-empty", "-qm", "Release version bump")
+        self.head_sha = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-qb", "base-main", "v1.52.0")
+        self.commit_files(["tracer/0001_new_on_main"])
+        self.base_sha = self.git("rev-parse", "HEAD")
+        self.git("checkout", "release-pr")
+        self.git("merge", "--no-edit", "base-main")
+        event = self.pr(self.notes())
+        event["pull_request"]["merge_commit_sha"] = self.git("rev-parse", "HEAD")
+        self.check("pull_request", event, success=False, count=1)
+
+    def test_missing_merge_preview_fails_closed(self):
+        self.prepare()
+        event = self.pr(self.notes(callout=True))
+        event["pull_request"]["merge_commit_sha"] = None
         self.check("pull_request", event, success=False)
 
     def test_crlf_body_and_single_delimiter_follow_release_please(self):
