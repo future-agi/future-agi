@@ -19,7 +19,8 @@ from tracer.tests.test_derived_metric_lifecycle_safety import _commit, _metric
 
 
 @pytest.fixture
-def snapshot_metric(workspace, observe_project):
+def snapshot_metric(workspace, observe_project, monkeypatch):
+    monkeypatch.setattr(snapshots, "enqueue_capture", lambda _: None)
     metric = _metric(workspace, observe_project)
     definition = DerivedMetricVersion.objects.create(
         metric=metric,
@@ -132,7 +133,7 @@ def test_soft_delete_retains_cleanup_intent(snapshot_metric):
     assert intent.project_id is None
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_rejected_submission_keeps_committed_no_dispatch_receipt(snapshot_metric, user):
     from unittest.mock import Mock
 
@@ -171,3 +172,161 @@ def test_unproven_legacy_writer_cannot_get_erasure_completion(snapshot_metric):
         _purge_snapshots(Mock(), request)
     request.refresh_from_db()
     assert request.status == "queued" and request.receipts == {}
+
+
+@pytest.mark.django_db
+def test_capture_rejects_normalized_window_crossing_backfill_start(
+    snapshot_metric, user
+):
+    from tracer.models.derived_metric import MetricGenerationPin
+    from tracer.services.derived_metrics.reads import effective_window
+    from tracer.services.derived_metrics.service import MetricUnavailableError
+
+    data = request_data()
+    window = effective_window(data["window_start"], data["window_end"])
+    DerivedMetricVersion.objects.filter(pk=snapshot_metric.active_version_id).update(
+        backfill_cursor={
+            "start": (window["window_start"] + timedelta(minutes=15)).isoformat()
+        }
+    )
+    with pytest.raises(MetricUnavailableError) as caught:
+        snapshots.request_snapshot(snapshot_metric, data, user)
+    assert caught.value.code == "window_not_calculated"
+    assert not DerivedMetricRun.objects.exists()
+    assert not MetricGenerationPin.objects.exists()
+
+
+def running_capture(metric, user):
+    saved = snapshots.request_snapshot(metric, request_data(), user)
+    run = DerivedMetricRun.objects.get(pk=saved["id"])
+    DerivedMetricRun.objects.filter(pk=run.id).update(
+        status="running", attempt_id=uuid4()
+    )
+    run.refresh_from_db()
+    return run
+
+
+@pytest.mark.django_db(transaction=True)
+def test_intent_interruption_is_recoverable_and_late_writer_is_fenced(
+    snapshot_metric, user
+):
+    from contextlib import contextmanager
+    from unittest.mock import Mock, patch
+
+    from tracer.models.derived_metric import MetricStateConflict
+
+    run = running_capture(snapshot_metric, user)
+    store = Mock()
+    fence = snapshots.project_dispatch_fence
+
+    @contextmanager
+    def recover_before_dispatch(project):
+        # The writer paused immediately after durable intent insertion, before
+        # obtaining the dispatch fence. A cleanup worker retires it first.
+        snapshots.drain_submissions(
+            store, organization_id=snapshot_metric.organization_id
+        )
+        with fence(project):
+            yield
+
+    with patch.object(snapshots, "project_dispatch_fence", recover_before_dispatch):
+        with pytest.raises(MetricStateConflict, match="fenced"):
+            snapshots._write(store, run, "INSERT INTO unused VALUES (1)", {})
+    store.execute.assert_not_called()
+    store.client.execute.assert_not_called()
+    job = MetricErasureRequest.objects.get(
+        store_payload__protocol=snapshots.SUBMISSION_PROTOCOL
+    )
+    assert job.status == "done"
+    assert job.receipts == {"not_submitted": {"drained": 1}}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_connection_failure_before_dispatch_has_no_dispatch_proof(
+    snapshot_metric, user
+):
+    from unittest.mock import Mock
+
+    run = running_capture(snapshot_metric, user)
+    store = Mock()
+    store.execute.side_effect = ConnectionError("probe failed")
+    with pytest.raises(ConnectionError):
+        snapshots._write(store, run, "INSERT INTO unused VALUES (1)", {})
+    store.client.execute.assert_not_called()
+    job = MetricErasureRequest.objects.get(
+        store_payload__protocol=snapshots.SUBMISSION_PROTOCOL
+    )
+    assert job.status == "done"
+    assert job.receipts == {"not_submitted": {"drained": 1}}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_native_failure_is_ambiguous_until_observed_server_restart(
+    snapshot_metric, user
+):
+    from unittest.mock import Mock
+
+    from tracer.models.derived_metric import MetricStateConflict
+
+    run = running_capture(snapshot_metric, user)
+    store = Mock()
+    store.execute.return_value = [("server", 1000, 500)]
+    store.client.execute.side_effect = ConnectionError("native send failed")
+    with pytest.raises(ConnectionError):
+        snapshots._write(store, run, "INSERT INTO unused VALUES (1)", {})
+    job = MetricErasureRequest.objects.get(
+        store_payload__protocol=snapshots.SUBMISSION_PROTOCOL
+    )
+    assert job.store_payload["phase"] == "dispatching"
+    # No process and no terminal record do NOT prove drainage.
+    store.execute.side_effect = [[(0,)], [(0,)], [("server", 1100, 600)]]
+    with pytest.raises(MetricStateConflict, match="drainage"):
+        snapshots.drain_submissions(
+            store, organization_id=snapshot_metric.organization_id
+        )
+    job.refresh_from_db()
+    assert job.status != "done" and job.receipts == {}
+    # A different host cannot supply proof for this query's native server.
+    store.execute.side_effect = [[(0,)], [(0,)], [("other-server", 1200, 10)]]
+    with pytest.raises(MetricStateConflict):
+        snapshots.drain_submissions(
+            store, organization_id=snapshot_metric.organization_id
+        )
+    # The operational re-arm path records only a new observation, not a receipt.
+    store.execute.side_effect = None
+    store.execute.return_value = [("server", 1150, 650)]
+    snapshots.arm_submission_recovery(job.id, store=store)
+    job.refresh_from_db()
+    assert job.status != "done" and job.receipts == {}
+    store.execute.side_effect = [[(0,)], [(0,)], [("server", 1200, 10)]]
+    snapshots.drain_submissions(store, organization_id=snapshot_metric.organization_id)
+    job.refresh_from_db()
+    assert job.status == "done" and job.receipts == {"server_restart": {"drained": 1}}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_legacy_unsealed_submission_cannot_infer_restart_proof(snapshot_metric):
+    from unittest.mock import Mock
+
+    from tracer.models.derived_metric import MetricStateConflict
+    from tracer.services.derived_metrics.deletion_protocol import _intent
+
+    job = _intent(
+        organization_id=snapshot_metric.organization_id,
+        project_id=snapshot_metric.project_id,
+        scope="history",
+        store_payload={
+            "protocol": snapshots.SUBMISSION_PROTOCOL,
+            "query_id": "legacy-query",
+        },
+    )
+    store = Mock()
+    store.execute.return_value = [(0,)]
+    with pytest.raises(MetricStateConflict, match="legacy"):
+        snapshots.arm_submission_recovery(job.id, store=store)
+    with pytest.raises(MetricStateConflict, match="drainage"):
+        snapshots.drain_submissions(
+            store, organization_id=snapshot_metric.organization_id
+        )
+    job.refresh_from_db()
+    assert job.status != "done" and job.receipts == {}

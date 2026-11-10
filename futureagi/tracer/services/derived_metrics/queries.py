@@ -607,7 +607,16 @@ def aggregate_select(source_sql: str, formula: Formula, *, rollup: str) -> str:
     return combine_parts_select(parts, formula, rollup=rollup)
 
 
-def rollup_insert(definition, run, result_id: UUID, rollup: str) -> tuple[str, dict]:
+def rollup_insert(
+    definition,
+    run,
+    result_id: UUID,
+    rollup: str,
+    *,
+    group_range=None,
+    mixed_scope=False,
+    unit_range=False,
+) -> tuple[str, dict]:
     metric = definition.metric
     scope = Scope(metric.organization_id, metric.workspace_id, metric.project_id)
     if getattr(run, "kind", "run") == "snapshot":
@@ -620,7 +629,20 @@ def rollup_insert(definition, run, result_id: UUID, rollup: str) -> tuple[str, d
         formula = compile_formula(
             definition.formula, [item["alias"] for item in definition.inputs]
         )
-    source = f"SELECT * FROM derived_metric_inputs WHERE {SCOPE_SQL} AND snapshot_id = %(snapshot_id)s ORDER BY unit_id"
+    predicate = "1"
+    if group_range is not None:
+        group, _ = rollup_group_sql(rollup)
+        predicate = f"{group} >= %(group_min)s AND {group} <= %(group_max)s"
+        if unit_range:
+            predicate += " AND unit_id >= %(group_min)s AND unit_id <= %(group_max)s"
+    # Scope validation is WINDOW-wide, not page-local. Otherwise paging session
+    # groups could accidentally turn a mixed-scope snapshot into valid estimates.
+    columns = (
+        "* REPLACE(toUInt8(if(notEmpty(sampling_scope), 1, invalid_probability)) AS invalid_probability)"
+        if mixed_scope
+        else "*"
+    )
+    source = f"SELECT {columns} FROM derived_metric_inputs WHERE {SCOPE_SQL} AND snapshot_id = %(snapshot_id)s AND ({predicate}) ORDER BY unit_id"
     params = {
         **scope.parameters(),
         **formula.parameters,
@@ -637,6 +659,8 @@ def rollup_insert(definition, run, result_id: UUID, rollup: str) -> tuple[str, d
         "definition_hash": definition.definition_hash,
         "sampling_scope": run.source_manifest.get("sampling_scope", ""),
     }
+    if group_range is not None:
+        params.update(group_min=group_range[0], group_max=group_range[1])
     if getattr(run, "kind", "run") == "snapshot":
         from tracer.services.derived_metrics.parts import (
             combine_parts_select,

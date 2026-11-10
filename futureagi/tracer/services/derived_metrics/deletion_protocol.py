@@ -64,13 +64,37 @@ def project_lock(project_id, *, using=DEFAULT_DB_ALIAS):
     db = connections[using]
     if not db.in_atomic_block:
         raise RuntimeError("project lock requires a transaction")
-    key = int.from_bytes(
+    with db.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(%s)", [_project_lock_key(project_id)]
+        )
+
+
+def _project_lock_key(project_id):
+    return int.from_bytes(
         hashlib.sha256(f"metric-lifecycle:{project_id}".encode()).digest()[:8],
         "big",
         signed=True,
     )
+
+
+@contextmanager
+def project_dispatch_fence(project_id):
+    """Same project lock across independently committed dispatch lifecycle phases.
+
+    Session ownership fences late writers while a drain commits a no-dispatch
+    decision. A transaction lock alone cannot preserve a dispatch marker when a
+    native call fails and its surrounding transaction rolls back.
+    """
+    db = connections[DEFAULT_DB_ALIAS]
+    key = _project_lock_key(project_id)
     with db.cursor() as cursor:
-        cursor.execute("SELECT pg_advisory_xact_lock(%s)", [key])
+        cursor.execute("SELECT pg_advisory_lock(%s)", [key])
+    try:
+        yield
+    finally:
+        with db.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_unlock(%s)", [key])
 
 
 @contextmanager

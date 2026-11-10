@@ -117,6 +117,42 @@ def _runs(request):
     return runs.select_related("definition__metric")
 
 
+def _frozen_subjects(store, request):
+    """Expand the retained 019 identity bridge, not the current survivor alone.
+
+    Those maps have no TTL and retain every historical old ID (including owners
+    that stopped being the survivor on consolidation). Traverse both directions
+    to cover chained aliases. Missing/unreadable lineage or a bound overflow is
+    an error, never a zero-match completion. No private IDs enter query logs.
+    """
+    from tracer.services.derived_metrics.queries import QUERY_SETTINGS
+
+    table = (
+        "end_user_id_remap"
+        if request.scope_kind == "users"
+        else "trace_session_id_remap"
+    )
+    subjects = set(request.subject_ids)
+    for _ in range(32):
+        if len(subjects) > 10000:
+            break
+        rows = store.client.execute(
+            "SELECT groupArray((toString(old_id), toString(new_id))) FROM ("
+            f"SELECT old_id, new_id FROM {table} FINAL "
+            "WHERE toString(old_id) IN %(subjects)s OR toString(new_id) IN %(subjects)s "
+            "LIMIT 10001)",
+            {"subjects": tuple(sorted(subjects))},
+            settings={**QUERY_SETTINGS, "log_queries": 0},
+        )[0][0]
+        if len(rows) > 10000:
+            break
+        expanded = subjects | {value for row in rows for value in row}
+        if expanded == subjects:
+            return sorted(subjects)
+        subjects = expanded
+    raise MetricStateConflict("snapshot identity lineage is not yet proven")
+
+
 def _subject_predicate(kind):
     if kind in {"organization", "project"}:
         return "1"
@@ -196,12 +232,12 @@ def _redact(store, request, token):
 
 
 def _redact_subjects(store, request):
-    for run in _runs(request).filter(deleted_at__isnull=True).iterator(chunk_size=100):
+    for run in _runs(request).iterator(chunk_size=100):
         key = f"redact:{request.id}:{run.id}"
         child = MetricErasureRequest.objects.filter(deletion_key=key).first()
-        if child is not None:
+        if child is not None and not run.deleted_at:
             continue
-        if run.status != "complete":
+        if run.deleted_at or run.status != "complete":
             # Revoked queued captures fail explicitly, rather than capture an
             # incomplete surviving population after erasure.
             DerivedMetricRun.objects.filter(
@@ -257,15 +293,27 @@ def _redact_subjects(store, request):
         process_erasure(child.id, store=store)
     if children.exclude(status="done").exists():
         raise MetricStateConflict("snapshot redaction is pending")
-    # Interrupted captures also have independently durable purge work.
-    for run in _runs(request).filter(status="failed", error="expired"):
-        purge_run(
-            store,
-            organization_id=request.organization_key,
-            project_id=run.definition.metric.project_id,
-            run_id=run.id,
-            snapshot_id=run.snapshot_id,
+    # Parent-independent obligations survive soft/hard deletion and EVERY capture
+    # failure, not just expiration. A parent receipt must wait for their physical
+    # purge receipts too. Redactions above are not whole-namespace purge jobs.
+    cleanup = (
+        MetricErasureRequest.objects.filter(
+            organization_key=request.organization_key, scope_kind="run"
         )
+        .exclude(status="done")
+        .filter(
+            Q(store_payload__protocol__isnull=True)
+            | ~Q(store_payload__protocol="metric_snapshot_redaction")
+        )
+    )
+    for field in ("project_key", "metric_key", "version_key", "run_key"):
+        value = getattr(request, field)
+        if value:
+            cleanup = cleanup.filter(**{field: value})
+    for job in cleanup.order_by("requested_at")[:10]:
+        process_erasure(job.id, store=store)
+    if cleanup.exists():
+        raise MetricStateConflict("snapshot namespace cleanup is pending")
 
 
 def _purge_snapshots(store, request):
@@ -397,6 +445,8 @@ def _process_erasure(request_id, *, store=None, writer=None):
                 if request.status == "done":
                     return True
             else:
+                if request.scope_kind in {"users", "sessions"}:
+                    request.subject_ids = _frozen_subjects(connection, request)
                 _purge_snapshots(connection, request)
                 from tracer.services.derived_metrics.retention import purge_by_scope
 

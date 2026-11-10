@@ -1,7 +1,7 @@
 """Pinned captures in the existing 028–030 store; never recalculate raw telemetry.
 
 Each native write has a parent-independent submission receipt before dispatch.
-Unknown outcomes block cleanup until a terminal query-log record proves drainage.
+Unknown outcomes require a terminal query record or a proven sealed-socket restart.
 The project lock fences dispatch against erasure, publication and parent deletion.
 Completed captures have no TTL. Only explicit erasure changes their frozen inputs.
 """
@@ -11,7 +11,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -25,6 +25,7 @@ from tracer.models.derived_metric import (
 from tracer.services.derived_metrics.deletion_protocol import (
     _intent,
     capture_pin,
+    project_dispatch_fence,
     serialized_project,
 )
 from tracer.services.derived_metrics.errors import MetricBusyError, MetricInputError
@@ -33,6 +34,7 @@ from tracer.services.derived_metrics.queries import (
     QUERY_SETTINGS,
     SCOPE_SQL,
     Scope,
+    rollup_group_sql,
     rollup_insert,
 )
 from tracer.services.derived_metrics.retention import retention_cutoff
@@ -61,6 +63,7 @@ def snapshot_store():
         database=config["database"],
         connect_timeout=10,
         send_receive_timeout=660,
+        disable_reconnect=True,
         # Erasure predicates contain private subjects. Only the namespace-only
         # writes in _write explicitly opt in to the query log for drainage proof.
         settings={"log_queries": 0, "log_query_threads": 0},
@@ -96,7 +99,10 @@ def enqueue_capture(run_id):
 
 def request_snapshot(metric, data, user):
     from tracer.serializers.derived_metric import DerivedMetricRunSerializer
-    from tracer.services.derived_metrics.reads import effective_window
+    from tracer.services.derived_metrics.reads import (
+        effective_window,
+        require_calculated_window,
+    )
     from tracer.services.derived_metrics.service import SnapshotNotSupportedError, _hash
 
     window = effective_window(data["window_start"], data["window_end"])
@@ -163,6 +169,7 @@ def request_snapshot(metric, data, user):
                 "snapshot_unavailable",
                 "No usable committed result is available to capture.",
             ) from exc
+        require_calculated_window(pin.definition_version, window)
         run = DerivedMetricRun.objects.create(
             id=run_id,
             definition=pin.definition_version,
@@ -213,8 +220,44 @@ def _current(run):
     return current
 
 
-def _write(store, run, sql, params, *, capturing=False):
-    """Register outside the dispatch transaction: rollback must not lose late IO."""
+def _submission_done(submission, proof):
+    MetricErasureRequest.objects.filter(pk=submission.id).update(
+        status="done", completed_at=timezone.now(), receipts={proof: {"drained": 1}}
+    )
+
+
+def _server_clock(store):
+    # A read-only connection probe BEFORE permitting native submission. Server
+    # time, not worker time, also supplies a conservative restart-recovery fence.
+    server, now, uptime = store.execute(
+        "SELECT toString(serverUUID()), toUnixTimestamp(now()), uptime()"
+    )[0]
+    return {"server": server, "time": int(now), "uptime": int(uptime)}
+
+
+@contextmanager
+def _no_reconnect(store):
+    # The probe and write MUST use the same established native connection. A
+    # server restart is a fence only if a paused writer cannot reconnect after it.
+    native = store.client.connection
+    previous = native.disable_reconnect
+    native.disable_reconnect = True
+    try:
+        yield
+    finally:
+        native.disable_reconnect = previous
+
+
+def _write(store, run, sql, params, *, capturing=False, private=False):
+    """prepared -> dispatching -> drained, each phase durable before the next.
+
+    The session fence uses the lifecycle lock's key. Drains can retire prepared
+    intents (including a process killed immediately after insertion), and a late
+    worker MUST re-read that retirement before dispatch. Once dispatching commits,
+    neither a client exception nor an empty process list proves no write happened.
+    """
+    if connection.in_atomic_block:
+        raise RuntimeError("snapshot dispatch requires independent committed phases")
     scope = scope_for(run)
     submission = _intent(
         organization_id=scope.organization,
@@ -225,11 +268,15 @@ def _write(store, run, sql, params, *, capturing=False):
         snapshot_key=run.snapshot_id,
         store_payload={
             "protocol": SUBMISSION_PROTOCOL,
+            "phase": "prepared",
+            "transport": "native_no_reconnect",
             "query_id": "metric-snapshot-" + uuid4().hex,
         },
     )
-    rejected = False
-    with serialized_project(scope.project):
+    with project_dispatch_fence(scope.project), _no_reconnect(store):
+        submission.refresh_from_db()
+        if submission.status == "done":
+            raise MetricStateConflict("snapshot submission was fenced")
         try:
             current = _current(run)
             if capturing:
@@ -247,36 +294,72 @@ def _write(store, run, sql, params, *, capturing=False):
                     or not _requester_can_run(current)
                 ):
                     raise MetricStateConflict("expired capture")
-        except MetricStateConflict:
-            rejected = True
-        if not rejected:
-            # Only namespace IDs occur in these queries, never subject lists.
-            # A native ID permits terminality proof after a lost acknowledgement.
-            store.client.execute(
-                sql,
-                params,
-                query_id=submission.store_payload["query_id"],
-                settings={
-                    **QUERY_SETTINGS,
-                    "max_threads": 1,
-                    "enable_analyzer": 0,
-                    "log_queries": 1,
-                },
-            )
+            clock = _server_clock(store)
+        except Exception:
+            _submission_done(submission, "not_submitted")
+            raise
+        submission.store_payload.update(phase="dispatching", server_clock=clock)
         MetricErasureRequest.objects.filter(pk=submission.id).update(
-            status="done",
-            completed_at=timezone.now(),
-            receipts={
-                "not_submitted" if rejected else "synchronous_response": {"drained": 1}
+            store_payload=submission.store_payload
+        )
+        # Private key ranges disable query logging and use restart recovery for
+        # ambiguous IO. Keep the marker even for failures before native submission.
+        store.client.execute(
+            sql,
+            params,
+            query_id=submission.store_payload["query_id"],
+            settings={
+                **QUERY_SETTINGS,
+                "max_threads": 1,
+                "enable_analyzer": 0,
+                "log_queries": 0 if private else 1,
             },
         )
-    # Reject AFTER the no-dispatch receipt commits; rollback would strand an
-    # obligation for a query that can never have a terminal query-log record.
-    if rejected:
-        raise MetricStateConflict("expired capture")
+        _submission_done(submission, "synchronous_response")
+
+
+def arm_submission_recovery(submission_id, *, store):
+    """Re-arm restart observation for a sealed sender with a very short old uptime.
+
+    Operator procedure: arm, restart the selected native server, retry cleanup
+    before its uptime reaches this observation. Arming NEVER asserts completion.
+    Old unsealed senders cannot use this path: they could reconnect after restart.
+    """
+    if connection.in_atomic_block:
+        raise RuntimeError("recovery observation requires an independent commit")
+    job = MetricErasureRequest.objects.get(
+        pk=submission_id, store_payload__protocol=SUBMISSION_PROTOCOL
+    )
+    with project_dispatch_fence(job.project_key):
+        job.refresh_from_db()
+        if job.status == "done":
+            return
+        before = job.store_payload.get("server_clock")
+        if not before or job.store_payload.get("transport") != "native_no_reconnect":
+            raise MetricStateConflict("legacy snapshot sender drainage is not proven")
+        after = _server_clock(store)
+        if after["server"] != before["server"]:
+            raise MetricStateConflict("snapshot native server changed")
+        job.store_payload["server_clock"] = after
+        MetricErasureRequest.objects.filter(pk=job.id).update(
+            store_payload=job.store_payload
+        )
 
 
 def drain_submissions(store, *, organization_id, project_id=None, run_id=None):
+    """Recover prepared work, or require terminal IO/restart proof for ambiguity.
+
+    Operational recovery: if a dispatching query never reached the server (or
+    its query log expired), restart the configured single native server, then
+    retry cleanup. The observed server boot must postdate its pre-dispatch clock.
+    This closes every old socket, and the sealed no-reconnect native transport
+    cannot dispatch on a new socket afterward. Observe recovery before the new
+    uptime exceeds the old uptime (a conservative additional monotonic proof).
+    Use arm_submission_recovery first if that observation window is too short.
+    Empty system.processes alone is NEVER sufficient. Legacy unsealed submissions
+    still require a terminal record: do not manufacture a restart receipt for an
+    old sender that might reconnect. This protocol must precede enabling captures.
+    """
     jobs = MetricErasureRequest.objects.filter(
         organization_key=organization_id, store_payload__protocol=SUBMISSION_PROTOCOL
     ).exclude(status="done")
@@ -285,22 +368,42 @@ def drain_submissions(store, *, organization_id, project_id=None, run_id=None):
     if run_id:
         jobs = jobs.filter(run_key=run_id)
     for job in jobs:
-        query_id = job.store_payload["query_id"]
-        active = store.execute(
-            "SELECT count() FROM system.processes WHERE query_id = %(query_id)s",
-            {"query_id": query_id},
-        )[0][0]
-        terminal = store.execute(
-            "SELECT count() FROM system.query_log WHERE query_id = %(query_id)s AND type IN ('QueryFinish', 'ExceptionBeforeStart', 'ExceptionWhileProcessing')",
-            {"query_id": query_id},
-        )[0][0]
-        if active or not terminal:
+        with serialized_project(job.project_key):
+            job.refresh_from_db()
+            if job.status == "done":
+                continue
+            if job.store_payload.get("phase") == "prepared":
+                _submission_done(job, "not_submitted")
+                continue
+            query_id = job.store_payload["query_id"]
+            active = store.execute(
+                "SELECT count() FROM system.processes WHERE query_id = %(query_id)s",
+                {"query_id": query_id},
+            )[0][0]
+            terminal = store.execute(
+                "SELECT count() FROM system.query_log WHERE query_id = %(query_id)s AND type IN ('QueryFinish', 'ExceptionBeforeStart', 'ExceptionWhileProcessing')",
+                {"query_id": query_id},
+            )[0][0]
+            if not active and terminal:
+                _submission_done(job, "terminal_query")
+                continue
+            before = job.store_payload.get("server_clock")
+            if (
+                not active
+                and before
+                and job.store_payload.get("transport") == "native_no_reconnect"
+            ):
+                after = _server_clock(store)
+                # Two seconds cover integer-clock rounding; false negatives wait
+                # for a later operator restart, never turn absence into proof.
+                if (
+                    after["server"] == before["server"]
+                    and after["uptime"] < before["uptime"]
+                    and after["time"] - after["uptime"] > before["time"] + 2
+                ):
+                    _submission_done(job, "server_restart")
+                    continue
             raise MetricStateConflict("snapshot write drainage is not yet proven")
-        MetricErasureRequest.objects.filter(pk=job.id).update(
-            status="done",
-            completed_at=timezone.now(),
-            receipts={"terminal_query": {"drained": 1}},
-        )
 
 
 def delete_rows(store, table, predicate, params):
@@ -373,6 +476,9 @@ def capture_select(run, manifest, start, end):
 
 
 def _assert_retained(store, run, manifest, policy):
+    from tracer.services.derived_metrics.reads import require_calculated_window
+
+    require_calculated_window(run.definition, {"window_start": run.window_start})
     if not run.pin or not run.pin.is_usable():
         raise MetricStateConflict("expired capture")
     cutoff = retention_cutoff(policy(run.definition.metric.organization_id))
@@ -402,11 +508,76 @@ def _assert_retained(store, run, manifest, policy):
         raise MetricStateConflict("expired capture")
 
 
+ROLLUP_PAGE_ROWS = 4096
+
+
+def _rollup_ranges(store, run, rollup, *, unit_range=False):
+    """Keyset pages without an unbounded DISTINCT/GROUP BY to discover keys.
+
+    LIMIT applies to sorted input rows before min/max. The closed key range then
+    includes ALL contributors for its last key, even when duplicates cross the
+    page boundary. Thus a group is never split or estimated from subgroup scalars.
+    Each aggregation has at most 4096 distinct output groups. Sorts may spill;
+    native memory/read/group-by safety limits remain unchanged.
+    """
+    if rollup == "overall":
+        yield None
+        return
+    group, keep = rollup_group_sql(rollup)
+    # Conversation sessions normally equal unit_id. A window-wide equality
+    # check authorizes the sparse-key pushdown, avoiding O(pages * rows) scans.
+    ordered = "unit_id" if unit_range else group
+    params = {**scope_for(run).parameters(), "snapshot_id": str(run.snapshot_id)}
+    after = None
+    while True:
+        predicate = "1" if after is None else f"{ordered} > %(after)s"
+        rows, first, last = store.client.execute(
+            f"SELECT count(), min(k), max(k) FROM (SELECT {group} AS k "
+            f"FROM derived_metric_inputs WHERE {SCOPE_SQL} AND snapshot_id = %(snapshot_id)s "
+            f"AND {keep} AND {predicate} ORDER BY {ordered} LIMIT {ROLLUP_PAGE_ROWS})",
+            {**params, "after": after},
+            settings={
+                **QUERY_SETTINGS,
+                "max_bytes_before_external_sort": 67108864,
+                "log_queries": 0,
+            },
+        )[0]
+        if not rows:
+            return
+        yield (first, last)
+        after = last
+
+
 def commit_results(store, run, *, capturing=False):
     result_id = uuid4()
+    mixed_scope, unaligned_sessions = store.client.execute(
+        f"SELECT minIf(sampling_scope, notEmpty(sampling_scope)) != "
+        f"maxIf(sampling_scope, notEmpty(sampling_scope)), "
+        f"countIf(session_id != unit_id) FROM derived_metric_inputs "
+        f"WHERE {SCOPE_SQL} AND snapshot_id = %(snapshot_id)s",
+        {**scope_for(run).parameters(), "snapshot_id": str(run.snapshot_id)},
+        settings=QUERY_SETTINGS,
+    )[0]
     for rollup in ROLLUPS:
-        sql, params = rollup_insert(run.definition, run, result_id, rollup)
-        _write(store, run, sql, params, capturing=capturing)
+        unit_range = rollup == "session" and not unaligned_sessions
+        for group_range in _rollup_ranges(store, run, rollup, unit_range=unit_range):
+            sql, params = rollup_insert(
+                run.definition,
+                run,
+                result_id,
+                rollup,
+                group_range=group_range,
+                mixed_scope=bool(mixed_scope),
+                unit_range=unit_range,
+            )
+            _write(
+                store,
+                run,
+                sql,
+                params,
+                capturing=capturing,
+                private=group_range is not None,
+            )
     params = {
         **scope_for(run).parameters(),
         "metric_id": str(run.definition.metric_id),
@@ -464,6 +635,7 @@ def execute_snapshot(run_id, *, store=None, policy=None):
     with nullcontext(store) if store else snapshot_store() as connection:
         try:
             from tracer.services.derived_metrics.service import (
+                MetricUnavailableError,
                 _authorized_metric,
                 _requester_can_run,
             )
@@ -509,9 +681,14 @@ def execute_snapshot(run_id, *, store=None, policy=None):
                 pk=run.id, attempt_id=run.attempt_id
             ).update(
                 status="failed",
-                error="expired"
-                if isinstance(exc, MetricStateConflict)
-                else "capture_failed",
+                error=(
+                    "expired"
+                    if isinstance(exc, MetricStateConflict)
+                    else "window_not_calculated"
+                    if isinstance(exc, MetricUnavailableError)
+                    and exc.code == "window_not_calculated"
+                    else "capture_failed"
+                ),
             )
             # Even partial writes belong to a durable parent-independent cleanup.
             _intent(
