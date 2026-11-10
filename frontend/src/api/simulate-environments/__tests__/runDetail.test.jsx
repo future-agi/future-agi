@@ -368,6 +368,25 @@ describe("mapCallDetail", () => {
     expect(d.stats.words).toBe(11);
   });
 
+  it("reads a chat row whose message is the scenario's own task as the task, not the customer", () => {
+    const d = mapCallDetail({
+      id: "chat-task",
+      simulation_call_type: "text",
+      persona: null,
+      transcript: [
+        {
+          role: "user",
+          content: [{ role: "task", content: "Nightly reconciliation: post deal 9." }],
+        },
+        { role: "assistant", content: [{ role: "assistant", content: "Posted." }] },
+        // An older row with the person's own message reads as before.
+        { role: "user", content: [{ role: "user", content: "Thanks" }] },
+      ],
+    });
+    expect(d.turns.map((t) => t.role)).toEqual(["task", "agent", "customer"]);
+    expect(d.persona).toBeNull();
+  });
+
   it("maps a real voice call-detail payload to the CallDetail view-model", () => {
     const d = mapCallDetail(callDetailPayload());
     expect(d.id).toBe("call-1");
