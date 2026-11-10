@@ -549,6 +549,14 @@ class CustomTokenRefreshView(APIView):
                 logger.error(f"Token decryption failed: {str(e)}")
                 return self._gm.bad_request("Invalid token.")
 
+            if (
+                not isinstance(user_id, str)
+                or not user_id
+                or not isinstance(token_id, str)
+                or not token_id
+            ):
+                return self._gm.bad_request("Invalid token.")
+
             if not AuthToken.objects.filter(
                 id=token_id, auth_type=AuthTokenType.REFRESH.value, is_active=True
             ).exists():
