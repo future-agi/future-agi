@@ -3097,7 +3097,7 @@ def queue_export_items_queryset(queue, status_filter=None):
     if normalized_status:
         items_qs = items_qs.filter(status=normalized_status)
 
-    return items_qs.order_by("order", "created_at")
+    return items_qs.order_by("order", "created_at", "pk")
 
 
 def build_queue_export_rows(queue, items_list):

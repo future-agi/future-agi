@@ -10,7 +10,11 @@ def resolve_export_job_state(job: AnnotationExportJob) -> tuple[str, str | None]
     if job.status not in (
         AnnotationExportJobStatus.PENDING.value,
         AnnotationExportJobStatus.RUNNING.value,
-    ) or not job.workflow_id:
+    ):
+        return job.status, job.error
+    if job.queue_id is None:
+        return AnnotationExportJobStatus.FAILED.value, "The annotation queue was deleted before export completed."
+    if not job.workflow_id:
         return job.status, job.error
 
     workflow = get_workflow_status_sync(job.workflow_id, timeout_seconds=2)

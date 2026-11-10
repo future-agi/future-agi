@@ -994,21 +994,27 @@ class AnnotationExportJob(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     queue = models.ForeignKey(
         AnnotationQueue,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="export_jobs",
+        null=True,
+        blank=True,
     )
     organization = models.ForeignKey(
         Organization,
-        on_delete=models.CASCADE,
-        related_name="annotation_export_jobs",
-    )
-    workspace = models.ForeignKey(
-        Workspace,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="annotation_export_jobs",
         null=True,
         blank=True,
     )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.SET_NULL,
+        related_name="annotation_export_jobs",
+        null=True,
+        blank=True,
+    )
+    # Kept after parent deletion so retention can still remove the artifact.
+    storage_key = models.CharField(max_length=255, default="")
     created_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,

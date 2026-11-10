@@ -19571,10 +19571,10 @@
                             "$ref": "#/definitions/QueueExportAnnotationsResponse"
                         }
                     },
-                    "413": {
+                    "202": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiTextErrorResponse"
+                            "$ref": "#/definitions/QueueExportScheduledResponse"
                         }
                     },
                     "400": {
@@ -84705,6 +84705,76 @@
                 ]
             },
             "parameters": []
+        },
+        "/model-hub/annotation-queues/{id}/export-jobs/{job_id}/": {
+            "get": {
+                "operationId": "model-hub_annotation-queues_export_job",
+                "description": "Status of a background export, carrying the link once it is ready.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/QueueExportJobResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "model-hub"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "description": "A UUID string identifying this annotation queue.",
+                    "required": true,
+                    "type": "string",
+                    "format": "uuid"
+                },
+                {
+                    "name": "job_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
         }
     },
     "definitions": {
@@ -181510,6 +181580,137 @@
                         "oss",
                         "enterprise"
                     ]
+                }
+            }
+        },
+        "QueueExportScheduledResponse": {
+            "required": [
+                "status",
+                "job_id",
+                "workflow_id",
+                "export_format",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "workflow_id": {
+                    "title": "Workflow id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "export_format": {
+                    "title": "Export format",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "QueueExportJobResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/QueueExportJobResult"
+                }
+            }
+        },
+        "QueueExportJobResult": {
+            "required": [
+                "job_id",
+                "queue_id",
+                "status",
+                "export_format",
+                "item_count",
+                "file_url",
+                "file_name",
+                "error",
+                "created_at",
+                "started_at",
+                "finished_at"
+            ],
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "queue_id": {
+                    "title": "Queue id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "export_format": {
+                    "title": "Export format",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "item_count": {
+                    "title": "Item count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "file_url": {
+                    "title": "File url",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "file_name": {
+                    "title": "File name",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
                 }
             }
         }

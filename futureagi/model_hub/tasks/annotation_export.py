@@ -12,6 +12,8 @@ import tempfile
 from datetime import timedelta
 
 import structlog
+from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.utils.encoders import JSONEncoder
 
@@ -47,15 +49,23 @@ def _is_csv(job):
 
 
 def _iter_item_chunks(items_qs, chunk_size):
-    """Yield lists of items without materializing the whole queue."""
-    chunk = []
-    for item in items_qs.iterator(chunk_size=chunk_size):
-        chunk.append(item)
-        if len(chunk) >= chunk_size:
-            yield chunk
-            chunk = []
-    if chunk:
+    """Bound SQL reads even when PgBouncer disables server-side cursors."""
+    after = None
+    while True:
+        page = items_qs.order_by("order", "created_at", "pk")
+        if after is not None:
+            page = page.filter(
+                Q(order__gt=after[0])
+                | Q(order=after[0], created_at__gt=after[1])
+                | Q(order=after[0], created_at=after[1], pk__gt=after[2])
+            )
+        chunk = list(page[:chunk_size])
+        if not chunk:
+            return
+        after = (chunk[-1].order, chunk[-1].created_at, chunk[-1].pk)
         yield chunk
+        if len(chunk) < chunk_size:
+            return
 
 
 def render_export(job):
@@ -129,7 +139,7 @@ def _store_export_file(job, fileobj, size):
 
     extension = "csv" if _is_csv(job) else "json"
     content_type = "text/csv" if _is_csv(job) else "application/json"
-    object_key = f"annotation-exports/{job.queue_id}/{job.id}.{extension}"
+    object_key = job.storage_key or f"annotation-exports/{job.queue_id}/{job.id}.{extension}"
     filename = f"queue_{job.queue_id}_annotations.{extension}"
 
     client = get_storage_client()
@@ -160,8 +170,10 @@ def _delete_export_object(job):
     from tfc.settings.settings import UPLOAD_BUCKET_NAME
     from tfc.utils.storage_client import get_storage_client
 
+    if not job.storage_key and job.queue_id is None:
+        return
     extension = "csv" if _is_csv(job) else "json"
-    object_key = f"annotation-exports/{job.queue_id}/{job.id}.{extension}"
+    object_key = job.storage_key or f"annotation-exports/{job.queue_id}/{job.id}.{extension}"
 
     client = get_storage_client()
     client.remove_object(UPLOAD_BUCKET_NAME, object_key)
@@ -196,60 +208,62 @@ def export_annotation_queue_async(job_id):
     is over the sync cap, so the HTTP request can return 202 immediately while
     the resolution of every item runs here.
     """
-    job = AnnotationExportJob.objects.select_related("queue", "organization").get(
-        pk=job_id
-    )
-
-    job.status = AnnotationExportJobStatus.RUNNING.value
-    job.started_at = timezone.now()
-    job.save(update_fields=["status", "started_at", "updated_at"])
+    with transaction.atomic():
+        job = AnnotationExportJob.no_workspace_objects.select_for_update().get(pk=job_id)
+        if job.status == AnnotationExportJobStatus.SUCCEEDED.value:
+            return _export_job_result(job)
+        job.status = AnnotationExportJobStatus.RUNNING.value
+        job.started_at = timezone.now()
+        job.error = None
+        job.finished_at = None
+        if not job.storage_key and job.queue_id:
+            extension = "csv" if _is_csv(job) else "json"
+            job.storage_key = f"annotation-exports/{job.queue_id}/{job.id}.{extension}"
+        job.save(update_fields=["status", "started_at", "error", "finished_at", "storage_key", "updated_at"])
+    attempt_started = job.started_at
 
     fileobj = None
     try:
+        if job.queue_id is None:
+            raise ValueError("The annotation queue was deleted before export completed.")
         fileobj, item_count, size = render_export(job)
-        file_url, file_name = _store_export_file(job, fileobj, size)
+        # Fence old attempts before touching the shared object. The row lock also
+        # serializes upload + success with redelivery and parent SET_NULL deletion.
+        with transaction.atomic():
+            job = AnnotationExportJob.no_workspace_objects.select_for_update().get(pk=job_id)
+            if job.status == AnnotationExportJobStatus.SUCCEEDED.value:
+                return _export_job_result(job)
+            if job.started_at != attempt_started or job.status != AnnotationExportJobStatus.RUNNING.value:
+                return _export_job_result(job)
+            if job.queue_id is None:
+                raise ValueError("The annotation queue was deleted before export completed.")
+            file_url, file_name = _store_export_file(job, fileobj, size)
+            job.status = AnnotationExportJobStatus.SUCCEEDED.value
+            job.item_count = item_count
+            job.file_url = file_url
+            job.file_name = file_name
+            job.finished_at = timezone.now()
+            job.save(update_fields=["status", "item_count", "file_url", "file_name", "finished_at", "updated_at"])
     except Exception as exc:
         logger.exception("annotation_export_failed", job_id=str(job_id), error=str(exc))
         if _temporal_will_retry():
-            # Another attempt is coming. Marking the job failed here would make
-            # the polling client give up on an export that is still going to
-            # finish, so the row stays running and only the log records this
-            # attempt.
             raise
-        # Last attempt: record the real reason so the client shows it instead
-        # of a generic download failure.
-        job.status = AnnotationExportJobStatus.FAILED.value
-        job.error = str(exc)
-        job.finished_at = timezone.now()
-        job.save(update_fields=["status", "error", "finished_at", "updated_at"])
+        AnnotationExportJob.no_workspace_objects.filter(
+            pk=job_id, status=AnnotationExportJobStatus.RUNNING.value,
+            started_at=attempt_started,
+        ).update(status=AnnotationExportJobStatus.FAILED.value, error=str(exc),
+                 finished_at=timezone.now(), updated_at=timezone.now())
         raise
     finally:
         if fileobj is not None:
             fileobj.close()
 
-    job.status = AnnotationExportJobStatus.SUCCEEDED.value
-    job.item_count = item_count
-    job.file_url = file_url
-    job.file_name = file_name
-    job.finished_at = timezone.now()
-    job.save(
-        update_fields=[
-            "status",
-            "item_count",
-            "file_url",
-            "file_name",
-            "finished_at",
-            "updated_at",
-        ]
-    )
+    logger.info("annotation_export_succeeded", job_id=str(job_id), item_count=job.item_count)
+    return _export_job_result(job)
 
-    logger.info(
-        "annotation_export_succeeded",
-        job_id=str(job_id),
-        queue_id=str(job.queue_id),
-        item_count=item_count,
-    )
-    return {"job_id": str(job.id), "item_count": item_count, "file_url": file_url}
+
+def _export_job_result(job):
+    return {"job_id": str(job.id), "item_count": job.item_count, "file_url": job.file_url}
 
 
 @temporal_activity(time_limit=600, queue="default")
@@ -269,7 +283,7 @@ def cleanup_expired_export_jobs():
 
     # Worker crashes/timeouts cannot execute the activity's exception handler.
     # Persist confirmed terminal states so their files also enter retention.
-    active = AnnotationExportJob.objects.filter(
+    active = AnnotationExportJob.no_workspace_objects.filter(
         status__in=[
             AnnotationExportJobStatus.PENDING.value,
             AnnotationExportJobStatus.RUNNING.value,
@@ -278,12 +292,12 @@ def cleanup_expired_export_jobs():
     for job in active.iterator(chunk_size=200):
         job_status, job_error = resolve_export_job_state(job)
         if job_status == AnnotationExportJobStatus.FAILED.value:
-            AnnotationExportJob.objects.filter(
+            AnnotationExportJob.no_workspace_objects.filter(
                 pk=job.pk, status=job.status
             ).update(status=job_status, error=job_error, finished_at=timezone.now())
 
     cutoff = timezone.now() - timedelta(days=EXPORT_RETENTION_DAYS)
-    stale = AnnotationExportJob.objects.filter(
+    stale = AnnotationExportJob.no_workspace_objects.filter(
         deleted=False,
         status__in=[
             AnnotationExportJobStatus.SUCCEEDED.value,

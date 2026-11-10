@@ -7306,6 +7306,18 @@ export interface QueueExportAnnotationsResponseApi {
   result: QueueExportAnnotationsResponseApiResultItem[];
 }
 
+export interface QueueExportScheduledResponseApi {
+  /** @minLength 1 */
+  status: string;
+  job_id: string;
+  /** @minLength 1 */
+  workflow_id: string;
+  /** @minLength 1 */
+  export_format: string;
+  /** @minLength 1 */
+  message: string;
+}
+
 export interface QueueHardDeleteRequestApi {
   force: boolean;
   /** @minLength 1 */
@@ -36486,6 +36498,30 @@ export interface ActivationResponseApi {
   allowed_services: string[];
   allowed_models: string[];
   scope: ActivationResponseApiScope;
+}
+
+export interface QueueExportJobResultApi {
+  job_id: string;
+  queue_id: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  export_format: string;
+  item_count: number;
+  /** @minLength 1 */
+  file_url: string;
+  /** @minLength 1 */
+  file_name: string;
+  /** @minLength 1 */
+  error: string;
+  created_at: string;
+  started_at: string;
+  finished_at: string;
+}
+
+export interface QueueExportJobResponseApi {
+  status?: boolean;
+  result: QueueExportJobResultApi;
 }
 
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {

@@ -359,8 +359,9 @@ def test_items_without_annotations_still_get_a_csv_line(organization, workspace,
     job = _make_job(seed["queue"], organization, workspace, user, "csv")
 
     text, item_count, _size = _render_text(job)
-    rows = list(csv.reader(io.StringIO(text)))[1:]
+    header, *rows = list(csv.reader(io.StringIO(text)))
 
+    assert header[-2:] == ["source_id", "source"]
     assert item_count == 3
     assert len(rows) == 3
     expected = {str(i.id) for i in QueueItem.objects.filter(queue=seed["queue"])}

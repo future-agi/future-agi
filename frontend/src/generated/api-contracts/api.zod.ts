@@ -80897,3 +80897,35 @@ export const V1SelfHostedActivationsCreateResponse = zod.object({
   allowed_models: zod.array(zod.string().min(1)),
   scope: zod.enum(["oss", "enterprise"]),
 });
+
+/**
+ * Status of a background export, carrying the link once it is ready.
+ */
+export const ModelHubAnnotationQueuesExportJobParams = zod.object({
+  id: zod
+    .string()
+    .uuid()
+    .describe("A UUID string identifying this annotation queue."),
+  job_id: zod.string(),
+});
+
+export const modelHubAnnotationQueuesExportJobResponseStatusDefault = true;
+
+export const ModelHubAnnotationQueuesExportJobResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(modelHubAnnotationQueuesExportJobResponseStatusDefault),
+  result: zod.object({
+    job_id: zod.string().uuid(),
+    queue_id: zod.string().uuid(),
+    status: zod.string().min(1),
+    export_format: zod.string().min(1),
+    item_count: zod.number(),
+    file_url: zod.string().min(1),
+    file_name: zod.string().min(1),
+    error: zod.string().min(1),
+    created_at: zod.string().datetime({ offset: true }),
+    started_at: zod.string().datetime({ offset: true }),
+    finished_at: zod.string().datetime({ offset: true }),
+  }),
+});

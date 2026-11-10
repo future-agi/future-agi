@@ -8,6 +8,8 @@ instead of materializing and resolving the whole queue synchronously.
 
 from __future__ import annotations
 
+import csv
+import io
 import uuid
 from datetime import UTC, datetime
 from unittest import mock
@@ -177,8 +179,10 @@ def test_export_csv_batches_dataset_cells(auth_client, organization, workspace, 
     assert resp["Content-Type"] == "text/csv"
     assert len(_cell_queries(cap)) == 1
     body = resp.content.decode()
-    # One header row + one line per item (no labels scored -> one row each).
-    assert body.count("dataset_row") == 3
+    # Source content also names its type; count CSV records, not substrings.
+    rows = list(csv.DictReader(io.StringIO(body)))
+    assert len(rows) == 3
+    assert all(row["source_type"] == "dataset_row" for row in rows)
 
 
 @pytest.mark.django_db

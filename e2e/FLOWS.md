@@ -186,6 +186,27 @@
 - public soft deletion excludes retained predicates without changing source spans
 - sibling project, owner B organization and owner A explicit other workspace cannot read target Scores/catalog/results
 
+### ANNOT-E2E-006 — large queues download all annotations and source content
+
+**Goal:** Download every annotation and its source content from a queue larger than 1000 items
+
+**Spec:** `flows/annotations/queue-export.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a 1001-item queue and a one-item queue through public APIs
+2. download CSV and JSON from the large queue Analytics tab
+3. download JSON from the queue header Export menu
+4. download CSV and JSON from the small queue without a background job
+
+**Backend state verified:**
+
+- large exports return 202 and their scoped jobs complete with all 1001 items
+- downloaded CSV and JSON contain the exact seeded item identities, source values and annotation
+- small queue exports return 200 inline and contain only the selected item
+
 ## auth
 
 ### AUTH-E2E-001 — user signs in with email and password
