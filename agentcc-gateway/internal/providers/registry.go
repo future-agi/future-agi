@@ -403,6 +403,12 @@ func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
+	if cfg.APIKey != "" {
+		// Discovery credentials belong to this endpoint, not a redirect target.
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
 	baseURL := strings.TrimRight(cfg.BaseURL, "/")
 	// Built the same way the provider builds its own URLs, or a provider that
 	// serves no /v1 would be probed at a path it does not have.
