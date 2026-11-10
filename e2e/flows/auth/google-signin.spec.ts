@@ -20,7 +20,7 @@ test('AUTH-E2E-005: Google sign-in accepts only verified identities including ro
     id: 'AUTH-E2E-005', area: 'auth',
     userGoal: 'An existing user signs in with Google only when Google supplies a valid identity, including after signing-key rotation',
     steps: ['provision one uniquely named synthetic account', 'click Continue with Google on the real login page',
-      'authorize the identity at the owned mock provider', 'see organization setup for a valid identity',
+      'authorize the identity at the owned mock provider', 'see the authenticated dataset dashboard for a valid identity',
       'see login refusal for invalid signature, issuer, audience, expiry and unknown key',
       'sign in successfully after the provider rotates its signing key'],
     backendChecks: [
@@ -72,8 +72,9 @@ test('AUTH-E2E-005: Google sign-in accepts only verified identities including ro
             expect(query.get('is_new_user')).toBe('false');
             const identity = await (await userInfo!).json();
             expect(identity.organization.id).toBe(actor.organizationId);
-            await expect(page).toHaveURL(/\/auth\/jwt\/setup-org/, { timeout: UI_READY });
-            await expect(page.getByLabel(/Organization Name/i)).toBeVisible({ timeout: UI_READY });
+            // settings.py default_next_url and the captured authenticated browser.
+            await expect(page).toHaveURL(`${E2E.appUrl}/dashboard/develop`, { timeout: UI_READY });
+            await expect(page.getByRole('heading', { name: 'Datasets', exact: true })).toBeVisible({ timeout: UI_READY });
             expect((await tokens()).length - before.length, 'successful callback AuthToken delta').toBe(1);
           } else {
             expect(query.get('denied')).toBe('true');

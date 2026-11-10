@@ -277,6 +277,29 @@
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
 
+### AUTH-E2E-005 — Google sign-in accepts only verified identities including rotated keys
+
+**Goal:** An existing user signs in with Google only when Google supplies a valid identity, including after signing-key rotation
+
+**Spec:** `flows/auth/google-signin.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision one uniquely named synthetic account
+2. click Continue with Google on the real login page
+3. authorize the identity at the owned mock provider
+4. see the authenticated dataset dashboard for a valid identity
+5. see login refusal for invalid signature, issuer, audience, expiry and unknown key
+6. sign in successfully after the provider rotates its signing key
+
+**Backend state verified:**
+
+- Successful Google callbacks persist exactly one new active AuthToken for the minted user and its existing organization.
+- Rejected Google callbacks persist no new AuthToken or user and expose no application bearer in the callback redirect.
+- The owned provider witnesses token exchange and JWKS verification; an unknown cached kid refreshes once, then succeeds only when the key is published.
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session
