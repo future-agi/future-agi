@@ -25,6 +25,7 @@ export const ACTORS_COPY = {
     },
     none: "none",
     badNumber: "A number above 0, or none",
+    badWholeNumber: "A whole number above 0, or none",
     model: "Model actors are played on",
     modelHelp: "Each actor can also have its own",
     callerModel: "The caller's model",
