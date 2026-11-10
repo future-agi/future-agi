@@ -8,6 +8,10 @@ import PropTypes from "prop-types";
 import { useAgThemeWithoutGridWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { ROW_HEIGHT } from "src/theme/sizes";
+import { DynamicColumnOriginTypes } from "../common";
+
+const isDynamicColumn = (item) =>
+  DynamicColumnOriginTypes.includes(item?.origin_type);
 
 const RunEvals = ({ gridRef, setIsData }) => {
   const [mainData, setMainData] = useState(null);
@@ -39,7 +43,7 @@ const RunEvals = ({ gridRef, setIsData }) => {
     },
     onSuccess: (data) => {
       const runPromptData = data?.result?.column_config?.filter(
-        (item) => item?.origin_type === "run_prompt",
+        (item) => item?.origin_type === "run_prompt" || isDynamicColumn(item),
       );
       setMainData(runPromptData);
     },
@@ -69,7 +73,9 @@ const RunEvals = ({ gridRef, setIsData }) => {
         content: item?.name || item?.eval_template_name,
         field: item?.origin_type === "run_prompt" ? item.source_id : item.id,
         originType:
-          item?.origin_type === "run_prompt" ? item.origin_type : "eval",
+          item?.origin_type === "run_prompt" || isDynamicColumn(item)
+            ? item.origin_type
+            : "eval",
       }));
     }
     return [];

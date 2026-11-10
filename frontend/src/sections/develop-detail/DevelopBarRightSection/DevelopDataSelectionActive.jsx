@@ -8,6 +8,10 @@ import CustomDialog from "../Common/CustomDialog/CustomDialog";
 import DataMenuList from "../DataTab/DataMenuList/DataMenuList";
 import DuplicateRowAction from "../DataTab/Duplicate/DuplicateRowAction";
 import RunEvals from "../DataTab/RunEvals/RunEvals";
+import {
+  DynamicColumnOperationTypes,
+  DynamicColumnOriginTypes,
+} from "../DataTab/common";
 import DeleteRowAction from "../DataTab/Delete/DeleteRowAction";
 import "./developData.css";
 import { useParams } from "react-router";
@@ -152,6 +156,10 @@ const DevelopDataSelectionActive = () => {
       const runPromptIds = selectedEvalIds
         .filter((item) => item?.originType == "run_prompt")
         .map((row) => row.field);
+      const dynamicColumns = selectedEvalIds.filter(
+        (item) =>
+          item?.field && DynamicColumnOriginTypes.includes(item?.originType),
+      );
 
       const requests = [];
       if (evalIds.length) {
@@ -172,6 +180,17 @@ const DevelopDataSelectionActive = () => {
           }),
         );
       }
+      // rerun-operation takes no row_ids: it recomputes the whole column.
+      dynamicColumns.forEach((column) => {
+        requests.push(
+          axios.post(
+            endpoints.develop.addColumns.updateDynamicColumn(column.field),
+            {
+              operation_type: DynamicColumnOperationTypes[column.originType],
+            },
+          ),
+        );
+      });
       trackEvent(Events.rowEvaluationsRunSuccessful, {
         [PropertyName.rowEval]: {
           user_eval_metric_ids: evalIds,
