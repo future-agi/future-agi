@@ -90,6 +90,11 @@ class MetricReadStore(ClickHousePublicationStore):
             params or {},
             settings={
                 **QUERY_SETTINGS,
+                # Match frozen sketch finalization: parallel TDigest partial
+                # merges can change the value even with identically ordered cells.
+                "max_threads": 1
+                if "read_percentile" in (params or {})
+                else QUERY_SETTINGS["max_threads"],
                 "max_result_rows": 4590,
                 "max_result_bytes": 16 * 1024 * 1024,
                 "use_query_cache": 0,
@@ -258,6 +263,14 @@ def _aggregate_select(sql, definition, params, *, grouped=False, per_period=Fals
             packed_uncertainty=True,
         )
     # Sketches are only meaningful for census inputs; never infer an IPW sketch.
+    # Merge in physical bucket-key order AFTER the window guard. TDigest merges
+    # are order-sensitive: live reads and frozen copies must use the same order,
+    # independent of checkpoint/delta layout or snapshot insert slicing.
+    # CH 25.8 otherwise lets a winner-selection ORDER BY ... LIMIT 1 BY
+    # override this downstream sort. A full-range LIMIT is an optimizer barrier,
+    # not a row cap: the native 20M-row read budget is unchanged and far smaller.
+    # Keep streaming states; collecting/sorting all digests in an array would
+    # add a window-sized memory working set just to enforce merge order.
     params["read_percentile"] = recipe.source.field_spec.get("percentile", 0.95)
     aggregate = (
         "uniqCombined64Merge(uniq_state)"
@@ -282,7 +295,9 @@ def _aggregate_select(sql, definition, params, *, grouped=False, per_period=Fals
                 sampled_count > 0, 'sampled_inputs_not_supported', valid_count = 0, 'missing_inputs',
                 NOT isFinite(raw_value), 'non_finite', 'ok') AS status
             FROM (SELECT *, minIf(scope_min, nonempty_scope_count > 0) OVER ({scope_partition}) !=
-                maxIf(scope_max, nonempty_scope_count > 0) OVER ({scope_partition}) AS mixed_scope FROM ({sql})) AS src
+                maxIf(scope_max, nonempty_scope_count > 0) OVER ({scope_partition}) AS mixed_scope FROM ({sql}) AS ordered_parts
+                ORDER BY ordered_parts.bucket_start, ordered_parts.group_key, ordered_parts.scope_key, ordered_parts.stratum_key
+                LIMIT 18446744073709551615) AS src
             {group_clause})"""
 
 

@@ -623,8 +623,7 @@ def rollup_insert(
         from tracer.services.derived_metrics.unit_reads import field_recipe
 
         formula = field_recipe(definition).formula
-        if formula is None:
-            raise ValueError("Snapshot requires a numeric formula.")
+        # Sketch snapshots use the same committed-state finalizer as KPI reads.
     else:
         formula = compile_formula(
             definition.formula, [item["alias"] for item in definition.inputs]
@@ -645,7 +644,7 @@ def rollup_insert(
     source = f"SELECT {columns} FROM derived_metric_inputs WHERE {SCOPE_SQL} AND snapshot_id = %(snapshot_id)s AND ({predicate}) ORDER BY unit_id"
     params = {
         **scope.parameters(),
-        **formula.parameters,
+        **(formula.parameters if formula else {}),
         "snapshot_id": str(run.snapshot_id),
         "result_id": str(result_id),
         "metric_id": str(metric.id),
@@ -661,7 +660,23 @@ def rollup_insert(
     }
     if group_range is not None:
         params.update(group_min=group_range[0], group_max=group_range[1])
-    if getattr(run, "kind", "run") == "snapshot":
+    if getattr(run, "kind", "run") == "snapshot" and definition.kind in {
+        "unique_count",
+        "percentile",
+    }:
+        from tracer.services.derived_metrics.snapshot_sketches import (
+            aggregate_select as sketch_select,
+        )
+
+        aggregate = sketch_select(
+            run,
+            rollup,
+            params,
+            group_range=group_range,
+            mixed_scope=mixed_scope,
+            unit_range=unit_range,
+        )
+    elif getattr(run, "kind", "run") == "snapshot":
         from tracer.services.derived_metrics.parts import (
             combine_parts_select,
             stratum_parts_select,

@@ -431,7 +431,11 @@ def _compute(run: DerivedMetricRun) -> None:
         )
         params["snapshot_id"] = str(snapshot_id)
         client.execute(
-            f"INSERT INTO derived_metric_inputs SELECT %(org_id)s, %(workspace_id)s, %(project_id)s, %(snapshot_id)s, frozen.* FROM ({query}) frozen",
+            "INSERT INTO derived_metric_inputs "
+            "(org_id, workspace_id, project_id, snapshot_id, unit_id, session_id, user_id, "
+            "cohort, day, input_values, probability, invalid_probability, source_rows, "
+            "sampling_scope, sampling_stratum, sampling_design, population_size) "
+            f"SELECT %(org_id)s, %(workspace_id)s, %(project_id)s, %(snapshot_id)s, frozen.* FROM ({query}) frozen",
             params,
             settings=QUERY_SETTINGS,
         )

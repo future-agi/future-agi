@@ -18,6 +18,7 @@ from tracer.services.derived_metrics.deletion_protocol import (
     capture_pin,
     serialized_project,
 )
+from tracer.services.derived_metrics.sketch_serialization import canonical_sketch_row
 from tracer.services.derived_metrics.storage import (
     BUCKET_CHECKPOINT,
     BUCKET_TOTALS,
@@ -295,7 +296,7 @@ class ClickHousePublicationStore:
             },
         )
         return FrozenRows(
-            tuple(row[0] for row in rows),
+            tuple(canonical_sketch_row(table, row[0]) for row in rows),
             tuple(rows[-1][1:]) if rows and key_columns else None,
             row_limit=row_limit,
         )
@@ -312,7 +313,12 @@ class ClickHousePublicationStore:
             )
 
     def verify(self, table, attempt, batch):
-        """Deduplicate byte-identical retry rows, then hash actual shard bytes."""
+        """Hash complete shard rows, normalizing only unordered sketch hashes.
+
+        Canonical full-state equality retains arbitrary future merge behavior;
+        equal finalized cardinalities alone would not detect different members.
+        Non-sketch payloads and every other byte keep the original exact check.
+        """
         lo = (attempt.fencing_epoch << 32) | batch.row_sequence_first
         hi = (attempt.fencing_epoch << 32) | batch.row_sequence_last
         columns = ", ".join(table.columns)
@@ -331,7 +337,7 @@ class ClickHousePublicationStore:
             },
         )
         actual = FrozenRows(
-            tuple(row[0] for row in rows),
+            tuple(dict.fromkeys(canonical_sketch_row(table, row[0]) for row in rows)),
             row_limit=MAX_COMPACTION_ROWS
             if attempt.purpose == "compaction"
             else MAX_BATCH_ROWS,

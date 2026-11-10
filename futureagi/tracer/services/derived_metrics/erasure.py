@@ -23,6 +23,12 @@ from tracer.services.derived_metrics.deletion_protocol import (
     _intent,
     serialized_project,
 )
+from tracer.services.derived_metrics.snapshot_sketches import (
+    BUCKET_TABLE,
+    UNIT_TABLE,
+    is_sketch,
+    rebuild_buckets,
+)
 from tracer.services.derived_metrics.snapshots import (
     SUBMISSION_PROTOCOL,
     commit_results,
@@ -202,13 +208,24 @@ def _redact(store, request, token):
         # Delete ALL result versions first. SQL workbench can bypass commit pointers.
         for table in ("derived_metric_results", "derived_metric_commits"):
             delete_rows(store, table, base + " AND run_id = toUUID(%(run)s)", params)
-        predicate = _subject_predicate(request.store_payload["subject_kind"])
+        # Opaque sketches cannot be subtracted. Remove every old state before
+        # deleting typed identities, including retries after partial rebuilds.
         delete_rows(
             store,
-            "derived_metric_inputs",
-            base + " AND snapshot_id = toUUID(%(snapshot)s) AND " + predicate,
+            BUCKET_TABLE,
+            base + " AND snapshot_id = toUUID(%(snapshot)s)",
             params,
         )
+        predicate = _subject_predicate(request.store_payload["subject_kind"])
+        for table in (UNIT_TABLE, "derived_metric_inputs"):
+            delete_rows(
+                store,
+                table,
+                base + " AND snapshot_id = toUUID(%(snapshot)s) AND " + predicate,
+                params,
+            )
+    if is_sketch(run.definition):
+        rebuild_buckets(store, run)
     commit_results(store, run)
     # No per-run receipt is inferred from result values. Parent hard deletion can
     # race this phase; in that case the separately retained run intent owns purge.
@@ -395,6 +412,8 @@ def _purge_snapshots(store, request):
             "derived_metric_results",
             "derived_metric_commits",
             "derived_metric_inputs",
+            BUCKET_TABLE,
+            UNIT_TABLE,
         ):
             delete_rows(store, table, predicate, params)
 

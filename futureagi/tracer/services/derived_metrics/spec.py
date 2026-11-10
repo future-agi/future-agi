@@ -74,11 +74,6 @@ def snapshot_support(definition):
         return False, f"Snapshots are not available for {definition.level} metrics."
     if definition.level == "trace" and not trace_enabled():
         return False, "Trace metrics are not enabled."
-    if definition.kind in {"unique_count", "percentile"}:
-        return (
-            False,
-            "Snapshots of distinct counts and percentiles are not available in the numeric snapshot store.",
-        )
     return True, ""
 
 

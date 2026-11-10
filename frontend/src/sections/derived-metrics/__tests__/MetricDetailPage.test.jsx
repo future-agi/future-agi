@@ -226,6 +226,29 @@ it("saves the selected window once and shows queued snapshot history", async () 
   expect(screen.getByText("Queued")).toBeVisible();
 });
 
+it.each(["unique_count", "percentile"])(
+  "enables Save snapshot for supported conversation %s metrics",
+  async (kind) => {
+    responses.detail.definition.kind = kind;
+    responses.detail.snapshot_supported = true;
+    responses.detail.snapshot_unsupported_reason = "";
+    mount();
+    await screen.findByTestId("metric-hero");
+    const save = screen.getByRole("button", { name: "Save snapshot" });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    const dialog = screen.getByRole("dialog", { name: "Save snapshot" });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Save snapshot" }),
+    );
+    await waitFor(() => expect(mock.post).toHaveBeenCalledTimes(1));
+    expect(mock.post.mock.calls[0][0]).toBe("/metrics/metric-a/snapshots");
+    expect(mock.post.mock.calls[0][1]).toMatchObject(
+      calls("kpi")[0][1].params,
+    );
+  },
+);
+
 it("confirms permanent deletion and shows cleanup pending, not deleted", async () => {
   const snapshot = {
     id: "snapshot-a",

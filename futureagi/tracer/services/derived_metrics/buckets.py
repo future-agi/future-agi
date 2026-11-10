@@ -74,6 +74,9 @@ def live_parts_select(definition, field_sql):
         rollup="cohort",
         bucket_column="bucket_start",
         sketch_value=recipe.value_column,
+        sketch_kind=recipe.kind
+        if recipe.kind in {"unique_count", "percentile"}
+        else None,
     )
     columns = [*KEYS]
     columns += [
