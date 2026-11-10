@@ -472,11 +472,35 @@ def test_google_marketplace_callback_preserves_organization(
         )
 
 
+@pytest.fixture
+def preserve_root_logging():
+    # The shared capture helper restores named loggers. These DEBUG cases also
+    # restore pytest's root handlers, so later tests and shutdown never write to
+    # a production handler whose captured output stream has already closed.
+    root = logging.getLogger()
+    level, handlers = root.level, list(root.handlers)
+    try:
+        yield
+    finally:
+        for handler in root.handlers:
+            if handler not in handlers:
+                handler.close()
+        root.handlers[:] = handlers
+        root.setLevel(level)
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("provider", ["google", "github", "microsoft"])
 @pytest.mark.parametrize("valid", [True, False])
 def test_production_callback_logging_redacts_query_and_signed_claims(
-    identity_server, google_user, settings, monkeypatch, tmp_path, provider, valid
+    identity_server,
+    google_user,
+    settings,
+    monkeypatch,
+    tmp_path,
+    provider,
+    valid,
+    preserve_root_logging,
 ):
     from saml2_auth.tests.log_capture import capture_security_logging
     from tfc.settings import settings as production
