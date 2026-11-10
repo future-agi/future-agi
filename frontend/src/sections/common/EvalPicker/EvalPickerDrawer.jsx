@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
+import SelectionBar from "src/components/selection-bar";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import EvalPickerProvider from "./context/EvalPickerProvider";
@@ -46,6 +47,11 @@ const EvalPickerContent = ({
     isEditMode,
     keepOpenAfterSave,
     keepOpenAfterEditSave,
+    ownsSelection,
+    selectedEvals,
+    setSelectedEvals,
+    batch,
+    setBatch,
   } = useEvalPickerContext();
 
   const queryClient = useQueryClient();
@@ -120,16 +126,75 @@ const EvalPickerContent = ({
     ],
   );
 
+  // "Add selected" on the multi-select bar adds every ticked eval in one
+  // pass. With skipConfig, the picks that need no model are added at once
+  // and the rest get the config screen; otherwise each pick gets its config
+  // screen in turn. Either way the picker isn't reopened between evals.
+  const handleAddSelected = useCallback(async () => {
+    const picks = selectedEvals;
+    if (!picks.length) return;
+    let toConfigure = picks;
+    if (skipConfig) {
+      setIsSaving(true);
+      try {
+        const needsConfig = await Promise.all(
+          picks.map((evalData) => needsModelSelection(evalData)),
+        );
+        toConfigure = picks.filter((_, i) => needsConfig[i]);
+        for (const evalData of picks.filter((_, i) => !needsConfig[i])) {
+          await onEvalAdded?.(normalizeEvalPickerEval(evalData));
+        }
+      } catch {
+        // Parent handles error display; the picks stay ticked for a retry.
+        return;
+      } finally {
+        setIsSaving(false);
+      }
+      if (!toConfigure.length) {
+        onClose?.();
+        return;
+      }
+    }
+    setSelectedEvals([]);
+    setBatch({ queue: toConfigure.slice(1), total: toConfigure.length });
+    setSelectedEval(toConfigure[0]);
+    setStep("config");
+  }, [
+    selectedEvals,
+    skipConfig,
+    needsModelSelection,
+    onEvalAdded,
+    onClose,
+    setSelectedEvals,
+    setBatch,
+    setSelectedEval,
+    setStep,
+  ]);
+
   // In edit mode, back closes the drawer (returns to the SavedEvalsList).
-  // In create mode, back returns to the list step.
+  // In create mode, back returns to the list step. Mid-pass, the picks not
+  // yet added go back to being ticked so the user can change them.
   const handleBackToList = useCallback(() => {
     if (isEditMode) {
       onClose?.();
       return;
     }
+    if (batch && selectedEval) {
+      setSelectedEvals([selectedEval, ...batch.queue]);
+    }
+    setBatch(null);
     setSelectedEval(null);
     setStep("list");
-  }, [isEditMode, onClose, setSelectedEval, setStep]);
+  }, [
+    isEditMode,
+    onClose,
+    batch,
+    selectedEval,
+    setSelectedEvals,
+    setBatch,
+    setSelectedEval,
+    setStep,
+  ]);
 
   const handleSaveEval = useCallback(
     async (evalConfig) => {
@@ -140,7 +205,12 @@ const EvalPickerContent = ({
           // Edit mode closes on save unless the host is walking a queue of
           // pre-selected evals (keepOpenAfterEditSave) and owns the close.
           if (!keepOpenAfterEditSave) onClose?.();
+        } else if (batch?.queue.length) {
+          // Mid multi-select pass: on to the next pick's config screen.
+          setSelectedEval(batch.queue[0]);
+          setBatch({ ...batch, queue: batch.queue.slice(1) });
         } else {
+          setBatch(null);
           setSelectedEval(null);
           setStep("list");
           // When the host wants the picker to stay open (e.g. dataset
@@ -159,12 +229,23 @@ const EvalPickerContent = ({
       isEditMode,
       onEvalAdded,
       onClose,
+      batch,
+      setBatch,
       setSelectedEval,
       setStep,
       keepOpenAfterSave,
       keepOpenAfterEditSave,
     ],
   );
+
+  // Where the user is in a multi-select pass, on each config screen. A
+  // host's own progress takes precedence.
+  const batchProgress =
+    batch?.total > 1 ? (
+      <Typography typography="s1" color="text.secondary" noWrap>
+        Evaluation {batch.total - batch.queue.length} of {batch.total}
+      </Typography>
+    ) : null;
 
   return (
     <Box
@@ -191,6 +272,21 @@ const EvalPickerContent = ({
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             {headerAction}
+            {ownsSelection && (
+              <SelectionBar
+                count={selectedEvals.length}
+                noun="evaluation"
+                actions={[
+                  {
+                    label: "Add selected",
+                    icon: "solar:add-linear",
+                    onClick: handleAddSelected,
+                    disabled: isSaving,
+                  },
+                ]}
+                onCancel={() => setSelectedEvals([])}
+              />
+            )}
             <Button
               variant="outlined"
               size="small"
@@ -261,7 +357,7 @@ const EvalPickerContent = ({
               onBack={handleBackToList}
               onSave={handleSaveEval}
               isSaving={isSaving}
-              progress={progress}
+              progress={progress ?? batchProgress}
               primaryLabel={primaryLabel}
               showClose={showClose}
             />
@@ -338,7 +434,10 @@ const EvalPickerDrawer = ({
   // driven by `selectedIds`/`onToggleSelect`; `headerAction` sits in the
   // list header; `progress`/`primaryLabel` decorate the config step's
   // action bar/primary button; `showClose` adds a close control to the
-  // config header for hosts that walk a queue.
+  // config header for hosts that walk a queue. With `multiSelect` and no
+  // `onToggleSelect`, the picker keeps the selection itself: a selection
+  // bar's "Add selected" adds every ticked eval in one pass, calling
+  // `onEvalAdded` once per eval and closing after the last.
   multiSelect = false,
   selectedIds = null,
   onToggleSelect = null,
