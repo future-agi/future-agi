@@ -4,6 +4,7 @@ import os
 import re
 import uuid
 
+import httpx
 import structlog
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
@@ -62,7 +63,7 @@ from agentcc.serializers.provider_credential import (
 )
 from agentcc.services.config_push import (
     _RULE_TO_REGISTRY,
-    push_all_org_configs,
+    push_all_org_configs_activity,
     push_org_config,
     validate_org_config,
 )
@@ -223,6 +224,28 @@ def _guardrail_check_fields(guardrail_config):
     return fields
 
 
+# User-facing health-check failure text. The raw GatewayClientError carries the
+# internal gateway URL and upstream response bodies; those go to the logs only.
+HEALTH_CHECK_UNREACHABLE = "The gateway could not be reached."
+HEALTH_CHECK_TIMED_OUT = (
+    "The gateway did not respond before the health-check timeout."
+)
+HEALTH_CHECK_UNEXPECTED = (
+    "The health check could not be completed because of a server error."
+)
+
+
+def _health_check_failure_message(error):
+    cause = error.__cause__
+    if isinstance(cause, httpx.TimeoutException):
+        return HEALTH_CHECK_TIMED_OUT
+    if isinstance(cause, httpx.TransportError):
+        return HEALTH_CHECK_UNREACHABLE
+    if error.status_code:
+        return f"The gateway returned HTTP {error.status_code}."
+    return HEALTH_CHECK_UNREACHABLE
+
+
 def _build_virtual_gateway(status="healthy", health=None):
     """Build the virtual gateway dict returned by list/retrieve."""
     data = {
@@ -379,14 +402,24 @@ class AgentccGatewayViewSet(ViewSet):
 
                 # Auto-sync org configs to gateway on first successful health check
                 # (e.g. after gateway container restart). Throttled to once per 5 min.
+                # The re-sync pushes every active org config and can outlast the
+                # client's request timeout, so it runs off the request path and the
+                # response reports only this probe. cache.add claims the slot so
+                # concurrent checks dispatch it at most once per window.
                 cache_key = "agentcc:gateway_config_synced"
-                if not cache.get(cache_key):
+                if not cache.get(cache_key) and cache.add(cache_key, True, 300):
                     try:
-                        push_all_org_configs()
-                        cache.set(cache_key, True, 300)
-                        logger.info("gateway_auto_sync", reason="first_health_check")
+                        push_all_org_configs_activity.apply_async(
+                            dispatch_timeout_seconds=5
+                        )
+                        logger.info(
+                            "gateway_auto_sync_dispatched", reason="first_health_check"
+                        )
                     except Exception:
-                        logger.warning("gateway_auto_sync_failed", exc_info=True)
+                        cache.delete(cache_key)
+                        logger.warning(
+                            "gateway_auto_sync_dispatch_failed", exc_info=True
+                        )
 
                 data = {
                     "status": "healthy",
@@ -398,16 +431,22 @@ class AgentccGatewayViewSet(ViewSet):
                 }
                 return self._gm.success_response(data)
             except GatewayClientError as e:
+                last_health_check = timezone.now().isoformat()
+                logger.warning(
+                    "gateway_health_check_failed",
+                    error=str(e),
+                    status_code=e.status_code,
+                )
                 return self._gm.bad_request(
                     {
                         "status": "unreachable",
-                        "last_health_check": timezone.now().isoformat(),
-                        "error": str(e),
+                        "last_health_check": last_health_check,
+                        "error": _health_check_failure_message(e),
                     }
                 )
         except Exception as e:
             logger.exception("health_check_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(HEALTH_CHECK_UNEXPECTED)
 
     # ------------------------------------------------------------------
     # config / reload / update-config
