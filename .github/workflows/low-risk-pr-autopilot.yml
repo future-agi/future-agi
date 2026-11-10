@@ -52,7 +52,8 @@ jobs:
           python3 scripts/test_pr_risk.py
 
   prepare:
-    if: github.event_name != 'pull_request' && vars.PR_AUTOPILOT == 'on'
+    # Reruns must not reuse a reservation; dispatch a fresh evaluation instead.
+    if: github.event_name != 'pull_request' && vars.PR_AUTOPILOT == 'on' && github.run_attempt == '1'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -60,6 +61,7 @@ jobs:
       pull-requests: write
       issues: write
       checks: write
+      statuses: read # legacy commit-status evidence is a separate permission
       actions: write # schedule -> workflow_dispatch on dev; no PR code runs here
     outputs:
       review: ${{ steps.policy.outputs.review }}
@@ -102,7 +104,7 @@ jobs:
   ai-review:
     name: Diff-only AI review
     needs: prepare
-    if: needs.prepare.outputs.review == 'true'
+    if: needs.prepare.outputs.review == 'true' && github.run_attempt == '1'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # The model never shares a runner or token with approval/merge steps.
@@ -112,6 +114,11 @@ jobs:
     outputs:
       verdict: ${{ steps.claude.outputs.structured_output }}
     steps:
+      - name: Reject partial workflow reruns before any AI invocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = '1'
       - name: Check out the same trusted sparse revision, never the PR head
         uses: actions/checkout@v4
         with:
@@ -149,7 +156,7 @@ jobs:
     name: Publish review gate and recheck merge
     needs: [prepare, ai-review]
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && github.run_attempt == '1' &&
       needs.prepare.result == 'success' && needs.prepare.outputs.context != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -158,6 +165,7 @@ jobs:
       pull-requests: write
       issues: write
       checks: write
+      statuses: read # legacy commit-status evidence is a separate permission
       actions: write # explicit post-merge CI/dev frontend dispatches; push runs are suppressed
     steps:
       - name: Check out only the same trusted controller revision

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import fnmatch
+from functools import lru_cache
 import html
 import json
 import os
@@ -68,15 +69,35 @@ def valid_path(path):
     )
 
 
+def path_matches(path, pattern):
+    """Match one segment at a time; only a whole ** segment can span slashes."""
+    parts, globs = path.split("/"), pattern.split("/")
+
+    @lru_cache(maxsize=None)
+    def match(i, j):
+        if j == len(globs):
+            return i == len(parts)
+        if globs[j] == "**":
+            return match(i, j + 1) or (i < len(parts) and match(i + 1, j))
+        return (
+            i < len(parts)
+            and fnmatch.fnmatchcase(parts[i], globs[j])
+            and match(i + 1, j + 1)
+        )
+
+    return match(0, 0)
+
+
 def matches(path, patterns):
-    # fnmatch's * also spans slashes. The config deliberately restricts suffixes
-    # and prefixes rather than pretending docs/* excludes nested docs.
-    return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+    return any(path_matches(path, pattern) for pattern in patterns)
 
 
 def sensitive(path, policy):
     camel_split = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", path)
-    tokens = set(re.split(r"[^a-z0-9]+", camel_split.lower()))
+    words = re.split(r"[^a-z0-9]+", camel_split.lower())
+    # Compound security names must survive snake_case, hyphens and camelCase:
+    # api_key/apiKey are as sensitive as apikey, including inside test roots.
+    tokens = set(words) | {a + b for a, b in zip(words, words[1:])}
     return matches(path.lower(), [p.lower() for p in policy["high_globs"]]) or bool(
         tokens.intersection(policy["high_path_tokens"])
     )
@@ -438,9 +459,7 @@ def protection(api, policy):
     query = """query($owner:String!, $repo:String!) {
       repository(owner:$owner, name:$repo) {
         ref(qualifiedName:"refs/heads/dev") {
-          branchProtectionRule {
-            requiresStatusChecks requiresStrictStatusChecks requiredStatusCheckContexts
-          }
+          refUpdateRule { requiredStatusCheckContexts }
         }
       }
     }"""
@@ -453,17 +472,21 @@ def protection(api, policy):
     ref = data["data"]["repository"]["ref"]
     if not ref:
         raise PolicyError("dev branch protection evidence missing")
-    classic = ref["branchProtectionRule"]
+    classic = ref["refUpdateRule"]
     requirements = {name: None for name in policy["required_checks"]}
+    # refUpdateRule is the non-admin view. It exposes contexts, but NOT classic
+    # strictness. GITHUB_TOKEN cannot read the admin-only branchProtectionRule.
+    # Require positive strictness evidence from an active ruleset instead; never
+    # infer it from mergeability, contexts alone, or an administrator's variable.
     strict = False
-    if classic:
-        for name in classic["requiredStatusCheckContexts"]:
+    if classic is not None:
+        contexts = classic.get("requiredStatusCheckContexts")
+        if not isinstance(contexts, list) or any(
+            not isinstance(name, str) or not name.strip() for name in contexts
+        ):
+            raise PolicyError("classic required-check evidence is incomplete")
+        for name in contexts:
             requirements[name] = None
-        strict = (
-            classic["requiresStatusChecks"] is True
-            and classic["requiresStrictStatusChecks"] is True
-            and bool(classic["requiredStatusCheckContexts"])
-        )
     for rule in api.pages("rules/branches/dev"):
         if rule["type"] == "required_status_checks":
             params = rule["parameters"]
@@ -485,7 +508,8 @@ def protection(api, policy):
     requirements.pop(policy["review_check"], None)
     if not strict:
         raise PolicyError(
-            "strict required checks on dev must be enabled before auto-merge"
+            "an active dev ruleset with strict required checks is needed; "
+            "classic strictness is not visible to GITHUB_TOKEN"
         )
     return requirements
 
@@ -650,12 +674,20 @@ def resolve_number(api, event, event_name):
     return int(raw)
 
 
+def require_initial_attempt():
+    if os.environ.get("GITHUB_RUN_ATTEMPT") != "1":
+        raise PolicyError(
+            "workflow job reruns are not eligible; dispatch a fresh evaluation on dev"
+        )
+
+
 def prepare(api, policy, settings, event, event_name):
     emit("review", "false")
     emit("context", "")
     if settings["enabled"] != "on":
         summary("PR autopilot is off; no writes or review calls.")
         return
+    require_initial_attempt()
     number = resolve_number(api, event, event_name)
     if number is None:
         return
@@ -757,6 +789,22 @@ def prepare(api, policy, settings, event, event_name):
 
 
 def publish_verdict(api, policy, context, raw, action_result):
+    require_initial_attempt()
+    if str(context["run_id"]) != os.environ.get("GITHUB_RUN_ID"):
+        raise PolicyError("review reservation belongs to another workflow run")
+    check = api.request("GET", f"check-runs/{context['check_id']}")
+    record = {key: context[key] for key in ("pr", "head", "base", "run_id", "round")}
+    if (
+        check.get("status") != "in_progress"
+        or check.get("conclusion") is not None
+        or check.get("name") != policy["review_check"]
+        or check.get("head_sha") != context["head"]
+        or check.get("app", {}).get("slug") != "github-actions"
+        or json.loads(check.get("external_id", "null")) != record
+    ):
+        # A partial rerun must never replace a finished blocking verdict with a
+        # later pass (or mutate any other reservation). Fresh revisions get new IDs.
+        raise PolicyError("review reservation is not pending or does not match")
     passed = False
     reasons = []
     try:
@@ -863,6 +911,9 @@ def merge(api, policy, settings, context):
     )
     if not already:
         comment(api, number, "<!-- pr-autopilot:approval -->\n" + audit)
+        # The audit writes and duplicate-approval lookup can race a new hold or
+        # change request. Refresh every gate after them, immediately before APPROVE.
+        validate_live(api, policy, settings, context)
         api.request(
             "POST",
             f"pulls/{number}/reviews",
@@ -945,6 +996,7 @@ def main():
             event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
             prepare(api, policy, settings, event, os.environ["GITHUB_EVENT_NAME"])
         else:
+            require_initial_attempt()
             context = json.loads(os.environ["PR_CONTEXT"])
             if "check_id" in context and not publish_verdict(
                 api,

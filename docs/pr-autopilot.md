@@ -26,8 +26,14 @@ against the PR totals. Missing, inconsistent or truncated evidence fails closed.
 
 HIGH rules take precedence, even within a test or documentation directory.
 Matching is case-insensitive for sensitive paths and splits security-related
-path tokens on separators and camelCase boundaries. The LOW allowlist is
-case-sensitive. An unrecognized path is never LOW. No file deletion or rename
+path tokens on separators and camelCase boundaries, then rejoins adjacent words
+so `api_key`, `api-key`, `apiKey`, and `apikey` all remain HIGH. Explicit rules
+also cover model-hub/agentcc API-key modules, socket workspace authorization and
+gateway access groups. These exclusions apply inside every LOW test root too.
+The LOW allowlist is case-sensitive. Glob `*` cannot cross a `/`; only a whole
+`**` segment matches zero or more directories. A `test_`-prefixed directory never
+makes `conftest.py`, `helpers.py` or `__init__.py` a named test file.
+An unrecognized path is never LOW. No file deletion or rename
 is LOW, which is stronger than just forbidding deleted test files. Deleting a
 test *inside* a modified file still needs the AI gate to detect the weakened
 coverage; metadata alone cannot judge that.
@@ -66,8 +72,8 @@ No repository settings are changed by the workflow installation.
 | PR label `autopilot-hold` | Absent | Add to stop automation for one PR; remove only when the PR may be reconsidered |
 | Labels `autopilot-low`, `autopilot-medium`, `autopilot-high` | Created by the first enabled run | No setup needed; the controller replaces only its own current tier label |
 | Labels `autopilot-approved`, `autopilot-merged` | Absent | Created/applied by the controller for audit; retain them after merge and revert |
-| Built-in `GITHUB_TOKEN` and Actions permissions | Provided by GitHub; explicit least-privilege job permissions | Allow the workflow's stated read/write scopes and “Allow GitHub Actions to create and approve pull requests”; do not grant a protection-bypass role |
-| `dev` protection / active org and repository branch rules | Read, never changed by this code | Enable strict required checks (“Require branches to be up to date”) and protect the branch; the controller refuses an unprotected/unknown strict-check configuration |
+| Built-in `GITHUB_TOKEN` and Actions permissions | Provided by GitHub; explicit least-privilege job permissions | Allow the workflow's stated read/write scopes, including separate `statuses: read` in both controller jobs, and “Allow GitHub Actions to create and approve pull requests”; no Administration permission or protection-bypass role is needed or granted |
+| `dev` protection / active org and repository branch rules | Read, never changed by this code | Enable an active branch ruleset with at least one required status check and strict up-to-date enforcement; preserve existing classic requirements. Classic-only strictness cannot be verified with `GITHUB_TOKEN`, so it is not sufficient |
 | Required status checks | Policy minimum: `Backend Tests Pass`, union all active classic/ruleset requirements | Keep required checks meaningful and green on the PR head; missing, skipped, neutral, pending, stale or failing checks cannot satisfy the bot |
 | Merge commits | The policy's only merge method | Keep merge commits enabled; this matches nine of the ten recent first-parent `dev` commits inspected at `a75af77f6` |
 | Actions/default-branch installation | No scheduled polling until GitHub can discover this workflow on the repository default branch | Land on `dev` through human review, and include it in the normal `dev` → `main` release; do not change the default branch |
@@ -101,9 +107,16 @@ number of human approvals.
 2. The controller classifies and audits the tier. It requires an open,
    non-draft, non-fork PR from an explicitly trusted author, a LOW classification,
    a present review key, no hold label, an allowed time and known mergeability.
-3. It reads both classic branch protection and active branch rules. Required
-   checks are the union of those and `Backend Tests Pass`, never a replacement
-   list. Strict up-to-date checks must be enabled. The newest result for each
+3. It reads classic check contexts through GraphQL `Ref.refUpdateRule`, the
+   non-admin protection view, and applicable active rules through
+   `GET /repos/{owner}/{repo}/rules/branches/dev`. Required checks are the union
+   of those and `Backend Tests Pass`, never a replacement list. The non-admin
+   view has **no classic strictness field**; the administrative
+   `branchProtectionRule` view is deliberately not used. An active ruleset with
+   strict required checks must supply positive up-to-date-enforcement evidence.
+   Classic-only protection or inaccessible evidence stops automation. Check
+   runs and legacy commit statuses are read with their separate permissions
+   (`checks` and `statuses`). The newest result for each
    check must be `success` on the exact head SHA. The expected integration ID is
    honored when supplied by a ruleset; otherwise a GitHub Actions check-run
    identity is required. Legacy status contexts with no verifiable App identity,
@@ -122,8 +135,10 @@ number of human approvals.
    files, rules, current-head CI, hold/draft/author state, time, and review result.
    Outstanding human change requests block it. A cached AI pass must match both
    head and base and come from this trusted workflow's run. It labels and comments
-   each automated approval, then approves with `GITHUB_TOKEN`. Existing matching
-   bot approvals are not duplicated.
+   each automated approval, refreshes every gate **after** the audit writes and
+   existing-approval lookup, then approves with `GITHUB_TOKEN`. Existing matching
+   bot approvals are not duplicated. An audit label/comment without a submitted
+   approval can remain if this final refresh catches a hold or another changed gate.
 7. It waits for GitHub's mergeability/protection state to be `clean`, then calls
    the merge API with the expected head SHA and `merge_method: merge`. GitHub
    remains the final authority for branch protection; no bypass token or
@@ -178,6 +193,19 @@ if the budget or automated path cannot complete. Do not delete/edit reservation
 comments to bypass the cap. A passing exact-pair review can be reused while the
 other merge gates are rechecked.
 
+**Workflow reruns do not invoke review or approve/merge.** All three controller/
+review jobs require `github.run_attempt == '1'`; a runtime guard also precedes
+any AI action. This includes “Re-run failed jobs”, a specific AI-job rerun, and
+full workflow reruns. They cannot reuse the successful prepare job's saved
+reservation to buy extra invocations. Use a **new** dispatch on `dev` or the next
+scheduled evaluation instead; the durable ledger still rejects a previously
+attempted head/base pair and still caps the whole PR at three rounds. A failed
+or cancelled first attempt is not refunded. The verdict publisher checks the
+original run identity and pending check record before writing. Completed
+verdicts cannot be overwritten by replay, even within the original attempt.
+If a finalization job failed after recording success, a fresh evaluation can
+reuse that exact-pair success without republishing it.
+
 References checked while implementing the adapter:
 
 - [Action README](https://github.com/anthropics/claude-code-action/blob/main/README.md)
@@ -185,6 +213,9 @@ References checked while implementing the adapter:
 - [Pinned usage and structured output](https://github.com/anthropics/claude-code-action/blob/v1.0.120/docs/usage.md)
 - [Pinned agent-mode behavior](https://github.com/anthropics/claude-code-action/blob/v1.0.120/src/modes/agent/index.ts)
 - [CLI tool restrictions](https://code.claude.com/docs/en/cli-reference)
+- [GitHub Ref and RefUpdateRule fields](https://docs.github.com/en/graphql/reference/git)
+- [GitHub Actions token permissions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions)
+- [GitHub workflow and job reruns](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)
 
 ## After merge and audit recovery
 
@@ -263,12 +294,16 @@ merge. A merged change must be reverted through the usual reviewed process.
 Suggested rollout:
 
 1. Human-review these HIGH-risk CI/policy changes. Confirm branch protection,
-   the GitHub token's read access to protection/rules evidence, App identities,
-   strict required checks, merge-commit support and current-head check SHAs.
+   an active strict-check ruleset, merge-commit support and current-head check SHAs.
 2. Keep `PR_AUTOPILOT` unset during CI validation. Run the synthetic tests and
    actionlint; verify the actual action/API contract in a disposable repository
-   before any eligible real PR can merge. No live GitHub merge or billable review
-   was exercised during development.
+   before any eligible real PR can merge. Rehearse with **exactly** each job's
+   declared `GITHUB_TOKEN` permissions, not a personal/admin token: the GraphQL
+   `refUpdateRule` query, active branch rules, check runs and commit statuses must
+   all succeed. Confirm missing-scope/error cases deny automation, classic-only
+   strictness is rejected, and a partial AI-job rerun makes no new model call.
+   No authenticated GitHub integration rehearsal, live merge or billable review
+   was exercised during development; synthetic scope checks are not that proof.
 3. On `dev` and the default branch, enable classification with an **empty trust
    list**. Check tier comments on docs, tests, sensitive paths, forks and drafts.
    This emits audit labels/comments but cannot run AI review or merge.
@@ -280,10 +315,13 @@ Suggested rollout:
    guardrails behave as expected. Policy widening is itself HIGH-risk.
 
 Development validation is synthetic and uses a fake GitHub transport. It covers
-classification, size/deletion/rename boundaries, metadata completeness, author
-and fork restrictions, missing switches/key, hours, required-check provenance,
-stale/rerun checks, structured verdicts, persistent review budgets, approval/merge
-races, audit ordering and dispatch selection. No cloud/cluster or production
+classification (including compound credentials and nested non-test filenames),
+size/deletion/rename boundaries, metadata completeness, author and fork restrictions,
+missing switches/key, hours, non-admin protection queries, declared evidence scopes,
+required-check provenance, stale/rerun checks, structured verdicts, immutable completed
+verdicts, persistent budgets and the workflow's runtime partial-rerun guard,
+approval/merge races (including holds during audit/duplicate-review reads), audit
+ordering and dispatch selection. No cloud/cluster or production
 configuration is needed. In CI the unprivileged `policy-tests` job tests proposed
 changes; privileged jobs never execute the proposed controller.
 

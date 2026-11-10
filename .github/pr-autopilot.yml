@@ -13,7 +13,7 @@
   "max_diff_bytes": 120000,
   "review_check": "PR Autopilot review",
   "required_checks": ["Backend Tests Pass"],
-  "_checks_reason": "This is a minimum, not an override of branch protection: union it with classic dev protection and all active branch rules. Require successful checks on the exact PR head, with a GitHub Actions app identity; no skipped, neutral, stale, or absent checks. E2E remains advisory unless an admin makes it required.",
+  "_checks_reason": "This is a minimum, not an override of branch protection: union non-admin refUpdateRule classic contexts with all active branch rules. GITHUB_TOKEN cannot read classic strictness, so an active ruleset with strict required checks must provide that evidence. Require successful checks on the exact PR head, with a GitHub Actions app identity; no skipped, neutral, stale, or absent checks. E2E remains advisory unless an admin makes it required.",
   "high_globs": [
     ".github/**", "**/.github/**", "CODEOWNERS", "**/CODEOWNERS",
     "ee/**", "**/ee/**", "deploy/**", "**/deploy/**",
@@ -27,6 +27,8 @@
     "CLAUDE.md", "**/CLAUDE.md", "AGENTS.md", "**/AGENTS.md", ".husky/**",
     "scripts/pr_risk.py", "scripts/test_pr_risk.py", "docs/pr-autopilot.md",
     "futureagi/accounts/**", "futureagi/saml2_auth/**", "futureagi/tfc/settings/**",
+    "futureagi/model_hub/models/api_key.py", "futureagi/agentcc/views/api_key.py",
+    "futureagi/sockets/workspace_access.py", "agentcc-gateway/internal/routing/accessgroups.go",
     "frontend/src/auth/**", "frontend/src/sections/account/**", "frontend/src/sections/keys/**",
     "frontend/src/sections/user/**", "frontend/src/sections/address/**",
     "**/package.json", "package.json", "**/*lock*", "*lock*",
@@ -44,9 +46,10 @@
     "permission", "permissions", "rbac", "iam", "billing", "payment", "payments", "pricing",
     "stripe", "subscription", "subscriptions", "settings", "secret", "secrets", "credential",
     "credentials", "token", "tokens", "password", "passwords", "apikey", "apikeys",
-    "keystore", "encryption", "crypto", "security", "infrastructure", "terraform"
+    "keystore", "encryption", "crypto", "security", "infrastructure", "terraform",
+    "workspaceaccess", "accessgroup", "accessgroups"
   ],
-  "_high_reason": "Sensitive components, dependency/build inputs, automation and its own policy always require people. Token matching is case-insensitive across path components and underscore/hyphen/camelCase boundaries; HIGH wins even inside tests or docs. Unknown paths are never LOW.",
+  "_high_reason": "Sensitive components, dependency/build inputs, automation and its own policy always require people. Explicit API-key lifecycle/storage, socket workspace authorization and gateway access-group modules reflect existing security boundaries. Token matching is case-insensitive across separators/camelCase and rejoins adjacent words, so api_key/api-key/apiKey and workspace_access/access_groups remain HIGH even in docs or tests. Unknown paths are never LOW.",
   "low_globs": [
     "docs/*.md", "docs/**/*.md", "README.md",
     "frontend/src/locales/langs/*.json",
@@ -56,7 +59,7 @@
     "futureagi/simulate/tests/test_*.py", "futureagi/simulate/tests/**/test_*.py",
     "e2e/flows/**/*.spec.ts"
   ],
-  "_low_reason": "Existing docs are Markdown, locale payloads live in frontend/src/locales/langs, and these are established test roots. Do not allow arbitrary scripts, MDX, JSX copy edits, fixtures, conftest, test configuration, harnesses or all of frontend: paths alone cannot prove they are copy-only. All removals and renames are MEDIUM unless a HIGH rule applies; this also prevents deleting or moving tests out of coverage.",
+  "_low_reason": "Existing docs are Markdown, locale payloads live in frontend/src/locales/langs, and these are established test roots. Glob * matches within one path segment; only ** as a whole segment spans zero or more directories. Named test files must match the final basename, never just a test_-prefixed parent directory. Do not allow arbitrary scripts, MDX, JSX copy edits, fixtures, conftest, test configuration, harnesses or all of frontend: paths alone cannot prove they are copy-only. All removals and renames are MEDIUM unless a HIGH rule applies; this also prevents deleting or moving tests out of coverage.",
   "labels": {
     "low": "autopilot-low",
     "medium": "autopilot-medium",

@@ -6,7 +6,10 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +21,27 @@ BASE = "b" * 40
 OTHER = "d" * 40
 NOW = dt.datetime(2026, 11, 9, 10, tzinfo=dt.timezone.utc)
 REPO = "example/project"
+TEST_ROOTS = (
+    "futureagi/tests",
+    "futureagi/tracer/tests",
+    "futureagi/model_hub/tests",
+    "futureagi/simulate/tests",
+)
+WORKFLOW_TEXT = (
+    Path(__file__).resolve().parents[1] / ".github/workflows/low-risk-pr-autopilot.yml"
+).read_text()
+
+
+def workflow_job(name):
+    return re.split(r"\n  [\w-]+:\n", WORKFLOW_TEXT.split(f"  {name}:\n", 1)[1])[0]
+
+
+def workflow_permissions(name):
+    return dict(
+        re.findall(
+            r"^      ([a-z-]+): (read|write)\b", workflow_job(name), re.MULTILINE
+        )
+    )
 
 
 def file(path="docs/guide.md", additions=1, deletions=0, status="modified", **extra):
@@ -96,7 +120,12 @@ class FakeGitHub:
 
     repository = REPO
 
-    def __init__(self):
+    def __init__(self, permissions=None):
+        self.permissions = (
+            workflow_permissions("review-gate-and-merge")
+            if permissions is None
+            else permissions
+        )
         self.pr = pr()
         self.files = [file()]
         self.checks = [check()]
@@ -104,8 +133,16 @@ class FakeGitHub:
         self.reviews = []
         self.labels = []
         self.statuses = []
-        self.rules = []
-        self.strict = True
+        self.rules = [
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": [{"context": "Backend Tests Pass"}],
+                },
+            }
+        ]
+        self.classic_present = True
         self.classic_checks = ["Backend Tests Pass"]
         self.requests = []
         self.after_approval = None
@@ -125,8 +162,12 @@ class FakeGitHub:
         if base == "labels":
             return copy.deepcopy(self.labels)
         if base.endswith("/check-runs"):
+            if self.permissions.get("checks") not in {"read", "write"}:
+                raise risk.PolicyError("check-run evidence permission denied")
             return copy.deepcopy(self.checks)
         if base.endswith("/statuses"):
+            if self.permissions.get("statuses") not in {"read", "write"}:
+                raise risk.PolicyError("commit-status evidence permission denied")
             return copy.deepcopy(self.statuses)
         if base == "rules/branches/dev":
             return copy.deepcopy(self.rules)
@@ -137,15 +178,19 @@ class FakeGitHub:
     def request(self, method, route, data=None, *, graphql=False):
         self.requests.append((method, route, copy.deepcopy(data)))
         if graphql:
+            if "branchProtectionRule" in data["query"]:
+                raise risk.PolicyError("administrative protection view denied")
+            if "refUpdateRule { requiredStatusCheckContexts }" not in data["query"]:
+                raise AssertionError("unexpected non-admin protection query")
             return {
                 "data": {
                     "repository": {
                         "ref": {
-                            "branchProtectionRule": {
-                                "requiresStatusChecks": True,
-                                "requiresStrictStatusChecks": self.strict,
+                            "refUpdateRule": {
                                 "requiredStatusCheckContexts": self.classic_checks,
                             }
+                            if self.classic_present
+                            else None
                         }
                     }
                 }
@@ -193,11 +238,12 @@ class FakeGitHub:
             }
             self.checks.append(result)
             return copy.deepcopy(result)
-        if method == "PATCH" and route.startswith("check-runs/"):
+        if method in {"GET", "PATCH"} and route.startswith("check-runs/"):
             target = next(
                 c for c in self.checks if c["id"] == int(route.split("/")[-1])
             )
-            target.update(data)
+            if method == "PATCH":
+                target.update(data)
             return copy.deepcopy(target)
         if method == "POST" and route == "pulls/42/reviews":
             result = {
@@ -304,6 +350,82 @@ class ClassificationTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(self.classify(file(path)), "medium")
+
+    def test_existing_credential_and_access_control_modules_are_high(self):
+        for path in (
+            "futureagi/model_hub/models/api_key.py",
+            "futureagi/agentcc/views/api_key.py",
+            "futureagi/sockets/workspace_access.py",
+            "agentcc-gateway/internal/routing/accessgroups.go",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, POLICY["high_globs"])
+                self.assertEqual(self.classify(file(path)), "high")
+
+    def test_security_compounds_are_high_in_every_low_root(self):
+        names = (
+            "api_key",
+            "api_keys",
+            "api-key",
+            "api-keys",
+            "apiKey",
+            "APIKey",
+            "APIKeys",
+            "apikey",
+            "apikeys",
+            "workspace_access",
+            "workspaceAccess",
+            "accessgroups",
+            "access_groups",
+            "accessGroups",
+        )
+        templates = [f"{root}/nested/test_{{}}.py" for root in TEST_ROOTS] + [
+            "docs/{}.md",
+            "frontend/src/locales/langs/{}.json",
+            "e2e/flows/{}.spec.ts",
+        ]
+        for template in templates:
+            for name in names:
+                path = template.format(name)
+                with self.subTest(path=path):
+                    self.assertEqual(self.classify(file(path)), "high")
+
+    def test_filename_globs_cannot_admit_nested_non_test_code(self):
+        for root in TEST_ROOTS:
+            for nested in ("test_helpers", "nested/test_helpers", "test_a/test_b"):
+                for basename in ("conftest.py", "helpers.py", "__init__.py"):
+                    path = f"{root}/{nested}/{basename}"
+                    with self.subTest(path=path):
+                        self.assertEqual(
+                            self.classify(file(path, status="added")), "medium"
+                        )
+                self.assertEqual(
+                    self.classify(file(f"{root}/{nested}/test_example.py")), "low"
+                )
+        self.assertEqual(
+            self.classify(file("frontend/src/locales/langs/en.json/tool.json")),
+            "medium",
+        )
+        self.assertEqual(
+            self.classify(file("e2e/flows/test.spec.ts/helpers.ts")), "medium"
+        )
+
+    def test_segment_glob_star_and_recursive_double_star(self):
+        cases = (
+            ("docs/guide.md", "docs/*.md", True),
+            ("docs/nested/guide.md", "docs/*.md", False),
+            ("docs/guide.md", "docs/**/*.md", True),
+            ("docs/a/b/guide.md", "docs/**/*.md", True),
+            ("a/test_helpers/conftest.py", "a/test_*.py", False),
+            ("a/test_helpers/conftest.py", "a/**/test_*.py", False),
+            ("a/test_helpers/test_example.py", "a/**/test_*.py", True),
+            ("futureagi/tests/example.py", "**", True),
+            (".github/workflows/ci.yml", "**/.github/**", True),
+            ("nested/.github/workflows/ci.yml", "**/.github/**", True),
+        )
+        for path, pattern, expected in cases:
+            with self.subTest(path=path, pattern=pattern):
+                self.assertEqual(risk.path_matches(path, pattern), expected)
 
     def test_exact_size_limits(self):
         self.assertEqual(self.classify(file(additions=200)), "low")
@@ -516,10 +638,8 @@ class EvidenceTests(unittest.TestCase):
             names, {"Backend Tests Pass": None, "extra-classic": None, "extra-org": 77}
         )
         api.rules = []
-        api.strict = False
         with self.assertRaises(risk.PolicyError):
             risk.protection(api, POLICY)
-        api.strict = True
         api.rules = [{"type": "merge_queue"}]
         with self.assertRaises(risk.PolicyError):
             risk.protection(api, POLICY)
@@ -544,6 +664,42 @@ class EvidenceTests(unittest.TestCase):
         api.request = lambda *a, **kw: {"data": {"repository": {"ref": None}}}
         with self.assertRaises(risk.PolicyError):
             risk.protection(api, POLICY)
+
+    def test_non_admin_protection_query_and_exact_job_permissions(self):
+        for job in ("prepare", "review-gate-and-merge"):
+            permissions = workflow_permissions(job)
+            self.assertEqual(permissions["statuses"], "read")
+            self.assertNotIn("administration", permissions)
+            api = FakeGitHub(permissions=permissions)
+            self.assertTrue(risk.ci_evidence(api, pr(), POLICY)[0])
+            query = next(r[2]["query"] for r in api.requests if r[0] == "POST")
+            self.assertIn("refUpdateRule { requiredStatusCheckContexts }", query)
+            self.assertNotIn("branchProtectionRule", query)
+            self.assertNotIn("requiresStrictStatusChecks", query)
+            self.assertTrue(any(r[1].endswith("/statuses") for r in api.requests))
+            del api.permissions["statuses"]
+            with self.assertRaisesRegex(risk.PolicyError, "commit-status"):
+                risk.ci_evidence(api, pr(), POLICY)
+
+    def test_classic_contexts_alone_cannot_establish_strictness(self):
+        api = FakeGitHub()
+        api.rules = []
+        with self.assertRaisesRegex(risk.PolicyError, "active dev ruleset"):
+            risk.protection(api, POLICY)
+        api = FakeGitHub()
+        api.rules[0]["parameters"]["strict_required_status_checks_policy"] = False
+        with self.assertRaises(risk.PolicyError):
+            risk.protection(api, POLICY)
+        api = FakeGitHub()
+        api.classic_present = False
+        self.assertEqual(risk.protection(api, POLICY), {"Backend Tests Pass": None})
+
+    def test_missing_or_invalid_classic_contexts_are_not_ignored(self):
+        api = FakeGitHub()
+        for contexts in (None, "Backend Tests Pass", [None], [""], [123]):
+            api.classic_checks = contexts
+            with self.subTest(contexts=contexts), self.assertRaises(risk.PolicyError):
+                risk.protection(api, POLICY)
 
     def test_structured_verdict_validation(self):
         self.assertFalse(
@@ -647,6 +803,7 @@ class ControllerTests(unittest.TestCase):
                 {
                     "POLICY_SHA": BASE,
                     "GITHUB_RUN_ID": "10",
+                    "GITHUB_RUN_ATTEMPT": "1",
                     "GITHUB_REF": "refs/heads/dev",
                 },
             ),
@@ -792,6 +949,90 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(self.api.writes("check-runs")), 1)
         self.assertEqual(self.outputs["review"], "false")
 
+    def test_partial_reruns_cannot_publish_again_or_replace_blocking_verdict(self):
+        context = self.prepare()
+        self.assertFalse(
+            risk.publish_verdict(
+                self.api, POLICY, context, verdict(blocking_findings=True), "success"
+            )
+        )
+        for attempt in ("2", "3", "4"):
+            with patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": attempt}):
+                with self.assertRaisesRegex(risk.PolicyError, "reruns"):
+                    risk.publish_verdict(
+                        self.api, POLICY, context, verdict(), "success"
+                    )
+        # Even replaying the original attempt cannot overwrite a completed check.
+        with self.assertRaisesRegex(risk.PolicyError, "not pending"):
+            risk.publish_verdict(self.api, POLICY, context, verdict(), "success")
+        self.assertEqual(self.api.checks[-1]["conclusion"], "failure")
+        self.assertEqual(len(self.api.writes(f"check-runs/{context['check_id']}")), 1)
+        self.assertEqual(len(risk.review_ledger(self.api, 42, self.api.comments)), 1)
+
+    def test_workflow_partial_ai_reruns_do_not_spend_unreserved_invocations(self):
+        # GitHub retains successful prepare outputs on re-run-failed-jobs and
+        # re-run-specific-job. Replay that exact context without calling prepare.
+        context = self.prepare()
+        ai_job = workflow_job("ai-review")
+        guard = textwrap.dedent(
+            ai_job.split("        run: |\n", 1)[1].split("      - ", 1)[0]
+        )
+        self.assertLess(ai_job.index("run: |"), ai_job.index("id: claude"))
+        invocations = []
+        for attempt in range(1, 5):
+            with patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": str(attempt)}):
+                guarded = subprocess.run(
+                    ["bash", "-c", guard], check=False, capture_output=True, text=True
+                )
+                self.assertEqual(guarded.returncode == 0, attempt == 1)
+                if guarded.returncode == 0:
+                    invocations.append(attempt)
+                    # A failed billable action consumes the original reservation.
+                    self.assertFalse(
+                        risk.publish_verdict(self.api, POLICY, context, "", "failure")
+                    )
+        self.assertEqual(invocations, [1])
+        self.assertEqual(len(risk.review_ledger(self.api, 42, self.api.comments)), 1)
+        self.assertEqual(self.api.checks[-1]["conclusion"], "failure")
+
+    def test_pending_reservation_cannot_be_completed_by_a_rerun_or_another_run(self):
+        context = self.prepare()
+        for env in (
+            {"GITHUB_RUN_ATTEMPT": "2"},
+            {"GITHUB_RUN_ATTEMPT": ""},
+            {"GITHUB_RUN_ID": "11"},
+        ):
+            with patch.dict(os.environ, env), self.assertRaises(risk.PolicyError):
+                risk.publish_verdict(self.api, POLICY, context, verdict(), "success")
+        self.assertEqual(self.api.checks[-1]["status"], "in_progress")
+        self.assertFalse(self.api.writes(f"check-runs/{context['check_id']}"))
+
+    def test_verdict_cannot_complete_a_different_reservation(self):
+        context = self.prepare()
+        self.api.checks[-1]["external_id"] = json.dumps({**context, "round": 2})
+        with self.assertRaisesRegex(risk.PolicyError, "does not match"):
+            risk.publish_verdict(self.api, POLICY, context, verdict(), "success")
+        self.assertFalse(self.api.writes(f"check-runs/{context['check_id']}"))
+
+    def test_full_rerun_cannot_reserve_or_write_audits(self):
+        with (
+            patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "2"}),
+            self.assertRaisesRegex(risk.PolicyError, "reruns"),
+        ):
+            self.prepare()
+        self.assertEqual(self.api.requests, [])
+
+    def test_nested_harness_change_never_reaches_review_or_approval(self):
+        for root in TEST_ROOTS:
+            self.api = FakeGitHub()
+            self.api.files = [file(f"{root}/test_helpers/conftest.py", status="added")]
+            self.prepare()
+            self.assertEqual(self.outputs["review"], "false")
+            self.assertEqual(self.outputs["context"], "")
+            self.assertFalse(self.api.writes("check-runs"))
+            self.assertFalse(self.api.writes("pulls/42/reviews"))
+            self.assertFalse(self.api.writes("pulls/42/merge"))
+
     def test_three_rounds_across_force_pushes_then_human(self):
         for index in range(4):
             self.api.pr["head"]["sha"] = str(index + 1) * 40
@@ -899,6 +1140,47 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.api.writes("pulls/42/reviews"))
         self.assertFalse(self.api.writes("pulls/42/merge"))
 
+    def test_hold_during_second_review_read_stops_before_approval(self):
+        context = self.passing_review()
+        original_pages = self.api.pages
+        reads = 0
+
+        def pages(route, key=None):
+            nonlocal reads
+            result = original_pages(route, key)
+            if route == "pulls/42/reviews":
+                reads += 1
+                if reads == 2:
+                    self.api.pr["labels"].append({"name": "autopilot-hold"})
+            return result
+
+        self.api.pages = pages
+        with self.assertRaisesRegex(risk.PolicyError, "autopilot-hold"):
+            risk.merge(self.api, POLICY, settings(), context)
+        self.assertGreaterEqual(reads, 2)
+        self.assertFalse(self.api.writes("pulls/42/reviews"))
+        self.assertFalse(self.api.writes("pulls/42/merge"))
+
+    def test_hold_during_approval_audit_stops_before_approval(self):
+        context = self.passing_review()
+        original_request = self.api.request
+
+        def request(method, route, data=None, **kwargs):
+            result = original_request(method, route, data, **kwargs)
+            if (
+                method == "POST"
+                and route == "issues/42/comments"
+                and data["body"].startswith("<!-- pr-autopilot:approval -->")
+            ):
+                self.api.pr["labels"].append({"name": "autopilot-hold"})
+            return result
+
+        self.api.request = request
+        with self.assertRaisesRegex(risk.PolicyError, "autopilot-hold"):
+            risk.merge(self.api, POLICY, settings(), context)
+        self.assertFalse(self.api.writes("pulls/42/reviews"))
+        self.assertFalse(self.api.writes("pulls/42/merge"))
+
     def test_check_external_id_is_compact_and_contains_no_untrusted_text(self):
         self.prepare()
         external_id = self.api.writes("check-runs")[0][2]["external_id"]
@@ -946,6 +1228,15 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("AI_VERDICT: ${{ needs.ai-review.outputs.verdict }}", text)
         self.assertIn("PR Autopilot review", text)
         self.assertIn("persist-credentials: false", text)
+
+    def test_all_privileged_jobs_and_ai_job_reject_partial_or_full_reruns(self):
+        for name in ("prepare", "ai-review", "review-gate-and-merge"):
+            job = workflow_job(name)
+            condition = job.split("    if:", 1)[1].split("    runs-on:", 1)[0]
+            self.assertIn("github.run_attempt == '1'", condition)
+        self.assertIn(
+            "needs.prepare.outputs.review == 'true'", workflow_job("ai-review")
+        )
 
     def test_multiline_output_has_collision_safe_delimiter(self):
         with tempfile.TemporaryDirectory() as directory:
