@@ -18,7 +18,10 @@ from tracer.services.derived_metrics.changes import (
     SourceKey,
     UnitKey,
 )
-from tracer.services.derived_metrics.publication import committed_rows_select
+from tracer.services.derived_metrics.publication import (
+    FrozenRows,
+    committed_rows_select,
+)
 from tracer.services.derived_metrics.queries import Scope
 from tracer.services.derived_metrics.storage import (
     BUCKET_TOTALS,
@@ -267,23 +270,31 @@ def test_source_and_field_merges_then_crash_bucket_move(
 
     def crash(table, payload):
         kill_at = 0 if crash_point == "after_fields" else 1
-        if (
-            table.name == BUCKET_TOTALS.name
-            and len(bucket_writes) == kill_at
-            and not failed
-        ):
-            failed.append(True)
-            raise RuntimeError("injected refresh crash")
-        original_insert(table, payload)
-        if table.name == BUCKET_TOTALS.name:
-            bucket_writes.append(True)
-        pinned = MetricProjectRefresh.objects.get(
-            project_id=observe_project.id
-        ).head_manifest
-        # Check the committed request snapshot THROUGHOUT staging, not only at
-        # eventual completion: staged fields and either bucket are still hidden.
-        assert current_fields(writer, pinned)[0][1] == 4.0
-        assert len([r for r in bucket_rows(writer, pinned) if not r[-1]]) == 1
+        # Folds now batch multiple quarters. Inject at the same logical bucket
+        # boundary, including a partial batch, rather than counting INSERT calls.
+        payloads = (
+            [FrozenRows((row,), row_limit=payload.row_limit) for row in payload.rows]
+            if table.name == BUCKET_TOTALS.name
+            else [payload]
+        )
+        for piece in payloads:
+            if (
+                table.name == BUCKET_TOTALS.name
+                and len(bucket_writes) == kill_at
+                and not failed
+            ):
+                failed.append(True)
+                raise RuntimeError("injected refresh crash")
+            original_insert(table, piece)
+            if table.name == BUCKET_TOTALS.name:
+                bucket_writes.append(True)
+            pinned = MetricProjectRefresh.objects.get(
+                project_id=observe_project.id
+            ).head_manifest
+            # Check the committed request snapshot THROUGHOUT staging, not only
+            # at completion: staged fields and either bucket are still hidden.
+            assert current_fields(writer, pinned)[0][1] == 4.0
+            assert len([r for r in bucket_rows(writer, pinned) if not r[-1]]) == 1
 
     writer.store.insert = crash
     with pytest.raises(RuntimeError):
@@ -295,6 +306,8 @@ def test_source_and_field_merges_then_crash_bucket_move(
             end=old_start + timedelta(days=1),
             as_of=old_start + timedelta(hours=2),
         )
+    assert failed == [True]
+    assert len(bucket_writes) == (0 if crash_point == "after_fields" else 1)
     current = MetricProjectRefresh.objects.get(project_id=observe_project.id)
     assert current.watermark_ns == 1
     assert [r for r in bucket_rows(writer, current.head_manifest) if not r[-1]][0][
@@ -524,20 +537,28 @@ def test_direct_span_totals_dedup_moves_deletes_and_atomic_retry(
     writes, failed = [], []
 
     def crash(table, payload):
-        if (
-            table.name == BUCKET_TOTALS.name
-            and len(writes) == crash_point
-            and not failed
-        ):
-            failed.append(True)
-            raise RuntimeError("injected direct span publication failure")
-        original(table, payload)
-        if table.name == BUCKET_TOTALS.name:
-            writes.append(True)
-        pinned = MetricProjectRefresh.objects.get(
-            project_id=observe_project.id
-        ).head_manifest
-        assert metric_bucket_rows(writer, pinned, span) == initial
+        # Crash after the same number of logical bucket writes even when both
+        # quarters share a frozen batch; keep the in-staging visibility oracle.
+        payloads = (
+            [FrozenRows((row,), row_limit=payload.row_limit) for row in payload.rows]
+            if table.name == BUCKET_TOTALS.name
+            else [payload]
+        )
+        for piece in payloads:
+            if (
+                table.name == BUCKET_TOTALS.name
+                and len(writes) == crash_point
+                and not failed
+            ):
+                failed.append(True)
+                raise RuntimeError("injected direct span publication failure")
+            original(table, piece)
+            if table.name == BUCKET_TOTALS.name:
+                writes.append(True)
+            pinned = MetricProjectRefresh.objects.get(
+                project_id=observe_project.id
+            ).head_manifest
+            assert metric_bucket_rows(writer, pinned, span) == initial
 
     writer.store.insert = crash
     with pytest.raises(RuntimeError, match="direct span publication"):
@@ -547,6 +568,7 @@ def test_direct_span_totals_dedup_moves_deletes_and_atomic_retry(
             scope,
             **kwargs,
         )
+    assert failed == [True] and len(writes) == crash_point
     writer.store.insert = original
     assert (
         MetricProjectRefresh.objects.get(project_id=observe_project.id).watermark_ns

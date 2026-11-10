@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from uuid import uuid4
 
+from clickhouse_driver.errors import ServerException
+
 from tracer.services.derived_metrics.compaction_ranges import canonical
 from tracer.services.derived_metrics.publication import MetricVisibilityError
 from tracer.services.derived_metrics.storage import (
@@ -158,15 +160,29 @@ class FrozenRelations:
             h.byte_count for h in self.handles.values()
         )
         remaining_rows = RELATION_ROWS - sum(h.row_count for h in self.handles.values())
-        self.store.execute(
-            f"INSERT INTO {name} ({PART_COLUMNS}) SELECT {PART_COLUMNS} FROM ("
-            "SELECT *, count() OVER () AS capture_rows, "
-            f"sum(length(formatRow('RowBinary', {PART_COLUMNS}))) OVER () AS capture_bytes "
-            f"FROM (SELECT {casts} FROM ({sql}))) "
-            f"WHERE throwIf(capture_rows > {remaining_rows} OR capture_bytes > {remaining_bytes}, "
-            "'metric_frozen_relation_budget') = 0",
-            params,
-        )
+        try:
+            self.store.execute(
+                f"INSERT INTO {name} ({PART_COLUMNS}) SELECT {PART_COLUMNS} FROM ("
+                "SELECT *, count() OVER () AS capture_rows, "
+                f"sum(length(formatRow('RowBinary', {PART_COLUMNS}))) OVER () AS capture_bytes "
+                f"FROM (SELECT {casts} FROM ({sql}))) "
+                f"WHERE throwIf(capture_rows > {remaining_rows} OR capture_bytes > {remaining_bytes}, "
+                "'metric_frozen_relation_budget') = 0",
+                params,
+            )
+        except ServerException as exc:
+            # Normalize only our pre-insert throwIf envelope, not memory,
+            # timeout, storage or unrelated server failures. The caller may
+            # subdivide this INPUT capture before any publication consumer runs.
+            message = exc.message.removeprefix("DB::Exception: ")
+            if (
+                exc.code != 395
+                or message.split(":", 1)[0] != "metric_frozen_relation_budget"
+            ):
+                raise
+            raise FrozenRelationOverflow(
+                "frozen relation exceeds capture budget"
+            ) from exc
         self._check_session()
         count, size, digest = self._measure(name)
         if self.store.execute(

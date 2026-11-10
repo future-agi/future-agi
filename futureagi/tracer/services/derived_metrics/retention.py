@@ -19,6 +19,7 @@ from django.db import connection
 from django.utils import timezone
 
 from tracer.models.derived_metric import (
+    DerivedMetricVersion,
     MetricAttemptLedgerChunk,
     MetricErasureRequest,
     MetricGenerationPin,
@@ -974,79 +975,105 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         )
 
         require_retirement_evidence(writer, head, definitions, cutoff=cutoff)
-        recovery = writer.abort_stale()
-        for opened in MetricRefreshAttempt.objects.filter(
-            project_id=project_id, state__in=MetricRefreshAttempt.OPEN_STATES
-        ):
-            for chunk in opened.ledger_chunks.exclude(part="cleanup_intent"):
-                recovery[chunk.part].extend(chunk.payload)
-            MetricRefreshAttempt.abort(
-                opened.id, reason="retention_replan", **writer.lease.check()
+        # Classification below performs ClickHouse reads without a PG
+        # transaction. Keep predecessors open (and therefore GC-rooted) until
+        # their complete, policy-safe handoff is durable in the successor.
+        predecessors = list(
+            MetricRefreshAttempt.objects.filter(
+                project_id=project_id,
+                state__in=MetricRefreshAttempt.OPEN_STATES,
+                fencing_epoch__lte=writer.lease.grant.fencing_epoch,
+            ).values_list("id", flat=True)
+        )
+        recovery = writer.abort_stale(abort=False)
+    params = {
+        "expiry_cutoff": cutoff,
+        "expiry_project": str(project_id),
+        "expiry_org": str(writer.org_id),
+    }
+    fields, p = committed_rows_select(
+        FIELD_VALUES, head, org_id=writer.org_id, project_id=project_id
+    )
+    params.update(p)
+    retired, rp = committed_rows_select(
+        RETIRED_PARTS, head, org_id=writer.org_id, project_id=project_id
+    )
+    params.update(rp)
+    # Expiry belongs to the logical conversation, not a physical revision
+    # or one member span. A stored earlier anchor expires every field version
+    # and every dependency of that unit, even if another version/member has
+    # a newer timestamp. These predicates are AFTER committed-row collapse.
+    expired_units = (
+        f"SELECT DISTINCT level, unit_id FROM ({fields}) "
+        "WHERE unit_start < toDateTime64(%(expiry_cutoff)s, 6, 'UTC')"
+    )
+    retained_units = (
+        f"SELECT DISTINCT level, unit_id FROM ({fields}) "
+        f"WHERE (level, unit_id) NOT IN ({expired_units})"
+    )
+    span_definitions = [d for d in definitions if d.level == "span"]
+    span_dirty = (
+        _expired_span_buckets(writer, head, cutoff) if span_definitions else set()
+    )
+    if (
+        not any(recovery.values())
+        and not span_dirty
+        and not (
+            span_definitions
+            and _span_owner_cleanup_required(writer, head, fields, params, cutoff)
+        )
+        and not writer.store.execute(f"SELECT count() FROM ({expired_units})", params)[
+            0
+        ][0]
+        and not _current_expiry_required(
+            writer, head, fields, params, cutoff_parameter="expiry_cutoff"
+        )
+        and not _expired_physical_payload(writer, head, cutoff)
+    ):
+        pending = (
+            MetricErasureRequest.objects.filter(
+                project_key=project_id, store_payload__protocol="metric_expiry"
             )
-        params = {
-            "expiry_cutoff": cutoff,
-            "expiry_project": str(project_id),
-            "expiry_org": str(writer.org_id),
+            .exclude(status="done")
+            .exists()
+        )
+        return {
+            "unlimited": False,
+            "purged": finish_pending_expiry(writer, now=now) if pending else False,
         }
-        fields, p = committed_rows_select(
-            FIELD_VALUES, head, org_id=writer.org_id, project_id=project_id
-        )
-        params.update(p)
-        retired, rp = committed_rows_select(
-            RETIRED_PARTS, head, org_id=writer.org_id, project_id=project_id
-        )
-        params.update(rp)
-        # Expiry belongs to the logical conversation, not a physical revision
-        # or one member span. A stored earlier anchor expires every field version
-        # and every dependency of that unit, even if another version/member has
-        # a newer timestamp. These predicates are AFTER committed-row collapse.
-        expired_units = (
-            f"SELECT DISTINCT level, unit_id FROM ({fields}) "
-            "WHERE unit_start < toDateTime64(%(expiry_cutoff)s, 6, 'UTC')"
-        )
-        retained_units = (
-            f"SELECT DISTINCT level, unit_id FROM ({fields}) "
-            f"WHERE (level, unit_id) NOT IN ({expired_units})"
-        )
-        span_definitions = [d for d in definitions if d.level == "span"]
-        span_dirty = (
-            _expired_span_buckets(writer, head, cutoff) if span_definitions else set()
-        )
-        if (
-            not any(recovery.values())
-            and not span_dirty
-            and not (
-                span_definitions
-                and _span_owner_cleanup_required(writer, head, fields, params, cutoff)
-            )
-            and not writer.store.execute(
-                f"SELECT count() FROM ({expired_units})", params
-            )[0][0]
-            and not _current_expiry_required(
-                writer, head, fields, params, cutoff_parameter="expiry_cutoff"
-            )
-            and not _expired_physical_payload(writer, head, cutoff)
-        ):
-            pending = (
-                MetricErasureRequest.objects.filter(
-                    project_key=project_id, store_payload__protocol="metric_expiry"
-                )
-                .exclude(status="done")
-                .exists()
-            )
-            return {
-                "unlimited": False,
-                "purged": finish_pending_expiry(writer, now=now) if pending else False,
-            }
-        recovery, recovery_blocked = _classify_recovery(
-            writer,
-            recovery,
-            fields,
-            params,
-            cutoff,
-            spans=any(d.level == "span" for d in definitions),
-        )
-        recovery_pending = any(recovery.values())
+    recovery, recovery_blocked = _classify_recovery(
+        writer,
+        recovery,
+        fields,
+        params,
+        cutoff,
+        spans=any(d.level == "span" for d in definitions),
+    )
+    recovery_pending = any(recovery.values())
+    with serialized_project(project_id):
+        # Classification ran without the lifecycle lock. Revocation need not
+        # change the head id or lease when there were no open predecessors, so
+        # neither begin() nor its publication CAS can validate this copied base.
+        current = MetricProjectRefresh.for_project(project_id).head_manifest
+        if current is None or current.id != head.id or current.revoked_at is not None:
+            raise MetricStateConflict("retention base changed or expired")
+        for definition in definitions:
+            definition_id = getattr(definition, "id", None)
+            if (
+                definition_id is not None
+                and not DerivedMetricVersion.objects.filter(
+                    id=definition_id,
+                    metric_id=definition.metric_id,
+                    version=definition.version,
+                    metric__project_id=project_id,
+                    metric__organization_id=writer.org_id,
+                    metric__deleted=False,
+                    pins_revoked_at__isnull=True,
+                ).exists()
+            ):
+                raise MetricStateConflict("retention definition is expired or deleted")
+        # Register the successor under the same lock as these fresh checks:
+        # subsequent revocations must abort it before any copy can publish.
         attempt = writer.begin(
             purpose="compaction",
             ceilings={
@@ -1074,186 +1101,187 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             ],
             ledger=recovery,
         )
-        if span_definitions:
-            writer.freeze(
-                attempt,
-                FIELD_VALUES,
-                _retained_fields(
-                    fields,
-                    f"(level, unit_id) NOT IN ({expired_units})",
-                    "expiry_cutoff",
-                ),
-                params,
-                collect_payloads=False,
+        # No ClickHouse work inside this short atomic handoff. An interrupted
+        # append rolls it all back, leaving every predecessor and its ledger
+        # available to the next fenced writer.
+        for predecessor in predecessors:
+            MetricRefreshAttempt.abort(
+                predecessor, reason="retention_replan", **writer.lease.check()
             )
-        else:
-            writer.freeze_current(
-                attempt,
-                FIELD_VALUES,
-                head,
-                where=f"(level, unit_id) NOT IN ({expired_units})",
-                params=params,
-            )
-        for definition in definitions:
-            if definition.level == "user":
-                continue
-            p = {
-                **params,
-                "expiry_metric": str(definition.metric_id),
-                "expiry_version": definition.version,
-            }
-            predicate = "field_id = toUUID(%(expiry_metric)s) AND field_version = %(expiry_version)s"
-            expiring = f"SELECT * FROM ({fields}) WHERE {predicate} AND (level, unit_id) IN ({expired_units})"
-            from tracer.services.derived_metrics.unit_reads import field_recipe
+    if span_definitions:
+        writer.freeze(
+            attempt,
+            FIELD_VALUES,
+            _retained_fields(
+                fields,
+                f"(level, unit_id) NOT IN ({expired_units})",
+                "expiry_cutoff",
+            ),
+            params,
+            collect_payloads=False,
+        )
+    else:
+        writer.freeze_current(
+            attempt,
+            FIELD_VALUES,
+            head,
+            where=f"(level, unit_id) NOT IN ({expired_units})",
+            params=params,
+        )
+    for definition in definitions:
+        if definition.level == "user":
+            continue
+        p = {
+            **params,
+            "expiry_metric": str(definition.metric_id),
+            "expiry_version": definition.version,
+        }
+        predicate = "field_id = toUUID(%(expiry_metric)s) AND field_version = %(expiry_version)s"
+        expiring = f"SELECT * FROM ({fields}) WHERE {predicate} AND (level, unit_id) IN ({expired_units})"
+        from tracer.services.derived_metrics.unit_reads import field_recipe
 
-            formula = field_recipe(definition).formula
-            if formula is not None:
-                p.update(formula.parameters)
+        formula = field_recipe(definition).formula
+        if formula is not None:
+            p.update(formula.parameters)
+        if definition.level == "span":
+            span_dirty.update(
+                row[0]
+                for row in writer.store.execute(
+                    f"SELECT DISTINCT bucket_start FROM ({expiring})", p
+                )
+            )
+            writer.append(
+                attempt,
+                "dirty_before",
+                [
+                    {"level": "span", "bucket_start": value}
+                    for value in sorted(span_dirty)
+                ],
+            )
+        from tracer.services.derived_metrics.span_evidence import (
+            retiring_span_parts,
+        )
+
+        capture = (
+            retiring_span_parts(
+                writer,
+                attempt,
+                head,
+                definition,
+                expiring,
+                p,
+                cutoff=cutoff,
+                as_of=as_of or now,
+            )
+            if definition.level == "span"
+            else nullcontext((live_parts_select(definition, expiring), p))
+        )
+        with capture as (live, p):
             if definition.level == "span":
                 span_dirty.update(
                     row[0]
                     for row in writer.store.execute(
-                        f"SELECT DISTINCT bucket_start FROM ({expiring})", p
+                        f"SELECT DISTINCT bucket_start FROM ({live})", p
                     )
                 )
-                writer.append(
-                    attempt,
-                    "dirty_before",
-                    [
-                        {"level": "span", "bucket_start": value}
-                        for value in sorted(span_dirty)
-                    ],
-                )
-            from tracer.services.derived_metrics.span_evidence import (
-                retiring_span_parts,
+            previous = f"SELECT {', '.join(KEYS + STATS)} FROM ({retired}) WHERE metric_id = toUUID(%(expiry_metric)s) AND metric_version = %(expiry_version)s AND is_deleted = 0"
+            merged = merge_parts_select(f"({live}) UNION ALL ({previous})")
+            writer.freeze(
+                attempt,
+                RETIRED_PARTS,
+                f"SELECT *, toUInt8(0) AS is_deleted FROM ({merged})",
+                p,
+                extra={
+                    "metric_id": "toUUID(%(expiry_metric)s)",
+                    "metric_version": "toUInt32(%(expiry_version)s)",
+                },
             )
-
-            capture = (
-                retiring_span_parts(
-                    writer,
-                    attempt,
-                    head,
-                    definition,
-                    expiring,
-                    p,
-                    cutoff=cutoff,
-                    as_of=as_of or now,
-                )
-                if definition.level == "span"
-                else nullcontext((live_parts_select(definition, expiring), p))
+    # Versions outside the supplied backfill/active set keep already anonymous
+    # history; no fresh stats may be manufactured without their definition.
+    missing = writer.store.execute(
+        f"SELECT DISTINCT field_id, field_version FROM ({fields}) WHERE is_deleted = 0 "
+        f"AND (level, unit_id) IN ({expired_units})",
+        params,
+    )
+    supplied = {(str(d.metric_id), d.version) for d in definitions}
+    if any((str(m), v) not in supplied for m, v in missing):
+        raise MetricStateConflict("retirement requires every stored field definition")
+    untouched = f"SELECT * FROM ({retired})"
+    if supplied:
+        untouched += " WHERE (metric_id, metric_version) NOT IN %(expiry_handled)s"
+        params["expiry_handled"] = tuple((UUID(m), v) for m, v in sorted(supplied))
+    writer.freeze(attempt, RETIRED_PARTS, untouched, params)
+    writer.append(
+        attempt,
+        "dirty_before",
+        [{"level": "span", "bucket_start": value} for value in sorted(span_dirty)],
+    )
+    for table in (BUCKET_TOTALS, UNIT_STATE, SOURCE_DEPENDENCIES):
+        where = "1"
+        if table == BUCKET_TOTALS and span_definitions and span_dirty:
+            where = (
+                "NOT ((metric_id, metric_version) IN %(expiry_span_metrics)s "
+                "AND bucket_start IN %(expiry_span_buckets)s)"
             )
-            with capture as (live, p):
-                if definition.level == "span":
-                    span_dirty.update(
-                        row[0]
-                        for row in writer.store.execute(
-                            f"SELECT DISTINCT bucket_start FROM ({live})", p
-                        )
-                    )
-                previous = f"SELECT {', '.join(KEYS + STATS)} FROM ({retired}) WHERE metric_id = toUUID(%(expiry_metric)s) AND metric_version = %(expiry_version)s AND is_deleted = 0"
-                merged = merge_parts_select(f"({live}) UNION ALL ({previous})")
-                writer.freeze(
-                    attempt,
-                    RETIRED_PARTS,
-                    f"SELECT *, toUInt8(0) AS is_deleted FROM ({merged})",
-                    p,
-                    extra={
-                        "metric_id": "toUUID(%(expiry_metric)s)",
-                        "metric_version": "toUInt32(%(expiry_version)s)",
-                    },
-                )
-        # Versions outside the supplied backfill/active set keep already anonymous
-        # history; no fresh stats may be manufactured without their definition.
-        missing = writer.store.execute(
-            f"SELECT DISTINCT field_id, field_version FROM ({fields}) WHERE is_deleted = 0 "
-            f"AND (level, unit_id) IN ({expired_units})",
-            params,
-        )
-        supplied = {(str(d.metric_id), d.version) for d in definitions}
-        if any((str(m), v) not in supplied for m, v in missing):
-            raise MetricStateConflict(
-                "retirement requires every stored field definition"
+            params.update(
+                expiry_span_metrics=tuple(
+                    (UUID(str(d.metric_id)), d.version) for d in span_definitions
+                ),
+                expiry_span_buckets=tuple(sorted(span_dirty)),
             )
-        untouched = f"SELECT * FROM ({retired})"
-        if supplied:
-            untouched += " WHERE (metric_id, metric_version) NOT IN %(expiry_handled)s"
-            params["expiry_handled"] = tuple((UUID(m), v) for m, v in sorted(supplied))
-        writer.freeze(attempt, RETIRED_PARTS, untouched, params)
-        writer.append(
-            attempt,
-            "dirty_before",
-            [{"level": "span", "bucket_start": value} for value in sorted(span_dirty)],
-        )
-        for table in (BUCKET_TOTALS, UNIT_STATE, SOURCE_DEPENDENCIES):
-            where = "1"
-            if table == BUCKET_TOTALS and span_definitions and span_dirty:
-                where = (
-                    "NOT ((metric_id, metric_version) IN %(expiry_span_metrics)s "
-                    "AND bucket_start IN %(expiry_span_buckets)s)"
-                )
-                params.update(
-                    expiry_span_metrics=tuple(
-                        (UUID(str(d.metric_id)), d.version) for d in span_definitions
-                    ),
-                    expiry_span_buckets=tuple(sorted(span_dirty)),
-                )
-            if table == SOURCE_DEPENDENCIES:
-                # B04's unit_start is the SPAN start. A recent member does not
-                # make an expired conversation's private membership retainable.
-                where = (
-                    "canonical_session_id IN (SELECT unit_id FROM "
-                    f"({retained_units}) WHERE level = 'conversation')"
-                )
-            elif table == UNIT_STATE:
-                where = f"(level, unit_id) IN ({retained_units})"
-            if table == SOURCE_DEPENDENCIES and any(
-                d.level == "span" for d in definitions
-            ):
-                sql, bound = committed_rows_select(
-                    table, head, org_id=writer.org_id, project_id=project_id
-                )
-                writer.freeze(
-                    attempt,
-                    table,
-                    _span_dependencies(sql, where, "expiry_cutoff"),
-                    {**params, **bound},
-                )
-            else:
-                writer.freeze_current(attempt, table, head, where=where, params=params)
-        for table in _current_tables(writer, head):
-            writer.freeze_current(
+        if table == SOURCE_DEPENDENCIES:
+            # B04's unit_start is the SPAN start. A recent member does not
+            # make an expired conversation's private membership retainable.
+            where = (
+                "canonical_session_id IN (SELECT unit_id FROM "
+                f"({retained_units}) WHERE level = 'conversation')"
+            )
+        elif table == UNIT_STATE:
+            where = f"(level, unit_id) IN ({retained_units})"
+        if table == SOURCE_DEPENDENCIES and any(d.level == "span" for d in definitions):
+            sql, bound = committed_rows_select(
+                table, head, org_id=writer.org_id, project_id=project_id
+            )
+            writer.freeze(
                 attempt,
                 table,
-                head,
-                where=_current_retained(fields, "expiry_cutoff"),
-                params=params,
+                _span_dependencies(sql, where, "expiry_cutoff"),
+                {**params, **bound},
             )
-        if span_definitions:
-            from tracer.services.derived_metrics.publication import FrozenRows
-            from tracer.services.derived_metrics.refresh import payload_select
+        else:
+            writer.freeze_current(attempt, table, head, where=where, params=params)
+    for table in _current_tables(writer, head):
+        writer.freeze_current(
+            attempt,
+            table,
+            head,
+            where=_current_retained(fields, "expiry_cutoff"),
+            params=params,
+        )
+    if span_definitions:
+        from tracer.services.derived_metrics.publication import FrozenRows
+        from tracer.services.derived_metrics.refresh import payload_select
 
-            new_live, nlp = _proposal_overlay(
-                writer, attempt, FIELD_VALUES, "expiry_live"
+        new_live, nlp = _proposal_overlay(writer, attempt, FIELD_VALUES, "expiry_live")
+        new_retired, nrp = payload_select(
+            RETIRED_PARTS,
+            [
+                FrozenRows.from_plan(p)
+                for p in writer.plans(attempt, kind="bucket_retired_parts")
+            ],
+            prefix="expiry_anonymous",
+        )
+        for definition in span_definitions:
+            writer._freeze_buckets(
+                attempt,
+                head,
+                definition,
+                new_live,
+                nlp,
+                complete_fields=True,
+                retired_override=(new_retired, nrp),
             )
-            new_retired, nrp = payload_select(
-                RETIRED_PARTS,
-                [
-                    FrozenRows.from_plan(p)
-                    for p in writer.plans(attempt, kind="bucket_retired_parts")
-                ],
-                prefix="expiry_anonymous",
-            )
-            for definition in span_definitions:
-                writer._freeze_buckets(
-                    attempt,
-                    head,
-                    definition,
-                    new_live,
-                    nlp,
-                    complete_fields=True,
-                    retired_override=(new_retired, nrp),
-                )
-        writer.seal(attempt, cursors={"pending_expiry": False})
+    writer.seal(attempt, cursors={"pending_expiry": False})
     manifest = writer.stage_and_publish(attempt)
     # Revocations and cleanup intent are ALREADY committed with this manifest.
     # Never roll PG back to evidence removed by a physical mutation.

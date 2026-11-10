@@ -54,7 +54,7 @@ from tracer.models.derived_metric import (
 )
 
 
-def project_lock(project_id, *, using=DEFAULT_DB_ALIAS):
+def project_lock(project_id, *, using=DEFAULT_DB_ALIAS, blocking=True):
     """Acquire the project serialization lock inside an existing transaction.
 
     Advisory rather than a parent FK lock: works before refresh-row creation and
@@ -64,10 +64,13 @@ def project_lock(project_id, *, using=DEFAULT_DB_ALIAS):
     db = connections[using]
     if not db.in_atomic_block:
         raise RuntimeError("project lock requires a transaction")
+    key = _project_lock_key(project_id)
     with db.cursor() as cursor:
-        cursor.execute(
-            "SELECT pg_advisory_xact_lock(%s)", [_project_lock_key(project_id)]
-        )
+        if not blocking:
+            cursor.execute("SELECT pg_try_advisory_xact_lock(%s)", [key])
+            return cursor.fetchone()[0]
+        cursor.execute("SELECT pg_advisory_xact_lock(%s)", [key])
+        return True
 
 
 def _project_lock_key(project_id):

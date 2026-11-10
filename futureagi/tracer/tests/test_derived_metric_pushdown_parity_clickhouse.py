@@ -1440,7 +1440,11 @@ def test_real_writer_cross_version_anchor_last_page_and_exact_start_rejection(
 def test_writer_capture_transport_failure_never_freezes_or_advances(
     live_writer, workspace, observe_project, monkeypatch
 ):
-    from tracer.models.derived_metric import MetricProjectRefresh, MetricRefreshAttempt
+    from tracer.models.derived_metric import (
+        MetricProjectRefresh,
+        MetricRefreshAttempt,
+        MetricStateConflict,
+    )
     from tracer.services.derived_metrics.queries import Scope
     from tracer.tests.test_derived_metric_refresh_clickhouse import (
         change_for,
@@ -1457,6 +1461,7 @@ def test_writer_capture_transport_failure_never_freezes_or_advances(
         writer, scope, uuid4(), "source", unit, now - timedelta(hours=1), 1, revision=1
     )
     stream = writer.store.client.execute_iter
+    freeze = writer.freeze
 
     def fail_after_last_row(*args, **kwargs):
         yield from stream(*args, **kwargs)
@@ -1475,9 +1480,44 @@ def test_writer_capture_transport_failure_never_freezes_or_advances(
             as_of=now,
         )
     assert frozen == []
-    assert not MetricRefreshAttempt.objects.filter(project_id=scope.project).exists()
+    # Preparation is durable now; an interrupted capture may leave its private
+    # attempt, but no frozen output, stageable ledger, publication or cursor.
+    failed = MetricRefreshAttempt.objects.get(project_id=scope.project)
+    assert failed.state == "prepared" and failed.ledger_sealed_at is None
+    assert list(writer.plans(failed)) == [] and not failed.batches.exists()
     state = MetricProjectRefresh.objects.get(project_id=scope.project)
     assert state.head_manifest_id is None and state.watermark_ns == 0
+    with pytest.raises(MetricStateConflict, match="ledger is not sealed"):
+        writer.stage_and_publish(failed)
+    failed.refresh_from_db()
+    assert failed.state == "prepared"
+    state.refresh_from_db()
+    assert state.head_manifest_id is None and state.watermark_ns == 0
+    for table in (FIELD_VALUES, BUCKET_TOTALS):
+        assert writer.store.execute(f"SELECT count() FROM {table.name}") == [(0,)]
+
+    monkeypatch.setattr(writer.store.client, "execute_iter", stream)
+    monkeypatch.setattr(writer, "freeze", freeze)
+    head = writer.refresh(
+        change_for(unit),
+        [definition],
+        scope,
+        start=now - timedelta(days=1),
+        end=now + timedelta(days=1),
+        as_of=now,
+    )
+    failed.refresh_from_db()
+    assert failed.state == "aborted"
+    assert head.published_by_id != failed.id and failed.id not in head.delta_attempt_ids
+    assert not failed.batches.exists()
+    state.refresh_from_db()
+    assert state.head_manifest_id == head.id and state.watermark_ns == 1
+    sql, params = committed_rows_select(
+        FIELD_VALUES, head, org_id=scope.organization, project_id=scope.project
+    )
+    assert writer.store.execute(
+        f"SELECT unit_id, value_number FROM ({sql}) WHERE is_deleted = 0", params
+    ) == [(str(unit), 1.0)]
 
 
 @pytest.mark.django_db(transaction=True)

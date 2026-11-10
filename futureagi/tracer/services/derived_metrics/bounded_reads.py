@@ -362,7 +362,7 @@ def field_window_requires_subdivision(
     project_id: UUID,
     field_id: UUID,
     field_version: int,
-    bucket_start: str,
+    bucket_start: str | tuple[str, ...],
     overlay: tuple[str, dict],
 ) -> bool:
     """Probe at most C+1 distinct nominees, never collapse the full payload.
@@ -394,10 +394,17 @@ def field_window_requires_subdivision(
     count = store.execute(
         "SELECT count() FROM (SELECT DISTINCT level, unit_id FROM ("
         + " UNION ALL ".join(branches)
-        + ") WHERE bucket_start = parseDateTimeBestEffort(%(bucket_probe_start)s, 'UTC') "
+        + ") WHERE bucket_start IN (SELECT parseDateTimeBestEffort(arrayJoin(%(bucket_probe_starts)s), 'UTC')) "
         + f"LIMIT {MAX_COMPACTION_ROWS + 1})",
         merge_bindings(
-            params, bound, fixed_params, {"bucket_probe_start": bucket_start}
+            params,
+            bound,
+            fixed_params,
+            {
+                "bucket_probe_starts": [bucket_start]
+                if isinstance(bucket_start, str)
+                else list(bucket_start)
+            },
         ),
     )[0][0]
     return count > MAX_COMPACTION_ROWS

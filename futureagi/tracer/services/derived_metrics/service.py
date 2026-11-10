@@ -1226,7 +1226,10 @@ def preview(
 
 def admit_refresh(metric):
     """Admit an authorized definition to B10's durable, throttled project queue."""
-    from tracer.services.derived_metrics.admission import request_refresh
+    from tracer.services.derived_metrics.admission import (
+        RefreshAdmissionUnavailable,
+        request_refresh,
+    )
     from tracer.services.derived_metrics.feature_flag import metrics_enabled
 
     if not metrics_enabled(org=metric.organization_id, project=metric.project_id):
@@ -1235,9 +1238,14 @@ def admit_refresh(metric):
         version=metric.current_version
     )
     require_computable(definition)
-    return {
-        "status": "queued" if request_refresh(metric.project_id) else "already_queued"
-    }
+    try:
+        queued = request_refresh(metric.project_id)
+    except RefreshAdmissionUnavailable as exc:
+        raise MetricUnavailableError(
+            "refresh_unavailable",
+            "Refresh admission is temporarily unavailable. Retry this request.",
+        ) from exc
+    return {"status": "queued" if queued else "already_queued"}
 
 
 def activate_definition(metric, data):

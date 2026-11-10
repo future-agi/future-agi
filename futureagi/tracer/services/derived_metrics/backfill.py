@@ -27,6 +27,7 @@ from tracer.models.derived_metric import (
 )
 from tracer.services.derived_metrics import changes
 from tracer.services.derived_metrics.bounded_reads import (
+    committed_branches,
     committed_key_pages,
     merge_bindings,
 )
@@ -595,6 +596,46 @@ def _grouped_committed_page(
     ]
 
 
+def _older_history_end(analytics, writer, head, *, floor, end, budget):
+    """Conservative physical nominees, including losers/deletes and old owners.
+
+    A raw maximum may nominate an unnecessary day; it cannot skip a committed
+    vanished field or dependency. No private identity is stored in this hint.
+    """
+    params = {
+        "history_project": str(writer.lease.project_id),
+        "history_floor": floor,
+        "history_end": end,
+    }
+    branches = [
+        "SELECT start_time AS moment FROM spans PREWHERE project_id = toUUID(%(history_project)s) "
+        "AND start_time >= %(history_floor)s AND start_time < %(history_end)s"
+    ]
+    for table in (SOURCE_DEPENDENCIES, FIELD_VALUES):
+        raw, bound = committed_branches(
+            table,
+            head,
+            org_id=writer.org_id,
+            project_id=writer.lease.project_id,
+            columns=("unit_start",),
+            param_prefix="history_" + table.name,
+        )
+        params = merge_bindings(params, bound)
+        branches.extend(
+            f"SELECT unit_start AS moment FROM ({sql}) WHERE unit_start >= %(history_floor)s AND unit_start < %(history_end)s"
+            for sql in raw
+        )
+    rows = changes.read(
+        analytics,
+        "SELECT maxOrNull(moment) AS latest FROM ("
+        + " UNION ALL ".join(branches)
+        + ")",
+        params,
+        budget,
+    )
+    return changes.utc(rows[0]["latest"]) if rows[0]["latest"] is not None else None
+
+
 def day_page(analytics, writer, head, cursor, *, page_size, cutoff=None):
     """Nominate one day's bounded source/dependency/field keys, newest first.
 
@@ -700,7 +741,25 @@ def day_page(analytics, writer, head, cursor, *, page_size, cutoff=None):
             proposed["phase"] = (
                 "coverage" if proposed["done"] == proposed["total"] else "sources"
             )
-            break  # At most one daily chunk per publication, even on empty days.
+            if proposed["phase"] != "coverage" and not keys and not units:
+                latest = _older_history_end(
+                    analytics, writer, head, floor=floor, end=start, budget=budget
+                )
+                if latest is None:
+                    proposed.update(
+                        done=proposed["total"],
+                        phase="coverage",
+                        day_end=floor.isoformat(),
+                    )
+                else:
+                    # Keep the original daily grid and coverage count. Skipped
+                    # ranges provably contain no raw or committed nominees.
+                    # day_end is exclusive: a nominee exactly on a daily
+                    # boundary belongs to the following page, not a skipped day.
+                    skipped = max(0, (start - latest - timedelta(microseconds=1)).days)
+                    proposed["done"] += skipped
+                    proposed["day_end"] = (start - timedelta(days=skipped)).isoformat()
+            break
     batch = changes._batch(
         analytics, tuple(sorted(keys)), params, budget, {}, extra_units=units
     )
@@ -870,8 +929,9 @@ def merge_changes(*batches):
 
 
 def incremental_changes(analytics, writer, head, definitions, *, now):
+    definitions = list(definitions)
     state = MetricProjectRefresh.for_project(writer.lease.project_id)
-    return changes.discover_changes(
+    batch = changes.discover_changes(
         analytics,
         org_id=writer.org_id,
         project_id=writer.lease.project_id,
@@ -889,12 +949,37 @@ def incremental_changes(analytics, writer, head, definitions, *, now):
             }
         ),
     )
+    work_units = len(batch.units)
+    if any(getattr(d, "level", None) == "span" for d in definitions):
+        # Span refreshes materialize source identities, not just their owners.
+        work_units = max(work_units, len(batch.source_keys))
+    if work_units > getattr(writer, "incremental_unit_limit", changes.MAX_KEYS):
+        # Do not truncate or consume any watermark. Existing overflow handling
+        # switches to fenced, durably checkpointed repair pages instead.
+        raise changes.arrivals.ContinuousCandidateOverflow(
+            "metric native write page exceeds admission cap"
+        )
+    return batch
+
+
+def _backfill_intents(control):
+    return control.get("backfills", ()) or (
+        [control["backfill"]] if control.get("backfill") else ()
+    )
 
 
 def check_backfill_publication(writer, control):
-    intent = control.get("backfill")
-    if not intent:
-        return
+    if (
+        control.get("initial_empty_head")
+        and MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest_id
+        is not None
+    ):
+        raise MetricStateConflict("initial history proof no longer has an empty parent")
+    for intent in _backfill_intents(control):
+        _check_backfill_intent(writer, intent)
+
+
+def _check_backfill_intent(writer, intent):
     definition = DerivedMetricVersion.objects.select_related("metric").get(
         id=intent["version_id"], metric__project_id=writer.lease.project_id
     )
@@ -914,8 +999,7 @@ def check_backfill_publication(writer, control):
 
 def apply_publication(writer, attempt, control):
     """Called ONLY after validation inside the fenced head-switch transaction."""
-    intent = control.get("backfill")
-    if intent:
+    for intent in _backfill_intents(control):
         definition = DerivedMetricVersion.objects.select_related("metric").get(
             id=intent["version_id"], metric__project_id=writer.lease.project_id
         )
@@ -1049,7 +1133,9 @@ def _committed_keyset_start(writer, committed, phase, after):
 class BackfillRunner:
     """One bounded admission. Fleet admission/fairness remains B10's concern."""
 
-    def __init__(self, writer, analytics, scope, *, page_size=PAGE_SIZE):
+    def __init__(
+        self, writer, analytics, scope, *, page_size=PAGE_SIZE, exhaustive_initial=False
+    ):
         if not 1 <= page_size <= PAGE_SIZE:
             raise ValueError("invalid backfill page size")
         if (
@@ -1062,6 +1148,7 @@ class BackfillRunner:
             raise MetricStateConflict("backfill requires current retention policy")
         self.writer, self.analytics, self.scope = writer, analytics, scope
         self.page_size = page_size
+        self.exhaustive_initial = exhaustive_initial
 
     def run_pass(self, *, max_chunks=MAX_CHUNKS_PER_PASS):
         if not 1 <= max_chunks <= MAX_CHUNKS_PER_PASS:
@@ -1178,6 +1265,9 @@ class BackfillRunner:
                 queue_bulk_change(writer.lease.project_id, now=now)
             return self.run_repair_page(skip_incremental=True)
         batch = merge_changes(batch, incremental)
+        initial_publication = self._initial_publication(
+            definitions, head, incremental, now=now
+        )
         return writer.refresh(
             batch,
             definitions,
@@ -1186,7 +1276,8 @@ class BackfillRunner:
             end=now,
             as_of=now,
             purpose="backfill",
-            publication={
+            publication=initial_publication
+            or {
                 "backfill": {
                     "version_id": str(definition.id),
                     "expected": definition.backfill_cursor,
@@ -1197,6 +1288,60 @@ class BackfillRunner:
                 }
             },
         )
+
+    def _initial_publication(self, definitions, head, incremental, *, now):
+        """A complete Epoch-to-now arrival scan is already initial coverage.
+
+        Only a brand-new, empty project can use this proof. There are no committed
+        vanished dependencies/fields to reconcile, and zero watermarks mean the
+        bounded discovery just exhaustively visited source/eval/remap history.
+        Overflow goes to the existing paged repair path, never this shortcut.
+        All pending recipes are recomputed by the SAME frozen publication; every
+        activation still validates its original progress/active-version CAS.
+        """
+        if not self.exhaustive_initial or head is not None or not definitions:
+            return None
+        state = MetricProjectRefresh.for_project(self.writer.lease.project_id)
+        if state.head_manifest_id is not None or any(
+            getattr(state, field) != 0 for field in MetricProjectRefresh.MONOTONE_FIELDS
+        ):
+            return None
+        if any(
+            d.backfill_status != "pending"
+            or d.backfill_cursor is not None
+            or d.backfill_updated_at is not None
+            or d.metric.active_version_id is not None
+            for d in definitions
+        ):
+            return None
+        coverage = changes.ReconciliationCheckpoint(
+            started_at=now,
+            completed_at=now,
+            phase="complete",
+            scanned=len(incremental.source_keys),
+            completed_passes=1,
+            covered_through=now,
+        )
+        intents = []
+        for definition in definitions:
+            cursor = _initial_cursor(
+                definition, now=now, retention_days=self.writer.retention_days()
+            )
+            cursor.update(
+                phase="complete",
+                done=cursor["total"],
+                day_end=cursor["start"],
+                coverage=coverage.to_dict(),
+            )
+            intents.append(
+                {
+                    "version_id": str(definition.id),
+                    "expected": None,
+                    "expected_updated_at": None,
+                    "next": cursor,
+                }
+            )
+        return {"initial_empty_head": True, "backfills": intents}
 
     def run_repair_page(self, *, skip_incremental=False):
         writer = self.writer

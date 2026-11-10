@@ -170,8 +170,9 @@ def committed_rows_select(
 class ClickHousePublicationStore:
     """One local shard, with server-enforced bounds on every statement."""
 
-    def __init__(self, client):
+    def __init__(self, client, *, lease=None):
         self.client = client
+        self.lease = lease
 
     @contextmanager
     def compaction_budget(self, deadline):
@@ -189,12 +190,21 @@ class ClickHousePublicationStore:
 
     def execute(self, sql, params=None, **kwargs):
         deadline = getattr(self, "_compaction_deadline", None)
+        if self.lease is not None:
+            self.lease.keepalive()
+            lease_deadline = monotonic() + self.lease.remaining_seconds()
+            deadline = min(deadline, lease_deadline) if deadline else lease_deadline
         if deadline is None:
             return self.client.execute(
                 sql, params or {}, settings=WRITE_SETTINGS, **kwargs
             )
         seconds = min(WRITE_SETTINGS["max_execution_time"], int(deadline - monotonic()))
         if seconds < 1:
+            if self.lease is not None:
+                from tracer.services.derived_metrics.lease import MetricPassDeadline
+
+                self.lease.check()
+                raise MetricPassDeadline()
             raise MetricVisibilityError("checkpoint compaction deadline exceeded")
         statement_deadline = min(deadline, monotonic() + seconds)
         connection = self.client.connection

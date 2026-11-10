@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from datetime import timedelta
+from time import monotonic
 
 from django.utils import timezone
 
@@ -10,11 +11,32 @@ from tracer.models.derived_metric import MetricFencingError, MetricProjectRefres
 DEFAULT_LEASE_TTL = timedelta(minutes=5)
 
 
+class MetricPassDeadline(BaseException):
+    """Cooperative cancellation, not a read error or a failed publication.
+
+    Like asyncio cancellation, this must pass through query-error normalization
+    and generic retry handlers unchanged. The reservation boundary consumes it
+    after transports/transactions unwind; PG alone schedules continuation.
+    """
+
+
 class ProjectLease:
-    def __init__(self, grant, *, clock=timezone.now):
+    def __init__(self, grant, *, clock=timezone.now, deadline=None):
         self.grant = grant
         self.clock = clock
         self.expires_at = grant.expires_at
+        self.deadline = deadline
+
+    def remaining_seconds(self):
+        remaining = (self.expires_at - self.clock()).total_seconds()
+        if self.deadline is not None:
+            budget = self.deadline - monotonic()
+            if budget <= 0:
+                raise MetricPassDeadline()
+            remaining = min(remaining, budget)
+        if remaining <= 0:
+            raise MetricFencingError()
+        return remaining
 
     @property
     def project_id(self):
@@ -28,6 +50,7 @@ class ProjectLease:
         }
 
     def check(self):
+        self.remaining_seconds()
         fence = self.fence()
         if not MetricProjectRefresh.objects.filter(
             MetricProjectRefresh.lease_q(**fence), project_id=self.project_id
@@ -36,6 +59,11 @@ class ProjectLease:
         return fence
 
     def renew(self, ttl=DEFAULT_LEASE_TTL):
+        self.remaining_seconds()
+        if self.deadline is not None:
+            ttl = min(ttl, timedelta(seconds=self.deadline - monotonic()))
+            if ttl <= timedelta(0):
+                raise MetricPassDeadline()
         self.expires_at = MetricProjectRefresh.renew_lease(
             self.project_id, ttl=ttl, **self.fence()
         )
