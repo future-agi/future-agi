@@ -11,7 +11,7 @@ const CREATE_DATASET = '/model-hub/develops/create-dataset-manually/';
 // QueueAnalyticsTab and queue-detail-view.jsx use these accessible controls.
 const UI_READY = 60_000;
 type ExportRow = { item_id: string; source_id: string; source: { fields: Record<string, string> };
-  annotations: { label_id: string; value: { rating: number } }[] };
+  annotations: { label_id: string; value: number }[] };
 type Item = { id: string; dataset_row_id: string };
 
 test('ANNOT-E2E-006: large queues download all annotations and source content', {
@@ -120,7 +120,7 @@ test('ANNOT-E2E-006: large queues download all annotations and source content', 
         for (const row of exported) expect(row.source.fields['Column 1']).toBe(valueByRow.get(row.source_id));
         if (scenario.queue === large) {
           expect(exported.find(r => r.item_id === annotated.id)!.annotations).toEqual([
-            expect.objectContaining({ label_id: labelId, value: { rating: 4 } }),
+            expect.objectContaining({ label_id: labelId, value: 4 }),
           ]);
         }
       } else {
