@@ -173,12 +173,11 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
                 return outcome
             task = current
             if task.run_type == RunType.CONTINUOUS:
-                # The workflow's PENDING -> RUNNING activity stamps start_time
-                # with now. That is also the reconciler's coverage floor: on a
-                # recovery it would skip never-dispatched arrivals, or clamp a
-                # partial catch-up slice straight to now. Transition here with
-                # the original floor instead, so that activity is a no-op.
-                # Keep the cursor intact, including NULL, and preserve results.
+                # Continuous coverage starts at acceptance/activation, never
+                # at recovery. Creation uses created_at; conversion persists a
+                # fresh start_time in the mode-change transaction. Match the
+                # workflow's guarded startup transition, retaining partial (or
+                # NULL) cursors and existing results through catch-up.
                 task.start_time = task.start_time or task.created_at
                 task.status = EvalTaskStatus.RUNNING
                 EvalTask.no_workspace_objects.filter(id=task.id).update(
@@ -191,11 +190,14 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
                 )
 
         # Commit state before dispatch (the worker must see it), then recheck
-        # immediately. A later pause still wins the workflow's guarded status
+        # on the primary: replica lag must neither suppress a valid restart nor
+        # hide a committed pause/delete. A later pause wins the guarded status
         # transition and active-state checks; never replace an execution.
-        if not EvalTask.no_workspace_objects.filter(
-            id=task.id, status=task.status
-        ).exists():
+        if not (
+            EvalTask.no_workspace_objects.filter(id=task.id, status=task.status)
+            .using("default")
+            .exists()
+        ):
             outcome["skipped"] = True
             return outcome
 

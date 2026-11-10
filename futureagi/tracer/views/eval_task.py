@@ -3120,10 +3120,15 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     # rows older than the overlap may newly match (or stop
                     # matching). Reset inside this locked transaction so the
                     # next reconcile performs a complete start-time proof.
-                    EvalTask.objects.filter(id=eval_task.id).update(
-                        continuous_cursor=None
-                    )
-                    eval_task.continuous_cursor = None
+                    coverage_fields = {"continuous_cursor": None}
+                    if original_run_type != RunType.CONTINUOUS:
+                        # A historical execution's start_time is not continuous
+                        # coverage. Persist activation before dispatch so either
+                        # normal startup or recovery excludes earlier arrivals.
+                        coverage_fields["start_time"] = timezone.now()
+                    EvalTask.objects.filter(id=eval_task.id).update(**coverage_fields)
+                    for field, value in coverage_fields.items():
+                        setattr(eval_task, field, value)
 
                 # Delete & rerun wipes live entries first; the workflow then
                 # reconciles (materialize/diff) and drains for both cases, so the
