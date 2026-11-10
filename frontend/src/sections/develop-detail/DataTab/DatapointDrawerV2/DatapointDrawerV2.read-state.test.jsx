@@ -36,6 +36,8 @@ vi.mock("../../states", () => ({
     setDrawerColumn: setDrawerColumnMock,
     column: null,
   }),
+  useDevelopFilterStore: { getState: () => ({ filters: [] }) },
+  useDevelopSearchStore: { getState: () => ({ search: "" }) },
 }));
 
 vi.mock("../../Context/DevelopDetailContext", () => ({

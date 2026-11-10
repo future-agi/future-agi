@@ -33,6 +33,8 @@ import CellMarkdown from "src/sections/common/CellMarkdown";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { canonicalEntries } from "src/utils/utils";
 import {
+  buildDatasetRowAdjacencyPayload,
+  getDatasetGridSort,
   readDatasetCellRow,
   readDatasetRowAdjacency,
   runDatasetPointReadAction,
@@ -211,6 +213,9 @@ const DatapointDrawerChild = ({
   rowIndex,
   setRunEval,
   runEval,
+  validatedFilters,
+  searchQuery,
+  gridApiRef,
   setActiveRow,
   totalCount,
   currentColumn,
@@ -450,10 +455,6 @@ const DatapointDrawerChild = ({
   const isPending = isLoadingCellData || isLoadingNextRows;
 
   const loadDatapoint = async (direction) => {
-    // const payload = {
-    //   row_id: datapoint?.rowData?.rowId,
-    //   filters: validatedFilters,
-    // };
     setNextAction(direction === "next");
     setNavigationError(null);
     setRetryDirection(null);
@@ -474,7 +475,12 @@ const DatapointDrawerChild = ({
           continuationRowId
         ) {
           adjacency = await setNextItem({
-            payload: { row_id: continuationRowId },
+            payload: buildDatasetRowAdjacencyPayload({
+              rowId: continuationRowId,
+              filters: validatedFilters,
+              searchQuery,
+              sort: getDatasetGridSort(gridApiRef?.current?.api),
+            }),
             signal: actionSignal,
           });
         }
@@ -1081,6 +1087,8 @@ DatapointDrawerChild.propTypes = {
   rowIndex: PropTypes.number,
   setRunEval: PropTypes.func,
   validatedFilters: PropTypes.array,
+  searchQuery: PropTypes.string,
+  gridApiRef: PropTypes.object,
   setActiveRow: PropTypes.func,
   totalCount: PropTypes.number,
   runEval: PropTypes.object,
@@ -1101,6 +1109,8 @@ const DatapointDrawer = ({
   setEvalDrawer,
   evalDrawer,
   validatedFilters,
+  searchQuery,
+  gridApiRef,
   setActiveRow,
   totalCount,
   rowNewData,
@@ -1160,6 +1170,8 @@ const DatapointDrawer = ({
         runEval={runEval}
         setDataPointDrawerData={setDataPointDrawerData}
         validatedFilters={validatedFilters}
+        searchQuery={searchQuery}
+        gridApiRef={gridApiRef}
         setActiveRow={setActiveRow}
         totalCount={totalCount}
         rowNewData={rowNewData}
@@ -1193,6 +1205,8 @@ DatapointDrawer.propTypes = {
   setEvalDrawer: PropTypes.func,
   evalDrawer: PropTypes.bool,
   validatedFilters: PropTypes.array,
+  searchQuery: PropTypes.string,
+  gridApiRef: PropTypes.object,
   setActiveRow: PropTypes.func,
   totalCount: PropTypes.number,
   rowNewData: PropTypes.object,

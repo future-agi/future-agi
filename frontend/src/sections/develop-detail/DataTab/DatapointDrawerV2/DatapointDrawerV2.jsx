@@ -17,6 +17,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   useAddEvaluationFeebackStore,
   useDatapointDrawerStore,
+  useDevelopFilterStore,
+  useDevelopSearchStore,
   useImprovePromptStore,
 } from "../../states";
 import PropTypes from "prop-types";
@@ -53,10 +55,13 @@ import { useEvalsList } from "src/sections/common/EvaluationDrawer/getEvalsList"
 import CompositeResultView from "src/sections/evals/components/CompositeResultView";
 import { canonicalEntries } from "src/utils/utils";
 import {
+  buildDatasetRowAdjacencyPayload,
+  getDatasetGridSort,
   readDatasetCellRow,
   readDatasetRowAdjacency,
   runDatasetPointReadAction,
 } from "../dataset_point_read";
+import { transformFilter, validateFilter } from "../DevelopFilters/common";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
@@ -501,9 +506,15 @@ const DatapointDrawerChild = () => {
 
           if (!nextId) {
             const adjacency = await getNextItemIds({
-              payload: {
-                row_id: datapoint?.rowData?.row_id ?? datapoint?.rowData?.rowId,
-              },
+              payload: buildDatasetRowAdjacencyPayload({
+                rowId: datapoint?.rowData?.row_id ?? datapoint?.rowData?.rowId,
+                filters: useDevelopFilterStore
+                  .getState()
+                  .filters.filter(validateFilter)
+                  .map(transformFilter),
+                searchQuery: useDevelopSearchStore.getState().search,
+                sort: getDatasetGridSort(gridApi.current),
+              }),
               signal: actionSignal,
             });
             const knownIds = new Set(mergedRows.map((item) => String(item.id)));
