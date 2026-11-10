@@ -479,10 +479,7 @@ const TaskListView = ({
 
   // Selected rows
   const selectedItems = useMemo(() => {
-    return Object.keys(rowSelection)
-      .filter((key) => rowSelection[key])
-      .map((key) => items[parseInt(key, 10)])
-      .filter(Boolean);
+    return items.filter((item) => rowSelection[item.id]);
   }, [rowSelection, items]);
 
   // Columns
@@ -688,7 +685,7 @@ const TaskListView = ({
                 startIcon={
                   <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 }
-                onClick={() => setDeleteTarget(selectedItems)}
+                onClick={() => setDeleteTarget(selectedItems.map((item) => item.id))}
                 disabled={
                   !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
                     role
@@ -755,6 +752,7 @@ const TaskListView = ({
         sorting={sorting}
         onSortingChange={handleSortingChange}
         rowSelection={rowSelection}
+        selectionScope={[observeId, queryPage, pageSize, searchQuery, debouncedSearch]}
         onRowSelectionChange={setRowSelection}
         onRowClick={(row) => onRowClick?.(row)}
         getRowId={(row) => row.id}
@@ -778,6 +776,7 @@ const TaskListView = ({
       {deleteTarget && (
         <DeleteConfirmation
           open={Boolean(deleteTarget)}
+          selectedItems={Array.isArray(deleteTarget) ? deleteTarget : [deleteTarget]}
           title={`Delete ${Array.isArray(deleteTarget) ? deleteTarget.length : 1} task(s)?`}
           content="This action cannot be undone. The task(s) and their logs will be permanently removed."
           onClose={() => setDeleteTarget(null)}

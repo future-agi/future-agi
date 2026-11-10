@@ -1,5 +1,5 @@
 import { Box, Button, Divider, Typography } from "@mui/material";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { styled } from "@mui/system";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
@@ -17,7 +17,12 @@ import SnackbarWithAction from "../Common/SnackbarWithAction";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import SvgColor from "src/components/svg-color";
 import { useDevelopDetailContext } from "../Context/DevelopDetailContext";
-import { useDevelopSelectedRowsStoreShallow } from "../states";
+import { useDevelopSelectedRowsStore, useDevelopSelectedRowsStoreShallow } from "../states";
+import {
+  assertRowSelectionCurrent,
+  captureRowSelection,
+  resolveSelectedRowIds,
+} from "../DataTab/datasetRowSelection";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { getCreatedRowsDatasetId } from "./createDatasetRowsResponse";
@@ -58,11 +63,12 @@ const DevelopDataSelectionActive = () => {
   const [targetDatasetId, setTargetDatasetId] = useState("");
   const [name, setName] = useState("");
   const { refreshGrid } = useDevelopDetailContext();
-  const { selectAll, toggledNodes, resetSelectedRows } =
+  const { selectAll, toggledNodes, resetSelectedRows, selectionRevision } =
     useDevelopSelectedRowsStoreShallow((s) => ({
       selectAll: s.selectAll,
       toggledNodes: s.toggledNodes,
       resetSelectedRows: s.resetSelectedRows,
+      selectionRevision: s.selectionRevision,
     }));
 
   const { role } = useAuthContext();
@@ -70,29 +76,85 @@ const DevelopDataSelectionActive = () => {
   const { gridApi } = useDevelopDetailContext();
 
   const navigate = useNavigate();
+  const confirmationRef = useRef(null);
+  const liveView = useRef({ dataset, active: true });
+  liveView.current.dataset = dataset;
+
+  useEffect(() => {
+    liveView.current.active = true;
+    return () => { liveView.current.active = false; confirmationRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    confirmationRef.current = null;
+    setIsDelete(false);
+    setIsDuplicate(false);
+  }, [dataset, selectionRevision]);
+
+  const assertActionCurrent = (action) => {
+    if (!action || confirmationRef.current !== action || !liveView.current.active ||
+        liveView.current.dataset !== action.selection.scope.dataset) {
+      throw new Error("Selection changed. Select the rows again.");
+    }
+    assertRowSelectionCurrent(action.selection, liveView.current.dataset, gridApi.current);
+  };
+
+  const openRowAction = (type) => {
+    try {
+      confirmationRef.current = { type, selection: captureRowSelection(dataset, gridApi.current) };
+      setIsDelete(type === "delete");
+      setIsDuplicate(type === "duplicate");
+    } catch (error) {
+      enqueueSnackbar(error.message, { variant: "warning" });
+    }
+  };
+
+  const closeRowAction = () => {
+    confirmationRef.current = null;
+    setIsDelete(false);
+    setIsDuplicate(false);
+  };
+
+  const onRowActionError = (_error, action) => {
+    if (!liveView.current.active || confirmationRef.current !== action) return;
+    closeRowAction();
+    enqueueSnackbar("The row action could not be completed. Select the rows again and retry.", {
+      variant: "error",
+    });
+  };
+
+  const clearCompletedSelection = (action) => {
+    if (useDevelopSelectedRowsStore.getState().selectionRevision === action.selection.revision) {
+      resetSelectedRows();
+      gridApi.current?.deselectAll();
+    }
+  };
 
   const handleClose = () => {
     setAnchorEl(null);
     setAnchorElSubmenu(null);
   };
 
-  const { mutate: onDeleteDatasetRow, isPending: isDeleting } = useMutation({
-    mutationFn: () => {
-      const selectedIds = toggledNodes;
-
-      return axios.delete(endpoints.develop.deleteDatasetRow(dataset), {
-        data: { row_ids: selectedIds, selected_all_rows: selectAll },
+  const { mutate: onDeleteDatasetRow, isPending: isDeleting, variables: deletingAction } = useMutation({
+    mutationFn: async (action) => {
+      const selectedIds = await resolveSelectedRowIds(action.selection, () => assertActionCurrent(action));
+      // Recheck after the resolver's promise settles and immediately before dispatch.
+      assertActionCurrent(action);
+      await axios.delete(endpoints.develop.deleteDatasetRow(action.selection.scope.dataset), {
+        data: { row_ids: selectedIds, selected_all_rows: false },
       });
+      return selectedIds;
     },
-    onSuccess: () => {
-      const selectedIds = toggledNodes;
+    onError: onRowActionError,
+    onSuccess: (selectedIds, action) => {
+      if (!liveView.current.active || liveView.current.dataset !== action.selection.scope.dataset) return;
       trackEvent(Events.deleteRowSuccessful, {
         [PropertyName.deleteRow]: {
           selectedRow: selectedIds,
         },
       });
-      setIsDelete(false);
-      unCheckedHandler();
+      if (confirmationRef.current === action) closeRowAction();
+      clearCompletedSelection(action);
       refreshGrid();
       enqueueSnackbar("Rows deleted successfully", {
         variant: "success",
@@ -100,28 +162,30 @@ const DevelopDataSelectionActive = () => {
     },
   });
 
-  const { mutate: onDuplicateDatasetRows, isPending: isDuplicateLoading } =
+  const { mutate: onDuplicateDatasetRows, isPending: isDuplicateLoading, variables: duplicatingAction } =
     useMutation({
-      mutationFn: () => {
-        const selectedIds = toggledNodes;
-
-        return axios.post(endpoints.develop.duplicateDatasetRows(dataset), {
-          num_copies: Number(noOfCopies),
+      mutationFn: async (action) => {
+        const selectedIds = await resolveSelectedRowIds(action.selection, () => assertActionCurrent(action));
+        assertActionCurrent(action);
+        await axios.post(endpoints.develop.duplicateDatasetRows(action.selection.scope.dataset), {
+          num_copies: action.copies,
           row_ids: selectedIds,
-          selected_all_rows: selectAll,
+          selected_all_rows: false,
         });
+        return selectedIds;
       },
-      onSuccess: () => {
-        const selectedIds = toggledNodes;
+      onError: onRowActionError,
+      onSuccess: (selectedIds, action) => {
+        if (!liveView.current.active || liveView.current.dataset !== action.selection.scope.dataset) return;
 
         trackEvent(Events.duplicateRowSuccessful, {
           [PropertyName.duplicateRow]: {
             rowId: selectedIds[0],
-            num_copies: Number(noOfCopies),
+            num_copies: action.copies,
           },
         });
-        setIsDuplicate(false);
-        setTimeout(unCheckedHandler, 100);
+        if (confirmationRef.current === action) closeRowAction();
+        clearCompletedSelection(action);
         refreshGrid();
         enqueueSnackbar("Rows duplicated successfully", {
           variant: "success",
@@ -251,6 +315,9 @@ const DevelopDataSelectionActive = () => {
     },
   });
 
+  const deletePending = isDeleting && deletingAction === confirmationRef.current;
+  const duplicatePending = isDuplicateLoading && duplicatingAction === confirmationRef.current;
+
   const unCheckedHandler = () => {
     resetSelectedRows();
     gridApi.current?.deselectAll();
@@ -293,13 +360,13 @@ const DevelopDataSelectionActive = () => {
       <StyledButton
         variant="text"
         size="small"
-        disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
+        disabled={deletePending || duplicatePending || !RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
         startIcon={
           <Iconify icon="gg:duplicate" sx={{ color: "text.secondary" }} />
         }
         onClick={() => {
           trackEvent(Events.duplicateRowClicked);
-          setIsDuplicate(!isDuplicate);
+          openRowAction("duplicate");
         }}
       >
         Duplicate
@@ -322,7 +389,7 @@ const DevelopDataSelectionActive = () => {
       <StyledButton
         variant="text"
         size="small"
-        disabled={!RolePermission.DATASETS[PERMISSIONS.DELETE][role]}
+        disabled={deletePending || duplicatePending || !RolePermission.DATASETS[PERMISSIONS.DELETE][role]}
         startIcon={
           <SvgColor
             src={`/assets/icons/components/ic_delete.svg`}
@@ -331,7 +398,7 @@ const DevelopDataSelectionActive = () => {
         }
         onClick={() => {
           trackEvent(Events.deleteRowClicked);
-          setIsDelete(!isDelete);
+          openRowAction("delete");
         }}
       >
         Delete
@@ -376,9 +443,14 @@ const DevelopDataSelectionActive = () => {
           actionButton="Duplicate"
           open={isDuplicate}
           className="dialogButton"
-          onClose={() => setIsDuplicate((prev) => !prev)}
-          loading={isDuplicateLoading}
-          onClickAction={() => onDuplicateDatasetRows()}
+          onClose={closeRowAction}
+          loading={duplicatePending}
+          onClickAction={() => {
+            const action = confirmationRef.current;
+            if (!action || action.type !== "duplicate") return;
+            action.copies = Number(noOfCopies);
+            onDuplicateDatasetRows(action);
+          }}
         >
           <DuplicateRowAction setNoOfCopies={setNoOfCopies} />
         </CustomDialog>
@@ -391,9 +463,12 @@ const DevelopDataSelectionActive = () => {
           actionButton="Delete"
           open={isDelete}
           preTitleIcon="solar:trash-bin-trash-bold"
-          onClose={() => setIsDelete((prev) => !prev)}
-          loading={isDeleting}
-          onClickAction={() => onDeleteDatasetRow()}
+          onClose={closeRowAction}
+          loading={deletePending}
+          onClickAction={() => {
+            const action = confirmationRef.current;
+            if (action?.type === "delete") onDeleteDatasetRow(action);
+          }}
         >
           <DeleteRowAction selectedCount={selectedCount} />
         </CustomDialog>

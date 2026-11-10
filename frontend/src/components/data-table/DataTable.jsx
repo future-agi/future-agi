@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { DataGrid } from "@mui/x-data-grid";
 import { Box, alpha, useTheme } from "@mui/material";
 
@@ -16,6 +16,11 @@ export default function DataTable({
   onSortingChange,
   rowSelection,
   onRowSelectionChange,
+  // Serializable query scope: page, page size, raw/debounced search, filters
+  // and route/tab IDs. Sorting is included automatically below.
+  selectionScope,
+  // Non-destructive pickers may own an external, cross-page selection.
+  preserveSelectionOnUnmount = false,
   onRowClick,
   getRowId,
   columnVisibility,
@@ -108,29 +113,60 @@ export default function DataTable({
     [onSortingChange],
   );
 
-  // Row selection — convert between array (MUI) and object (our API)
-  const selectionModel = useMemo(() => {
-    if (!rowSelection) return [];
-    return Object.keys(rowSelection)
-      .filter((k) => rowSelection[k])
-      .map((k) => {
-        const row = (data || [])[parseInt(k, 10)];
-        return row ? (getRowId ? getRowId(row) : row.id) : k;
-      })
-      .filter(Boolean);
-  }, [rowSelection, data, getRowId]);
+  // Controlled contract: { [recordId]: true }, never page-local indices.
+  // The second callback argument contains only selected records on this page.
+  const scopeKey = JSON.stringify([selectionScope, sorting]);
+  const selectionSync = useRef({ scopeKey, ids: null, rows: null });
+  const selectionCallback = useRef(null);
+  const scopeChanged = selectionSync.current.scopeKey !== scopeKey;
+  const selectedRows = useMemo(
+    () => scopeChanged ? [] : (data || []).filter((row) => {
+      const id = getRowId ? getRowId(row) : row.id;
+      return Object.prototype.hasOwnProperty.call(rowSelection || {}, id) &&
+        Boolean(rowSelection[id]);
+    }),
+    [data, getRowId, rowSelection, scopeChanged],
+  );
+  const selectionModel = selectedRows.map((row) => getRowId ? getRowId(row) : row.id);
+  const selectedKey = JSON.stringify(Object.keys(rowSelection || {})
+    .filter((id) => rowSelection[id]).sort());
+  const modelKey = JSON.stringify(selectionModel.map(String).sort());
+  const rowsKey = JSON.stringify((data || []).map((row) => getRowId ? getRowId(row) : row.id));
+
+  // Reconcile before the user can act on a changed view. Identity-equivalent
+  // refetches do not clear selection; removed IDs are dropped from the owner as
+  // well as the checkboxes, so they cannot reappear selected on a later poll.
+  useLayoutEffect(() => {
+    selectionCallback.current = enableSelection ? onRowSelectionChange : null;
+    const previous = selectionSync.current;
+    const notify = previous.scopeKey !== scopeKey || selectedKey !== modelKey ||
+      previous.ids !== modelKey || previous.rows !== rowsKey;
+    selectionSync.current = { scopeKey, ids: modelKey, rows: rowsKey };
+    if (notify && enableSelection) {
+      onRowSelectionChange?.(
+        Object.fromEntries(selectionModel.map((id) => [id, true])), selectedRows,
+      );
+    }
+  });
+
+  // Also clear callback-owned snapshots when a parent hides this table (empty
+  // state, tab switch, route change), rather than leaving an actionable toolbar.
+  useEffect(() => () => {
+    if (!preserveSelectionOnUnmount) selectionCallback.current?.({}, []);
+  }, [preserveSelectionOnUnmount]);
 
   const handleSelectionChange = useCallback(
     (newSelection) => {
       if (!onRowSelectionChange) return;
-      const obj = {};
-      (data || []).forEach((row, idx) => {
-        const key = getRowId ? getRowId(row) : row.id;
-        if (newSelection.includes(key)) obj[idx] = true;
-      });
-      onRowSelectionChange(obj);
+      const ids = new Set(newSelection);
+      const records = scopeChanged ? [] : (data || []).filter((row) =>
+        ids.has(getRowId ? getRowId(row) : row.id));
+      onRowSelectionChange(
+        Object.fromEntries(records.map((row) => [getRowId ? getRowId(row) : row.id, true])),
+        records,
+      );
     },
-    [onRowSelectionChange, data, getRowId],
+    [onRowSelectionChange, data, getRowId, scopeChanged],
   );
 
   // Column visibility — convert our format to MUI format

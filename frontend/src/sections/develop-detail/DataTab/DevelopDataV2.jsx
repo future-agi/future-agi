@@ -10,8 +10,6 @@ import { AgGridReact } from "ag-grid-react";
 import {
   useDatapointDrawerStore,
   useDatapointDrawerStoreShallow,
-  useDevelopFilterStore,
-  useDevelopSearchStore,
   useEditCellStoreShallow,
   useProcessingStore,
 } from "src/sections/develop-detail/states";
@@ -75,7 +73,11 @@ import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/Evaluat
 import { MultiImageViewerProvider } from "../Common/MultiImageViewer";
 import DevelopFilterBox from "./DevelopFilters/DevelopFilterBox";
 import TopBanner from "./TopBanner";
-import { transformFilter, validateFilter } from "./DevelopFilters/common";
+import {
+  getDatasetSelectionScope,
+  isDatasetSelectionScopeCurrent,
+  recordGridSelection,
+} from "./datasetRowSelection";
 import DatapointDrawerV2 from "./DatapointDrawerV2/DatapointDrawerV2";
 import useWavesurferCache from "src/hooks/use-wavesurfer-cache";
 import AddRowData from "./AddRowData";
@@ -209,7 +211,9 @@ const getDataSource = (
   updateProcessingSyntheticData,
   overlayTimeoutRef,
 ) => {
+  let active = true;
   return {
+    destroy: () => { active = false; },
     getRows: async (params) => {
       const { request } = params;
       const pageNumber = Math.floor(request.startRow / DATASET_ROWS_LIMIT);
@@ -217,9 +221,8 @@ const getDataSource = (
         column_id: colId,
         type: sort === "asc" ? "ascending" : "descending",
       }));
-      const filters = useDevelopFilterStore.getState().filters;
-      const search = useDevelopSearchStore.getState().search;
-      const validFilters = filters.filter(validateFilter).map(transformFilter);
+      const selectionScope = getDatasetSelectionScope(datasetId);
+      const { search, filters: validFilters } = selectionScope;
       let tempOrigin;
 
       if (overlayTimeoutRef.current) {
@@ -242,6 +245,11 @@ const getDataSource = (
         const data = servedFromCache
           ? cachedState.data
           : await queryClient.fetchQuery({ ...queryOptions });
+        if (!active) return;
+        if (!isDatasetSelectionScopeCurrent(selectionScope, datasetId)) {
+          params.fail();
+          return;
+        }
         const result = data?.data?.result;
         const processingData = getResultIsProcessingData(result);
 
@@ -270,6 +278,8 @@ const getDataSource = (
 
         params.api.setGridOption("context", {
           totalRowCount: totalRows ?? 0,
+          selectionScope: processingData || result?.metadata?.error_messages?.length
+            ? null : selectionScope,
         });
 
         if (
@@ -364,22 +374,8 @@ const getDataSource = (
   };
 };
 
-const onRowSelectionChanged = ({ api, context, source }) => {
-  // if (EventToSkip.includes(source)) {
-  //   return;
-  // }
-  logger.debug("onRowSelectionChanged", { api, context, source });
-  const totalRowCount = context?.totalRowCount;
-  const { selectAll, toggledNodes } = api.getServerSideSelectionState();
-
-  if (selectAll && totalRowCount - toggledNodes.length === 0) {
-    api.deselectAll();
-  }
-
-  useDevelopSelectedRowsStore.setState({
-    toggledNodes: toggledNodes,
-    selectAll: selectAll,
-  });
+const onRowSelectionChanged = ({ api }) => {
+  recordGridSelection(api);
 };
 
 const onHeaderClicked = ({ api, column, event, ..._rest }) => {
@@ -636,14 +632,16 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
   );
   isProcessingSyntheticData;
 
-  // Reset row selection when dataset changes or component unmounts (tab switch)
+  // Search/filter invalidation must also remove AG Grid's inverted selection.
   useEffect(() => {
-    useDevelopSelectedRowsStore.getState().setToggledNodes([]);
-    useDevelopSelectedRowsStore.getState().setSelectAll(false);
+    useDevelopSelectedRowsStore.getState().resetSelectedRows();
     gridApiRef.current?.api?.deselectAll();
+    const unsubscribe = useDevelopSelectedRowsStore.subscribe((state, previous) => {
+      if (state.queryEpoch !== previous.queryEpoch) gridApiRef.current?.api?.deselectAll();
+    });
     return () => {
-      useDevelopSelectedRowsStore.getState().setToggledNodes([]);
-      useDevelopSelectedRowsStore.getState().setSelectAll(false);
+      unsubscribe();
+      useDevelopSelectedRowsStore.getState().invalidateSelectionScope();
     };
   }, [dataset]);
 
@@ -657,6 +655,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
       overlayTimeoutRef,
     );
     gridApiRef.current?.api?.setGridOption("serverSideDatasource", dataSource);
+    return () => dataSource.destroy();
   }, [
     dataset,
     queryClient,
@@ -946,9 +945,8 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
       return acc;
     }, []);
 
-    const filters = useDevelopFilterStore.getState().filters;
-    const search = useDevelopSearchStore.getState().search;
-    const validFilters = filters.filter(validateFilter).map(transformFilter);
+    const selectionScope = getDatasetSelectionScope(dataset);
+    const { search, filters: validFilters } = selectionScope;
 
     const maxActivePage = activePages.length
       ? Math.max(...activePages)
@@ -995,6 +993,8 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
             queryKey: queryOptions.queryKey,
           });
           const data = await queryOptions.queryFn();
+          if (!gridApiRef.current?.api ||
+              !isDatasetSelectionScopeCurrent(selectionScope, dataset)) return;
           const result = data?.data?.result;
           const processingData = getResultIsProcessingData(result);
           const rows = processingData ? DUMMY_ROWS : result?.table;

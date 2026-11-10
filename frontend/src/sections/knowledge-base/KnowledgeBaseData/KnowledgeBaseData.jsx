@@ -27,10 +27,10 @@ const KnowledgeBaseData = React.forwardRef(
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { role } = useAuthContext();
-    const [selected, setSelected] = useState([]);
-    const [rowSelection, setRowSelection] = useState({});
+    const [selectedIds, setSelectedIds] = useState([]);
     const [searchQuery, setSearchQuery] = useState("");
     const [openDelete, setOpenDelete] = useState(false);
+    const [deleteTargets, setDeleteTargets] = useState([]);
     const [page, setPage] = useState(0);
     const [pageSize, setPageSize] = useState(25);
 
@@ -86,19 +86,34 @@ const KnowledgeBaseData = React.forwardRef(
       }
     }, [isEntitlementBlocked, setHasData]);
 
-    const selectedItems = useMemo(
-      () =>
-        Object.keys(rowSelection)
-          .filter((k) => rowSelection[k])
-          .map((k) => items[parseInt(k, 10)])
-          .filter(Boolean),
-      [rowSelection, items],
-    );
+    // Own stable KB IDs end to end, including DataTable's controlled selection.
+    // The checkboxes, count and delete payload all use these same current rows.
+    const { selectedItems, rowSelection } = useMemo(() => {
+      const ids = new Set(selectedIds);
+      const nextRowSelection = {};
+      const nextSelectedItems = items.filter((item) => {
+        if (!ids.has(item.id)) return false;
+        nextRowSelection[item.id] = true;
+        return true;
+      });
+      return {
+        selectedItems: nextSelectedItems,
+        rowSelection: nextRowSelection,
+      };
+    }, [items, selectedIds]);
+
+    // A refresh can remove selected KBs. Drop their IDs permanently and require
+    // a new confirmation if the set being deleted has changed.
+    useEffect(() => {
+      if (selectedItems.length !== selectedIds.length) {
+        setSelectedIds(selectedItems.map((item) => item.id));
+        setOpenDelete(false);
+      }
+    }, [selectedItems, selectedIds.length]);
 
     const closeModal = useCallback(() => {
       setOpenDelete(false);
-      setRowSelection({});
-      setSelected([]);
+      setSelectedIds([]);
     }, []);
 
     const refreshGrid = useCallback(() => {
@@ -111,15 +126,10 @@ const KnowledgeBaseData = React.forwardRef(
     }));
 
     const handleRowSelectionChange = useCallback(
-      (newSelection) => {
-        setRowSelection(newSelection);
-        const newSelected = Object.keys(newSelection)
-          .filter((k) => newSelection[k])
-          .map((k) => items[parseInt(k, 10)])
-          .filter(Boolean);
-        setSelected(newSelected);
+      (_selection, selected) => {
+        setSelectedIds(selected.map((item) => item.id));
       },
-      [items],
+      [],
     );
 
     const columns = useMemo(
@@ -230,6 +240,7 @@ const KnowledgeBaseData = React.forwardRef(
             }}
             searchQuery={searchQuery}
             onChange={(e) => {
+              closeModal();
               setSearchQuery(e.target.value);
               setPage(0);
             }}
@@ -273,6 +284,7 @@ const KnowledgeBaseData = React.forwardRef(
                     if (
                       RolePermission.KNOWLEDGE_BASE[PERMISSIONS.DELETE][role]
                     ) {
+                      setDeleteTargets(selectedItems.map((item) => ({ ...item })));
                       setOpenDelete(true);
                     }
                   }}
@@ -349,6 +361,7 @@ const KnowledgeBaseData = React.forwardRef(
           isLoading={isLoading}
           rowCount={total}
           rowSelection={rowSelection}
+          selectionScope={[page, pageSize, searchQuery, debouncedSearchQuery]}
           onRowSelectionChange={handleRowSelectionChange}
           onRowClick={handleRowClick}
           getRowId={(row) => row.id}
@@ -364,18 +377,27 @@ const KnowledgeBaseData = React.forwardRef(
           page={page}
           pageSize={pageSize}
           total={total}
-          onPageChange={setPage}
+          onPageChange={(newPage) => {
+            closeModal();
+            setPage(newPage);
+          }}
           onPageSizeChange={(size) => {
+            closeModal();
             setPageSize(size);
             setPage(0);
           }}
         />
 
         <DeleteKnowledgeBase
-          open={openDelete}
+          open={
+            openDelete &&
+            deleteTargets.every((target) => items.some((item) => item.id === target.id)) &&
+            selectedItems.length > 0 &&
+            selectedItems.length === selectedIds.length
+          }
           onClose={closeModal}
           refreshGrid={refreshGrid}
-          selected={selected}
+          selected={deleteTargets}
         />
       </Box>
     );

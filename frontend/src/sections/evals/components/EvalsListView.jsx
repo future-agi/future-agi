@@ -321,7 +321,7 @@ const EvalsListView = () => {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [sorting, setSorting] = useState([{ id: "lastUpdated", desc: true }]);
-  const [rowSelection, setRowSelection] = useState({});
+  const [selectedIds, setSelectedIds] = useState([]);
   const [filters, setFilters] = useState(null);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [displayAnchorEl, setDisplayAnchorEl] = useState(null);
@@ -332,6 +332,7 @@ const EvalsListView = () => {
     mergeColumnOrder(getStorage(COLUMN_ORDER_STORAGE_KEY)),
   );
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState([]);
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
@@ -500,13 +501,21 @@ const EvalsListView = () => {
     !chartsLoading &&
     (chartsTransportError || (Boolean(chartsRead) && !chartsRenderable));
 
-  // Selected rows
-  const selectedItems = useMemo(() => {
-    return Object.keys(rowSelection)
-      .filter((key) => rowSelection[key])
-      .map((key) => items[parseInt(key, 10)])
-      .filter(Boolean);
-  }, [rowSelection, items]);
+  // The controlled table contract uses these same stable record IDs.
+  const rowSelection = useMemo(
+    () => Object.fromEntries(selectedIds.map((id) => [id, true])),
+    [selectedIds],
+  );
+
+  const handleRowSelectionChange = useCallback((_selection, selected) => {
+    setSelectedIds(selected.map((item) => item.id));
+  }, []);
+
+  // Only visible, explicitly selected identities participate in bulk actions.
+  const selectedItems = useMemo(
+    () => items.filter((item) => selectedIds.includes(item.id)),
+    [items, selectedIds],
+  );
 
   // Column definitions — TanStack format
   const columns = useMemo(
@@ -786,14 +795,21 @@ const EvalsListView = () => {
   }, [panelFilters]);
 
   const handleCancelSelection = useCallback(() => {
-    setRowSelection({});
+    setSelectedIds([]);
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
+    // Preserve the existing refresh protection: require a new confirmation if
+    // any target disappeared, rather than silently deleting a smaller set.
+    if (deleteTargets.some((target) => !items.some((item) => item.id === target.id))) {
+      setDeleteDialogOpen(false);
+      handleCancelSelection();
+      return;
+    }
     // System-owned evals cannot be deleted — filter them out and warn
     // the user if any were in the selection.
-    const systemItems = selectedItems.filter((item) => item.owner === "system");
-    const deletable = selectedItems.filter((item) => item.owner !== "system");
+    const systemItems = deleteTargets.filter((item) => item.owner === "system");
+    const deletable = deleteTargets.filter((item) => item.owner !== "system");
 
     if (systemItems.length > 0) {
       enqueueSnackbar(
@@ -818,7 +834,7 @@ const EvalsListView = () => {
     await bulkDelete.mutateAsync(ids);
     setDeleteDialogOpen(false);
     handleCancelSelection();
-  }, [selectedItems, bulkDelete, handleCancelSelection]);
+  }, [deleteTargets, items, bulkDelete, handleCancelSelection]);
   return (
     <Box
       sx={{
@@ -894,7 +910,10 @@ const EvalsListView = () => {
           {selectedItems.length > 0 ? (
             <BulkActionsBar
               selectedCount={selectedItems.length}
-              onDelete={() => setDeleteDialogOpen(true)}
+              onDelete={() => {
+                setDeleteTargets(selectedItems.map((item) => ({ ...item })));
+                setDeleteDialogOpen(true);
+              }}
               onCancel={handleCancelSelection}
               canEditEvals={canEditEvals}
             />
@@ -1052,7 +1071,8 @@ const EvalsListView = () => {
         sorting={sorting}
         onSortingChange={setSorting}
         rowSelection={rowSelection}
-        onRowSelectionChange={setRowSelection}
+        selectionScope={[page, pageSize, searchQuery, debouncedSearch, filters]}
+        onRowSelectionChange={handleRowSelectionChange}
         columnVisibility={columnVisibility}
         onColumnVisibilityChange={handleColumnVisibilityChange}
         onRowClick={(row) => navigate(`/dashboard/evaluations/${row.id}`)}
@@ -1161,7 +1181,7 @@ const EvalsListView = () => {
       {/* Delete confirmation */}
       <BulkDeleteDialog
         open={deleteDialogOpen}
-        count={selectedItems.length}
+        count={deleteTargets.length}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteDialogOpen(false)}
         isLoading={bulkDelete.isLoading}

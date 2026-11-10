@@ -421,29 +421,17 @@ const TestRunsGrid = ({ agentType, simulationType }) => {
   // `toggledNodes` (array of execution IDs). onChange writes back to the store.
   const toggledNodes = useTestRunsGridStore((s) => s.toggledNodes);
 
-  const rowSelection = useMemo(() => {
-    const map = {};
-    items.forEach((item, idx) => {
-      if (toggledNodes.includes(item.id)) {
-        map[idx] = true;
-      }
-    });
-    return map;
-  }, [items, toggledNodes]);
-
-  const handleRowSelectionChange = useCallback(
-    (newSel) => {
-      const ids = Object.keys(newSel)
-        .filter((k) => newSel[k])
-        .map((k) => items[parseInt(k, 10)]?.id)
-        .filter(Boolean);
-      useTestRunsGridStore.setState({
-        toggledNodes: ids,
-        selectAll: false,
-      });
-    },
-    [items],
+  const rowSelection = useMemo(
+    () => Object.fromEntries(toggledNodes.map((id) => [id, true])),
+    [toggledNodes],
   );
+
+  const handleRowSelectionChange = useCallback((_selection, selected) => {
+    useTestRunsGridStore.setState({
+      toggledNodes: selected.map((row) => row.id),
+      selectAll: false,
+    });
+  }, []);
 
   const columns = useMemo(
     () => buildColumns(agentType ?? AGENT_TYPES.VOICE, simulationType),
@@ -484,6 +472,7 @@ const TestRunsGrid = ({ agentType, simulationType }) => {
         isLoading={isLoading}
         rowCount={total}
         rowSelection={rowSelection}
+        selectionScope={[testId, page, pageSize, search, debouncedSearch]}
         onRowSelectionChange={handleRowSelectionChange}
         onRowClick={handleRowClick}
         getRowId={(row) => row.id}
