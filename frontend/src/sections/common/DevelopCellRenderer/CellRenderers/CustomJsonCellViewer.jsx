@@ -2,27 +2,8 @@ import { JsonViewer } from "@textea/json-viewer";
 import React from "react";
 import PropTypes from "prop-types";
 import { useTheme } from "@mui/material";
-import { defineDataType } from "@textea/json-viewer";
-
-const MiniImageRender = ({ value }) => (
-  <img
-    width={150}
-    src={value}
-    alt="Base64 Preview"
-    style={{ display: "inline-block" }}
-  />
-);
-
-MiniImageRender.propTypes = {
-  value: PropTypes.string,
-};
-
-const imageType = defineDataType({
-  is: (value) => {
-    return typeof value === "string" && value.startsWith("data:image");
-  },
-  Component: MiniImageRender,
-});
+import { MEDIA_PREVIEW_CLASS } from "src/components/custom-json-viewer/media-detection";
+import { mediaValueTypes } from "src/components/custom-json-viewer/media-value-types";
 
 const CustomJsonViewer = ({ object, ...rest }) => {
   const theme = useTheme();
@@ -44,7 +25,9 @@ const CustomJsonViewer = ({ object, ...rest }) => {
         '.tj-toggle-button, [class*="toggle"], .tj-toggle-icon, .tj-expandable > svg, .tj-arrow, [class*="arrow"], [class*="caret"], [class*="chevron"]',
       );
 
-      if (isToggleElement) {
+      // A media preview opens its own dialog, so the grid shouldn't open the
+      // row drawer either.
+      if (isToggleElement || e.target.closest(`.${MEDIA_PREVIEW_CLASS}`)) {
         window.__jsonViewerClick = true;
       }
     };
@@ -70,7 +53,7 @@ const CustomJsonViewer = ({ object, ...rest }) => {
         groupArraysAfterLength={10}
         highlightUpdates={false}
         editable={false}
-        valueTypes={[imageType]}
+        valueTypes={mediaValueTypes}
         // Disable copy functionality
         enableClipboard={false}
         quotesOnKeys={false}
