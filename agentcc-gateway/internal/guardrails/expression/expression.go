@@ -239,11 +239,6 @@ type token struct {
 	val  string
 }
 
-func tokenize(input string) []token {
-	tokens, _ := tokenizeMode(input, false)
-	return tokens
-}
-
 func tokenizeMode(input string, strict bool) ([]token, error) {
 	var tokens []token
 	i := 0
