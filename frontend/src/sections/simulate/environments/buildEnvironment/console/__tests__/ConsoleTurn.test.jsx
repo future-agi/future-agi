@@ -102,10 +102,14 @@ describe("ConsoleTurn new step kinds", () => {
     "Use _private_field or __init__ here? Also 2*3*4 and C:\\temp\\new.",
     "# of rooms to hold back?",
     "1. Should we keep this rule?",
+    "How should holds work?\n# of rooms per booking: 3",
+    "Rename `x` to __init__ or 2*3*4?",
   ])("shows a plain question exactly as written: %s", (prompt) => {
     const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
-    render(<Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />);
-    expect(screen.getByText(prompt)).toBeInTheDocument();
+    const { container } = render(
+      <Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />,
+    );
+    expect(container.textContent).toContain(prompt);
   });
 
   it("never loads an image from model-written markdown", () => {
@@ -138,7 +142,7 @@ describe("ConsoleTurn new step kinds", () => {
   });
 
   it("keeps raw angle brackets inside a markdown question", () => {
-    const prompt = "Approve this?\n\n- send it to the <front desk>";
+    const prompt = "Approve this?\n\n### Routing\n\n- send it to the <front desk>";
     const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
     render(<Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />);
     expect(screen.getByRole("listitem")).toHaveTextContent("send it to the <front desk>");

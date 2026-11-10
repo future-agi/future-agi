@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
+import { visuallyHidden } from "@mui/utils";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
@@ -37,12 +38,16 @@ function composerReducer(state, action) {
 const NEAR_BOTTOM_PX = 8;
 
 // Things worth reading. Tool rows and other progress only keep the ship flying,
-// or the new-message ping would replace it almost at once.
-const MESSAGE_KINDS = new Set(["note", "ask", "error", "nudge"]);
+// or the new-message ping would replace it almost at once. Rebuild and rollback
+// cards are their own system turns, with no steps.
+const MESSAGE_KINDS = new Set(["note", "ask", "error"]);
 
 const countMessages = (turns) =>
   (turns || []).reduce(
-    (total, turn) => total + (turn.steps || []).filter((s) => MESSAGE_KINDS.has(s.kind)).length,
+    (total, turn) =>
+      total +
+      (turn.role === "system" ? 1 : 0) +
+      (turn.steps || []).filter((s) => MESSAGE_KINDS.has(s.kind)).length,
     0,
   );
 
@@ -110,17 +115,13 @@ export default function BuilderConsole({
   }, [count, lastId, lastSteps, running, canStop, active, following]);
 
   // Sending from any path (composer, a question card, Stop) and reopening the
-  // console both return to the latest turn.
-  useEffect(() => {
-    if (running) setFollowing(true);
-  }, [running]);
-  useEffect(() => {
-    if (active) setFollowing(true);
-  }, [active]);
-
-  useEffect(() => {
-    if (following) setSeenMessages(messageCount);
-  }, [following, messageCount]);
+  // console both return to the latest turn. Adjusted during render, so the next
+  // paint already follows.
+  const [prev, setPrev] = useState({ running, active });
+  if (prev.running !== running || prev.active !== active) {
+    if ((running && !prev.running) || (active && !prev.active)) setFollowing(true);
+    setPrev({ running, active });
+  }
 
   const handleScroll = () => {
     const list = listRef.current;
@@ -133,6 +134,7 @@ export default function BuilderConsole({
       // and put the list far from the bottom without the user doing anything. A
       // changed height means text rewrapped and moved the list, not the user.
       setFollowing(false);
+      setSeenMessages(messageCount);
     }
     lastScrollRef.current = { top: scrollTop, height: scrollHeight };
   };
@@ -182,7 +184,7 @@ export default function BuilderConsole({
           <Iconify icon="solar:chat-round-line-linear" width={13} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography noWrap sx={{ typography: "s1", color: "text.secondary" }}>
+          <Typography role="status" noWrap sx={{ typography: "s1", color: "text.secondary" }}>
             {frozen
               ? reason
               : stopping
@@ -240,6 +242,9 @@ export default function BuilderConsole({
         </Stack>
       </Box>
 
+      <Box role="status" sx={visuallyHidden}>
+        {hasNewMessage ? CONSOLE_COPY.newMessage : ""}
+      </Box>
       {!following && (hasNewMessage || busy) && (
         <JumpToLatestBar hasNewMessage={hasNewMessage} onClick={() => setFollowing(true)} />
       )}

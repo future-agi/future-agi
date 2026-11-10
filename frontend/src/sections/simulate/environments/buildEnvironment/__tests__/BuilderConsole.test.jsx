@@ -197,6 +197,15 @@ describe("BuilderConsole", () => {
       rerender(<BuilderConsole turns={[withNote(toolTurn(2))]} running={false} canStop />);
       expect(jump(CONSOLE_COPY.jumpWorking)).not.toBeInTheDocument();
       expect(jump(CONSOLE_COPY.jumpNewMessage)).toBeInTheDocument();
+      // Screen readers hear it too, not only the changed button label.
+      expect(screen.getByText(CONSOLE_COPY.newMessage, { selector: '[role="status"]' })).toBeInTheDocument();
+    });
+
+    it("pings for a system card, which has no steps, even when idle", () => {
+      const { rerender } = renderScrolledUp({ canStop: false });
+      const card = { id: "r1", role: "system", kind: "reapply", text: "The edits that went live with v2 were rolled back." };
+      rerender(<BuilderConsole turns={[toolTurn(1), card]} running={false} canStop={false} />);
+      expect(jump(CONSOLE_COPY.jumpNewMessage)).toBeInTheDocument();
     });
 
     it("shows no button when scrolled up with nothing happening", () => {

@@ -6,12 +6,12 @@ import Iconify from "src/components/iconify";
 import ChatMarkdown from "./ChatMarkdown";
 
 // Prompts are the model's free text. Plain questions must show exactly as written,
-// so `# of rooms` or `__init__` only go through markdown alongside real markdown.
-// The table case matches its `|---|---|` row, not any line with a pipe in it.
-const MARKDOWN_BLOCK = /^(#{1,6} |[-*+] |\d+[.)] |> |```|\s*\|?\s*:?-+:?\s*\|[\s|:-]*$)/m;
-const MARKDOWN_INLINE = /\*\*[^*\s][^*]*\*\*|`[^`\n]+`/;
+// so one stray signal like `# of rooms` or a single `code` span is not enough: it
+// takes two, or a table's `|---|---|` row (not just any line with a pipe in it).
+const MARKDOWN_SIGNAL = /^(#{1,6} |[-*+] |\d+[.)] |> |```)|\*\*[^*\s][^*]*\*\*|`[^`\n]+`/gm;
+const TABLE_DIVIDER = /^\s*\|?\s*:?-+:?\s*\|[\s|:-]*$/m;
 const looksLikeMarkdown = (text = "") =>
-  (text.includes("\n") && MARKDOWN_BLOCK.test(text)) || MARKDOWN_INLINE.test(text);
+  TABLE_DIVIDER.test(text) || (text.match(MARKDOWN_SIGNAL) || []).length >= 2;
 
 function Prompt({ text, sx }) {
   if (looksLikeMarkdown(text)) {

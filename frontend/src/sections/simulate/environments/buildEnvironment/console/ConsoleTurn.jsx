@@ -35,7 +35,6 @@ const STEP_SHAPE = PropTypes.shape({
   value: PropTypes.string,
   count: PropTypes.number,
   lines: PropTypes.arrayOf(PropTypes.string),
-  since: PropTypes.string,
   question: PropTypes.object,
   resolved: PropTypes.bool,
   answerText: PropTypes.string,
@@ -397,6 +396,3 @@ QuietRow.propTypes = {
   pulse: PropTypes.bool,
   children: PropTypes.node,
 };
-
-/* ── working indicator ───────────────────────────────────────────────────── */
-

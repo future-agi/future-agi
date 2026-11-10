@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 import { keyframes } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
-import { FalconIcon } from "src/sections/falcon-ai/components/FalconAIFab";
+import FalconIcon from "src/components/falcon-icon";
 
 import { CONSOLE_COPY } from "../build.constants";
 
@@ -190,7 +190,7 @@ export function JumpToLatestBar({ hasNewMessage, onClick }) {
           left: 0,
           right: 0,
           bottom: 0,
-          height: 30,
+          height: 32,
           display: "flex",
           alignItems: "center",
           gap: 1,
@@ -198,6 +198,17 @@ export function JumpToLatestBar({ hasNewMessage, onClick }) {
           bgcolor: "background.paper",
           borderTop: "1px solid",
           borderColor: "divider",
+          // The hover tint is see-through, so lay it over the solid bar rather
+          // than replacing it, or chat text would show through.
+          "&:hover": {
+            backgroundImage: (theme) =>
+              `linear-gradient(${theme.palette.action.hover}, ${theme.palette.action.hover})`,
+          },
+          "&.Mui-focusVisible": {
+            outline: "2px solid",
+            outlineColor: "border.focus",
+            outlineOffset: -2,
+          },
         }}
       >
         {hasNewMessage ? <NewMessageSignal /> : <FlightPath />}
@@ -210,7 +221,7 @@ export function JumpToLatestBar({ hasNewMessage, onClick }) {
           <Typography sx={{ typography: "s1", fontWeight: 500 }}>
             {CONSOLE_COPY.jumpToLatest}
           </Typography>
-          <Iconify icon="solar:arrow-down-linear" width={13} />
+          <Iconify icon="solar:arrow-down-linear" width={14} />
         </Stack>
       </ButtonBase>
     </Box>

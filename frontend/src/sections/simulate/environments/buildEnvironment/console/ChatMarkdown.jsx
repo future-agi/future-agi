@@ -49,7 +49,7 @@ export default function ChatMarkdown({ text, dim, sx }) {
           mb: 0.5,
         },
         "& ul, & ol": { m: 0, mb: 1, pl: 3 },
-        "& code": { fontFamily: MONO, fontSize: "0.85em" },
+        "& code": { typography: "s1", fontFamily: MONO },
         "& a": { color: "text.primary", textDecoration: "underline" },
         // Code keeps its lines and tables keep whole words, so both scroll
         // sideways inside their own box rather than widening the chat.
@@ -58,7 +58,7 @@ export default function ChatMarkdown({ text, dim, sx }) {
           mb: 1,
           px: 1.5,
           py: 1,
-          borderRadius: "4px",
+          borderRadius: "6px",
           bgcolor: "background.neutral",
           overflowX: "auto",
           maxWidth: "100%",
