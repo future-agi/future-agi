@@ -97,9 +97,7 @@ def variant_bundles(*, snapshot: dict, variant: str) -> dict[str, dict]:
     target = (
         snapshot["candidate"]
         if variant == "candidate"
-        else snapshot["production"]
-        if variant == "production"
-        else None
+        else snapshot["production"] if variant == "production" else None
     )
     if variant not in {"candidate", "production", "without_target"} or (
         variant == "production" and target is None
@@ -646,9 +644,7 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
         else (
             "unverifiable"
             if target_loaded is None
-            else "pass"
-            if target_loaded == case["expected_trigger"]
-            else "fail"
+            else "pass" if target_loaded == case["expected_trigger"] else "fail"
         )
     )
     checks = grade_deterministic(
