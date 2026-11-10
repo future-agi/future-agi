@@ -303,7 +303,13 @@ def test_google_callback_keeps_secrets_out_of_logs(
         assert request[2]["Authorization"] == f"Bearer {ACCESS_TOKEN}"
     else:
         _assert_denied(client, response, before)
-    for marker in (CODE, ACCESS_TOKEN, identity_server["id_token"], PROFILE, CLAIM_MARKER):
+    for marker in (
+        CODE,
+        ACCESS_TOKEN,
+        identity_server["id_token"],
+        PROFILE,
+        CLAIM_MARKER,
+    ):
         assert marker not in caplog.text
 
 
@@ -397,7 +403,13 @@ def test_other_oauth_callbacks_do_not_log_secrets(
     else:
         assert "sso_token=" in response["Location"]
         assert AuthToken.objects.filter(user=google_user).count() == before + 1
-    for marker in (CODE, ACCESS_TOKEN, identity_server["id_token"], PROFILE, CLAIM_MARKER):
+    for marker in (
+        CODE,
+        ACCESS_TOKEN,
+        identity_server["id_token"],
+        PROFILE,
+        CLAIM_MARKER,
+    ):
         assert marker not in caplog.text
 
 
@@ -509,14 +521,20 @@ def test_production_callback_logging_redacts_query_and_signed_claims(
         if valid and provider == "google":
             assert any(e.get("event") == "oauth_identity_decoded" for e in events)
         for marker in (
-            CODE, ACCESS_TOKEN, identity_server["id_token"], PROFILE, CLAIM_MARKER,
-            "synthetic-custom-token-marker", "synthetic-uppercase-token-marker",
+            CODE,
+            ACCESS_TOKEN,
+            identity_server["id_token"],
+            PROFILE,
+            CLAIM_MARKER,
+            "synthetic-custom-token-marker",
+            "synthetic-uppercase-token-marker",
         ):
             assert marker not in rendered
 
 
 def test_request_logging_preserves_non_sso_queries_and_callback_input():
     from django.test import RequestFactory
+
     from tfc.logging.middleware import CredentialSafeRequestMiddleware
 
     request = RequestFactory().get("/saml2_auth/auth/callback/", {"code": CODE})
