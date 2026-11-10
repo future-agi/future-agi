@@ -116,12 +116,21 @@ def test_only_a_cloud_region_turns_on_cloud_defaults(
 
 
 # RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: orgs created at or after it see only
-# Environments in Simulate. Unset means no org is restricted, and a value that
-# is not a date-time refuses to start rather than silently restricting nobody.
+# Environments in Simulate. Unset means the first release with the restriction,
+# so self-hosted installs get it too; blank means no org is restricted, and a
+# value that is not a date-time refuses to start rather than silently
+# restricting nobody.
+
+
+def test_unset_simulate_cutoff_is_the_first_release_with_it(monkeypatch):
+    monkeypatch.delenv("RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF", raising=False)
+    loaded = _load_settings(["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"])
+    assert loaded.returncode == 0, loaded.stderr
+    assert loaded.stdout.splitlines()[-1] == "2026-10-28 00:00:00+00:00"
 
 
 @pytest.mark.parametrize("value", ["", " "])
-def test_unset_simulate_cutoff_restricts_nobody(value):
+def test_blank_simulate_cutoff_restricts_nobody(value):
     loaded = _load_settings(
         ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"],
         RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=value,

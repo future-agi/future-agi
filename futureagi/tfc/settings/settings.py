@@ -1500,9 +1500,11 @@ USAGE_EVENTS_MAX_LEN = env_int("USAGE_EVENTS_MAX_LEN", 1_000_000, minimum=1)
 
 # Orgs created at or after this instant see only Environments in Simulate. Set it
 # to the start of the deploy that introduces the restriction, in UTC, the same
-# value in every region. Unset restricts no org (self-hosted installs).
+# value in every region. Unset means 2026-10-28T00:00:00Z, the day v1.56.0 (the
+# first release with the restriction) reached self-hosted installs; blank
+# restricts no org.
 RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF = env_datetime(
-    "RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"
+    "RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF", "2026-10-28T00:00:00Z"
 )
 
 # Django Channels layer. CHANNEL_LAYER_BACKEND: auto (default) | memory | redis |
