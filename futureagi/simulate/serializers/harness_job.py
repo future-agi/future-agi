@@ -7,7 +7,11 @@ from typing import Any
 from django.conf import settings
 from rest_framework import serializers
 
-from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB, MAX_SEED
+from simulate.models.hosted_harness import (
+    MAX_SCENARIOS_PER_JOB,
+    MAX_SEED,
+    HostedHarnessJob,
+)
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
@@ -1130,6 +1134,18 @@ class HarnessJobStatusSerializer(serializers.Serializer):
     queued_scenarios = serializers.IntegerField(required=False)
     total_scenarios = serializers.IntegerField()
     deadline_at = serializers.CharField()
+    cancel_requested_at = serializers.CharField(allow_null=True, required=False)
+    cancel_confirmed_at = serializers.CharField(allow_null=True, required=False)
+    cancel_confirmed_by = serializers.ChoiceField(
+        choices=HostedHarnessJob.CancelConfirmation.choices,
+        allow_null=True,
+        required=False,
+    )
+    cancel_status = serializers.ChoiceField(
+        choices=("requested", "confirmed", "cleanup_failed"),
+        allow_null=True,
+        required=False,
+    )
     failure = serializers.JSONField(allow_null=True)
 
 

@@ -4421,6 +4421,15 @@ class HostedHarnessGateway:
     ) -> HostedHarnessJob:
         """Stop the job and remove its sandbox; `await_seal` (the cancel activity only, never a request) first waits,
         bounded, for the guest to seal the call in flight."""
+        from simulate.services.harness_cancel import confirm_cancel
+
+        job = self._cancel(job, reason=reason, await_seal=await_seal)
+        confirm_cancel(job)
+        return job
+
+    def _cancel(
+        self, job: HostedHarnessJob, *, reason: str, await_seal: bool = False
+    ) -> HostedHarnessJob:
         from simulate.services.phone_telephony import cleanup_hosted_phone_rooms
 
         validate_cancellation_reason(reason)
