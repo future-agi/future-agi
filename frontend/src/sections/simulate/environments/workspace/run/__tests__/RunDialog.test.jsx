@@ -41,6 +41,9 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   };
 });
 
+// Ready to run has its own tests (RunPlanReadiness.test.jsx).
+vi.mock("../readiness/ReadyToRunSection", () => ({ default: () => null }));
+
 const { default: RunDialog } = await import("../RunDialog");
 
 const ENV = { id: "env-1", versioning: { enabled: true } };

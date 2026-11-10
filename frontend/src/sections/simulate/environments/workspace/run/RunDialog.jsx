@@ -2,9 +2,9 @@ import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Box,
   Button,
   CircularProgress,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -13,6 +13,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { ClosableDialog } from "src/components/custom-dialog";
+import Iconify from "src/components/iconify";
 import {
   VERSION_PIECES,
   isVersioningDisabled,
@@ -23,6 +25,11 @@ import {
 } from "src/api/simulate-environments/versions";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal } from "./runErrors";
+import ReadyToRunSection from "./readiness/ReadyToRunSection";
+import {
+  READY_TO_RUN_COPY,
+  RUN_PLAN_COPY,
+} from "./readiness/readiness.constants";
 
 // Only versions a run can take are offered: an active environment or scenario
 // version, an agent version the server marks pickable (its check passed), and
@@ -69,6 +76,8 @@ export default function RunDialog({
   const [agentFellBack, setAgentFellBack] = useState(false);
   // A refusal stays shown until the user changes a pick.
   const [dismissedError, setDismissedError] = useState(null);
+  // What Ready to run read for these picks: counts and whether Run is allowed.
+  const [readiness, setReadiness] = useState(null);
 
   const options = useMemo(
     () =>
@@ -185,6 +194,16 @@ export default function RunDialog({
       COPY.refused
     : null;
 
+  // The server holds back blocked scenarios itself; the popup shows the
+  // count and refuses only a run with nothing left to send.
+  const held = readiness?.summary;
+  const heldBack = held?.blocked > 0;
+  const allHeld = heldBack && held.blocked >= held.requested;
+  const blockingArea = readiness?.open.find(
+    (line) => line.status === "blocked",
+  )?.area;
+  const blockingLabel = READY_TO_RUN_COPY.areas[blockingArea];
+
   const canSubmit =
     !submitting &&
     !versions.isLoading &&
@@ -192,10 +211,21 @@ export default function RunDialog({
     !refusedPlan &&
     !blocked &&
     !(!runAll && members.isLoading) &&
-    (!needsMembers || memberKeys?.length > 0);
+    (!needsMembers || memberKeys?.length > 0) &&
+    (!readiness || readiness.canRun) &&
+    !allHeld;
 
   let runLabel = warnings.length ? COPY.runAnyway : COPY.run;
+  if (heldBack && !allHeld) {
+    runLabel = RUN_PLAN_COPY.runOf(
+      held.requested - held.blocked,
+      held.requested,
+    );
+  }
   if (submitting) runLabel = COPY.starting;
+  // Ready to run reads the scenarios this run sends; run-all of the default
+  // suite asks for the whole suite.
+  const readinessKeys = (needsMembers ? memberKeys : runIds) || null;
 
   const pick = (piece, id) => {
     setOverrides((current) => ({ ...current, [piece]: id }));
@@ -211,23 +241,42 @@ export default function RunDialog({
   };
 
   const pickerField = (piece) => (
+    <Stack key={piece} direction="row" spacing={2} alignItems="flex-start">
+      <Typography
+        component="label"
+        id={`run-pick-${piece}-label`}
+        htmlFor={`run-pick-${piece}`}
+        sx={{
+          typography: "s2",
+          color: "text.secondary",
+          width: 140,
+          flexShrink: 0,
+          pt: 0.75,
+        }}
+      >
+        {COPY.pieces[piece]}
+      </Typography>
+      {versionPicker(piece)}
+    </Stack>
+  );
+
+  const versionPicker = (piece) => (
     <TextField
-      key={piece}
+      id={`run-pick-${piece}`}
       select
       fullWidth
       size="small"
-      label={COPY.pieces[piece]}
       value={selected[piece] || ""}
       onChange={(e) => pick(piece, e.target.value)}
       disabled={!options[piece].length || submitting}
       SelectProps={{
+        labelId: `run-pick-${piece}-label`,
         displayEmpty: true,
         renderValue: (id) => {
           const version = options[piece].find((one) => one.id === id);
           return version ? optionLabel(version) : COPY.none;
         },
       }}
-      InputLabelProps={{ shrink: true }}
       error={pickerError === piece}
       helperText={pickerError === piece ? errorText : undefined}
     >
@@ -274,16 +323,52 @@ export default function RunDialog({
     const line = scenarioLine();
     return (
       <>
-        {PICKABLE.map(pickerField)}
+        {/* Versions first: Ready to run answers for whatever is picked. */}
+        <Stack
+          spacing={1.5}
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+            p: 1.5,
+          }}
+        >
+          {PICKABLE.map(pickerField)}
+        </Stack>
+        {env?.versioning?.enabled && !blocked && (
+          <ReadyToRunSection
+            envId={env.id}
+            picks={picks}
+            keys={readinessKeys}
+            trials={trials}
+            onView={setReadiness}
+          />
+        )}
         {rerun === "fellBack" && (
           <Alert severity="info" data-testid="rerun-fallback">
             {agentFellBack ? COPY.rerunAgentFallback : COPY.rerunFallback}
           </Alert>
         )}
-        {line && (
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {line}
-          </Typography>
+        {(line || (heldBack && !allHeld)) && (
+          <Stack spacing={0.5}>
+            {line && (
+              <Typography
+                sx={{ typography: "s2", fontWeight: "fontWeightMedium" }}
+              >
+                {line}
+              </Typography>
+            )}
+            {heldBack && !allHeld && (
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {RUN_PLAN_COPY.heldBack(held, blockingLabel)}
+              </Typography>
+            )}
+          </Stack>
+        )}
+        {allHeld && (
+          <Alert severity="error" data-testid="run-all-held">
+            {RUN_PLAN_COPY.allHeld(blockingLabel)}
+          </Alert>
         )}
         {drafts?.any && (
           <Alert severity="info" data-testid="run-drafts-note">
@@ -343,14 +428,29 @@ export default function RunDialog({
   };
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={submitting ? undefined : onClose}
       fullWidth
-      maxWidth="xs"
+      maxWidth="sm"
     >
       <DialogTitle sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
-        {COPY.title}
+        {RUN_PLAN_COPY.title}
+        <Box
+          component="span"
+          sx={{
+            display: "block",
+            typography: "s3",
+            fontWeight: "fontWeightRegular",
+            color: "text.secondary",
+          }}
+        >
+          {RUN_PLAN_COPY.subtitle(
+            env?.name,
+            options.environment.find((one) => one.id === selected.environment)
+              ?.label,
+          )}
+        </Box>
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
@@ -366,11 +466,16 @@ export default function RunDialog({
         <Button color="inherit" onClick={onClose} disabled={submitting}>
           {COPY.cancel}
         </Button>
-        <Button variant="contained" onClick={submit} disabled={!canSubmit}>
+        <Button
+          variant="contained"
+          onClick={submit}
+          disabled={!canSubmit}
+          startIcon={<Iconify icon="solar:play-bold" width={16} />}
+        >
           {runLabel}
         </Button>
       </DialogActions>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 
@@ -378,6 +483,7 @@ RunDialog.propTypes = {
   open: PropTypes.bool,
   env: PropTypes.shape({
     id: PropTypes.string,
+    name: PropTypes.string,
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   }),
   // Undefined runs every scenario.
