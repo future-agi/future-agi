@@ -731,6 +731,7 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
     cause = (
         code
         if code in ("certify_incomplete", CHECK_TIMED_OUT)
+        or failure.get("domain") == "infrastructure"
         else (
             platform_failure(failure, (bundle.error or {}).get("failed_actions"))
             if code == "authoring_runtime_validation_failed"

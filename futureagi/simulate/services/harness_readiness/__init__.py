@@ -35,6 +35,7 @@ from simulate.services.harness_readiness.selection import (
     SelectionReport,
     case_page,
     select_for_run,
+    scenario_readiness,
     selection_report,
 )
 
@@ -59,6 +60,7 @@ __all__ = [
     "recheck",
     "resolve_pairing",
     "select_for_run",
+    "scenario_readiness",
     "selection_report",
     "store_run_snapshot",
     "structural_findings",

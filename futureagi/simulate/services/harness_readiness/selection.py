@@ -217,6 +217,115 @@ def selection_report(
     }
 
 
+ProofState = Literal["proved", "failed", "not_proved"]
+
+
+class LastProved(TypedDict):
+    environment_version: int | None
+    suite_version: int | None
+
+
+class ProofView(TypedDict):
+    state: ProofState
+    last_proved: LastProved | None
+
+
+class ScenarioReadiness(TypedDict):
+    bucket: Bucket | None
+    by: list[str]
+    # Each readiness row in ``by`` and its reason code, e.g. ``environment_changed``.
+    reasons: dict[str, str | None]
+    dropped: str | None
+    proof: ProofView
+
+
+def scenario_readiness(pairing: Pairing) -> dict[str, ScenarioReadiness]:
+    """Each scenario of the pairing's suite version, by key: its bucket and what put it
+    there, and where its proof stands. A dropped scenario has no bucket. One readiness
+    read for the whole suite. No writes."""
+    report = readiness_report(pairing)
+    placement = _place_all(pairing, report["rows"], keys=None, trials=1)
+    proof = _proof_views(pairing, certified(pair_bundle(pairing)))
+    rows = {row["id"]: row for row in report["rows"]}
+    found: dict[str, ScenarioReadiness] = {
+        one.case.key: {
+            "bucket": one.bucket,
+            "by": list(one.by),
+            "reasons": {
+                name: rows[name]["reason_code"] for name in one.by if name in rows
+            },
+            "dropped": None,
+            "proof": proof(one.case.key),
+        }
+        for one in placement.placed
+    }
+    for one in placement.dropped:
+        found[one["key"]] = {
+            "bucket": None,
+            "by": [],
+            "reasons": {},
+            "dropped": one["code"],
+            "proof": proof(one["key"]),
+        }
+    return found
+
+
+def _proof_views(pairing: Pairing, ready: bool):
+    """Where each scenario's proof stands for this suite and environment version:
+    proved (or the pairing is certified), failed, or not proved; and, when not proved
+    here, the latest versions it was last proved on. One query."""
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    here: Mapping[str, object] = {}
+    earlier: list[tuple[dict[str, object], LastProved]] = []
+    for row in (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version__job_id=pairing.environment.id
+        )
+        .select_related("suite_version", "environment_version")
+        .order_by("-proved_at")
+    ):
+        proofs = {
+            _scenario_token(key): value
+            for key, value in (row.proofs or {}).items()
+            if isinstance(value, Mapping)
+        }
+        if (
+            row.suite_version_id == pairing.suite_version.id
+            and row.environment_version_id == pairing.environment_version.id
+        ):
+            here = proofs
+        else:
+            earlier.append(
+                (
+                    proofs,
+                    {
+                        "environment_version": row.environment_version.version_number,
+                        "suite_version": row.suite_version.version_number,
+                    },
+                )
+            )
+
+    def view(key: str) -> ProofView:
+        token = _scenario_token(key)
+        mine = here.get(token)
+        if ready or (isinstance(mine, Mapping) and mine.get("holds") is True):
+            return {"state": "proved", "last_proved": None}
+        last = next(
+            (
+                versions
+                for proofs, versions in earlier
+                if isinstance(proofs.get(token), Mapping)
+                and proofs[token].get("holds") is True
+            ),
+            None,
+        )
+        state: ProofState = "failed" if isinstance(mine, Mapping) else "not_proved"
+        return {"state": state, "last_proved": last}
+
+    return view
+
+
 def _selected_answer(
     found: AnswerView, rows: list[SelectionRowView], placed: list[Placed]
 ) -> AnswerView:

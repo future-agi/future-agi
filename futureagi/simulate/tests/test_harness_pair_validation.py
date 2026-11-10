@@ -1535,6 +1535,30 @@ class TestCheckUnavailable:
         )
         assert validation.platform_failure(None) is None
 
+    @pytest.mark.parametrize(
+        "code",
+        ["sandbox_launch_failed", "hosted_launch_failed", "sandbox_unreachable"],
+    )
+    def test_a_check_our_sandbox_could_not_run_reads_unavailable(
+        self, user, workspace, storage, code
+    ):
+        from simulate.services import harness_readiness
+
+        environment = _pending(user, workspace, storage, f"pv-infra-{code}")
+        job = _start(environment).job
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            state="failed",
+            failure={"domain": "infrastructure", "stage": "queued", "code": code},
+        )
+
+        assert validation.finish_validation(job.id) == "unavailable"
+
+        view = harness_readiness.readiness_report(
+            harness_readiness.resolve_pairing(environment)
+        )["validation"]
+        assert view["state"] == "check_unavailable"
+        assert _row(environment).error["last_attempt"]["cause"] == code
+
     def test_a_test_world_failure_holds_no_run_back_and_reads_unavailable(
         self, user, workspace, storage
     ):

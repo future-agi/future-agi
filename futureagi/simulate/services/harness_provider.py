@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
+import uuid
 from typing import Any
 
 from django.conf import settings
@@ -2153,13 +2154,28 @@ class HostedHarnessProvider:
 
         asked = request.query_params.get("group_by")
         group_by = DEFAULT_GROUP_BY if asked is None else asked
+        flags = None
+        if request.query_params.get("readiness") in ("1", "true"):
+            from simulate.services.hosted_harness import HostedHarnessError
+
+            try:
+                flags = _scenario_readiness(job, request.query_params)
+            except HostedHarnessError as exc:
+                return Response(exc.as_dict(), status=exc.status_code)
         rows = grouped(
             [
-                (
-                    {**scenario_row(one), "draft_change": one.draft_change}
-                    if drafted is not None
-                    else scenario_row(one)
-                )
+                {
+                    **(
+                        {**scenario_row(one), "draft_change": one.draft_change}
+                        if drafted is not None
+                        else scenario_row(one)
+                    ),
+                    **(
+                        {"readiness": flags.get(one.scenario_key)}
+                        if flags is not None
+                        else {}
+                    ),
+                }
                 for one in page or []
             ],
             group_by,
@@ -3148,3 +3164,23 @@ class SandboxHarnessProvider:
 
 class _SandboxMappingError(RuntimeError):
     pass
+
+
+def _scenario_readiness(job, params):
+    """Each scenario's readiness for the pairing the query names (an absent id is the
+    environment's default), by scenario key."""
+    from simulate.services.harness_readiness import resolve_pairing, scenario_readiness
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    picks = {}
+    for name in ("agent_version_id", "environment_version_id", "suite_version_id"):
+        value = params.get(name)
+        if not value:
+            continue
+        try:
+            picks[name] = uuid.UUID(str(value))
+        except ValueError:
+            raise HostedHarnessError(
+                "invalid_version_id", f"{name} is not a valid id", status_code=400
+            ) from None
+    return scenario_readiness(resolve_pairing(job, **picks))
