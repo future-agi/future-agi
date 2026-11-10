@@ -22,6 +22,11 @@ func Reply(w http.ResponseWriter, provider string, forced bool) {
 	}
 	emit := func(event, data string) {
 		if provider == "bedrock" || provider == "converse" {
+			// InvokeModel wraps Anthropic payloads in chunk events; Converse
+			// uses its own messageStart/contentBlockDelta event names.
+			if provider == "bedrock" {
+				event = "chunk"
+			}
 			_, _ = w.Write(frame(event, []byte(data)))
 		} else {
 			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
