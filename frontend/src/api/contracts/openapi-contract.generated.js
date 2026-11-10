@@ -104671,7 +104671,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         verdict: {
           title: "Verdict",
           type: "string",
-          enum: ["pass", "fail", "not_applicable", "inconclusive"],
+          enum: [
+            "pass",
+            "fail",
+            "not_applicable",
+            "inconclusive",
+            "unmeasured",
+          ],
+        },
+        evidence: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+            minLength: 1,
+          },
+          maxItems: 16,
         },
         subject: {
           title: "Subject",
