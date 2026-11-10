@@ -175,7 +175,6 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
 
         <DialogActions sx={{ pt: "32px" }}>
           <LoadingButton
-            sx={{ color: "text.disabled" }}
             disabled={!isDirty || isPending}
             loading={isPending}
             variant="outlined"
