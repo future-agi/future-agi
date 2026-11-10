@@ -12,8 +12,9 @@ import (
 // recordProviderOutcome samples only the operator's actual upstream instance.
 // Org instances can share its routing ID but have different credentials/endpoints.
 // Cache hits, policy refusals and client cancellations are not upstream outcomes.
-func (h *Handlers) recordProviderOutcome(provider providers.Provider, elapsed time.Duration, err error) {
-	if h.healthMonitor == nil || h.registry == nil || errors.Is(err, context.Canceled) {
+func (h *Handlers) recordProviderOutcome(ctx context.Context, provider providers.Provider, elapsed time.Duration, err error) {
+	// Adapters may normalize cancellation to an API timeout without an Unwrap.
+	if h.healthMonitor == nil || h.registry == nil || errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
 		return
 	}
 	base, ok := h.registry.GetProvider(provider.ID())
@@ -31,6 +32,6 @@ func (h *Handlers) recordProviderOutcome(provider providers.Provider, elapsed ti
 func (h *Handlers) callChatProvider(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	start := time.Now()
 	resp, err := provider.ChatCompletion(ctx, req)
-	h.recordProviderOutcome(provider, time.Since(start), err)
+	h.recordProviderOutcome(ctx, provider, time.Since(start), err)
 	return resp, err
 }

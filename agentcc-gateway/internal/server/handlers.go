@@ -1601,13 +1601,13 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		if candidateChunks == nil {
 			attemptCancel()
 			err := models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
-			h.recordProviderOutcome(callProvider, time.Since(start), err)
+			h.recordProviderOutcome(callCtx, callProvider, time.Since(start), err)
 			return err
 		}
 
 		chunk, err := waitForFirstStreamChunk(callCtx, candidateChunks, candidateErrCh)
 		if err != nil {
-			h.recordProviderOutcome(callProvider, time.Since(start), err)
+			h.recordProviderOutcome(callCtx, callProvider, time.Since(start), err)
 			cancelAndDrainStream(attemptCancel, candidateChunks)
 			return err
 		}
@@ -1835,14 +1835,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if !ok {
 				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
 					if apiErr != nil {
-						h.recordProviderOutcome(servingProvider, time.Since(upstreamStart), apiErr)
+						h.recordProviderOutcome(ctx, servingProvider, time.Since(upstreamStart), apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
-				h.recordProviderOutcome(servingProvider, time.Since(upstreamStart), nil)
+				h.recordProviderOutcome(ctx, servingProvider, time.Since(upstreamStart), nil)
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1905,7 +1905,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				h.recordProviderOutcome(servingProvider, time.Since(upstreamStart), err)
+				h.recordProviderOutcome(ctx, servingProvider, time.Since(upstreamStart), err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
 					apiErr = models.ErrInternal(err.Error())
@@ -1922,7 +1922,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			// guardrail goroutines. Drain remaining chunks to unblock the
 			// provider goroutine.
 			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
-				h.recordProviderOutcome(servingProvider, time.Since(upstreamStart), ctx.Err())
+				h.recordProviderOutcome(ctx, servingProvider, time.Since(upstreamStart), ctx.Err())
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}
