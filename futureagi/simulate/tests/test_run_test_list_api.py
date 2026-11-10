@@ -187,6 +187,87 @@ class TestRunTestListPromptVersionRegression:
         assert scenario["prompt_version_detail"]["template_version"] == "v10"
 
 
+@pytest.mark.integration
+@pytest.mark.api
+class TestRunTestListAgentTypeFilter:
+    """The Run Simulation table's Voice / Chat filter sends ``agent_type``."""
+
+    URL = "/simulate/run-tests/?page=1&limit=25&summary=true"
+
+    @pytest.fixture
+    def runs(self, organization, workspace, agent_definition, prompt_template):
+        voice_agent = AgentDefinition.objects.create(
+            agent_name="Voice Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+12345678901",
+            inbound=True,
+            provider="vapi",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+
+        def run(name, **fields):
+            return RunTest.objects.create(
+                name=name, organization=organization, workspace=workspace, **fields
+            )
+
+        return {
+            "chat": run(
+                "Chat agent run",
+                agent_definition=agent_definition,
+                source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+            ),
+            "voice": run(
+                "Voice agent run",
+                agent_definition=voice_agent,
+                source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+            ),
+            # A prompt simulation has no agent definition; it is a chat.
+            "prompt": run(
+                "Prompt run",
+                prompt_template=prompt_template,
+                source_type=RunTest.SourceTypes.PROMPT,
+            ),
+        }
+
+    @staticmethod
+    def _listed_ids(response):
+        assert response.status_code == status.HTTP_200_OK, response.content
+        return {item["id"] for item in response.json()["results"]}
+
+    def test_voice_lists_only_voice_agent_runs(self, auth_client, runs):
+        response = auth_client.get(f"{self.URL}&agent_type=voice")
+
+        assert self._listed_ids(response) == {str(runs["voice"].id)}
+
+    def test_chat_lists_chat_agent_runs_and_prompt_runs(self, auth_client, runs):
+        response = auth_client.get(f"{self.URL}&agent_type=text")
+
+        assert self._listed_ids(response) == {
+            str(runs["chat"].id),
+            str(runs["prompt"].id),
+        }
+
+    def test_no_type_lists_every_run(self, auth_client, runs):
+        response = auth_client.get(self.URL)
+
+        assert self._listed_ids(response) == {str(r.id) for r in runs.values()}
+
+    def test_type_combines_with_search(self, auth_client, runs):
+        response = auth_client.get(f"{self.URL}&search=prompt&agent_type=text")
+
+        assert self._listed_ids(response) == {str(runs["prompt"].id)}
+
+    def test_unknown_type_is_rejected(self, auth_client):
+        response = auth_client.get(f"{self.URL}&agent_type=video")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["agent_type"] == [
+            '"video" is not a valid choice.'
+        ]
+
+
 def _link_harness_job(run_test):
     """Link the run test to a harness job, as registering an environment's
     scenarios does; only then is it a harness run."""

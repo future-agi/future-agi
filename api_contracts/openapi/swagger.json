@@ -55637,6 +55637,17 @@
                         "default": ""
                     },
                     {
+                        "name": "agent_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "voice",
+                            "text"
+                        ],
+                        "default": ""
+                    },
+                    {
                         "name": "prompt_template_id",
                         "in": "query",
                         "required": false,
@@ -56703,7 +56714,7 @@
         "/simulate/run-tests/": {
             "get": {
                 "operationId": "simulate_run-tests_list",
-                "description": "Get paginated list of run tests for the user's organization\nQuery Parameters:\n- search: search string to filter run tests by name\n- limit: number of items per page (default: 10)\n- page: page number (default: 1)\n- simulation_type: filter by source type (RunTest.SourceTypes values:\n    'agent_definition' or 'prompt')\n- prompt_template_id: filter by prompt template ID (used when\n    simulation_type is 'prompt')\n- summary: return the bounded list-card representation",
+                "description": "Get paginated list of run tests for the user's organization\nQuery Parameters:\n- search: search string to filter run tests by name\n- limit: number of items per page (default: 10)\n- page: page number (default: 1)\n- simulation_type: filter by source type (RunTest.SourceTypes values:\n    'agent_definition' or 'prompt')\n- agent_type: filter by agent type ('voice' or 'text'); 'text' also\n    includes prompt simulations, which have no agent definition\n- prompt_template_id: filter by prompt template ID (used when\n    simulation_type is 'prompt')\n- summary: return the bounded list-card representation",
                 "parameters": [
                     {
                         "name": "search",
@@ -56720,6 +56731,17 @@
                         "enum": [
                             "agent_definition",
                             "prompt"
+                        ],
+                        "default": ""
+                    },
+                    {
+                        "name": "agent_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "voice",
+                            "text"
                         ],
                         "default": ""
                     },

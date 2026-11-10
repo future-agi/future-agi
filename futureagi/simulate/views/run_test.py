@@ -535,6 +535,8 @@ class RunTestListView(APIView):
         - page: page number (default: 1)
         - simulation_type: filter by source type (RunTest.SourceTypes values:
             'agent_definition' or 'prompt')
+        - agent_type: filter by agent type ('voice' or 'text'); 'text' also
+            includes prompt simulations, which have no agent definition
         - prompt_template_id: filter by prompt template ID (used when
             simulation_type is 'prompt')
         - summary: return the bounded list-card representation
@@ -551,6 +553,7 @@ class RunTestListView(APIView):
             query_data = request.validated_query_data
             search_query = query_data.get("search", "").strip()
             simulation_type = query_data.get("simulation_type", "").strip()
+            agent_type = query_data.get("agent_type", "").strip()
             prompt_template_id = query_data.get("prompt_template_id")
             summary = query_data.get("summary", False)
 
@@ -577,6 +580,16 @@ class RunTestListView(APIView):
                 run_tests = run_tests.filter(
                     source_type=RunTest.SourceTypes.AGENT_DEFINITION
                 )
+
+            # Apply agent_type filter; prompt simulations count as text (chat),
+            # the same way the scenarios list counts prompt scenarios.
+            if agent_type:
+                agent_type_filter = models.Q(agent_definition__agent_type=agent_type)
+                if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
+                    agent_type_filter |= models.Q(
+                        source_type=RunTest.SourceTypes.PROMPT
+                    )
+                run_tests = run_tests.filter(agent_type_filter)
 
             # Apply search filter if search query is provided
             if search_query:

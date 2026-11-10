@@ -8,6 +8,8 @@ import {
   Menu,
   MenuItem,
   Popover,
+  Stack,
+  TextField,
   Tooltip,
   Typography,
   useTheme,
@@ -29,6 +31,7 @@ import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/Custom
 
 import { useAuthContext } from "src/auth/hooks";
 import { useDebounce } from "src/hooks/use-debounce";
+import { AGENT_TYPES } from "src/sections/agents/constants";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -271,11 +274,14 @@ const RunTestsContent = ({
   const queryClient = useQueryClient();
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [testToDelete, setTestToDelete] = useState(null);
 
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
+  // Every prompt simulation is a chat, so only the full list filters by type.
+  const showTypeFilter = simulationType !== SIMULATION_TYPE.PROMPT;
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["run-tests"] });
@@ -338,8 +344,18 @@ const RunTestsContent = ({
     if (simulationType === SIMULATION_TYPE.PROMPT && promptTemplateId) {
       params.prompt_template_id = promptTemplateId;
     }
+    if (typeFilter) {
+      params.agent_type = typeFilter;
+    }
     return params;
-  }, [page, pageSize, debouncedSearchQuery, simulationType, promptTemplateId]);
+  }, [
+    page,
+    pageSize,
+    debouncedSearchQuery,
+    simulationType,
+    promptTemplateId,
+    typeFilter,
+  ]);
 
   const { isPending, data } = useQuery({
     queryKey: [
@@ -349,6 +365,7 @@ const RunTestsContent = ({
       page,
       pageSize,
       debouncedSearchQuery,
+      typeFilter,
     ],
     queryFn: () => axios.get(endpoints.runTests.list, { params: queryParams }),
     select: (d) => d.data,
@@ -360,7 +377,11 @@ const RunTestsContent = ({
   const hasData = items.length > 0;
 
   const showEmptyScreen =
-    !isPending && data && total === 0 && debouncedSearchQuery === "";
+    !isPending &&
+    data &&
+    total === 0 &&
+    debouncedSearchQuery === "" &&
+    !typeFilter;
 
   const canManage =
     RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role] &&
@@ -590,25 +611,50 @@ const RunTestsContent = ({
                 gap: 2,
               }}
             >
-              <ShowComponent condition={showSearch}>
-                <FormSearchField
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setPage(0);
-                  }}
-                  size="small"
-                  placeholder="Search"
-                  sx={{
-                    minWidth: "250px",
-                    "& .MuiOutlinedInput-root": { height: "30px" },
-                  }}
-                />
-              </ShowComponent>
-              <ShowComponent condition={!showSearch}>
-                <Box />
-              </ShowComponent>
-              <ShowComponent condition={hasData || debouncedSearchQuery !== ""}>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <ShowComponent condition={showSearch}>
+                  <FormSearchField
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setPage(0);
+                    }}
+                    size="small"
+                    placeholder="Search"
+                    sx={{
+                      minWidth: "250px",
+                      "& .MuiOutlinedInput-root": { height: "30px" },
+                    }}
+                  />
+                </ShowComponent>
+                <ShowComponent condition={showTypeFilter}>
+                  <TextField
+                    select
+                    size="small"
+                    value={typeFilter ?? "all"}
+                    onChange={(e) => {
+                      setTypeFilter(
+                        e.target.value === "all" ? null : e.target.value,
+                      );
+                      setPage(0);
+                    }}
+                    inputProps={{ "aria-label": "Agent type" }}
+                    sx={{
+                      minWidth: 140,
+                      "& .MuiOutlinedInput-root": { height: "30px" },
+                    }}
+                  >
+                    <MenuItem value="all">All types</MenuItem>
+                    <MenuItem value={AGENT_TYPES.VOICE}>Voice</MenuItem>
+                    <MenuItem value={AGENT_TYPES.CHAT}>Chat</MenuItem>
+                  </TextField>
+                </ShowComponent>
+              </Stack>
+              <ShowComponent
+                condition={
+                  hasData || debouncedSearchQuery !== "" || Boolean(typeFilter)
+                }
+              >
                 <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
                   <ShowComponent condition={showHeader}>
                     <Button

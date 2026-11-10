@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "9e44be0b1089cb6e39b8e38c1477988e9d49f63f8b6713ec137923028821586d",
+  "source_contract_sha256": "8334db63585a858d07229e83d15881005a9fc78199451bb5f424dc32fc21f063",
   "tool_count": 107,
   "tools": [
     {
@@ -8822,6 +8822,14 @@
             ],
             "default": ""
           },
+          "agent_type": {
+            "type": "string",
+            "enum": [
+              "voice",
+              "text"
+            ],
+            "default": ""
+          },
           "prompt_template_id": {
             "anyOf": [
               {
@@ -8866,6 +8874,7 @@
           "query": [
             "search",
             "simulation_type",
+            "agent_type",
             "prompt_template_id",
             "page",
             "limit",
