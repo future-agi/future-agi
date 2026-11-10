@@ -88,9 +88,6 @@ export default function ErrorFeedView() {
                     sx={{
                       border: "1px solid",
                       borderColor: "divider",
-                      borderRadius: "6px",
-                      width: 32,
-                      height: 32,
                       color: "text.secondary",
                     }}
                   >

@@ -285,8 +285,6 @@ export default function EscalationSettingsDialog({
                         label="decides"
                         sx={{
                           mr: 1,
-                          height: 18,
-                          fontSize: 11,
                           color: "text.secondary",
                           bgcolor: "action.hover",
                         }}
@@ -467,26 +465,15 @@ export default function EscalationSettingsDialog({
                     sm: "repeat(3, 1fr) 0.85fr",
                   },
                   gap: 0.5,
-                  p: "3px",
-                  bgcolor: "action.hover",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 1,
                   "& .MuiToggleButtonGroup-grouped": {
                     m: 0,
-                    py: 0.875,
-                    px: 1,
-                    border: "1px solid transparent !important",
-                    borderRadius: "6px !important",
                     flexDirection: "column",
-                    textTransform: "none",
-                    color: "text.primary",
                     "&.Mui-selected, &.Mui-selected:hover": {
                       ...accentSx,
                       borderColor: (t) =>
                         `${t.palette.primary.main} !important`,
                     },
-                    "&.Mui-disabled": { color: "text.primary", opacity: 0.6 },
+                    "&.Mui-disabled": { opacity: 0.6 },
                     "&.Mui-disabled.Mui-selected": { opacity: 1, ...accentSx },
                   },
                 }}
@@ -567,7 +554,7 @@ export default function EscalationSettingsDialog({
                       color="error"
                       variant="soft"
                       label={`${errorNames.length} to fix`}
-                      sx={{ ml: 1, height: 20 }}
+                      sx={{ ml: 1 }}
                     />
                   )}
                   {active === "custom" && (
@@ -577,7 +564,6 @@ export default function EscalationSettingsDialog({
                       sx={{
                         ml: "auto",
                         mr: 1,
-                        height: 20,
                         color: "text.secondary",
                         bgcolor: "action.hover",
                       }}
@@ -607,7 +593,7 @@ export default function EscalationSettingsDialog({
                       RECOVERY,
                       recoveryDecides,
                       `${recoverAt(shown, usual).toLocaleString("en-US")} or fewer`,
-                      "#F5A623",
+                      "warning.main",
                     )}
                   </Box>
                 </AccordionDetails>

@@ -52,13 +52,13 @@ export default function EscalationPreviewChart({ values, usual, stale }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const colors = {
-    curve: isDark ? "#D4D4D8" : "#52525B",
+    curve: theme.palette.text.secondary,
     hot: theme.palette.error.main,
-    escText: isDark ? "#FF8F8D" : "#B42321",
+    escText: theme.palette.status.danger.fg,
     shade: isDark ? "rgba(219,47,45,0.13)" : "rgba(219,47,45,0.07)",
     muted: theme.palette.text.secondary,
     text: theme.palette.text.primary,
-    recLine: isDark ? "#A1A1AA" : "#8A8A93",
+    recLine: theme.palette.text.tertiary,
   };
   const scale = usual / SAMPLE.base;
   const floor = 0.7 * usual;

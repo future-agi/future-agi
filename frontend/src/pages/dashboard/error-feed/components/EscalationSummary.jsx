@@ -177,9 +177,8 @@ function Ruler({ escalate, recover, usual }) {
           sx={{
             ...zone,
             width: `${pRec}%`,
-            bgcolor: (t) =>
-              t.palette.mode === "dark" ? "rgba(245,166,35,0.15)" : "#FDEEE2",
-            color: (t) => (t.palette.mode === "dark" ? "#F5A623" : "#8C3F08"),
+            bgcolor: "status.warning.bg",
+            color: "status.warning.fg",
           }}
         >
           For review
@@ -201,9 +200,8 @@ function Ruler({ escalate, recover, usual }) {
             ...zone,
             flex: 1,
             justifyContent: "flex-end",
-            bgcolor: (t) =>
-              t.palette.mode === "dark" ? "rgba(219,47,45,0.15)" : "#FCE8E7",
-            color: (t) => (t.palette.mode === "dark" ? "#E87878" : "#DB2F2D"),
+            bgcolor: "status.danger.bg",
+            color: "status.danger.fg",
           }}
         >
           Escalating
