@@ -26,7 +26,15 @@ type Library = { results: { id: string; name: string }[]; stats: { total: number
 type Usage = { total: number; by_channel: { api: number; download: number; mcp: number } };
 type Checks = { items: { code: string }[]; summary: { errors: number; warnings: number } };
 
+async function selectSourceIfAvailable(page: Page) {
+  const monaco = page.getByRole('textbox', { name: /Editor content/ });
+  const source = page.getByRole('tablist', { name: 'Skill document view' }).getByRole('tab', { name: 'Source', exact: true });
+  await expect(monaco.or(source).first()).toBeVisible({ timeout: UI_READY });
+  if (await source.isVisible()) await source.click();
+}
+
 async function editText(page: Page, value: string) {
+  await selectSourceIfAvailable(page);
   // SkillFileEditor -> FormCodeEditor/Monaco accessible input. Paste through the
   // real clipboard; never call editor models, app state or a replacement API write.
   const editor = page.getByRole('textbox', { name: /Editor content/ });
@@ -161,10 +169,11 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
 
     await test.step('Live checks find the synthetic secret', async () => {
       const initial = initialDraft.files.find(file => file.path === 'SKILL.md')!.content;
-      const checked = page.waitForResponse(response => response.url().endsWith(`${SKILLS}checks/`) &&
-        response.request().postData()?.includes('FAKE_ONLY_') === true, { timeout: UI_READY });
-      await editText(page, initial + FAKE_SECRET);
-      const response = await checked;
+      const [response] = await Promise.all([
+        page.waitForResponse(response => response.url().endsWith(`${SKILLS}checks/`) &&
+          response.request().postData()?.includes('FAKE_ONLY_') === true, { timeout: UI_READY }),
+        editText(page, initial + FAKE_SECRET),
+      ]);
       expect(response.status()).toBe(200);
       const checks = ((await response.json()) as Envelope<Checks>).result;
       expect(checks.items.filter(item => item.code === 'secret_suspected').map(item => item.code)).toEqual(['secret_suspected']);
@@ -175,10 +184,12 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
     await test.step('Remove the warning and persist the exact revision-one files', async () => {
       v1Files = initialDraft.files.map(file => file.path === 'SKILL.md'
         ? { ...file, content: file.content + `\n\n${prefix}: revision one; escalate ambiguous requests to a human reviewer.\n` } : file);
-      const checked = page.waitForResponse(response => response.url().endsWith(`${SKILLS}checks/`) &&
-        response.request().postData()?.includes(`${prefix}: revision one`) === true && !response.request().postData()?.includes('FAKE_ONLY_'), { timeout: UI_READY });
-      await editText(page, v1Files.find(file => file.path === 'SKILL.md')!.content);
-      const clean = ((await (await checked).json()) as Envelope<Checks>).result;
+      const [checked] = await Promise.all([
+        page.waitForResponse(response => response.url().endsWith(`${SKILLS}checks/`) &&
+          response.request().postData()?.includes(`${prefix}: revision one`) === true && !response.request().postData()?.includes('FAKE_ONLY_'), { timeout: UI_READY }),
+        editText(page, v1Files.find(file => file.path === 'SKILL.md')!.content),
+      ]);
+      const clean = ((await checked.json()) as Envelope<Checks>).result;
       expect(clean.items.filter(item => item.code === 'secret_suspected')).toEqual([]);
       expect(clean.summary).toMatchObject({ errors: 0, warnings: 0 });
       const draft = await saved(v1Files);
@@ -198,7 +209,7 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
     }, { timeout: UI_READY });
 
     await test.step('Rename a supporting file through the editor', async () => {
-      await page.getByRole('link', { name: 'Edit', exact: true }).click();
+      await page.getByRole('link', { name: 'Edit latest v1', exact: true }).click();
       await page.getByRole('treeitem', { name: 'examples.md', exact: true }).click();
       await page.getByRole('button', { name: 'Rename', exact: true }).click();
       const dialog = page.getByRole('dialog');
@@ -334,7 +345,8 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
 
     await test.step('Copy the production install command and capture fetch baseline', async () => {
       await page.goto(`${LIBRARY}/${id}?tab=use`);
-      await page.getByRole('tab', { name: 'Claude Code', exact: true }).click();
+      await page.getByRole('combobox', { name: /^Coding client/ }).click();
+      await page.getByRole('option', { name: 'Claude Code', exact: true }).click();
       await page.getByRole('button', { name: 'Copy code', exact: true }).click();
       command = await page.evaluate(() => navigator.clipboard.readText());
       expect(command.includes(credentials.apiKey)).toBe(false);

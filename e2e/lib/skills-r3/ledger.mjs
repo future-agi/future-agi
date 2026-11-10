@@ -8,7 +8,14 @@ const PHASES = ['cold', 'recurring', 'recovery', 'exit'];
 const EVENT_TYPES = ['registration', 'start', 'end', 'observation', 'fault', 'outcome', 'stage'];
 export const STAGE_SOURCES = Object.freeze(['api', 'pg', 'filesystem', 'git', 'model_boundary', 'guest', 'external_trace', 'external_pipeline', 'external_github']);
 
+function validateDecision(decision) {
+  requireValue(decision && Object.keys(decision).sort().join(',') === 'packet_sha256,preconditions_sha256'
+    && [decision.packet_sha256, decision.preconditions_sha256].every((value) => /^[a-f0-9]{64}$/.test(value)),
+  'Decision evidence must contain only packet and preconditions hashes');
+}
+
 function validateStageReceipt(receipt, preceding) {
+  if (receipt.decision !== undefined) validateDecision(receipt.decision);
   token(receipt.step, 'stage');
   requireValue(PHASES.includes(receipt.phase), 'Invalid stage phase');
   requireValue(STAGE_SOURCES.includes(receipt.source) && /^[a-f0-9]{64}$/.test(receipt.artifact_hash), 'Independent stage evidence required');
@@ -65,7 +72,8 @@ export class ActionLedger {
     this.#append({ type: 'registration', comparison_identity: comparisonIdentity, preregistration_hash: preregistrationHash });
   }
 
-  async measure({ dimension, primitive, actor, step, phase, target, items = [], exceptionItems = [] }, effect) {
+  async measure({ dimension, primitive, actor, step, phase, target, items = [], exceptionItems = [], decision = null }, effect) {
+    if (decision !== null) validateDecision(decision);
     requireValue(DIMENSIONS.includes(dimension), 'Invalid dimension');
     requireValue(dimension !== 'A' || ACTIONS.includes(primitive), 'A must be a meaningful primitive');
     requireValue(dimension === 'A' || ({ S: 'transition', H: 'handoff', R: 'reconcile' })[dimension] === primitive, 'Use the dimension-specific primitive');
@@ -76,7 +84,7 @@ export class ActionLedger {
     requireValue(new Set(items).size === items.length, 'Duplicate review item');
     requireValue(exceptionItems.every((v) => items.includes(v)), 'Exception was not exposed');
     requireValue(!['review', 'approve'].includes(primitive) || items.length > 0, 'Review must name exposed items');
-    const start = this.#append({ type: 'start', dimension, primitive, actor, step, phase, target, items, exception_items: exceptionItems });
+    const start = this.#append({ type: 'start', dimension, primitive, actor, step, phase, target, items, exception_items: exceptionItems, ...(decision ? { decision: structuredClone(decision) } : {}) });
     try {
       const result = await effect();
       this.#append({ type: 'end', start_sequence: start.sequence, status: 'completed' });
@@ -92,8 +100,8 @@ export class ActionLedger {
   /** Evidence that a mechanical stage completed. The same completed action can support
    * several stages without being counted again. Empty references mean automatic work,
    * never an implicit human review/authorization. Cross-phase attribution is forbidden. */
-  stage({ step, phase, source, artifactHash, actionSequences = [] }) {
-    const receipt = { type: 'stage', step, phase, source, artifact_hash: artifactHash, action_sequences: actionSequences };
+  stage({ step, phase, source, artifactHash, actionSequences = [], decision = null }) {
+    const receipt = { type: 'stage', step, phase, source, artifact_hash: artifactHash, action_sequences: actionSequences, ...(decision ? { decision: structuredClone(decision) } : {}) };
     validateStageReceipt(receipt, this.#events);
     this.#append(receipt);
   }
@@ -134,6 +142,7 @@ export function verifyLedger(events) {
     requireValue(EVENT_TYPES.includes(event.type) && Number.isFinite(event.elapsed_ms) && event.elapsed_ms >= elapsed, 'Invalid ledger event');
     if (event.type === 'registration') requireValue(index === 0 && [event.comparison_identity, event.preregistration_hash].every((value) => /^[a-f0-9]{64}$/.test(value)), 'Invalid registration event');
     if (event.type === 'start') {
+      if (event.decision !== undefined) validateDecision(event.decision);
       requireValue(DIMENSIONS.includes(event.dimension) && PHASES.includes(event.phase), 'Invalid measurement');
       requireValue(event.dimension !== 'A' || ACTIONS.includes(event.primitive), 'Invalid action');
       requireValue(event.dimension === 'A' || ({ S: 'transition', H: 'handoff', R: 'reconcile' })[event.dimension] === event.primitive, 'Invalid dimension primitive');

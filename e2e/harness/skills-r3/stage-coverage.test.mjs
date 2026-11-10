@@ -52,6 +52,19 @@ test('re-hashing invalid stage data cannot bypass import validation', async () =
   assert.throws(() => verifyLedger(events), /same-phase/);
 });
 
+test('decision evidence retains only immutable packet and precondition hashes', async () => {
+  const journal = ledger();
+  const decision = { packet_sha256: hash, preconditions_sha256: hash };
+  await assert.rejects(journal.measure({ ...action, decision: { ...decision, payload: 'not permitted' } }, () => {}), /only packet/);
+  await assert.rejects(journal.measure({ ...action, decision: { ...decision, packet_sha256: 'not-a-hash' } }, () => {}), /only packet/);
+  await journal.measure({ ...action, decision }, () => {});
+  journal.stage({ ...receipt, decision });
+  decision.packet_sha256 = 'b'.repeat(64);
+  assert.equal(journal.events()[0].decision.packet_sha256, hash);
+  assert.equal(journal.events().at(-1).decision.packet_sha256, hash);
+  assert.equal(verifyLedger(journal.events()).complete, true);
+});
+
 test('registration is a first-event immutable part of the reviewer-bound journal', async () => {
   const journal = ledger();
   journal.registration({ comparisonIdentity: hash, preregistrationHash: hash });

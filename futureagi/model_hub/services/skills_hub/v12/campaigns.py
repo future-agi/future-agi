@@ -423,7 +423,9 @@ def create_campaign(
         _fail("invalid_campaign", "A binding can appear only once.", 400)
     if request["parent_campaign_id"] is not None:
         _uuid(request["parent_campaign_id"])
-    Workspace.no_workspace_objects.select_for_update().get(
+    # Serialize workspace operations without blocking context publication's
+    # foreign-key KEY SHARE checks while we wait for its context row lock.
+    Workspace.no_workspace_objects.select_for_update(no_key=True).get(
         pk=principal.scope.workspace_id, organization_id=principal.scope.organization_id
     )
     lookup, digest, replay = _operation(

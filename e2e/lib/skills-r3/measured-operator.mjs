@@ -17,11 +17,11 @@ export class MeasuredOperator {
   }
   click(locator, target) { return this.#measure('A', 'click', target, () => locator.click()); }
   fill(locator, value, target) { return this.#measure('A', 'field_edit', target, () => locator.fill(value)); }
-  review(target, items, exceptionItems, effect) {
-    return this.#measure('A', 'review', target, effect, { items, exceptionItems });
+  review(target, items, exceptionItems, effect, decision = null) {
+    return this.#measure('A', 'review', target, effect, { items, exceptionItems, decision });
   }
-  approve(target, items, effect) { return this.#measure('A', 'approve', target, effect, { items }); }
-  recoveryDecision(target, effect) { return this.#measure('A', 'recovery_decision', target, effect); }
+  approve(target, items, effect, decision = null) { return this.#measure('A', 'approve', target, effect, { items, decision }); }
+  recoveryDecision(target, effect, decision = null) { return this.#measure('A', 'recovery_decision', target, effect, { decision }); }
   configurationEdit(target, effect) { return this.#measure('A', 'configuration_edit', target, effect); }
   transition(target, effect) { return this.#measure('S', 'transition', target, effect); }
   handoff(recipient, effect) { return this.#measure('H', 'handoff', recipient, effect); }

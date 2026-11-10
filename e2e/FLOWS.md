@@ -2450,7 +2450,7 @@
 
 **Goal:** A developer authors, publishes, restores and consumes the exact reviewed workspace skill while production changes only through an explicit promotion
 
-**Spec:** `flows/skills/library-lifecycle.spec.ts:42`
+**Spec:** `flows/skills/library-lifecycle.spec.ts:50`
 
 **Tags:** —
 
@@ -2480,7 +2480,7 @@
 
 **Goal:** A contributor verifies a policy repair against reviewed examples, publishes exactly the shared evidence-backed candidate without moving production, and an administrator deliberately promotes or rolls it back
 
-**Spec:** `flows/skills/reviewed-release.spec.ts:38`
+**Spec:** `flows/skills/reviewed-release.spec.ts:46`
 
 **Tags:** —
 
@@ -2509,7 +2509,7 @@
 
 **Goal:** A maintainer reviews a public source and stages its exact update without overwriting a personal draft, silently merging local customizations or changing production
 
-**Spec:** `flows/skills/github-draft-update.spec.ts:32`
+**Spec:** `flows/skills/github-draft-update.spec.ts:40`
 
 **Tags:** —
 

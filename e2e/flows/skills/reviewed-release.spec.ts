@@ -25,7 +25,15 @@ async function select(page: Page, label: string | RegExp, option: string) {
   await page.getByRole('option', { name: option, exact: true }).click({ timeout: UI_READY });
 }
 
+async function selectSourceIfAvailable(page: Page) {
+  const monaco = page.getByRole('textbox', { name: /Editor content/ });
+  const source = page.getByRole('tablist', { name: 'Skill document view' }).getByRole('tab', { name: 'Source', exact: true });
+  await expect(monaco.or(source).first()).toBeVisible({ timeout: UI_READY });
+  if (await source.isVisible()) await source.click();
+}
+
 async function editText(page: Page, content: string) {
+  await selectSourceIfAvailable(page);
   // SkillFileEditor -> Monaco's accessible textbox; real clipboard paste, no app-state injection.
   const input = page.getByRole('textbox', { name: /Editor content/ });
   await expect(input).toBeVisible({ timeout: UI_READY });

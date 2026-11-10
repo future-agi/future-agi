@@ -36,7 +36,7 @@ class ResponseTooLargeError(ValueError):
 
 def bounded_response(data: Any) -> Any:
     """Keep complete pages; preview long blob strings and reject oversized results."""
-    truncated = []
+    truncated: list[str] = []
     visited = 0
 
     def visit(value: Any, path: str, blob: bool = False, depth: int = 0) -> Any:
@@ -58,7 +58,7 @@ def bounded_response(data: Any) -> Any:
                 )
                 for key, child in value.items()
             }
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, list | tuple):
             return [
                 visit(child, f"{path}/{index}", blob, depth + 1)
                 for index, child in enumerate(value)

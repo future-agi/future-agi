@@ -118,6 +118,9 @@ def contract(output=None, *, body=None, query=None, status=200, many=False, **kw
                 "campaign_id",
                 "binding_id",
                 "request_id",
+                "plan_id",
+                "capture_id",
+                "source_id",
             }:
                 parameters.append(
                     openapi.Parameter(

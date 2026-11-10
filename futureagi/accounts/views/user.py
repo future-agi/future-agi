@@ -649,6 +649,9 @@ def get_user_info(request):
         "onboarding", {}
     ).get("completed", False)
     data = user_serializer.data
+    # The public user-info contract is an array, including before onboarding.
+    # Keep the nullable persistence field unchanged for other user serializers.
+    data["goals"] = user.goals if user.goals is not None else []
     data["remember_me"] = remember_me
     data["get_started_completed"] = get_started_completed
     data["onboarding_completed"] = onboarding_completed

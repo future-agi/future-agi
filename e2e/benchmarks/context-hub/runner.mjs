@@ -32,15 +32,22 @@ export function comparisonContract(job, registration) {
     population: structuredClone(registration.population) };
 }
 
-function validateStageCoverage(stage, events) {
+function validateStageCoverage(stage, events, afterSequence = 0) {
   const completed = new Set(events.filter((event) => event.type === 'end' && event.status === 'completed').map((event) => event.start_sequence));
   const receipt = events.find((event) => event.type === 'stage' && event.step === stage.id);
   const actions = events.filter((event) => event.type === 'start' && event.dimension === 'A' && completed.has(event.sequence)
     && (event.step === stage.id || receipt?.action_sequences.includes(event.sequence)));
   requireValue(receipt || actions.length > 0, `Uninstrumented stage ${stage.id}`);
   requireValue(!receipt || receipt.phase === stage.phase, 'Stage receipt phase differs');
-  // A mechanical stage may be automatic; an actual human review or authorization may not.
-  for (const primitive of stage.human_actions ?? []) requireValue(actions.some((action) => action.primitive === primitive), `Missing human ${primitive} for ${stage.id}`);
+  // Sharing is only for mechanical work. Every decision must be made for this
+  // stage's independently observed packet and preconditions, not an earlier one.
+  for (const primitive of stage.human_actions ?? []) {
+    requireValue(receipt && SHA256.test(receipt.decision?.packet_sha256)
+      && SHA256.test(receipt.decision?.preconditions_sha256), `Missing decision evidence for ${stage.id}`);
+    requireValue(actions.some((action) => action.step === stage.id && action.primitive === primitive
+      && action.sequence > afterSequence && action.sequence < receipt.sequence && canonical(action.decision) === canonical(receipt.decision)),
+    `Missing current human ${primitive} for ${stage.id}`);
+  }
 }
 
 function validateAccounting(job, cohort, events) {
@@ -49,7 +56,15 @@ function validateAccounting(job, cohort, events) {
     const stage = stages.find((item) => item.id === event.step);
     requireValue(stage && event.phase === stage.phase, 'Action/stage is outside the preregistered cohort or phase');
   }
-  for (const stage of stages) validateStageCoverage(stage, events);
+  let boundary = 0;
+  for (const stage of stages) {
+    validateStageCoverage(stage, events, boundary);
+    const starts = new Set(events.filter((event) => event.type === 'start' && event.step === stage.id).map((event) => event.sequence));
+    for (const event of events) {
+      if ((event.type === 'stage' && event.step === stage.id)
+        || (event.type === 'end' && starts.has(event.start_sequence))) boundary = Math.max(boundary, event.sequence);
+    }
+  }
 }
 
 /** Performs ordered complete-job stages; never infers A from the number of stages. */
@@ -84,9 +99,10 @@ export async function runJourney({ jobId, runId, driver, registration, outputDir
       const entry = { id: stage.id, status: 'running' };
       report.stages.push(entry);
       try {
+        const boundary = ledger.events().at(-1)?.sequence ?? 0;
         await driver.perform(structuredClone(stage), { ledger, signal: controller.signal });
         if (controller.signal.aborted) throw new Error('journey_deadline');
-        validateStageCoverage(stage, ledger.events());
+        validateStageCoverage(stage, ledger.events(), boundary);
         entry.status = 'completed';
       } catch (error) { entry.status = 'failed'; throw error; }
     }

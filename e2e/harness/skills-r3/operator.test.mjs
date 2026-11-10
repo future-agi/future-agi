@@ -38,3 +38,15 @@ test('cancelled operators cannot start more user actions', async () => {
   assert.throws(() => operator.click({ click: () => assert.fail('must not execute') }, 'button'), /cancelled/);
   assert.equal(ledger.events().length, 0);
 });
+
+
+test('human decision adapters preserve packet and precondition bindings', async () => {
+  const { ledger, operator } = setup();
+  const decision = { packet_sha256: 'a'.repeat(64), preconditions_sha256: 'b'.repeat(64) };
+  await operator.review('packet', ['item'], [], () => {}, decision);
+  await operator.approve('packet', ['item'], () => {}, decision);
+  await operator.recoveryDecision('packet', () => {}, decision);
+  const starts = ledger.events().filter((event) => event.type === 'start');
+  assert.equal(starts.length, 3);
+  assert.ok(starts.every((event) => JSON.stringify(event.decision) === JSON.stringify(decision)));
+});

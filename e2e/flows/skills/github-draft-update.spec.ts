@@ -20,7 +20,15 @@ type Preview = { id: string; status: string; outcome: string; roots: string[]; l
   diff: { files: { path: string; status: string; from_text?: string; to_text?: string }[] } };
 type Source = { imported_sha: string; upstream_digest: string; revision: number; associated_version: number };
 
+async function selectSourceIfAvailable(page: Page) {
+  const monaco = page.getByRole('textbox', { name: /Editor content/ });
+  const source = page.getByRole('tablist', { name: 'Skill document view' }).getByRole('tab', { name: 'Source', exact: true });
+  await expect(monaco.or(source).first()).toBeVisible({ timeout: UI_READY });
+  if (await source.isVisible()) await source.click();
+}
+
 async function editText(page: Page, text: string) {
+  await selectSourceIfAvailable(page);
   const input = page.getByRole('textbox', { name: /Editor content/ }); // SkillFileEditor / Monaco
   await expect(input).toBeVisible({ timeout: UI_READY });
   await input.focus();
@@ -276,6 +284,7 @@ test('SKILLS-E2E-003: review and stage an exact GitHub update without overwritin
     await testInfo.attach('github-staging-receipt', { body: JSON.stringify({ id, update, personalRevision: personal!.revision, staged: staged!, replay, releasesBefore, labelsBefore, ledger: await fake.ledger() }), contentType: 'application/json' });
     await test.step('Inspect the staged source receipt in the browser', async () => {
       await page.getByRole('button', { name: 'Review and test changes', exact: true }).click();
+      await selectSourceIfAvailable(page);
       await expect(page.getByRole('textbox', { name: /Editor content/ })).toBeVisible({ timeout: UI_READY });
       await testInfo.attach('github-replacement-draft', { body: await page.screenshot(), contentType: 'image/png' });
     }, { timeout: UI_READY });

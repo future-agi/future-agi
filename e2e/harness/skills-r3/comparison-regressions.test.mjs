@@ -11,6 +11,7 @@ import { main } from '../../benchmarks/context-hub/cli.mjs';
 
 // Synthetic observations exercise comparator mechanics, not customer/competitor measurements.
 const hash = 'a'.repeat(64);
+const decision = { packet_sha256: hash, preconditions_sha256: hash };
 const provenance = { product_base: 'b'.repeat(40), product_head: 'b'.repeat(40), product_tree: 'b'.repeat(40),
   sdk_commit: 'b'.repeat(40), fixture_hash: hash, runtime_digest: hash, package_hashes: [hash],
   lockfile_hashes: [hash], dirty: false, environment: 'gcp', project: 'fagi-omega-staging' };
@@ -32,9 +33,9 @@ function driver(job, mode, { counts = {}, coverage = false } = {}) {
         sequences.push(ledger.events().length + 1);
         const primitive = stage.human_actions?.[i] ?? 'command';
         await ledger.measure({ dimension: 'A', primitive, actor: 'operator', step: stage.id, phase: stage.phase,
-          target: 'synthetic-target', items: ['synthetic-item'] }, () => {});
+          target: 'synthetic-target', items: ['synthetic-item'], decision }, () => {});
       }
-      if (coverage) ledger.stage({ step: stage.id, phase: stage.phase, source: 'api', artifactHash: hash, actionSequences: sequences });
+      if (coverage || stage.human_actions.length) ledger.stage({ step: stage.id, phase: stage.phase, source: 'api', artifactHash: hash, actionSequences: sequences, decision });
     },
     async observe(check) { return { source: check.sources[0], artifact_sha256: hash, value: sample(check) }; },
     async teardown() { return { qualified: true }; },
@@ -163,5 +164,69 @@ test('comparison CLI saves machine-readable components and fails unmeasured or b
       assert.equal(result.components.recovery.ten_x_actions, false);
       await assert.rejects(main(['compare', ...paths, output]), /EEXIST/, 'failed comparisons must not be overwritten');
     });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+for (const [later, originalStage] of [['renewed-review', 'review-packet'], ['authorized-release', 'record-decision']]) {
+  test(`EVIDENCE-01: ${later} cannot reuse ${originalStage} in a journey or imported comparison`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'l13-decision-'));
+    const job = getJob('J4');
+    try {
+      const d = driver(job, 'product', { coverage: true });
+      const perform = d.perform;
+      d.perform = async (stage, context) => {
+        if (stage.id !== later) return perform(stage, context);
+        const original = context.ledger.events().find((event) => event.type === 'start' && event.step === originalStage);
+        context.ledger.stage({ step: stage.id, phase: stage.phase, source: 'api', artifactHash: hash,
+          actionSequences: [original.sequence], decision });
+      };
+      const rejected = await runJourney({ jobId: 'J4', runId: 'reused', driver: d,
+        registration: registration(job), outputDir: root });
+      assert.equal(rejected.status, 'failed');
+      assert.equal(rejected.stages.at(-1).id, later);
+      const run = (mode) => runJourney({ jobId: 'J4', runId: mode, driver: driver(job, mode, { coverage: true }),
+        registration: registration(job), outputDir: root });
+      const ours = await run('product'), other = await run('competitor');
+      assert.equal(ours.status, 'completed'); assert.equal(other.status, 'completed');
+      assert.equal(compareActionRuns(ours, other, review(ours, other)).action_ratio, 1);
+      const forged = structuredClone(ours);
+      const original = forged.events.find((event) => event.type === 'start' && event.step === originalStage);
+      const removed = forged.events.find((event) => event.type === 'start' && event.step === later);
+      const receipt = forged.events.find((event) => event.type === 'stage' && event.step === later);
+      receipt.action_sequences = [original.sequence];
+      forged.events = forged.events.filter((event) => event.sequence !== removed.sequence && event.start_sequence !== removed.sequence);
+      const indexes = new Map(forged.events.map((event, index) => [event.sequence, index + 1]));
+      let previous = '0'.repeat(64);
+      for (const event of forged.events) {
+        event.sequence = indexes.get(event.sequence);
+        if (event.start_sequence) event.start_sequence = indexes.get(event.start_sequence);
+        if (event.action_sequences) event.action_sequences = event.action_sequences.map((sequence) => indexes.get(sequence));
+        event.previous = previous;
+        const { hash: ignored, ...body } = event;
+        event.hash = digest(body); previous = event.hash;
+      }
+      assert.equal(compareActionRuns(forged, other, review(forged, other)).ten_x_actions, null);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+}
+
+test('human decisions must bind the independently observed packet and preconditions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'l13-packet-'));
+  const job = getJob('J4');
+  try {
+    for (const field of ['packet_sha256', 'preconditions_sha256']) {
+      const d = driver(job, 'product');
+      const perform = d.perform;
+      d.perform = async (stage, context) => {
+        if (stage.id !== 'renewed-review') return perform(stage, context);
+        await context.ledger.measure({ dimension: 'A', primitive: 'review', actor: 'operator', step: stage.id,
+          phase: stage.phase, target: 'packet', items: ['item'], decision }, () => {});
+        context.ledger.stage({ step: stage.id, phase: stage.phase, source: 'api', artifactHash: hash,
+          decision: { ...decision, [field]: 'c'.repeat(64) } });
+      };
+      const result = await runJourney({ jobId: 'J4', runId: field, driver: d, registration: registration(job), outputDir: root });
+      assert.equal(result.status, 'failed');
+      assert.equal(result.stages.at(-1).id, 'renewed-review');
+    }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

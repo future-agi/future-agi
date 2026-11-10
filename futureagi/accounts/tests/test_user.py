@@ -191,6 +191,21 @@ class TestGetUserInfoAPI:
         assert "email" in data
         assert data["email"] == user.email
 
+    @pytest.mark.parametrize("goals", [None, [], ["Build AI apps"]])
+    def test_get_user_info_goals_matches_array_contract(self, auth_client, user, goals):
+        from accounts.serializers.contracts import UserInfoResponseSerializer
+
+        user.goals = goals
+        user.save(update_fields=["goals"])
+        response = auth_client.get("/accounts/user-info/")
+        assert response.status_code == status.HTTP_200_OK
+        expected = goals if goals is not None else []
+        assert response.json()["goals"] == expected
+        field = UserInfoResponseSerializer().fields["goals"]
+        assert field.run_validation(response.json()["goals"]) == expected
+        user.refresh_from_db()
+        assert user.goals == goals
+
     def test_get_user_info_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
         response = api_client.get("/accounts/user-info/")

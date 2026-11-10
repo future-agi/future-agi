@@ -12,6 +12,7 @@ import { ActionLedger, summarizeLedger } from '../../lib/skills-r3/ledger.mjs';
 
 const hash = 'a'.repeat(64);
 const commit = 'b'.repeat(40);
+const decision = { packet_sha256: hash, preconditions_sha256: hash };
 const provenance = { product_base: commit, product_head: commit, product_tree: commit, sdk_commit: commit,
   fixture_hash: hash, runtime_digest: hash, package_hashes: [hash], lockfile_hashes: [hash], dirty: false,
   environment: 'gcp', project: 'fagi-omega-staging' };
@@ -31,7 +32,8 @@ function driverFor(job, { fail = false } = {}) {
   return { mode: 'selftest', provenance,
     async perform(stage, { ledger }) {
       await ledger.measure({ dimension: 'A', primitive: stage.human_actions[0] ?? 'command', actor: 'synthetic-operator', step: stage.id,
-        phase: stage.phase, target: 'synthetic-target', items: ['synthetic-item'] }, () => {});
+        phase: stage.phase, target: 'synthetic-target', items: ['synthetic-item'], decision }, () => {});
+      ledger.stage({ step: stage.id, phase: stage.phase, source: 'api', artifactHash: hash, decision });
       if (stage.id === job.steps[0].id) for (const fault of job.fault_ids) ledger.fault(fault, `scenario-${fault}`);
       if (fail) throw new Error('secret-bearing failure must not be printed');
     },
@@ -116,7 +118,10 @@ test('complete-job comparisons use verified ledgers, refuse zero, selftest, dirt
     const ledger = new ActionLedger({ runId: `compare-${mode}`, job: 'J1', mode });
     const contract = comparisonContract(JOBS[0], registration(JOBS[0]));
     ledger.registration({ comparisonIdentity: digest(contract), preregistrationHash: hash });
-    for (const stage of JOBS[0].steps) for (let i = 0; i < count; i++) await ledger.measure({ dimension: 'A', primitive: stage.human_actions[0] ?? 'command', actor: 'operator', step: stage.id, phase: stage.phase, target: 'test', items: ['item-1'] }, () => {});
+    for (const stage of JOBS[0].steps) {
+      for (let i = 0; i < count; i++) await ledger.measure({ dimension: 'A', primitive: stage.human_actions[0] ?? 'command', actor: 'operator', step: stage.id, phase: stage.phase, target: 'test', items: ['item-1'], decision }, () => {});
+      ledger.stage({ step: stage.id, phase: stage.phase, source: 'api', artifactHash: hash, decision });
+    }
     for (const fault of JOBS[0].fault_ids) ledger.fault(fault, `scenario-${fault}`);
     for (const check of JOBS[0].checks) ledger.outcome(check.id, 'pass', hash);
     return { status: 'completed', mode, job: 'J1', run_id: `compare-${mode}`, cohort: 'cold', evidence_scope: 'customer',
