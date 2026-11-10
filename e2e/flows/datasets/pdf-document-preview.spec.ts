@@ -1,0 +1,160 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { test, expect } from '../../lib/fixtures';
+import { uploadPdfFixture } from '../../lib/pdf-fixture';
+import { POLL } from '../../lib/state-probe';
+import { flowAnnotation } from '../../lib/flow-meta';
+
+// develop_dataset_contracts.py and frontend/src/utils/axios.js.
+const CREATE_DATASET = '/model-hub/develops/create-dataset-manually/';
+// ExperimentsTableSerializer: empty prompt_config snapshots existing data without provider calls.
+const CREATE_EXPERIMENT = '/model-hub/experiments/';
+// FileCellRenderer.jsx uses the existing .icon-actions button for both entry points.
+const PREVIEW_BUTTON = '.icon-actions button';
+const UI_READY = 60_000;
+const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E-004']] as const) {
+  test(`${id}: ${entry} PDFs render without a runtime CDN worker`, {
+    tag: ['@flow'],
+    annotation: flowAnnotation({
+      id, area: 'datasets',
+      userGoal: `Read a stored PDF from a ${entry} cell without a CDN dependency and recognize an unreadable document`,
+      steps: ['create a document dataset and upload a synthetic PDF through the product input',
+        `open the ${entry} document preview with external runtime requests denied`,
+        'read both pages, navigate back, close and reopen, then download the PDF',
+        'upload an unreadable PDF and verify the error state with no rendered page'],
+      backendChecks: ['the stored dataset and document cell belong to the actor scope',
+        'the storage URL and browser download return exactly the uploaded PDF bytes',
+        'the document cell opens the correct PDF through a same-origin worker without a CDN request'],
+    }),
+  }, async ({ page, context, actor, probe }, testInfo) => {
+    // 2 * (ASYNC_JOB 60s + 8 UI_READY 60s) + 120s setup headroom.
+    test.setTimeout(1_200_000);
+    page.setDefaultTimeout(UI_READY);
+    const blocked: string[] = [];
+    const workers: string[] = [];
+    const errors: string[] = [];
+    const dialogs: string[] = [];
+    page.on('worker', worker => workers.push(worker.url()));
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
+    // Real application and storage responses are never fulfilled or replaced.
+    // Unrelated optional network dependencies are recorded separately from PDF workers.
+    await context.route('**/*', route => {
+      const url = new URL(route.request().url());
+      if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+        blocked.push(url.href);
+        return route.abort('blockedbyclient');
+      }
+      return route.continue();
+    });
+    try {
+      for (const unreadable of [false, true]) {
+        const name = `e2e-pdf-${entry}-${testInfo.workerIndex}-${Date.now().toString(36)}`;
+        const created = await actor.api.post<{ result: { dataset_id: string } }>(CREATE_DATASET,
+          { dataset_name: name, number_of_rows: 1, number_of_columns: 1 });
+        const datasetId = created.result.dataset_id;
+        const columns = await probe.pg<{ id: string }>(
+          'SELECT id FROM model_hub_column WHERE dataset_id = $1 AND NOT deleted', [datasetId]);
+        expect(columns).toHaveLength(1);
+        const columnId = columns[0].id;
+        await actor.api.put(`/model-hub/develops/${datasetId}/update_column_type/${columnId}/`,
+          { new_column_type: 'document', preview: false, force_update: true });
+        await testInfo.attach(`seed-${name}`, { body: JSON.stringify({ name, datasetId, columnId,
+          organizationId: actor.organizationId, workspaceId: actor.workspaceId, unreadable }),
+        contentType: 'application/json' });
+        const scope = await probe.pg<{ name: string; organization_id: string; workspace_id: string }>(
+          'SELECT name, organization_id, workspace_id FROM model_hub_dataset WHERE id = $1 AND NOT deleted', [datasetId]);
+        expect(scope).toEqual([{ name, organization_id: actor.organizationId, workspace_id: actor.workspaceId }]);
+
+        // dashboard.jsx dataset route; FileCellRenderer / ReplaceMediaDialog upload UI.
+        await page.goto(`/dashboard/develop/${datasetId}`, { waitUntil: 'domcontentloaded' });
+        // Exclude the experiment grid's pinned Average footer; this is the seeded data row.
+        const cell = page.locator(`.ag-center-cols-container .ag-row [col-id="${columnId}"]`);
+        await expect(cell).toHaveCount(1, { timeout: UI_READY });
+        await cell.getByText('Click here', { exact: true }).click();
+        const upload = page.getByRole('dialog').filter({ has: page.getByText('Upload File', { exact: true }) });
+        const bytes = await uploadPdfFixture(upload.locator('input[type="file"]'), name, unreadable);
+        await upload.getByRole('button', { name: 'Upload', exact: true }).click();
+        let storedUrl = '';
+        await expect.poll(async () => {
+          const rows = await probe.pg<{ value_infos: string | { document_url?: string } }>(
+            'SELECT value_infos FROM model_hub_cell WHERE dataset_id = $1 AND column_id = $2 AND NOT deleted',
+            [datasetId, columnId]);
+          expect(rows).toHaveLength(1);
+          const value = typeof rows[0].value_infos === 'string' ? JSON.parse(rows[0].value_infos) : rows[0].value_infos;
+          storedUrl = value?.document_url ?? '';
+          return Boolean(storedUrl);
+        }, POLL.ASYNC_JOB).toBe(true);
+        expect(['localhost', '127.0.0.1', '[::1]']).toContain(new URL(storedUrl).hostname);
+        const stored = await context.request.get(storedUrl);
+        expect(stored.status()).toBe(200);
+        expect(digest(await stored.body())).toBe(digest(bytes));
+        await testInfo.attach(`document-${name}`, { body: JSON.stringify({ datasetId, columnId,
+          storedUrl, sha256: digest(bytes) }), contentType: 'application/json' });
+
+        let path = `/dashboard/develop/${datasetId}`;
+        if (entry === 'experiment') {
+          await actor.api.post(CREATE_EXPERIMENT, { name, dataset_id: datasetId,
+            column_id: columnId, prompt_config: [], user_eval_template_ids: [] });
+          const experiments = await probe.pg<{ id: string }>(
+            'SELECT id FROM model_hub_experimentstable WHERE dataset_id = $1 AND name = $2 AND NOT deleted',
+            [datasetId, name]);
+          expect(experiments).toHaveLength(1);
+          path = `/dashboard/develop/experiment/${experiments[0].id}/data`;
+          await testInfo.attach(`experiment-${name}`, { body: JSON.stringify(experiments), contentType: 'application/json' });
+        }
+        await page.goto(path, { waitUntil: 'domcontentloaded' });
+        await expect(cell).toHaveCount(1, { timeout: UI_READY });
+        await cell.hover();
+        await cell.locator(PREVIEW_BUTTON).first().click();
+        // PdfPreviewDrawer.jsx exposes Download file and Close in both renderer versions.
+        const preview = page.locator('.MuiDrawer-paper').filter({
+          has: page.getByRole('button', { name: 'Download file', exact: true }),
+        });
+        await expect(preview).toBeVisible({ timeout: UI_READY });
+        if (unreadable) {
+          await expect(preview.getByText('Unable to preview this document', { exact: true })).toBeVisible({ timeout: UI_READY });
+          await expect(preview.locator('canvas')).toHaveCount(0);
+        } else {
+          // Renderer-neutral regression anchor: public dev must fail here for its missing CDN worker.
+          await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
+          const canvas = preview.locator('canvas');
+          await expect(canvas).toBeVisible({ timeout: UI_READY });
+          expect(await canvas.evaluate((element: HTMLCanvasElement) => {
+            const pixels = element.getContext('2d')!.getImageData(0, 0, element.width, element.height).data;
+            let ink = 0;
+            for (let i = 0; i < pixels.length; i += 4) {
+              if (pixels[i + 3] > 0 && pixels[i] + pixels[i + 1] + pixels[i + 2] < 600) ink++;
+            }
+            return ink;
+          })).toBeGreaterThan(20);
+          expect(workers.length).toBeGreaterThan(0);
+          for (const worker of workers) expect(new URL(worker).origin).toBe(new URL(page.url()).origin);
+          expect(blocked.filter(url => /pdf\.worker|pdfjs-dist|unpkg\.com/.test(url))).toEqual([]);
+          await preview.getByRole('button', { name: 'Next page', exact: true }).click();
+          await expect(preview.getByText(`PDF 2 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
+          await preview.getByRole('button', { name: 'Previous page', exact: true }).click();
+          await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
+          await preview.getByRole('button', { name: 'Close', exact: true }).click();
+          await cell.hover();
+          await cell.locator(PREVIEW_BUTTON).first().click();
+          await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
+          const [download] = await Promise.all([page.waitForEvent('download'),
+            preview.getByRole('button', { name: 'Download file', exact: true }).click()]);
+          expect(digest(await readFile((await download.path())!))).toBe(digest(bytes));
+        }
+        expect(dialogs).toEqual([]);
+        expect(new URL(page.url()).pathname).toBe(path);
+        await testInfo.attach(`preview-${name}`, { body: await page.screenshot(), contentType: 'image/png' });
+        await preview.getByRole('button', { name: 'Close', exact: true }).click();
+      }
+      expect(errors.filter(error => /useLocation|Router|staticContext/.test(error))).toEqual([]);
+    } finally {
+      await testInfo.attach('runtime-network-and-errors', {
+        body: JSON.stringify({ blocked, workers, errors, dialogs }), contentType: 'application/json',
+      });
+    }
+  });
+}

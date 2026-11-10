@@ -51,7 +51,11 @@ export default defineConfig({
         // Ensure consistent file hashing for cache busting
         entryFileNames: 'assets/[name]-[hash].js',
         chunkFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash].[ext]',
+        // Serve the module worker as JavaScript on nginx installations whose
+        // mime.types does not include .mjs. The pinned worker bytes stay unchanged.
+        assetFileNames: (asset) => asset.name === 'pdf.worker.min.mjs'
+          ? 'assets/[name]-[hash].js'
+          : 'assets/[name]-[hash].[ext]',
         // Split vendor chunks to reduce memory usage
         manualChunks: {
           vendor: ['react', 'react-dom'],
@@ -66,7 +70,7 @@ export default defineConfig({
           flow: ['@xyflow/react', '@dagrejs/dagre'],
           sentry: ['@sentry/react'],
           media: ['swiper', 'wavesurfer.js', 'wavesurfer-multitrack', 'react-player'],
-          pdf: ['pdfjs-dist', '@react-pdf-viewer/core', '@react-pdf-viewer/default-layout'],
+          pdf: ['pdfjs-dist', 'react-pdf'],
           markdown: ['react-markdown', 'react-syntax-highlighter', 'rehype-raw', 'rehype-sanitize', 'remark-gfm']
         }
       },
