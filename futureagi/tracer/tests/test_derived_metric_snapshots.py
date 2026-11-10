@@ -98,6 +98,48 @@ def test_unsupported_grains_create_neither_pin_nor_run(snapshot_metric, user, le
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("kind", ["unique_count", "percentile"])
+def test_sketch_admission_and_ui_capability(snapshot_metric, user, kind):
+    from tracer.serializers.derived_metric import DerivedMetricSerializer
+
+    original = snapshot_metric.active_version
+    definition = DerivedMetricVersion.objects.create(
+        metric=snapshot_metric,
+        version=2,
+        **{**original.semantics(), "kind": kind, "definition_hash": "f" * 64},
+        backfill_status="complete",
+    )
+    snapshot_metric.active_version = definition
+    snapshot_metric.save(update_fields=["active_version"])
+    data = DerivedMetricSerializer(snapshot_metric).data
+    assert data["snapshot_supported"] is True
+    assert data["snapshot_unsupported_reason"] == ""
+    saved = snapshots.request_snapshot(snapshot_metric, request_data(), user)
+    assert DerivedMetricRun.objects.get(pk=saved["id"]).definition_id == definition.id
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("kind", ["unique_count", "percentile"])
+def test_sketch_contributors_do_not_claim_additive_influence(snapshot_metric, kind):
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from tracer.services.derived_metrics.contributors import _read_contributors
+
+    run = SimpleNamespace(
+        kind="snapshot",
+        result_id=uuid4(),
+        snapshot_id=uuid4(),
+        definition=SimpleNamespace(metric=snapshot_metric, kind=kind),
+    )
+    with patch(
+        "tracer.services.derived_metrics.service._authorized_metric", return_value=True
+    ):
+        with pytest.raises(MetricInputError, match="influence"):
+            _read_contributors(run)
+
+
+@pytest.mark.django_db
 def test_admission_and_pending_erasure(snapshot_metric, user):
     for _ in range(2):
         snapshots.request_snapshot(snapshot_metric, request_data(), user)

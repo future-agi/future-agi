@@ -39,6 +39,10 @@ def publication_store(metric_ch):
     for filename in dict.fromkeys(table.schema_file for table in TABLES.values()):
         for sql in split_statements((SCHEMA / filename).read_text()):
             metric_ch.execute(sql)
+    for sql in split_statements(
+        (SCHEMA / "038_metric_snapshot_sketches.sql").read_text()
+    ):
+        metric_ch.execute(sql)
     return ClickHousePublicationStore(metric_ch)
 
 
@@ -241,6 +245,94 @@ def test_binary_roundtrip_is_lossless_and_duplicate_retries_verify(live_writer):
         == payloads[0].digest
     )
     assert current_fields(live_writer, manifest)[0][0] == "ends-with-last-byte-z"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "cardinality", [0, 1, 16, 17, 37, 100, 250, 500, 750, 4095, 4096, 6000]
+)
+def test_sketch_receipts_preserve_full_states_and_merges(live_writer, cardinality):
+    from tracer.services.derived_metrics.refresh import payload_select
+    from tracer.services.derived_metrics.sketch_serialization import (
+        canonical_sketch_row,
+    )
+    from tracer.services.derived_metrics.storage import BUCKET_TOTALS
+
+    writer = live_writer
+    attempt = writer.begin()
+    source = default_row_select(
+        BUCKET_TOTALS,
+        {
+            "uniq_state": f"(SELECT uniqCombined64State(toString(number)) FROM numbers({cardinality}))",
+            "quantile_state": f"(SELECT quantileTDigestState(toFloat64(number) / 7) FROM numbers({cardinality}))",
+        },
+    )
+    payloads = writer.freeze(attempt, BUCKET_TOTALS, source)
+    writer.seal(attempt)
+    writer.stage_and_publish(attempt)
+    payload = payloads[0]
+    batch = attempt.batches.get()
+    # Repeated deserialization can alternate MEDIUM hash iteration orders. The
+    # stored canonical payload and full-state receipt must survive every retry.
+    for _ in range(3):
+        writer.store.insert(BUCKET_TOTALS, payload)
+        receipt = writer.store.verify(BUCKET_TOTALS, attempt, batch)
+        assert receipt == {"count": 1, "sha256": payload.digest}
+    columns = ", ".join(BUCKET_TOTALS.columns)
+    actual = writer.store.execute(
+        f"SELECT hex(formatRow('RowBinary', {columns})) FROM {BUCKET_TOTALS.name} "
+        "WHERE attempt_id = %(attempt)s LIMIT 1",
+        {"attempt": attempt.id},
+    )[0][0]
+    assert canonical_sketch_row(BUCKET_TOTALS, actual) == payload.rows[0]
+    decoded, params = payload_select(BUCKET_TOTALS, payloads, prefix="roundtrip")
+    # Check both finalization and merging with overlapping/disjoint other states,
+    # including the transition from exact hash sets to HLL. Quantile bytes remain
+    # exact, so this also covers EVERY configured percentile, not just these probes.
+    finalizers = ["uniqCombined64Merge(u)"] + [
+        f"hex(formatRow('RowBinary', quantileTDigestMerge({p})(q)))"
+        for p in (0, 0.05, 0.5, 0.9, 0.95, 0.99, 1)
+    ]
+    for other in (0, 250, 6000):
+        results = []
+        for relation, bound in (
+            (decoded, params),
+            (
+                f"SELECT * FROM {BUCKET_TOTALS.name} WHERE attempt_id = %(attempt)s LIMIT 1",
+                {"attempt": attempt.id},
+            ),
+        ):
+            states = (
+                "SELECT uniq_state AS u, quantile_state AS q, 0 AS merge_order "
+                f"FROM ({relation}) UNION ALL "
+                "SELECT uniqCombined64State(toString(number + 125)) AS u, "
+                "quantileTDigestState(toFloat64(number + 125) / 7) AS q, 1 AS merge_order "
+                f"FROM numbers({other})"
+            )
+            results.append(
+                writer.store.execute(
+                    f"SELECT {', '.join(finalizers)} FROM ({states} ORDER BY merge_order) SETTINGS max_threads=1",
+                    bound,
+                )
+            )
+        assert results[0] == results[1], (cardinality, other)
+    if cardinality == 250:
+        # Same cardinality is NOT sufficient: replace the members but preserve
+        # every scalar, row version, and the quantile state. Fail closed.
+        corrupt = writer.store.freeze_select(
+            BUCKET_TOTALS,
+            f"SELECT * REPLACE((SELECT uniqCombined64State(concat('wrong-', toString(number))) "
+            f"FROM numbers(250)) AS uniq_state) FROM {BUCKET_TOTALS.name} "
+            "WHERE attempt_id = %(attempt)s LIMIT 1",
+            {"attempt": attempt.id},
+        )
+        writer.store.execute(
+            f"ALTER TABLE {BUCKET_TOTALS.name} DELETE WHERE attempt_id = %(attempt)s SETTINGS mutations_sync=2",
+            {"attempt": attempt.id},
+        )
+        writer.store.insert(BUCKET_TOTALS, corrupt)
+        with pytest.raises(MetricVisibilityError, match="frozen batch not visible"):
+            writer.store.verify(BUCKET_TOTALS, attempt, batch)
 
 
 def default_row_select(table, overrides):

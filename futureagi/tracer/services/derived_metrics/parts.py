@@ -55,6 +55,7 @@ def stratum_parts_select(
     scope_column: str | None = "sampling_scope",
     bucket_column: str | None = None,
     sketch_value: str | None = None,
+    sketch_kind: str | None = None,
 ) -> str:
     """One uncorrected part per [bucket,] group, scope and stratum.
 
@@ -71,6 +72,8 @@ def stratum_parts_select(
         raise ValueError("Unsupported bucket column.")
     if sketch_value not in {None, "value_number", "value_text", "value_bool"}:
         raise ValueError("Unsupported sketch value column.")
+    if sketch_kind not in {None, "unique_count", "percentile"}:
+        raise ValueError("Unsupported sketch kind.")
     # Bucket writers need scalar moments AND opaque sketches from the same
     # winners. A second aggregation joined to this one duplicates every IN set
     # in the revision-complete field compiler; CTEs do not materialize it in CH.
@@ -80,9 +83,18 @@ def stratum_parts_select(
         sketch_output = (
             ", uniq_state_h AS uniq_state, quantile_state_h AS quantile_state"
         )
+        # The other sketch is not an input to this metric. Leave its physical
+        # column empty rather than retaining unrelated values (and paying for an
+        # unused hash-set serialization in percentile publications).
+        unique_gate = "0" if sketch_kind == "percentile" else "status = 'ok'"
+        quantile_gate = (
+            "0"
+            if sketch_kind == "unique_count"
+            else "status = 'ok' AND isNotNull(value_number)"
+        )
         sketch_aggregates = (
-            f", uniqCombined64StateIf(ifNull(toString({sketch_value}), ''), status = 'ok') AS uniq_state_h"
-            ", quantileTDigestStateIf(ifNull(value_number, 0), status = 'ok' AND isNotNull(value_number)) AS quantile_state_h"
+            f", uniqCombined64StateIf(ifNull(toString({sketch_value}), ''), {unique_gate}) AS uniq_state_h"
+            f", quantileTDigestStateIf(ifNull(value_number, 0), {quantile_gate}) AS quantile_state_h"
         )
     group, _ = rollup_group_sql(rollup)
     scope = scope_column or "''"

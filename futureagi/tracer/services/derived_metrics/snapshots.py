@@ -1,4 +1,4 @@
-"""Pinned captures in the existing 028–030 store; never recalculate raw telemetry.
+"""Pinned captures in the 028–030/038 store; never recalculate raw telemetry.
 
 Each native write has a parent-independent submission receipt before dispatch.
 Unknown outcomes require a terminal query record or a proven sealed-socket restart.
@@ -38,9 +38,18 @@ from tracer.services.derived_metrics.queries import (
     rollup_insert,
 )
 from tracer.services.derived_metrics.retention import retention_cutoff
+from tracer.services.derived_metrics.snapshot_sketches import (
+    BUCKET_TABLE,
+    INPUT_COLUMNS,
+    UNIT_TABLE,
+    assert_complete_capture,
+    capture_buckets_select,
+    capture_units_select,
+    is_sketch,
+    rollup_source,
+)
 from tracer.services.derived_metrics.spec import snapshot_support
 from tracer.services.derived_metrics.storage import FIELD_VALUES, RETIRED_PARTS
-from tracer.services.derived_metrics.unit_reads import field_recipe
 
 PIN_TTL = timedelta(hours=1)
 SUBMISSION_PROTOCOL = "metric_snapshot_submission"
@@ -134,12 +143,6 @@ def request_snapshot(metric, data, user):
         supported, reason = snapshot_support(metric.active_version)
         if not supported:
             raise SnapshotNotSupportedError(reason)
-        # 028 deliberately stores numeric aliases only; do not silently coerce text.
-        recipe = field_recipe(metric.active_version)
-        if recipe.kind in {"unique_count", "percentile"}:
-            raise SnapshotNotSupportedError(
-                "Snapshots of distinct counts and percentiles are not available in the numeric snapshot store."
-            )
         if (
             DerivedMetricRun.objects.filter(
                 definition__metric__project_id=metric.project_id,
@@ -432,12 +435,13 @@ def purge_run(store, *, organization_id, project_id, run_id, snapshot_id):
     for table in ("derived_metric_results", "derived_metric_commits"):
         delete_rows(store, table, base + " AND run_id = toUUID(%(run)s)", params)
     if snapshot_id:
-        delete_rows(
-            store,
-            "derived_metric_inputs",
-            base + " AND snapshot_id = toUUID(%(snapshot)s)",
-            params,
-        )
+        for table in (BUCKET_TABLE, UNIT_TABLE, "derived_metric_inputs"):
+            delete_rows(
+                store,
+                table,
+                base + " AND snapshot_id = toUUID(%(snapshot)s)",
+                params,
+            )
 
 
 def capture_select(run, manifest, start, end):
@@ -463,11 +467,12 @@ def capture_select(run, manifest, start, end):
         level=run.supported_grain,
     )
     return (
-        f"""INSERT INTO derived_metric_inputs
+        f"""INSERT INTO derived_metric_inputs ({", ".join(INPUT_COLUMNS)})
         SELECT %(org_id)s, %(workspace_id)s, %(project_id)s, %(snapshot_id)s,
-            unit_id, session_id, user_id, group_key, toDate(unit_start), inputs,
+            unit_id, session_id, user_id, group_key, toDate(unit_start, 'UTC'), inputs,
             sample_probability, invalid_probability, toUInt64(1), sampling_scope, sampling_stratum,
-            sampling_design, population_size
+            sampling_design, population_size, unit_start, bucket_start, status,
+            value_bool, value_number, value_text
         FROM ({sql}) WHERE is_deleted = 0 AND status != 'open' AND workspace_id = toUUID(%(workspace_id)s)
             AND field_id = toUUID(%(field_id)s) AND field_version = %(field_version)s AND level = %(level)s
             AND unit_start >= %(start)s AND unit_start < %(end)s""",
@@ -524,6 +529,9 @@ def _rollup_ranges(store, run, rollup, *, unit_range=False):
         yield None
         return
     group, keep = rollup_group_sql(rollup)
+    table = "derived_metric_inputs"
+    if is_sketch(run.definition):
+        table, group = rollup_source(rollup)
     # Conversation sessions normally equal unit_id. A window-wide equality
     # check authorizes the sparse-key pushdown, avoiding O(pages * rows) scans.
     ordered = "unit_id" if unit_range else group
@@ -533,7 +541,7 @@ def _rollup_ranges(store, run, rollup, *, unit_range=False):
         predicate = "1" if after is None else f"{ordered} > %(after)s"
         rows, first, last = store.client.execute(
             f"SELECT count(), min(k), max(k) FROM (SELECT {group} AS k "
-            f"FROM derived_metric_inputs WHERE {SCOPE_SQL} AND snapshot_id = %(snapshot_id)s "
+            f"FROM {table} WHERE {SCOPE_SQL} AND snapshot_id = %(snapshot_id)s "
             f"AND {keep} AND {predicate} ORDER BY {ordered} LIMIT {ROLLUP_PAGE_ROWS})",
             {**params, "after": after},
             settings={
@@ -671,9 +679,18 @@ def execute_snapshot(run_id, *, store=None, policy=None):
                 end = min(start + timedelta(days=30), run.window_end)
                 sql, params = capture_select(run, run.pin.manifest, start, end)
                 _write(connection, run, sql, params, capturing=True)
+                if is_sketch(run.definition):
+                    sql, params = capture_units_select(run, start, end)
+                    _write(connection, run, sql, params, capturing=True)
+                    sql, params = capture_buckets_select(
+                        run, run.pin.manifest, start, end
+                    )
+                    _write(connection, run, sql, params, capturing=True)
                 start = end
             with serialized_project(scope.project):
                 _assert_retained(connection, run, run.pin.manifest, policy or _policy)
+            if is_sketch(run.definition):
+                assert_complete_capture(connection, run)
             commit_results(connection, run, capturing=True)
         except Exception as exc:
             # No exception text: native errors can include private unit IDs/maps.

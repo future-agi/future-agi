@@ -143,6 +143,10 @@ def _read_contributors(
     if getattr(run, "kind", "run") == "snapshot":
         from tracer.services.derived_metrics.unit_reads import field_recipe
 
+        if definition.kind in {"unique_count", "percentile"}:
+            raise MetricInputError(
+                "Contributor influence is not additive for distinct counts or percentiles."
+            )
         formula = field_recipe(definition).formula
     else:
         formula = compile_formula(
