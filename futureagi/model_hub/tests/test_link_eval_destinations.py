@@ -1,0 +1,361 @@
+"""Acceptance checks for the two repository-owned link evaluation programs.
+
+Outbound traffic is either intercepted before transport or stays on loopback.
+The YAML code executes directly, without a Django/LLM test double.
+"""
+
+import http.server
+import os
+from pathlib import Path
+import socket
+import threading
+import unittest
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[3]
+NAMES = ("contains_valid_link", "no_invalid_links")
+
+
+def load(name):
+    path = ROOT / "futureagi/model_hub/system_evals/function" / (name + ".yaml")
+    code = path.read_text().split("  code: |\n", 1)[1]
+    namespace = {}
+    exec(
+        "\n".join(
+            line[4:] if line.startswith("    ") else line for line in code.splitlines()
+        ),
+        namespace,
+    )  # noqa: S102
+    return namespace["evaluate"]
+
+
+class LinkAcceptance(unittest.TestCase):
+    def test_email_without_requests(self):
+        for text in (
+            "Contact support@acme.io",
+            "Contact help@my-domain.example",
+            "Contact first.last+tag@sub.acme.io",
+        ):
+            for name, score in zip(NAMES, (0.0, 1.0)):
+                with (
+                    self.subTest(text=text, name=name),
+                    mock.patch("urllib.request.urlopen") as opened,
+                    mock.patch("socket.getaddrinfo") as resolved,
+                ):
+                    opened.return_value.status = 200
+                    result = load(name)(None, text, None, None)
+                    self.assertEqual(result["score"], score)
+                    opened.assert_not_called()
+                    resolved.assert_not_called()
+
+    def test_prose_without_requests(self):
+        for text in (
+            "The value increased by 3.14 percent",
+            "e.g. a sample",
+            "Version 1.2.3",
+            "Read report.pdf and notes.txt",
+        ):
+            for name, score in zip(NAMES, (0.0, 1.0)):
+                with (
+                    self.subTest(text=text, name=name),
+                    mock.patch("urllib.request.urlopen") as opened,
+                    mock.patch("socket.getaddrinfo") as resolved,
+                ):
+                    opened.return_value.status = 200
+                    result = load(name)(None, text, None, None)
+                    self.assertEqual(result["score"], score)
+                    opened.assert_not_called()
+                    resolved.assert_not_called()
+
+    def test_unapproved_host_refused_before_dns(self):
+        for name in NAMES:
+            with (
+                self.subTest(name=name),
+                mock.patch.dict(os.environ, {"LINK_EVAL_ALLOWED_HOSTS": ""}),
+                mock.patch("urllib.request.urlopen") as opened,
+                mock.patch("socket.getaddrinfo") as resolved,
+            ):
+                opened.return_value.status = 200
+                result = load(name)(
+                    None, "Read https://unapproved.example/docs", None, None
+                )
+                self.assertEqual(result["score"], 0.0)
+                self.assertIn("not permitted", result["reason"])
+                opened.assert_not_called()
+                resolved.assert_not_called()
+
+    def test_kwargs_cannot_grant_destination(self):
+        for name in NAMES:
+            with (
+                self.subTest(name=name),
+                mock.patch.dict(os.environ, {"LINK_EVAL_ALLOWED_HOSTS": ""}),
+                mock.patch("urllib.request.urlopen") as opened,
+                mock.patch("socket.getaddrinfo") as resolved,
+            ):
+                opened.return_value.status = 200
+                result = load(name)(
+                    None,
+                    "https://unapproved.example",
+                    None,
+                    None,
+                    allowed_hosts=["unapproved.example"],
+                    allow_private=True,
+                )
+                self.assertEqual(result["score"], 0.0)
+                opened.assert_not_called()
+                resolved.assert_not_called()
+
+    def test_private_destination_never_reaches_listener(self):
+        received = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_HEAD(self):
+                received.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass
+
+        with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                for name in NAMES:
+                    with (
+                        self.subTest(name=name),
+                        mock.patch.dict(
+                            os.environ, {"LINK_EVAL_ALLOWED_HOSTS": "127.0.0.1"}
+                        ),
+                    ):
+                        result = load(name)(
+                            None,
+                            f"http://127.0.0.1:{server.server_port}/private-canary",
+                            None,
+                            None,
+                        )
+                        self.assertEqual(result["score"], 0.0)
+                        self.assertIn("not permitted", result["reason"])
+                        self.assertEqual(received, [])
+            finally:
+                server.shutdown()
+                thread.join()
+        print("PRIVATE_CANARY_REQUESTS=" + repr(received), flush=True)
+
+    def test_identical_self_contained_policy(self):
+        programs = []
+        for name in NAMES:
+            path = ROOT / "futureagi/model_hub/system_evals/function" / (name + ".yaml")
+            programs.append(
+                path.read_text()
+                .split("  code: |\n", 1)[1]
+                .split("    def evaluate(", 1)[0]
+            )
+        self.assertEqual(*programs)
+
+    def test_explicit_www_and_bare_links(self):
+        for text, expected in (
+            ("See https://allowed.example/docs", "https://allowed.example/docs"),
+            ("Visit www.allowed.example.", "http://www.allowed.example"),
+            ("Read allowed.example/help.", "http://allowed.example/help"),
+            ("See (https://allowed.example/a_(b)).", "https://allowed.example/a_(b)"),
+            ("HTTPS://allowed.example/docs", "HTTPS://allowed.example/docs"),
+            ("support@acme.io then https://allowed.example", "https://allowed.example"),
+            (
+                "allowed.example/docs?email=support@acme.io",
+                "http://allowed.example/docs?email=support@acme.io",
+            ),
+        ):
+            for name in NAMES:
+                evaluate = load(name)
+                with (
+                    self.subTest(text=text, name=name),
+                    mock.patch.dict(
+                        evaluate.__globals__,
+                        {"_link_status": mock.Mock(return_value=200)},
+                    ) as namespace,
+                ):
+                    self.assertEqual(evaluate(None, text, None, None)["score"], 1.0)
+                    self.assertEqual(
+                        namespace["_link_status"].call_args.args[0], expected
+                    )
+
+    def test_private_mixed_and_special_addresses_refused(self):
+        for address in (
+            "127.0.0.1",
+            "10.0.0.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "224.0.0.1",
+            "::1",
+            "fc00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "2002:7f00:1::1",
+        ):
+            for name in NAMES:
+                records = [
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("11.0.0.1", 80)),
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 80)),
+                ]
+                with (
+                    self.subTest(address=address, name=name),
+                    mock.patch.dict(
+                        os.environ, {"LINK_EVAL_ALLOWED_HOSTS": "allowed.example"}
+                    ),
+                    mock.patch("socket.getaddrinfo", return_value=records),
+                    mock.patch("socket.socket") as connect,
+                ):
+                    result = load(name)(None, "http://allowed.example", None, None)
+                    self.assertEqual(result["score"], 0.0)
+                    self.assertIn("not permitted", result["reason"])
+                    connect.assert_not_called()
+
+    def test_no_wildcards_credentials_metadata_or_database_ports(self):
+        for url, setting in (
+            ("http://allowed.example:5432", "allowed.example"),
+            ("https://", "allowed.example"),
+            ("http://user:secret@allowed.example", "allowed.example"),
+            ("http://allowed.example", "*.example"),
+            ("http://metadata.google.internal", "metadata.google.internal"),
+            ("http://allowed.example", "https://allowed.example"),
+            ("http://allowed.example:0", "allowed.example"),
+            ("http://allowed.example:65536", "allowed.example"),
+            ("http://allowed.example\\@other.example", "allowed.example"),
+        ):
+            for name in NAMES:
+                with (
+                    self.subTest(url=url, setting=setting, name=name),
+                    mock.patch.dict(os.environ, {"LINK_EVAL_ALLOWED_HOSTS": setting}),
+                    mock.patch("socket.getaddrinfo") as resolve,
+                ):
+                    result = load(name)(None, url, None, None)
+                    self.assertEqual(result["score"], 0.0)
+                    self.assertIn("not permitted", result["reason"])
+                    self.assertNotIn("secret", result["reason"])
+                    resolve.assert_not_called()
+
+    def test_pinned_connection_preserves_authority_and_refuses_redirects(self):
+        for name in NAMES:
+            for scheme, status in (
+                ("http", 200),
+                ("https", 200),
+                ("http", 302),
+                ("https", 404),
+            ):
+                address = ("11.0.0.1", 443 if scheme == "https" else 80)
+                records = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", address)]
+                target = (
+                    "http.client.HTTPSConnection"
+                    if scheme == "https"
+                    else "http.client.HTTPConnection"
+                )
+                with (
+                    self.subTest(name=name, scheme=scheme, status=status),
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            "LINK_EVAL_ALLOWED_HOSTS": "ALLOWED.EXAMPLE.",
+                            "HTTP_PROXY": "http://127.0.0.1:1",
+                        },
+                    ),
+                    mock.patch("socket.getaddrinfo", return_value=records) as resolve,
+                    mock.patch("socket.socket") as sockets,
+                    mock.patch(target) as transport,
+                ):
+                    connection = transport.return_value
+                    connection.getresponse.return_value.__enter__.return_value.status = (
+                        status
+                    )
+                    connection.request.side_effect = (
+                        lambda *a, **k: connection._create_connection()
+                    )
+                    result = load(name)(
+                        None,
+                        scheme + "://allowed.example/docs?view=1#section",
+                        None,
+                        None,
+                    )
+                    self.assertEqual(result["score"], 1.0 if status == 200 else 0.0)
+                    self.assertEqual(
+                        transport.call_args.args, ("allowed.example", address[1])
+                    )
+                    sockets.return_value.connect.assert_called_once_with(address)
+                    resolve.assert_called_once_with(
+                        "allowed.example", address[1], type=socket.SOCK_STREAM
+                    )
+                    connection.request.assert_called_once_with(
+                        "HEAD", "/docs?view=1", headers={"Connection": "close"}
+                    )
+                    connection.close.assert_called_once()
+
+    def test_resolver_error_is_not_returned(self):
+        for name in NAMES:
+            with (
+                self.subTest(name=name),
+                mock.patch.dict(
+                    os.environ, {"LINK_EVAL_ALLOWED_HOSTS": "allowed.example"}
+                ),
+                mock.patch(
+                    "socket.getaddrinfo",
+                    side_effect=socket.gaierror("private diagnostic value"),
+                ),
+            ):
+                result = load(name)(None, "https://allowed.example", None, None)
+                self.assertEqual(result["score"], 0.0)
+                self.assertEqual(result["reason"], "Link host could not be resolved")
+
+    def test_all_links_share_deadline_and_first_failure_stops(self):
+        evaluate = load("no_invalid_links")
+        check = mock.Mock(side_effect=[200, 404])
+        with mock.patch.dict(evaluate.__globals__, {"_link_status": check}):
+            result = evaluate(
+                None,
+                "allowed.example/one allowed.example/two allowed.example/three",
+                None,
+                None,
+            )
+        self.assertEqual(result["score"], 0.0)
+        self.assertEqual(check.call_count, 2)
+        self.assertEqual(
+            check.call_args_list[0].args[1], check.call_args_list[1].args[1]
+        )
+
+    def test_link_budget_refuses_before_any_request(self):
+        for name in NAMES:
+            evaluate = load(name)
+            check = mock.Mock()
+            with (
+                self.subTest(name=name),
+                mock.patch.dict(evaluate.__globals__, {"_link_status": check}),
+            ):
+                result = evaluate(
+                    None,
+                    " ".join(f"allowed.example/{i}" for i in range(21)),
+                    None,
+                    None,
+                )
+                self.assertEqual(result["score"], 0.0)
+                self.assertEqual(result["reason"], "Too many links to validate")
+                check.assert_not_called()
+
+    def test_system_eval_version_is_bumped(self):
+        import ast
+
+        path = ROOT / "futureagi/model_hub/management/commands/seed_system_evals.py"
+        tree = ast.parse(path.read_text())
+        versions = [
+            node.value.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "SYSTEM_EVALS_VERSION"
+                for target in node.targets
+            )
+        ]
+        self.assertEqual(versions, [29])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
