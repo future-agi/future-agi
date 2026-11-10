@@ -709,6 +709,7 @@ const CreateScenarioView = () => {
                   isFetchingNextPage={
                     isFetchingNextPage || isFetchingPromptsNextPage
                   }
+                  isLoading={agentDefinitionsLoading || isLoadingPrompts}
                   onChange={handleSourceChange}
                 />
                 <CustomTooltip
