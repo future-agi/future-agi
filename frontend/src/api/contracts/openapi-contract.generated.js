@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1128,
+  endpointCount: 1130,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28798,6 +28798,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/evidence-imports/": {
+      post: {
+        operationId: "simulate_api_harness-environments_evidence_imports",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EvidenceImportCreate",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/EvidenceImport",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": {
+      get: {
+        operationId: "simulate_api_harness-environments_evidence_import",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/EvidenceImport",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -63434,6 +63470,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 100,
           minLength: 1,
+        },
+      },
+    },
+    EvidenceImport: {
+      required: [
+        "id",
+        "environment_id",
+        "project_id",
+        "agent_version_id",
+        "source_kind",
+        "created_at",
+        "cases",
+        "redaction",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          enum: ["session", "call"],
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        cases: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceImportCase",
+          },
+        },
+        redaction: {
+          $ref: "#/definitions/EvidenceRedaction",
+        },
+      },
+    },
+    EvidenceImportCreate: {
+      required: ["project_id", "source_kind", "ids"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          enum: ["session", "call"],
+        },
+        ids: {
+          description:
+            "Session ids, or the trace ids of calls, in the order picked.",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 20,
+          minItems: 1,
         },
       },
     },
@@ -99306,6 +99424,112 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EvidenceImportCase: {
+      required: [
+        "id",
+        "source_id",
+        "status",
+        "reason",
+        "changed_since_import",
+        "trace_ids",
+        "started_at",
+        "ended_at",
+        "transcript",
+        "tool_calls",
+        "tool_io",
+        "starting_state",
+        "labels",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        source_id: {
+          title: "Source id",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["pending", "unavailable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        changed_since_import: {
+          title: "Changed since import",
+          type: "boolean",
+        },
+        trace_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        ended_at: {
+          title: "Ended at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        transcript: {
+          $ref: "#/definitions/EvidenceTranscript",
+        },
+        tool_calls: {
+          $ref: "#/definitions/EvidenceToolCalls",
+        },
+        tool_io: {
+          $ref: "#/definitions/EvidencePart",
+        },
+        starting_state: {
+          $ref: "#/definitions/EvidencePart",
+        },
+        labels: {
+          $ref: "#/definitions/EvidenceLabels",
+        },
+      },
+    },
+    EvidenceRedaction: {
+      required: ["status", "reason", "findings", "total"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          description:
+            "unavailable: nothing could look for personal data; import refuses.",
+          type: "string",
+          enum: ["ready", "unavailable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        findings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceRedactionFinding",
+          },
+        },
+        total: {
+          title: "Total",
+          description: "Every finding, including those past the listed ones.",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
     ExecutePromptSimulationResult: {
       required: ["scenario_ids"],
       type: "object",
@@ -119991,6 +120215,146 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       additionalProperties: true,
     },
+    EvidenceLabels: {
+      required: ["status", "reason", "labels"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["present", "partial", "truncated", "missing"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        labels: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceLabel",
+          },
+        },
+      },
+    },
+    EvidencePart: {
+      description: "Whether the tool calls recorded their inputs and outputs.",
+      required: ["status", "reason"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["present", "partial", "truncated", "missing"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+      },
+    },
+    EvidenceToolCalls: {
+      required: ["status", "reason", "calls"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["present", "partial", "truncated", "missing"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        calls: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceToolCall",
+          },
+        },
+      },
+    },
+    EvidenceTranscript: {
+      required: ["status", "reason", "turns"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["present", "partial", "truncated", "missing"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        turns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceTurn",
+          },
+        },
+      },
+    },
+    EvidenceRedactionFinding: {
+      required: [
+        "case_id",
+        "part",
+        "index",
+        "field",
+        "entity",
+        "start",
+        "end",
+        "value",
+        "replacement",
+      ],
+      type: "object",
+      properties: {
+        case_id: {
+          title: "Case id",
+          type: "string",
+          format: "uuid",
+        },
+        part: {
+          title: "Part",
+          type: "string",
+          enum: ["transcript", "tool_calls"],
+        },
+        index: {
+          title: "Index",
+          type: "integer",
+          minimum: 0,
+        },
+        field: {
+          title: "Field",
+          type: "string",
+          enum: ["text", "input", "output"],
+        },
+        entity: {
+          title: "Entity",
+          type: "string",
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "integer",
+          minimum: 0,
+        },
+        end: {
+          title: "End",
+          type: "integer",
+          minimum: 0,
+        },
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        replacement: {
+          title: "Replacement",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     ExperimentComparisonDetail: {
       required: ["metrics", "weights"],
       type: "object",
@@ -129991,6 +130355,127 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             type: "object",
           },
+          "x-nullable": true,
+        },
+      },
+    },
+    EvidenceLabel: {
+      required: ["name", "kind", "value", "notes", "target"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          description:
+            "As the annotator recorded it: input evidence, not a verdict.",
+          type: "object",
+        },
+        notes: {
+          title: "Notes",
+          type: "string",
+        },
+        target: {
+          title: "Target",
+          type: "string",
+          enum: ["session", "trace", "span"],
+        },
+      },
+    },
+    EvidenceToolCall: {
+      required: [
+        "span_id",
+        "trace_id",
+        "name",
+        "at",
+        "failed",
+        "error",
+        "input",
+        "output",
+        "input_truncated",
+        "output_truncated",
+      ],
+      type: "object",
+      properties: {
+        span_id: {
+          title: "Span id",
+          type: "string",
+          minLength: 1,
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
+        },
+        failed: {
+          title: "Failed",
+          type: "boolean",
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        input: {
+          title: "Input",
+          type: "string",
+        },
+        output: {
+          title: "Output",
+          type: "string",
+        },
+        input_truncated: {
+          title: "Input truncated",
+          type: "boolean",
+        },
+        output_truncated: {
+          title: "Output truncated",
+          type: "boolean",
+        },
+      },
+    },
+    EvidenceTurn: {
+      required: ["role", "text", "truncated", "trace_id", "at"],
+      type: "object",
+      properties: {
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["user", "agent"],
+        },
+        text: {
+          title: "Text",
+          type: "string",
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          minLength: 1,
+        },
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
           "x-nullable": true,
         },
       },

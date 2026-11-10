@@ -487,6 +487,8 @@ import type {
   EvalTemplateVersionRestoreResponseApi,
   EvalUsageStatsResponseApi,
   EvalUserTemplateApi,
+  EvidenceImportApi,
+  EvidenceImportCreateApi,
   ExecutePromptSimulationRequestApi,
   ExecutePromptSimulationResponseApi,
   ExecuteRequestApi,
@@ -60406,6 +60408,104 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponse201 = {
+  data: EvidenceImportApi;
+  status: 201;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponseSuccess =
+  simulateApiHarnessEnvironmentsEvidenceImportsResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponseError =
+  simulateApiHarnessEnvironmentsEvidenceImportsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponse =
+  | simulateApiHarnessEnvironmentsEvidenceImportsResponseSuccess
+  | simulateApiHarnessEnvironmentsEvidenceImportsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvidenceImportsUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evidence-imports/`;
+};
+
+/**
+ * Freeze Observe sessions or calls as evidence for this environment's
+tests; returns what each holds and lacks, and what redaction would
+replace. Nothing is drafted or run.
+ */
+export const simulateApiHarnessEnvironmentsEvidenceImports = async (
+  id: string,
+  evidenceImportCreateApi: EvidenceImportCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsEvidenceImportsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsEvidenceImportsResponse>(
+    getSimulateApiHarnessEnvironmentsEvidenceImportsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(evidenceImportCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponse200 = {
+  data: EvidenceImportApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponseSuccess =
+  simulateApiHarnessEnvironmentsEvidenceImportResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsEvidenceImportResponseError =
+  simulateApiHarnessEnvironmentsEvidenceImportResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponse =
+  | simulateApiHarnessEnvironmentsEvidenceImportResponseSuccess
+  | simulateApiHarnessEnvironmentsEvidenceImportResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvidenceImportUrl = (
+  id: string,
+  importId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evidence-imports/${importId}/`;
+};
+
+/**
+ * One evidence import, read from Observe again: a source deleted since
+reads as unavailable, and a changed one says so.
+ */
+export const simulateApiHarnessEnvironmentsEvidenceImport = async (
+  id: string,
+  importId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsEvidenceImportResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsEvidenceImportResponse>(
+    getSimulateApiHarnessEnvironmentsEvidenceImportUrl(id, importId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

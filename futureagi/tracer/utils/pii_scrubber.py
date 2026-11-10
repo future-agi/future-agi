@@ -8,6 +8,7 @@ the configured Presidio engines cannot be initialized.
 """
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -55,7 +56,6 @@ def _ensure_engines() -> bool:
     try:
         from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
         from presidio_anonymizer import AnonymizerEngine
-        from presidio_anonymizer.entities import OperatorConfig
 
         # Custom recognizer for API keys (sk-live-..., pk_test-..., etc.)
         api_key_recognizer = PatternRecognizer(
@@ -207,6 +207,57 @@ def scrub_pii_in_string(text: str) -> str:
     except Exception:
         logger.warning("pii_scrub_string_failed", exc_info=True)
         return text
+
+
+# Names and places are personal data once a conversation becomes test text,
+# though ingestion's opt-in scrubbing leaves them in the trace.
+_FINDABLE_ENTITIES = (*_ENTITY_OPERATORS, "PERSON", "LOCATION")
+
+
+@dataclass(frozen=True)
+class PiiFinding:
+    """One value Presidio would replace: where it sits in the text, what kind
+    of value it is, and the token that would replace it."""
+
+    entity: str
+    start: int
+    end: int
+    value: str
+    replacement: str
+
+
+def find_pii(text: str) -> list[PiiFinding] | None:
+    """The personal data Presidio finds in *text*, in order and without
+    overlaps (the likelier reading of a span wins). ``None`` when nothing could
+    look: the engines are missing or the analysis failed. Unlike the scrubbers,
+    this does not fail open, so a caller can refuse rather than read "none"."""
+    if not text:
+        return []
+    if not _ensure_engines():
+        return None
+    try:
+        results = _analyzer.analyze(
+            text=text, language="en", entities=list(_FINDABLE_ENTITIES)
+        )
+    except Exception:
+        logger.warning("pii_find_failed", exc_info=True)
+        return None
+    findings: list[PiiFinding] = []
+    for result in sorted(results, key=lambda r: (-r.score, r.start, r.end)):
+        if any(result.start < f.end and f.start < result.end for f in findings):
+            continue
+        findings.append(
+            PiiFinding(
+                entity=result.entity_type,
+                start=result.start,
+                end=result.end,
+                value=text[result.start : result.end],
+                replacement=_TOKEN_NAMES.get(
+                    result.entity_type, f"<{result.entity_type}>"
+                ),
+            )
+        )
+    return sorted(findings, key=lambda f: f.start)
 
 
 _MEDIA_PREFIXES = (

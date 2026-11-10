@@ -19969,6 +19969,250 @@ export interface SimulateEvalConfigResponseApi {
   readonly editable?: boolean;
 }
 
+export type EvidenceImportCreateApiSourceKind =
+  (typeof EvidenceImportCreateApiSourceKind)[keyof typeof EvidenceImportCreateApiSourceKind];
+
+export const EvidenceImportCreateApiSourceKind = {
+  session: "session",
+  call: "call",
+} as const;
+
+export interface EvidenceImportCreateApi {
+  project_id: string;
+  source_kind: EvidenceImportCreateApiSourceKind;
+  /**
+   * Session ids, or the trace ids of calls, in the order picked.
+   * @minItems 1
+   * @maxItems 20
+   */
+  ids: string[];
+}
+
+export type EvidenceImportApiSourceKind =
+  (typeof EvidenceImportApiSourceKind)[keyof typeof EvidenceImportApiSourceKind];
+
+export const EvidenceImportApiSourceKind = {
+  session: "session",
+  call: "call",
+} as const;
+
+export type EvidenceImportCaseApiStatus =
+  (typeof EvidenceImportCaseApiStatus)[keyof typeof EvidenceImportCaseApiStatus];
+
+export const EvidenceImportCaseApiStatus = {
+  pending: "pending",
+  unavailable: "unavailable",
+} as const;
+
+export type EvidenceTranscriptApiStatus =
+  (typeof EvidenceTranscriptApiStatus)[keyof typeof EvidenceTranscriptApiStatus];
+
+export const EvidenceTranscriptApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+} as const;
+
+export type EvidenceTurnApiRole =
+  (typeof EvidenceTurnApiRole)[keyof typeof EvidenceTurnApiRole];
+
+export const EvidenceTurnApiRole = {
+  user: "user",
+  agent: "agent",
+} as const;
+
+export interface EvidenceTurnApi {
+  role: EvidenceTurnApiRole;
+  text: string;
+  truncated: boolean;
+  /** @minLength 1 */
+  trace_id: string;
+  at: string;
+}
+
+export interface EvidenceTranscriptApi {
+  status: EvidenceTranscriptApiStatus;
+  reason: string;
+  turns: EvidenceTurnApi[];
+}
+
+export type EvidenceToolCallsApiStatus =
+  (typeof EvidenceToolCallsApiStatus)[keyof typeof EvidenceToolCallsApiStatus];
+
+export const EvidenceToolCallsApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+} as const;
+
+export interface EvidenceToolCallApi {
+  /** @minLength 1 */
+  span_id: string;
+  /** @minLength 1 */
+  trace_id: string;
+  name: string;
+  at: string;
+  failed: boolean;
+  error: string;
+  input: string;
+  output: string;
+  input_truncated: boolean;
+  output_truncated: boolean;
+}
+
+export interface EvidenceToolCallsApi {
+  status: EvidenceToolCallsApiStatus;
+  reason: string;
+  calls: EvidenceToolCallApi[];
+}
+
+export type EvidencePartApiStatus =
+  (typeof EvidencePartApiStatus)[keyof typeof EvidencePartApiStatus];
+
+export const EvidencePartApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+} as const;
+
+/**
+ * Whether the tool calls recorded their inputs and outputs.
+ */
+export interface EvidencePartApi {
+  status: EvidencePartApiStatus;
+  reason: string;
+}
+
+export type EvidenceLabelsApiStatus =
+  (typeof EvidenceLabelsApiStatus)[keyof typeof EvidenceLabelsApiStatus];
+
+export const EvidenceLabelsApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+} as const;
+
+export type EvidenceLabelApiTarget =
+  (typeof EvidenceLabelApiTarget)[keyof typeof EvidenceLabelApiTarget];
+
+export const EvidenceLabelApiTarget = {
+  session: "session",
+  trace: "trace",
+  span: "span",
+} as const;
+
+/**
+ * As the annotator recorded it: input evidence, not a verdict.
+ */
+export type EvidenceLabelApiValue = { [key: string]: unknown };
+
+export interface EvidenceLabelApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  kind: string;
+  /** As the annotator recorded it: input evidence, not a verdict. */
+  value: EvidenceLabelApiValue;
+  notes: string;
+  target: EvidenceLabelApiTarget;
+}
+
+export interface EvidenceLabelsApi {
+  status: EvidenceLabelsApiStatus;
+  reason: string;
+  labels: EvidenceLabelApi[];
+}
+
+export interface EvidenceImportCaseApi {
+  id: string;
+  /** @minLength 1 */
+  source_id: string;
+  status: EvidenceImportCaseApiStatus;
+  reason: string;
+  changed_since_import: boolean;
+  trace_ids: string[];
+  started_at: string;
+  ended_at: string;
+  transcript: EvidenceTranscriptApi;
+  tool_calls: EvidenceToolCallsApi;
+  tool_io: EvidencePartApi;
+  starting_state: EvidencePartApi;
+  labels: EvidenceLabelsApi;
+}
+
+/**
+ * unavailable: nothing could look for personal data; import refuses.
+ */
+export type EvidenceRedactionApiStatus =
+  (typeof EvidenceRedactionApiStatus)[keyof typeof EvidenceRedactionApiStatus];
+
+export const EvidenceRedactionApiStatus = {
+  ready: "ready",
+  unavailable: "unavailable",
+} as const;
+
+export type EvidenceRedactionFindingApiPart =
+  (typeof EvidenceRedactionFindingApiPart)[keyof typeof EvidenceRedactionFindingApiPart];
+
+export const EvidenceRedactionFindingApiPart = {
+  transcript: "transcript",
+  tool_calls: "tool_calls",
+} as const;
+
+export type EvidenceRedactionFindingApiField =
+  (typeof EvidenceRedactionFindingApiField)[keyof typeof EvidenceRedactionFindingApiField];
+
+export const EvidenceRedactionFindingApiField = {
+  text: "text",
+  input: "input",
+  output: "output",
+} as const;
+
+export interface EvidenceRedactionFindingApi {
+  case_id: string;
+  part: EvidenceRedactionFindingApiPart;
+  /** @minimum 0 */
+  index: number;
+  field: EvidenceRedactionFindingApiField;
+  /** @minLength 1 */
+  entity: string;
+  /** @minimum 0 */
+  start: number;
+  /** @minimum 0 */
+  end: number;
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  replacement: string;
+}
+
+export interface EvidenceRedactionApi {
+  /** unavailable: nothing could look for personal data; import refuses. */
+  status: EvidenceRedactionApiStatus;
+  reason: string;
+  findings: EvidenceRedactionFindingApi[];
+  /**
+   * Every finding, including those past the listed ones.
+   * @minimum 0
+   */
+  total: number;
+}
+
+export interface EvidenceImportApi {
+  id: string;
+  environment_id: string;
+  project_id: string;
+  agent_version_id: string;
+  source_kind: EvidenceImportApiSourceKind;
+  created_at: string;
+  cases: EvidenceImportCaseApi[];
+  redaction: EvidenceRedactionApi;
+}
+
 export type HarnessNudgeApiTarget =
   (typeof HarnessNudgeApiTarget)[keyof typeof HarnessNudgeApiTarget];
 

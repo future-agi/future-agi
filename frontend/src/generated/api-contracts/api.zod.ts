@@ -40196,6 +40196,165 @@ export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
 });
 
 /**
+ * Freeze Observe sessions or calls as evidence for this environment's
+tests; returns what each holds and lacks, and what redaction would
+replace. Nothing is drafted or run.
+ */
+export const SimulateApiHarnessEnvironmentsEvidenceImportsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyIdsMax = 20;
+
+export const SimulateApiHarnessEnvironmentsEvidenceImportsBody = zod.object({
+  project_id: zod.string().uuid(),
+  source_kind: zod.enum(["session", "call"]),
+  ids: zod
+    .array(zod.string().uuid())
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyIdsMax)
+    .describe("Session ids, or the trace ids of calls, in the order picked."),
+});
+
+/**
+ * One evidence import, read from Observe again: a source deleted since
+reads as unavailable, and a changed one says so.
+ */
+export const SimulateApiHarnessEnvironmentsEvidenceImportParams = zod.object({
+  id: zod.string(),
+  import_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemStartMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemEndMin = 0;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionTotalMin = 0;
+
+export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
+  id: zod.string().uuid(),
+  environment_id: zod.string().uuid(),
+  project_id: zod.string().uuid(),
+  agent_version_id: zod.string().uuid(),
+  source_kind: zod.enum(["session", "call"]),
+  created_at: zod.string().datetime({ offset: true }),
+  cases: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      source_id: zod.string().min(1),
+      status: zod.enum(["pending", "unavailable"]),
+      reason: zod.string(),
+      changed_since_import: zod.boolean(),
+      trace_ids: zod.array(zod.string().min(1)),
+      started_at: zod.string().datetime({ offset: true }),
+      ended_at: zod.string().datetime({ offset: true }),
+      transcript: zod.object({
+        status: zod.enum(["present", "partial", "truncated", "missing"]),
+        reason: zod.string(),
+        turns: zod.array(
+          zod.object({
+            role: zod.enum(["user", "agent"]),
+            text: zod.string(),
+            truncated: zod.boolean(),
+            trace_id: zod.string().min(1),
+            at: zod.string().datetime({ offset: true }),
+          }),
+        ),
+      }),
+      tool_calls: zod.object({
+        status: zod.enum(["present", "partial", "truncated", "missing"]),
+        reason: zod.string(),
+        calls: zod.array(
+          zod.object({
+            span_id: zod.string().min(1),
+            trace_id: zod.string().min(1),
+            name: zod.string(),
+            at: zod.string().datetime({ offset: true }),
+            failed: zod.boolean(),
+            error: zod.string(),
+            input: zod.string(),
+            output: zod.string(),
+            input_truncated: zod.boolean(),
+            output_truncated: zod.boolean(),
+          }),
+        ),
+      }),
+      tool_io: zod
+        .object({
+          status: zod.enum(["present", "partial", "truncated", "missing"]),
+          reason: zod.string(),
+        })
+        .describe("Whether the tool calls recorded their inputs and outputs."),
+      starting_state: zod
+        .object({
+          status: zod.enum(["present", "partial", "truncated", "missing"]),
+          reason: zod.string(),
+        })
+        .describe("Whether the tool calls recorded their inputs and outputs."),
+      labels: zod.object({
+        status: zod.enum(["present", "partial", "truncated", "missing"]),
+        reason: zod.string(),
+        labels: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            kind: zod.string().min(1),
+            value: zod
+              .object({})
+              .passthrough()
+              .describe(
+                "As the annotator recorded it: input evidence, not a verdict.",
+              ),
+            notes: zod.string(),
+            target: zod.enum(["session", "trace", "span"]),
+          }),
+        ),
+      }),
+    }),
+  ),
+  redaction: zod.object({
+    status: zod
+      .enum(["ready", "unavailable"])
+      .describe(
+        "unavailable: nothing could look for personal data; import refuses.",
+      ),
+    reason: zod.string(),
+    findings: zod.array(
+      zod.object({
+        case_id: zod.string().uuid(),
+        part: zod.enum(["transcript", "tool_calls"]),
+        index: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin,
+          ),
+        field: zod.enum(["text", "input", "output"]),
+        entity: zod.string().min(1),
+        start: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemStartMin,
+          ),
+        end: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemEndMin,
+          ),
+        value: zod.string().min(1),
+        replacement: zod.string().min(1),
+      }),
+    ),
+    total: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionTotalMin,
+      )
+      .describe("Every finding, including those past the listed ones."),
+  }),
+});
+
+/**
  * This environment's offers to rebuild after a change, newest first.
  */
 export const SimulateApiHarnessEnvironmentsNudgesParams = zod.object({
