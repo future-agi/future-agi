@@ -57,13 +57,14 @@ const MAX_KEYS = 200;
 
 // A header count that names its scenarios on hover: the first page the
 // server lists, and how many more from the count itself.
-function CountTip({ envId, picks, keys, bucket, count, children }) {
+function CountTip({ envId, picks, keys, bucket, count, report, children }) {
   const [shown, setShown] = useState(false);
   const tooMany = (keys?.length || 0) > MAX_KEYS;
   const cases = useReadinessCases(envId, {
     picks,
     bucket,
     keys,
+    report,
     enabled: shown && !tooMany,
   });
   const names = (cases.data || [])
@@ -98,6 +99,7 @@ function CountTip({ envId, picks, keys, bucket, count, children }) {
     >
       <Box
         component="span"
+        tabIndex={0}
         sx={{ textDecoration: "underline dotted", cursor: "default" }}
       >
         {children}
@@ -112,6 +114,7 @@ CountTip.propTypes = {
   keys: PropTypes.arrayOf(PropTypes.string),
   bucket: PropTypes.string.isRequired,
   count: PropTypes.number,
+  report: PropTypes.string,
   children: PropTypes.node,
 };
 
@@ -169,6 +172,8 @@ function FixLine({
             size="small"
             variant="outlined"
             onClick={onToggle}
+            aria-expanded={open}
+            aria-controls={`readiness-fix-${line.area}`}
             sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
           >
             {open && COPY.hideFix}
@@ -177,7 +182,11 @@ function FixLine({
         )}
       </Stack>
       {fix && (
-        <Collapse in={open && (!checking || inFlight)} unmountOnExit>
+        <Collapse
+          id={`readiness-fix-${line.area}`}
+          in={open && (!checking || inFlight)}
+          unmountOnExit
+        >
           <Stack spacing={1} sx={{ pt: 1, pl: 2.5 }}>
             {/* A re-check line opens on its full reason and what it means;
                 a fix line on what to change. */}
@@ -260,6 +269,16 @@ export default function ReadyToRunSection({
 
   // From the click until the server says it is checking, Run waits too.
   const sending = recheck.isPending || retryAgent.isPending || refreshing;
+  // Another pairing starts with nothing open and nothing running.
+  const picksKey = JSON.stringify(picks || {});
+  useEffect(() => {
+    setPressed(null);
+    setOpenArea(null);
+  }, [picksKey]);
+
+  // Gone from the popup: it no longer holds Run or shows held-back counts.
+  useEffect(() => () => onView?.(null), [onView]);
+
   useEffect(() => {
     if (readiness.isLoading) onView?.(LOADING_VIEW);
     else onView?.(view && sending ? { ...view, canRun: false } : view);
@@ -351,6 +370,7 @@ export default function ReadyToRunSection({
                   keys={keys}
                   bucket={part.bucket}
                   count={part.count}
+                  report={readiness.data?.computed_at}
                 >
                   {part.text}
                 </CountTip>
@@ -381,7 +401,10 @@ export default function ReadyToRunSection({
             variant="dot"
             sx={{ gap: 0 }}
           />
-          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          <Typography
+            aria-live="polite"
+            sx={{ typography: "s3", color: "text.secondary" }}
+          >
             {note}
           </Typography>
         </Stack>
