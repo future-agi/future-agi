@@ -208,9 +208,9 @@ providers:
   #   auto_discover: true             # authenticated GET /v1/models
   #   # Or set auto_discover: false and use an explicit allow-list:
   #   # models:
-  #     - glm-5.2
-  #     - kimi-k2.7-code
-  #     - green-embedding
+  #   #   - glm-5.2
+  #   #   - kimi-k2.7-code
+  #   #   - green-embedding
 
   # mistral:
   #   api_key: "${MISTRAL_API_KEY}"

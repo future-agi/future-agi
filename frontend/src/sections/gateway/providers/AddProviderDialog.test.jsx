@@ -139,28 +139,40 @@ describe("AddProviderDialog validation", () => {
   it("selects GreenPT, discovers models and saves the OpenAI-compatible preset", async () => {
     fetchMutate.mockImplementation(
       deferred((_vars, opts) =>
-        opts?.onSuccess?.({ models: ["synthetic-chat", "synthetic-embedding"] }),
+        opts?.onSuccess?.({
+          models: ["synthetic-chat", "synthetic-embedding"],
+        }),
       ),
     );
     renderCreateDialog();
     await userEvent.click(screen.getByLabelText(/^Provider/));
     await userEvent.click(screen.getByRole("option", { name: "GreenPT" }));
-    expect(screen.getByLabelText("Base URL").value).toBe("https://api.greenpt.ai/v1");
+    expect(screen.getByLabelText("Base URL").value).toBe(
+      "https://api.greenpt.ai/v1",
+    );
     expect(screen.getByLabelText("API Path Prefix").value).toBe("/v1");
     fireEvent.change(screen.getByLabelText(/API Key/i), {
       target: { value: "synthetic-greenpt-key" },
     });
-    await waitFor(() => expect(fetchMutate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        baseUrl: "https://api.greenpt.ai/v1",
-        apiKey: "synthetic-greenpt-key",
-        apiFormat: "openai",
-        apiPathPrefix: "/v1",
-      }),
-      expect.any(Object),
-    ));
-    await userEvent.click(await screen.findByRole("button", { name: "Select All" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Add Provider" }).disabled).toBe(false));
+    await waitFor(() =>
+      expect(fetchMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseUrl: "https://api.greenpt.ai/v1",
+          apiKey: "synthetic-greenpt-key",
+          apiFormat: "openai",
+          apiPathPrefix: "/v1",
+        }),
+        expect.any(Object),
+      ),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Select All" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add Provider" }).disabled,
+      ).toBe(false),
+    );
     await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
     expect(updateMutate).toHaveBeenCalledWith(
       expect.objectContaining({

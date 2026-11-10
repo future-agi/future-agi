@@ -6,13 +6,41 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"gopkg.in/yaml.v3"
 )
+
+func TestGreenPTExampleConfiguration(t *testing.T) {
+	content, err := os.ReadFile("../../config.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, after, ok := strings.Cut(string(content), "  # greenpt:\n")
+	if !ok {
+		t.Fatal("GreenPT example configuration is missing")
+	}
+	block, _, _ := strings.Cut(after, "\n\n")
+	lines := strings.Split(block, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimPrefix(lines[i], "  # ")
+	}
+	example := "greenpt:\n" + strings.Join(lines, "\n")
+	var providers map[string]config.ProviderConfig
+	if err := yaml.Unmarshal([]byte(example), &providers); err != nil {
+		t.Fatalf("uncommented GreenPT example is invalid YAML: %v", err)
+	}
+	cfg := providers["greenpt"]
+	if cfg.Type != "greenpt" || cfg.AutoDiscover == nil || !*cfg.AutoDiscover || len(cfg.Models) != 0 {
+		t.Fatal("GreenPT example must enable discovery without an active model allow-list")
+	}
+}
 
 func TestGreenPTRegistryDiscoveryAndInference(t *testing.T) {
 	var discovered atomic.Int32
@@ -69,7 +97,7 @@ func TestGreenPTRegistryDiscoveryAndInference(t *testing.T) {
 		t.Fatal(err)
 	}
 	chat, err := provider.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
-		Model: "synthetic-chat",
+		Model:    "synthetic-chat",
 		Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"synthetic input"`)}},
 	})
 	if err != nil {
