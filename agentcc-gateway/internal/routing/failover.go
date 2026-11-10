@@ -13,6 +13,10 @@ import (
 // DefaultFailoverStatusCodes are HTTP status codes that trigger failover.
 var DefaultFailoverStatusCodes = []int{429, 500, 502, 503, 504}
 
+// ErrFailoverTargetDenied skips a policy-refused target without treating it as
+// an upstream failure. If no target is admitted, the client receives this 403.
+var ErrFailoverTargetDenied error = models.ErrForbidden("provider is not permitted by the routing policy")
+
 // Failover handles automatic provider failover on errors.
 type Failover struct {
 	cfg     config.FailoverConfig
@@ -143,6 +147,20 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 
 		if attemptCancel != nil {
 			attemptCancel()
+		}
+
+		// Admission refusals are not provider attempts: skip them without
+		// consuming the attempt budget or recording a circuit-breaker failure.
+		if errors.Is(callErr, ErrFailoverTargetDenied) {
+			excluded[result.Target.ProviderID] = true
+			if lastErr == nil {
+				lastErr = callErr
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			attempt--
+			continue
 		}
 
 		// Record result in circuit breaker.

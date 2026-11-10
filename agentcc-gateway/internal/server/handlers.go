@@ -466,21 +466,21 @@ func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model 
 
 // effectiveProviderLock selects the org's policy without changing the shared
 // gateway resolver. An omitted policy inherits the gateway configuration.
-func (h *Handlers) effectiveProviderLock(orgCfg *tenant.OrgConfig) *routing.ProviderLockResolver {
+func (h *Handlers) effectiveProviderLock(orgCfg *tenant.OrgConfig) providerLockPolicy {
 	if orgCfg == nil || orgCfg.Routing == nil || orgCfg.Routing.ProviderLock == nil {
 		return h.providerLockResolver
 	}
 	cfg := orgCfg.Routing.ProviderLock
 	if !cfg.Enabled {
-		// The global resolver constructor enables an empty config by default;
-		// an explicitly disabled org policy must not take that default.
-		return nil
+		// Preserve nil-safe IsEnabled without the global constructor's
+		// "empty config means enabled" default for an explicitly disabled org.
+		return (*routing.ProviderLockResolver)(nil)
 	}
-	return routing.NewProviderLockResolver(config.ProviderLockConfig{
-		Enabled:          cfg.Enabled,
-		AllowedProviders: cfg.AllowedProviders,
-		DenyProviders:    cfg.DenyProviders,
-	})
+	return &orgProviderLockResolver{
+		ProviderLockResolver: routing.NewProviderLockResolver(config.ProviderLockConfig{Enabled: true}),
+		allowed:              append([]string(nil), cfg.AllowedProviders...),
+		denied:               append([]string(nil), cfg.DenyProviders...),
+	}
 }
 
 func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover {
@@ -1443,6 +1443,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
 	servingProvider := provider
+	admit := h.orgFailoverAdmission(rc, orgCfg)
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := provider.ChatCompletion(ctx, rc.Request)
@@ -1458,7 +1459,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 
 		for _, fbModel := range modelChain {
 			fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
-			if !ok {
+			if !ok || admit(fbProviderID) != nil {
 				continue
 			}
 
@@ -1500,11 +1501,15 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
 	var servingProvider providers.Provider
+	admit := h.orgFailoverAdmission(rc, orgCfg)
 
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		foResult, err := fo.Execute(ctx, rc.Model, func(ctx context.Context, providerID string, modelOverride string) error {
+			if err := admit(providerID); err != nil {
+				return err
+			}
 			p, ok := h.registry.GetProvider(providerID)
 			if !ok {
 				return fmt.Errorf("provider %q not found", providerID)
@@ -1551,7 +1556,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 			for _, fbModel := range modelChain {
 				// Resolve fallback model: check org providers first, then global registry.
 				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
-				if !ok {
+				if !ok || admit(fbProviderID) != nil {
 					continue
 				}
 
@@ -1619,6 +1624,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 	}()
 	effectiveFailover := h.effectiveFailover(orgCfg)
+	admit := h.orgFailoverAdmission(rc, orgCfg)
 
 	// callCtx bounds an attempt only until its first chunk. The stream itself
 	// lives on the request context: failover cancels callCtx as soon as the
@@ -1672,7 +1678,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			for _, fbModel := range modelChain {
 				fallbackModel := fbModel
 				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fallbackModel)
-				if !ok {
+				if !ok || admit(fbProviderID) != nil {
 					continue
 				}
 
@@ -1692,6 +1698,9 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
 			result, err := effectiveFailover.Execute(ctx, rc.Model, func(callCtx context.Context, providerID string, modelOverride string) error {
+				if err := admit(providerID); err != nil {
+					return err
+				}
 				p, ok := h.registry.GetProvider(providerID)
 				if !ok {
 					return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", providerID))
