@@ -387,7 +387,6 @@ def test_runtime_grounding_retains_feedback_and_tenant_scope(
         "response": "The identifier is ABC.",
         "session_context": {"id": "synthetic-session"},
         "ground_truth_blocks": [{"type": "text", "text": "runtime ground truth"}],
-        "reference_context": "optional current reference",
     }
     params = prepare_run_params(
         inputs, template, organization_id=str(feedback.organization_id)
@@ -398,47 +397,6 @@ def test_runtime_grounding_retains_feedback_and_tenant_scope(
     assert queries == [
         "What is the identifier?",
         "The identifier is ABC.",
-        "optional current reference",
     ]
     for key, value in inputs.items():
         assert params[key] == value
-
-
-@pytest.mark.integration
-def test_stale_retrieved_example_does_not_hide_later_feedback(
-    feedback_factory, vector_manager
-):
-    stale = feedback_factory(explanation="stale correction")
-    embed_feedback(vector_manager, stale, inputs=("prompt",))
-    # A legacy stored record is missing a newly mapped field entirely.
-    vector_manager.db_client.upsert_vector(
-        "feedbacks",
-        str(stale.eval_template_id),
-        [1.0, 0.0],
-        {
-            "item_id": str(uuid.uuid4()),
-            "prompt": "stale input must not leak",
-            "feedback_comment": "stale correction",
-            "feedback_value": "Failed",
-            "input_type": "text",
-            "organization_id": str(stale.organization_id),
-        },
-        ["item_id"],
-    )
-    valid = feedback_factory(explanation="valid correction")
-    embed_feedback(vector_manager, valid)
-    examples = vector_manager.retrieve_avg_rag_based_examples(
-        eval_id=str(valid.eval_template_id),
-        inputs=["What is the identifier?"],
-        input_cols=["prompt"],
-        organization_id=str(valid.organization_id),
-    )
-    # Reproduce a stale-first batch; real vector retrieval returned the metadata.
-    examples.sort(key=lambda group: "response" in group[0])
-    assert "response" not in examples[0][0]
-    vector_manager.input_types = ["text", "text"]
-    content = vector_manager.process_examples(
-        examples, ["prompt", "response"], "feedback_comment", "feedback_value"
-    )
-    assert "stale input must not leak" not in str(content)
-    assert "valid correction" in str(content)

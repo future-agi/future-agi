@@ -148,7 +148,6 @@ def _get_few_shot_examples(
                 inputs=input_keys,
                 feedback_col_name="feedback_comment",
                 corrected_label_col_name="feedback_value",
-                optional_inputs=optional_keys,
             )
 
             shot_count = (

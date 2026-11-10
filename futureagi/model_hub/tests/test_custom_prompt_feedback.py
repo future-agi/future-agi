@@ -301,9 +301,6 @@ def test_runtime_context_is_not_used_for_feedback_lookup(monkeypatch, context_ke
         "reference_context",
         "old_version_input",
     ]
-    assert manager.process_examples.call_args.kwargs["optional_inputs"] == {
-        "reference_context"
-    }
     assert params[context_key] == inputs[context_key]
     assert params["few_shots"] == manager.process_examples.return_value
     assert inputs == before

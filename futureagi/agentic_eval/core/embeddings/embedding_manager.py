@@ -1307,133 +1307,90 @@ class EmbeddingManager:
         return base64.urlsafe_b64encode(str(path).encode()).decode()
 
     def process_examples(
-        self,
-        dpp_examples,
-        inputs,
-        feedback_col_name,
-        corrected_label_col_name,
-        optional_inputs=(),
+        self, dpp_examples, inputs, feedback_col_name, corrected_label_col_name
     ):
-        """Format complete feedback examples, skipping incompatible stored rows.
-
-        ``input_types`` comes from the preceding retrieval and must align with
-        ``inputs``. Missing optional inputs are omitted, never fabricated. All
-        metadata is validated before uploading images or publishing any blocks.
         """
-        if not dpp_examples:
+        Processes and formats examples for multiple inputs and input types.
+
+        Args:
+            dpp_examples (list): List of examples retrieved from vector similarity search.
+            input_types (list): List of input types (e.g., "text", "image").
+            inputs (list): List of corresponding input column names.
+
+        Returns:
+            list: A list of formatted content for display.
+        """
+
+        if len(dpp_examples) == 0:
             return ""
-        if len(self.input_types) != len(inputs) or not inputs:
-            logger.warning("feedback_examples_skipped", reason="input_type_mismatch")
-            return []
-
         try:
-            from ee.prompts.eval_prompts import FEEDBACK_FEWSHOT_PROMPT
-        except ImportError:
-            FEEDBACK_FEWSHOT_PROMPT = ""
+            content = []
 
-        optional_inputs = {str(key) for key in optional_inputs}
-        content = []
-        for example_idx, example in enumerate(dpp_examples):
-            reason = "invalid_metadata"
             try:
-                if not isinstance(example, (list, tuple)) or not example:
-                    raise ValueError("Expected a metadata group")
-                metadata = example[0]
-                if not isinstance(metadata, dict):
-                    raise ValueError("Expected metadata mapping")
+                from ee.prompts.eval_prompts import FEEDBACK_FEWSHOT_PROMPT
+            except ImportError:
+                FEEDBACK_FEWSHOT_PROMPT = ""
 
-                reason = "missing_input"
-                example_inputs = []
-                for input_idx, (column, input_type) in enumerate(
-                    zip(inputs, self.input_types, strict=True)
-                ):
-                    key = str(column)
-                    if key not in metadata or metadata[key] is None:
-                        if key in optional_inputs:
-                            continue
-                        raise ValueError("Missing required feedback input")
-                    example_inputs.append((input_idx, input_type, metadata[key]))
+            content.append({"type": "text", "text": FEEDBACK_FEWSHOT_PROMPT})
 
-                reason = "missing_feedback"
-                feedback = metadata.get(feedback_col_name)
-                label = metadata.get(corrected_label_col_name)
-                if feedback in (None, "") and label in (None, ""):
-                    raise ValueError("Missing feedback comment and correction")
-                reason = "invalid_feedback"
-                if any(
-                    value is not None and not isinstance(value, (str, int, float, bool))
-                    for value in (feedback, label)
-                ):
-                    raise ValueError("Expected scalar feedback")
+            for example_idx, example in enumerate(dpp_examples):
 
-                # Decode every image before the first upload: a malformed later
-                # field must not cause external side effects for a rejected row.
-                reason = "invalid_image"
-                image_paths = {}
-                for input_idx, input_type, value in example_inputs:
+                for input_idx, input_type in enumerate(self.input_types):
+                    if input_idx >= len(inputs):
+                        logger.warning(f"Skipping input_idx {input_idx} in process_examples due to input length mismatch")
+                        continue
+                    column_name = inputs[input_idx]
+
                     if input_type == "image":
-                        if not isinstance(value, str) or not value:
-                            raise ValueError("Missing encoded image path")
-                        path = self.decode_path(value)
-                        if not path:
-                            raise ValueError("Empty image path")
-                        image_paths[input_idx] = path
-
-                reason = "formatting_failed"
-                example_content = []
-                for input_idx, input_type, value in example_inputs:
-                    if input_type == "image":
+                        input_string = example[0][column_name]
+                        formatted_str = self.decode_path(input_string)
                         fewshot_image_url = upload_image_to_s3(
-                            image_paths[input_idx],
-                            bucket_name=os.environ.get(
-                                "S3_CUSTOMER_DATA_BUCKET", "fi-customer-data-dev"
-                            ),
+                            formatted_str,
+                            bucket_name=os.environ.get("S3_CUSTOMER_DATA_BUCKET", "fi-customer-data-dev"),
                             object_key=f"tempcust/{uuid.uuid4()}",
                         )
-                        if not fewshot_image_url:
-                            raise ValueError("Image upload returned no URL")
-                        example_content.extend(
-                            [
-                                {
-                                    "type": "text",
-                                    "text": f"<example_image_{example_idx + 1}_{input_idx + 1}>",
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": fewshot_image_url},
-                                },
-                                {
-                                    "type": "text",
-                                    "text": f"</example_image_{example_idx + 1}_{input_idx + 1}>",
-                                },
-                            ]
-                        )
-                    elif input_type == "text":
-                        example_content.append({"type": "text", "text": str(value)})
 
+                        content.append(
+                            {
+                                "type": "text",
+                                "text": f"<example_image_{example_idx+1}_{input_idx+1}>",
+                            }
+                        )
+                        content.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": fewshot_image_url},
+                            }
+                        )
+                        content.append(
+                            {
+                                "type": "text",
+                                "text": f"</example_image_{example_idx+1}_{input_idx+1}>",
+                            }
+                        )
+
+                    elif input_type == "text":
+                        input_string = example[0][str(column_name)]
+                        content.append({"type": "text", "text": f"{input_string}"})
+
+                # Add feedback and corrected label information if available
                 feedback_text = (
-                    f"Feedback: {feedback}, " if feedback not in (None, "") else ""
+                    f"Feedback: {example[0][feedback_col_name]}, "
+                    if example[0][feedback_col_name]
+                    else ""
                 )
                 corrected_label = (
-                    f"Corrected Label: {label}" if label not in (None, "") else ""
+                    f"Corrected Label: {example[0][corrected_label_col_name]}"
+                    if example[0][corrected_label_col_name]
+                    else ""
                 )
-                example_content.append(
-                    {"type": "text", "text": f"{feedback_text}{corrected_label}"}
-                )
-            except Exception as exc:
-                # Stored feedback and image paths can contain sensitive data;
-                # log only the rejection category, not the payload/exception.
-                logger.warning(
-                    "feedback_example_skipped",
-                    example_index=example_idx,
-                    reason=reason,
-                    error_type=type(exc).__name__,
-                )
-                continue
+                label_text = f"{feedback_text}{corrected_label}"
 
-            if not content:
-                content.append({"type": "text", "text": FEEDBACK_FEWSHOT_PROMPT})
-            content.extend(example_content)
+                content.append({"type": "text", "text": label_text})
+
+        except Exception as e:
+            logger.exception(f"Error in process_examples: {e}")
+            traceback.print_exc()
 
         return content
 
