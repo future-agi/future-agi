@@ -13,6 +13,17 @@ import EvalCreatePage from "../EvalCreatePage";
 import axios from "src/utils/axios";
 import { JEV_RUBRIC_ERROR } from "../../utils/jevMapping";
 
+const renderPage = () =>
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <EvalCreatePage />
+    </QueryClientProvider>,
+  );
+
 const mocks = vi.hoisted(() => ({
   draft: null,
   mutate: vi.fn(),
@@ -131,6 +142,9 @@ vi.mock("../LLMPromptEditor", () => ({
         onChange={(e) => onModelChange(e.target.value)}
       >
         <option value="jev-latest">Jev latest</option>
+        <option value="decision/openrouter/openai/gpt-6-luna-decisions">
+          GPT-6 Luna Decisions via OpenRouter
+        </option>
         <option value="turing_large">Turing Large</option>
       </select>
       <textarea
@@ -195,6 +209,34 @@ beforeEach(() => {
 });
 
 describe("EvalCreatePage with a Jev model", () => {
+  it("autosaves the chosen OpenRouter decision route with typed criteria", async () => {
+    const model = "decision/openrouter/openai/gpt-6-luna-decisions";
+    mocks.draft.config.model = model;
+    renderPage();
+    await screen.findByDisplayValue("GPT-6 Luna Decisions via OpenRouter");
+    await userEvent.type(
+      screen.getByLabelText("Describe a pass (true)"),
+      "Explicitly confirmed",
+    );
+    await waitFor(
+      () =>
+        expect(lastPayload()).toEqual(
+          expect.objectContaining({
+            model,
+            jev_mapping: expect.objectContaining({
+              revision: "jev-map-v1",
+              question_type: "noul",
+              pass: {
+                criteria_true: "Explicitly confirmed",
+                criteria_false: "",
+              },
+            }),
+          }),
+        ),
+      { timeout: 4000 },
+    );
+  });
+
   it.each(["auto", "agent"])(
     "preserves %s through Jev selection and evaluator tab changes",
     async (initialMode) => {
@@ -260,7 +302,7 @@ describe("EvalCreatePage with a Jev model", () => {
   );
 
   it("autosaves a mapping that follows the chosen output type", async () => {
-    render(<EvalCreatePage />);
+    renderPage();
     await screen.findByDisplayValue("Jev latest");
     await userEvent.click(screen.getByLabelText("Scoring"));
     await userEvent.click(
@@ -299,7 +341,7 @@ describe("EvalCreatePage with a Jev model", () => {
           ),
         );
     });
-    render(<EvalCreatePage />);
+    renderPage();
     await screen.findByDisplayValue("Jev latest");
     mocks.mutate.mockClear();
     await userEvent.click(screen.getByLabelText("Scoring"));
@@ -330,7 +372,7 @@ describe("EvalCreatePage with a Jev model", () => {
   });
 
   it("saves the prompt while it holds an unfinished Jev Score, and says so", async () => {
-    render(<EvalCreatePage />);
+    renderPage();
     await screen.findByDisplayValue("Jev latest");
     await userEvent.click(screen.getByLabelText("Scoring"));
     expect(
@@ -365,7 +407,7 @@ describe("EvalCreatePage with a Jev model", () => {
   };
 
   it("asks before leaving while the Jev settings are held", async () => {
-    render(<EvalCreatePage />);
+    renderPage();
     await screen.findByDisplayValue("Jev latest");
     expect(leavePrevented()).toBe(false);
     await userEvent.click(screen.getByLabelText("Scoring"));
@@ -382,7 +424,7 @@ describe("EvalCreatePage with a Jev model", () => {
   });
 
   it("leaves without asking once the Jev setup can run", async () => {
-    render(<EvalCreatePage />);
+    renderPage();
     await screen.findByDisplayValue("Jev latest");
     await userEvent.click(screen.getByLabelText("Scoring"));
     for (const [index, level] of ["Unresolved", "Resolved"].entries()) {
@@ -399,7 +441,7 @@ describe("EvalCreatePage with a Jev model", () => {
   });
 
   it("flags a Score whose levels repeat", async () => {
-    render(<EvalCreatePage />);
+    renderPage();
     await screen.findByDisplayValue("Jev latest");
     await userEvent.click(screen.getByLabelText("Scoring"));
     for (const index of [0, 1]) {
@@ -430,7 +472,7 @@ describe("EvalCreatePage with a Jev model", () => {
         },
       },
     };
-    render(<EvalCreatePage />);
+    renderPage();
     await userEvent.type(
       await screen.findByLabelText("Description for Unresolved"),
       "Still open",
@@ -449,7 +491,7 @@ describe("EvalCreatePage with a Jev model", () => {
   });
 
   it("sends no jev_mapping once a Jev draft switches to Code", async () => {
-    render(<EvalCreatePage />);
+    renderPage();
     await screen.findByDisplayValue("Jev latest");
     await userEvent.click(screen.getByRole("tab", { name: /Code/ }));
     await waitFor(() => expect(lastPayload()?.eval_type).toBe("code"), {
@@ -522,7 +564,7 @@ describe("EvalCreatePage with a Jev model", () => {
         jev_mapping: { revision: "jev-map-v1", question_type: "score" },
       },
     };
-    render(<EvalCreatePage />);
+    renderPage();
     await screen.findByDisplayValue("Jev latest");
     expect(
       await screen.findByRole("button", { name: /Test Evaluation/ }),
@@ -591,7 +633,7 @@ describe("EvalCreatePage with a Jev model", () => {
     mocks.mutate.mockImplementation((payload, options) =>
       options?.onError?.(new Error("refused")),
     );
-    render(<EvalCreatePage />);
+    renderPage();
     const picker = await screen.findByLabelText("Evaluator model");
     await userEvent.selectOptions(picker, "turing_large");
     await waitFor(() => expect(mocks.snack).toHaveBeenCalledTimes(1), {
@@ -612,7 +654,7 @@ describe("EvalCreatePage with a Jev model", () => {
   });
 
   it("sends no jev_mapping for non-Jev models", async () => {
-    render(<EvalCreatePage />);
+    renderPage();
     await userEvent.selectOptions(
       await screen.findByLabelText("Evaluator model"),
       "turing_large",
