@@ -28,6 +28,7 @@ import {
 import ScenarioPicker from "./ScenarioPicker";
 import { formatCredits, formatMinutes } from "./fixRunView";
 import {
+  blockedByDraft,
   blockedReason as blockedReasonOf,
   budgetSteps,
   countsLine,
@@ -194,6 +195,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
   const { agent, environment, limits } = options;
   const error = launchError({ targets, protectedKeys, surfaces, limits });
   const blockedReason = blockedReasonOf(options, targets.length);
+  const draftBlocks = blockedByDraft(options, targets.length);
   const variations = variationsNote(targets.length, limits, agent.kind);
   const startDisabled = !!blockedReason || !!error || launch.isPending;
   const agentLine = [
@@ -404,6 +406,20 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
             error ||
             "A winner comes back for you to review. Nothing changes until you ship it."}
         </Typography>
+        {draftBlocks && (
+          <Button
+            size="small"
+            onClick={() => {
+              onClose();
+              // The Scenarios tab's draft bar saves or discards the changes.
+              navigate(
+                `${paths.dashboard.simulate.environments.detail(envId)}?tab=scenarios`,
+              );
+            }}
+          >
+            Review unsaved changes
+          </Button>
+        )}
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>

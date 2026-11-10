@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SnackbarProvider } from "notistack";
+import { paths } from "src/routes/paths";
 
 import {
   fixtureLaunchOptions,
@@ -319,6 +320,31 @@ describe("LaunchFixDialog", () => {
     expect(
       screen.getByRole("button", { name: "Start improvement" }),
     ).toBeDisabled();
+    // The way out: the environment's Scenarios tab, whose draft bar saves or discards.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review unsaved changes" }),
+    );
+    expect(onClose).toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith(
+      `${paths.dashboard.simulate.environments.detail("env-1")}?tab=scenarios`,
+    );
+  });
+
+  it("offers no draft link when the variations are not needed", async () => {
+    const base = fixtureLaunchOptions("te-run-6");
+    pinOptions({
+      ...base,
+      variations_blocked: {
+        code: "fix_suite_draft_open",
+        message:
+          "Save or discard the environment's unsaved scenario changes first.",
+      },
+    });
+    renderDialog();
+    await screen.findByRole("button", { name: "Start improvement" });
+    expect(
+      screen.queryByRole("button", { name: "Review unsaved changes" }),
+    ).not.toBeInTheDocument();
   });
 
   it("disables a part the agent cannot change", async () => {
