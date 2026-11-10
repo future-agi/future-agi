@@ -267,7 +267,7 @@ describe("retained source intake", () => {
     choose("Review item", "refunds"); check("Apply this exact decision to the reviewed identity and head, without changing production."); click("Record keep decision");
     await screen.findByText(/could not be confirmed/);
     view.rerender(<MigrationPlanPanel scopeKey={scopeKey} plan={{ ...plan, expiresAt: "2000-01-01T00:00:00Z" }} onKeep={accept} />);
-    expect(button("Record keep decision")).not.toBeDisabled(); click("Record keep decision");
+    expect(button("Retry exact decision")).not.toBeDisabled(); click("Retry exact decision");
     await waitFor(() => expect(accept).toHaveBeenCalledTimes(2));
     expect(accept.mock.calls[0]).toEqual(accept.mock.calls[1]);
   });
