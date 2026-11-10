@@ -158,24 +158,59 @@ def test_skills_openapi_has_all_routes_and_errors():
         authoring_operations.update(
             {base + suffix: allowed for suffix, allowed in operations.items()}
         )
+    workflow_operations = {
+        "/model-hub/skills/" + suffix: allowed
+        for suffix, allowed in {
+            "intake/preview/": {"post"},
+            "intake/langfuse/preview/": {"post"},
+            "intake/{plan_id}/": {"get"},
+            "intake/{plan_id}/accept/": {"post"},
+            "intake/{plan_id}/reconcile/": {"post"},
+            "intake/{plan_id}/review/": {"post"},
+            "intake/{plan_id}/receipts/": {"get"},
+            "{resource_id}/versions/{number}/migration-export/": {"get"},
+            "contexts/{context_id}/captures/source/": {"post"},
+            "contexts/{context_id}/captures/preview/": {"post"},
+            "contexts/{context_id}/captures/{capture_id}/accept/": {"post"},
+            "evidence/{source}/{source_id}/": {"get"},
+            "evidence/{source}/{source_id}/annotations/": {"get", "post"},
+            "{skill_id}/context-dependents/": {"get"},
+            "contexts/{context_id}/test-runs/": {"get", "post"},
+            "contexts/{context_id}/test-runs/preview/": {"post"},
+            "contexts/{context_id}/test-runs/{run_id}/": {"get"},
+            "contexts/{context_id}/test-runs/{run_id}/results/": {"get"},
+            "contexts/{context_id}/test-runs/{run_id}/attempts/{attempt_id}/": {"get"},
+            "contexts/{context_id}/test-runs/{run_id}/files/": {"get"},
+            "contexts/{context_id}/test-runs/{run_id}/cancel/": {"post"},
+            "contexts/{context_id}/test-runs/{run_id}/share/": {"post"},
+        }.items()
+    }
     authoring_paths = set(authoring_operations)
+    workflow_paths = set(workflow_operations)
     assert len(authoring_paths) == 34
+    assert len(workflow_paths) == 22
     assert foundation_paths <= paths.keys()
     assert integration_paths <= paths.keys()
     assert authoring_paths <= paths.keys()
+    assert workflow_paths <= paths.keys()
     assert foundation_paths.isdisjoint(integration_paths)
     assert authoring_paths.isdisjoint(foundation_paths | integration_paths)
+    assert workflow_paths.isdisjoint(
+        foundation_paths | integration_paths | authoring_paths
+    )
     legacy_paths = {
         path: item
         for path, item in paths.items()
-        if path not in foundation_paths | integration_paths | authoring_paths
+        if path
+        not in foundation_paths | integration_paths | authoring_paths | workflow_paths
     }
     assert len(legacy_paths) == 46
-    assert len(paths) == 107
+    assert len(paths) == 129
     methods = {"get", "post", "put", "patch", "delete"}
-    for path, allowed in authoring_operations.items():
+    for path, allowed in (authoring_operations | workflow_operations).items():
         assert methods.intersection(paths[path]) == allowed, path
     assert sum(map(len, authoring_operations.values())) == 38
+    assert sum(map(len, workflow_operations.values())) == 24
     assert sum(len(methods.intersection(item)) for item in legacy_paths.values()) == 58
     assert (
         sum(len(methods.intersection(paths[path])) for path in foundation_paths) == 11
