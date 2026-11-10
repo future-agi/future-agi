@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Stack,
+  Typography,
+} from "@mui/material";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
@@ -19,6 +25,12 @@ const lineSx = {
   py: 1,
 };
 
+const boxSx = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
+
+// Until the report lands nothing is known to be blocked or fine, so Run waits.
+// A report that fails to load leaves Run as it was: unknown is not blocked.
+const LOADING_VIEW = { canRun: false, loading: true, summary: null, open: [] };
+
 const STATE_ROLE = {
   checking: "running",
   failed: "failed",
@@ -27,16 +39,19 @@ const STATE_ROLE = {
   unchecked: "untested",
 };
 
-function stateText(view) {
-  const text = COPY.states[view.state];
-  return typeof text === "function" ? text(view.stateReason) : text;
+function stateText(state, reason) {
+  const text = COPY.states[state];
+  return typeof text === "function" ? text(reason) : text;
 }
 
-function FixLine({ line, onRecheck, onRetryAgent, busy }) {
+const spinner = <CircularProgress size={12} color="inherit" />;
+
+function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
   const [open, setOpen] = useState(false);
   const { fix } = line;
   return (
-    <Box sx={lineSx}>
+    // While a check runs these are the last results: dimmed, no Fix.
+    <Box sx={{ ...lineSx, opacity: checking && !inFlight ? 0.5 : 1 }}>
       <Stack direction="row" spacing={1} alignItems="center">
         <Box sx={{ flexShrink: 0 }}>
           <StatusBadge
@@ -57,7 +72,7 @@ function FixLine({ line, onRecheck, onRetryAgent, busy }) {
           {line.reason}
           {line.affected ? ` · ${COPY.affected(line.affected)}` : ""}
         </Typography>
-        {fix && (
+        {fix && !checking && (
           <Button
             size="small"
             variant="outlined"
@@ -68,7 +83,7 @@ function FixLine({ line, onRecheck, onRetryAgent, busy }) {
           </Button>
         )}
       </Stack>
-      {open && fix && (
+      {open && fix && (!checking || inFlight) && (
         <Stack spacing={1} sx={{ pt: 1, pl: 2.5 }}>
           <Typography sx={{ typography: "s3", color: "text.primary" }}>
             {fix.action}
@@ -84,13 +99,16 @@ function FixLine({ line, onRecheck, onRetryAgent, busy }) {
                 size="small"
                 variant="contained"
                 disabled={busy}
+                startIcon={inFlight ? spinner : null}
                 onClick={
                   fix.recheck.scope === "agent" ? onRetryAgent : onRecheck
                 }
               >
-                {fix.recheck.scope === "agent"
-                  ? COPY.retryAgent
-                  : COPY.recheckPair}
+                {inFlight && COPY.checking}
+                {!inFlight &&
+                  (fix.recheck.scope === "agent"
+                    ? COPY.retryAgent
+                    : COPY.recheckPair)}
               </Button>
             </Box>
           )}
@@ -105,6 +123,9 @@ FixLine.propTypes = {
   onRecheck: PropTypes.func.isRequired,
   onRetryAgent: PropTypes.func.isRequired,
   busy: PropTypes.bool,
+  checking: PropTypes.bool,
+  // This line's own re-check is the one running.
+  inFlight: PropTypes.bool,
 };
 
 /**
@@ -122,17 +143,26 @@ export default function ReadyToRunSection({
   const readiness = useReadiness(envId, picks, { keys, trials });
   const recheck = useRecheck(envId);
   const retryAgent = useRetryAgentVersion(envId);
+  // Which line's button started the check, so that button shows it running.
+  const [pressed, setPressed] = useState(null);
   const view = useMemo(
     () => (readiness.data ? readinessView(readiness.data) : null),
     [readiness.data],
   );
 
+  // From the click until the server says it is checking, Run waits too.
+  const sending = recheck.isPending || retryAgent.isPending;
   useEffect(() => {
-    onView?.(view);
-  }, [view, onView]);
+    if (readiness.isLoading) onView?.(LOADING_VIEW);
+    else onView?.(view && sending ? { ...view, canRun: false } : view);
+  }, [view, onView, readiness.isLoading, sending]);
 
   if (readiness.isLoading) {
-    return <ContentSkeleton variant="rows" rows={3} label={COPY.title} />;
+    return (
+      <Box sx={boxSx}>
+        <ContentSkeleton variant="panel" rows={3} label={COPY.title} />
+      </Box>
+    );
   }
   if (!view) {
     return readiness.isError ? (
@@ -140,25 +170,30 @@ export default function ReadyToRunSection({
     ) : null;
   }
 
-  const checking = view.state === "checking";
-  const busy = checking || recheck.isPending || retryAgent.isPending;
-  const runRecheck = () => recheck.mutate(picks);
+  // A re-check reads as running from the click, not from the next report.
+  const checking = view.state === "checking" || sending;
+  const dimSx = { ...lineSx, opacity: checking ? 0.5 : 1 };
+  const busy = checking;
+  const runRecheck = (from = null) => {
+    setPressed(from);
+    recheck.mutate(picks);
+  };
   const agentId = readiness.data?.pairing?.agent_version?.id;
-  const runRetryAgent = () =>
+  const runRetryAgent = (from = null) => {
+    setPressed(from);
     retryAgent.mutate(
       { versionId: agentId },
       { onSettled: () => readiness.refetch() },
     );
+  };
   const blockers = view.open.filter((line) => line.status === "blocked").length;
   const readyLabels = view.ready.map((area) => COPY.areas[area] || area);
   if (!view.grading.notGradable) readyLabels.push(COPY.areas.grading);
-  const note = stateText(view);
+  const noteState = checking ? "checking" : view.state;
+  const note = stateText(noteState, view.stateReason);
 
   return (
-    <Box
-      data-testid="ready-to-run"
-      sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
-    >
+    <Box data-testid="ready-to-run" sx={boxSx}>
       <Stack
         direction="row"
         spacing={1}
@@ -183,7 +218,8 @@ export default function ReadyToRunSection({
           size="small"
           variant="outlined"
           disabled={busy}
-          onClick={runRecheck}
+          startIcon={checking ? spinner : null}
+          onClick={() => runRecheck()}
           sx={{ py: 0, flexShrink: 0 }}
         >
           {checking ? COPY.checking : COPY.recheck}
@@ -191,7 +227,7 @@ export default function ReadyToRunSection({
       </Stack>
       {note && (
         <Stack direction="row" spacing={1} alignItems="center" sx={lineSx}>
-          <StatusBadge status={STATE_ROLE[view.state]} label="" variant="dot" />
+          <StatusBadge status={STATE_ROLE[noteState]} label="" variant="dot" />
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
             {note}
           </Typography>
@@ -201,8 +237,10 @@ export default function ReadyToRunSection({
         <FixLine
           key={line.area}
           line={line}
-          onRecheck={runRecheck}
-          onRetryAgent={runRetryAgent}
+          onRecheck={() => runRecheck(line.area)}
+          onRetryAgent={() => runRetryAgent(line.area)}
+          inFlight={checking && pressed === line.area}
+          checking={checking}
           busy={busy}
         />
       ))}
@@ -212,7 +250,7 @@ export default function ReadyToRunSection({
           direction="row"
           spacing={1}
           alignItems="center"
-          sx={lineSx}
+          sx={dimSx}
         >
           <StatusBadge
             status={line.status}
@@ -228,7 +266,7 @@ export default function ReadyToRunSection({
         </Stack>
       ))}
       {view.grading.notGradable > 0 && (
-        <Stack direction="row" spacing={1} alignItems="center" sx={lineSx}>
+        <Stack direction="row" spacing={1} alignItems="center" sx={dimSx}>
           <StatusBadge
             status="partial"
             label={COPY.areas.grading}
@@ -240,7 +278,7 @@ export default function ReadyToRunSection({
         </Stack>
       )}
       {readyLabels.length > 0 && (
-        <Stack direction="row" spacing={1} alignItems="center" sx={lineSx}>
+        <Stack direction="row" spacing={1} alignItems="center" sx={dimSx}>
           <StatusBadge status="supported" label="" variant="dot" />
           <Typography
             noWrap

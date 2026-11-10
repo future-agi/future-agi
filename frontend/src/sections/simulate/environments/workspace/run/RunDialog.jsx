@@ -15,6 +15,7 @@ import {
 } from "@mui/material";
 import { ClosableDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
+import ContentSkeleton from "src/components/content-skeleton";
 import {
   VERSION_PIECES,
   isVersioningDisabled,
@@ -38,6 +39,8 @@ const PICKABLE = VERSION_PIECES;
 const offered = (piece, version) =>
   version.isDefault ||
   (piece === "agent" ? version.pickable : version.status === "active");
+
+const BOX_SX = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
 
 // Notes sit compact in the plan, like its Ready to run lines: a 16px icon
 // level with one line of small text.
@@ -314,13 +317,16 @@ export default function RunDialog({
 
   const body = () => {
     if (versions.isLoading) {
+      // The plan's own boxes, greyed, so nothing jumps when they load.
       return (
-        <Stack direction="row" spacing={1} alignItems="center">
-          <CircularProgress size={16} />
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {COPY.loading}
-          </Typography>
-        </Stack>
+        <>
+          <Box sx={BOX_SX}>
+            <ContentSkeleton variant="panel" rows={2} label={COPY.loading} />
+          </Box>
+          <Box sx={BOX_SX} aria-hidden>
+            <ContentSkeleton variant="panel" rows={3} role="presentation" />
+          </Box>
+        </>
       );
     }
     if (!data) {
@@ -336,15 +342,7 @@ export default function RunDialog({
     return (
       <>
         {/* Versions first: Ready to run answers for whatever is picked. */}
-        <Stack
-          spacing={1.5}
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 1,
-            p: 1.5,
-          }}
-        >
+        <Stack spacing={1.5} sx={{ ...BOX_SX, p: 1.5 }}>
           {PICKABLE.map(pickerField)}
         </Stack>
         {env?.versioning?.enabled && !blocked && (

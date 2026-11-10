@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 
 // The versions hooks answer one environment; the Ready to run section is
 // stubbed to hand the popup a view, and records what it was asked for.
-const state = { view: null };
+const state = { view: null, versionsLoading: false };
 const sectionCalls = [];
 vi.mock("src/api/simulate-environments/versions", async () => {
   const actual = await vi.importActual(
@@ -26,7 +26,10 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   });
   return {
     ...actual,
-    useEnvironmentVersions: () => ({ data: versions, isLoading: false }),
+    useEnvironmentVersions: () =>
+      state.versionsLoading
+        ? { data: undefined, isLoading: true }
+        : { data: versions, isLoading: false },
     useRunPlan: () => ({ data: { warnings: [] }, isLoading: false }),
     useDrafts: () => ({ data: undefined }),
     useSuiteMembers: () => ({
@@ -84,10 +87,20 @@ const runButton = () => screen.getByRole("button", { name: /^Run/ });
 
 beforeEach(() => {
   state.view = null;
+  state.versionsLoading = false;
   sectionCalls.length = 0;
 });
 
 describe("RunDialog with Ready to run", () => {
+  it("keeps the plan's shape with a placeholder while the versions load", () => {
+    state.versionsLoading = true;
+    renderDialog();
+    expect(
+      screen.getByRole("progressbar", { name: "Loading versions…" }),
+    ).toBeInTheDocument();
+    expect(runButton()).toBeDisabled();
+  });
+
   it("reads Run 6 of 10 when 4 of the selected scenarios are held back", () => {
     state.view = view({ requested: 10, blocked: 4 });
     renderDialog();
