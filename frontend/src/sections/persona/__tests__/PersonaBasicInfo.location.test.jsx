@@ -9,14 +9,18 @@ import {
   PersonCreateValidationSchema,
 } from "../PersonaCreateEdit/common";
 
-// Values the create persona form submits once Name, Description and Language
-// are filled in. Location is left at its empty default unless overridden.
+// Values the create persona form submits once Name, Description, Language and
+// the Behavioural Settings are filled in. Location is left at its empty
+// default unless overridden.
 const formValues = (overrides = {}) => ({
   ...getPersonaDefaultValues(),
   simulationType: "voice",
   name: "angry_customer",
   description: "A customer who is angry about the product",
   language: "english",
+  personality: [{ value: "Friendly and cooperative" }],
+  communicationStyle: ["Direct and concise"],
+  accent: ["american"],
   ...overrides,
 });
 
