@@ -1407,6 +1407,30 @@ def test_a_call_actor_follows_the_sealed_persona_role_and_channel_rules(
     )
 
 
+def test_the_editor_offers_only_the_channels_that_reach_the_environment_s_agent(
+    user, workspace, storage, auth_client
+):
+    offered = {}
+    for modality in ("chat", "voice"):
+        environment = record_tests._environment(
+            user, workspace, f"actors-channels-{modality}"
+        )
+        record_authoring(
+            environment,
+            _authoring(contract={**CRM_CONTRACT, "modality": modality}),
+            origin="authoring",
+        )
+        listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+        offered[modality] = sorted(listed["channels"])
+    unknown = _built(user, workspace, "actors-channels-unknown")
+
+    assert offered == {
+        "chat": ["chat_message"],
+        "voice": ["audio_handoff", "audio_mix", "ivr"],
+    }
+    assert len(auth_client.get(f"{BASE}/{unknown.id}/actors/").json()["channels"]) == 4
+
+
 def test_a_call_keeps_its_trial_s_state_changes_and_actor_decisions_and_serves_them(
     organization, workspace
 ):
@@ -1619,6 +1643,67 @@ def test_a_worker_s_entry_with_its_refused_attempts_is_served_as_the_world_recor
     }
     served = TrialStateSerializer({"state_changes": [worker]}).data
     assert served["state_changes"][0]["refused_actions"] == worker["refused_actions"]
+
+
+def test_the_harness_s_own_tables_are_never_offered_or_given_as_records_an_actor_reads(
+    user, workspace, storage, auth_client
+):
+    from simulate.models import HostedHarnessStageOutput
+    from simulate.services import harness_actors
+
+    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules["record_changes"] = {
+        "from": "generic-harness/source-model.json",
+        "tables": "tables",
+        "name": "name",
+        "verbs": ["put", "change"],
+        "never_prefix": "_alk_",
+        "never": ["harness_seed_sentinel"],
+    }
+    environment = record_tests._environment(user, workspace, "actors-harness-tables")
+    record_authoring(
+        environment,
+        _authoring(contract=CRM_CONTRACT, **{"actor_rules.json": json.dumps(rules)}),
+        origin="authoring",
+    )
+    environment.refresh_from_db()
+    HostedHarnessStageOutput.no_workspace_objects.create(
+        job=environment,
+        title="Stores",
+        summary="",
+        kind="stores",
+        data=[
+            {
+                "capability": "world_db",
+                "engine": "postgres",
+                "tables": [
+                    {"name": "deals"},
+                    {"name": "_alk_tool_trace"},
+                    {"name": "_ALK_actors"},
+                    {"name": "harness_seed_sentinel"},
+                ],
+            }
+        ],
+    )
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+    assert listed["knowledge_sources"]["records"] == [
+        {"store": "world_db", "collection": "deals"}
+    ]
+    refused = _add(
+        auth_client,
+        environment,
+        {
+            **MANAGER,
+            "knowledge": [
+                {
+                    "kind": "records",
+                    "store": "world_db",
+                    "collection": "_alk_tool_trace",
+                }
+            ],
+        },
+    )
+    assert refused.status_code == 400, refused.content
 
 
 def test_giving_an_actor_an_action_only_one_other_actor_holds_shows_the_conflict_before_saving(

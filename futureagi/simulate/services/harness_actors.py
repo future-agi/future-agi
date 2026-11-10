@@ -233,8 +233,6 @@ def _record_changes(
     tables = (
         model.get(naming.get("tables", "tables")) if isinstance(model, dict) else None
     )
-    never = set(naming.get("never") or [])
-    prefix = str(naming.get("never_prefix") or "")
     out: dict[str, dict[str, Any]] = {}
     for table in tables or []:
         name = (
@@ -242,7 +240,7 @@ def _record_changes(
             if isinstance(table, dict)
             else ""
         )
-        if not name or name in never or (prefix and name.lower().startswith(prefix)):
+        if not name or _harness_table(name, rules):
             continue
         for verb in naming.get("verbs") or []:
             out[f"{name}.{verb}"] = {
@@ -250,6 +248,15 @@ def _record_changes(
                 "description": f"A record change on {name}",
             }
     return out
+
+
+def _harness_table(name: str, rules: ActorRules) -> bool:
+    """Whether a collection is the harness's own, as the sealing release names them: never a world record."""
+    naming = rules.get("record_changes") or {}
+    prefix = str(naming.get("never_prefix") or "")
+    return name in (naming.get("never") or []) or bool(
+        prefix and name.lower().startswith(prefix)
+    )
 
 
 def _readable_file(path: str, rules: ActorRules) -> bool:
@@ -283,7 +290,9 @@ def knowledge_sources(
         for store in (stores if isinstance(stores, list) else [])
         if isinstance(store, dict)
         for table in store.get("tables") or []
-        if isinstance(table, dict) and table.get("name")
+        if isinstance(table, dict)
+        and table.get("name")
+        and not _harness_table(str(table["name"]), rules)
     ]
     return {
         "files": sorted(
@@ -297,6 +306,17 @@ def _stores(environment: HostedHarnessJob) -> Any:
     from simulate.services.harness_environment import _stage_output
 
     return _stage_output(environment, "stores")
+
+
+def _reachable_channels(rules: ActorRules, modality: str | None) -> dict[str, str]:
+    """The channels an actor can join through to reach this environment's agent; all of them before authoring
+    reports the agent's modality."""
+    reaches = rules.get("channel_modalities") or {}
+    return {
+        channel: about
+        for channel, about in (rules.get("channels") or {}).items()
+        if not modality or channel not in reaches or modality in reaches[channel]
+    }
 
 
 def _cast_view(
@@ -319,7 +339,7 @@ def _cast_view(
         "revision": draft.revision if draft is not None else 0,
         "record_schemas": rules["records"],
         "actions": world_actions(environment_files, rules),
-        "channels": rules.get("channels") or {},
+        "channels": _reachable_channels(rules, _modality(environment_files)),
         "loudness": rules.get("loudness") or {},
         "reserved_ids": list(rules.get("reserved_ids") or []),
         "knowledge_sources": knowledge_sources(environment_files, rules, stores),

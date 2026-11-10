@@ -38954,7 +38954,7 @@ export const simulateApiHarnessEnvironmentsActorLimitsBodyExpectedRevisionMin = 
 
 export const SimulateApiHarnessEnvironmentsActorLimitsBody = zod.object({
   limits: zod
-    .record(zod.string(), zod.string())
+    .record(zod.string(), zod.unknown())
     .describe(
       "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.",
     ),

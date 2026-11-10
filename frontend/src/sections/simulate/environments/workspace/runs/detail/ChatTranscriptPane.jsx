@@ -112,7 +112,11 @@ export default function ChatTranscriptPane({ turns, customerName }) {
     <>
       {others.length > 0 && (
         <Box sx={{ px: 2, pt: 1.25 }}>
-          <CallParticipants others={others} customerName={customerName} />
+          <CallParticipants
+            others={others}
+            customerName={customerName}
+            withCustomer={turns.some((s) => s.role === "customer")}
+          />
         </Box>
       )}
       <Stack

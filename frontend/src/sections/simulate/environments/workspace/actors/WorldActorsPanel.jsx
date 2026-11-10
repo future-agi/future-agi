@@ -127,6 +127,8 @@ export default function WorldActorsPanel({ envId, locked = false }) {
     setConfirmRemove(true);
   };
   const actionIds = context.actions.map((one) => one.action);
+  // Another actor answering instead is named as people read it; anything else keeps its own label.
+  const nameOf = (id) => cast.find((one) => one.id === id)?.name || id;
   // A new person on the caller's side starts on the first channel the rules list.
   const deletingId =
     edit.isPending && edit.variables?.op === "delete"
@@ -143,6 +145,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
         onRemove={() => remove(actor)}
         actionIds={actionIds}
         loudChannels={context.loudness.channels || []}
+        nameOf={nameOf}
         deleting={actor.id === deletingId}
         busy={edit.isPending}
       />
@@ -344,7 +347,7 @@ Group.propTypes = {
   children: PropTypes.node,
 };
 
-function summary(actor, actionIds, loudChannels) {
+function summary(actor, actionIds, loudChannels, nameOf) {
   const permitted = actor.permitted_actions || [];
   const fallback = actor.activation?.fallback || "silent";
   // Every actor has both: how it speaks in the conversation (if it does) and what it may do in the world.
@@ -368,7 +371,7 @@ function summary(actor, actionIds, loudChannels) {
     `${C.ifNoAnswer}: ${
       permitted.includes(fallback)
         ? C.form.takesAction(fallback)
-        : C.form.fallbackLabel(fallback)
+        : C.form.fallbackLabel(nameOf(fallback))
     }`,
     ACTORS_COPY.callActors.scenarios(actor.scenarios ?? 0),
   ]
@@ -384,6 +387,7 @@ function ActorRow({
   onRemove,
   actionIds,
   loudChannels,
+  nameOf,
   deleting,
   busy,
 }) {
@@ -472,7 +476,7 @@ function ActorRow({
               wordBreak: "break-word",
             }}
           >
-            {summary(actor, actionIds, loudChannels)}
+            {summary(actor, actionIds, loudChannels, nameOf)}
           </Typography>
         </Box>
         <Stack
@@ -577,6 +581,7 @@ ActorRow.propTypes = {
   onRemove: PropTypes.func,
   actionIds: PropTypes.arrayOf(PropTypes.string),
   loudChannels: PropTypes.arrayOf(PropTypes.string),
+  nameOf: PropTypes.func.isRequired,
   deleting: PropTypes.bool,
   busy: PropTypes.bool,
 };
