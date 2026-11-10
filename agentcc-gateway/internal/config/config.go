@@ -1079,6 +1079,12 @@ func Load(path string) (*Config, error) {
 
 	loadFromEnv(cfg)
 
+	// Presets must supply required fields before validation, not just at registry creation.
+	for name, provider := range cfg.Providers {
+		ApplyProviderPreset(&provider)
+		cfg.Providers[name] = provider
+	}
+
 	// The control plane checks the gateway's calls against the same shared
 	// admin token (Django's AGENTCC_ADMIN_TOKEN), so a gateway told only the
 	// one token can still sync keys and org configs.
