@@ -6,6 +6,7 @@ Run with: pytest model_hub/tests/test_run_prompt_tasks.py -v
 
 from datetime import timedelta
 from unittest.mock import MagicMock, PropertyMock, patch
+from uuid import UUID
 
 import pytest
 from django.utils import timezone
@@ -503,3 +504,320 @@ class TestLiteLLMResponseMethodSignature:
             "litellm_response should be called without arguments, "
             "not with run_prompt_id or any other invalid parameter"
         )
+
+
+class TestRunPromptPersistence:
+    """Exercise the row worker without a provider, database, or billing service."""
+
+    @pytest.fixture
+    def execution(self, monkeypatch):
+        import sys
+        from types import ModuleType, SimpleNamespace
+        from unittest.mock import Mock
+
+        from django.db import transaction
+
+        from model_hub.views import run_prompt as module
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        state = SimpleNamespace(
+            history=[],
+            save_failures=0,
+            persisted_status=APICallStatusChoices.PROCESSING.value,
+        )
+
+        def save_status(**kwargs):
+            state.history.append(f"status:{api_call.status}")
+            if state.save_failures:
+                state.save_failures -= 1
+                raise RuntimeError("status save unavailable")
+            state.persisted_status = api_call.status
+
+        def update_status(*, status):
+            state.history.append(f"update:{status}")
+            state.persisted_status = status
+            return 1
+
+        class ApiCall:
+            objects = Mock()
+
+        api_call = ApiCall()
+        api_call.pk = api_call.id = 2080
+        api_call.log_id = UUID("550e8400-e29b-41d4-a716-446655442080")
+        api_call.status = state.persisted_status
+        api_call.save = Mock(side_effect=save_status)
+        state.api_call = api_call
+        state.fallback = ApiCall.objects.filter.return_value.update
+        state.fallback.side_effect = update_status
+
+        class MissingCell(Exception):
+            pass
+
+        def persist_cell(**kwargs):
+            state.history.append("cell")
+            return state.cell
+
+        state.cell = SimpleNamespace(id="cell-2080", save=Mock(side_effect=persist_cell))
+        state.cells = Mock()
+        state.cells.create.side_effect = persist_cell
+        state.cells.get.return_value = state.cell
+        state.missing_cell = MissingCell
+        monkeypatch.setattr(
+            module, "Cell", SimpleNamespace(objects=state.cells, DoesNotExist=MissingCell)
+        )
+
+        dataset = SimpleNamespace(id="dataset-2080", workspace=None)
+        state.row = SimpleNamespace(id="row-2080", dataset=dataset)
+        state.column = SimpleNamespace(id="column-2080")
+        state.runner = module.RunPrompts("prompt-2080")
+        state.runner.is_editing = False
+        state.runner.run_prompt_model = SimpleNamespace(
+            organization=SimpleNamespace(id="org-2080"),
+            dataset=dataset,
+            model="gpt-4o",
+            messages=[],
+            run_prompt_config={},
+            temperature=None,
+            frequency_penalty=None,
+            presence_penalty=None,
+            top_p=None,
+            response_format=None,
+            tool_choice=None,
+            output_format="string",
+        )
+        state.validate = Mock(return_value=api_call)
+        monkeypatch.setattr(module, "log_and_deduct_cost_for_api_request", state.validate)
+        monkeypatch.setattr(module, "populate_placeholders", Mock(return_value=[]))
+        monkeypatch.setattr(
+            module, "remove_empty_text_from_messages", lambda messages: messages
+        )
+        monkeypatch.setattr(
+            module, "get_specific_error_message", Mock(return_value="Run failed")
+        )
+        monkeypatch.setattr(
+            module, "get_error_for_api_status", Mock(return_value="Request denied")
+        )
+
+        def respond():
+            state.history.append("model")
+            return "answer", {"data": {"response": "answer"}}
+
+        state.provider = Mock(side_effect=respond)
+        provider_class = Mock()
+        provider_class.return_value.litellm_response = state.provider
+        monkeypatch.setattr(module, "RunPrompt", provider_class)
+        state.close = Mock()
+        monkeypatch.setattr(module, "close_old_connections", state.close)
+        state.real_on_commit = transaction.on_commit
+        state.on_commit = Mock(side_effect=lambda callback: callback())
+        monkeypatch.setattr(transaction, "on_commit", state.on_commit)
+
+        events = ModuleType("ee.usage.schemas.events")
+        events.UsageEvent = Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs))
+        emitter = ModuleType("ee.usage.services.emitter")
+        emitter.emit = Mock(side_effect=lambda event: state.history.append("usage"))
+        monkeypatch.setitem(sys.modules, events.__name__, events)
+        monkeypatch.setitem(sys.modules, emitter.__name__, emitter)
+        state.emit = emitter.emit
+        state.module = module
+        return state
+
+    @staticmethod
+    def configure_cell_path(execution, cell_path):
+        execution.runner.is_editing = cell_path != "create"
+        if cell_path == "edit_missing":
+            execution.cells.get.side_effect = execution.missing_cell
+
+    @pytest.mark.parametrize("cell_path", ["create", "edit", "edit_missing"])
+    @pytest.mark.parametrize("save_failures", [0, 1, 2])
+    def test_success_is_persisted_before_single_usage_event(
+        self, execution, cell_path, save_failures
+    ):
+        self.configure_cell_path(execution, cell_path)
+        execution.save_failures = save_failures
+
+        execution.runner.process_row(execution.row, execution.column)
+
+        assert execution.history[:2] == ["model", "cell"]
+        assert execution.history[-1] == "usage"
+        assert execution.persisted_status == "success"
+        assert execution.api_call.save.call_count == min(save_failures + 1, 2)
+        execution.on_commit.assert_called_once()
+        execution.emit.assert_called_once()
+        event = execution.emit.call_args.args[0]
+        assert event.org_id == "org-2080"
+        assert event.event_type == "dataset_run_prompt"
+        assert isinstance(event.event_id, str)
+        assert UUID(event.event_id) == execution.api_call.log_id
+        assert event.event_id == str(execution.api_call.log_id)
+        if save_failures == 2:
+            type(execution.api_call).objects.filter.assert_called_once_with(pk=2080)
+            execution.fallback.assert_called_once_with(status="success")
+        else:
+            execution.fallback.assert_not_called()
+        execution.close.assert_called_once()
+
+    @pytest.mark.parametrize("save_failures", [0, 1, 2])
+    def test_provider_failure_persists_error_without_usage(self, execution, save_failures):
+        execution.save_failures = save_failures
+        execution.provider.side_effect = RuntimeError("provider unavailable")
+
+        execution.runner.process_row(execution.row, execution.column)
+
+        assert execution.persisted_status == "error"
+        assert (
+            execution.cells.create.call_args.kwargs["status"]
+            == execution.module.CellStatus.ERROR.value
+        )
+        assert execution.api_call.save.call_count == min(save_failures + 1, 2)
+        execution.emit.assert_not_called()
+        if save_failures == 2:
+            execution.fallback.assert_called_once_with(status="error")
+        execution.close.assert_called_once()
+
+    @pytest.mark.parametrize("cell_path", ["create", "edit", "edit_missing"])
+    def test_failed_cell_persist_records_error_without_usage(self, execution, cell_path):
+        self.configure_cell_path(execution, cell_path)
+        execution.cells.create.side_effect = RuntimeError("cell persist unavailable")
+        execution.cell.save.side_effect = RuntimeError("cell persist unavailable")
+
+        with pytest.raises(RuntimeError, match="cell persist unavailable"):
+            execution.runner.process_row(execution.row, execution.column)
+
+        assert execution.persisted_status == "error"
+        execution.emit.assert_not_called()
+        execution.close.assert_called_once()
+
+    @pytest.mark.parametrize("fallback_failure", ["exception", "missing_row"])
+    def test_unpersistable_error_status_raises(self, execution, fallback_failure):
+        execution.provider.side_effect = RuntimeError("provider unavailable")
+        execution.save_failures = 2
+        if fallback_failure == "exception":
+            execution.fallback.side_effect = RuntimeError("status update unavailable")
+        else:
+            execution.fallback.side_effect = None
+            execution.fallback.return_value = 0
+
+        with pytest.raises(RuntimeError, match="Unable to persist run-prompt API call status"):
+            execution.runner.process_row(execution.row, execution.column)
+
+        assert execution.persisted_status == "processing"
+        assert execution.api_call.save.call_count == 2
+        execution.fallback.assert_called_once_with(status="error")
+        execution.emit.assert_not_called()
+        execution.close.assert_called_once()
+
+    def test_failed_success_status_records_error_and_does_not_emit(self, execution):
+        execution.save_failures = 2
+        execution.fallback.side_effect = None
+        execution.fallback.return_value = 0
+
+        with pytest.raises(RuntimeError, match="Unable to persist run-prompt API call status"):
+            execution.runner.process_row(execution.row, execution.column)
+
+        assert "cell" in execution.history
+        assert execution.persisted_status == "error"
+        execution.emit.assert_not_called()
+        execution.close.assert_called_once()
+
+    def test_usage_waits_for_commit(self, execution):
+        callbacks = []
+        execution.on_commit.side_effect = callbacks.append
+
+        execution.runner.process_row(execution.row, execution.column)
+
+        assert execution.persisted_status == "success"
+        execution.emit.assert_not_called()
+        assert len(callbacks) == 1
+        callbacks[0]()
+        execution.emit.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "log_id",
+        ["550e8400-e29b-41d4-a716-446655442080", "550e8400-e29b-41d4-a716-446655442081"],
+        ids=["first-call", "second-call"],
+    )
+    def test_replayed_usage_callback_keeps_event_uuid(self, execution, log_id):
+        execution.api_call.log_id = UUID(log_id)
+        callbacks = []
+        execution.on_commit.side_effect = callbacks.append
+        execution.emit.side_effect = [RuntimeError("meter unavailable"), None]
+
+        execution.runner.process_row(execution.row, execution.column)
+
+        execution.on_commit.assert_called_once()
+        execution.emit.assert_not_called()
+        # Explicitly replay delivery for the saved call; the worker itself does not retry.
+        callbacks[0]()
+        callbacks[0]()
+
+        event_ids = [call.args[0].event_id for call in execution.emit.call_args_list]
+        assert event_ids == [log_id, log_id]
+        assert all(UUID(event_id) == execution.api_call.log_id for event_id in event_ids)
+        assert execution.persisted_status == "success"
+        execution.api_call.save.assert_called_once_with(update_fields=["status"])
+        execution.provider.assert_called_once()
+        execution.cells.create.assert_called_once()
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.parametrize("rollback", [False, True], ids=["commit", "rollback"])
+    def test_usage_follows_outer_transaction(self, execution, monkeypatch, rollback):
+        from django.db import transaction
+
+        monkeypatch.setattr(transaction, "on_commit", execution.real_on_commit)
+        with transaction.atomic():
+            execution.runner.process_row(execution.row, execution.column)
+            execution.emit.assert_not_called()
+            if rollback:
+                transaction.set_rollback(True)
+
+        assert execution.emit.call_count == (0 if rollback else 1)
+
+    def test_emitter_failure_does_not_undo_success_or_retry_usage(self, execution):
+        execution.emit.side_effect = RuntimeError("meter unavailable")
+
+        execution.runner.process_row(execution.row, execution.column)
+
+        assert execution.history[:2] == ["model", "cell"]
+        assert execution.persisted_status == "success"
+        execution.emit.assert_called_once()
+        execution.close.assert_called_once()
+
+    @pytest.mark.parametrize("rejected_status", ["rate_limited", "resource_limit"])
+    def test_rejected_call_keeps_its_status_and_never_emits(self, execution, rejected_status):
+        execution.api_call.status = execution.persisted_status = rejected_status
+
+        execution.runner.process_row(execution.row, execution.column)
+
+        assert execution.persisted_status == rejected_status
+        execution.api_call.save.assert_not_called()
+        execution.fallback.assert_not_called()
+        execution.provider.assert_not_called()
+        execution.emit.assert_not_called()
+
+    @pytest.mark.parametrize("validation_failure", ["exception", "missing_row"])
+    def test_validation_failure_does_not_mask_cell_error(self, execution, validation_failure):
+        if validation_failure == "exception":
+            execution.validate.side_effect = RuntimeError("validation unavailable")
+        else:
+            execution.validate.return_value = None
+
+        execution.runner.process_row(execution.row, execution.column)
+
+        assert (
+            execution.cells.create.call_args.kwargs["status"]
+            == execution.module.CellStatus.ERROR.value
+        )
+        execution.provider.assert_not_called()
+        execution.emit.assert_not_called()
+        execution.api_call.save.assert_not_called()
+        execution.close.assert_called_once()
+
+    def test_oss_without_billing_still_persists_cell(self, execution, monkeypatch):
+        monkeypatch.setattr(execution.module, "log_and_deduct_cost_for_api_request", None)
+
+        execution.runner.process_row(execution.row, execution.column)
+
+        assert execution.history == ["model", "cell"]
+        execution.emit.assert_not_called()
+        execution.close.assert_called_once()
