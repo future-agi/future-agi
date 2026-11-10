@@ -266,51 +266,53 @@ const ChatMessageView = ({
   }, [input, attrInputMessages]);
 
   // Parse output — prefer attribute-extracted, fall back to raw output
-  const outputMessage = useMemo(() => {
+  const outputMessages = useMemo(() => {
     if (attrOutputMessages?.length > 0) {
-      return normalizeMessage(attrOutputMessages[0]);
+      return attrOutputMessages.map(normalizeMessage);
     }
-    if (output == null || output === "") return null;
+    if (output == null || output === "") return [];
     let data = output;
     if (typeof data === "string") {
       try {
         data = JSON.parse(data);
       } catch {
-        return { role: "assistant", content: [output] };
+        return [{ role: "assistant", content: [output] }];
       }
     }
-    if (data == null || (Array.isArray(data) && data.length === 0)) return null;
+    if (data == null || (Array.isArray(data) && data.length === 0)) return [];
+    // Role-bearing arrays are separate messages; other arrays are reply blocks.
+    if (
+      Array.isArray(data) &&
+      data.every((message) => typeof message?.role === "string" && message.role)
+    ) {
+      return data.map(normalizeMessage);
+    }
+    // Raw OpenAI completion: {choices: [{message: {role, content}}]}.
+    if (typeof data.choices?.[0]?.message?.role === "string") {
+      return [normalizeMessage(data.choices[0].message)];
+    }
     // Gemini output: {content: {role: "model", parts: [{text: "..."}]}}
     if (typeof data === "object" && data.content && data.content.role) {
-      return normalizeMessage(data.content);
+      return [normalizeMessage(data.content)];
     }
     // OpenAI: {role, content}
-    if (typeof data === "object" && data.role) return normalizeMessage(data);
+    if (typeof data === "object" && data.role) return [normalizeMessage(data)];
     if (
       typeof data === "object" &&
       data.content &&
       typeof data.content === "string"
     ) {
-      return { role: "assistant", content: [data.content] };
+      return [{ role: "assistant", content: [data.content] }];
     }
     // Raw output may be content blocks or a JSON scalar, not a message envelope.
     // Keep unknown blocks as JSON rather than silently hiding the model's reply.
-    return normalizeMessage({ role: "assistant", content: data });
+    return [normalizeMessage({ role: "assistant", content: data })];
   }, [output, attrOutputMessages]);
 
-  const allMessages = useMemo(() => {
-    const msgs = [...messages];
-    // Add output as last assistant message if not already present
-    if (
-      outputMessage &&
-      !msgs.some(
-        (m) => m.role === "assistant" && m.content === outputMessage.content,
-      )
-    ) {
-      msgs.push(outputMessage);
-    }
-    return msgs;
-  }, [messages, outputMessage]);
+  const allMessages = useMemo(
+    () => [...messages, ...outputMessages],
+    [messages, outputMessages],
+  );
 
   const COLLAPSE_THRESHOLD = 4;
   const shouldCollapse = allMessages.length > COLLAPSE_THRESHOLD && !showAll;

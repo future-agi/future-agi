@@ -46,6 +46,16 @@ const replies = [
   ["JSON string", JSON.stringify(reply)],
   ["OpenAI message", JSON.stringify({ role: "assistant", content: reply })],
   [
+    "OpenAI completion",
+    JSON.stringify({
+      choices: [{ message: { role: "assistant", content: reply } }],
+    }),
+  ],
+  [
+    "decoded OpenAI completion",
+    { choices: [{ message: { role: "assistant", content: reply } }] },
+  ],
+  [
     "Gemini message",
     JSON.stringify({ content: { role: "model", parts: [{ text: reply }] } }),
   ],
@@ -97,6 +107,80 @@ describe.each(["chat", "markdown"])(
       expect(screen.getByText("assistant")).toBeVisible();
       expect(screen.getByText(/read_file/)).toBeVisible();
       expect(screen.getByText(/stats\.py/)).toBeVisible();
+    });
+
+    it.each(["encoded", "decoded"])(
+      "renders %s role-bearing output arrays as separate ordered messages",
+      (encoding) => {
+        const output = [
+          { role: "tool", content: "Median calculation verified." },
+          { role: "assistant", content: [{ type: "text", text: reply }] },
+        ];
+        render(
+          preview(
+            encoding === "encoded" ? JSON.stringify(output) : output,
+            mode,
+          ),
+        );
+
+        const toolReply = screen.getByText("Median calculation verified.");
+        const answer = screen.getByText(reply);
+        expect(screen.getByText("tool")).toBeVisible();
+        expect(screen.getAllByText("assistant")).toHaveLength(1);
+        expect(screen.getAllByText(reply)).toHaveLength(1);
+        expect(
+          toolReply.compareDocumentPosition(answer) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+      },
+    );
+
+    it("normalizes parts in role-bearing output arrays", () => {
+      render(
+        preview(
+          [
+            { role: "tool", parts: [{ text: "Read stats.py." }] },
+            { role: "model", parts: [{ text: reply }] },
+          ],
+          mode,
+        ),
+      );
+      expect(screen.getByText("tool")).toBeVisible();
+      expect(screen.getByText("model")).toBeVisible();
+      expect(screen.getByText("Read stats.py.")).toBeVisible();
+      expect(screen.getByText(reply)).toBeVisible();
+    });
+
+    it.each([
+      [null, { type: "text", text: reply }],
+      [{ role: { malformed: true } }, { type: "text", text: reply }],
+      [
+        { role: "tool", content: "mixed envelope" },
+        { type: "text", text: reply },
+      ],
+    ])(
+      "keeps mixed or malformed array items as reply blocks: %j",
+      (...blocks) => {
+        render(preview(blocks, mode));
+        expect(screen.getByText("assistant")).toBeVisible();
+        expect(screen.getByText(reply)).toBeVisible();
+        expect(screen.queryByText("tool")).not.toBeInTheDocument();
+      },
+    );
+
+    it("retains every attribute-extracted output message", () => {
+      render(
+        preview("raw fallback", mode, {
+          "llm.output_messages.0.message.role": "tool",
+          "llm.output_messages.0.message.content": "Attribute tool result.",
+          "llm.output_messages.1.message.role": "assistant",
+          "llm.output_messages.1.message.content": reply,
+        }),
+      );
+      expect(screen.getByText("tool")).toBeVisible();
+      expect(screen.getByText("Attribute tool result.")).toBeVisible();
+      expect(screen.getAllByText(reply)).toHaveLength(1);
+      expect(screen.queryByText("raw fallback")).not.toBeInTheDocument();
     });
 
     it("preserves text and tool blocks together", () => {
