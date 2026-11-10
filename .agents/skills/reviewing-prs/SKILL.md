@@ -149,8 +149,22 @@ State in the review what you ran and what you did not run, with the predicate th
 
 ### 5. Trace the load-bearing path, then fan out by lens
 
-Trace the main changed path end to end yourself first — inputs, the branch that changed, the value
-written, the value read back. Then fan out.
+Trace the main changed path end to end yourself first. For each changed behaviour, keep an internal
+trace map: entry point → representation → branch → canonical write → consumer and read-back.
+Include alternate writers, supported result shapes and picker roots where relevant. Mark untraced
+paths as limitations, not covered; do not commit a new checklist file.
+
+Use adversarial cases only where the diff touches the behaviour:
+
+- Async reads: refresh while an old load is in flight, then follow its completion and the current load.
+- Persistence: edit, save, reopen and rerun through each changed edit entry point.
+- Mutable authoring: add, drop and finalize; distinguish provisional state from committed history.
+- Permission predicates: compare old/new truth tables for absent, empty and populated inputs,
+  including previously allowed and denied cases, against the stated policy.
+- Recovery: restart with each available persisted producer format.
+
+For changed workflow failures, trace both orchestration status and the durable status users read.
+Then fan out. Complete and verify correctness traces before hygiene observations.
 
 The rules live in [references/standards-checklist.md](references/standards-checklist.md), grouped by
 lens; load the section for the lens you are working, not the whole file. Every lens also loads the
@@ -185,9 +199,18 @@ checklist row is the citation.
 Reproduce the mechanism, grep the claim across the repo, or read the framework's own code. A wrong P0
 on a public review is worse than a missed P3.
 
+For every functional finding, ask: would the proposed fix prevent the stated failure with the stated
+input or interleaving? Verify both allowed and denied cases against policy; a newly restrictive
+predicate is not itself the specification. A wording fix, test request, typing cleanup or adjacent
+bug does not establish detection of a different mechanism.
+
+Separate source-demonstrable defects from operational hypotheses. When needed, ask for sanitized
+deployed fixtures or representative size/memory evidence; do not present an unverified hypothesis as
+a defect. Run runtime verification only on approved temporary GCP or E2B environments.
+
 If verification kills the finding, it does not go in the review — not as a hedged paragraph, not as
 "defence in depth", not as a nit. If verification only weakens it, it goes in at the severity the
-evidence supports.
+evidence supports. Deduplicate findings by failure mechanism before writing the review.
 
 ### 7. Write the review
 
