@@ -369,10 +369,11 @@ const PersonCreateBaseValidationSchema = z.object({
   profession: z.array(z.string()).transform((val) => (val.length ? val : null)),
   personality: z
     .array(z.object({ value: z.string() }))
-    .transform((val) => (val.length ? val?.map((item) => item.value) : null)),
+    .min(1, "Personality is required")
+    .transform((val) => val.map((item) => item.value)),
   communicationStyle: z
     .array(z.string())
-    .transform((val) => (val.length ? val : null)),
+    .min(1, "Communication style is required"),
   accent: z.array(z.string()).transform((val) => (val.length ? val : null)),
   conversationSpeed: z
     .array(z.object({ value: z.string() }))
@@ -431,6 +432,16 @@ export const PersonCreateValidationSchema = z
       ...PersonCreateBaseValidationSchema.shape,
     }),
   ])
+  // Only voice personas show the Accent field, so only they need one.
+  .superRefine((data, ctx) => {
+    if (data.simulationType === "voice" && !data.accent) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["accent"],
+        message: "Accent is required",
+      });
+    }
+  })
   .transform((data) => {
     return {
       ...data,

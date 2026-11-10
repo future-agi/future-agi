@@ -1,5 +1,5 @@
-import React from "react";
-import { Box, Button, Typography } from "@mui/material";
+import React, { useId } from "react";
+import { Box, Button, FormHelperText, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { useController, useFieldArray, useFormContext } from "react-hook-form";
 import logger from "src/utils/logger";
@@ -19,7 +19,17 @@ const OptionSelectors = ({
     name: fieldName,
   });
 
-  const { field } = useController({ control, name: fieldName });
+  const { field, fieldState } = useController({ control, name: fieldName });
+  const errorMessage = fieldState.error?.message;
+
+  const id = useId();
+  const labelId = `${id}-label`;
+  const descriptionId = `${id}-description`;
+  const errorId = `${id}-error`;
+  const describedBy =
+    [description && descriptionId, errorMessage && errorId]
+      .filter(Boolean)
+      .join(" ") || undefined;
 
   const getIsSelected = (value) => {
     logger.debug("getIsSelected", field.value, value);
@@ -52,7 +62,7 @@ const OptionSelectors = ({
             alignItems: "center",
           }}
         >
-          <Typography variant="s1_2" fontWeight="fontWeightMedium">
+          <Typography id={labelId} variant="s1_2" fontWeight="fontWeightMedium">
             {label}
           </Typography>
           <ShowComponent condition={showClearButton}>
@@ -72,6 +82,7 @@ const OptionSelectors = ({
           </ShowComponent>
         </Box>
         <Typography
+          id={descriptionId}
           typography="s1"
           fontWeight="fontWeightRegular"
           color="text.secondary"
@@ -79,33 +90,38 @@ const OptionSelectors = ({
           {description}
         </Typography>
       </Box>
-      <Box sx={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+      <Box
+        role="group"
+        aria-labelledby={labelId}
+        aria-describedby={describedBy}
+        sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}
+      >
         {options.map(({ label, value }) => {
           const isSelected = getIsSelected(value);
 
           return (
-            <Box
+            <Button
               key={value}
+              type="button"
+              variant="outlined"
+              size="small"
+              aria-pressed={isSelected}
               sx={{
-                padding: "4px 12px",
-                borderRadius: "4px",
-                border: "1px solid",
-                borderColor: isSelected ? "primary.main" : "divider",
-                cursor: "pointer",
-                backgroundColor: isSelected
-                  ? "action.hover"
-                  : "background.paper",
-                transition: "background-color, border-color, 200ms ease-in-out",
+                borderColor: isSelected ? "text.primary" : undefined,
+                backgroundColor: isSelected ? "action.selected" : undefined,
               }}
               onClick={() => {
                 onToggle(value, isSelected);
               }}
             >
-              <Typography variant="s1">{label}</Typography>
-            </Box>
+              <Typography variant="s1" component="span">{label}</Typography>
+            </Button>
           );
         })}
       </Box>
+      <ShowComponent condition={Boolean(errorMessage)}>
+        <FormHelperText id={errorId} error>{errorMessage}</FormHelperText>
+      </ShowComponent>
     </Box>
   );
 };

@@ -94,6 +94,13 @@ async function main() {
           'input[placeholder="Select language"]',
           "English",
         );
+        await clickVisibleText(page, "🤝 Friendly and cooperative");
+        await selectDropdownOption(
+          page,
+          'input[placeholder="Direct and concise"]',
+          "Direct and concise",
+        );
+        await closeMultiSelectMenu(page, "Direct and concise");
         await clickButtonByText(page, "Save");
       },
     );

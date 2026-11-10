@@ -6,6 +6,32 @@ from tfc.middleware.workspace_context import (
     get_current_workspace,
 )
 
+BEHAVIOURAL_SETTING_ERRORS = {
+    "personality": "At least one personality is required.",
+    "communication_style": "At least one communication style is required.",
+    "accent": "At least one accent is required for voice personas.",
+}
+
+
+def behavioural_setting_errors(attrs, simulation_type, skip_missing=False):
+    """Errors for Behavioural Settings left empty.
+
+    Accent only applies to voice personas. With ``skip_missing`` a field the
+    request leaves out is not checked, so updates to other fields still work
+    on personas saved before these settings were required.
+    """
+    voice = Persona.SimulationTypeChoices.VOICE
+    is_voice = (simulation_type or voice) == voice
+    errors = {}
+    for field, message in BEHAVIOURAL_SETTING_ERRORS.items():
+        if field == "accent" and not is_voice:
+            continue
+        if skip_missing and field not in attrs:
+            continue
+        if not attrs.get(field):
+            errors[field] = message
+    return errors
+
 
 class PersonaSerializer(serializers.ModelSerializer):
     """
@@ -97,6 +123,13 @@ class PersonaSerializer(serializers.ModelSerializer):
         # Note: organization and workspace are not in the serializer fields
         # They are handled automatically in the view layer from user context
         # No validation needed here since they're set internally
+        errors = behavioural_setting_errors(
+            attrs,
+            getattr(self.instance, "simulation_type", None),
+            skip_missing=True,
+        )
+        if errors:
+            raise serializers.ValidationError(errors)
         return attrs
 
     def get_simulation_type(self, obj):
@@ -577,6 +610,10 @@ class PersonaCreateSerializer(serializers.Serializer):
                             "custom_properties": f"Value for property '{key}' must be a non-empty string."
                         }
                     )
+
+        errors = behavioural_setting_errors(attrs, attrs.get("simulation_type"))
+        if errors:
+            raise serializers.ValidationError(errors)
 
         return attrs
 

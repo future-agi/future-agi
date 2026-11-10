@@ -286,6 +286,9 @@ class TestPersonaCRUD:
         payload = {
             "name": "Created Persona",
             "description": "A persona created via the API",
+            "personality": ["Friendly and cooperative"],
+            "communication_style": ["Direct and concise"],
+            "accent": ["american"],
         }
         payload.update(overrides)
         return payload
@@ -342,6 +345,69 @@ class TestPersonaCRUD:
         assert persona.workspace_id == workspace.id
         assert persona.workspace_id != other_workspace.id
 
+    @pytest.mark.parametrize(
+        ("field", "message"),
+        [
+            ("personality", "At least one personality is required."),
+            (
+                "communication_style",
+                "At least one communication style is required.",
+            ),
+            ("accent", "At least one accent is required for voice personas."),
+        ],
+    )
+    @pytest.mark.parametrize("empty_value", [[], None])
+    def test_create_rejects_empty_behavioural_setting(
+        self, auth_client, field, message, empty_value
+    ):
+        response = auth_client.post(
+            "/simulate/api/personas/",
+            self._create_payload(name="Empty Behaviour", **{field: empty_value}),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["status"] is False
+        assert data["details"][field] == [message]
+        assert not Persona.no_workspace_objects.filter(
+            name="Empty Behaviour"
+        ).exists()
+
+    def test_create_reports_each_missing_behavioural_setting(self, auth_client):
+        response = auth_client.post(
+            "/simulate/api/personas/",
+            {
+                "name": "No Behaviour",
+                "description": "A persona with no behavioural settings",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        details = response.json()["details"]
+        assert details["personality"] == ["At least one personality is required."]
+        assert details["communication_style"] == [
+            "At least one communication style is required."
+        ]
+        assert details["accent"] == [
+            "At least one accent is required for voice personas."
+        ]
+
+    def test_create_text_persona_without_accent(self, auth_client):
+        response = auth_client.post(
+            "/simulate/api/personas/",
+            self._create_payload(
+                name="Text Persona", simulation_type="text", accent=[]
+            ),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        result = response.json()["result"]
+        assert result["simulation_type"] == "text"
+        assert result["personality"] == ["Friendly and cooperative"]
+
     def test_retrieve_returns_persona_detail(self, auth_client, source_persona):
         response = auth_client.get(f"/simulate/api/personas/{source_persona.id}/")
 
@@ -380,6 +446,50 @@ class TestPersonaCRUD:
         assert response.json()["result"]["description"] == "Patched description"
         source_persona.refresh_from_db()
         assert source_persona.description == "Patched description"
+
+    @pytest.mark.parametrize(
+        ("field", "message"),
+        [
+            ("personality", "At least one personality is required."),
+            (
+                "communication_style",
+                "At least one communication style is required.",
+            ),
+            ("accent", "At least one accent is required for voice personas."),
+        ],
+    )
+    def test_partial_update_rejects_clearing_behavioural_setting(
+        self, auth_client, source_persona, field, message
+    ):
+        setattr(source_persona, field, ["kept"])
+        source_persona.save(update_fields=[field])
+
+        response = auth_client.patch(
+            f"/simulate/api/personas/{source_persona.id}/",
+            {field: []},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"][field] == [message]
+        source_persona.refresh_from_db()
+        assert getattr(source_persona, field) == ["kept"]
+
+    def test_partial_update_allows_empty_accent_for_text_persona(
+        self, auth_client, source_persona
+    ):
+        source_persona.simulation_type = Persona.SimulationTypeChoices.TEXT
+        source_persona.save(update_fields=["simulation_type"])
+
+        response = auth_client.patch(
+            f"/simulate/api/personas/{source_persona.id}/",
+            {"accent": None, "description": "Text persona edit"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        source_persona.refresh_from_db()
+        assert source_persona.description == "Text persona edit"
 
     def test_partial_update_other_workspace_returns_404(
         self, auth_client, other_workspace_persona
