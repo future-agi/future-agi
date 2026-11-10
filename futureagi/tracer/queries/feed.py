@@ -206,6 +206,18 @@ def _cluster_escalation(cluster: TraceErrorGroup) -> FeedEscalation | None:
         return None
 
 
+def _cluster_escalation_error(cluster: TraceErrorGroup) -> str | None:
+    """Why the latest automatic check failed; ``escalation`` keeps the last success."""
+    if cluster.status_origin != "system":
+        return None
+    error = cluster.escalation_state.get("evaluation_error")
+    if not error:
+        return None
+    return (
+        "evidence_unavailable" if error == "CountUnavailable" else "calculation_failed"
+    )
+
+
 def _current_memberships() -> QuerySet:
     """Source-aware active memberships; legacy scanner/eval rows keep their unit."""
     from tracer.services.feed_escalation_inputs import current_memberships
@@ -522,6 +534,7 @@ def _row_from_cluster(
         status_origin=cluster.status_origin,
         status_revision=cluster.status_revision,
         escalation=_cluster_escalation(cluster),
+        escalation_error=_cluster_escalation_error(cluster),
         severity=priority_to_severity(cluster.priority),
         severity_assessment_status=cluster.severity_assessment_status,
         severity_source=cluster.severity_source,

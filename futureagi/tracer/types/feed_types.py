@@ -91,6 +91,7 @@ class FeedListRow:
     status_origin: str = "legacy_unknown"
     status_revision: int = 0
     escalation: FeedEscalation | None = None
+    escalation_error: str | None = None
 
 
 @dataclass

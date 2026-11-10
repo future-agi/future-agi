@@ -115,6 +115,12 @@ class FeedListRowSerializer(serializers.Serializer):
     )
     status_revision = serializers.IntegerField(required=False)
     escalation = FeedEscalationSerializer(allow_null=True, required=False)
+    escalation_error = serializers.ChoiceField(
+        choices=["evidence_unavailable", "calculation_failed"],
+        allow_null=True,
+        required=False,
+        help_text="Why the latest automatic escalation check failed; null when it succeeded.",
+    )
     severity_assessment_status = serializers.CharField(required=False)
     severity_source = serializers.CharField(required=False)
     severity_reason = serializers.CharField(allow_blank=True, required=False)

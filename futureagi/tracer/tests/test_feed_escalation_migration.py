@@ -143,8 +143,8 @@ def test_upgrade_resets_legacy_escalating_and_preserves_other_statuses(
         # Runtime preserves the reset while timestamps are missing, then repairs
         # real source times and requires fresh confirmation before escalating.
         monkeypatch.setattr(
-            "tracer.services.feed_escalation_evidence.capture_occurrence",
-            lambda **kwargs: (None, ""),
+            "tracer.services.feed_escalation_evidence.capture_trace_occurrences",
+            lambda project_id, trace_ids: {str(t): (None, "") for t in trace_ids},
         )
         now = T + timedelta(minutes=10)
         assert evaluate_issue(cluster.pk, now=now) == "error"
@@ -153,8 +153,10 @@ def test_upgrade_resets_legacy_escalating_and_preserves_other_statuses(
         assert cluster.status == "for_review"
         assert cluster.escalation_state["evaluation_error"] == "CountUnavailable"
         monkeypatch.setattr(
-            "tracer.services.feed_escalation_evidence.capture_occurrence",
-            lambda **kwargs: (T - timedelta(minutes=20), "trace_end"),
+            "tracer.services.feed_escalation_evidence.capture_trace_occurrences",
+            lambda project_id, trace_ids: {
+                str(t): (T - timedelta(minutes=20), "trace_end") for t in trace_ids
+            },
         )
         monkeypatch.setattr(
             "tracer.services.feed_escalation._wake_issue", lambda pk: None

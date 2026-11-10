@@ -26,11 +26,16 @@ No AuditLog or source-configuration/task schema changes are included.
 
 The migration does not replay historical growth or immediately re-escalate issues.
 It schedules runtime checks, which require fresh confirmation before escalation
-and honor the rollout controls below. Missing source timestamps block automatic
-transitions; runtime retries recover original scanner/eval completion times in
-bounded batches. Unavailable timestamps are never replaced with migration time.
+and honor the rollout controls below. A missing source timestamp blocks automatic
+transitions only when its finding was recorded inside the evaluation range (the
+current and baseline windows plus the processing allowance, about 25 hours): a
+finding is recorded after it occurs, so older rows can never change a count.
+Runtime retries recover those recent times with one batched ClickHouse read per
+issue per check. Unavailable timestamps are never replaced with migration time.
 Omega completion times available in PostgreSQL are recovered during migration.
-For proactive preparation or retrying unavailable evidence, run
+While a check keeps failing, the Feed APIs return `escalation_error`
+(`evidence_unavailable` or `calculation_failed`) next to the last successful
+`escalation` reason. For proactive preparation of full history, run
 `python manage.py prepare_feed_escalation_evidence --help` for selected workspaces.
 
 Automation defaults to `ERROR_FEED_ESCALATION_MODE=shadow` and scanner sources.

@@ -120533,6 +120533,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         escalation: {
           $ref: "#/definitions/FeedEscalation",
         },
+        escalation_error: {
+          title: "Escalation error",
+          description:
+            "Why the latest automatic escalation check failed; null when it succeeded.",
+          type: "string",
+          enum: ["evidence_unavailable", "calculation_failed"],
+          "x-nullable": true,
+        },
         severity_assessment_status: {
           title: "Severity assessment status",
           type: "string",

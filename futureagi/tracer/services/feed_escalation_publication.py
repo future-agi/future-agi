@@ -6,7 +6,10 @@ from django.db import transaction
 from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
 from tracer.models.trace_scan import TraceScanIssue
 from tracer.services.feed_escalation import request_evaluation
-from tracer.services.feed_escalation_inputs import source_occurrence_time
+from tracer.services.feed_escalation_inputs import (
+    source_occurrence_time,
+    trace_end_times,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -23,6 +26,19 @@ def capture_occurrence(**source):
     # Keep publication available; the evaluator fails closed and timestamp
     # preparation retries missing source evidence without fabricating time.
     return None, ""
+
+
+def capture_trace_occurrences(project_id, trace_ids):
+    """``capture_occurrence`` for many traces in one read; unknown stays None."""
+    try:
+        times = trace_end_times(project_id, trace_ids)
+    except Exception:
+        logger.exception("feed_occurrence_time_unavailable", project_id=str(project_id))
+        times = {}
+    return {
+        tid: (times[tid], "trace_end") if tid in times else (None, "")
+        for tid in map(str, trace_ids)
+    }
 
 
 def bind_scan_occurrence(*, cluster, finding_id, trace_id):

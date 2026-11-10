@@ -45,8 +45,21 @@ def current_memberships():
     )
 
 
+def evidence_since(boundary: datetime) -> datetime:
+    """Oldest row creation time that can still hold a counted occurrence.
+
+    A finding is recorded after it occurs, so an older row can never land in
+    the current or baseline window; the allowance absorbs source clock skew.
+    """
+    return boundary - WINDOW - BASELINE_WINDOW - PROCESSING_ALLOWANCE
+
+
 def _aggregate(qs, *, identity, trace, boundary, now, unit="findings"):
-    if qs.filter(occurred_at__isnull=True).exists():
+    # Rows recorded before the range cannot count, so a missing time there
+    # must not block evaluation (pre-upgrade history is never repaired).
+    if qs.filter(
+        occurred_at__isnull=True, created_at__gte=evidence_since(boundary)
+    ).exists():
         raise CountUnavailable("Required occurrence timestamp is unavailable")
     if qs.filter(occurred_at__gt=now).exists():
         raise CountUnavailable("Occurrence timestamp is in the future")
@@ -252,17 +265,24 @@ def source_occurrence_time(*, project_id, trace_id=None, span_id=None, session_i
         if trace_id
         else reader.session_trace_ids(str(project_id), str(session_id))
     )
-    roots = reader.list_root_spans_by_trace_ids(
-        trace_ids,
+    times = trace_end_times(project_id, trace_ids)
+    if len(times) != len(trace_ids) or not times:
+        return None, ""
+    return max(times.values()), "session_end" if session_id else "trace_end"
+
+
+def trace_end_times(project_id, trace_ids) -> dict[str, datetime]:
+    """Root-span completion time per trace, in one ClickHouse read."""
+    from tracer.services.clickhouse.v2 import get_reader
+
+    roots = get_reader().list_root_spans_by_trace_ids(
+        [str(t) for t in trace_ids],
         project_id=str(project_id),
         include_heavy=False,
         columns=["trace_id", "end_time"],
     )
-    times = [
-        completion_time_utc(row["end_time"])
-        for row in roots.values()
+    return {
+        str(tid): completion_time_utc(row["end_time"])
+        for tid, row in roots.items()
         if row["end_time"]
-    ]
-    if len(times) != len(trace_ids) or not times:
-        return None, ""
-    return max(times), "session_end" if session_id else "trace_end"
+    }

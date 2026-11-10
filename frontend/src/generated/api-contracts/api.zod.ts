@@ -61501,6 +61501,12 @@ export const TracerFeedIssuesListResponse = zod.object({
             recovery_confirmation_minutes: zod.number(),
           })
           .optional(),
+        escalation_error: zod
+          .enum(["evidence_unavailable", "calculation_failed"])
+          .optional()
+          .describe(
+            "Why the latest automatic escalation check failed; null when it succeeded.",
+          ),
         severity_assessment_status: zod.string().min(1).optional(),
         severity_source: zod.string().min(1).optional(),
         severity_reason: zod.string().optional(),
@@ -61607,6 +61613,12 @@ export const TracerFeedIssuesReadResponse = zod.object({
           recovery_confirmation_minutes: zod.number(),
         })
         .optional(),
+      escalation_error: zod
+        .enum(["evidence_unavailable", "calculation_failed"])
+        .optional()
+        .describe(
+          "Why the latest automatic escalation check failed; null when it succeeded.",
+        ),
       severity_assessment_status: zod.string().min(1).optional(),
       severity_source: zod.string().min(1).optional(),
       severity_reason: zod.string().optional(),
@@ -61729,6 +61741,12 @@ export const TracerFeedIssuesPartialUpdateResponse = zod.object({
           recovery_confirmation_minutes: zod.number(),
         })
         .optional(),
+      escalation_error: zod
+        .enum(["evidence_unavailable", "calculation_failed"])
+        .optional()
+        .describe(
+          "Why the latest automatic escalation check failed; null when it succeeded.",
+        ),
       severity_assessment_status: zod.string().min(1).optional(),
       severity_source: zod.string().min(1).optional(),
       severity_reason: zod.string().optional(),
@@ -71928,6 +71946,12 @@ export const TracerSharedReadResponse = zod.object({
               recovery_confirmation_minutes: zod.number(),
             })
             .optional(),
+          escalation_error: zod
+            .enum(["evidence_unavailable", "calculation_failed"])
+            .optional()
+            .describe(
+              "Why the latest automatic escalation check failed; null when it succeeded.",
+            ),
           severity_assessment_status: zod.string().min(1).optional(),
           severity_source: zod.string().min(1).optional(),
           severity_reason: zod.string().optional(),

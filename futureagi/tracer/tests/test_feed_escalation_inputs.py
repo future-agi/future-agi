@@ -242,3 +242,29 @@ def test_a_later_passing_eval_supersedes_failed_occurrence(custom_eval_config):
         eval_task_id="second",
     )
     assert count_occurrences(cluster, T).current == 0
+
+
+def _recorded_at(finding, at):
+    TraceScanIssue.no_workspace_objects.filter(pk=finding.pk).update(created_at=at)
+
+
+def test_missing_time_recorded_before_the_range_does_not_block_counting(legacy_issue):
+    from tracer.services.feed_escalation_inputs import evidence_since
+
+    cluster, scan = legacy_issue
+    # A finding is recorded after it occurs, so this one cannot reach a window.
+    _recorded_at(
+        add_scan_finding(cluster, scan, None), evidence_since(T) - timedelta(seconds=1)
+    )
+    add_scan_finding(cluster, scan, T - timedelta(minutes=20))
+    result = count_occurrences(cluster, T)
+    assert (result.current, result.historical) == (1, 0)
+
+
+def test_missing_time_recorded_inside_the_range_still_blocks_counting(legacy_issue):
+    from tracer.services.feed_escalation_inputs import evidence_since
+
+    cluster, scan = legacy_issue
+    _recorded_at(add_scan_finding(cluster, scan, None), evidence_since(T))
+    with pytest.raises(CountUnavailable):
+        count_occurrences(cluster, T)

@@ -28343,6 +28343,17 @@ export interface FeedEscalationApi {
   recovery_confirmation_minutes: number;
 }
 
+/**
+ * Why the latest automatic escalation check failed; null when it succeeded.
+ */
+export type FeedListRowApiEscalationError =
+  (typeof FeedListRowApiEscalationError)[keyof typeof FeedListRowApiEscalationError];
+
+export const FeedListRowApiEscalationError = {
+  evidence_unavailable: "evidence_unavailable",
+  calculation_failed: "calculation_failed",
+} as const;
+
 export interface ErrorNameApi {
   /** @minLength 1 */
   name: string;
@@ -28359,6 +28370,8 @@ export interface FeedListRowApi {
   status_origin?: FeedListRowApiStatusOrigin;
   status_revision?: number;
   escalation?: FeedEscalationApi;
+  /** Why the latest automatic escalation check failed; null when it succeeded. */
+  escalation_error?: FeedListRowApiEscalationError;
   /** @minLength 1 */
   severity_assessment_status?: string;
   /** @minLength 1 */

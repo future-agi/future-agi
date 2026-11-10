@@ -15,7 +15,11 @@ from django.utils import timezone
 from tfc.temporal.drop_in import temporal_activity
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.models.trace_grouping import TraceGroupingIssueState, TraceGroupingScope
-from tracer.services.feed_escalation_inputs import CountUnavailable, count_occurrences
+from tracer.services.feed_escalation_inputs import (
+    CountUnavailable,
+    count_occurrences,
+    evidence_since,
+)
 from tracer.services.feed_escalation_policy import (
     ALGORITHM_VERSION,
     CADENCE,
@@ -173,7 +177,9 @@ def evaluate_issue(cluster_id, *, now=None):
     if snapshot.escalation_state.get("evaluation_error") == "CountUnavailable":
         from tracer.services.feed_escalation_evidence import prepare_issue_evidence
 
-        repaired = prepare_issue_evidence(snapshot.pk, now=now)
+        repaired = prepare_issue_evidence(
+            snapshot.pk, now=now, since=evidence_since(boundary)
+        )
         if repaired["prepared"]:
             # Preparation bumped the durable input revision; read a new snapshot.
             return "stale"

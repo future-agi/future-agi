@@ -7,11 +7,19 @@ from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGro
 from tracer.models.trace_scan import TraceScanIssue
 from tracer.services.feed_escalation_publication import (
     capture_occurrence,
+    capture_trace_occurrences,
     known_eval_occurrence_time,
 )
 
 
-def prepare_issue_evidence(cluster_id, *, limit=100, dry_run=False, now=None):
+def prepare_issue_evidence(
+    cluster_id, *, limit=100, dry_run=False, now=None, since=None
+):
+    """Capture missing occurrence times for up to ``limit`` rows.
+
+    ``since`` keeps the repair to rows recorded inside the evaluation range
+    (see ``evidence_since``); older rows cannot change a count.
+    """
     if not 1 <= limit <= 500:
         raise ValueError("Evidence batch limit must be between 1 and 500")
     issue = (
@@ -26,12 +34,14 @@ def prepare_issue_evidence(cluster_id, *, limit=100, dry_run=False, now=None):
     )
     if issue is None:
         return {"prepared": 0, "unresolved": 0}
+    recent = {} if since is None else {"created_at__gte": since}
     rows = list(
         TraceScanIssue.no_workspace_objects.filter(
             cluster=issue,
             occurred_at__isnull=True,
             scan_result__project_id=issue.project_id,
             scan_result__deleted=False,
+            **recent,
         )
         .select_related("scan_result")
         .order_by("id")[:limit]
@@ -42,6 +52,7 @@ def prepare_issue_evidence(cluster_id, *, limit=100, dry_run=False, now=None):
             ErrorClusterTraces.no_workspace_objects.filter(
                 cluster=issue,
                 occurred_at__isnull=True,
+                **recent,
             )
             .select_related(
                 "finding__report__job",
@@ -50,7 +61,7 @@ def prepare_issue_evidence(cluster_id, *, limit=100, dry_run=False, now=None):
             )
             .order_by("id")[:remaining]
         )
-    cache, resolved = {}, []
+    cache, resolved, pending = {}, [], []
     unresolved = 0
     for row in rows:
         at, provenance = None, ""
@@ -85,6 +96,17 @@ def prepare_issue_evidence(cluster_id, *, limit=100, dry_run=False, now=None):
             key = ("trace", str(source["trace_id"]))
         else:
             key, source = None, None
+        pending.append((row, at, provenance, key, source))
+    traces = {key[1] for *_, key, _ in pending if key and key[0] == "trace"}
+    if traces:
+        # One root-span read for every trace-keyed row, not one per row.
+        cache.update(
+            (("trace", tid), found)
+            for tid, found in capture_trace_occurrences(
+                issue.project_id, traces
+            ).items()
+        )
+    for row, at, provenance, key, source in pending:
         if key:
             if key not in cache:
                 cache[key] = capture_occurrence(project_id=issue.project_id, **source)
