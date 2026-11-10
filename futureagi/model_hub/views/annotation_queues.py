@@ -155,6 +155,7 @@ from model_hub.utils.annotation_queue_helpers import (
 from model_hub.utils.utils import send_message_to_channel
 from simulate.models.test_execution import CallTranscript
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+from tfc.routers import primary_required
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import (
@@ -3738,6 +3739,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         methods=["get"],
         url_path=r"export-jobs/(?P<job_id>[^/.]+)",
     )
+    @primary_required
     def export_job(self, request, pk=None, job_id=None):
         """Status of a background export, carrying the link once it is ready."""
         from model_hub.services.annotation_export_storage import can_download_export
@@ -3804,6 +3806,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         methods=["get"],
         url_path=r"export-jobs/(?P<job_id>[^/.]+)/download",
     )
+    @primary_required
     def export_download(self, request, pk=None, job_id=None):
         """Stream a private export only while this user can still read its queue."""
         from django.http import FileResponse

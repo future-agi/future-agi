@@ -169,15 +169,27 @@ test('ANNOT-E2E-006: large queues download all annotations and source content', 
           ]);
         }
       } else {
-        // Synthetic fields contain no newlines; identity is the first unquoted UUID column.
+        // Seeded fields contain no newlines. Split only commas outside quoted
+        // cells, then decode CSV's doubled quotes (including the source JSON).
         const [header, ...lines] = text.trimEnd().split(/\r?\n/);
-        expect(header.endsWith(',source_id,source')).toBe(true);
-        expect(lines.map(line => line.split(',')[0]).sort()).toEqual(scenario.items.map(i => i.id).sort());
+        const columns = header.split(',');
+        expect(columns.slice(-2)).toEqual(['source_id', 'source']);
+        const exported = lines.map(line => {
+          const cells = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(cell =>
+            cell.startsWith('"') ? cell.slice(1, -1).replace(/""/g, '"') : cell);
+          expect(cells).toHaveLength(columns.length);
+          return Object.fromEntries(columns.map((column, index) => [column, cells[index]]));
+        });
+        expect(exported.map(row => row.item_id).sort()).toEqual(scenario.items.map(item => item.id).sort());
         for (const item of scenario.items) {
-          const line = lines.find(l => l.startsWith(`${item.id},`))!;
-          expect(line).toContain(valueByRow.get(item.dataset_row_id)!);
+          const row = exported.find(value => value.item_id === item.id)!;
+          expect(row.source_id).toBe(item.dataset_row_id);
+          expect(JSON.parse(row.source).fields['Column 1']).toBe(valueByRow.get(item.dataset_row_id));
+          expect({ label_id: row.label_id, value: row.value }).toEqual(
+            scenario.queue === large && item.id === annotated.id
+              ? { label_id: labelId, value: '4' }
+              : { label_id: '', value: '' });
         }
-        if (scenario.queue === large) expect(lines.find(l => l.startsWith(`${annotated.id},`))).toContain(labelId);
       }
     });
   }
