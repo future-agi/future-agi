@@ -141944,7 +141944,8 @@
                         "present",
                         "partial",
                         "truncated",
-                        "missing"
+                        "missing",
+                        "unreadable"
                     ]
                 },
                 "reason": {
@@ -142034,7 +142035,8 @@
                         "present",
                         "partial",
                         "truncated",
-                        "missing"
+                        "missing",
+                        "unreadable"
                     ]
                 },
                 "reason": {
@@ -142050,7 +142052,7 @@
             }
         },
         "EvidencePart": {
-            "description": "Whether the tool calls recorded their inputs and outputs.",
+            "description": "Whether the tool calls recorded their inputs.",
             "required": [
                 "status",
                 "reason"
@@ -142064,7 +142066,8 @@
                         "present",
                         "partial",
                         "truncated",
-                        "missing"
+                        "missing",
+                        "unreadable"
                     ]
                 },
                 "reason": {
@@ -142128,7 +142131,8 @@
                         "present",
                         "partial",
                         "truncated",
-                        "missing"
+                        "missing",
+                        "unreadable"
                     ]
                 },
                 "reason": {
@@ -142155,7 +142159,8 @@
                 "ended_at",
                 "transcript",
                 "tool_calls",
-                "tool_io",
+                "tool_inputs",
+                "tool_outputs",
                 "starting_state",
                 "labels"
             ],
@@ -142185,7 +142190,9 @@
                 },
                 "changed_since_import": {
                     "title": "Changed since import",
-                    "type": "boolean"
+                    "description": "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
+                    "type": "boolean",
+                    "x-nullable": true
                 },
                 "trace_ids": {
                     "type": "array",
@@ -142212,7 +142219,10 @@
                 "tool_calls": {
                     "$ref": "#/definitions/EvidenceToolCalls"
                 },
-                "tool_io": {
+                "tool_inputs": {
+                    "$ref": "#/definitions/EvidencePart"
+                },
+                "tool_outputs": {
                     "$ref": "#/definitions/EvidencePart"
                 },
                 "starting_state": {
@@ -142247,7 +142257,8 @@
                     "type": "string",
                     "enum": [
                         "transcript",
-                        "tool_calls"
+                        "tool_calls",
+                        "labels"
                     ]
                 },
                 "index": {
@@ -142261,7 +142272,10 @@
                     "enum": [
                         "text",
                         "input",
-                        "output"
+                        "output",
+                        "error",
+                        "notes",
+                        "value"
                     ]
                 },
                 "entity": {
@@ -142293,20 +142307,20 @@
         },
         "EvidenceRedaction": {
             "required": [
-                "status",
+                "method",
                 "reason",
                 "findings",
                 "total"
             ],
             "type": "object",
             "properties": {
-                "status": {
-                    "title": "Status",
-                    "description": "unavailable: nothing could look for personal data; import refuses.",
+                "method": {
+                    "title": "Method",
+                    "description": "basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.",
                     "type": "string",
                     "enum": [
-                        "ready",
-                        "unavailable"
+                        "presidio",
+                        "basic"
                     ]
                 },
                 "reason": {

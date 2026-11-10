@@ -1,6 +1,7 @@
 """Evidence imports over HTTP: freezing Observe sessions or calls for an
 environment, the bundle the review reads (what each source holds and lacks,
-and what redaction would replace), and who may make one.
+cut to the import's size, and what redaction would replace), and who may make
+one.
 
 Observe itself is a stand-in here (``observe_evidence``); its reads are covered
 in ``tracer/tests/test_observe_evidence.py``.
@@ -28,14 +29,26 @@ from accounts.tests.test_rbac_regressions import (
 from model_hub.models.ai_model import AIModel
 from simulate.models import EvidenceImport, EvidenceImportCase
 from simulate.selectors.evidence_import import (
+    BASIC_REDACTION,
+    MAX_IMPORT_CHARS,
     MAX_SOURCES,
-    REDACTION_UNAVAILABLE,
     SOURCE_NOT_FOUND,
     SOURCE_UNAVAILABLE,
+    evidence_digest,
+    import_evidence,
 )
 from simulate.services.hosted_harness import create_hosted_job
 from tracer.models.project import Project
-from tracer.selectors.observe_evidence import SourceEvidence, ToolCall, Turn
+from tracer.selectors.observe_evidence import (
+    MAX_TOOL_CALLS,
+    MAX_TURNS,
+    TOOL_FIELD_CHARS,
+    TURN_CHARS,
+    Label,
+    SourceEvidence,
+    ToolCall,
+    Turn,
+)
 
 from .test_hosted_harness_channels import _payload
 
@@ -59,6 +72,8 @@ def _evidence(source_id=SESSION, **overrides) -> SourceEvidence:
             Turn("agent", "I've issued a second refund.", False, trace, T0),
         ),
         turns_truncated=False,
+        turns_omitted=0,
+        transcript_unreadable=False,
         tool_calls=(),
         tool_calls_truncated=False,
         labels=(),
@@ -66,14 +81,26 @@ def _evidence(source_id=SESSION, **overrides) -> SourceEvidence:
     return replace(value, **overrides)
 
 
+def _call(name, **fields) -> ToolCall:
+    return ToolCall(
+        span_id=str(uuid.uuid4()),
+        trace_id="t",
+        name=name,
+        at=T0,
+        failed=False,
+        error=fields.get("error", ""),
+        input=fields.get("input", '{"order": 42}'),
+        output=fields.get("output", "refunded"),
+        input_truncated=False,
+        output_truncated=False,
+    )
+
+
 def _observe(found: dict):
-    """Observe holds ``found`` for both the import and every later read."""
-    return [
-        patch("simulate.services.evidence_import.observe_evidence", return_value=found),
-        patch(
-            "simulate.selectors.evidence_import.observe_evidence", return_value=found
-        ),
-    ]
+    """Observe holds ``found`` for the import and every later read."""
+    return patch(
+        "simulate.selectors.evidence_import.observe_evidence", return_value=found
+    )
 
 
 @pytest.fixture
@@ -116,10 +143,16 @@ def _create(client, environment, project, ids=(SESSION, MISSING), **body):
     )
 
 
-def _start(client, environment, project, found):
-    first, second = _observe(found)
-    with first, second:
-        return _create(client, environment, project)
+def _start(client, environment, project, found, ids=(SESSION, MISSING)):
+    with _observe(found):
+        return _create(client, environment, project, ids=ids)
+
+
+def _reread(client, environment, made, found):
+    with _observe(found):
+        return client.get(
+            f"{ENVIRONMENTS}/{environment.id}/evidence-imports/{made['id']}/"
+        )
 
 
 class TestCreate:
@@ -144,6 +177,7 @@ class TestCreate:
         assert found["labels"]["status"] == "missing"
         assert (missing["source_id"], missing["status"]) == (MISSING, "unavailable")
         assert missing["reason"] == SOURCE_NOT_FOUND
+        assert missing["changed_since_import"] is None
 
         stored = EvidenceImport.no_workspace_objects.get(id=body["id"])
         assert stored.workspace_id == environment.workspace_id
@@ -160,7 +194,7 @@ class TestCreate:
         response = _start(client, environment, project, {SESSION: _evidence()})
 
         redaction = response.json()["redaction"]
-        assert redaction["status"] == "ready", redaction
+        assert (redaction["method"], redaction["reason"]) == ("presidio", "")
         email = next(f for f in redaction["findings"] if f["entity"] == "EMAIL_ADDRESS")
         assert email["value"] == "jane.doe@example.com"
         assert email["replacement"] == "<EMAIL_ADDRESS>"
@@ -172,56 +206,81 @@ class TestCreate:
         text = response.json()["cases"][0]["transcript"]["turns"][0]["text"]
         assert text[email["start"] : email["end"]] == email["value"]
 
-    def test_redaction_fails_closed_when_nothing_can_look(
+    def test_tool_errors_and_label_notes_are_checked_too(
+        self, client, environment, project
+    ):
+        found = {
+            SESSION: _evidence(
+                turns=(),
+                tool_calls=(_call("lookup", error="no customer bob@example.com"),),
+                labels=(
+                    Label(
+                        "Resolved",
+                        "text",
+                        "call me on 415-555-0134",
+                        "ask ann@example.com",
+                        "trace",
+                    ),
+                ),
+            )
+        }
+
+        redaction = _start(client, environment, project, found).json()["redaction"]
+
+        places = {(f["part"], f["field"], f["value"]) for f in redaction["findings"]}
+        assert ("tool_calls", "error", "bob@example.com") in places
+        assert ("labels", "notes", "ann@example.com") in places
+        assert any(part == "labels" and field == "value" for part, field, _ in places)
+
+    def test_without_presidio_a_fixed_shape_match_stands_in(
         self, client, environment, project
     ):
         with patch("simulate.selectors.evidence_import.find_pii", return_value=None):
             response = _start(client, environment, project, {SESSION: _evidence()})
 
         assert response.status_code == status.HTTP_201_CREATED
-        assert response.json()["redaction"] == {
-            "status": "unavailable",
-            "reason": REDACTION_UNAVAILABLE,
-            "findings": [],
-            "total": 0,
+        redaction = response.json()["redaction"]
+        assert (redaction["method"], redaction["reason"]) == ("basic", BASIC_REDACTION)
+        assert [f["value"] for f in redaction["findings"]] == ["jane.doe@example.com"]
+
+    def test_parts_that_could_not_be_read_say_so(self, client, environment, project):
+        found = {
+            SESSION: _evidence(turns=(), transcript_unreadable=True, tool_calls=None)
         }
 
-    def test_a_missing_transcript_and_unreadable_tool_calls_say_so(
+        case = _start(client, environment, project, found).json()["cases"][0]
+
+        assert case["transcript"]["status"] == "unreadable"
+        assert case["tool_calls"] == {
+            "status": "unreadable",
+            "reason": "The tool calls could not be read.",
+            "calls": [],
+        }
+        assert case["tool_inputs"]["status"] == "unreadable"
+        assert case["tool_outputs"]["status"] == "unreadable"
+        # Nobody can tell whether a part that could not be read has changed.
+        assert case["changed_since_import"] is None
+        assert EvidenceImportCase.objects.get(id=case["id"]).digest == ""
+
+    def test_a_missing_transcript_is_not_an_unreadable_one(
         self, client, environment, project
     ):
-        found = {SESSION: _evidence(turns=(), tool_calls=None)}
-
-        case = _start(client, environment, project, found).json()["cases"][0]
+        case = _start(
+            client, environment, project, {SESSION: _evidence(turns=())}
+        ).json()["cases"][0]
 
         assert case["transcript"] == {
             "status": "missing",
             "reason": "No conversation text was recorded.",
             "turns": [],
         }
-        assert case["tool_calls"]["status"] == "missing"
-        assert case["tool_calls"]["reason"] == "The tool calls could not be read."
-        assert case["tool_io"]["status"] == "missing"
 
-    def test_tool_calls_and_their_inputs_and_outputs(
+    def test_tool_inputs_and_outputs_are_marked_separately(
         self, client, environment, project
     ):
-        def call(name, **fields):
-            return ToolCall(
-                span_id=str(uuid.uuid4()),
-                trace_id="t",
-                name=name,
-                at=T0,
-                failed=False,
-                error="",
-                input=fields.get("input", '{"order": 42}'),
-                output=fields.get("output", ""),
-                input_truncated=False,
-                output_truncated=False,
-            )
-
         found = {
             SESSION: _evidence(
-                tool_calls=(call("lookup_order", output="refunded"), call("refund"))
+                tool_calls=(_call("lookup_order"), _call("refund", output=""))
             )
         }
 
@@ -232,8 +291,126 @@ class TestCreate:
             "lookup_order",
             "refund",
         ]
-        assert case["tool_io"]["status"] == "present"
-        assert case["tool_calls"]["calls"][1]["output"] == ""
+        assert case["tool_inputs"]["status"] == "present"
+        assert case["tool_outputs"]["status"] == "partial"
+
+
+class TestBudget:
+    def test_an_over_budget_import_is_cut_and_says_so(
+        self, client, environment, project
+    ):
+        trace = str(uuid.uuid4())
+        long = tuple(
+            Turn("user" if i % 2 else "agent", "word " * 400, False, trace, T0)
+            for i in range(MAX_IMPORT_CHARS // 2000 + 10)
+        )
+
+        case = _start(
+            client,
+            environment,
+            project,
+            {SESSION: _evidence(turns=long)},
+            ids=(SESSION,),
+        ).json()["cases"][0]
+
+        assert case["transcript"]["status"] == "truncated"
+        kept = sum(len(t["text"]) for t in case["transcript"]["turns"])
+        assert kept <= MAX_IMPORT_CHARS
+
+    def test_a_late_failed_tool_call_survives_the_cut(self, project):
+        """A failure often comes last; it is given room before the rest."""
+        field = "z " * (TOOL_FIELD_CHARS // 2)
+        calls = tuple(
+            _call(f"step{i}", input=field, output=field) for i in range(40)
+        ) + (_call("refund", input=field, output=field, error="already refunded"),)
+        calls = calls[:-1] + (replace(calls[-1], failed=True),)
+
+        with _observe({SESSION: _evidence(turns=(), tool_calls=calls)}):
+            (kept,) = import_evidence(project, "session", [SESSION]).values()
+
+        assert kept.tool_calls_truncated is True
+        assert len(kept.tool_calls) < len(calls)
+        assert kept.tool_calls[-1].name == "refund"
+        assert kept.tool_calls[-1].failed is True
+        assert kept.tool_calls[-1].error == "already refunded"
+
+    def test_the_last_turn_survives_and_the_middle_is_counted(
+        self, client, environment, project
+    ):
+        trace = str(uuid.uuid4())
+        turns = tuple(
+            Turn("user", f"turn {i} " + "word " * 300, False, trace, T0)
+            for i in range(60)
+        ) + (Turn("agent", "I issued the second refund.", False, trace, T0),)
+
+        case = _start(
+            client,
+            environment,
+            project,
+            {SESSION: _evidence(turns=turns)},
+            ids=(SESSION,),
+        ).json()["cases"][0]
+
+        shown = case["transcript"]["turns"]
+        assert shown[0]["text"].startswith("turn 0 ")
+        assert shown[-1]["text"] == "I issued the second refund."
+        omitted = len(turns) - len(shown)
+        assert omitted > 0
+        assert case["transcript"]["status"] == "truncated"
+        assert case["transcript"]["reason"].startswith(
+            f"{omitted} middle turns left out"
+        )
+
+    def test_the_same_data_gives_the_same_digest(self, project):
+        trace = str(uuid.uuid4())
+        turns = tuple(Turn("user", "word " * 500, False, trace, T0) for _ in range(40))
+        found = {SESSION: _evidence(turns=turns)}
+
+        with _observe(found):
+            first = import_evidence(project, "session", [SESSION])[SESSION]
+        with _observe(found):
+            second = import_evidence(project, "session", [SESSION])[SESSION]
+
+        assert first.turns_truncated is True
+        assert evidence_digest(first) == evidence_digest(second) != ""
+
+    def test_the_worst_case_never_exceeds_the_budget(self, project):
+        """Every source at every cap: what redaction reads stays in budget."""
+        trace = str(uuid.uuid4())
+        full = "x " * (TURN_CHARS // 2)
+        field = "y " * (TOOL_FIELD_CHARS // 2)
+        worst = _evidence(
+            turns=tuple(Turn("user", full, False, trace, T0) for _ in range(MAX_TURNS)),
+            tool_calls=tuple(
+                _call("t", input=field, output=field, error="e" * 300)
+                for _ in range(MAX_TOOL_CALLS)
+            ),
+            labels=tuple(
+                Label("L", "text", "v" * 500, "n" * 500, "trace") for _ in range(50)
+            ),
+        )
+        ids = [str(uuid.uuid4()) for _ in range(MAX_SOURCES)]
+
+        with _observe(
+            {source_id: replace(worst, source_id=source_id) for source_id in ids}
+        ):
+            evidence = import_evidence(project, "session", ids)
+
+        read = sum(
+            sum(len(t.text) for t in source.turns)
+            + sum(
+                len(c.input) + len(c.output) + len(c.error) for c in source.tool_calls
+            )
+            + sum(len(label.notes) + len(label.value) for label in source.labels)
+            for source in evidence.values()
+        )
+        assert read <= MAX_IMPORT_CHARS
+        assert all(
+            source.turns_truncated
+            and source.tool_calls_truncated
+            and source.labels_truncated
+            for source in evidence.values()
+        )
 
 
 class TestReread:
@@ -242,28 +419,50 @@ class TestReread:
     ):
         made = _start(client, environment, project, {SESSION: _evidence()}).json()
 
-        first, second = _observe({})
-        with first, second:
-            response = client.get(
-                f"{ENVIRONMENTS}/{environment.id}/evidence-imports/{made['id']}/"
-            )
+        response = _reread(client, environment, made, {})
 
         assert response.status_code == status.HTTP_200_OK, response.data
         case = response.json()["cases"][0]
         assert (case["status"], case["reason"]) == ("unavailable", SOURCE_UNAVAILABLE)
         assert case["transcript"]["status"] == "missing"
+        assert case["changed_since_import"] is None
 
     def test_a_changed_source_says_so(self, client, environment, project):
         made = _start(client, environment, project, {SESSION: _evidence()}).json()
         changed = _evidence(turns=(Turn("user", "Different now", False, "t", T0),))
 
-        first, second = _observe({SESSION: changed})
-        with first, second:
-            response = client.get(
-                f"{ENVIRONMENTS}/{environment.id}/evidence-imports/{made['id']}/"
-            )
+        response = _reread(client, environment, made, {SESSION: changed})
 
         assert response.json()["cases"][0]["changed_since_import"] is True
+
+    def test_a_source_the_import_found_nothing_for_stays_unavailable(
+        self, client, environment, project
+    ):
+        made = _start(client, environment, project, {SESSION: _evidence()}).json()
+
+        response = _reread(
+            client,
+            environment,
+            made,
+            {SESSION: _evidence(), MISSING: _evidence(MISSING)},
+        )
+
+        missing = response.json()["cases"][1]
+        assert (missing["status"], missing["reason"]) == (
+            "unavailable",
+            SOURCE_NOT_FOUND,
+        )
+        assert missing["transcript"]["turns"] == []
+
+    def test_a_deleted_project_reads_every_source_unavailable(
+        self, client, environment, project
+    ):
+        made = _start(client, environment, project, {SESSION: _evidence()}).json()
+        Project.objects.filter(id=project.id).update(deleted=True)
+
+        response = _reread(client, environment, made, {SESSION: _evidence()})
+
+        assert [c["status"] for c in response.json()["cases"]] == ["unavailable"] * 2
 
     def test_another_environments_import_is_not_found(
         self, client, environment, project, user, workspace
@@ -362,7 +561,8 @@ def test_an_environment_only_organization_imports_through_its_environment(
     client, environment, project, organization
 ):
     """EV-2: an organization restricted to Environment resources (the legacy
-    Replay is hidden from it) makes the import through the environment."""
+    Replay is hidden from it) makes the import through the environment. Fails
+    if any server path starts refusing such organizations."""
     cutoff = organization.created_at - timedelta(days=1)
     with override_settings(RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=cutoff):
         assert restrict_simulate_to_environments(organization) is True

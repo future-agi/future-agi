@@ -20012,6 +20012,7 @@ export const EvidenceTranscriptApiStatus = {
   partial: "partial",
   truncated: "truncated",
   missing: "missing",
+  unreadable: "unreadable",
 } as const;
 
 export type EvidenceTurnApiRole =
@@ -20045,6 +20046,7 @@ export const EvidenceToolCallsApiStatus = {
   partial: "partial",
   truncated: "truncated",
   missing: "missing",
+  unreadable: "unreadable",
 } as const;
 
 export interface EvidenceToolCallApi {
@@ -20076,10 +20078,11 @@ export const EvidencePartApiStatus = {
   partial: "partial",
   truncated: "truncated",
   missing: "missing",
+  unreadable: "unreadable",
 } as const;
 
 /**
- * Whether the tool calls recorded their inputs and outputs.
+ * Whether the tool calls recorded their inputs.
  */
 export interface EvidencePartApi {
   status: EvidencePartApiStatus;
@@ -20094,6 +20097,7 @@ export const EvidenceLabelsApiStatus = {
   partial: "partial",
   truncated: "truncated",
   missing: "missing",
+  unreadable: "unreadable",
 } as const;
 
 export type EvidenceLabelApiTarget =
@@ -20133,26 +20137,28 @@ export interface EvidenceImportCaseApi {
   source_id: string;
   status: EvidenceImportCaseApiStatus;
   reason: string;
+  /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. */
   changed_since_import: boolean;
   trace_ids: string[];
   started_at: string;
   ended_at: string;
   transcript: EvidenceTranscriptApi;
   tool_calls: EvidenceToolCallsApi;
-  tool_io: EvidencePartApi;
+  tool_inputs: EvidencePartApi;
+  tool_outputs: EvidencePartApi;
   starting_state: EvidencePartApi;
   labels: EvidenceLabelsApi;
 }
 
 /**
- * unavailable: nothing could look for personal data; import refuses.
+ * basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.
  */
-export type EvidenceRedactionApiStatus =
-  (typeof EvidenceRedactionApiStatus)[keyof typeof EvidenceRedactionApiStatus];
+export type EvidenceRedactionApiMethod =
+  (typeof EvidenceRedactionApiMethod)[keyof typeof EvidenceRedactionApiMethod];
 
-export const EvidenceRedactionApiStatus = {
-  ready: "ready",
-  unavailable: "unavailable",
+export const EvidenceRedactionApiMethod = {
+  presidio: "presidio",
+  basic: "basic",
 } as const;
 
 export type EvidenceRedactionFindingApiPart =
@@ -20161,6 +20167,7 @@ export type EvidenceRedactionFindingApiPart =
 export const EvidenceRedactionFindingApiPart = {
   transcript: "transcript",
   tool_calls: "tool_calls",
+  labels: "labels",
 } as const;
 
 export type EvidenceRedactionFindingApiField =
@@ -20170,6 +20177,9 @@ export const EvidenceRedactionFindingApiField = {
   text: "text",
   input: "input",
   output: "output",
+  error: "error",
+  notes: "notes",
+  value: "value",
 } as const;
 
 export interface EvidenceRedactionFindingApi {
@@ -20191,8 +20201,8 @@ export interface EvidenceRedactionFindingApi {
 }
 
 export interface EvidenceRedactionApi {
-  /** unavailable: nothing could look for personal data; import refuses. */
-  status: EvidenceRedactionApiStatus;
+  /** basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses. */
+  method: EvidenceRedactionApiMethod;
   reason: string;
   findings: EvidenceRedactionFindingApi[];
   /**

@@ -6,7 +6,8 @@ from rest_framework import serializers
 from simulate.models import EvidenceImport, EvidenceImportCase
 from simulate.selectors.evidence_import import MAX_SOURCES
 
-PART_STATUSES = ("present", "partial", "truncated", "missing")
+# unreadable: recorded, but could not be read; missing: not recorded.
+PART_STATUSES = ("present", "partial", "truncated", "missing", "unreadable")
 
 
 class EvidenceImportCreateSerializer(serializers.Serializer):
@@ -78,14 +79,21 @@ class EvidenceImportCaseSerializer(serializers.Serializer):
     source_id = serializers.CharField()
     status = serializers.ChoiceField(choices=EvidenceImportCase.Status.choices)
     reason = serializers.CharField(allow_blank=True)
-    changed_since_import = serializers.BooleanField()
+    changed_since_import = serializers.BooleanField(
+        allow_null=True,
+        help_text="Null when unknown: the source is gone, or part of it could not "
+        "be read now or when the import was made.",
+    )
     trace_ids = serializers.ListField(child=serializers.CharField())
     started_at = serializers.DateTimeField(allow_null=True)
     ended_at = serializers.DateTimeField(allow_null=True)
     transcript = EvidenceTranscriptSerializer()
     tool_calls = EvidenceToolCallsSerializer()
-    tool_io = EvidencePartSerializer(
-        help_text="Whether the tool calls recorded their inputs and outputs."
+    tool_inputs = EvidencePartSerializer(
+        help_text="Whether the tool calls recorded their inputs."
+    )
+    tool_outputs = EvidencePartSerializer(
+        help_text="Whether the tool calls recorded their outputs."
     )
     starting_state = EvidencePartSerializer(
         help_text="The records the agent's tools read before the conversation."
@@ -95,9 +103,11 @@ class EvidenceImportCaseSerializer(serializers.Serializer):
 
 class EvidenceRedactionFindingSerializer(serializers.Serializer):
     case_id = serializers.UUIDField()
-    part = serializers.ChoiceField(choices=("transcript", "tool_calls"))
+    part = serializers.ChoiceField(choices=("transcript", "tool_calls", "labels"))
     index = serializers.IntegerField(min_value=0)
-    field = serializers.ChoiceField(choices=("text", "input", "output"))
+    field = serializers.ChoiceField(
+        choices=("text", "input", "output", "error", "notes", "value")
+    )
     entity = serializers.CharField()
     start = serializers.IntegerField(min_value=0)
     end = serializers.IntegerField(min_value=0)
@@ -106,9 +116,10 @@ class EvidenceRedactionFindingSerializer(serializers.Serializer):
 
 
 class EvidenceRedactionSerializer(serializers.Serializer):
-    status = serializers.ChoiceField(
-        choices=("ready", "unavailable"),
-        help_text="unavailable: nothing could look for personal data; import refuses.",
+    method = serializers.ChoiceField(
+        choices=("presidio", "basic"),
+        help_text="basic: a fixed-shape match, for a server without Presidio; it "
+        "finds no names or addresses.",
     )
     reason = serializers.CharField(allow_blank=True)
     findings = EvidenceRedactionFindingSerializer(many=True)

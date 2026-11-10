@@ -99436,7 +99436,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "ended_at",
         "transcript",
         "tool_calls",
-        "tool_io",
+        "tool_inputs",
+        "tool_outputs",
         "starting_state",
         "labels",
       ],
@@ -99463,7 +99464,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         changed_since_import: {
           title: "Changed since import",
+          description:
+            "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
           type: "boolean",
+          "x-nullable": true,
         },
         trace_ids: {
           type: "array",
@@ -99490,7 +99494,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         tool_calls: {
           $ref: "#/definitions/EvidenceToolCalls",
         },
-        tool_io: {
+        tool_inputs: {
+          $ref: "#/definitions/EvidencePart",
+        },
+        tool_outputs: {
           $ref: "#/definitions/EvidencePart",
         },
         starting_state: {
@@ -99502,15 +99509,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     EvidenceRedaction: {
-      required: ["status", "reason", "findings", "total"],
+      required: ["method", "reason", "findings", "total"],
       type: "object",
       properties: {
-        status: {
-          title: "Status",
+        method: {
+          title: "Method",
           description:
-            "unavailable: nothing could look for personal data; import refuses.",
+            "basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.",
           type: "string",
-          enum: ["ready", "unavailable"],
+          enum: ["presidio", "basic"],
         },
         reason: {
           title: "Reason",
@@ -120222,7 +120229,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["present", "partial", "truncated", "missing"],
+          enum: ["present", "partial", "truncated", "missing", "unreadable"],
         },
         reason: {
           title: "Reason",
@@ -120237,14 +120244,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     EvidencePart: {
-      description: "Whether the tool calls recorded their inputs and outputs.",
+      description: "Whether the tool calls recorded their inputs.",
       required: ["status", "reason"],
       type: "object",
       properties: {
         status: {
           title: "Status",
           type: "string",
-          enum: ["present", "partial", "truncated", "missing"],
+          enum: ["present", "partial", "truncated", "missing", "unreadable"],
         },
         reason: {
           title: "Reason",
@@ -120259,7 +120266,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["present", "partial", "truncated", "missing"],
+          enum: ["present", "partial", "truncated", "missing", "unreadable"],
         },
         reason: {
           title: "Reason",
@@ -120280,7 +120287,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["present", "partial", "truncated", "missing"],
+          enum: ["present", "partial", "truncated", "missing", "unreadable"],
         },
         reason: {
           title: "Reason",
@@ -120316,7 +120323,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         part: {
           title: "Part",
           type: "string",
-          enum: ["transcript", "tool_calls"],
+          enum: ["transcript", "tool_calls", "labels"],
         },
         index: {
           title: "Index",
@@ -120326,7 +120333,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         field: {
           title: "Field",
           type: "string",
-          enum: ["text", "input", "output"],
+          enum: ["text", "input", "output", "error", "notes", "value"],
         },
         entity: {
           title: "Entity",

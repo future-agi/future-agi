@@ -1,26 +1,38 @@
 """Reads for an evidence import: which Observe project an environment may take
 evidence from, and the bundle a person reviews before a test is drafted from it.
 
-The bundle is read live from Observe on every view. It says what each source
-holds and lacks, and what redaction would replace before any of it becomes
-scenario text or seed data.
+The bundle is read live from Observe on every view, cut to the import's size
+budget. It says what each source holds and lacks, and what redaction would
+replace before any of it becomes scenario text or seed data.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from django.db.models import Q, QuerySet
 
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
 from tracer.models.project import Project
-from tracer.selectors.observe_evidence import SourceEvidence, observe_evidence
-from tracer.utils.pii_scrubber import find_pii
+from tracer.selectors.observe_evidence import (
+    Label,
+    SourceEvidence,
+    SourceKind,
+    ToolCall,
+    Turn,
+    observe_evidence,
+)
+from tracer.utils.pii_scrubber import find_pii, find_pii_basic
 
 # Sources one import may hold.
 MAX_SOURCES = 20
+# Characters of conversation text and tool inputs and outputs one import
+# carries, shared equally by its sources. Redaction analyses every one of them
+# on each read: about 45 microseconds a character on the shared dev box
+# (8 vCPU, batched), so this keeps a read near 2.6 s.
+MAX_IMPORT_CHARS = 60_000
 # Findings one bundle lists; the rest are counted.
 MAX_FINDINGS = 1000
 
@@ -28,13 +40,14 @@ STATE_MISSING = (
     "Observe does not record the records the agent's tools read before the "
     "conversation. Supply them, or label the starting state synthetic."
 )
-REDACTION_UNAVAILABLE = (
-    "Automatic redaction is unavailable on this server (the pii extra, "
-    "Presidio, is not installed or failed to load). Evidence cannot be turned "
-    "into tests until it is."
+BASIC_REDACTION = (
+    "Names and addresses were not checked: this server has no name detection "
+    "(the pii extra, Presidio). Emails, phone, card and ID numbers, IP addresses "
+    "and keys were."
 )
 SOURCE_UNAVAILABLE = "The source was deleted or is no longer kept by Observe."
 SOURCE_NOT_FOUND = "No retained session or call with this id in the project."
+CUT_TO_FIT = "Cut to fit the import's size; the start is kept."
 
 
 def evidence_project(
@@ -66,13 +79,33 @@ def environment_evidence_import(
         EvidenceImport.no_workspace_objects.filter(
             environment=environment, id=import_id, deleted=False
         )
+        .select_related("project")
         .prefetch_related("cases")
         .first()
     )
 
 
+def import_evidence(
+    project: Project, source_kind: SourceKind, source_ids: list[str]
+) -> dict[str, SourceEvidence]:
+    """What Observe holds now for ``source_ids``, each source cut to its equal
+    share of the import's budget. Nothing, once the project is deleted."""
+    if project.deleted:
+        return {}
+    share = MAX_IMPORT_CHARS // max(1, len(source_ids))
+    return {
+        source_id: _within(evidence, share)
+        for source_id, evidence in observe_evidence(
+            project, source_kind, source_ids
+        ).items()
+    }
+
+
 def evidence_digest(evidence: SourceEvidence) -> str:
-    """A fingerprint of what a source holds, to tell later whether it changed."""
+    """A fingerprint of what a source holds, to tell later whether it changed;
+    blank when part of it could not be read, since then nobody can tell."""
+    if evidence.tool_calls is None or evidence.transcript_unreadable:
+        return ""
     body = json.dumps(asdict(evidence), sort_keys=True, default=str)
     return hashlib.sha256(body.encode()).hexdigest()
 
@@ -82,14 +115,20 @@ def import_bundle(
     evidence: dict[str, SourceEvidence] | None = None,
 ) -> dict:
     """The import as the review shows it. ``evidence`` is what Observe holds
-    now for its sources; it is read when not given."""
+    now for its sources (``import_evidence``); it is read when not given."""
     cases = list(evidence_import.cases.all())
     if evidence is None:
-        evidence = observe_evidence(
-            str(evidence_import.project_id),
+        evidence = import_evidence(
+            evidence_import.project,
             evidence_import.source_kind,
             [case.source_id for case in cases],
         )
+    # A source the import found nothing for stays unavailable: it was frozen so.
+    current = {
+        case.source_id: evidence.get(case.source_id)
+        for case in cases
+        if case.status != EvidenceImportCase.Status.UNAVAILABLE
+    }
     return {
         "id": evidence_import.id,
         "environment_id": evidence_import.environment_id,
@@ -97,37 +136,174 @@ def import_bundle(
         "agent_version_id": evidence_import.agent_version_id,
         "source_kind": evidence_import.source_kind,
         "created_at": evidence_import.created_at,
-        "cases": [_case(case, evidence.get(case.source_id)) for case in cases],
-        "redaction": _redaction(cases, evidence),
+        "cases": [_case(case, current.get(case.source_id)) for case in cases],
+        "redaction": _redaction(cases, current),
     }
+
+
+def _within(evidence: SourceEvidence, chars: int) -> SourceEvidence:
+    """``evidence`` with at most ``chars`` characters of text redaction must
+    read: the conversation, the tool calls' inputs, outputs and errors, and the
+    labels' notes. The parts share ``chars`` evenly, a part needing less giving
+    the rest to the others. A cut keeps the start and says so."""
+    sizes = (
+        sum(len(turn.text) for turn in evidence.turns),
+        sum(_call_size(call) for call in evidence.tool_calls or ()),
+        sum(_label_size(label) for label in evidence.labels),
+    )
+    if sum(sizes) <= chars:
+        return evidence
+    turns_room, calls_room, labels_room = _shares(sizes, chars)
+    turns, turns_cut, omitted = _cut_turns(evidence.turns, turns_room)
+    calls, calls_cut = _cut_calls(evidence.tool_calls, calls_room)
+    labels, labels_cut = _cut_labels(evidence.labels, labels_room)
+    return replace(
+        evidence,
+        turns=turns,
+        turns_truncated=evidence.turns_truncated or turns_cut,
+        turns_omitted=evidence.turns_omitted + omitted,
+        tool_calls=calls,
+        tool_calls_truncated=evidence.tool_calls_truncated or calls_cut,
+        labels=labels,
+        labels_truncated=evidence.labels_truncated or labels_cut,
+    )
+
+
+def _call_size(call: ToolCall) -> int:
+    return len(call.input) + len(call.output) + len(call.error)
+
+
+def _label_size(label: Label) -> int:
+    return len(label.notes) + (len(label.value) if isinstance(label.value, str) else 0)
+
+
+def _shares(sizes: tuple[int, ...], total: int) -> list[int]:
+    """``total`` split evenly across parts, none given more than its size."""
+    shares = [0] * len(sizes)
+    left = total
+    for done, index in enumerate(sorted(range(len(sizes)), key=lambda i: sizes[i])):
+        shares[index] = min(sizes[index], left // (len(sizes) - done))
+        left -= shares[index]
+    return shares
+
+
+def _clip(text: str, room: int) -> tuple[str, int]:
+    """``text`` cut to ``room``, and the room left after it."""
+    kept = text[: max(0, room)]
+    return kept, room - len(kept)
+
+
+def _cut_turns(
+    turns: tuple[Turn, ...], room: int
+) -> tuple[tuple[Turn, ...], bool, int]:
+    """``turns`` in ``room`` characters: the last turns, then the first, and
+    how many middle turns were left out. The last turn always stays (cut when
+    it alone is too long), since a failure often comes at the end."""
+    if sum(len(turn.text) for turn in turns) <= room:
+        return turns, False, 0
+    tail_room = room // 2
+    tail: list[Turn] = []
+    end = len(turns)
+    while end > 0 and tail_room > 0:
+        turn = turns[end - 1]
+        if len(turn.text) > tail_room:
+            if not tail:
+                tail.append(replace(turn, text=turn.text[:tail_room], truncated=True))
+                tail_room, end = 0, end - 1
+            break
+        tail.append(turn)
+        tail_room -= len(turn.text)
+        end -= 1
+    head_room = room - room // 2 + tail_room
+    head: list[Turn] = []
+    start = 0
+    while start < end and head_room > 0:
+        turn = turns[start]
+        text, head_room = _clip(turn.text, head_room)
+        head.append(
+            replace(turn, text=text, truncated=turn.truncated or text != turn.text)
+        )
+        start += 1
+    return tuple(head + tail[::-1]), True, end - start
+
+
+def _cut_calls(
+    calls: tuple[ToolCall, ...] | None, room: int
+) -> tuple[tuple[ToolCall, ...] | None, bool]:
+    """``calls`` in ``room`` characters, failed calls given room first, then
+    shown in the order they ran."""
+    if calls is None:
+        return None, False
+    kept: dict[int, ToolCall] = {}
+    cut = False
+    for index in sorted(range(len(calls)), key=lambda i: (not calls[i].failed, i)):
+        call = calls[index]
+        if room <= 0:
+            cut = True
+            break
+        given, room = _clip(call.input, room)
+        taken, room = _clip(call.output, room)
+        error, room = _clip(call.error, room)
+        cut = cut or (given, taken, error) != (call.input, call.output, call.error)
+        kept[index] = replace(
+            call,
+            input=given,
+            output=taken,
+            error=error,
+            input_truncated=call.input_truncated or given != call.input,
+            output_truncated=call.output_truncated or taken != call.output,
+        )
+    return tuple(kept[index] for index in sorted(kept)), cut
+
+
+def _cut_labels(labels: tuple[Label, ...], room: int) -> tuple[tuple[Label, ...], bool]:
+    kept: list[Label] = []
+    cut = False
+    for label in labels:
+        if room <= 0 and _label_size(label):
+            return tuple(kept), True
+        notes, room = _clip(label.notes, room)
+        value = label.value
+        if isinstance(value, str):
+            value, room = _clip(value, room)
+        cut = cut or notes != label.notes or value != label.value
+        kept.append(replace(label, notes=notes, value=value))
+    return tuple(kept), cut
 
 
 def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
     if evidence is None:
-        reason = case.reason
-        if case.status != EvidenceImportCase.Status.UNAVAILABLE:
-            reason = SOURCE_UNAVAILABLE
+        reason = (
+            case.reason
+            if case.status == EvidenceImportCase.Status.UNAVAILABLE
+            else SOURCE_UNAVAILABLE
+        )
         return {
             "id": case.id,
             "source_id": case.source_id,
             "status": EvidenceImportCase.Status.UNAVAILABLE,
             "reason": reason,
-            "changed_since_import": False,
+            "changed_since_import": None,
             "trace_ids": [],
             "started_at": None,
             "ended_at": None,
             "transcript": _part("missing", reason, turns=[]),
             "tool_calls": _part("missing", reason, calls=[]),
-            "tool_io": _part("missing", reason),
+            "tool_inputs": _part("missing", reason),
+            "tool_outputs": _part("missing", reason),
             "starting_state": _part("missing", STATE_MISSING),
             "labels": _part("missing", reason, labels=[]),
         }
+    digest = evidence_digest(evidence)
     return {
         "id": case.id,
         "source_id": case.source_id,
         "status": case.status,
         "reason": case.reason,
-        "changed_since_import": evidence_digest(evidence) != case.digest,
+        # Unknown when either side could not be read in full.
+        "changed_since_import": (
+            digest != case.digest if digest and case.digest else None
+        ),
         "trace_ids": list(evidence.trace_ids),
         "started_at": evidence.started_at,
         "ended_at": evidence.ended_at,
@@ -144,20 +320,41 @@ def _part(status: str, reason: str = "", **items) -> dict:
 
 def _transcript(evidence: SourceEvidence) -> dict:
     turns = [asdict(turn) for turn in evidence.turns]
+    if evidence.transcript_unreadable and not turns:
+        return _part(
+            "unreadable", "The recorded transcript could not be read.", turns=[]
+        )
     if not turns:
         return _part("missing", "No conversation text was recorded.", turns=[])
-    if evidence.turns_truncated or any(t["truncated"] for t in turns):
+    if evidence.turns_omitted:
+        count = evidence.turns_omitted
         return _part(
-            "truncated", "Cut to fit; the start of each part is kept.", turns=turns
+            "truncated",
+            f"{count} middle turn{'s' if count != 1 else ''} left out to fit; "
+            "the first and last are kept.",
+            turns=turns,
         )
+    if evidence.turns_truncated or any(t["truncated"] for t in turns):
+        return _part("truncated", CUT_TO_FIT, turns=turns)
     return _part("present", turns=turns)
 
 
 def _tools(evidence: SourceEvidence) -> dict:
     if evidence.tool_calls is None:
-        missing = _part("missing", "The tool calls could not be read.")
-        return {"tool_calls": {**missing, "calls": []}, "tool_io": missing}
+        unreadable = _part("unreadable", "The tool calls could not be read.")
+        return {
+            "tool_calls": {**unreadable, "calls": []},
+            "tool_inputs": unreadable,
+            "tool_outputs": unreadable,
+        }
     calls = [asdict(call) for call in evidence.tool_calls]
+    if not calls and evidence.tool_calls_truncated:
+        cut = _part("truncated", "More steps were recorded than could be shown.")
+        return {
+            "tool_calls": {**cut, "calls": []},
+            "tool_inputs": cut,
+            "tool_outputs": cut,
+        }
     if not calls:
         # Observe cannot tell an agent that called no tool from one whose
         # tools are not traced.
@@ -165,64 +362,89 @@ def _tools(evidence: SourceEvidence) -> dict:
             "missing",
             "No tool calls were recorded, or the agent's tools are not traced.",
         )
-        return {"tool_calls": {**missing, "calls": []}, "tool_io": missing}
+        return {
+            "tool_calls": {**missing, "calls": []},
+            "tool_inputs": missing,
+            "tool_outputs": missing,
+        }
     listed = (
         _part("truncated", "More tool calls were recorded than are shown.", calls=calls)
         if evidence.tool_calls_truncated
         else _part("present", calls=calls)
     )
-    with_io = [c for c in calls if c["input"] or c["output"]]
-    if not with_io:
-        io = _part("missing", "The tool calls recorded no inputs or outputs.")
-    elif len(with_io) < len(calls):
-        io = _part("partial", "Some tool calls recorded no input or output.")
-    elif any(c["input_truncated"] or c["output_truncated"] for c in calls):
-        io = _part("truncated", "Cut to fit; the start of each value is kept.")
-    else:
-        io = _part("present")
-    return {"tool_calls": listed, "tool_io": io}
+    return {
+        "tool_calls": listed,
+        "tool_inputs": _values(calls, "input", "inputs"),
+        "tool_outputs": _values(calls, "output", "outputs"),
+    }
+
+
+def _values(calls: list[dict], field: str, plural: str) -> dict:
+    recorded = [call for call in calls if call[field]]
+    if not recorded:
+        return _part("missing", f"The tool calls recorded no {plural}.")
+    if len(recorded) < len(calls):
+        return _part("partial", f"Some tool calls recorded no {plural}.")
+    if any(call[f"{field}_truncated"] for call in calls):
+        return _part("truncated", CUT_TO_FIT)
+    return _part("present")
 
 
 def _labels(evidence: SourceEvidence) -> dict:
     labels = [asdict(label) for label in evidence.labels]
     if not labels:
         return _part("missing", "Nobody labelled this source.", labels=[])
+    if evidence.labels_truncated:
+        return _part("truncated", CUT_TO_FIT, labels=labels)
     return _part("present", labels=labels)
 
 
 def _redaction(
-    cases: list[EvidenceImportCase], evidence: dict[str, SourceEvidence]
+    cases: list[EvidenceImportCase], evidence: dict[str, SourceEvidence | None]
 ) -> dict:
-    """What redaction would replace, per value. It fails closed: when nothing
-    could look, the status says so and no finding claims the text is clean."""
-    findings: list[dict] = []
-    total = 0
+    """What redaction would replace in every text the bundle carries, analysed
+    in one batch. Without Presidio, a fixed-shape match stands in and the
+    reason says what it could not check."""
+    values: list[tuple[EvidenceImportCase, str, int, str, str]] = []
     for case in cases:
         source = evidence.get(case.source_id)
         if source is None:
             continue
-        values = [("transcript", i, "text", t.text) for i, t in enumerate(source.turns)]
+        values += [
+            (case, "transcript", i, "text", t.text) for i, t in enumerate(source.turns)
+        ]
         for i, call in enumerate(source.tool_calls or ()):
-            values += [("tool_calls", i, "input", call.input)]
-            values += [("tool_calls", i, "output", call.output)]
-        for part, index, field, text in values:
-            found = find_pii(text)
-            if found is None:
-                return {
-                    "status": "unavailable",
-                    "reason": REDACTION_UNAVAILABLE,
-                    "findings": [],
-                    "total": 0,
-                }
-            total += len(found)
-            findings += [
-                {
-                    "case_id": case.id,
-                    "part": part,
-                    "index": index,
-                    "field": field,
-                    **asdict(finding),
-                }
-                for finding in found
-            ][: max(0, MAX_FINDINGS - len(findings))]
-    return {"status": "ready", "reason": "", "findings": findings, "total": total}
+            values += [
+                (case, "tool_calls", i, field, text)
+                for field, text in (
+                    ("input", call.input),
+                    ("output", call.output),
+                    ("error", call.error),
+                )
+            ]
+        for i, label in enumerate(source.labels):
+            values.append((case, "labels", i, "notes", label.notes))
+            if isinstance(label.value, str):
+                values.append((case, "labels", i, "value", label.value))
+    texts = [text for *_, text in values]
+    found = find_pii(texts)
+    method, reason = "presidio", ""
+    if found is None:
+        found, method, reason = find_pii_basic(texts), "basic", BASIC_REDACTION
+    findings = [
+        {
+            "case_id": case.id,
+            "part": part,
+            "index": index,
+            "field": field,
+            **asdict(finding),
+        }
+        for (case, part, index, field, _), hits in zip(values, found, strict=True)
+        for finding in hits
+    ]
+    return {
+        "method": method,
+        "reason": reason,
+        "findings": findings[:MAX_FINDINGS],
+        "total": len(findings),
+    }

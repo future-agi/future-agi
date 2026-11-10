@@ -9,13 +9,13 @@ from __future__ import annotations
 from django.db import transaction
 
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
-from simulate.selectors.evidence_import import SOURCE_NOT_FOUND, evidence_digest
-from tracer.models.project import Project
-from tracer.selectors.observe_evidence import (
-    SourceEvidence,
-    SourceKind,
-    observe_evidence,
+from simulate.selectors.evidence_import import (
+    SOURCE_NOT_FOUND,
+    evidence_digest,
+    import_evidence,
 )
+from tracer.models.project import Project
+from tracer.selectors.observe_evidence import SourceEvidence, SourceKind
 
 
 def create_evidence_import(
@@ -27,9 +27,10 @@ def create_evidence_import(
     user,
 ) -> tuple[EvidenceImport, dict[str, SourceEvidence]]:
     """Freeze ``source_ids`` as an import for ``environment``, each with a
-    fingerprint of what it holds now. Returns the import and the evidence it
-    was made from, so the caller can show it without reading Observe again."""
-    evidence = observe_evidence(str(project.id), source_kind, source_ids)
+    fingerprint of what it holds now (blank when part of it could not be read).
+    Returns the import and the evidence it was made from, so the caller can
+    show it without reading Observe again."""
+    evidence = import_evidence(project, source_kind, source_ids)
     with transaction.atomic():
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,

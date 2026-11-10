@@ -40246,12 +40246,22 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
       source_id: zod.string().min(1),
       status: zod.enum(["pending", "unavailable"]),
       reason: zod.string(),
-      changed_since_import: zod.boolean(),
+      changed_since_import: zod
+        .boolean()
+        .describe(
+          "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
+        ),
       trace_ids: zod.array(zod.string().min(1)),
       started_at: zod.string().datetime({ offset: true }),
       ended_at: zod.string().datetime({ offset: true }),
       transcript: zod.object({
-        status: zod.enum(["present", "partial", "truncated", "missing"]),
+        status: zod.enum([
+          "present",
+          "partial",
+          "truncated",
+          "missing",
+          "unreadable",
+        ]),
         reason: zod.string(),
         turns: zod.array(
           zod.object({
@@ -40264,7 +40274,13 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
         ),
       }),
       tool_calls: zod.object({
-        status: zod.enum(["present", "partial", "truncated", "missing"]),
+        status: zod.enum([
+          "present",
+          "partial",
+          "truncated",
+          "missing",
+          "unreadable",
+        ]),
         reason: zod.string(),
         calls: zod.array(
           zod.object({
@@ -40281,20 +40297,50 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
           }),
         ),
       }),
-      tool_io: zod
+      tool_inputs: zod
         .object({
-          status: zod.enum(["present", "partial", "truncated", "missing"]),
+          status: zod.enum([
+            "present",
+            "partial",
+            "truncated",
+            "missing",
+            "unreadable",
+          ]),
           reason: zod.string(),
         })
-        .describe("Whether the tool calls recorded their inputs and outputs."),
+        .describe("Whether the tool calls recorded their inputs."),
+      tool_outputs: zod
+        .object({
+          status: zod.enum([
+            "present",
+            "partial",
+            "truncated",
+            "missing",
+            "unreadable",
+          ]),
+          reason: zod.string(),
+        })
+        .describe("Whether the tool calls recorded their inputs."),
       starting_state: zod
         .object({
-          status: zod.enum(["present", "partial", "truncated", "missing"]),
+          status: zod.enum([
+            "present",
+            "partial",
+            "truncated",
+            "missing",
+            "unreadable",
+          ]),
           reason: zod.string(),
         })
-        .describe("Whether the tool calls recorded their inputs and outputs."),
+        .describe("Whether the tool calls recorded their inputs."),
       labels: zod.object({
-        status: zod.enum(["present", "partial", "truncated", "missing"]),
+        status: zod.enum([
+          "present",
+          "partial",
+          "truncated",
+          "missing",
+          "unreadable",
+        ]),
         reason: zod.string(),
         labels: zod.array(
           zod.object({
@@ -40314,22 +40360,22 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
     }),
   ),
   redaction: zod.object({
-    status: zod
-      .enum(["ready", "unavailable"])
+    method: zod
+      .enum(["presidio", "basic"])
       .describe(
-        "unavailable: nothing could look for personal data; import refuses.",
+        "basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.",
       ),
     reason: zod.string(),
     findings: zod.array(
       zod.object({
         case_id: zod.string().uuid(),
-        part: zod.enum(["transcript", "tool_calls"]),
+        part: zod.enum(["transcript", "tool_calls", "labels"]),
         index: zod
           .number()
           .min(
             simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin,
           ),
-        field: zod.enum(["text", "input", "output"]),
+        field: zod.enum(["text", "input", "output", "error", "notes", "value"]),
         entity: zod.string().min(1),
         start: zod
           .number()
