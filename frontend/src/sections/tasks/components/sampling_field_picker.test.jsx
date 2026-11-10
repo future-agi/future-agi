@@ -591,6 +591,12 @@ describe("sampling group discovery using existing query adapters", () => {
     expect(
       screen.getByRole("option", { name: "Use “Ocea” string" }),
     ).toBeVisible();
+    // The rows loaded for the empty search do not contain "Ocea", so none
+    // is offered as if it matched while the lookup runs.
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(
+      screen.queryByRole("option", { name: "en,CA string" }),
+    ).not.toBeInTheDocument();
     expect(
       await screen.findByText("No matching values in the loaded list."),
     ).toHaveAttribute("role", "status");
@@ -613,5 +619,55 @@ describe("sampling group discovery using existing query adapters", () => {
     expect(filters(form.getValues("samplingPolicy"))).toEqual([
       { source: "span", key: "locale", op: "in", values: ["Ocea"] },
     ]);
+  });
+
+  it("offers only loaded fields that contain the typed text until the typed search is looked up", async () => {
+    show();
+    await group();
+    await userEvent.click(fieldBox());
+    await option("locale");
+    expect(await option("Load more fields")).toBeVisible();
+    await userEvent.type(fieldBox(), "lo");
+    expect(screen.getByText("Searching span attributes…")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      ["locale string", "Use “lo” Span attribute"],
+    );
+    // "Load more" would page the previous search, so it waits as well.
+    expect(
+      screen.queryByRole("option", { name: "Load more fields" }),
+    ).not.toBeInTheDocument();
+    await userEvent.type(fieldBox(), "x");
+    expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      ["Use “lox” Span attribute"],
+    );
+    // Once looked up, the rows are exactly what the search returned (this
+    // mock returns "locale" for every search).
+    expect(await option("locale")).toBeVisible();
+    expect(
+      screen.queryByText("Searching span attributes…"),
+    ).not.toBeInTheDocument();
+    expect(form.getValues("samplingPolicy.strata")).toEqual([]);
+  });
+
+  it("offers only loaded values that contain the typed text until the typed search is looked up", async () => {
+    show();
+    await group();
+    await chooseField("locale");
+    await userEvent.click(valuesBox());
+    await screen.findByRole("option", { name: "en,CA string" });
+    await userEvent.type(valuesBox(), "en");
+    expect(screen.getByText("Searching values…")).toBeVisible();
+    expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      ["en,CA string", "Use “en” string"],
+    );
+    expect(form.getValues("samplingPolicy.strata")).toEqual([]);
+    // Looked up: the mock returns every value for any search, shown as is.
+    expect(
+      await screen.findByRole("option", { name: "42 number" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Searching values…")).not.toBeInTheDocument();
   });
 });

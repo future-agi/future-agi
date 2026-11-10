@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -20,6 +20,7 @@ import { RowLimitField, SamplingRateField } from "./task_sampling_fields";
 import {
   advancedSamplingSummary,
   isSimpleSamplingPolicy,
+  isValidSamplingRate,
   pickLevels,
   pickNames,
   resetHistoricalSamplingCounts,
@@ -40,6 +41,14 @@ export function TaskSamplingSummary({ control }) {
       "rowType",
     ],
   });
+  // The field already shows the error for an invalid percentage; echoing the
+  // value here ("About 0%") would read as a real selection.
+  if (!policy && !isValidSamplingRate(rate)) return null;
+  // A cleared custom limit is missing, not zero.
+  const limitText =
+    limit === "" || limit == null || !Number.isFinite(Number(limit))
+      ? " The processing limit is not set yet."
+      : ` Stop after processing ${Number(limit).toLocaleString()} matching rows, not after selecting that many evaluations.`;
   return (
     <Typography
       variant="body2"
@@ -50,7 +59,7 @@ export function TaskSamplingSummary({ control }) {
         ? isSimpleSamplingPolicy(policy)
           ? simpleSelectionText(policy, rowType)
           : advancedSamplingSummary(policy)
-        : `${Number(rate) === 100 ? "All" : `About ${rate}% of`} filter-matching ${rowNames(rowType)}.${runType === "historical" ? ` Stop after processing ${Number(limit).toLocaleString()} matching rows, not after selecting that many evaluations.` : ""}`}
+        : `${Number(rate) === 100 ? "All" : `About ${rate}% of`} filter-matching ${rowNames(rowType)}.${runType === "historical" ? limitText : ""}`}
     </Typography>
   );
 }
@@ -67,12 +76,9 @@ export default function TaskSamplingSection({ control, getValues }) {
     control,
     name: ["rowType", "samplingRate"],
   });
-  const rowRateValid =
-    samplingRate !== "" &&
-    samplingRate != null &&
-    Number.isFinite(Number(samplingRate)) &&
-    Number(samplingRate) >= 1 &&
-    Number(samplingRate) <= 100;
+  const rowRateValid = isValidSamplingRate(samplingRate);
+  // Why "Pick whole groups" is unavailable; the field itself shows the error.
+  const switchHelpId = useId();
   const runType = runTypeField.value;
   const previousRow = useRef(rowType);
   const previousPolicy = useRef(null);
@@ -81,6 +87,7 @@ export default function TaskSamplingSection({ control, getValues }) {
   const [remove, setRemove] = useState(false);
   const policy = field.value;
   const simple = policy && isSimpleSamplingPolicy(policy);
+  const switchBlocked = !policy && !rowRateValid;
 
   useEffect(() => {
     if (previousRow.current !== rowType) {
@@ -169,11 +176,14 @@ export default function TaskSamplingSection({ control, getValues }) {
         />
         <FormControlLabel
           value="units"
-          disabled={!pickLevels(rowType).length || (!policy && !rowRateValid)}
+          disabled={!pickLevels(rowType).length || switchBlocked}
           control={
             <Radio
               size="small"
               sx={{ "&.Mui-checked": { color: "text.primary" } }}
+              inputProps={
+                switchBlocked ? { "aria-describedby": switchHelpId } : undefined
+              }
             />
           }
           label={`Pick whole groups of ${rowNames(rowType)}`}
@@ -207,10 +217,13 @@ export default function TaskSamplingSection({ control, getValues }) {
       ) : (
         <>
           <SamplingRateField control={control} />
-          {!rowRateValid && (
-            <Typography variant="caption" color="error.main">
-              Choose a valid percentage before switching methods. Your retained
-              percentage is required when saving.
+          {switchBlocked && (
+            <Typography
+              id={switchHelpId}
+              variant="caption"
+              color="text.secondary"
+            >
+              Enter a valid percentage to switch to group picking.
             </Typography>
           )}
           {runType === "historical" && <RowLimitField control={control} />}

@@ -188,6 +188,71 @@ describe("two-choice task data selection", () => {
     ).toEqual({ target_n: 100 });
   });
 
+  it("drops the selection summary while the custom percentage is invalid and never shows a cleared limit as 0", async () => {
+    show();
+    const input = screen.getByRole("spinbutton", {
+      name: "Custom percentage (%)",
+    });
+    for (const invalid of [0, 101]) {
+      await userEvent.clear(input);
+      await userEvent.type(input, String(invalid));
+      // The typed value is kept as entered; only the summary echo goes.
+      expect(form.getValues("samplingRate")).toBe(invalid);
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(
+        screen.getByText("Enter a percentage from 1 to 100."),
+      ).toBeVisible();
+      // One error, under the field. The disabled method names its reason.
+      const groups = screen.getByRole("radio", {
+        name: "Pick whole groups of spans",
+      });
+      expect(groups).toBeDisabled();
+      expect(groups).toHaveAccessibleDescription(
+        "Enter a valid percentage to switch to group picking.",
+      );
+      expect(
+        screen.queryByText(/Choose a valid percentage/),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("Data selection summary"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(new RegExp(`About ${invalid}%`)),
+      ).not.toBeInTheDocument();
+    }
+    await userEvent.clear(input);
+    await userEvent.type(input, "25");
+    expect(screen.getByLabelText("Data selection summary")).toHaveTextContent(
+      "About 25% of filter-matching spans. Stop after processing 100,000 matching rows, not after selecting that many evaluations.",
+    );
+    const groupPicking = screen.getByRole("radio", {
+      name: "Pick whole groups of spans",
+    });
+    expect(groupPicking).toBeEnabled();
+    expect(groupPicking).not.toHaveAttribute("aria-describedby");
+    expect(
+      screen.queryByText(
+        "Enter a valid percentage to switch to group picking.",
+      ),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Custom limit" }));
+    const limit = screen.getByRole("spinbutton", {
+      name: "Matching rows to process",
+    });
+    await userEvent.clear(limit);
+    expect(form.getValues("spansLimit")).toBe("");
+    expect(screen.getByLabelText("Data selection summary")).toHaveTextContent(
+      "About 25% of filter-matching spans. The processing limit is not set yet.",
+    );
+    expect(
+      screen.getByLabelText("Data selection summary"),
+    ).not.toHaveTextContent(/\b0 matching rows/);
+    await userEvent.type(limit, "2500");
+    expect(screen.getByLabelText("Data selection summary")).toHaveTextContent(
+      "Stop after processing 2,500 matching rows",
+    );
+  });
+
   const combinations = ["spans", "traces", "sessions"].flatMap((rowType) =>
     pickLevels(rowType).flatMap((unit) =>
       ["historical", "continuous"].map((runType) => [rowType, unit, runType]),

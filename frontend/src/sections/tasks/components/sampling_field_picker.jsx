@@ -96,6 +96,11 @@ const compactAutocompleteSx = {
 };
 const isInert = (option) =>
   typeof option === "object" && Boolean(option.disabled);
+// Until a typed search has been looked up, the loaded rows answer the previous
+// search. Keep only those that contain the typed text, so no row reads as a
+// match for text it does not contain.
+const containsTyped = (typed) => (text) =>
+  String(text).toLowerCase().includes(typed.toLowerCase());
 // Theme menu rows are 30px with a 1px gap. A long list stops halfway through
 // a row so it reads as scrollable; a short one shows every row, so the
 // trailing "Load more" row is never the one cut in half.
@@ -311,7 +316,15 @@ export function SamplingFieldPicker({
     commit({ source, key: query });
   };
 
-  const fields = catalog.map((field) => {
+  const searchSettled = (inventory.debouncedSearch ?? typed) === typed;
+  const matchesTyped = containsTyped(typed);
+  const shownCatalog = searchSettled
+    ? catalog
+    : catalog.filter(
+        (field) =>
+          matchesTyped(field.name || field.id) || matchesTyped(field.id),
+      );
+  const fields = shownCatalog.map((field) => {
     const scalar = isScalarField(field);
     const types = fieldTypes(field).join(", ");
     return {
@@ -346,7 +359,8 @@ export function SamplingFieldPicker({
       disabled: inventory.isFetching,
       run: run(inventory.refetch),
     });
-  if (span && inventory.hasNextPage)
+  // "Load more" would page the previous search, so it waits for this one.
+  if (span && inventory.hasNextPage && searchSettled)
     options.push({
       id: "action:more",
       kind: "action",
@@ -360,7 +374,6 @@ export function SamplingFieldPicker({
     });
 
   const busy = inventory.isFetching && !inventory.isFetchingNextPage;
-  const searchSettled = (inventory.debouncedSearch ?? typed) === typed;
   const status = [];
   if (span && !lookupFailed) {
     if (inventory.isLoading) status.push("Loading fields…");
@@ -556,8 +569,11 @@ export function SamplingValuePicker({
   const suggestions = discoverable
     ? (inventory.data || []).flatMap(scalarValueOption)
     : [];
+  const searchSettled = typed === settledSearch.trim();
+  const matchesTyped = containsTyped(typed);
   // Chosen values are chips, not rows.
   const options = suggestions
+    .filter(({ raw }) => searchSettled || matchesTyped(displayValue(raw)))
     .filter(({ raw }) => !selectedIds.has(valueIdentity(raw)))
     .map(({ raw, type }) => {
       const twin = sameGroupAs(raw);
@@ -602,7 +618,7 @@ export function SamplingValuePicker({
       disabled: inventory.isFetching,
       run: run(inventory.refetch),
     });
-  if (discoverable && inventory.hasNextPage)
+  if (discoverable && inventory.hasNextPage && searchSettled)
     options.push({
       id: "action:more",
       kind: "action",
@@ -620,8 +636,7 @@ export function SamplingValuePicker({
   const busy = inventory.isFetching && !inventory.isFetchingNextPage;
   const status = [];
   if (discoverable && !loadFailed) {
-    if (typed && (typed !== settledSearch.trim() || busy))
-      status.push("Searching values…");
+    if (typed && (!searchSettled || busy)) status.push("Searching values…");
     else if (busy && !suggestions.length) status.push("Loading values…");
     else if (inventory.isFetched && !busy && !suggestions.length)
       status.push(
