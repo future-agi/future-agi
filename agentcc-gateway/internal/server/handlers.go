@@ -1445,7 +1445,12 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			rc.Provider = fbProviderID
 			rc.Request.Model = resolvedModel
 
-			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
+			var fbResp *models.ChatCompletionResponse
+			fbCallErr := effectiveFailover.CallProvider(fbProviderID, func() error {
+				var callErr error
+				fbResp, callErr = fbProvider.ChatCompletion(ctx, rc.Request)
+				return callErr
+			})
 			if fbCallErr == nil {
 				servingProvider = fbProvider
 				rc.Response = fbResp
@@ -1538,7 +1543,12 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Provider = fbProviderID
 				rc.Request.Model = resolvedModel
 
-				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
+				var fbResp *models.ChatCompletionResponse
+				fbCallErr := fo.CallProvider(fbProviderID, func() error {
+					var callErr error
+					fbResp, callErr = fbProvider.ChatCompletion(ctx, rc.Request)
+					return callErr
+				})
 				if fbCallErr == nil {
 					servingProvider = fbProvider
 					rc.Response = fbResp
@@ -1658,7 +1668,9 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 				rc.Provider = fbProviderID
 				rc.Request.Model = resolvedModel
-				if err := openStream(ctx, fbProvider); err == nil {
+				if err := effectiveFailover.CallProvider(fbProviderID, func() error {
+					return openStream(ctx, fbProvider)
+				}); err == nil {
 					rc.Flags.FallbackUsed = true
 					rc.Metadata["original_model"] = originalModel
 					rc.Metadata["fallback_model"] = resolvedModel

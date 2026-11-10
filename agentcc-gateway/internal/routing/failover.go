@@ -115,53 +115,29 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 			originalProvider = result.Target.ProviderID
 		}
 
-		// Keep the admission generation across retries and record exactly one result.
-		var cb *CircuitBreaker
-		var generation uint64
-		if f.cbReg.IsEnabled() {
-			cb = f.cbReg.Get(result.Target.ProviderID)
-			var allowed bool
-			generation, allowed = cb.Allow()
-			if !allowed {
-				excluded[result.Target.ProviderID] = true
-				if lastErr == nil {
-					lastErr = &models.APIError{
-						Status: 503, Type: models.ErrTypeServer, Code: "circuit_open",
-						Message: "Provider circuit is open or at its probe limit",
-					}
-				}
-				continue
+		admitted, callErr := f.callProvider(result.Target.ProviderID, func() error {
+			// Create per-attempt timeout so later attempts get their full time.
+			attemptCtx := ctx
+			if f.cfg.PerAttemptTimeout > 0 {
+				var cancel context.CancelFunc
+				attemptCtx, cancel = context.WithTimeout(ctx, f.cfg.PerAttemptTimeout)
+				defer cancel()
 			}
-		}
 
-		// Create per-attempt timeout if configured so later attempts get full time.
-		attemptCtx := ctx
-		var attemptCancel context.CancelFunc
-		if f.cfg.PerAttemptTimeout > 0 {
-			attemptCtx, attemptCancel = context.WithTimeout(ctx, f.cfg.PerAttemptTimeout)
-		}
-
-		// Call the provider (with retry if configured).
-		var callErr error
-		if f.retryer.IsEnabled() {
-			_, callErr = f.retryer.Execute(attemptCtx, func() error {
-				return call(attemptCtx, result.Target.ProviderID, result.Target.ModelOverride)
-			})
-		} else {
-			callErr = call(attemptCtx, result.Target.ProviderID, result.Target.ModelOverride)
-		}
-
-		if attemptCancel != nil {
-			attemptCancel()
-		}
-
-		// Record result in circuit breaker.
-		if cb != nil {
-			if callErr == nil {
-				cb.RecordSuccess(generation)
-			} else {
-				cb.RecordFailure(generation, callErr)
+			if f.retryer.IsEnabled() {
+				_, err := f.retryer.Execute(attemptCtx, func() error {
+					return call(attemptCtx, result.Target.ProviderID, result.Target.ModelOverride)
+				})
+				return err
 			}
+			return call(attemptCtx, result.Target.ProviderID, result.Target.ModelOverride)
+		})
+		if !admitted {
+			excluded[result.Target.ProviderID] = true
+			if lastErr == nil {
+				lastErr = callErr
+			}
+			continue
 		}
 
 		if callErr == nil {
