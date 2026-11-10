@@ -51,8 +51,11 @@ def download_knowledge_base_file(request, kb_id, file_id):
             raise PermissionDenied("Access denied to this knowledge base.")
 
     membership = OrganizationMembership.no_workspace_objects.filter(
-        user=request.user, user__is_active=True, organization=org,
-        organization__deleted=False, is_active=True, deleted=False,
+        user=request.user,
+        user__is_active=True,
+        organization=org,
+        is_active=True,
+        deleted=False,
     ).first()
     if membership is None or not workspace.is_active or workspace.deleted:
         raise PermissionDenied("Access denied to this knowledge base.")
@@ -60,7 +63,10 @@ def download_knowledge_base_file(request, kb_id, file_id):
         raise PermissionDenied("Access denied to this knowledge base.")
     if membership.level_or_legacy < Level.ADMIN:
         workspace_membership = WorkspaceMembership.no_workspace_objects.filter(
-            user=request.user, workspace=workspace, is_active=True, deleted=False,
+            user=request.user,
+            workspace=workspace,
+            is_active=True,
+            deleted=False,
         ).first()
         if (
             workspace_membership is None
@@ -68,13 +74,16 @@ def download_knowledge_base_file(request, kb_id, file_id):
                 workspace_membership.level
                 if workspace_membership.level is not None
                 else Level.STRING_TO_LEVEL.get(workspace_membership.role, 0)
-            ) < Level.WORKSPACE_VIEWER
+            )
+            < Level.WORKSPACE_VIEWER
         ):
             raise PermissionDenied("Access denied to this knowledge base.")
 
     # The file UI uses KnowledgeBaseFile, not the separate KnowledgeBase model.
     kb = KnowledgeBaseFile.no_workspace_objects.filter(
-        id=kb_id, organization=org, deleted=False,
+        id=kb_id,
+        organization=org,
+        deleted=False,
     ).first()
     if kb is None or (
         kb.workspace_id != workspace.id
@@ -95,7 +104,9 @@ def download_knowledge_base_file(request, kb_id, file_id):
     if not re.fullmatch(r"[a-z0-9]{1,10}", extension):
         raise NotFound("Knowledge base file not found.")
     filename = file.name.replace("\\", "/").rsplit("/", 1)[-1]
-    filename = "".join(char for char in filename if ord(char) >= 32 and ord(char) != 127)
+    filename = "".join(
+        char for char in filename if ord(char) >= 32 and ord(char) != 127
+    )
     filename = filename or f"download.{extension}"
     key = f"knowledge-base/{kb.id}/{file.id}.{extension}"
     try:

@@ -5,6 +5,13 @@ from django.db.models import Q
 from django.http import Http404
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework import filters, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
+
 from model_hub.models.kb import KnowledgeBase
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
@@ -17,12 +24,6 @@ from model_hub.serializers.kb import (
     KnowledgeBaseDownloadQuerySerializer,
     KnowledgeBaseSerializer,
 )
-from rest_framework import filters, viewsets
-from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError as DRFValidationError
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.request import Request
-from rest_framework.response import Response
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
@@ -77,7 +78,6 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
         check_ee_feature("knowledge_base", org_id=str(org.id))
 
         try:
-
             serializer = request.validated_serializer
             self.perform_create(serializer)
             return self._gm.success_response(serializer.data, status=201)
