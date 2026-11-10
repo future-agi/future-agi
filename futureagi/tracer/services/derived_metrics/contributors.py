@@ -106,7 +106,28 @@ def _trace_id(unit_id: str, selection_unit: str) -> str | None:
     return str(trace)
 
 
-def read_contributors(
+def read_contributors(run, rollup="overall", group_key="", limit=20):
+    if getattr(run, "kind", "run") != "snapshot":
+        return _read_contributors(run, rollup, group_key, limit)
+    from tracer.models.derived_metric import DerivedMetricRun
+    from tracer.services.derived_metrics.deletion_protocol import serialized_project
+
+    with serialized_project(run.definition.metric.project_id):
+        current = (
+            DerivedMetricRun.objects.select_related("definition__metric")
+            .filter(
+                pk=run.id,
+                status="complete",
+                deleted_at__isnull=True,
+            )
+            .first()
+        )
+        if current is None:
+            raise MetricInputError("This snapshot is no longer available.")
+        return _read_contributors(current, rollup, group_key, limit)
+
+
+def _read_contributors(
     run, rollup: str = "overall", group_key: str = "", limit: int = 20
 ) -> dict:
     from tracer.services.derived_metrics.service import _authorized_metric
@@ -119,9 +140,14 @@ def read_contributors(
     metric = definition.metric
     if not _authorized_metric(metric):
         raise MetricInputError("Metric project scope is no longer available.")
-    formula = compile_formula(
-        definition.formula, [item["alias"] for item in definition.inputs]
-    )
+    if getattr(run, "kind", "run") == "snapshot":
+        from tracer.services.derived_metrics.unit_reads import field_recipe
+
+        formula = field_recipe(definition).formula
+    else:
+        formula = compile_formula(
+            definition.formula, [item["alias"] for item in definition.inputs]
+        )
     params = {
         **Scope(
             metric.organization_id, metric.workspace_id, metric.project_id

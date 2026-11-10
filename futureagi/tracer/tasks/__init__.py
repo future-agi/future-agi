@@ -17,6 +17,8 @@ from tracer.tasks.dataset import (
 
 # Derived metric jobs
 from tracer.tasks.derived_metric import (
+    capture_derived_metric_snapshot,
+    cleanup_derived_metric_snapshots,
     compute_derived_metric,
     dispatch_derived_metrics,
     refresh_derived_metric_project,
@@ -55,6 +57,8 @@ __all__ = [
     "process_spans_chunk_task",
     "CHUNK_SIZE",
     "refresh_exact_aggregation_snapshot",
+    "capture_derived_metric_snapshot",
+    "cleanup_derived_metric_snapshots",
     "compute_derived_metric",
     "dispatch_derived_metrics",
     "refresh_derived_metric_project",

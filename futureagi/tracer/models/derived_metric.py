@@ -170,6 +170,16 @@ class DerivedMetric(BaseModel):
         ]
 
     def save(self, *args, **kwargs):
+        if self.deleted and not self._state.adding:
+            from tracer.services.derived_metrics.deletion_protocol import (
+                _before_delete,
+                serialized_project,
+            )
+
+            using = kwargs.get("using") or self._state.db or "default"
+            with serialized_project(self.project_id, using=using):
+                _before_delete(type(self), self, using)
+                return super().save(*args, **kwargs)
         # A new draft abandons the previous draft's private paging position.
         # Serialize this with publication, just like save_definition does; model
         # callers must not leave an indefinitely unscheduled private keyset.
@@ -2132,14 +2142,18 @@ class MetricReadManifest(models.Model):
             if "source_cut" in visibility_receipts:
                 raise MetricLedgerConflict("source receipt must come from the adapter")
             if source_cut is None and "a01_source_cut" in attempt.source_ceilings:
-                raise MetricLedgerConflict("frozen source cut requires publication evidence")
+                raise MetricLedgerConflict(
+                    "frozen source cut requires publication evidence"
+                )
             if source_cut is not None:
                 from tracer.services.derived_metrics.base_list_current_source_publication import (
                     bind_source_publication_cut,
                 )
 
                 visibility_receipts["source_cut"] = bind_source_publication_cut(
-                    source_cut, attempt=attempt, visibility_receipts=visibility_receipts,
+                    source_cut,
+                    attempt=attempt,
+                    visibility_receipts=visibility_receipts,
                 )
             committed = MetricRefreshAttempt.objects.filter(
                 id=attempt.id,
@@ -2672,6 +2686,7 @@ class MetricErasureRequest(models.Model):
                     "metric_expiry",
                     "metric_policy_replan",
                     "metric_omission",
+                    "metric_snapshot_submission",
                 ]
             ),
             id=request_id,

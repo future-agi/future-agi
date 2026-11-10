@@ -17,18 +17,29 @@ import { metric, kpi, trend, driver, field } from "./metricPageFixtures";
 const mock = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  delete: vi.fn(),
   org: {},
   workspace: {},
   enabled: true,
 }));
 vi.mock("src/utils/axios", () => ({
-  default: { get: mock.get, post: mock.post },
+  default: { get: mock.get, post: mock.post, delete: mock.delete },
   endpoints: {
-    derivedMetrics: Object.fromEntries(
-      ["detail", "kpi", "trend", "drivers", "fields", "history", "refresh"].map(
-        (name) => [name, (id) => `/metrics/${id}/${name}`],
+    derivedMetrics: {
+      ...Object.fromEntries(
+        [
+          "detail",
+          "kpi",
+          "trend",
+          "drivers",
+          "fields",
+          "history",
+          "refresh",
+          "snapshots",
+        ].map((name) => [name, (id) => `/metrics/${id}/${name}`]),
       ),
-    ),
+      snapshot: (id, snapshotId) => `/metrics/${id}/snapshots/${snapshotId}`,
+    },
   },
 }));
 vi.mock("src/contexts/OrganizationContext", () => ({
@@ -135,6 +146,9 @@ beforeEach(() => {
     return { data: responses[kind] };
   });
   mock.post.mockReset().mockResolvedValue({ data: { status: "queued" } });
+  mock.delete
+    .mockReset()
+    .mockResolvedValue({ data: { status: "cleanup_pending" } });
 });
 afterEach(() => {
   cleanup();
@@ -173,6 +187,97 @@ it("loads only active-version KPI and trend with explicit tenant and closed wind
     screen.getAllByText("from 81 evaluated of 137 conversations").length,
   ).toBeGreaterThan(0);
 });
+
+it("saves the selected window once and shows queued snapshot history", async () => {
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("button", { name: "Save snapshot" }));
+  const dialog = screen.getByRole("dialog", { name: "Save snapshot" });
+  expect(
+    within(dialog).getByText(/Later recalculations will not change it/),
+  ).toBeVisible();
+  responses.history.results.unshift({
+    kind: "snapshot",
+    created_at: "2026-11-09T00:00:00Z",
+    status: "queued",
+    snapshot: {
+      id: "snapshot-a",
+      metric_version: 2,
+      window_start: "2026-11-01T00:00:00Z",
+      window_end: "2026-11-08T00:00:00Z",
+      captured_at: "2026-11-09T00:00:00Z",
+      status: "queued",
+    },
+  });
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Save snapshot" }),
+  );
+  await waitFor(() => expect(mock.post).toHaveBeenCalledTimes(1));
+  const [url, body, config] = mock.post.mock.calls[0];
+  expect(url).toBe("/metrics/metric-a/snapshots");
+  expect(body.window_start).toBe(calls("kpi")[0][1].params.window_start);
+  expect(body.window_end).toBe(calls("kpi")[0][1].params.window_end);
+  expect(body.idempotency_key).toEqual(expect.any(String));
+  expect(config.headers).toEqual({
+    "X-Organization-Id": "org-a",
+    "X-Workspace-Id": "ws-a",
+  });
+  expect(await screen.findByText("Snapshot · v2")).toBeVisible();
+  expect(screen.getByText("Queued")).toBeVisible();
+});
+
+it("confirms permanent deletion and shows cleanup pending, not deleted", async () => {
+  const snapshot = {
+    id: "snapshot-a",
+    metric_version: 2,
+    window_start: "2026-11-01T00:00:00Z",
+    window_end: "2026-11-08T00:00:00Z",
+    captured_at: "2026-11-09T00:00:00Z",
+    status: "complete",
+  };
+  responses.history.results = [
+    {
+      kind: "snapshot",
+      created_at: snapshot.captured_at,
+      status: "complete",
+      snapshot,
+    },
+  ];
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "History" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Delete snapshot" }),
+  );
+  expect(mock.delete).not.toHaveBeenCalled();
+  const dialog = screen.getByRole("dialog", { name: "Delete snapshot?" });
+  snapshot.deleted_at = "2026-11-09T01:00:00Z";
+  snapshot.cleanup_status = "pending";
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Delete snapshot" }),
+  );
+  await waitFor(() => expect(mock.delete).toHaveBeenCalledTimes(1));
+  expect(mock.delete.mock.calls[0][0]).toBe(
+    "/metrics/metric-a/snapshots/snapshot-a",
+  );
+  expect(await screen.findByText("Cleanup pending")).toBeVisible();
+  expect(screen.queryByText("Deleted")).not.toBeInTheDocument();
+});
+
+it.each(["span", "user", "trace"])(
+  "does not enable unsupported %s snapshot writes",
+  async (level) => {
+    responses.detail.definition.level = level;
+    responses.detail.snapshot_supported = false;
+    responses.detail.snapshot_unsupported_reason = `Snapshots are not available for ${level} metrics.`;
+    mount();
+    await screen.findByRole("heading", { name: "Resolution rate" });
+    expect(
+      screen.getByRole("button", { name: "Save snapshot" }),
+    ).toBeDisabled();
+    expect(mock.post).not.toHaveBeenCalled();
+  },
+);
 
 it("keeps loading separate from empty data", async () => {
   const pending = deferred();
@@ -484,7 +589,7 @@ it("keeps span drivers unavailable while leaving KPI and trend readable", async 
   expect(calls("drivers")).toHaveLength(0);
 });
 
-it("renders history and cursor paging without calling snapshot placeholders", async () => {
+it("renders history and cursor paging without implicitly saving a snapshot", async () => {
   responses.history.next_cursor = "history-anchor";
   mount();
   await screen.findByTestId("metric-hero");
@@ -494,12 +599,8 @@ it("renders history and cursor paging without calling snapshot placeholders", as
   ).toBeVisible();
   expect(screen.getByText("Definition v2")).toBeVisible();
   expect(screen.getByText("7 of 7 days")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Save snapshot" })).toBeDisabled();
-  expect(
-    screen.getByText(
-      "Snapshots are not available yet. No snapshot will be saved.",
-    ),
-  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Save snapshot" })).toBeEnabled();
+  expect(screen.getByText(/Snapshots keep the captured result/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Older events" }));
   await waitFor(() =>
     expect(calls("history").at(-1)[1].params).toEqual({
@@ -508,6 +609,30 @@ it("renders history and cursor paging without calling snapshot placeholders", as
     }),
   );
   expect(mock.post).not.toHaveBeenCalled();
+});
+
+it("returns to newest history after saving from an older page", async () => {
+  responses.history.next_cursor = "history-anchor";
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "History" }));
+  await screen.findByRole("table", { name: "Metric history" });
+  fireEvent.click(screen.getByRole("button", { name: "Older events" }));
+  await waitFor(() =>
+    expect(calls("history").at(-1)[1].params.before).toBe("history-anchor"),
+  );
+  await screen.findByRole("table", { name: "Metric history" });
+  expect(screen.getByText("Page 2")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Save snapshot" }));
+  const dialog = screen.getByRole("dialog", { name: "Save snapshot" });
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Save snapshot" }),
+  );
+  await waitFor(() => expect(mock.post).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByText("Page 1")).toBeVisible());
+  await waitFor(() =>
+    expect(calls("history").at(-1)[1].params).toEqual({ limit: 30 }),
+  );
 });
 
 it.each(["success", "error"])(

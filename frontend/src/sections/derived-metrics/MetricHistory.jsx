@@ -10,10 +10,16 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Tooltip,
+  Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
   Typography,
 } from "@mui/material";
-import { useMetricHistory } from "./api";
+import { useMetricHistory, useDeleteMetricSnapshot } from "./api";
+import { metricReadMessage } from "./metricPageValues";
+import { snapshotStateCopy } from "./copy";
 import { formatMetricTime } from "./metricTime";
 import { MetricReadNotice } from "./MetricStatusLine";
 
@@ -32,7 +38,7 @@ const statusLabels = {
   not_started: "Not started",
 };
 
-export default function MetricHistory({ metric, scope }) {
+export default function MetricHistory({ metric, scope, canWrite = false }) {
   const [cursors, setCursors] = useState([null]);
   const [page, setPage] = useState(0);
   const query = useMetricHistory({
@@ -42,12 +48,6 @@ export default function MetricHistory({ metric, scope }) {
     params: { limit: 30, ...(cursors[page] && { before: cursors[page] }) },
   });
   if (!metric) return null;
-  // B18 has no snapshot implementation. Even a serializer's grain support bit
-  // is not proof the action exists. Do not call its placeholder write endpoint.
-  const snapshotReason = metric.snapshot_supported
-    ? "Snapshots are not available yet. No snapshot will be saved."
-    : metric.snapshot_unsupported_reason ||
-      "Snapshots are not available for this metric yet.";
   return (
     <Stack spacing={2}>
       <Stack
@@ -60,19 +60,20 @@ export default function MetricHistory({ metric, scope }) {
             History
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Definition versions and recalculations, newest first.
+            Snapshots, definition versions and recalculations, newest first.
           </Typography>
         </Box>
-        <Tooltip title={snapshotReason} describeChild>
-          <span tabIndex={0}>
-            <Button color="inherit" variant="outlined" disabled>
-              Save snapshot
-            </Button>
-          </span>
-        </Tooltip>
+        <Button
+          color="inherit"
+          disabled={query.readState === "loading"}
+          onClick={() => query.refetch()}
+        >
+          Refresh history
+        </Button>
       </Stack>
       <Typography variant="body2" color="text.secondary">
-        {snapshotReason}
+        Snapshots keep the captured result, even after source retention.
+        Explicit data erasure can change them.
       </Typography>
       <MetricReadNotice query={query} label="History" />
       {query.data &&
@@ -81,7 +82,7 @@ export default function MetricHistory({ metric, scope }) {
             <Table size="small" aria-label="Metric history">
               <TableHead>
                 <TableRow>
-                  {["Event", "Created (UTC)", "Status", "History progress"].map(
+                  {["Event", "Created (UTC)", "Status", "Details"].map(
                     (label) => (
                       <TableCell key={label}>{label}</TableCell>
                     ),
@@ -90,6 +91,16 @@ export default function MetricHistory({ metric, scope }) {
               </TableHead>
               <TableBody>
                 {query.data.results.map((entry, index) => {
+                  if (entry.kind === "snapshot" && entry.snapshot)
+                    return (
+                      <SnapshotRow
+                        key={entry.snapshot.id}
+                        snapshot={entry.snapshot}
+                        scope={scope}
+                        metricId={metric.id}
+                        canWrite={canWrite}
+                      />
+                    );
                   const definition = entry.definition;
                   const progress =
                     Number.isSafeInteger(definition?.backfill_days_done) &&
@@ -165,4 +176,124 @@ export default function MetricHistory({ metric, scope }) {
 MetricHistory.propTypes = {
   metric: PropTypes.object,
   scope: PropTypes.object.isRequired,
+  canWrite: PropTypes.bool,
+};
+
+function SnapshotRow({ snapshot, scope, metricId, canWrite }) {
+  const [confirm, setConfirm] = useState(false);
+  const remove = useDeleteMetricSnapshot({
+    scope,
+    metricId,
+    snapshotId: snapshot.id,
+  });
+  const label = snapshot.deleted_at
+    ? snapshot.cleanup_status === "done"
+      ? "Deleted"
+      : "Cleanup pending"
+    : snapshot.error === "expired"
+      ? "Expired"
+      : snapshot.changed_at
+        ? "Changed by data erasure"
+        : snapshot.status === "complete"
+          ? "Saved"
+          : snapshot.status === "running"
+            ? "Capturing"
+            : statusLabels[snapshot.status] || "Unavailable";
+  return (
+    <TableRow>
+      <TableCell>
+        <Typography variant="body2" fontWeight={600}>
+          Snapshot · v{snapshot.metric_version}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" component="div">
+          {formatMetricTime(snapshot.window_start)} –{" "}
+          {formatMetricTime(snapshot.window_end)} (UTC)
+        </Typography>
+      </TableCell>
+      <TableCell>
+        {formatMetricTime(snapshot.captured_at || snapshot.created_at)}
+      </TableCell>
+      <TableCell>
+        {label}
+        {snapshot.changed_at && (
+          <Typography component="div" variant="caption" color="text.secondary">
+            {snapshotStateCopy("changed", {
+              date: formatMetricTime(snapshot.changed_at),
+              removedCount: snapshot.removed_unit_count,
+            })}
+          </Typography>
+        )}
+        {snapshot.error === "expired" && (
+          <Typography component="div" variant="caption" color="text.secondary">
+            {snapshotStateCopy("expired")}
+          </Typography>
+        )}
+      </TableCell>
+      <TableCell>
+        {snapshot.deleted_at ? (
+          "No longer available"
+        ) : (
+          <Button
+            color="inherit"
+            disabled={!canWrite || remove.isPending}
+            onClick={() => setConfirm(true)}
+          >
+            Delete snapshot
+          </Button>
+        )}
+        <Dialog
+          open={confirm}
+          onClose={remove.isPending ? undefined : () => setConfirm(false)}
+          maxWidth="sm"
+          fullWidth
+          aria-labelledby={`delete-snapshot-${snapshot.id}`}
+        >
+          <DialogTitle id={`delete-snapshot-${snapshot.id}`}>
+            Delete snapshot?
+          </DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">
+              This permanently removes this snapshot’s frozen inputs and
+              results. The live metric is not deleted.
+            </Typography>
+            {remove.isError && (
+              <Alert severity="error" sx={{ mt: 2 }}>
+                {metricReadMessage(remove.error, "Snapshot deletion")}
+              </Alert>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button
+              color="inherit"
+              disabled={remove.isPending}
+              onClick={() => setConfirm(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="error"
+              variant="contained"
+              disabled={remove.isPending}
+              onClick={async () => {
+                try {
+                  await remove.mutateAsync();
+                  setConfirm(false);
+                } catch {
+                  /* Keep the confirmation and its error visible. */
+                }
+              }}
+            >
+              {remove.isPending ? "Deleting…" : "Delete snapshot"}
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </TableCell>
+    </TableRow>
+  );
+}
+SnapshotRow.propTypes = {
+  snapshot: PropTypes.object.isRequired,
+  scope: PropTypes.object.isRequired,
+  metricId: PropTypes.string.isRequired,
+  canWrite: PropTypes.bool.isRequired,
 };

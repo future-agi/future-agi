@@ -40,7 +40,6 @@ from tracer.services.derived_metrics.spec import (
     SEMANTIC_KEYS,
     normalize_spec,
     require_computable,
-    snapshot_support,
 )
 from tracer.services.derived_metrics.uncertainty import CONFIDENCE_LEVEL, NOT_COMPUTED
 from tracer.services.derived_metrics.unit_reads import field_recipe
@@ -527,6 +526,10 @@ def _compute(run: DerivedMetricRun) -> None:
 @transaction.atomic
 def queue_recompute(run: DerivedMetricRun, user) -> DerivedMetricRun:
     run = DerivedMetricRun.objects.select_for_update().get(pk=run.id)
+    if run.kind == "snapshot":
+        raise MetricInputError(
+            "Saved snapshots cannot be rerun. Save a new snapshot instead."
+        )
     require_computable(run.definition)
     if (
         run.status in {DerivedMetricRun.Status.RUNNING, DerivedMetricRun.Status.QUEUED}
@@ -587,13 +590,35 @@ def shape_result(row: dict, *, include_uncertainty: bool) -> dict:
     return shaped
 
 
-def read_results(
+def read_results(run, rollup="overall", after="", limit=50, include_uncertainty=False):
+    if getattr(run, "kind", "run") != "snapshot":
+        return _read_results(run, rollup, after, limit, include_uncertainty)
+    from tracer.services.derived_metrics.deletion_protocol import serialized_project
+
+    with serialized_project(run.definition.metric.project_id):
+        current = (
+            DerivedMetricRun.objects.select_related("definition__metric")
+            .filter(pk=run.pk)
+            .first()
+        )
+        if current is None:
+            raise MetricInputError("This run is no longer available.")
+        return _read_results(current, rollup, after, limit, include_uncertainty)
+
+
+def _read_results(
     run: DerivedMetricRun,
     rollup: str = "overall",
     after: str = "",
     limit: int = 50,
     include_uncertainty: bool = False,
 ) -> dict:
+    if getattr(run, "deleted_at", None) or (
+        getattr(run, "kind", "run") == "snapshot" and run.status != "complete"
+    ):
+        raise MetricInputError(
+            "This snapshot does not have an available committed result."
+        )
     if run.result_id is None:
         raise MetricInputError("This run does not have a committed result yet.")
     metric = run.definition.metric
@@ -1233,28 +1258,12 @@ def activate_definition(metric, data):
 
 
 def request_snapshot(metric, data, user):
-    definition = metric.active_version
-    supported, reason = snapshot_support(definition)
-    if not supported:
-        raise SnapshotNotSupportedError(reason)
-    raise MetricUnavailableError(
-        "snapshot_unavailable",
-        "Snapshot capture is not available until the committed snapshot writer is installed.",
-    )
+    from tracer.services.derived_metrics.snapshots import request_snapshot as capture
+
+    return capture(metric, data, user)
 
 
 def delete_snapshot(metric, snapshot_id, user):
-    # Do not mutate the ledger or report success without durable external cleanup.
-    from django.http import Http404
+    from tracer.services.derived_metrics.snapshots import delete_snapshot as remove
 
-    if not DerivedMetricRun.objects.filter(
-        definition__metric=metric,
-        pk=snapshot_id,
-        kind="snapshot",
-        deleted_at__isnull=True,
-    ).exists():
-        raise Http404
-    raise MetricUnavailableError(
-        "snapshot_unavailable",
-        "Snapshot deletion is not available until the cleanup worker is installed.",
-    )
+    return remove(metric, snapshot_id, user)

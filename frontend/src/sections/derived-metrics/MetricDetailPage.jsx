@@ -33,6 +33,7 @@ import MetricOverview from "./MetricOverview";
 import MetricDrivers from "./MetricDrivers";
 import MetricHistory from "./MetricHistory";
 import MetricDefinition from "./MetricDefinition";
+import SaveSnapshot from "./SaveSnapshot";
 
 const tabs = ["Overview", "Drivers", "History", "Definition"];
 
@@ -147,6 +148,17 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
           )}
         </Box>
         <Stack direction="row" spacing={2} sx={{ flexShrink: 0 }}>
+          <SaveSnapshot
+            metric={metric}
+            scope={scopeWithProject}
+            window={window}
+            canWrite={canWrite}
+            onSaved={() => {
+              setTab("History");
+              setReadRevision((value) => value + 1);
+              reload();
+            }}
+          />
           <Tooltip
             title={
               canWrite
@@ -365,6 +377,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
         )}
         {tab === "History" && (
           <MetricHistory
+            canWrite={canWrite}
             key={readKey}
             metric={metric}
             scope={scopeWithProject}
