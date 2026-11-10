@@ -13,6 +13,59 @@ describe("OpenAPI runtime contract", () => {
     vi.unstubAllEnvs();
   });
 
+  it("accepts typed Error Feed thresholds in create, update and list contracts", () => {
+    const alertId = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
+    expect(
+      validateContractedRequestConfig({
+        url: "/tracer/alerts/",
+        method: "post",
+        data: {
+          kind: "error_feed",
+          trigger_type: "severity_reached",
+          severity_threshold: "high",
+        },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: `/tracer/alerts/error_feed/${alertId}/`,
+        method: "patch",
+        data: { trigger_type: "occurrences_crossed", occurrence_threshold: 7 },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: "/tracer/alerts/",
+        method: "post",
+        data: { kind: "error_feed", occurrence_threshold: "7" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateContractedResponse({
+        config: { url: "/tracer/alerts/?kind=error_feed", method: "get" },
+        status: 200,
+        data: {
+          status: true,
+          result: {
+            alerts: [
+              {
+                id: alertId,
+                kind: "error_feed",
+                name: "Occurrence alert",
+                enabled: true,
+                project_id: null,
+                trigger_type: "occurrences_crossed",
+                occurrence_threshold: 7,
+                last_triggered_at: null,
+                failure_reason: null,
+              },
+            ],
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   it("keeps response contracts warn-only unless explicitly promoted to strict", () => {
     expect(shouldEnforceApiResponseContracts()).toBe(false);
 

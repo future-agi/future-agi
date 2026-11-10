@@ -14,6 +14,7 @@ from tracer.models.trace_error_analysis import ErrorClusterTraces
 from tracer.models.trace_grouping import (
     TraceGroupingAttempt,
     TraceGroupingCall,
+    TraceGroupingConstraint,
     TraceGroupingDecision,
     TraceGroupingFeature,
     TraceGroupingOutbox,
@@ -91,12 +92,19 @@ def test_long_model_title_is_rejected():
         )
 
 
+def nearest_to(ids):
+    """A fake index answer: every pending view sees these candidates, id order."""
+    return lambda self, **kwargs: {
+        (row["occurrence_id"], row["view"]): sorted(ids) for row in kwargs["pending"]
+    }
+
+
 class FakeFeatureStore:
     def write_and_verify(self, **kwargs):
         assert kwargs["rows"]
 
     def candidate_occurrences(self, **kwargs):
-        return []
+        return {}
 
     def read_vectors(self, **kwargs):
         return [
@@ -723,9 +731,7 @@ def test_protected_checkpoint_refresh_does_not_block_publication(
             state="completed"
         )
     pending = _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
-    monkeypatch.setattr(
-        FakeFeatureStore, "candidate_occurrences", lambda self, **kwargs: ids
-    )
+    monkeypatch.setattr(FakeFeatureStore, "candidate_occurrences", nearest_to(ids))
     claim = claim_grouping_work(worker_id="refresh-recovery", limit=1)["claims"][0]
     attempt = TraceGroupingAttempt.no_workspace_objects.get(pk=claim["attempt_id"])
     assert attempt.offered_issue_ids == [str(issue.cluster_id)]
@@ -761,3 +767,296 @@ def test_protected_checkpoint_refresh_does_not_block_publication(
     assert not TraceGroupingSeverityJob.no_workspace_objects.filter(
         issue=issue
     ).exists()
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_claim_retrieves_from_live_issues_without_an_index_size_cap(
+    observe_project, monkeypatch
+):
+    live = _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    retired = _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
+    mechanism = {
+        "mechanism": "Wrong refund amount",
+        "fix_hypothesis": "Use requested amount",
+        "falsifier": "Executed amount matches",
+    }
+    issues = {}
+    for name, report in (("live", live), ("retired", retired)):
+        finding = report.findings.get()
+        issues[name] = _new_issue(scope, mechanism, [str(finding.id)])
+        _assign(finding, issues[name], scope)
+        report.grouping_status = TraceInvestigationGroupingStatus.COMPLETED
+        report.save(update_fields=["grouping_status"])
+        TraceGroupingWork.no_workspace_objects.filter(report=report).update(
+            state="completed"
+        )
+    issues["retired"].retired = True
+    issues["retired"].save(update_fields=["retired"])
+    pending = _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    calls = []
+
+    def nearest(self, **kwargs):
+        calls.append(kwargs)
+        # Far more hits than the old 512-hit bucket window.
+        hits = [str(live.findings.get().id), *(str(uuid.uuid4()) for _ in range(600))]
+        return {(row["occurrence_id"], row["view"]): hits for row in kwargs["pending"]}
+
+    monkeypatch.setattr(FakeFeatureStore, "candidate_occurrences", nearest)
+    claim = claim_grouping_work(worker_id="exact-retrieval", limit=1)["claims"][0]
+
+    attempt = TraceGroupingAttempt.no_workspace_objects.get(pk=claim["attempt_id"])
+    assert attempt.state == "claimed"
+    assert attempt.offered_issue_ids == [str(issues["live"].cluster_id)]
+    (call,) = calls
+    assert call["limit"] == 40
+    assert {row["occurrence_id"] for row in call["pending"]} == {
+        str(pending.findings.get().id)
+    }
+    assert sorted(
+        (row["view"], row["feature_digest"]) for row in call["candidates"]
+    ) == sorted(
+        TraceGroupingFeature.no_workspace_objects.filter(
+            finding=live.findings.get()
+        ).values_list("view", "feature_digest")
+    )
+
+
+def _grouped_issues(project, monkeypatch, count):
+    """``count`` live one-member issues, each from its own grouped report."""
+    mechanism = {
+        "mechanism": "Wrong refund amount",
+        "fix_hypothesis": "Use requested amount",
+        "falsifier": "Executed amount matches",
+    }
+    issues = []
+    for _ in range(count):
+        report = _prepare_runtime(project, monkeypatch, identity=uuid.uuid4())
+        scope = TraceGroupingScope.no_workspace_objects.get(project=project)
+        finding = report.findings.get()
+        issue = _new_issue(scope, mechanism, [str(finding.id)])
+        _assign(finding, issue, scope)
+        report.grouping_status = TraceInvestigationGroupingStatus.COMPLETED
+        report.save(update_fields=["grouping_status"])
+        TraceGroupingWork.no_workspace_objects.filter(report=report).update(
+            state="completed"
+        )
+        issues.append((issue, finding))
+    return issues
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_claim_reads_only_window_members_and_is_deterministic(
+    observe_project, monkeypatch
+):
+    issues = _grouped_issues(observe_project, monkeypatch, 3)
+    pending = _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    hits = sorted(str(finding.id) for _, finding in issues)
+    monkeypatch.setattr(FakeFeatureStore, "candidate_occurrences", nearest_to(hits))
+    monkeypatch.setattr(context, "MAX_CANDIDATE_ISSUES", 2)
+    exported, read = [], []
+    real_export = context.export_grouping_snapshot
+    real_read = FakeFeatureStore.read_vectors
+
+    def export(*, report):
+        exported.append(str(report.id))
+        return real_export(report=report)
+
+    def read_vectors(self, **kwargs):
+        read.extend(row["occurrence_id"] for row in kwargs["receipts"])
+        return real_read(self, **kwargs)
+
+    monkeypatch.setattr(context, "export_grouping_snapshot", export)
+    monkeypatch.setattr(FakeFeatureStore, "read_vectors", read_vectors)
+
+    claim = claim_grouping_work(worker_id="window-only", limit=1)["claims"][0]
+
+    by_finding = {str(finding.id): issue for issue, finding in issues}
+    window = [by_finding[item] for item in hits[:2]]
+    left_out = by_finding[hits[2]]
+    assert [item["issue_id"] for item in claim["candidate_window"]["issues"]] == [
+        str(issue.cluster_id) for issue in window
+    ]
+    reports = {str(finding.id): str(finding.report_id) for _, finding in issues}
+    # The hit outside the window is ranked from the index order alone: its
+    # report is never exported and its vectors are never read.
+    assert sorted(exported) == sorted(reports[item] for item in hits[:2])
+    assert hits[2] not in read
+    assert set(read) <= {str(pending.findings.get().id), *hits[:2]}
+    assert str(left_out.cluster_id) in {
+        item["issue_id"] for item in claim["candidate_window"]["omitted_candidates"]
+    }
+
+    first = TraceGroupingAttempt.no_workspace_objects.get(pk=claim["attempt_id"])
+    update_grouping_attempt(
+        attempt_id=first.id, lease_token=claim["lease_token"], action="cancel"
+    )
+    TraceGroupingWork.no_workspace_objects.filter(report=pending).update(
+        not_before=timezone.now()
+    )
+    again = claim_grouping_work(worker_id="window-only", limit=1)["claims"][0]
+    assert again["candidate_digest"] == claim["candidate_digest"]
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_blocked_neighbours_are_refilled_from_the_next_eligible_match(
+    observe_project, monkeypatch
+):
+    window = 2 * context.NEIGHBOURS_PER_VIEW
+    grouped = _grouped_issues(observe_project, monkeypatch, window + 1)
+    pending = _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    pending_id = str(pending.findings.get().id)
+    scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
+    # The pending finding is excluded from the issues of its 40 nearest
+    # neighbours; the only eligible match is 41st.
+    for issue, _ in grouped[:window]:
+        TraceGroupingConstraint.no_workspace_objects.create(
+            scope=scope,
+            kind="exclude_issue",
+            first_finding_id=pending_id,
+            issue_id=issue.cluster_id,
+        )
+    order = [str(finding.id) for _, finding in grouped]
+    calls = []
+
+    def nearest(self, **kwargs):
+        calls.append(kwargs)
+        allowed = {row["feature_digest"] for row in kwargs["candidates"]}
+        answer = {}
+        for row in kwargs["pending"]:
+            ranked = [
+                item
+                for item in order
+                if hashlib.sha256(f"{item}:{row['view']}".encode()).hexdigest()
+                in allowed
+            ]
+            answer[(row["occurrence_id"], row["view"])] = ranked[: kwargs["limit"]]
+        return answer
+
+    monkeypatch.setattr(FakeFeatureStore, "candidate_occurrences", nearest)
+
+    claim = claim_grouping_work(worker_id="refill", limit=1)["claims"][0]
+
+    match, _ = grouped[window]
+    assert [item["issue_id"] for item in claim["candidate_window"]["issues"]] == [
+        str(match.cluster_id)
+    ]
+    # The second read runs without the excluded issues, and the excluded
+    # issues are still reported as omitted.
+    first, second = calls
+    assert {(row["occurrence_id"], row["view"]) for row in second["pending"]} == {
+        (row["occurrence_id"], row["view"]) for row in first["pending"]
+    }
+    assert len(second["candidates"]) < len(first["candidates"])
+    assert not {str(row["finding__cluster_id"]) for row in second["candidates"]} & {
+        str(issue.cluster_id) for issue, _ in grouped[:window]
+    }
+    assert {
+        item["issue_id"]
+        for item in claim["candidate_window"]["omitted_candidates"]
+        if item["reason"] == "hard_constraint_or_no_top20_view_hit"
+    } == {str(issue.cluster_id) for issue, _ in grouped[:window]}
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_offered_vector_from_another_release_fails_the_claim(
+    observe_project, monkeypatch
+):
+    ((_, member),) = _grouped_issues(observe_project, monkeypatch, 1)
+    _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    monkeypatch.setattr(
+        FakeFeatureStore, "candidate_occurrences", nearest_to([str(member.id)])
+    )
+    real_read = FakeFeatureStore.read_vectors
+
+    def read_vectors(self, **kwargs):
+        # The PG receipt is current, but ClickHouse holds another release.
+        return [
+            (
+                {**row, "serving_release": "other-release"}
+                if row["occurrence_id"] == str(member.id)
+                else row
+            )
+            for row in real_read(self, **kwargs)
+        ]
+
+    monkeypatch.setattr(FakeFeatureStore, "read_vectors", read_vectors)
+
+    assert claim_grouping_work(worker_id="identity", limit=1) == {"claims": []}
+    attempt = TraceGroupingAttempt.no_workspace_objects.get(worker_id="identity")
+    assert attempt.failure_code == "control_rejected"
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_stale_or_foreign_features_are_never_candidates(observe_project, monkeypatch):
+    (current, current_finding), (_, stale_finding), (_, foreign_finding) = (
+        _grouped_issues(observe_project, monkeypatch, 3)
+    )
+    features = TraceGroupingFeature.no_workspace_objects
+    features.filter(finding=stale_finding).update(
+        evidence_revision="sha256:" + "f" * 64
+    )
+    # Another embedding release: its vectors are not comparable with the cohort's.
+    features.filter(finding=foreign_finding).update(serving_release="other-release")
+    _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    calls = []
+
+    def nearest(self, **kwargs):
+        calls.append(kwargs)
+        digests = {row["feature_digest"] for row in kwargs["candidates"]}
+        hits = sorted(
+            str(item)
+            for item in features.filter(feature_digest__in=digests).values_list(
+                "finding_id", flat=True
+            )
+        )
+        return {(row["occurrence_id"], row["view"]): hits for row in kwargs["pending"]}
+
+    monkeypatch.setattr(FakeFeatureStore, "candidate_occurrences", nearest)
+
+    claim = claim_grouping_work(worker_id="comparable-only", limit=1)["claims"][0]
+
+    (call,) = calls
+    assert {row["feature_digest"] for row in call["candidates"]} == set(
+        features.filter(finding=current_finding).values_list(
+            "feature_digest", flat=True
+        )
+    )
+    assert [item["issue_id"] for item in claim["candidate_window"]["issues"]] == [
+        str(current.cluster_id)
+    ]

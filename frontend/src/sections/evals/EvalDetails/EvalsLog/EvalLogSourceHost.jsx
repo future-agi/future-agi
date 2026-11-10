@@ -194,6 +194,7 @@ function TraceBody({ pinned, onClose, revalidate, onViewerReady, onState }) {
       traceId={pinned.trace_id}
       projectId={pinned.project_id}
       initialSpanId={pinned.span_id}
+      disablePortal
       hideOpenInNewTab
       hasPrev={false}
       hasNext={false}

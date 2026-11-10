@@ -405,7 +405,8 @@ const getDefaultValues = (evalConfig, editMode, allColumns, fagiLocked) => {
       );
       const safeDefault =
         fagiLocked && FAGI_MODEL_VALUES.has(defaultVal) ? "" : defaultVal;
-      const hasTuringLarge = !fagiLocked && allowed.includes(DEFAULT_EVAL_MODEL);
+      const hasTuringLarge =
+        !fagiLocked && allowed.includes(DEFAULT_EVAL_MODEL);
       config[key] = editMode
         ? safeDefault ||
           (hasTuringLarge ? DEFAULT_EVAL_MODEL : allowed[0] || "")
@@ -1119,15 +1120,15 @@ const EvaluationConfigureForm = ({
         >
           <Typography
             color={"text.primary"}
-            fontSize="14px"
-            fontWeight={700}
+            fontSize="13px"
+            fontWeight={600}
             sx={{ mt: 1 }}
           >
             {"Evaluation Test"}
           </Typography>
           <Typography
-            fontSize="14px"
-            fontWeight={700}
+            fontSize="13px"
+            fontWeight={600}
             sx={{ mb: "1.5rem", mt: "0.2rem" }}
           >
             <HelperText text="Run a sample evals to see how it works" />
@@ -1151,7 +1152,7 @@ const EvaluationConfigureForm = ({
             bottom: 0,
           }}
         >
-          <Typography fontSize="14px" fontWeight={700} sx={{ mb: 1 }}>
+          <Typography fontSize="13px" fontWeight={600} sx={{ mb: 1 }}>
             <Box
               sx={{
                 display: "flex",
@@ -1172,7 +1173,7 @@ const EvaluationConfigureForm = ({
               paddingY: "12px",
               backgroundColor: `${testData?.responses[0]?.output_type == "score" ? interpolateColorBasedOnScore(testData?.responses[0]?.output, 1) : testData?.responses[0]?.output_type == "Pass/Fail" ? (testData?.responses[0]?.output == "Passed" ? interpolateColorBasedOnScore(1, 1) : interpolateColorBasedOnScore(0, 1)) : "background.neutral"}`,
               overflowWrap: "break-word",
-              borderRadius: "10px",
+              borderRadius: "8px",
             }}
           >
             {testData && testData?.responses?.length > 0 ? (
@@ -1243,7 +1244,7 @@ const EvaluationConfigureForm = ({
             size="small"
             startIcon={
               <Iconify
-                icon="octicon:chevron-left-24"
+                icon="solar:alt-arrow-left-linear"
                 width="24px"
                 sx={{ color: "primary.main" }}
               />
@@ -1256,7 +1257,7 @@ const EvaluationConfigureForm = ({
             Back
           </Button>
           <Iconify
-            icon="flowbite:x-outline"
+            icon="solar:close-linear"
             sx={{ cursor: "pointer" }}
             onClick={() => {
               setLogIds([]);
@@ -1266,9 +1267,9 @@ const EvaluationConfigureForm = ({
           />
         </Box>
 
-        <Typography color={"text.primary"} fontSize="14px" fontWeight={700}>
+        <Typography color={"text.primary"} fontSize="13px" fontWeight={600}>
           {selectedEval?.name || evalConfig?.name}
-          <Typography fontSize="14px" fontWeight={700} sx={{ mt: "0.2rem" }}>
+          <Typography fontSize="13px" fontWeight={600} sx={{ mt: "0.2rem" }}>
             <HelperText text={selectedEval?.description} />
           </Typography>
         </Typography>

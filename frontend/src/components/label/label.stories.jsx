@@ -64,9 +64,7 @@ WithStartIcon.args = {
   children: "Label",
   variant: "soft",
   color: "default",
-  startIcon: (
-    <Iconify icon="mdi:apple-keyboard-command" height={16} width={16} />
-  ),
+  startIcon: <Iconify icon="solar:command-linear" height={16} width={16} />,
   endIcon: null,
   sx: {},
 };
@@ -77,7 +75,7 @@ WithEndIcon.args = {
   variant: "soft",
   color: "default",
   startIcon: null,
-  endIcon: <Iconify icon="mdi:apple-keyboard-command" height={16} width={16} />,
+  endIcon: <Iconify icon="solar:command-linear" height={16} width={16} />,
   sx: {},
 };
 
@@ -86,10 +84,8 @@ WithBothIcons.args = {
   children: "Label",
   variant: "soft",
   color: "default",
-  startIcon: (
-    <Iconify icon="mdi:apple-keyboard-command" height={16} width={16} />
-  ),
-  endIcon: <Iconify icon="mdi:apple-keyboard-command" height={16} width={16} />,
+  startIcon: <Iconify icon="solar:command-linear" height={16} width={16} />,
+  endIcon: <Iconify icon="solar:command-linear" height={16} width={16} />,
   sx: {},
 };
 

@@ -33,7 +33,8 @@ func (a *Authenticator) HTTPMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx := WithResolvedContext(r.Context(), result, CacheKey(apiKey, secretKey))
+		ctx := withRequestCredentials(r.Context(), apiKey, secretKey)
+		ctx = WithResolvedContext(ctx, result, CacheKey(apiKey, secretKey))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

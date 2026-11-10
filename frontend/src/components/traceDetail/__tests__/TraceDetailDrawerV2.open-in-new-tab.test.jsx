@@ -45,27 +45,56 @@ describe("TraceDetailDrawerV2 open-in-new-tab integration option", () => {
     );
     const { rerender, unmount } = render(drawer());
     expect(
-      screen.getByLabelText("Open in new tab").querySelector("button"),
+      screen.getByRole("button", { name: "Open in new tab" }),
     ).toBeInTheDocument();
     rerender(drawer(true));
-    expect(screen.queryByLabelText("Open in new tab")).not.toBeInTheDocument();
     expect(
-      screen.getByLabelText("Fullscreen").querySelector("button"),
+      screen.queryByRole("button", { name: "Open in new tab" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Fullscreen" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByLabelText("Download raw data").querySelector("button"),
+      screen.getByRole("button", { name: "Download raw data" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByLabelText("Share trace").querySelector("button"),
+      screen.getByRole("button", { name: "Share trace" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Close (Esc)" }),
     ).toBeInTheDocument();
     rerender(drawer());
     expect(
-      screen.getByLabelText("Open in new tab").querySelector("button"),
+      screen.getByRole("button", { name: "Open in new tab" }),
     ).toBeInTheDocument();
     unmount();
     client.clear();
   });
+
+  it.each([false, true])(
+    "keeps the trace inside its modal host only when disablePortal=%s",
+    (disablePortal) => {
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const { unmount } = render(
+        <QueryClientProvider client={client}>
+          <div data-testid="trace-modal-host">
+            <TraceDetailDrawerV2
+              open
+              traceId="trace-1"
+              projectId="project-1"
+              onClose={vi.fn()}
+              disablePortal={disablePortal}
+            />
+          </div>
+        </QueryClientProvider>,
+      );
+      const host = screen.getByTestId("trace-modal-host");
+      const close = screen.getByRole("button", { name: "Close (Esc)" });
+      expect(host.contains(close)).toBe(disablePortal);
+      unmount();
+      client.clear();
+    },
+  );
 });

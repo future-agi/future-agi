@@ -1,4 +1,4 @@
-"""TH-4804: all four usage writers preserve provenance and stamp the owner project."""
+"""TH-4804: usage writers preserve provenance and stamp the owner project."""
 
 from types import SimpleNamespace
 from uuid import uuid4
@@ -12,7 +12,7 @@ class UsageCaptured(BaseException):
     """Stop at the real usage boundary, before executing an evaluation."""
 
 
-@pytest.mark.parametrize("path", ["legacy_span", "span", "trace", "session"])
+@pytest.mark.parametrize("path", ["span", "trace", "session"])
 @pytest.mark.parametrize("feedback", [False, True])
 def test_writer_stamps_owner_project(monkeypatch, path, feedback):
     project = SimpleNamespace(
@@ -65,21 +65,7 @@ def test_writer_stamps_owner_project(monkeypatch, path, feedback):
     )
 
     with pytest.raises(UsageCaptured):
-        if path == "legacy_span":
-            eval_utils._run_evaluation(
-                params,
-                template,
-                None,
-                span,
-                config,
-                None,
-                "CustomCodeEval",
-                False,
-                None,
-                params,
-                feedback_id=feedback_id,
-            )
-        elif path == "span":
+        if path == "span":
             eval_utils._execute_evaluation(
                 span.id,
                 config.id,

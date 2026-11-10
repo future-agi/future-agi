@@ -1,0 +1,12 @@
+# Render only; no timer is installed or enabled by generating this text.
+[Unit]
+Description=Future AGI five-minute checkout update opportunity
+
+[Timer]
+OnCalendar=*-*-* *:0/5:00
+Persistent=true
+RandomizedDelaySec=60
+Unit=${name}.service
+
+[Install]
+WantedBy=timers.target

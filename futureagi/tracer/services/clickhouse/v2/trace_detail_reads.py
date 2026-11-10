@@ -98,6 +98,11 @@ class TraceDetailRead:
     annotations: tuple[dict[str, Any], ...]
     query_count: int
     elapsed_ms: float
+    # The core identity/content tree was proven complete, but the optional eval
+    # enrichment query itself failed. This is intentionally narrower than a
+    # detail-read failure: bounds, deadline, annotations and core content stay
+    # fail-closed.
+    eval_unavailable: bool = False
 
 
 class TraceDetailReadBuilder:
@@ -332,7 +337,10 @@ class TraceDetailReadBuilder:
                 latest_error AS error,
                 latest_error_message AS error_message,
                 latest_status AS status,
-                latest_skipped_reason AS skipped_reason
+                latest_skipped_reason AS skipped_reason,
+                latest_created_at AS created_at,
+                latest_target_type AS target_type,
+                toString(grouped_eval_id) AS log_id
             FROM (
                 SELECT
                     id AS grouped_eval_id,
@@ -351,6 +359,8 @@ class TraceDetailReadBuilder:
                         AS latest_error_message,
                     {status_aggregate} AS latest_status,
                     {skipped_reason_aggregate} AS latest_skipped_reason,
+                    argMax(created_at, {version}) AS latest_created_at,
+                    argMax(target_type, {version}) AS latest_target_type,
                     {deleted} AS latest_is_deleted
                 FROM {table}
                 PREWHERE trace_id = %(detail_eval_trace_id)s
@@ -547,15 +557,25 @@ def read_trace_detail(
         span_ids=span_ids,
         eval_config_ids=eval_config_ids,
     )
-    eval_rows = (
-        execute(
-            eval_query,
-            eval_params,
-            max_result_rows=_MAX_EVAL_ROWS + 1,
+    eval_unavailable = False
+    try:
+        eval_rows = (
+            execute(
+                eval_query,
+                eval_params,
+                max_result_rows=_MAX_EVAL_ROWS + 1,
+            )
+            if eval_query
+            else []
         )
-        if eval_query
-        else []
-    )
+    except TraceDetailReadUnavailable as exc:
+        # Only the enrichment query's ClickHouse execution failure becomes an
+        # explicit unavailable marker. A proven read-budget/deadline/bounds
+        # failure remains a 503 because a partial read must never look complete.
+        if exc.code != "clickhouse_query_failed":
+            raise
+        eval_rows = []
+        eval_unavailable = True
     if len(eval_rows) > _MAX_EVAL_ROWS:
         raise TraceDetailReadUnavailable("eval_limit_exceeded")
 
@@ -577,6 +597,7 @@ def read_trace_detail(
         spans=tuple(content_rows),
         eval_config_ids=eval_config_ids,
         evals=tuple(eval_rows),
+        eval_unavailable=eval_unavailable,
         annotations=tuple(annotation_rows),
         query_count=query_count,
         elapsed_ms=(monotonic() - started) * 1000,

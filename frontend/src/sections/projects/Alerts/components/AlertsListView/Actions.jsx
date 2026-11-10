@@ -7,7 +7,7 @@ import RowActions from "./RowActions";
 import ColumnDropdown from "src/components/ColumnDropdown/ColumnDropdown";
 import { camelCase } from "lodash";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
-import FilterPanel from "src/components/filter-panel/FilterPanel";
+import { ObjectFilterPanel } from "src/components/filter";
 import { useAlertStore } from "../../store/useAlertStore";
 import {
   useAlertFilterFields,
@@ -153,9 +153,6 @@ export default function Actions() {
                 sx={{
                   color: "text.primary",
                   borderColor: "divider",
-                  padding: 1.5,
-                  fontSize: "14px",
-                  height: "38px",
                 }}
                 startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
                 component="a"
@@ -168,19 +165,11 @@ export default function Actions() {
                 variant="contained"
                 color="primary"
                 data-alert-action="new"
-                sx={{
-                  px: "24px",
-                  borderRadius: "8px",
-                  height: "38px",
-                }}
                 startIcon={
                   <Iconify
-                    icon="octicon:plus-24"
+                    icon="solar:add-linear"
                     color="background.paper"
-                    sx={{
-                      width: "20px",
-                      height: "20px",
-                    }}
+                    width="20px"
                   />
                 }
                 onClick={handleOnNewAlert}
@@ -196,7 +185,7 @@ export default function Actions() {
           </Stack>
         )}
       </Stack>
-      <FilterPanel
+      <ObjectFilterPanel
         anchorEl={filterRef?.current}
         open={openFilter}
         onClose={() => setOpenFilter(false)}

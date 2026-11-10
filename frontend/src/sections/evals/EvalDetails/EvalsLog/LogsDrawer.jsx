@@ -25,6 +25,7 @@ import AddEvalsFeedbackDrawer from "./../EvalsFeedback/AddEvalsFeedbackDrawer";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import EvalLogSourceHost from "./EvalLogSourceHost";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const LogsDrawerChild = ({
   onClose,
@@ -134,7 +135,7 @@ const LogsDrawerChild = ({
             Evaluation Logs
           </Typography>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="akar-icons:cross" sx={{ color: "text.primary" }} />
+            <Iconify icon="solar:close-linear" sx={{ color: "text.primary" }} />
           </IconButton>
         </Box>
         <Box display={"flex"} gap="8px" flexWrap={"wrap"}>
@@ -305,10 +306,13 @@ const LogsDrawer = ({
     gcTime: 0,
   });
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       variant="temporary"
       onClose={onClose}
       PaperProps={{
@@ -317,8 +321,7 @@ const LogsDrawer = ({
           width: "70%",
           position: "fixed",
           zIndex: 10,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -383,7 +386,7 @@ const LoaderDrawer = ({ onClose }) => {
             sx={{ borderRadius: "4px" }}
           />
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="akar-icons:cross" sx={{ color: "text.primary" }} />
+            <Iconify icon="solar:close-linear" sx={{ color: "text.primary" }} />
           </IconButton>
         </Box>
         <Box display={"flex"} gap="8px" flexWrap={"wrap"}>
