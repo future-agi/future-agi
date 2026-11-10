@@ -15,6 +15,7 @@ const KEYS = {
   list: (params) => ["errorFeed", "list", params],
   stats: (params) => ["errorFeed", "stats", params],
   detail: (clusterId) => ["errorFeed", "detail", clusterId],
+  redirect: (clusterId) => ["errorFeed", "redirect", clusterId],
   overview: (clusterId) => ["errorFeed", "overview", clusterId],
   traces: (clusterId, params) => ["errorFeed", "traces", clusterId, params],
   trends: (clusterId, params) => ["errorFeed", "trends", clusterId, params],
@@ -90,6 +91,19 @@ export const useErrorFeedDetail = (clusterId, options = {}) => {
   });
 };
 
+export const useErrorFeedRedirect = (clusterId, options = {}) => {
+  const enabled = !!clusterId && (options.enabled ?? true);
+
+  return useQuery({
+    ...options,
+    queryKey: KEYS.redirect(clusterId),
+    queryFn: () => axios.get(endpoints.errorFeed.redirect(clusterId)),
+    select: (res) => res?.data?.result,
+    enabled,
+    retry: false,
+  });
+};
+
 /**
  * Overview tab: events over time, pattern summary, representative traces.
  */
@@ -102,6 +116,24 @@ export const useErrorFeedOverview = (clusterId, options = {}) => {
     queryFn: () => axios.get(endpoints.errorFeed.overview(clusterId)),
     select: (res) => res?.data?.result,
     enabled,
+  });
+};
+
+// The overview endpoint's `rep_limit` max, so one request covers the export.
+export const EXPORT_TRACE_LIMIT = 200;
+
+/**
+ * One-shot Overview read for the traces CSV export. Kept apart from
+ * useErrorFeedOverview so the larger payload never replaces the tab's cache.
+ */
+export const useExportErrorFeedTraces = () => {
+  return useMutation({
+    mutationFn: (clusterId) =>
+      axios
+        .get(endpoints.errorFeed.overview(clusterId), {
+          params: { rep_limit: EXPORT_TRACE_LIMIT },
+        })
+        .then((res) => res?.data?.result),
   });
 };
 

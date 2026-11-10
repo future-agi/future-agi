@@ -298,3 +298,47 @@ class TestTraceSpanCompositeBranch:
 
         mock_composite.assert_called_once()
         assert result == {"value": 0.5}
+
+    def test_independent_composite_records_child_summary_as_result(
+        self, independent_composite, organization
+    ):
+        """Aggregation off: the completed span result carries the per-child
+        summary instead of a blank score and reason."""
+        from tracer.utils import eval as tracer_eval
+
+        fake_span = MagicMock()
+        fake_span.project.organization = organization
+        fake_span.project.workspace = None
+        fake_config = MagicMock()
+        fake_config.eval_template = independent_composite
+        fake_config.config = {}
+        fake_config.model = None
+
+        with (
+            patch.object(
+                tracer_eval.CustomEvalConfig.objects, "get", return_value=fake_config
+            ),
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value={
+                    "output": 1.0,
+                    "reason": "leaf reason",
+                    "output_type": "score",
+                    "model": "turing_large",
+                    "metadata": {},
+                    "log_id": None,
+                },
+            ),
+        ):
+            logger_kwargs = tracer_eval._execute_composite_on_span(
+                observation_span_id="span-1",
+                custom_eval_config_id="cfg-1",
+                eval_task_id="task-1",
+                run_params={"input": "hello"},
+                observation_span=fake_span,
+            )
+
+        assert not logger_kwargs.get("error")
+        assert "[leaf-child]" in logger_kwargs["output_str"]
+        assert "leaf reason" in logger_kwargs["output_str"]
+        assert logger_kwargs["eval_explanation"] == logger_kwargs["output_str"]

@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDebounce } from "src/hooks/use-debounce";
 import {
   isPropertyCatalogNotReadyError,
@@ -656,9 +656,15 @@ export function useExactTraceAttributeProperties({
     enabled: enabled && useLegacyFallback,
   });
 
+  // `catalog.metrics` keeps its identity while the pages are unchanged; keep
+  // the mapped array stable too so consumers' memos and effects stay idle.
+  const properties = useMemo(
+    () => catalog.metrics.map(propertyCatalogMetricToTraceAttribute),
+    [catalog.metrics],
+  );
+
   if (useLegacyFallback) return legacy;
 
-  const properties = catalog.metrics.map(propertyCatalogMetricToTraceAttribute);
   const catalogNotReady = isPropertyCatalogNotReadyError(catalog.error);
   const catalogError = Boolean(catalog.isError && !catalogNotReady);
   const hasNextPage = Boolean(catalog.hasNextPage);

@@ -139,14 +139,17 @@ def test_explicit_raw_flags_fuse_without_recompiling_or_pruning_spans(days, coun
     sql, params, settings = _read(filters)
     assert "AS user_window_rows" in sql
     assert "AS scalar_user_rows" not in sql
-    # Count references, not only the single CTE definition: one remap seed
-    # plus one flags/metrics consumer. This is NOT a one-physical-scan claim.
-    assert len(re.findall(r"\bFROM latest_spans\b", sql)) == 2
-    assert "FROM latest_spans" in _cte(sql, "candidate_end_user_ids")[0]
-    assert "FROM candidate_end_user_ids" in _cte(sql, "eu_survivor_map")[0]
+    # One reference is one physical scan: the remap no longer seeds from this
+    # population, and the flags/metrics consumer is the only reader left.
+    assert len(re.findall(r"\bFROM latest_spans\b", sql)) == 1
+    assert "candidate_end_user_ids" not in sql
+    assert "FROM end_user_id_remap FINAL" in _cte(sql, "eu_survivor_map")[0]
     assert graph._active_user_dimension_membership_sql() in sql
     for index, predicate in enumerate(plan.predicates):
-        assert f"countIf({predicate}) AS user_member_trace_{index}" in sql
+        assert predicate in sql
+        assert (
+            f"countIf(rs.user_member_match_{index}) AS user_member_trace_{index}" in sql
+        )
         assert f"sum(user_member_trace_{index}) AS user_member_bucket_{index}" in sql
         assert (
             f"sum(user_member_bucket_{index}) OVER (PARTITION BY end_user_id) "
@@ -203,7 +206,10 @@ def test_typed_flags_keep_shared_negative_null_and_presence_contract(kind, value
     for index, (predicate, required) in enumerate(
         zip(plan.predicates, plan.require_match, strict=True)
     ):
-        assert f"countIf({predicate}) AS user_member_trace_{index}" in sql
+        assert predicate in sql
+        assert (
+            f"countIf(rs.user_member_match_{index}) AS user_member_trace_{index}" in sql
+        )
         assert f"user_member_window_{index} {'> 0' if required else '= 0'}" in sql
     assert all(params[key] == value for key, value in expected_params.items())
 
@@ -328,35 +334,34 @@ def test_failure_never_retries_as_unfiltered_or_publishes_empty_success(
     assert calls == [stage]
 
 
-def test_fusion_preserves_latest_population_and_span_seeded_remap_verbatim():
+def test_fusion_preserves_latest_population_and_metric_reductions_verbatim():
     filters = [_date(), _leaf()]
     fused, _ = _build(filters, fused=True)
     previous, _ = _build(filters, fused=False)
-    for name in ("latest_spans", "candidate_end_user_ids", "eu_survivor_map"):
-        assert _cte(fused, name)[0] == _cte(previous, name)[0]
+    assert _cte(fused, "eu_survivor_map")[0] == _cte(previous, "eu_survivor_map")[0]
     latest = " ".join(_cte(fused, "latest_spans")[0].split())
-    replay, live = latest.split(") AS snapshot_spans", 1)
-    assert "FROM spans FINAL" in replay
-    physical = replay.split("FROM spans FINAL PREWHERE", 1)[1].split(
-        ") AS physical", 1
-    )[0]
-    assert "is_deleted" not in physical and "end_user_id" not in physical
-    assert (
-        "user_snapshot_start_us" not in replay and "user_snapshot_end_us" not in replay
-    )
-    assert "toStartOfHour(start_time) >= %(user_snapshot_scan_start)s" in physical
-    assert "toStartOfHour(start_time) < %(user_snapshot_scan_end)s" in physical
-    assert (
-        "ARRAY JOIN [tuple(physical.start_time, physical.is_deleted, physical.end_user_id, physical.trace_session_id)] AS latest_membership"
-        in replay
-    )
-    assert "snapshot_spans.is_deleted = 0" in live
-    assert "user_snapshot_start_us" in live and "user_snapshot_end_us" in live
+    scan, replayed = latest.split("GROUP BY project_id", 1)
+    assert "FROM spans FINAL" not in latest
+    # Only immutable project/identity-hour predicates precede the replay; the
+    # fused flags ride in the reduced tuple so they see the winning version.
+    prewhere = scan.split("PREWHERE", 1)[1]
+    assert "is_deleted" not in prewhere and "end_user_id" not in prewhere
+    assert "user_snapshot_start_us" not in scan and "user_snapshot_end_us" not in scan
+    assert "toStartOfHour(start_time) >= %(user_snapshot_scan_start)s" in prewhere
+    assert "toStartOfHour(start_time) < %(user_snapshot_scan_end)s" in prewhere
+    assert ", _version) AS latest_state" in scan
+    assert "AS user_member_match_0" in latest
+    having = replayed.split("HAVING", 1)[1]
+    assert "latest_state.2 = 0" in having
+    assert "user_snapshot_start_us" in having and "user_snapshot_end_us" in having
     for expression in (
         "min(rs.start_time) AS min_start",
-        "avg(rs.latency_ms) AS span_avg_latency",
-        "avg(span_avg_latency) AS user_avg_latency",
-        "avg(user_avg_latency) AS avg_latency",
+        # Latency is the pooled span mean: sums and counts at every level.
+        "sum(rs.latency_ms) AS span_latency_sum",
+        "count(rs.latency_ms) AS span_latency_count",
+        "sum(span_latency_sum) AS user_latency_sum",
+        "sum(span_latency_count) AS user_latency_count",
+        "sum(user_latency_sum) / greatest(sum(user_latency_count), 1) AS avg_latency",
         "sum(rs.cost) AS span_total_cost",
         "sum(span_total_cost) AS user_total_cost",
         "avg(user_total_cost) AS avg_cost",
@@ -392,13 +397,68 @@ class _UniqExact:
         return len(self.values)
 
 
+class _SumIf:
+    def __init__(self):
+        self.total = 0
+
+    def step(self, value, include):
+        if include and value is not None:
+            self.total += value
+
+    def finalize(self):
+        return self.total
+
+
 def _sqlite_metric_sql(sql):
-    # Replace only CH-only syntax/functions; execute both real generated
-    # reductions against the same pre-replayed latest_spans/remap fixtures.
-    tail = sql[_cte(sql, "eu_survivor_map")[1] :].split("SETTINGS", 1)[0]
+    # Exercise the generated fused-window/member reduction against the same
+    # explicitly pre-replayed latest_spans/remap fixture. The CH-only monetary
+    # proof runs through real CH25 coverage suites; here the fixture supplies
+    # its already-qualified compact flags, just as this module's docstring says.
+    monetary, after_monetary = _cte(sql, "graph_monetary_spans")
+    assert "AS graph_usage_states" in monetary
+    assert "ARRAY JOIN graph_usage_state.1 AS graph_own_span" in monetary
+    assert monetary.count("FROM latest_spans") == 1
+    assert "AS graph_cost_flags" in monetary
+    match_marker = "toUInt8(ifNull(("
+    assert match_marker in monetary
+    expression_start = monetary.index(match_marker) + len("toUInt8(ifNull(")
+    depth = 0
+    expression_end = None
+    for offset in range(expression_start, len(monetary)):
+        depth += (monetary[offset] == "(") - (monetary[offset] == ")")
+        if depth == 0:
+            expression_end = offset
+            break
+    assert expression_end is not None
+    output_match = monetary[expression_start + 1 : expression_end]
+    tail = sql[after_monetary:].split("SETTINGS", 1)[0].lstrip(" ,\n")
+    # The fixture already is the explicitly latest-live relation and carries
+    # the compact flags the graph-membership cases precompile. Preserve the
+    # real generated output-membership predicate (curated live dimension for
+    # fused, independently declared selected users for two-stage) and execute
+    # it against the same end_users/remap relations as the oracle.
+    canonical_user = (
+        "if(id_remap.survivor_id IS NULL "
+        f"OR id_remap.survivor_id = toUUID('{NIL}'), "
+        "rs.end_user_id, id_remap.survivor_id)"
+    )
+    query = (
+        "WITH graph_monetary_spans AS ("
+        f"SELECT {canonical_user} AS end_user_id, rs.trace_id, rs.start_time, "
+        "rs.latency_ms, rs.cost, rs.total_tokens, rs.prompt_tokens, "
+        "rs.completion_tokens, rs.status, rs.user_member_match_0, "
+        "rs.user_member_match_1, 1 AS graph_cost_known, "
+        "0 AS graph_cost_unknown, "
+        f"toUInt8(ifNull(({output_match}), 0)) AS graph_output_match "
+        "FROM latest_spans AS rs "
+        "LEFT JOIN eu_survivor_map AS id_remap "
+        "ON rs.end_user_id = id_remap.any_id)\n" + tail
+    )
     return (
-        tail.replace(" FINAL", "")
+        query.replace(" FINAL", "")
         .replace("%(project_id)s", ":project_id")
+        .replace("rs.graph_cost_flags.1", "rs.graph_cost_known")
+        .replace("rs.graph_cost_flags.2", "rs.graph_cost_unknown")
         # SQLite gives input column names precedence over SELECT aliases.
         .replace("GROUP BY end_user_id, trace_id", "GROUP BY 1, 2")
     )
@@ -467,16 +527,19 @@ def test_generated_sql_fused_window_matches_declared_users_and_nested_metrics(
         db.row_factory = sqlite3.Row
         db.create_function("if", 3, lambda condition, yes, no: yes if condition else no)
         db.create_function("toUUID", 1, lambda value: value)
+        db.create_function("toUInt8", 1, int)
         db.create_function("isNotNull", 1, lambda value: value is not None)
         db.create_function("notEmpty", 1, lambda value: bool(value))
         db.create_function("toStartOfDay", 1, lambda value: value[:10])
         db.create_function("greatest", 2, max)
         db.create_aggregate("countIf", 1, _CountIf)
         db.create_aggregate("uniqExact", 1, _UniqExact)
+        db.create_aggregate("sumIf", 2, _SumIf)
         db.executescript("""
             CREATE TABLE latest_spans(end_user_id TEXT, trace_id TEXT, start_time TEXT,
                 latency_ms REAL, cost REAL, total_tokens REAL, prompt_tokens REAL,
-                completion_tokens REAL, status TEXT, flag_0 INTEGER, flag_1 INTEGER);
+                completion_tokens REAL, status TEXT,
+                user_member_match_0 INTEGER, user_member_match_1 INTEGER);
             CREATE TABLE eu_survivor_map(any_id TEXT, survivor_id TEXT);
             CREATE TABLE end_users(end_user_id TEXT, project_id TEXT, user_id TEXT, is_deleted INTEGER);
             CREATE TABLE fixture_selected_users(end_user_id TEXT);
@@ -520,7 +583,11 @@ def test_generated_sql_fused_window_matches_declared_users_and_nested_metrics(
         for key in left.keys() - {"time_bucket"}:
             assert left[key] == pytest.approx(right[key])
     if not mapped_nil:
-        assert actual[0]["avg_latency"] == (185 if mode == "null" else 127.5)
+        # The pooled mean of every span of the bucket's user traces: t1 of
+        # old-a contributes both its day-1 and day-2 spans (0, 20), t2 100,
+        # unmapped 200, and in null mode absent 300. Never a mean of per-user
+        # means (that was 185 / 127.5).
+        assert actual[0]["avg_latency"] == (124 if mode == "null" else 80)
         assert actual[0]["avg_cost"] == (11 if mode == "null" else 10)
         assert (
             actual[0]["total_cost_sum"]

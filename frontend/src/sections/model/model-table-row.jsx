@@ -69,14 +69,20 @@ export default function ModelTableRow({
         <TableCell>
           <Stack alignItems="center" direction="row">
             {monitorDetail.numTriggers === null && (
-              <Iconify icon="mdi:alert" style={{ color: "grey" }} />
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                style={{ color: "grey" }}
+              />
             )}
             {monitorDetail.numTriggers > 0 && (
-              <Iconify icon="mdi:alert" style={{ color: "red" }} />
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                style={{ color: "red" }}
+              />
             )}
             {monitorDetail.numTriggers === 0 && (
               <Iconify
-                icon="mdi:tick-circle-outline"
+                icon="solar:check-circle-linear"
                 style={{ color: "green" }}
               />
             )}
@@ -88,14 +94,20 @@ export default function ModelTableRow({
         <TableCell>
           <Stack alignItems="center" direction="row">
             {monitorDetail.performance === null && (
-              <Iconify icon="mdi:alert" style={{ color: "grey" }} />
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                style={{ color: "grey" }}
+              />
             )}
             {monitorDetail.performance === true && (
-              <Iconify icon="mdi:alert" style={{ color: "red" }} />
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                style={{ color: "red" }}
+              />
             )}
             {monitorDetail.performance === false && (
               <Iconify
-                icon="mdi:tick-circle-outline"
+                icon="solar:check-circle-linear"
                 style={{ color: "green" }}
               />
             )}
@@ -105,14 +117,20 @@ export default function ModelTableRow({
         <TableCell>
           <Stack alignItems="center" direction="row">
             {monitorDetail.drift === null && (
-              <Iconify icon="mdi:alert" style={{ color: "grey" }} />
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                style={{ color: "grey" }}
+              />
             )}
             {monitorDetail.drift === true && (
-              <Iconify icon="mdi:alert" style={{ color: "red" }} />
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                style={{ color: "red" }}
+              />
             )}
             {monitorDetail.drift === false && (
               <Iconify
-                icon="mdi:tick-circle-outline"
+                icon="solar:check-circle-linear"
                 style={{ color: "green" }}
               />
             )}
@@ -122,14 +140,20 @@ export default function ModelTableRow({
         <TableCell>
           <Stack alignItems="center" direction="row">
             {monitorDetail.analytics === null && (
-              <Iconify icon="mdi:alert" style={{ color: "grey" }} />
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                style={{ color: "grey" }}
+              />
             )}
             {monitorDetail.analytics === true && (
-              <Iconify icon="mdi:alert" style={{ color: "red" }} />
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                style={{ color: "red" }}
+              />
             )}
             {monitorDetail.analytics === false && (
               <Iconify
-                icon="mdi:tick-circle-outline"
+                icon="solar:check-circle-linear"
                 style={{ color: "green" }}
               />
             )}
@@ -192,7 +216,6 @@ export default function ModelTableRow({
             confirm.onTrue();
             popover.onClose();
           }}
-          sx={{ color: "error.main" }}
         >
           <Iconify icon="solar:trash-bin-trash-bold" />
           Delete

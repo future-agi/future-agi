@@ -1373,12 +1373,26 @@ class LiteLlmModelProvider(Enum):
     HUME = "hume"
     CARTESIA = "cartesia"
     LMNT = "lmnt"
+    # Jev evaluator models (System One API); keys are used by ee.jev, not LiteLLM.
+    TYPESAFE = "typesafe"
     # VERTEX_AI_CHAT_MODELS = "vertex_ai-chat-models"
     # VERTEX_AI_CODE_CHAT_MODELS = "vertex_ai-code-chat-models"
 
     @classmethod
     def get_choices(cls):
-        return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
+        return [
+            (
+                tag.value,
+                _PROVIDER_DISPLAY_NAMES.get(
+                    tag.value, tag.name.replace("_", " ").title()
+                ),
+            )
+            for tag in cls
+        ]
+
+
+# Brand casing that title() gets wrong. Labels only; stored values are unchanged.
+_PROVIDER_DISPLAY_NAMES = {LiteLlmModelProvider.TYPESAFE.value: "TypeSafe"}
 
 
 class ProviderLogoUrls(Enum):

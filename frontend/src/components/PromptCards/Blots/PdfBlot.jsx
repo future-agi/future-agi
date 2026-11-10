@@ -1,41 +1,21 @@
-import Quill from "quill";
 import React from "react";
-import { createRoot } from "react-dom/client";
 import "../PromptCardEditor.css";
 import PdfEmbed from "../EmbedComponents/PdfEmbed";
-const BlockEmbed = Quill.import("blots/block/embed");
+import MediaBlockEmbed from "./MediaBlockEmbed";
 
-class PdfBlot extends BlockEmbed {
-  static create(value) {
-    const node = super.create();
-    node.setAttribute("contenteditable", false);
-    node.setAttribute("id", value.id);
-    node.setAttribute(
-      "data-pdf-data",
-      JSON.stringify({
-        url: value.url,
-        pdf_name: value.name,
-        pdf_size: value.size,
-      }),
-    );
-
-    const root = createRoot(node);
-
-    root.render(
+class PdfBlot extends MediaBlockEmbed {
+  static renderCard(v, callbacks) {
+    const canRemove =
+      !callbacks.readOnly && typeof callbacks.handleRemovePdf === "function";
+    return (
       <PdfEmbed
-        name={value.name}
-        size={value.size}
+        name={v.name}
+        size={v.size}
         isEmbed
-        id={value.id}
-        onDelete={() => value.handleRemovePdf(value.id)}
-      />,
+        id={v.id}
+        onDelete={canRemove ? () => callbacks.handleRemovePdf(v.id) : undefined}
+      />
     );
-
-    return node;
-  }
-
-  static formats() {
-    return null;
   }
 
   // Add value method to properly handle the blot's value
@@ -63,5 +43,7 @@ class PdfBlot extends BlockEmbed {
 
 PdfBlot.blotName = "PdfBlot";
 PdfBlot.tagName = "div";
+PdfBlot.mediaKind = "pdf";
+PdfBlot.dataAttribute = "data-pdf-data";
 
 export default PdfBlot;

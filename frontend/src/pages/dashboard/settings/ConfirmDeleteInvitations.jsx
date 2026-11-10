@@ -45,7 +45,7 @@ const ConfirmDeleteInvitations = ({
             Are you sure you want delete {count} invitations?
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
