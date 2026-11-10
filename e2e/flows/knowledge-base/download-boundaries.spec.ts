@@ -62,7 +62,13 @@ test('knowledge-base download authorization and input boundaries', async ({ scop
     const beforeOrg = await snapshot();
     const revokedOrg = await request.get(path, { headers: knowledgeHeaders(scopes.viewer), params });
     receipts.push({ label: 'removed-org-member', status: revokedOrg.status(), body: await revokedOrg.text() });
-    expect(revokedOrg.status()).toBe(403);
+    // MemberRemoveView calls clear_user_redis_cache, which deactivates all
+    // AuthToken rows. Its existing-session contract is 401, before view authz.
+    expect(revokedOrg.status()).toBe(401);
+    expect(await revokedOrg.json()).toMatchObject({
+      status: false, type: 'authentication_error', code: 'authentication_failed',
+    });
+    expect(await revokedOrg.text()).not.toContain(contents);
     expect(await snapshot()).toEqual(beforeOrg);
 
     const removedFile = await scopes.send(scopes.ownerA, 'DELETE', '/model-hub/knowledge-base/files/',
