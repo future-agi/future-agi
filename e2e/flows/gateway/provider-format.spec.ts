@@ -58,7 +58,7 @@ test('GW-E2E-020: named providers save their native API format', {
       await dialog.getByLabel(/^Base URL/).fill(SYNTHETIC_UPSTREAM);
       await dialog.getByLabel(/^API Key/).fill(`synthetic-format-${suffix}`);
       // Free-solo model input is also available after a failed native listing.
-      const models = dialog.getByPlaceholder(/Fetching models|Select models|type manually/);
+      const models = dialog.getByPlaceholder(/Fetching models|Select models|type manually|Azure deployment names/);
       await models.fill(model);
       await models.press('Enter');
       const save = dialog.getByRole('button', { name: 'Add Provider', exact: true });

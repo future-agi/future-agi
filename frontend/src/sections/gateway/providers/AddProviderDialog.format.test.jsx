@@ -56,10 +56,15 @@ describe("provider format transitions", () => {
     fireEvent.change(screen.getByLabelText(/^API Key/), {
       target: { value: "synthetic-provider-key" },
     });
-    await waitFor(() => expect(fetchMutate).toHaveBeenCalledWith(
-      expect.objectContaining({ apiFormat: format }), expect.any(Object),
-    ));
-    await userEvent.click(await screen.findByRole("button", { name: "Select All" }));
+    if (format === "azure") {
+      await userEvent.type(screen.getByPlaceholderText("Type or paste Azure deployment names"), "production-chat{enter}");
+      expect(fetchMutate).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() => expect(fetchMutate).toHaveBeenCalledWith(
+        expect.objectContaining({ apiFormat: format }), expect.any(Object),
+      ));
+      await userEvent.click(await screen.findByRole("button", { name: "Select All" }));
+    }
     await waitFor(() => expect(screen.getByRole("button", { name: "Add Provider" })).toBeEnabled());
     await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
     expect(updateMutate).toHaveBeenCalledWith(
@@ -101,6 +106,31 @@ describe("provider format transitions", () => {
     expect(formatField()).toHaveTextContent("openai");
     await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
     expect(updateMutate.mock.calls[0][0].config.api_format).toBe("openai");
+  });
+
+  it("allows explicitly repairing a saved named provider's stale adapter", async () => {
+    renderDialog({ name: "anthropic", config: {
+      base_url: "https://provider.example.test",
+      api_format: "openai",
+      models: ["synthetic-model"],
+    } });
+    expect(formatField()).toHaveTextContent("openai");
+    await userEvent.click(formatField());
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["openai", "anthropic"]);
+    await userEvent.click(screen.getByRole("option", { name: "anthropic", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.api_format).toBe("anthropic");
+  });
+
+  it("edits native Azure deployments without listing catalogue models", async () => {
+    renderDialog({ name: "azure", config: {
+      base_url: "https://resource.example.test",
+      api_format: "azure",
+      models: ["production-chat"],
+    } });
+    expect(fetchMutate).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual(["production-chat"]);
   });
 
   it("retains explicit format selection for a saved custom name", async () => {

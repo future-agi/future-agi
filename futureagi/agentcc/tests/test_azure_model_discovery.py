@@ -1,18 +1,37 @@
 from unittest.mock import Mock, patch
 
 import pytest
-import requests
 
 from agentcc.views.provider_credential import AgentccProviderCredentialViewSet
 
 
 @pytest.mark.parametrize("provider_name", [None, "azure", "custom-azure"])
-@pytest.mark.parametrize("suffix", ["", "/"])
-def test_azure_discovery_uses_native_path_and_auth(provider_name, suffix):
+@pytest.mark.parametrize("base_url", ["", "https://resource.example.test/"])
+def test_native_azure_requires_explicit_deployment_names(provider_name, base_url):
     session = Mock()
     session.get.return_value.json.return_value = {
-        "data": [{"id": "synthetic-z"}, {"id": "synthetic-a"}]
+        "data": [{"id": "catalogue-model-not-deployment"}]
     }
+    with (
+        patch("agentcc.views.provider_credential.ensure_public_http_url"),
+        patch("agentcc.views.provider_credential.http_requests.get") as get,
+        patch(
+            "agentcc.views.provider_credential.build_ssrf_safe_session",
+            return_value=session,
+        ),
+    ):
+        models = AgentccProviderCredentialViewSet()._fetch_models_from_provider(
+            provider_name, base_url, "synthetic-key", "azure"
+        )
+
+    assert models == []
+    session.get.assert_not_called()
+    get.assert_not_called()
+
+
+def test_saved_azure_openai_compatible_connection_keeps_its_protocol():
+    session = Mock()
+    session.get.return_value.json.return_value = {"data": [{"id": "deployment"}]}
     with (
         patch("agentcc.views.provider_credential.ensure_public_http_url"),
         patch(
@@ -21,47 +40,12 @@ def test_azure_discovery_uses_native_path_and_auth(provider_name, suffix):
         ),
     ):
         models = AgentccProviderCredentialViewSet()._fetch_models_from_provider(
-            provider_name,
-            f"https://resource.example.test{suffix}",
-            "synthetic-key",
-            "azure",
+            "azure", "https://resource.example.test/openai/v1", "synthetic-key", "openai"
         )
 
-    assert models == ["synthetic-a", "synthetic-z"]
+    assert models == ["deployment"]
     session.get.assert_called_once_with(
-        "https://resource.example.test/openai/models",
-        headers={"api-key": "synthetic-key"},
-        params={"api-version": "2024-10-21"},
+        "https://resource.example.test/openai/v1/models",
+        headers={"Authorization": "Bearer synthetic-key"},
         timeout=15,
     )
-    session.get.return_value.raise_for_status.assert_called_once_with()
-
-
-def test_azure_discovery_requires_a_resource_url():
-    with (
-        patch("agentcc.views.provider_credential.http_requests.get") as get,
-        pytest.raises(ValueError, match="requires a resource base URL"),
-    ):
-        AgentccProviderCredentialViewSet()._fetch_models_from_provider(
-            "azure", "", "synthetic-key", "azure"
-        )
-    get.assert_not_called()
-
-
-def test_azure_discovery_does_not_fall_back_after_an_auth_failure():
-    session = Mock()
-    session.get.return_value.raise_for_status.side_effect = requests.HTTPError(
-        "synthetic authentication rejection"
-    )
-    with (
-        patch("agentcc.views.provider_credential.ensure_public_http_url"),
-        patch(
-            "agentcc.views.provider_credential.build_ssrf_safe_session",
-            return_value=session,
-        ),
-        pytest.raises(requests.HTTPError, match="synthetic authentication rejection"),
-    ):
-        AgentccProviderCredentialViewSet()._fetch_models_from_provider(
-            "azure", "https://resource.example.test", "synthetic-key", "azure"
-        )
-    assert session.get.call_count == 1

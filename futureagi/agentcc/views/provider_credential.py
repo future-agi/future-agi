@@ -367,6 +367,13 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         ``provider_name`` first; falls back to ``api_format`` for custom /
         unknown providers.
         """
+        # Azure inference addresses deployment names, not catalogue model IDs.
+        # Listing deployments requires management-plane credentials this API
+        # does not accept. Require explicit deployment names instead of probing
+        # a different protocol or presenting unusable catalogue IDs.
+        if api_format == "azure":
+            return []
+
         timeout = 15
 
         # Validate user-supplied base_url and use safe session to prevent SSRF
@@ -465,19 +472,6 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             if "data" in data:
                 return sorted(m["id"] for m in data["data"])
             return sorted(m["name"] for m in data.get("models", []) if m.get("name"))
-
-        if name == "azure" or api_format == "azure":
-            if not base_url:
-                raise ValueError("Azure model discovery requires a resource base URL")
-            # Match the Azure gateway adapter's default data-plane API version.
-            resp = http.get(
-                f"{base_url.rstrip('/')}/openai/models",
-                headers={"api-key": api_key},
-                params={"api-version": "2024-10-21"},
-                timeout=timeout,
-            )
-            resp.raise_for_status()
-            return sorted(model["id"] for model in resp.json().get("data", []))
 
         # Default: OpenAI-compatible (OpenAI, Groq, Together, Fireworks, Mistral,
         # custom/self-hosted). The version segment is the

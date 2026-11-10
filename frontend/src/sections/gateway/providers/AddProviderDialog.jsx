@@ -487,7 +487,7 @@ const AddProviderDialog = ({
         setFetchError("");
         setKeyFetchError("");
         setHasFetched(false);
-      } else if (provider.name !== "vertex") {
+      } else if (provider.name !== "vertex" && storedFormat !== "azure") {
         doFetchModels({
           providerName: provider.name,
           format: storedFormat,
@@ -508,6 +508,7 @@ const AddProviderDialog = ({
 
   const isAwsAuth = PROVIDER_PRESETS[name]?.authType === "aws";
   const isVertexAuth = PROVIDER_PRESETS[name]?.authType === "gcp";
+  const requiresDeploymentIds = apiFormat === "azure";
   const isSystemOne = isSystemOneFormat(apiFormat);
   const keyIsOptional = allowsKeylessSystemOne(name, apiFormat, baseUrl);
 
@@ -515,8 +516,14 @@ const AddProviderDialog = ({
   // typed key replaces the stored one, so it has to list models before Save.
   // Skip auto-fetch for AWS providers (Bedrock models must be entered manually)
   useEffect(() => {
-    if (isAwsAuth || isVertexAuth) {
+    if (isAwsAuth || isVertexAuth || requiresDeploymentIds) {
+      // Azure's model catalogue is not a list of callable deployment names.
+      if (requiresDeploymentIds) setModelOptions([]);
+      fetchSeqRef.current += 1;
       setFetchScheduled(false);
+      setFetchError("");
+      setKeyFetchError("");
+      setHasFetched(false);
       return;
     }
     // System One providers are never probed, so a key cannot start a billed
@@ -584,6 +591,7 @@ const AddProviderDialog = ({
     isEditMode,
     isAwsAuth,
     isVertexAuth,
+    requiresDeploymentIds,
   ]);
 
   // Editing the prefix moves the discovery URL, so the stored-credential
@@ -592,7 +600,9 @@ const AddProviderDialog = ({
   useEffect(() => {
     if (!open || !isEditMode || !provider) return;
     if (apiKey.trim()) return;
-    if (isAwsAuth || isVertexAuth || provider.name === "vertex") return;
+    if (
+      isAwsAuth || isVertexAuth || requiresDeploymentIds || provider.name === "vertex"
+    ) return;
     // null until the hydrating fetch records one, so opening the dialog is not
     // mistaken for a change.
     if (byNameFetchPrefix.current === null) return;
@@ -607,7 +617,10 @@ const AddProviderDialog = ({
     }, 600);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiPathPrefix, apiKey, open, isEditMode, isAwsAuth, isVertexAuth]);
+  }, [
+    apiPathPrefix, apiKey, open, isEditMode, isAwsAuth, isVertexAuth,
+    requiresDeploymentIds,
+  ]);
 
   const resetForm = () => {
     const defaultPreset = PROVIDER_PRESETS.openai;
@@ -1191,9 +1204,9 @@ const AddProviderDialog = ({
 
           {(() => {
             const currentPreset = PROVIDER_PRESETS[name];
-            // Keep saved adapters intact on edit; only Custom offers a choice.
+            // Keep a saved adapter until the user explicitly chooses the native one.
             const visibleFormats = currentPreset && name !== "custom"
-              ? [apiFormat]
+              ? [...new Set([apiFormat, currentPreset.apiFormat])]
               : currentPreset?.supportedFormats?.length
                 ? API_FORMATS.filter((f) =>
                     currentPreset.supportedFormats.includes(f),
@@ -1314,9 +1327,15 @@ const AddProviderDialog = ({
               renderInput={(params) => (
                 <TextField
                   {...params}
+                  helperText={requiresDeploymentIds
+                    ? "Enter the deployment names from your Azure resource, not catalogue model IDs."
+                    : undefined
+                  }
                   placeholder={
                     modelsLoading
                       ? "Fetching models..."
+                      : requiresDeploymentIds
+                        ? "Type or paste Azure deployment names"
                       : modelOptions.length > 0
                         ? "Select models..."
                         : isAwsAuth || isVertexAuth || isSystemOne
