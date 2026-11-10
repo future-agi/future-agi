@@ -4,7 +4,7 @@ import AccordionSummary from "@mui/material/AccordionSummary";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
-import { Box, useTheme } from "@mui/material";
+import { Box, ButtonBase, useTheme } from "@mui/material";
 import Iconify from "../iconify";
 import { grey } from "src/theme/palette";
 import PropTypes from "prop-types";
@@ -33,18 +33,18 @@ export default function CustomAccordion({
     <Box>
       {/* Label outside of the accordion */}
       {!isExpanded && (
-        <Typography
-          sx={{
-            color: theme.palette.text.disabled,
-            mb: 1,
-            cursor: "pointer",
-          }}
+        <ButtonBase
           onClick={() => setIsExpanded(true)}
-          fontSize={12}
-          fontWeight={600}
+          sx={{ display: "flex", mb: 1 }}
         >
-          {labelText}
-        </Typography>
+          <Typography
+            sx={{ color: theme.palette.text.disabled }}
+            fontSize={12}
+            fontWeight={600}
+          >
+            {labelText}
+          </Typography>
+        </ButtonBase>
       )}
 
       <Accordion
@@ -54,7 +54,7 @@ export default function CustomAccordion({
           border: `1px solid grey`,
           borderColor: grey["300"],
           overflow: "hidden",
-          boxShadow: "none !important",
+          boxShadow: "none",
         }}
       >
         <AccordionSummary
@@ -67,17 +67,17 @@ export default function CustomAccordion({
                   handleCopy();
                 }}
               >
-                <Iconify icon="material-symbols-light:content-copy-outline-rounded" />
+                <Iconify icon="solar:copy-linear" />
               </IconButton>
 
               <IconButton
                 sx={{
                   transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-                  transition: "transform 0.3s ease",
+                  transition: "transform 0.2s ease",
                 }}
                 size="medium"
               >
-                <Iconify icon={`material-symbols-light:keyboard-arrow-down`} />
+                <Iconify icon={`solar:alt-arrow-down-linear`} />
               </IconButton>
             </Box>
           }
@@ -105,7 +105,7 @@ export default function CustomAccordion({
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
-            fontSize={14}
+            fontSize={13}
             fontWeight={400}
           >
             {!isExpanded ? detailsText : labelText}
@@ -123,7 +123,7 @@ export default function CustomAccordion({
         >
           <Typography
             color={theme.palette.text.primary}
-            fontSize={14}
+            fontSize={13}
             fontWeight={theme.typography.fontWeightRegular}
             lineHeight={1.6}
           >

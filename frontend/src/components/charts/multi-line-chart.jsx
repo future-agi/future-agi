@@ -1,6 +1,7 @@
 import React from "react";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material";
+import { seriesColorList } from "src/theme/data-colors";
 
 export default function MultiLineChart() {
   const theme = useTheme();
@@ -30,7 +31,7 @@ export default function MultiLineChart() {
       // height: 350,
       type: "line",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: theme.palette.text.secondary,
       zoom: {
         enabled: false,
       },
@@ -41,7 +42,7 @@ export default function MultiLineChart() {
     theme: {
       mode: isDark ? "dark" : "light",
     },
-    colors: ["#FF4560", "#00E396", "#008FFB", "#775DD0"], // Add more colors if you have more series
+    colors: seriesColorList(theme, series.length),
     dataLabels: {
       enabled: false,
     },
@@ -66,7 +67,7 @@ export default function MultiLineChart() {
       },
     },
     grid: {
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: theme.palette.divider,
     },
     legend: {
       position: "bottom",

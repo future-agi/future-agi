@@ -172,7 +172,7 @@ const PerformanceTable = ({
       />
       {isFetchingNextPage && (
         <Box sx={{ display: "flex", justifyContent: "center" }}>
-          <CircularProgress size={30} />
+          <CircularProgress size={20} sx={{ color: "text.secondary" }} />
         </Box>
       )}
     </Box>

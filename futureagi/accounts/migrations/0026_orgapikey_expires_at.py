@@ -2,9 +2,11 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ("accounts", "0025_gcpmarketplaceprocessedevent_gcpmarketplaceaccount_and_more"),
+        (
+            "accounts",
+            "0025_gcpmarketplaceprocessedevent_gcpmarketplaceaccount_and_more",
+        ),
     ]
 
     operations = [

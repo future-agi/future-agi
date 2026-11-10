@@ -26,6 +26,7 @@ func TestBillableHandlersRunThePipeline(t *testing.T) {
 		"handlers_responses.go":  {"CreateResponse"},
 		"handlers_anthropic.go":  {"AnthropicMessages"},
 		"handlers_genai.go":      {"GenAIHandler"},
+		"handlers_decision.go":   {"SystemOne", "Decisions"},
 	}
 
 	for file, handlers := range billable {

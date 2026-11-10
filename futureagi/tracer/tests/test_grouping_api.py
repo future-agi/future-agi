@@ -12,12 +12,40 @@ from tracer.views.trace_grouping import (
     ClaimGroupingView,
     ReserveGroupingCallView,
     SettleGroupingCallView,
+    UpdateGroupingAttemptView,
 )
 from tracer.views.trace_severity import ReserveSeverityView, SettleSeverityView
 
 
 @override_settings(INTERNAL_API_SECRET="test-grouping-secret")
 class GroupingControlApiTests(SimpleTestCase):
+    def test_failure_action_dispatches_only_validated_fields(self):
+        attempt_id = uuid.uuid4()
+        request = APIRequestFactory().patch(
+            "/grouping/attempts/",
+            {
+                "lease_token": "lease",
+                "action": "fail",
+                "failure_code": "control_timeout",
+            },
+            format="json",
+            HTTP_AUTHORIZATION="Bearer test-grouping-secret",
+        )
+        with patch(
+            "tracer.views.trace_grouping.control.update_grouping_attempt",
+            return_value={"state": "cancelled", "failure_code": "control_timeout"},
+        ) as service:
+            response = UpdateGroupingAttemptView.as_view()(
+                request, attempt_id=attempt_id
+            )
+        self.assertEqual(response.status_code, 200)
+        service.assert_called_once_with(
+            attempt_id=attempt_id,
+            lease_token="lease",
+            action="fail",
+            failure_code="control_timeout",
+        )
+
     def test_severity_accounting_dispatch_does_not_shadow_response_operation(self):
         job_id = uuid.uuid4()
         common = {
