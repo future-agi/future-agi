@@ -504,18 +504,27 @@ def source_run_usage(source_run: HostedHarnessJob) -> dict[str, CallUsage]:
         ) from exc
 
 
+def model_key(name: str) -> str:
+    """A model's name as the lock compares it, without its provider: the engine counts
+    "vertex_ai/gemini-3.8-flash" as the allowed "gemini-3.8-flash"."""
+    return name.lower().rsplit("/", 1)[-1]
+
+
 def models_called(usage: Mapping[str, CallUsage]) -> list[str]:
     return sorted({model for one in usage.values() for model in one.models})
 
 
-def _first_time_ms(content: Any) -> int | None:
-    """When a chat row's first timed item was said: hosted chat stores each segment's
-    start time on its item."""
+def _first_time_ms(content: Any, *, text_only: bool = False) -> int | None:
+    """When a chat row's first timed item was said, or with ``text_only`` its first
+    text, not a tool call or its result: hosted chat stores each segment's start time
+    on its item."""
     return next(
         (
             item["start_time_ms"]
             for item in content or []
-            if isinstance(item, Mapping) and isinstance(item.get("start_time_ms"), int)
+            if isinstance(item, Mapping)
+            and isinstance(item.get("start_time_ms"), int)
+            and not (text_only and (item.get("kind") or not item.get("content")))
         ),
         None,
     )
@@ -524,8 +533,9 @@ def _first_time_ms(content: Any) -> int | None:
 def _reply_latencies(calls: Iterable[CallExecution]) -> dict[Any, float | None]:
     """Each call's reply latency in ms. A voice call has its agent's average latency. A
     chat has the median, over its user turns, of the time from the user's message to
-    the agent's first message after it. An agent's greeting before any user turn, and a
-    last user turn the agent never answered, have no reply."""
+    the agent's first text after it: a tool loop before the answer is time the user
+    waits. An agent's greeting before any user turn, and a last user turn the agent
+    never answered in text, have no reply."""
     latencies: dict[Any, float | None] = {}
     chats = []
     for call in calls:
@@ -537,7 +547,9 @@ def _reply_latencies(calls: Iterable[CallExecution]) -> dict[Any, float | None]:
                 if call.avg_agent_latency_ms is not None
                 else None
             )
-    turns: dict[Any, list[tuple[int | None, Any, str, str]]] = defaultdict(list)
+    turns: dict[Any, list[tuple[int | None, Any, str, str, int | None]]] = defaultdict(
+        list
+    )
     for (
         call_id,
         created_at,
@@ -551,7 +563,15 @@ def _reply_latencies(calls: Iterable[CallExecution]) -> dict[Any, float | None]:
             ChatMessageModel.RoleChoices.ASSISTANT,
         ],
     ).values_list("call_execution_id", "created_at", "id", "role", "content"):
-        turns[call_id].append((_first_time_ms(content), created_at, str(row_id), role))
+        turns[call_id].append(
+            (
+                _first_time_ms(content),
+                created_at,
+                str(row_id),
+                role,
+                _first_time_ms(content, text_only=True),
+            )
+        )
     for call_id in chats:
         rows = turns[call_id]
         # The conversation's order: its own times when every row has one, else the
@@ -563,12 +583,15 @@ def _reply_latencies(calls: Iterable[CallExecution]) -> dict[Any, float | None]:
         gaps = []
         asked: int | None = None
         waiting = False
-        for at, _created_at, _row_id, role in rows:
+        for at, _created_at, _row_id, role, answered in rows:
             if role == ChatMessageModel.RoleChoices.USER:
                 asked, waiting = at, True
                 continue
-            if waiting and asked is not None and at is not None and at >= asked:
-                gaps.append(at - asked)
+            # Rows of tool calls alone keep the user waiting for the text.
+            if not waiting or answered is None:
+                continue
+            if asked is not None and answered >= asked:
+                gaps.append(answered - asked)
             waiting = False
         latencies[call_id] = float(median(gaps)) if gaps else None
     return latencies
@@ -1165,7 +1188,13 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
     )
     blocked = launch_blocker(source_run)
     variations_blocked = variations_blocker(source_run)
-    usage = call_usage(source_run)
+    try:
+        usage = source_run_usage(source_run)
+    except HostedHarnessError as exc:
+        # The launch would be refused the same way: the form says so, rather than call
+        # the agent untraced.
+        usage = {}
+        blocked = blocked or exc
     return LaunchOptions(
         source_run=LaunchSourceRun(
             id=str(source_run.test_execution_id),

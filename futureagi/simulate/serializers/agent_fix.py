@@ -114,10 +114,19 @@ class AgentFixRequestSerializer(serializers.Serializer):
     )
 
 
+class AgentFixVerdictTierPartSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=64)
+    status = serializers.ChoiceField(choices=["passed", "failed", "skipped"])
+    detail = serializers.CharField(required=False, allow_blank=True, default="")
+
+
 class AgentFixVerdictTierSerializer(serializers.Serializer):
     name = serializers.CharField()
     status = serializers.ChoiceField(choices=["passed", "failed", "pending", "skipped"])
     detail = serializers.CharField(required=False, allow_blank=True, default="")
+    # The checks inside a tier that holds several, each with its own status; a tier
+    # from an older engine has none.
+    parts = AgentFixVerdictTierPartSerializer(many=True, required=False, default=list)
 
 
 class AgentFixPlanSerializer(serializers.Serializer):

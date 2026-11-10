@@ -39,6 +39,46 @@ const gain = (r) => {
   return d ? `${d > 0 ? "↑" : "↓"} ${Math.abs(d)} pts` : "";
 };
 
+// One check's status, name and detail. A check that could not measure reads
+// skipped, which the drawer says as "not verified".
+function CheckLine({ check, sx }) {
+  return (
+    <Stack direction="row" spacing={1} alignItems="center" sx={sx}>
+      <Iconify
+        icon={tierIcon(check.status)}
+        width={14}
+        sx={{
+          color: check.status === "failed" ? BUILD_TONES.red : "text.secondary",
+          flexShrink: 0,
+        }}
+      />
+      <Typography sx={{ typography: "s3", fontWeight: 600, width: 90 }}>
+        {check.name}
+      </Typography>
+      {check.status === "skipped" && (
+        <Typography
+          noWrap
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.secondary",
+            flexShrink: 0,
+          }}
+        >
+          not verified
+        </Typography>
+      )}
+      <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+        {check.detail}
+      </Typography>
+    </Stack>
+  );
+}
+CheckLine.propTypes = {
+  check: PropTypes.object.isRequired,
+  sx: PropTypes.object,
+};
+
 // "How it was decided", laid out as the design's decision drawer: the evidence
 // for the kept trial, every finalist side by side, and the checks it passed.
 export default function FixDecisionDrawer({ fix, open, onClose }) {
@@ -189,48 +229,18 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                 </Typography>
               </Box>
               {v.tiers.map((t, i) => (
-                <Stack
-                  key={t.name}
-                  direction="row"
-                  spacing={1}
-                  alignItems="center"
-                  sx={{ ...rowSx(i + 1), display: "flex" }}
-                >
-                  <Iconify
-                    icon={tierIcon(t.status)}
-                    width={14}
-                    sx={{
-                      color:
-                        t.status === "failed"
-                          ? BUILD_TONES.red
-                          : "text.secondary",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Typography
-                    sx={{ typography: "s3", fontWeight: 600, width: 90 }}
-                  >
-                    {t.name}
-                  </Typography>
-                  {t.status === "skipped" && (
-                    <Typography
-                      noWrap
-                      sx={{
-                        typography: "s3",
-                        fontWeight: 600,
-                        color: "text.secondary",
-                        flexShrink: 0,
-                      }}
-                    >
-                      not verified
-                    </Typography>
-                  )}
-                  <Typography
-                    sx={{ typography: "s3", color: "text.secondary" }}
-                  >
-                    {t.detail}
-                  </Typography>
-                </Stack>
+                <Box key={t.name} sx={rowSx(i + 1)}>
+                  <CheckLine check={t} />
+                  {/* A tier that holds several checks, such as each ceiling,
+                      shows what each one verified. */}
+                  {(t.parts || []).map((part) => (
+                    <CheckLine
+                      key={part.name}
+                      check={part}
+                      sx={{ pl: 3, mt: 0.5 }}
+                    />
+                  ))}
+                </Box>
               ))}
             </Box>
           </Box>

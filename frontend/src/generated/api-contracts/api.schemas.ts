@@ -17848,11 +17848,31 @@ export const AgentFixVerdictTierApiStatus = {
   skipped: "skipped",
 } as const;
 
+export type AgentFixVerdictTierPartApiStatus =
+  (typeof AgentFixVerdictTierPartApiStatus)[keyof typeof AgentFixVerdictTierPartApiStatus];
+
+export const AgentFixVerdictTierPartApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface AgentFixVerdictTierPartApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  name: string;
+  status: AgentFixVerdictTierPartApiStatus;
+  detail?: string;
+}
+
 export interface AgentFixVerdictTierApi {
   /** @minLength 1 */
   name: string;
   status: AgentFixVerdictTierApiStatus;
   detail?: string;
+  parts?: AgentFixVerdictTierPartApi[];
 }
 
 export interface AgentFixVerdictApi {

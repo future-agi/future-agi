@@ -36,6 +36,7 @@ import {
   countsLine,
   isTraced,
   seesModels,
+  tracesUnreadable,
   launchError,
   marginSteps,
   minuteSteps,
@@ -221,7 +222,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
     surfaces,
     limits,
     models,
-    needsModels: lockable,
+    seenModels: options.defaults.allowed_models,
     costLimit,
   });
   const blockedReason = blockedReasonOf(options, targets.length);
@@ -402,7 +403,11 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
               />
             ) : (
               <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-                {isTraced(options) ? NO_MODELS_NOTE : UNTRACED_NOTE}
+                {tracesUnreadable(options)
+                  ? options.blocked.message
+                  : isTraced(options)
+                    ? NO_MODELS_NOTE
+                    : UNTRACED_NOTE}
               </Typography>
             )}
           </Row>

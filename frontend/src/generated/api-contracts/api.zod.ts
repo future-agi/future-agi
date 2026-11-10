@@ -35990,6 +35990,11 @@ export const simulateApiAgentFixEngineReportBodyDiagnosisCausesDefault = [];
 export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
 export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+
+export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsDefault =
+  [];
 export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersDefault =
   [];
 export const simulateApiAgentFixEngineReportBodyCandidatesDefault = [];
@@ -36067,6 +36072,26 @@ export const SimulateApiAgentFixEngineReportBody = zod.object({
                     .string()
                     .default(
                       simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemDetailDefault,
+                    ),
+                  parts: zod
+                    .array(
+                      zod.object({
+                        name: zod
+                          .string()
+                          .min(1)
+                          .max(
+                            simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsItemNameMax,
+                          ),
+                        status: zod.enum(["passed", "failed", "skipped"]),
+                        detail: zod
+                          .string()
+                          .default(
+                            simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsItemDetailDefault,
+                          ),
+                      }),
+                    )
+                    .default(
+                      simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemPartsDefault,
                     ),
                 }),
               )
@@ -36195,6 +36220,11 @@ export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttempt
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsDefault =
+  [];
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersDefault =
   [];
 
@@ -36379,6 +36409,26 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
                     .string()
                     .default(
                       simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemDetailDefault,
+                    ),
+                  parts: zod
+                    .array(
+                      zod.object({
+                        name: zod
+                          .string()
+                          .min(1)
+                          .max(
+                            simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemNameMax,
+                          ),
+                        status: zod.enum(["passed", "failed", "skipped"]),
+                        detail: zod
+                          .string()
+                          .default(
+                            simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemDetailDefault,
+                          ),
+                      }),
+                    )
+                    .default(
+                      simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsDefault,
                     ),
                 }),
               )
@@ -36635,6 +36685,11 @@ export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767
 export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
 export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsDefault =
+  [];
 export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersDefault =
   [];
 
@@ -36798,6 +36853,26 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
                 .string()
                 .default(
                   simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemDetailDefault,
+                ),
+              parts: zod
+                .array(
+                  zod.object({
+                    name: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemNameMax,
+                      ),
+                    status: zod.enum(["passed", "failed", "skipped"]),
+                    detail: zod
+                      .string()
+                      .default(
+                        simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault,
+                      ),
+                  }),
+                )
+                .default(
+                  simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsDefault,
                 ),
             }),
           )
@@ -36969,6 +37044,11 @@ export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax = 32767
 export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
 export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsDefault =
+  [];
 export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersDefault =
   [];
 
@@ -37132,6 +37212,26 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
                 .string()
                 .default(
                   simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemDetailDefault,
+                ),
+              parts: zod
+                .array(
+                  zod.object({
+                    name: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemNameMax,
+                      ),
+                    status: zod.enum(["passed", "failed", "skipped"]),
+                    detail: zod
+                      .string()
+                      .default(
+                        simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault,
+                      ),
+                  }),
+                )
+                .default(
+                  simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsDefault,
                 ),
             }),
           )

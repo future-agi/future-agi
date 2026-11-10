@@ -129191,6 +129191,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           default: "",
         },
+        parts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixVerdictTierPart",
+          },
+          default: [],
+        },
       },
     },
     AgentPromptOptimiserTrialEvalScore: {
@@ -130868,6 +130875,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Count",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    AgentFixVerdictTierPart: {
+      required: ["name", "status"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["passed", "failed", "skipped"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          default: "",
         },
       },
     },

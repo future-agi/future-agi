@@ -102,6 +102,11 @@ export const isTraced = (options) =>
 export const UNTRACED_NOTE =
   "This agent is not traced, so a fix cannot see the models it calls or what they cost. The model lock and the cost limit will read as not verified.";
 
+// Shown when the platform could not read the run's traces: the launch is refused
+// until it can, so the form does not call the agent untraced.
+export const tracesUnreadable = (options) =>
+  options.blocked?.code === "fix_traces_unreadable";
+
 export const NO_MODELS_NOTE =
   "This agent's traces name no model, so the model lock will read as not verified. Its cost is still checked.";
 
@@ -120,7 +125,7 @@ export function launchError({
   surfaces,
   limits,
   models = [],
-  needsModels = false,
+  seenModels = [],
   costLimit = "",
 }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
@@ -134,7 +139,14 @@ export function launchError({
     return "A case can't be both fixed and protected.";
   }
   if (!surfaces.length) return "Pick at least one part it may change.";
-  if (needsModels && !models.length) return "Allow at least one model.";
+  if (seenModels.length && !models.length) return "Allow at least one model.";
+  // The platform compares models without their provider, as the engine's lock does.
+  const keyOf = (name) => name.toLowerCase().split("/").pop();
+  const kept = new Set(models.map(keyOf));
+  const leftOut = seenModels.filter((name) => !kept.has(keyOf(name)));
+  if (leftOut.length) {
+    return `Allow every model this run called: ${leftOut.join(", ")}.`;
+  }
   if (Number.isNaN(costLimitOf(costLimit))) {
     return "The cost limit must be a number of dollars above 0.";
   }

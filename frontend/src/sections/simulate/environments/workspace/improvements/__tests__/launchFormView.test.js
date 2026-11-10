@@ -12,6 +12,7 @@ import {
   costLimitOf,
   isTraced,
   seesModels,
+  tracesUnreadable,
   marginSteps,
 } from "../launchFormView";
 
@@ -166,10 +167,15 @@ describe("launch checks", () => {
       "A case can't be both fixed and protected.",
     ],
     [{ ...ok, surfaces: [] }, "Pick at least one part it may change."],
-    [{ ...ok, needsModels: true, models: ["m1"] }, null],
-    [{ ...ok, needsModels: true, models: [] }, "Allow at least one model."],
+    [{ ...ok, seenModels: ["m1"], models: ["m1"] }, null],
+    [{ ...ok, seenModels: ["m1"], models: [] }, "Allow at least one model."],
+    [
+      { ...ok, seenModels: ["m1", "vertex_ai/m2"], models: ["m1"] },
+      "Allow every model this run called: vertex_ai/m2.",
+    ],
+    [{ ...ok, seenModels: ["m1", "vertex_ai/m2"], models: ["m1", "M2"] }, null],
     // A fix that sees no model needs none allowed.
-    [{ ...ok, needsModels: false, models: [] }, null],
+    [{ ...ok, seenModels: [], models: [] }, null],
     [{ ...ok, costLimit: "0.05" }, null],
     [
       { ...ok, costLimit: "0" },
@@ -195,6 +201,16 @@ describe("constraints", () => {
   it("offers the margins with the default among them", () => {
     expect(marginSteps(25)).toEqual([10, 25, 50, 100]);
     expect(marginSteps(40)).toEqual([10, 25, 40, 50, 100]);
+  });
+
+  it("tells an unreadable run's traces from an untraced agent", () => {
+    expect(
+      tracesUnreadable({ blocked: { code: "fix_traces_unreadable" } }),
+    ).toBe(true);
+    expect(tracesUnreadable({ blocked: { code: "fix_run_active" } })).toBe(
+      false,
+    );
+    expect(tracesUnreadable({ blocked: null })).toBe(false);
   });
 
   it("calls an agent traced when its spans named a model or measured its cost", () => {

@@ -200,6 +200,15 @@ class CheckRunStatus(BaseModel):
     parallelism: int | None = None
 
 
+class VerdictTierPart(BaseModel):
+    """One check of a tier that holds several, with its own status."""
+
+    name: str
+    # passed | failed | skipped
+    status: str
+    detail: str = ""
+
+
 class VerdictTier(BaseModel):
     """One check of the verdict, in the order the engine runs them."""
 
@@ -207,6 +216,9 @@ class VerdictTier(BaseModel):
     # passed | failed | pending | skipped
     status: str
     detail: str = ""
+    # The checks inside the tier: the ceilings tier holds reply latency and agent cost,
+    # so one measured and one not show apart.
+    parts: list[VerdictTierPart] = Field(default_factory=list)
 
 
 class CandidateVerdict(BaseModel):

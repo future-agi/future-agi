@@ -146,6 +146,42 @@ describe("FixVerdict", () => {
     expect(screen.getAllByText("not verified")).toHaveLength(1);
   });
 
+  it("shows each ceiling's own status in the decision drawer", () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.verdict.tiers = [
+      ...winner.verdict.tiers.filter((t) => t.name !== "ceilings"),
+      {
+        name: "ceilings",
+        status: "skipped",
+        detail: "reply latency within; agent cost not verified",
+        parts: [
+          {
+            name: "reply latency",
+            status: "passed",
+            detail: "median 1.1 s, baseline 1 s: within",
+          },
+          {
+            name: "agent cost",
+            status: "skipped",
+            detail: "the agent's model calls are not traced",
+          },
+        ],
+      },
+    ];
+    renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
+
+    const latency = screen.getByText("reply latency").parentElement;
+    const cost = screen.getByText("agent cost").parentElement;
+    expect(within(latency).queryByText("not verified")).toBeNull();
+    expect(
+      within(latency).getByText("median 1.1 s, baseline 1 s: within"),
+    ).toBeInTheDocument();
+    expect(within(cost).getByText("not verified")).toBeInTheDocument();
+    // The tier and its unmeasured cost; the measured latency reads verified.
+    expect(screen.getAllByText("not verified")).toHaveLength(2);
+  });
+
   it("renders a verdict without tiers, here and in the decision drawer", () => {
     const fix = fixOf("fix-ready-archive");
     fix.candidates.forEach((c) => delete c.verdict.tiers);

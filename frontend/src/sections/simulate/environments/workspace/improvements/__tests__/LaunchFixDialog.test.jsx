@@ -443,7 +443,11 @@ describe("LaunchFixDialog", () => {
     ).toEqual(["gpt-5-mini", "vertex_ai/gemini-3.8-flash"]);
     expect(screen.queryByText(/This agent is not traced/)).toBeNull();
 
-    await user.click(models.getAllByTestId("CancelIcon")[0]);
+    await user.type(
+      screen.getByLabelText("Add an allowed model"),
+      "openai/gpt-5{Enter}",
+    );
+    expect(models.getAllByTestId("CancelIcon")).toHaveLength(3);
     await pickOption(user, "Reply time margin", "Up to 10% slower than now");
     await pickOption(user, "Agent's cost margin", "Up to 50% more than now");
     await user.type(
@@ -459,7 +463,12 @@ describe("LaunchFixDialog", () => {
       body.reply_latency_margin_pct,
       body.cost_margin_pct,
       body.cost_limit_usd,
-    ]).toEqual([["vertex_ai/gemini-3.8-flash"], 10, 50, 0.02]);
+    ]).toEqual([
+      ["gpt-5-mini", "vertex_ai/gemini-3.8-flash", "openai/gpt-5"],
+      10,
+      50,
+      0.02,
+    ]);
   });
 
   it("disables Start when a traced agent may call no model, or the cost limit is not a price", async () => {
@@ -482,6 +491,15 @@ describe("LaunchFixDialog", () => {
       screen.getByLabelText("Add an allowed model"),
       "gpt-5{Enter}",
     );
+    // Every model the run called stays allowed, with or without its provider.
+    expect(start).toBeDisabled();
+    expect(
+      screen.getByText("Allow every model this run called: gpt-5-mini."),
+    ).toBeInTheDocument();
+    await user.type(
+      screen.getByLabelText("Add an allowed model"),
+      "openai/gpt-5-mini{Enter}",
+    );
     expect(start).toBeEnabled();
     await user.type(
       screen.getByLabelText("Agent's cost limit per conversation"),
@@ -491,5 +509,25 @@ describe("LaunchFixDialog", () => {
     expect(
       screen.getByText("The cost limit must be a number of dollars above 0."),
     ).toBeInTheDocument();
+  });
+
+  it("says when the run's traces could not be read, and keeps Start off", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.blocked = {
+      code: "fix_traces_unreadable",
+      message: "could not read this run's traces; try again",
+    };
+    pinOptions(options);
+    renderDialog();
+
+    const start = await screen.findByRole("button", {
+      name: "Start improvement",
+    });
+    expect(start).toBeDisabled();
+    // The Models row and the footer say it; the form never calls the agent untraced.
+    expect(
+      screen.getAllByText("could not read this run's traces; try again"),
+    ).toHaveLength(2);
+    expect(screen.queryByText(/This agent is not traced/)).toBeNull();
   });
 });

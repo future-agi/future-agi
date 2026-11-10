@@ -2389,7 +2389,7 @@ class TestMeasuredConversations:
                     "content": "Book a visit",
                     "start_time_ms": 1200,
                 },
-                # The agent's first message after a turn may be a tool call.
+                # A tool call before the answer is time the user still waits.
                 {
                     "speaker_role": "tool_calls",
                     "content": "find_slot",
@@ -2421,8 +2421,8 @@ class TestMeasuredConversations:
 
         [record] = check_run_status(run).records
 
-        # Replies of 1850, 2200 and 900 ms.
-        assert record.reply_latency_ms == 1850
+        # Replies of 2200 (the text after the tool call, not the call), 2200 and 900 ms.
+        assert record.reply_latency_ms == 2200
 
     def test_a_voice_call_s_reply_latency_is_its_agent_s_average(self, source_run):
         run, [call] = _finished_trials(source_run)
@@ -2481,6 +2481,18 @@ class TestLaunchConstraints:
             defaults = launch_options(source_run).defaults
 
         assert (defaults.allowed_models, defaults.agent_cost_metered) == ([], True)
+
+    def test_a_form_whose_run_s_traces_cannot_be_read_says_so_instead_of_untraced(
+        self, source_run
+    ):
+        with patch(TRACED, side_effect=CHError("down")):
+            options = launch_options(source_run)
+
+        assert (options.blocked.code, options.blocked.message) == (
+            "fix_traces_unreadable",
+            "could not read this run's traces; try again",
+        )
+        assert options.defaults.allowed_models == []
 
     def test_a_launch_whose_traces_cannot_be_read_is_refused_to_be_tried_again(
         self, source_run, user
@@ -2566,6 +2578,40 @@ class TestLaunchConstraints:
             request.cost_margin_pct,
             request.cost_limit_usd,
         ) == (["m1", "m2"], 10, 50, 0.02)
+
+    def test_a_traced_agent_s_fix_that_leaves_out_a_model_its_run_called_is_refused(
+        self, source_run, user
+    ):
+        usage = self._source_usage(
+            source_run,
+            [CallUsage(models=["m1", "vertex_ai/m2"], llm_spans=2, cost_usd=0.01)],
+        )
+
+        def launch(allowed):
+            return launch_fix_run(
+                source_run,
+                target_scenario_keys=[KEYS[0]],
+                surfaces=[Surface.PROMPT],
+                locked_paths=[],
+                budget_usd=5.0,
+                max_minutes=30,
+                user=user,
+                allowed_models=allowed,
+            )
+
+        with patch(TRACED, _usage(usage)):
+            with pytest.raises(HostedHarnessError) as refused:
+                launch(["m1"])
+            assert not AgentFixRun.no_workspace_objects.exists()
+            # A provider prefix does not count, as in the engine's lock.
+            fix_run = launch(["m1", "M2"])
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_models_exclude_source",
+            400,
+        )
+        assert refused.value.message.endswith(": vertex_ai/m2")
+        assert FixRequest.model_validate(fix_run.request).allowed_models == ["m1", "M2"]
 
     def test_a_traced_agent_s_fix_with_no_model_allowed_is_refused(
         self, source_run, user

@@ -436,6 +436,16 @@ class TestEngineCalls:
         tiers = [
             {"name": "static", "status": "passed", "detail": "1 file changed"},
             {"name": "target", "status": "failed", "detail": "0 of 1 passed"},
+            # A tier that holds several checks keeps each one's own status.
+            {
+                "name": "ceilings",
+                "status": "skipped",
+                "detail": "latency within; cost not verified",
+                "parts": [
+                    {"name": "reply latency", "status": "passed", "detail": "within"},
+                    {"name": "agent cost", "status": "skipped", "detail": "untraced"},
+                ],
+            },
         ]
 
         response = _engine(
@@ -483,7 +493,9 @@ class TestEngineCalls:
             0,
         )
         assert read["diagnosis"] == {"causes": ["It never refunds before closing"]}
-        assert read["candidates"][0]["verdict"]["tiers"] == tiers
+        assert read["candidates"][0]["verdict"]["tiers"] == [
+            {"parts": [], **tier} for tier in tiers
+        ]
 
     def test_a_check_run_past_the_organizations_limit_is_refused_with_its_reason(
         self, api_client, source_run, temporal

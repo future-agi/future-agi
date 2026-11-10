@@ -136057,6 +136057,35 @@
             },
             "x-nullable": true
         },
+        "AgentFixVerdictTierPart": {
+            "required": [
+                "name",
+                "status"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "passed",
+                        "failed",
+                        "skipped"
+                    ]
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "default": ""
+                }
+            }
+        },
         "AgentFixVerdictTier": {
             "required": [
                 "name",
@@ -136083,6 +136112,13 @@
                     "title": "Detail",
                     "type": "string",
                     "default": ""
+                },
+                "parts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixVerdictTierPart"
+                    },
+                    "default": []
                 }
             }
         },

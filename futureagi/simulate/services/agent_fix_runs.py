@@ -33,6 +33,7 @@ from simulate.selectors.agent_fix import (
     fewest_failing_cases,
     is_retryable,
     launch_blocker,
+    model_key,
     models_called,
     overridable_regressions,
     recent_lost_models,
@@ -189,12 +190,21 @@ def launch_fix_run(
     usage = source_run_usage(source_run)
     seen = models_called(usage)
     allowed = list(dict.fromkeys(seen if allowed_models is None else allowed_models))
-    # A fix that sees the agent's models with none allowed would refuse every candidate.
+    # A fix that sees the agent's models with none allowed, or without one the run
+    # called, would refuse every candidate once the base version's run showed it.
     if seen and not allowed:
         raise HostedHarnessError(
             "fix_models_empty",
             "allow at least one model: this agent's model calls are traced, and each"
             " must name an allowed model",
+            status_code=400,
+        )
+    kept = {model_key(model) for model in allowed}
+    if left_out := [model for model in seen if model_key(model) not in kept]:
+        raise HostedHarnessError(
+            "fix_models_exclude_source",
+            "allow every model this run's agent called, or the fix would refuse every"
+            f" candidate: {', '.join(left_out)}",
             status_code=400,
         )
     request = FixRequest(
