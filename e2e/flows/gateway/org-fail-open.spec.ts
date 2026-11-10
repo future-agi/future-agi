@@ -40,6 +40,13 @@ test('GW-E2E-004: an organization explicitly opts into continuing after a guardr
 }, async ({ page, actor, probe }, testInfo) => {
   // Seven UI waits, three pushes, three HTTP requests and seeding headroom.
   test.setTimeout(720_000);
+  const blockedURLs: string[] = [];
+  await page.context().route('**/*', route => {
+    const host = new URL(route.request().url()).hostname;
+    if (['localhost', '127.0.0.1', 'backend', 'frontend', 'mock-llm', 'agentcc-gateway'].includes(host)) return route.continue();
+    blockedURLs.push(route.request().url());
+    return route.abort();
+  });
   const name = `e2e-optin-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const provider = `${name}-provider`;
   const check = `${name}-check`;
@@ -96,7 +103,9 @@ test('GW-E2E-004: an organization explicitly opts into continuing after a guardr
     await expect(toggle).not.toBeChecked({ timeout: UI_READY });
     await assertPolicy(false);
     const closed = await send();
-    expect(closed.status(), await closed.text()).toBe(403);
+    expect(closed.status(), await closed.text()).toBe(503);
+    expect(await closed.json()).toMatchObject({ error: { type: 'guardrail', code: 'guardrail_unavailable' } });
+    expect(await closed.json()).not.toHaveProperty('choices');
 
     await toggle.check();
     await save();
@@ -111,7 +120,9 @@ test('GW-E2E-004: an organization explicitly opts into continuing after a guardr
     await expect(toggle).not.toBeChecked({ timeout: UI_READY });
     await assertPolicy(false);
     const revoked = await send();
-    expect(revoked.status(), await revoked.text()).toBe(403);
+    expect(revoked.status(), await revoked.text()).toBe(503);
+    expect(await revoked.json()).toMatchObject({ error: { type: 'guardrail', code: 'guardrail_unavailable' } });
+    expect(await revoked.json()).not.toHaveProperty('choices');
 
     // Pin the immutable version table from AgentccOrgConfig.Meta.db_table.
     const versions = async () => (await probe.pg<{ n: string }>(
@@ -122,6 +133,7 @@ test('GW-E2E-004: an organization explicitly opts into continuing after a guardr
     await expect(actor.api.post(CONFIGS, { guardrails: { fail_open: 'not-a-boolean' } })).rejects.toMatchObject({ status: 400 });
     expect(await versions()).toBe(before);
   } finally {
+    await testInfo.attach('blocked-external-urls', { body: JSON.stringify(blockedURLs), contentType: 'application/json' });
     await gateway.dispose();
   }
 });

@@ -73,9 +73,11 @@ type TriggeredGuardrail struct {
 
 // PipelineResult is the aggregate result of running all guardrails in a stage.
 type PipelineResult struct {
-	Blocked   bool
-	Warnings  []string
-	Triggered []TriggeredGuardrail
+	// Unavailable marks a blocking execution failure, never a content verdict.
+	Unavailable bool
+	Blocked     bool
+	Warnings    []string
+	Triggered   []TriggeredGuardrail
 }
 
 // shouldTrigger applies the configured threshold to score-based guardrails.

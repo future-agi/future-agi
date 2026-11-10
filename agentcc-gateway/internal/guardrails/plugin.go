@@ -102,6 +102,9 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 				rc.Metadata["guardrail_action"] = "blocked"
 			}
 			storeGuardrailResults(rc, result)
+			if result.Unavailable {
+				return pipeline.ResultError(models.ErrGuardrailUnavailable(p.buildBlockMessage(result)))
+			}
 			return pipeline.ResultError(models.ErrGuardrailBlocked(
 				"content_blocked",
 				p.buildBlockMessage(result),
@@ -193,6 +196,12 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 		rc.Flags.GuardrailTriggered = true
 		rc.Metadata["guardrail_name"] = blocker
 		rc.Metadata["guardrail_action"] = "blocked"
+		if stage == StagePost && rc.Response != nil {
+			rc.Response = &models.ChatCompletionResponse{Model: rc.Response.Model, Usage: rc.Response.Usage}
+		}
+		if outcomes[blockIdx].Err != nil {
+			return pipeline.ResultError(models.ErrGuardrailUnavailable(p.buildBlockMessage(result)))
+		}
 		return pipeline.ResultError(models.ErrGuardrailBlocked(
 			"content_blocked",
 			p.buildBlockMessage(result),
@@ -605,6 +614,9 @@ func (p *GuardrailPlugin) processResult(rc *models.RequestContext, result *Pipel
 		}
 		// Store structured results even for blocks, so logs capture which guardrails fired.
 		storeGuardrailResults(rc, result)
+		if result.Unavailable {
+			return pipeline.ResultError(models.ErrGuardrailUnavailable(p.buildBlockMessage(result)))
+		}
 		return pipeline.ResultError(models.ErrGuardrailBlocked(
 			"content_blocked",
 			p.buildBlockMessage(result),

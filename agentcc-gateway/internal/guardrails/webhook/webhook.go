@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"math"
 	"net/http"
 	"time"
 
@@ -35,6 +35,33 @@ type webhookResponse struct {
 	Score   float64                `json:"score"`
 	Message string                 `json:"message"`
 	Details map[string]interface{} `json:"details,omitempty"`
+}
+
+// UnmarshalJSON requires a real verdict while retaining the optional legacy score.
+func (wr *webhookResponse) UnmarshalJSON(data []byte) error {
+	type fields webhookResponse
+	var value fields
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	var verdict struct {
+		Pass  *bool           `json:"pass"`
+		Score json.RawMessage `json:"score"`
+	}
+	if err := json.Unmarshal(data, &verdict); err != nil {
+		return err
+	}
+	if verdict.Pass == nil {
+		return fmt.Errorf("webhook requires a boolean pass")
+	}
+	if len(verdict.Score) > 0 && string(verdict.Score) == "null" {
+		return fmt.Errorf("webhook score must be numeric")
+	}
+	if math.IsNaN(value.Score) || math.IsInf(value.Score, 0) || value.Score < 0 || value.Score > 1 {
+		return fmt.Errorf("webhook score must be finite and in [0,1]")
+	}
+	*wr = webhookResponse(value)
+	return nil
 }
 
 // New creates a WebhookGuardrail from rule config.
@@ -81,8 +108,8 @@ func (g *WebhookGuardrail) Stage() guardrails.Stage { return guardrails.StagePre
 
 // Check calls the webhook endpoint.
 func (g *WebhookGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
-	if g.url == "" {
-		return &guardrails.CheckResult{Pass: true}
+	if input == nil || g.url == "" {
+		return errorResult("webhook requires input and URL")
 	}
 
 	payload := webhookRequest{
@@ -141,7 +168,7 @@ func (g *WebhookGuardrail) doRequest(ctx context.Context, body []byte) (*guardra
 		return nil, fmt.Errorf("webhook returned status %d", resp.StatusCode)
 	}
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
+	respBody, err := guardrails.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read webhook response: %v", err)
 	}

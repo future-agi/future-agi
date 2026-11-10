@@ -294,8 +294,8 @@ func TestFutureAGI_EmptyEvaluations(t *testing.T) {
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
-	if !result.Pass {
-		t.Fatal("expected pass for empty evaluations (fail-open)")
+	if result.Pass || result.Err == nil {
+		t.Fatal("expected typed execution failure: expected pass for empty evaluations")
 	}
 }
 
@@ -311,8 +311,8 @@ func TestFutureAGI_EmptyResult(t *testing.T) {
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
-	if !result.Pass {
-		t.Fatal("expected pass for empty result (fail-open)")
+	if result.Pass || result.Err == nil {
+		t.Fatal("expected typed execution failure: expected pass for empty result")
 	}
 }
 
@@ -417,8 +417,8 @@ func TestFutureAGI_MissingAPIKey(t *testing.T) {
 		"api_key": "", "secret_key": "s",
 	})
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
-	if !result.Pass {
-		t.Fatal("missing api_key should pass (skip)")
+	if result.Pass || result.Err == nil {
+		t.Fatal("expected typed execution failure: missing api_key")
 	}
 }
 
@@ -429,8 +429,8 @@ func TestFutureAGI_MissingEvalID(t *testing.T) {
 		"secret_key": "s",
 	})
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
-	if !result.Pass {
-		t.Fatal("missing eval_id should pass (skip)")
+	if result.Pass || result.Err == nil {
+		t.Fatal("expected typed execution failure: missing eval_id")
 	}
 }
 

@@ -53,7 +53,7 @@ func acceptanceRC() *models.RequestContext {
 	rc.Request = &models.ChatCompletionRequest{Model: "synthetic-model", Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"synthetic text"`)}}}
 	return rc
 }
-func assertDecision(t *testing.T, p *g.GuardrailPlugin, wantBlock bool) {
+func assertDecision(t *testing.T, p *g.GuardrailPlugin, wantBlock bool, status int) {
 	t.Helper()
 	rc := acceptanceRC()
 	defer rc.Release()
@@ -62,8 +62,8 @@ func assertDecision(t *testing.T, p *g.GuardrailPlugin, wantBlock bool) {
 	if blocked != wantBlock {
 		t.Fatalf("blocked=%v want=%v result=%+v", blocked, wantBlock, res)
 	}
-	if wantBlock && (res.Error == nil || res.Error.Status != 403) {
-		t.Fatalf("expected 403 guardrail refusal, got %+v", res.Error)
+	if wantBlock && (res.Error == nil || res.Error.Status != status) {
+		t.Fatalf("expected %d guardrail refusal, got %+v", status, res.Error)
 	}
 }
 
@@ -87,7 +87,7 @@ func TestWQ2FailurePolicy(t *testing.T) {
 							}
 						}}
 						raw := fmt.Sprintf(`{"fail_open":%v,"timeout_ms":30,"checks":{"check":{"enabled":true,"action":"block","confidence_threshold":%g}}}`, org, threshold)
-						assertDecision(t, acceptancePlugin(t, global, raw, map[string]g.Guardrail{"check": check}), !org)
+						assertDecision(t, acceptancePlugin(t, global, raw, map[string]g.Guardrail{"check": check}), !org, 503)
 					})
 				}
 			}
@@ -98,7 +98,7 @@ func TestWQ2FailurePolicy(t *testing.T) {
 func TestWQ2OmittedPolicyStaysClosed(t *testing.T) {
 	check := acceptanceCheck{name: "check", fn: func(ctx context.Context, in *g.CheckInput) *g.CheckResult { panic("synthetic failure") }}
 	p := acceptancePlugin(t, true, `{"checks":{"check":{"enabled":true,"action":"block","confidence_threshold":0.5}}}`, map[string]g.Guardrail{"check": check})
-	assertDecision(t, p, true)
+	assertDecision(t, p, true, 503)
 }
 
 func TestWQ2WebhookPolicy(t *testing.T) {
@@ -127,7 +127,11 @@ func TestWQ2WebhookPolicy(t *testing.T) {
 					raw := fmt.Sprintf(`{"fail_open":%v,"checks":{"hook":{"enabled":true,"action":"block","confidence_threshold":%g}}}`, org, threshold)
 					p := acceptancePlugin(t, !org, raw, map[string]g.Guardrail{"hook": webhook.New("hook", map[string]interface{}{"url": srv.URL})})
 					want := kind == "operational" && !org || kind == "reject" && threshold < 1
-					assertDecision(t, p, want)
+					status := 403
+					if kind == "operational" {
+						status = 503
+					}
+					assertDecision(t, p, want, status)
 					if n := requests.Load(); n != 1 {
 						t.Fatalf("local webhook requests=%d want=1", n)
 					}
@@ -160,7 +164,7 @@ func TestWQ2Mode(t *testing.T) {
 			}
 			raw := fmt.Sprintf(`{"pipeline_mode":%q,"fail_open":false,"checks":{"a":{"enabled":true,"action":"block"},"b":{"enabled":true,"action":"block"}}}`, mode)
 			p := acceptancePlugin(t, false, raw, map[string]g.Guardrail{"a": check("a"), "b": check("b")})
-			assertDecision(t, p, false)
+			assertDecision(t, p, false, 403)
 			want := int32(2)
 			if mode == "sequential" {
 				want = 1

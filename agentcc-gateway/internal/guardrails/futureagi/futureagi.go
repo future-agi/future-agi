@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -148,7 +147,7 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	return g
 }
 
-func (g *FutureAGIGuardrail) Name() string           { return g.name }
+func (g *FutureAGIGuardrail) Name() string            { return g.name }
 func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check evaluates text against the Future AGI evaluation API.
@@ -157,16 +156,10 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 		return &guardrails.CheckResult{Pass: true}
 	}
 	if g.apiKey == "" || g.secretKey == "" {
-		return &guardrails.CheckResult{
-			Pass:    true,
-			Message: "futureagi guardrail: missing api_key or secret_key, skipping",
-		}
+		return guardrails.ExecutionFailure("futureagi guardrail: missing api_key or secret_key")
 	}
 	if len(g.evalIDs) == 0 {
-		return &guardrails.CheckResult{
-			Pass:    true,
-			Message: "futureagi guardrail: missing eval_id, skipping",
-		}
+		return guardrails.ExecutionFailure("futureagi guardrail: missing eval_id")
 	}
 
 	// Determine text to evaluate.
@@ -182,13 +175,12 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 
 	resp, err := g.callAPI(ctx, text)
 	if err != nil {
-		return &guardrails.CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Message: fmt.Sprintf("futureagi evaluation failed: %v", err),
-		}
+		return guardrails.ExecutionFailure(fmt.Sprintf("futureagi evaluation failed: %v", err))
 	}
 
+	if err := validateEvaluations(resp, g.evalIDs); err != nil {
+		return guardrails.ExecutionFailure(err.Error())
+	}
 	return parseResult(resp)
 }
 
@@ -316,7 +308,7 @@ func (g *FutureAGIGuardrail) doRequest(ctx context.Context, url string, body []b
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
+	respBody, err := guardrails.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -334,7 +326,7 @@ func (g *FutureAGIGuardrail) doRequest(ctx context.Context, url string, body []b
 // the failing eval's reason and details are surfaced.
 func parseResult(resp *evalResponse) *guardrails.CheckResult {
 	if resp == nil || len(resp.Result) == 0 {
-		return &guardrails.CheckResult{Pass: true, Message: "no evaluation results"}
+		return guardrails.ExecutionFailure("no evaluation results")
 	}
 
 	var firstEval *evaluation
@@ -358,7 +350,7 @@ func parseResult(resp *evalResponse) *guardrails.CheckResult {
 	if firstEval != nil {
 		return buildResult(firstEval, true, 0.0)
 	}
-	return &guardrails.CheckResult{Pass: true, Message: "no evaluation results"}
+	return guardrails.ExecutionFailure("no evaluation results")
 }
 
 func isFailedOutput(output interface{}) bool {

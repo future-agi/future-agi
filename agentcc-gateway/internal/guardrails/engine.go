@@ -176,6 +176,7 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 		switch effectiveAction {
 		case ActionBlock:
 			result.Blocked = true
+			result.Unavailable = checkResult.Err != nil
 			return result // Short-circuit on block.
 		case ActionWarn:
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", rule.guardrail.Name(), checkResult.Message))
