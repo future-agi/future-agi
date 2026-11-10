@@ -13,7 +13,23 @@ services:
       SQL_MAX_IDLE_CONNS: "2"
       SQL_VIS_MAX_CONNS: "2"
       SQL_VIS_MAX_IDLE_CONNS: "1"
+  # A live process is not namespace readiness; the one-shot must not race it.
+  peerdb-temporal:
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "temporal",
+          "operator",
+          "namespace",
+          "describe",
+          "--namespace",
+          "default",
+          "--address",
+          "peerdb-temporal:7233",
+        ]
   backend:
+    networks: [default, link-public]
     restart: "no"
     # Replace the production outbox: the ONLY application mount permitted by
     # managed-mock is this public, read-only status directory (never the worker).
@@ -81,3 +97,41 @@ services:
     ports:
       - "127.0.0.1:28081:8080"
     restart: "no"
+
+  # Dedicated executor selection/fallback policy reuses the executor harness.
+  # Its only networks are internal: no default route to real destinations.
+  code-executor:
+    networks: [link-public, link-private]
+    extra_hosts:
+      - "allowed.example:11.23.0.10"
+      - "denied.example:11.23.0.10"
+      - "private.example:172.30.91.10"
+    restart: "no"
+  link-canary:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/link-canary/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28082:80"
+    networks:
+      # Host-only readout port needs a non-internal bridge. This listener never
+      # makes outbound requests; the executor stays on internal networks only.
+      default: {}
+      link-public:
+        ipv4_address: 11.23.0.10
+      link-private:
+        ipv4_address: 172.30.91.10
+    restart: "no"
+
+networks:
+  link-public:
+    internal: true
+    ipam:
+      config:
+        - subnet: 11.23.0.0/24
+  link-private:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.91.0/24

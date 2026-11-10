@@ -16,11 +16,10 @@ ENV_FILE="$ROOT/e2e/stack/e2e.env"
 COMPOSE=(docker compose --env-file "$ENV_FILE"
   -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
   -p "${E2E_COMPOSE_PROJECT:-futureagi-e2e}")
-# Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus a
-# dedicated exact-aggregation worker. PeerDB is included through the same
-# bootstrap graph as OSS. Completed one-shot dependencies gate the application;
-# the harness never recreates failed jobs.
-SERVICES=(frontend backend worker worker-exact-aggregation
+# Dedicated-executor service selection reused from the existing executor harness.
+# No serving; keep the general and exact-aggregation workers and real sandbox.
+# Completed one-shot dependencies gate the app; failed jobs are never retried.
+SERVICES=(frontend backend worker worker-exact-aggregation code-executor link-canary
   postgres clickhouse redis minio
   temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
@@ -35,7 +34,7 @@ if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   SERVICES=(app postgres clickhouse mock-llm)
 fi
 
-BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app"
+BUILD_TARGETS="backend|frontend|collector|executor|all|standalone|standalone-app"
 
 backend_port() { grep '^BACKEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
 ch_port() { grep '^CH_HTTP_PORT=' "$ENV_FILE" | cut -d= -f2; }
@@ -81,8 +80,10 @@ build_target() {
                echo "built. run with: FRONTEND_VERSION=e2e-local bin/e2e up" ;;
     collector) docker build -t futureagi/fi-collector:e2e-local "$ROOT/fi-collector"
                echo "built. run with: E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
-    all)       build_target backend; build_target frontend; build_target collector
-               echo "run with: FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
+    executor)  docker build -t futureagi/code-executor:e2e-local "$ROOT/futureagi/code-executor"
+               echo "built. run with: CODE_EXECUTOR_VERSION=e2e-local bin/e2e up" ;;
+    all)       build_target backend; build_target frontend; build_target collector; build_target executor
+               echo "run with: FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local CODE_EXECUTOR_VERSION=e2e-local bin/e2e up" ;;
     # The images e2e/stack/standalone-e2e.env runs, tagged with its
     # FUTURE_AGI_VERSION: bin/lib/build-local.sh, the recipe of ./bin/install
     # --from-source (the slim backend, frontend, fi-collector and

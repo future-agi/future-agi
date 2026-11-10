@@ -2,9 +2,9 @@
 
 import importlib.util
 import os
-from pathlib import Path
 import sys
 import types
+from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]

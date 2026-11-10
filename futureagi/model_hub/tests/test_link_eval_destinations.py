@@ -6,10 +6,10 @@ The YAML code executes directly, without a Django/LLM test double.
 
 import http.server
 import os
-from pathlib import Path
 import socket
 import threading
 import unittest
+from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -36,7 +36,7 @@ class LinkAcceptance(unittest.TestCase):
             "Contact help@my-domain.example",
             "Contact first.last+tag@sub.acme.io",
         ):
-            for name, score in zip(NAMES, (0.0, 1.0)):
+            for name, score in zip(NAMES, (0.0, 1.0), strict=True):
                 with (
                     self.subTest(text=text, name=name),
                     mock.patch("urllib.request.urlopen") as opened,
@@ -55,7 +55,7 @@ class LinkAcceptance(unittest.TestCase):
             "Version 1.2.3",
             "Read report.pdf and notes.txt",
         ):
-            for name, score in zip(NAMES, (0.0, 1.0)):
+            for name, score in zip(NAMES, (0.0, 1.0), strict=True):
                 with (
                     self.subTest(text=text, name=name),
                     mock.patch("urllib.request.urlopen") as opened,
@@ -273,7 +273,7 @@ class LinkAcceptance(unittest.TestCase):
                         status
                     )
                     connection.request.side_effect = (
-                        lambda *a, **k: connection._create_connection()
+                        lambda *a, connection=connection, **k: connection._create_connection()
                     )
                     result = load(name)(
                         None,
