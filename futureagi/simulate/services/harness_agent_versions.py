@@ -1015,6 +1015,10 @@ def create_agent_version(
             # draft.
             if activate:
                 transaction.on_commit(lambda: _schedule_preflight(version.id))
+            if source_kind == HarnessAgentVersionRuntime.SourceKind.ARCHIVE:
+                from simulate.services.skills import scan_after_commit
+
+                scan_after_commit(version.id)
     if reused is not None:
         logger.info(
             "harness_agent_version_reused version=%s definition=%s trigger=%s",

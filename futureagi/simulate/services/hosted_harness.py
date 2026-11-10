@@ -292,6 +292,8 @@ def create_selected_harness_run(
     parallelism: int | None = None,
     verify: bool = False,
     coding_agent_key_id: str | None = None,
+    skill_test: Any = None,
+    skill_overrides: dict[str, Any] | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Freeze and preallocate one selected-scenario Run for an authored environment.
 
@@ -628,6 +630,7 @@ def create_selected_harness_run(
         child.stage_outputs = list(environment.stage_outputs or [])
         child.bundle_digest = environment.bundle_digest
         child.test_execution = test_execution
+        child.skill_test = skill_test
         pin_fields: list[str] = []
         if pins is not None:
             child.stage_outputs = pins.stage_outputs(child.stage_outputs)
@@ -641,6 +644,13 @@ def create_selected_harness_run(
                 "suite_version",
                 "assembled_bundle",
             ]
+        from simulate.services.skills import skill_snapshot
+
+        child.skill_snapshot = skill_snapshot(
+            test_execution.agent_definition,
+            agent_version_id=child.agent_version_id or test_execution.agent_version_id,
+            overrides=skill_overrides,
+        )
         child.save(
             update_fields=[
                 "payload",
@@ -652,6 +662,8 @@ def create_selected_harness_run(
                 "updated_at",
                 "stage_outputs",
                 "bundle_digest",
+                "skill_snapshot",
+                "skill_test",
                 *pin_fields,
             ]
         )

@@ -905,6 +905,9 @@ def _apply_receipt_to_call(
     metadata["hosted_harness_receipt"] = _json_ready(body)
     metadata["harness_evaluations"] = _receipt_evaluations(body)
     metadata["harness_outcome_status"] = body["status"]
+    metadata["skill_loads"] = _json_ready(
+        list((call_data or {}).get("skill_loads") or [])
+    )
     coverage = _receipt_evaluation_coverage(body)
     metadata["harness_eval_coverage"] = coverage
     if coverage["complete"]:

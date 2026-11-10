@@ -63,6 +63,7 @@ from simulate.services.scoring_status import (
     SCORING_STATUSES,
     scoring_counts,
 )
+from simulate.services.skills import run_skill_summary
 from simulate.services.test_executor import build_eval_configs_map
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
@@ -256,6 +257,17 @@ class RunResumeSerializer(serializers.Serializer):
     history = RunResumeEntrySerializer(many=True)
 
 
+class RunSkillLoadSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    kind = serializers.CharField()
+    origin = serializers.ChoiceField(choices=("library", "repo"))
+    version_number = serializers.IntegerField(allow_null=True)
+    from_tag = serializers.CharField(allow_null=True)
+    observed = serializers.BooleanField(allow_null=True)
+    loaded_in = serializers.IntegerField()
+    total = serializers.IntegerField()
+
+
 class RunExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     run_test_id = serializers.UUIDField()
@@ -279,6 +291,7 @@ class RunExecutionSerializer(serializers.Serializer):
     summary = RunSummarySerializer()
     # Set on a fix's check run, which is not one of the user's runs; null otherwise.
     fix_run = RunFixRunSerializer(allow_null=True, required=False)
+    skills = RunSkillLoadSerializer(many=True, required=False, default=list)
 
 
 class PersonaDetailsSerializer(serializers.Serializer):
@@ -676,6 +689,7 @@ def _execution_payload(
         "resume": asdict(resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,
+        "skills": run_skill_summary(job),
     }
 
 

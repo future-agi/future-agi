@@ -129,6 +129,19 @@ class HarnessTargetMetricsSerializer(serializers.Serializer):
     )
 
 
+class HarnessSkillLoadSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=64)
+    origin = serializers.ChoiceField(
+        choices=("library", "repo"), required=False, default="library"
+    )
+    version_number = serializers.IntegerField(
+        min_value=1, required=False, allow_null=True, default=None
+    )
+    observed = serializers.BooleanField()
+    loaded = serializers.ChoiceField(choices=("yes", "no", "unknown"))
+    at = serializers.FloatField(required=False, allow_null=True)
+
+
 class HarnessCallSerializer(serializers.Serializer):
     started_at = serializers.DateTimeField()
     ended_at = serializers.DateTimeField()
@@ -145,6 +158,7 @@ class HarnessCallSerializer(serializers.Serializer):
     )
     script_completed = serializers.BooleanField(required=False)
     target_metrics = HarnessTargetMetricsSerializer(required=False, allow_null=True)
+    skill_loads = HarnessSkillLoadSerializer(many=True, required=False, allow_null=True)
 
 
 HARNESS_FAILURE_DOMAINS = (
