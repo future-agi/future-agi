@@ -284,9 +284,8 @@ func (s *streamState) handleMessageDelta(event streamEvent) (*models.StreamChunk
 
 	// Include usage if available.
 	if event.Usage != nil {
-		// Anthropic-compatible providers may leave input_tokens at 0 in
-		// message_start and report it here instead; Anthropic itself repeats
-		// the cumulative count. Prefer the message_delta value when present.
+		// Compatible providers can defer the input count until message_delta.
+		// Native streams report it in message_start and omit it here.
 		if event.Usage.InputTokens > 0 {
 			s.inputTokens = event.Usage.InputTokens
 		}

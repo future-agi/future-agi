@@ -99,17 +99,24 @@ func (u *Usage) UnmarshalJSON(data []byte) error {
 	type Alias Usage
 	var a struct {
 		Alias
-		InputTokens  *int `json:"input_tokens"`
-		OutputTokens *int `json:"output_tokens"`
+		PromptTokens     *int `json:"prompt_tokens"`
+		CompletionTokens *int `json:"completion_tokens"`
+		InputTokens      *int `json:"input_tokens"`
+		OutputTokens     *int `json:"output_tokens"`
 	}
 	if err := json.Unmarshal(data, &a); err != nil {
 		return err
 	}
 	*u = Usage(a.Alias)
-	if u.PromptTokens == 0 && a.InputTokens != nil {
+	// An explicit zero in the canonical spelling must win over its alias.
+	if a.PromptTokens != nil {
+		u.PromptTokens = *a.PromptTokens
+	} else if a.InputTokens != nil {
 		u.PromptTokens = *a.InputTokens
 	}
-	if u.CompletionTokens == 0 && a.OutputTokens != nil {
+	if a.CompletionTokens != nil {
+		u.CompletionTokens = *a.CompletionTokens
+	} else if a.OutputTokens != nil {
 		u.CompletionTokens = *a.OutputTokens
 	}
 	if u.TotalTokens == 0 {
