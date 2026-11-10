@@ -113,6 +113,28 @@ function normalizeHostStatusSchema(schema) {
   return nullable ? { anyOf: [result, { type: "null" }] } : result;
 }
 
+// Rich StringOrObjectField subclasses (such as tag items) carry a typed object
+// branch. Express their union before generation; the legacy description-based
+// rewrites below cover only unstructured JSON objects, not these schemas.
+function normalizeTypedStringOrObject(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(normalizeTypedStringOrObject);
+  const result = Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => [
+      key,
+      normalizeTypedStringOrObject(value),
+    ]),
+  );
+  if (
+    result["x-string-or-object"] &&
+    Object.keys(result.properties || {}).length
+  ) {
+    delete result["x-string-or-object"];
+    return { anyOf: [{ type: "string" }, result] };
+  }
+  return result;
+}
+
 // The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
 // upgrade. Never insert native unions/null types into the Swagger 2 input, or
 // disable validation to make a nonconforming input pass.
@@ -124,9 +146,11 @@ function normalizeHostStatusSpec(spec) {
       schemas: Object.fromEntries(
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
-          name.startsWith("HostUpdateStatusResponse")
-            ? normalizeHostStatusSchema(schema)
-            : schema,
+          normalizeTypedStringOrObject(
+            name.startsWith("HostUpdateStatusResponse")
+              ? normalizeHostStatusSchema(schema)
+              : schema,
+          ),
         ]),
       ),
     },
@@ -1506,7 +1530,8 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
     );
 
-    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    const modelListResponse =
+      "export const ModelHubApiModelsListListResponse = zod.object({";
     for (const [field, schema] of [
       ["next", "zod.string()"],
       ["previous", "zod.string()"],

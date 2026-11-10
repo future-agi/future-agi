@@ -102,6 +102,7 @@ const CustomTraceRenderer = (params) => {
         value={value}
         traceId={data?.trace_id}
         spanId={data?.span_id}
+        entity={data}
         entityType={params.context?.entityType}
         canEditTags={params.context?.canEditTags}
         // This grid is AG-Grid server-side, not React Query, so the popover's

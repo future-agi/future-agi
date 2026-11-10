@@ -6,12 +6,13 @@ import CustomTraceRenderer from "../CustomTraceRenderer";
 // renderer's wiring: which entity it targets, and that a save refreshes the
 // server-side grid via the grid api (which the cache invalidation can't do).
 vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
-  default: ({ open, traceId, spanId, onClose }) => (
+  default: ({ open, traceId, spanId, entity, onClose }) => (
     <div
       data-testid="add-tags-popover"
       data-open={String(open)}
       data-trace-id={traceId ?? ""}
       data-span-id={spanId ?? ""}
+      data-entity={JSON.stringify(entity)}
     >
       {open && (
         <button
@@ -43,6 +44,25 @@ const renderTagsColumn = (overrides = {}) => {
 };
 
 describe("CustomTraceRenderer — tags column", () => {
+  it("passes the complete server tag metadata through without reconstructing identity", () => {
+    const data = {
+      trace_id: "trace-1",
+      span_id: "root-1",
+      tag_target: {
+        expected_version: "18446744073709551614",
+        service_name: "",
+      },
+      tag_revision: 3,
+      source_tag_names: ["sdk"],
+      manual_tags: [{ name: "reviewed" }],
+    };
+    renderTagsColumn({ data });
+    expect(screen.getByTestId("add-tags-popover")).toHaveAttribute(
+      "data-entity",
+      JSON.stringify(data),
+    );
+  });
+
   it("targets the trace on the trace grid even when the row carries a root span_id", async () => {
     const user = userEvent.setup();
     const { container } = renderTagsColumn();

@@ -4382,12 +4382,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                           .then((res) => ({
                             id,
                             type: "trace",
-                            currentTags: res?.data?.result?.tags || [],
-                          }))
-                          .catch(() => ({
-                            id,
-                            type: "trace",
-                            currentTags: [],
+                            entity: res?.data?.result?.trace,
+                            currentTags: res?.data?.result?.trace?.tags || [],
                           })),
                       ),
                     )
@@ -4395,6 +4391,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         setTagsBulkItems(items);
                         setTagsAnchorEl(anchor);
                       })
+                      .catch(() =>
+                        enqueueSnackbar(
+                          "Could not load tag editing details. Refresh and try again.",
+                          { variant: "error" },
+                        ),
+                      )
                       .finally(() => setTagsFetching(false));
                   }
                   return;
@@ -4473,6 +4475,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                               : n.data?.span_id,
                           type: selectedTab === "trace" ? "trace" : "span",
                           currentTags: n.data?.tags || [],
+                          entity: n.data,
                         }))
                         .filter((i) => i.id),
                     );

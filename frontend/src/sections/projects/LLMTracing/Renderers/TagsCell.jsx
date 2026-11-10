@@ -11,6 +11,7 @@ const TagsCell = ({
   value,
   traceId,
   spanId,
+  entity,
   entityType,
   canEditTags = true,
   onTagsUpdated,
@@ -112,6 +113,7 @@ const TagsCell = ({
           open={Boolean(anchorEl)}
           anchorEl={anchorEl}
           onClose={handleClose}
+          entity={entity}
           traceId={targetTraceId}
           spanId={targetSpanId}
           currentTags={value}
@@ -125,6 +127,7 @@ TagsCell.propTypes = {
   value: PropTypes.array,
   traceId: PropTypes.string,
   spanId: PropTypes.string,
+  entity: PropTypes.object,
   // "trace" | "span" — which entity this grid tags. Disambiguates rows that
   // carry both ids so the right endpoint is hit.
   entityType: PropTypes.oneOf(["trace", "span"]),

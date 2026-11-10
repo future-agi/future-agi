@@ -3,8 +3,10 @@ import PropTypes from "prop-types";
 import { Box, Button, Stack } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
-import axios from "src/utils/axios";
-import { apiPath } from "src/api/contracts/api-surface";
+import useSaveEntityTags, {
+  isSourceTag,
+  tagUpdateErrorMessage,
+} from "src/components/traceDetail/useSaveEntityTags";
 import { fDateTime } from "src/utils/format-time";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import Iconify from "src/components/iconify";
@@ -115,25 +117,26 @@ const formatCost = (cost) => {
  * row's underlying trace record via the same `/tracer/trace/{id}/tags/`
  * PATCH that voice uses.
  */
-const InlineTagsRow = ({ tags = [], traceId }) => {
+const InlineTagsRow = ({ tags = [], entity }) => {
+  const saveEntityTags = useSaveEntityTags();
   const [isAdding, setIsAdding] = useState(false);
   const queryClient = useQueryClient();
 
   const normalized = useMemo(() => normalizeTags(tags), [tags]);
 
   const { mutate: saveTags, isPending } = useMutation({
-    mutationFn: (newTags) =>
-      axios.patch(apiPath("/tracer/trace/{id}/tags/", { id: traceId }), {
-        tags: newTags,
-      }),
-    onSuccess: () => {
-      TAG_INVALIDATION_QUERY_KEYS.forEach((queryKey) =>
-        queryClient.invalidateQueries({ queryKey }),
-      );
+    mutationFn: (newTags) => saveEntityTags({ entity, tags: newTags }),
+    onSuccess: () =>
+      Promise.all(
+        TAG_INVALIDATION_QUERY_KEYS.map((queryKey) =>
+          queryClient.invalidateQueries({ queryKey }),
+        ),
+      ),
+    onError: (error) => {
+      queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
+      enqueueSnackbar(tagUpdateErrorMessage(error), { variant: "error" });
     },
-    onError: () => {
-      enqueueSnackbar("Failed to update tags", { variant: "error" });
-    },
+    retry: false,
   });
 
   return (
@@ -152,6 +155,7 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
           name={tag.name}
           color={tag.color}
           size="small"
+          readOnly={isPending || isSourceTag(entity, tag.name)}
           onRemove={() => saveTags(normalized.filter((_, i) => i !== idx))}
           onColorChange={(c) =>
             saveTags(
@@ -199,7 +203,7 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
 };
 InlineTagsRow.propTypes = {
   tags: PropTypes.array,
-  traceId: PropTypes.string,
+  entity: PropTypes.object,
 };
 
 const ChatDetailsBar = ({ data, onAction }) => {
@@ -252,9 +256,12 @@ const ChatDetailsBar = ({ data, onAction }) => {
   // detail so the chip row stays in sync.
   const traceId = data?.trace_id;
   const isObserve = data?.module === DRAWER_MODULE.OBSERVE;
-  const { data: traceDetail } = useGetTraceDetail(isObserve ? traceId : null, {
-    projectId: data?.project_id,
-  });
+  const { data: traceDetail } = useGetTraceDetail(
+    isObserve && data?.project_id ? traceId : null,
+    {
+      projectId: data?.project_id,
+    },
+  );
   const tags =
     traceDetail?.trace?.tags ||
     traceDetail?.tags ||
@@ -309,7 +316,13 @@ const ChatDetailsBar = ({ data, onAction }) => {
 
       {traceId && (
         <Box sx={{ mt: 0.75 }}>
-          <InlineTagsRow tags={tags} traceId={traceId} />
+          <InlineTagsRow
+            tags={tags}
+            entity={
+              traceDetail?.trace ||
+              (data?.tag_target ? data : data?.trace || data)
+            }
+          />
         </Box>
       )}
     </Box>

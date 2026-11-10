@@ -38,8 +38,10 @@ import "react-json-view-lite/dist/index.css";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { enqueueSnackbar } from "notistack";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import axios from "src/utils/axios";
-import { apiPath } from "src/api/contracts/api-surface";
+import useSaveEntityTags, {
+  isSourceTag,
+  tagUpdateErrorMessage,
+} from "src/components/traceDetail/useSaveEntityTags";
 import SmartPreview from "./SmartPreview";
 import { isOpenAIMessages } from "./ChatMessageView";
 import useSearchHighlight from "./useSearchHighlight";
@@ -1164,30 +1166,23 @@ LogViewTable.propTypes = {
 
 /* ── InlineTagsRow — always-visible tag chips with add/remove ── */
 
-const InlineTagsRow = ({ tags = [], traceId, spanId, readOnly = false }) => {
+const InlineTagsRow = ({ tags = [], entity, readOnly = false }) => {
+  const saveEntityTags = useSaveEntityTags();
   const [isAdding, setIsAdding] = useState(false);
   const queryClient = useQueryClient();
 
   const normalized = useMemo(() => normalizeTags(tags), [tags]);
 
   const { mutate: saveTags, isPending } = useMutation({
-    mutationFn: (newTags) => {
-      if (spanId) {
-        return axios.post(apiPath("/tracer/observation-span/update-tags/"), {
-          span_id: spanId,
-          tags: newTags,
-        });
-      }
-      return axios.patch(apiPath("/tracer/trace/{id}/tags/", { id: traceId }), {
-        tags: newTags,
-      });
-    },
-    onSuccess: () => {
+    mutationFn: (newTags) =>
+      saveEntityTags({ entity, tags: newTags, type: "span" }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["trace-detail"] }),
+    onError: (error) => {
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
+      enqueueSnackbar(tagUpdateErrorMessage(error), { variant: "error" });
     },
-    onError: () => {
-      enqueueSnackbar("Failed to update tags", { variant: "error" });
-    },
+    retry: false,
   });
 
   const persist = useCallback((next) => saveTags(next), [saveTags]);
@@ -1209,7 +1204,7 @@ const InlineTagsRow = ({ tags = [], traceId, spanId, readOnly = false }) => {
           name={tag.name}
           color={tag.color}
           size="small"
-          readOnly={readOnly}
+          readOnly={readOnly || isPending || isSourceTag(entity, tag.name)}
           onRemove={() => persist(normalized.filter((_, i) => i !== idx))}
           onColorChange={(c) =>
             persist(
@@ -1261,8 +1256,7 @@ const InlineTagsRow = ({ tags = [], traceId, spanId, readOnly = false }) => {
 
 InlineTagsRow.propTypes = {
   tags: PropTypes.array,
-  traceId: PropTypes.string,
-  spanId: PropTypes.string,
+  entity: PropTypes.object,
   readOnly: PropTypes.bool,
 };
 
@@ -1905,8 +1899,7 @@ const SpanDetailPane = ({
         {/* Tags — span-level, inline add/remove */}
         <InlineTagsRow
           tags={span?.tags || []}
-          traceId={span?.trace}
-          spanId={span?.id}
+          entity={span}
           readOnly={readOnly}
         />
       </Box>
@@ -1918,7 +1911,8 @@ const SpanDetailPane = ({
         variant="scrollable"
         scrollButtons="auto"
         allowScrollButtonsMobile
-        sx={{ boxShadow: "none",
+        sx={{
+          boxShadow: "none",
           borderBottom: "1px solid",
           borderColor: "divider",
           "& .MuiTabs-flexContainer": { gap: 0 },
@@ -2113,52 +2107,52 @@ const SpanDetailPane = ({
               />
             )}
             <EvalsTabView
-            evals={collectAllEvalsFromEntry(entry)}
-            onSelectSpan={onSelectSpan}
-            emptyMessage="No evaluations for this span or its children"
-            showErrorLocalization={!readOnly}
-            showFixWithFalcon={!readOnly}
-            onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
-              const traceId = span?.trace;
-              if (level === "eval" && ev) {
+              evals={collectAllEvalsFromEntry(entry)}
+              onSelectSpan={onSelectSpan}
+              emptyMessage="No evaluations for this span or its children"
+              showErrorLocalization={!readOnly}
+              showFixWithFalcon={!readOnly}
+              onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
+                const traceId = span?.trace;
+                if (level === "eval" && ev) {
+                  openFixWithFalcon({
+                    level: "eval",
+                    context: {
+                      trace_id: traceId,
+                      span_id: ev.spanId || ev.observation_span_id || span?.id,
+                      eval_log_id: ev.eval_log_id || ev.cell_id || ev.log_id,
+                      custom_eval_config_id:
+                        ev.custom_eval_config_id || ev.eval_config_id,
+                      eval_name: ev.eval_name,
+                      score: ev.score,
+                      explanation: ev.explanation || ev.eval_explanation,
+                      span_name: ev.spanName,
+                      project_id: projectId,
+                    },
+                  });
+                  return;
+                }
+                // Span-level or trace-level — include pass/fail summary so
+                // Falcon can gate (no fabricated failures when everything passes).
+                const total = (allEvals || []).length;
+                const passCount = (allEvals || []).filter(
+                  (e) => e.score != null && e.score >= 50,
+                ).length;
                 openFixWithFalcon({
-                  level: "eval",
+                  level: isRootSpan ? "trace" : "span",
                   context: {
                     trace_id: traceId,
-                    span_id: ev.spanId || ev.observation_span_id || span?.id,
-                    eval_log_id: ev.eval_log_id || ev.cell_id || ev.log_id,
-                    custom_eval_config_id:
-                      ev.custom_eval_config_id || ev.eval_config_id,
-                    eval_name: ev.eval_name,
-                    score: ev.score,
-                    explanation: ev.explanation || ev.eval_explanation,
-                    span_name: ev.spanName,
+                    span_id: isRootSpan ? undefined : span?.id,
+                    span_name: isRootSpan ? undefined : span?.name,
+                    evals_summary: `${passCount}/${total} passed`,
+                    failing_evals: (failingEvals || []).map((e) => ({
+                      name: e.eval_name,
+                      score: e.score,
+                    })),
                     project_id: projectId,
                   },
                 });
-                return;
-              }
-              // Span-level or trace-level — include pass/fail summary so
-              // Falcon can gate (no fabricated failures when everything passes).
-              const total = (allEvals || []).length;
-              const passCount = (allEvals || []).filter(
-                (e) => e.score != null && e.score >= 50,
-              ).length;
-              openFixWithFalcon({
-                level: isRootSpan ? "trace" : "span",
-                context: {
-                  trace_id: traceId,
-                  span_id: isRootSpan ? undefined : span?.id,
-                  span_name: isRootSpan ? undefined : span?.name,
-                  evals_summary: `${passCount}/${total} passed`,
-                  failing_evals: (failingEvals || []).map((e) => ({
-                    name: e.eval_name,
-                    score: e.score,
-                  })),
-                  project_id: projectId,
-                },
-              });
-            }}
+              }}
             />
           </>
         )}

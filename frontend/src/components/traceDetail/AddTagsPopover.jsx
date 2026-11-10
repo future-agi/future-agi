@@ -1,68 +1,82 @@
 import React, { useState, useCallback } from "react";
 import PropTypes from "prop-types";
-import { Box, Popover, Stack, Typography } from "@mui/material";
+import { Popover, Stack, Typography } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import axios from "src/utils/axios";
-import { apiPath } from "src/api/contracts/api-surface";
+import useSaveEntityTags, {
+  isSourceTag,
+  tagUpdateErrorMessage,
+} from "./useSaveEntityTags";
 import { enqueueSnackbar } from "notistack";
 import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 
+const EMPTY_TAGS = [];
+
 const AddTagsPopover = ({
   anchorEl,
   open,
   onClose,
-  traceId,
   spanId,
+  entity,
   bulkItems,
-  currentTags = [],
+  currentTags = EMPTY_TAGS,
   onSuccess,
 }) => {
   const items = Array.isArray(bulkItems) ? bulkItems : [];
   const isBulk = items.length > 1;
+  const selectedEntity = items.length === 1 ? items[0].entity : entity;
+  const selectedTags =
+    items.length === 1 ? items[0].currentTags || EMPTY_TAGS : currentTags;
+  const saveEntityTags = useSaveEntityTags();
 
   const [tags, setTags] = useState(() =>
-    isBulk ? [] : normalizeTags(currentTags),
+    isBulk ? [] : normalizeTags(selectedTags),
   );
+  const confirmedTags = React.useRef(tags);
   const queryClient = useQueryClient();
 
   React.useEffect(() => {
-    if (open) setTags(isBulk ? [] : normalizeTags(currentTags));
-  }, [open, currentTags, isBulk]);
-
-  const patchTrace = (id, newTags) =>
-    axios.patch(apiPath("/tracer/trace/{id}/tags/", { id }), { tags: newTags });
-  const patchSpan = (id, newTags) =>
-    axios.post(apiPath("/tracer/observation-span/update-tags/"), {
-      span_id: id,
-      tags: newTags,
-    });
+    if (open) {
+      confirmedTags.current = isBulk ? [] : normalizeTags(selectedTags);
+      setTags(confirmedTags.current);
+    }
+  }, [open, selectedTags, isBulk]);
 
   const { mutate: saveTags, isPending } = useMutation({
     mutationFn: (newTags) => {
       if (isBulk) {
         // Merge with each item's existing tags to avoid overwriting.
         // Backend PATCH replaces tags[], so we compute the full set here.
-        return Promise.all(
+        return Promise.allSettled(
           items.map((item) => {
-            const existing = normalizeTags(item.currentTags || []);
-            const merged = [...existing];
+            const merged = normalizeTags(item.currentTags || []);
             newTags.forEach((t) => {
               if (!merged.some((e) => e.name === t.name)) merged.push(t);
             });
-            return item.type === "span"
-              ? patchSpan(item.id, merged)
-              : patchTrace(item.id, merged);
+            return saveEntityTags({
+              entity: item.entity,
+              type: item.type,
+              tags: merged,
+            });
           }),
-        );
+        ).then((results) => {
+          const failed = results.find((result) => result.status === "rejected");
+          if (failed) throw failed.reason;
+          return results;
+        });
       }
-      if (spanId) {
-        return patchSpan(spanId, newTags);
-      }
-      return patchTrace(traceId, newTags);
+      return saveEntityTags({
+        entity: selectedEntity,
+        type: items[0]?.type || (spanId ? "span" : "trace"),
+        tags: newTags,
+      });
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
+      if (!isBulk) {
+        confirmedTags.current = normalizeTags(result.tags);
+        setTags(confirmedTags.current);
+      }
       enqueueSnackbar(
         isBulk ? `Tags applied to ${items.length} items` : "Tags updated",
         { variant: "success" },
@@ -72,10 +86,15 @@ const AddTagsPopover = ({
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       onSuccess?.();
     },
-    onError: () => {
-      if (!isBulk) setTags(normalizeTags(currentTags));
-      enqueueSnackbar("Failed to update tags", { variant: "error" });
+    onError: (error) => {
+      if (!isBulk) setTags(confirmedTags.current);
+      queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
+      enqueueSnackbar(
+        `${isBulk ? "Some items may have been updated. " : ""}${tagUpdateErrorMessage(error)}`,
+        { variant: "error" },
+      );
     },
+    retry: false,
   });
 
   const persist = useCallback(
@@ -133,6 +152,7 @@ const AddTagsPopover = ({
               key={`${tag.name}-${idx}`}
               name={tag.name}
               color={tag.color}
+              readOnly={isPending || isSourceTag(selectedEntity, tag.name)}
               onRemove={() => handleRemove(idx)}
               onColorChange={(c) => handleColorChange(idx, c)}
               onRename={(n) => handleRename(idx, n)}
@@ -160,7 +180,7 @@ AddTagsPopover.propTypes = {
   anchorEl: PropTypes.any,
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
-  traceId: PropTypes.string,
+  entity: PropTypes.object,
   spanId: PropTypes.string,
   bulkItems: PropTypes.arrayOf(
     PropTypes.shape({

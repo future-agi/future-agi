@@ -38996,15 +38996,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/observation-span/update-tags/": {
       post: {
         operationId: "tracer_observation-span_update_tags",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/ObservationSpan",
+          $ref: "#/definitions/SpanTagsUpdate",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/ObservationSpan",
+          200: {
+            $ref: "#/definitions/EntityTagsResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -42521,14 +42536,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
       patch: {
         operationId: "tracer_trace_update_tags",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/TraceTagsUpdate",
         },
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/TraceTagsUpdate",
+            $ref: "#/definitions/EntityTagsResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -61266,6 +61296,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Renewal notice",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    EntityTagsResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/EntityTagsResult",
         },
       },
     },
@@ -85140,6 +85183,95 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SpanTagsUpdate: {
+      required: [
+        "tags",
+        "project_id",
+        "trace_id",
+        "span_id",
+        "start_hour",
+        "observation_type",
+        "service_name",
+        "expected_start_time",
+        "expected_version",
+        "expected_tag_revision",
+      ],
+      type: "object",
+      properties: {
+        tags: {
+          type: "array",
+          items: {
+            type: "object",
+            "x-string-or-object": true,
+            required: ["name"],
+            properties: {
+              name: {
+                type: "string",
+                maxLength: 256,
+              },
+              color: {
+                type: "string",
+                pattern: "^#[0-9a-fA-F]{6}$",
+              },
+            },
+            additionalProperties: false,
+            description:
+              "Exact tag name, or {name, color}; color is an optional six-digit hex value.",
+          },
+          maxItems: 100,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        start_hour: {
+          title: "Start hour",
+          type: "string",
+          format: "date-time",
+        },
+        observation_type: {
+          title: "Observation type",
+          type: "string",
+          maxLength: 64,
+        },
+        service_name: {
+          title: "Service name",
+          type: "string",
+          maxLength: 255,
+        },
+        expected_start_time: {
+          title: "Expected start time",
+          type: "string",
+          format: "date-time",
+        },
+        expected_version: {
+          title: "Expected version",
+          type: "string",
+          minLength: 1,
+        },
+        expected_tag_revision: {
+          title: "Expected tag revision",
+          description:
+            "0 for no assignment; otherwise the last returned tag_revision.",
+          type: "integer",
+          maximum: 9007199254740990,
+          minimum: 0,
+        },
+      },
+    },
     SpendSummaryResponse: {
       required: ["status", "result"],
       type: "object",
@@ -87739,15 +87871,91 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     TraceTagsUpdate: {
-      required: ["tags"],
+      required: [
+        "tags",
+        "project_id",
+        "trace_id",
+        "span_id",
+        "start_hour",
+        "observation_type",
+        "service_name",
+        "expected_start_time",
+        "expected_version",
+        "expected_tag_revision",
+      ],
       type: "object",
       properties: {
         tags: {
           type: "array",
           items: {
-            type: "string",
-            minLength: 1,
+            type: "object",
+            "x-string-or-object": true,
+            required: ["name"],
+            properties: {
+              name: {
+                type: "string",
+                maxLength: 256,
+              },
+              color: {
+                type: "string",
+                pattern: "^#[0-9a-fA-F]{6}$",
+              },
+            },
+            additionalProperties: false,
+            description:
+              "Exact tag name, or {name, color}; color is an optional six-digit hex value.",
           },
+          maxItems: 100,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        start_hour: {
+          title: "Start hour",
+          type: "string",
+          format: "date-time",
+        },
+        observation_type: {
+          title: "Observation type",
+          type: "string",
+          maxLength: 64,
+        },
+        service_name: {
+          title: "Service name",
+          type: "string",
+          maxLength: 255,
+        },
+        expected_start_time: {
+          title: "Expected start time",
+          type: "string",
+          format: "date-time",
+        },
+        expected_version: {
+          title: "Expected version",
+          type: "string",
+          minLength: 1,
+        },
+        expected_tag_revision: {
+          title: "Expected tag revision",
+          description:
+            "0 for no assignment; otherwise the last returned tag_revision.",
+          type: "integer",
+          maximum: 9007199254740990,
+          minimum: 0,
         },
       },
     },
@@ -98205,6 +98413,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         embedding: {
           $ref: "#/definitions/EmbeddingProvider",
+        },
+      },
+    },
+    EntityTagsResult: {
+      required: [
+        "id",
+        "tags",
+        "manual_tags",
+        "source_tag_names",
+        "tag_revision",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        tags: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TagItem",
+          },
+        },
+        manual_tags: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TagItem",
+          },
+        },
+        source_tag_names: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        tag_revision: {
+          title: "Tag revision",
+          type: "integer",
+          minimum: 1,
         },
       },
     },
@@ -118890,6 +119139,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             $ref: "#/definitions/EmbeddingConfigOption",
           },
+        },
+      },
+    },
+    TagItem: {
+      required: ["name"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        color: {
+          title: "Color",
+          type: "string",
+          pattern: "^#[0-9a-fA-F]{6}$",
+          minLength: 1,
         },
       },
     },

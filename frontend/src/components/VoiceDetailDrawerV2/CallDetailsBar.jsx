@@ -3,8 +3,10 @@ import PropTypes from "prop-types";
 import { Box, Button, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import axios from "src/utils/axios";
-import { apiPath } from "src/api/contracts/api-surface";
+import useSaveEntityTags, {
+  isSourceTag,
+  tagUpdateErrorMessage,
+} from "src/components/traceDetail/useSaveEntityTags";
 import { enqueueSnackbar } from "notistack";
 import { fDateTime } from "src/utils/format-time";
 import TagChip from "src/components/traceDetail/TagChip";
@@ -81,24 +83,25 @@ const formatCost = (cost) => {
  * calls persist tags on the underlying trace record via the same endpoint
  * trace tags use.
  */
-const InlineTagsRow = ({ tags = [], traceId }) => {
+const InlineTagsRow = ({ tags = [], entity }) => {
+  const saveEntityTags = useSaveEntityTags();
   const [isAdding, setIsAdding] = useState(false);
   const queryClient = useQueryClient();
 
   const normalized = useMemo(() => normalizeTags(tags), [tags]);
 
   const { mutate: saveTags, isPending } = useMutation({
-    mutationFn: (newTags) =>
-      axios.patch(apiPath("/tracer/trace/{id}/tags/", { id: traceId }), {
-        tags: newTags,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] });
+    mutationFn: (newTags) => saveEntityTags({ entity, tags: newTags }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] }),
+        queryClient.invalidateQueries({ queryKey: ["trace-detail"] }),
+      ]),
+    onError: (error) => {
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
+      enqueueSnackbar(tagUpdateErrorMessage(error), { variant: "error" });
     },
-    onError: () => {
-      enqueueSnackbar("Failed to update tags", { variant: "error" });
-    },
+    retry: false,
   });
 
   const persist = useCallback((next) => saveTags(next), [saveTags]);
@@ -119,6 +122,7 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
           name={tag.name}
           color={tag.color}
           size="small"
+          readOnly={isPending || isSourceTag(entity, tag.name)}
           onRemove={() => persist(normalized.filter((_, i) => i !== idx))}
           onColorChange={(c) =>
             persist(
@@ -167,7 +171,7 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
 
 InlineTagsRow.propTypes = {
   tags: PropTypes.array,
-  traceId: PropTypes.string,
+  entity: PropTypes.object,
 };
 
 const CallDetailsBar = ({ data, onAction, hiddenActionIds = [] }) => {
@@ -223,9 +227,12 @@ const CallDetailsBar = ({ data, onAction, hiddenActionIds = [] }) => {
   // call IDs aren't real tracer traces and the endpoint 404s, which
   // surfaces a nasty "Unable to retrieve trace" toast.
   const isObserve = data?.module === "project";
-  const { data: traceDetail } = useGetTraceDetail(isObserve ? traceId : null, {
-    projectId: data?.project_id,
-  });
+  const { data: traceDetail } = useGetTraceDetail(
+    isObserve && data?.project_id ? traceId : null,
+    {
+      projectId: data?.project_id,
+    },
+  );
   const tags =
     traceDetail?.trace?.tags ||
     traceDetail?.tags ||
@@ -285,7 +292,13 @@ const CallDetailsBar = ({ data, onAction, hiddenActionIds = [] }) => {
           persist against. Mirrors trace drawer InlineTagsRow exactly. */}
       {traceId && (
         <Box sx={{ mt: 0.75 }}>
-          <InlineTagsRow tags={tags} traceId={traceId} />
+          <InlineTagsRow
+            tags={tags}
+            entity={
+              traceDetail?.trace ||
+              (data?.tag_target ? data : data?.trace || data)
+            }
+          />
         </Box>
       )}
     </Box>

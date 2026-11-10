@@ -1603,10 +1603,10 @@ const TraceDetailDrawerV2 = ({
             anchorEl={tagsAnchorEl}
             open={Boolean(tagsAnchorEl)}
             onClose={() => setTagsAnchorEl(null)}
-            traceId={traceId}
+            entity={selectedSpanId ? getSpan(selectedSpanData) : data?.trace}
             spanId={selectedSpanId}
             currentTags={
-              selectedSpanData
+              selectedSpanId
                 ? getSpan(selectedSpanData)?.tags || []
                 : data?.trace?.tags || []
             }
