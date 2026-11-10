@@ -212,7 +212,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     rules = guardrails_data.get("rules")
 
     # Checks as list (from guardrail_sync — merged policies)
-    if isinstance(raw_checks, list):
+    if isinstance(raw_checks, list) and raw_checks:
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
         _inject_guardrail_credentials(raw_checks, org_id)
 
@@ -244,7 +244,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
         return result
 
     # Checks as dict (from frontend saves via OrgConfig)
-    if isinstance(raw_checks, dict):
+    if isinstance(raw_checks, dict) and raw_checks:
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
         _inject_guardrail_credentials(raw_checks, org_id)
 
@@ -264,8 +264,11 @@ def _transform_guardrails(guardrails_data, org_id=None):
             _inject_fi_credentials(mapped, org_id)
         return {**guardrails_data, "checks": mapped}
 
-    # Convert rules array → checks map
+    # A populated rules array takes precedence over an empty checks placeholder.
+    # Even an empty rules array must be projected to the gateway's checks map.
     if not isinstance(rules, list):
+        if raw_checks == []:
+            guardrails_data["checks"] = {}
         return guardrails_data
 
     # Inject decrypted guardrail credentials before transformation
