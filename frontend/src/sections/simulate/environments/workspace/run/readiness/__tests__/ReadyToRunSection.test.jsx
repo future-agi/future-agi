@@ -58,7 +58,7 @@ beforeEach(() => {
 });
 
 describe("ReadyToRunSection", () => {
-  it("offers Re-check, not Fix, on a line that only needs checking again", async () => {
+  it("opens a re-check-only line on Fix with its reason and Re-check inside", async () => {
     report = blockedReport("pair");
     report.rows[0].fix = {
       type: "recheck",
@@ -66,13 +66,13 @@ describe("ReadyToRunSection", () => {
       would: "The row reads what this agent does",
       recheck: { scope: "pair", method: "POST", path: "/x/" },
     };
+    report.rows[0].consequence = "Check again before trusting these cases";
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
 
-    expect(screen.queryByRole("button", { name: "Fix" })).toBeNull();
-    // The line opens like the others, with its full reason and the action.
-    const [, lineRecheck] = screen.getAllByRole("button", { name: "Re-check" });
-    await userEvent.click(lineRecheck);
-    expect(recheck).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Fix" }));
+    expect(
+      screen.getByText("Check again before trusting these cases"),
+    ).toBeVisible();
     await userEvent.click(
       screen.getByRole("button", { name: "Re-check this pair" }),
     );

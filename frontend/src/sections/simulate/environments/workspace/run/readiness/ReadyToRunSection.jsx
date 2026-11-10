@@ -50,8 +50,8 @@ const spinner = <CircularProgress size={12} color="inherit" />;
 function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
   const [open, setOpen] = useState(false);
   const { fix } = line;
-  // Checking the pair again is this line's whole fix: its button says
-  // Re-check, not a Fix that would only say "check again".
+  // Checking the pair again is this line's whole fix: it opens on the full
+  // reason and what it means, not an instruction that only says "check again".
   const recheckOnly = fix?.type === "recheck" && fix.recheck?.scope === "pair";
   return (
     // While a check runs these are the last results: dimmed, no Fix.
@@ -96,7 +96,7 @@ function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
             sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
           >
             {open && COPY.hideFix}
-            {!open && (recheckOnly ? COPY.recheck : COPY.fix)}
+            {!open && COPY.fix}
           </Button>
         )}
       </Stack>
