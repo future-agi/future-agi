@@ -1,8 +1,10 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { baselineReport, compareActionRuns, runJourney } from './runner.mjs';
 import { requireValue } from '../../lib/skills-r3/canonical.mjs';
+import { createRegisteredDriver } from './dispatcher.mjs';
+import { getJob } from './jobs.mjs';
 
 // Explicit driver path is executable trusted test code, never read from an audit/fixture/response.
 // Example (cloud): node e2e/benchmarks/context-hub/cli.mjs baseline /tmp/l13-baseline.json
@@ -16,13 +18,29 @@ export async function main(args) {
     return 0;
   }
   if (command === 'run') {
-    requireValue(rest.length === 5, 'Usage: cli.mjs run J1 RUN_ID REGISTRATION.json DRIVER.mjs OUTPUT_DIR');
+    requireValue(rest.length === 5, 'Usage: cli.mjs run J1 RUN_ID REGISTRATION.json registered|DRIVER.mjs OUTPUT_DIR');
     const [jobId, runId, registrationPath, driverPath, outputDir] = rest;
+    const job = getJob(jobId);
     const registration = JSON.parse(await readFile(registrationPath, 'utf8'));
-    const { createDriver } = await import(pathToFileURL(resolve(driverPath)).href);
-    requireValue(typeof createDriver === 'function', 'Driver must export createDriver');
-    const driver = await createDriver({ jobId, runId, registration });
+    requireValue(registration.job === jobId && ['cold', 'configured'].includes(registration.cohort), 'Matching job and cohort required');
+    let driver;
+    if (driverPath === 'registered') {
+      driver = await createRegisteredDriver({ jobId, runId, registration });
+    } else {
+      const { createDriver } = await import(pathToFileURL(resolve(driverPath)).href);
+      requireValue(typeof createDriver === 'function', 'Driver must export createDriver');
+      driver = await createDriver({ jobId, runId, registration });
+    }
     const result = await runJourney({ jobId, runId, registration, driver, outputDir });
+    if (result.status === 'not_measured') {
+      // The runner has no ledger when a driver/Checkpoint P is unavailable.
+      // Retain that null-count result, not a fabricated zero-action run.
+      await mkdir(outputDir, { recursive: true });
+      await writeFile(resolve(outputDir, `${runId}.json`), `${JSON.stringify({ ...result,
+        run_id: runId, cohort: registration.cohort,
+        driver_status: driverPath === 'registered' ? job.integration.status : 'explicit',
+      }, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+    }
     return result.status === 'completed' ? 0 : 1;
   }
   if (command === 'compare') {

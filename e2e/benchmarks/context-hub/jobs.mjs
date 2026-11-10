@@ -135,7 +135,19 @@ const HUMAN_ACTIONS = {
   J5: { 'establish-ownership': ['review'], 'review-plans': ['review'], 'authorize-exact-patches': ['approve'], 'reverse-plan': ['review'] },
   J6: { 'choose-eligible-release': ['review'], 'cas-rollback': ['approve'], 'resume-or-clean-thread': ['recovery_decision'] },
 };
+// Registration is availability metadata, never qualification. Missing complete
+// drivers stay absent; the dispatcher records not_measured rather than running
+// prerequisite browser flows as if they were the whole job.
+const integrations = {
+  J1: { status: 'missing', module: null, flow_id: 'SKILLS-E2E-010', flow: 'j1-retained-subset.spec.ts' },
+  J2: { status: 'missing', module: null, flow_id: 'SKILLS-E2E-020', flow: 'j2-historical-draft.spec.ts' },
+  J3: { status: 'missing', module: null, flow_id: 'SKILLS-E2E-030', flow: 'j3-accepted-dependency.spec.ts' },
+  J4: { status: 'incomplete', module: './drivers/j4.mjs', flow_id: 'SKILLS-E2E-040', flow: 'j4-reviewer-receipt.spec.ts' },
+  J5: { status: 'incomplete', module: './drivers/j5.mjs', flow_id: 'SKILLS-E2E-050', flow: 'j5-inventory-gate.spec.ts' },
+  J6: { status: 'missing', module: null, flow_id: 'SKILLS-E2E-060', flow: 'j6-recovery-coverage.spec.ts' },
+};
 export const JOBS = Object.freeze(jobs.map((job) => Object.freeze({ ...job,
+  integration: Object.freeze({ ...integrations[job.id], complete_job_qualified: false }),
   steps: Object.freeze(job.steps.map((stage) => Object.freeze({ ...stage, human_actions: Object.freeze(HUMAN_ACTIONS[job.id]?.[stage.id] ?? []) }))),
 })));
 export function getJob(id) {

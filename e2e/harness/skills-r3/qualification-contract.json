@@ -1,6 +1,15 @@
 {
   "schema": 1,
-  "status": "harness_primitives_only_public_interface_integration_blocked",
+  "status": "prerequisite_flows_integrated_complete_jobs_unqualified",
+  "registered_driver_command": "node e2e/benchmarks/context-hub/cli.mjs run J1 RUN_ID REGISTRATION.json registered OUTPUT_DIR",
+  "job_integrations": [
+    {"job":"J1","driver_status":"missing","driver_module":null,"flow_id":"SKILLS-E2E-010","flow":"j1-retained-subset.spec.ts","complete_job_qualified":false},
+    {"job":"J2","driver_status":"missing","driver_module":null,"flow_id":"SKILLS-E2E-020","flow":"j2-historical-draft.spec.ts","complete_job_qualified":false},
+    {"job":"J3","driver_status":"missing","driver_module":null,"flow_id":"SKILLS-E2E-030","flow":"j3-accepted-dependency.spec.ts","complete_job_qualified":false},
+    {"job":"J4","driver_status":"incomplete","driver_module":"./drivers/j4.mjs","flow_id":"SKILLS-E2E-040","flow":"j4-reviewer-receipt.spec.ts","complete_job_qualified":false},
+    {"job":"J5","driver_status":"incomplete","driver_module":"./drivers/j5.mjs","flow_id":"SKILLS-E2E-050","flow":"j5-inventory-gate.spec.ts","complete_job_qualified":false},
+    {"job":"J6","driver_status":"missing","driver_module":null,"flow_id":"SKILLS-E2E-060","flow":"j6-recovery-coverage.spec.ts","complete_job_qualified":false}
+  ],
   "foundation_base": "3d15feb6a783dbd15fe905089ec91838de58aaa7",
   "foundation_contract": "F12-interfaces.md r3.2 plus F12b corrections: consumption/auth/lease, immutable persistence, selected-origin internal helpers, editor and source serializers exist. Complete context authoring/review/native/session endpoints and runtime qualification are not provided.",
   "test_command": "yarn --cwd e2e selftest",
@@ -52,7 +61,7 @@
   "integration_blockers": [
     "Complete downstream context authoring/review/native/session public interfaces; F12b does not expose them",
     "Product test-image-only scoped clock/cache/quota and owned-worker barriers; existing v1.1 programmable transport alone is insufficient",
-    "Concrete round-3 browser flow approvals with usable routes, serializer pins and locators; the supplied approval document covers only SKILLS-E2E-001 through 003, no round-3 IDs are reserved",
+    "Complete-job public-interface drivers for J1/J2/J3/J6 are absent; J4/J5 drivers cover prerequisites only. Reserved round-4 browser flows do not establish complete-job qualification",
     "Actual Simulation launch/ingestion path and private-native/shared-budget controls",
     "Released SDK/application wheel and npm artifacts with hashes; actual native binaries and observable delivery",
     "Customer environment, retained external tracing/CI access, independent competitor reviewer and measured comparator runs",
@@ -60,7 +69,7 @@
     "Human-time/success/comprehension/cost study before product acceptance"
   ],
   "limitations": [
-    "No new round-3 browser flows or FLOWS.md edits: concrete round-3 approvals and complete dependent public surfaces are absent; the three existing Skills flows are inherited foundation work",
+    "SKILLS-E2E-010/020/030/040/050/060 are registered prerequisite subsets under the reserved round-4 IDs; catalog inclusion is not execution evidence or complete-job qualification",
     "44 one-sided oracle self-tests prove harness fallibility, not backend product coverage",
     "Provider/Git fixtures do not qualify real provider transport, permissions, GitHub semantics or business behavior",
     "Worker barriers/clock are injection primitives, not production state mutations or an alternative scheduler",

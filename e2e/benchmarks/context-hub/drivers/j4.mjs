@@ -4,6 +4,12 @@ import { resolve } from 'node:path';
 import { MeasuredOperator } from '../../../lib/skills-r3/measured-operator.mjs';
 import { digest, requireValue } from '../../../lib/skills-r3/canonical.mjs';
 
+export async function readSkillResult({ apiUrl, headers, path, signal }) {
+  const response = await fetch(`${apiUrl}/model-hub/skills/${path}`, { headers, signal });
+  requireValue(response.ok, 'Independent public observation unavailable');
+  return (await response.json()).result;
+}
+
 /**
  * Live configured-J4 qualification attempt, never a replay of test artifacts.
  * J4_DRIVER_INPUT is a private local JSON file on the approved Linux VM:
@@ -31,11 +37,7 @@ export async function createDriver({ jobId, runId, registration }) {
   let page;
   let published;
   const headers = { Authorization: `Bearer ${input.author.access}`, 'X-Organization-Id': input.author.organizationId, 'X-Workspace-Id': input.author.workspaceId };
-  const read = async (path, signal) => {
-    const response = await fetch(`${input.apiUrl}/model-hub/skills/${path}`, { headers, signal });
-    requireValue(response.ok(), 'Independent public observation unavailable');
-    return (await response.json()).result;
-  };
+  const read = (path, signal) => readSkillResult({ apiUrl: input.apiUrl, headers, path, signal });
   const record = async (name, value) => {
     await writeFile(resolve(output, `${name}.json`), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
     return digest(value);
