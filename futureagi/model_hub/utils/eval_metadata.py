@@ -5,7 +5,10 @@ from collections.abc import Callable, Iterable
 from typing import TypeVar
 from uuid import UUID
 
-from django.db import DEFAULT_DB_ALIAS, InterfaceError, OperationalError, connections
+import psycopg
+from django.db import InterfaceError, OperationalError, connections
+from django.db.backends.base.base import BaseDatabaseWrapper
+from django.db.models import Model
 from psycopg.errors import ConnectionTimeout
 
 from accounts.models.workspace import Workspace
@@ -27,23 +30,49 @@ class EvaluationMetadataUnavailable(RuntimeError):
         )
 
 
-def _is_connection_failure(error: Exception) -> bool:
-    # Django wraps the driver's exception. Do not retry all OperationalErrors:
-    # statement timeouts, invalid SQL and configuration failures are not outages.
+def _is_connection_failure(error: Exception, connection: BaseDatabaseWrapper) -> bool:
+    # Django wraps the driver's exception. A server SQLSTATE takes precedence
+    # over connection state: authentication and statement failures aren't outages.
     cause = error.__cause__
     if isinstance(cause, ConnectionTimeout):
         return True
     sqlstate = getattr(cause, "sqlstate", None)
-    return bool(
-        sqlstate
-        and (
-            sqlstate.startswith("08")
-            or sqlstate
-            in {
-                "57P01",
-                "57P02",
-                "57P03",
-            }
+    if sqlstate:
+        return sqlstate.startswith("08") or sqlstate in {"57P01", "57P02", "57P03"}
+    if not isinstance(cause, (psycopg.OperationalError, psycopg.InterfaceError)):
+        return False
+
+    # libpq can report connect/transport failures without a server SQLSTATE.
+    # In particular a refused connection has no installed driver connection to
+    # inspect. Keep these signatures narrow; unknown OperationalErrors escape.
+    message = str(cause).lower()
+    if any(
+        marker in message
+        for marker in (
+            "fatal:",
+            "authentication failed",
+            "no password supplied",
+            "pg_hba.conf",
+            "certificate verify failed",
+            "invalid connection option",
+            "statement timeout",
+        )
+    ):
+        return False
+    driver_connection = connection.connection
+    if driver_connection is not None and driver_connection.broken:
+        return True
+    return any(
+        marker in message
+        for marker in (
+            "connection refused",
+            "server closed the connection unexpectedly",
+            "ssl connection has been closed unexpectedly",
+            "ssl syscall error: eof detected",
+            "connection reset by peer",
+            "could not send data to server: broken pipe",
+            "the connection is closed",
+            "the connection is lost",
         )
     )
 
@@ -53,9 +82,9 @@ def _read_metadata(read: Callable[[], _T], *, using: str) -> _T:
         try:
             return read()
         except (OperationalError, InterfaceError) as error:
-            if not _is_connection_failure(error):
-                raise
             connection = connections[using]
+            if not _is_connection_failure(error, connection):
+                raise
             # A caller-owned transaction cannot be repaired here. Closing it or
             # retrying queries inside it would leave the caller's work unusable.
             if connection.in_atomic_block:
@@ -80,8 +109,26 @@ def read_evaluation_column_types(column_ids: Iterable[str | UUID]) -> dict[str, 
     )
 
 
+def _read_metadata_relation(instance: Model, name: str) -> Model | None:
+    field = instance._meta.get_field(name)
+    if field.is_cached(instance) or field.value_from_object(instance) is None:
+        # Preserve descriptor semantics for cached and nullable relations.
+        return getattr(instance, name)
+
+    # Match Django's forward-FK lookup (base manager + instance routing hint),
+    # then pin the routed alias so the query and cleanup use the same wrapper.
+    related = field.remote_field.model._base_manager.db_manager(
+        hints={"instance": instance}
+    ).filter(field.get_reverse_related_filter(instance))
+    using = related.db
+    related = related.using(using)
+    value = _read_metadata(related.get, using=using)
+    field.set_cached_value(instance, value)
+    return value
+
+
 def read_evaluation_workspace(row: Row) -> Workspace | None:
-    return _read_metadata(
-        lambda: row.dataset.workspace,
-        using=row._state.db or DEFAULT_DB_ALIAS,
-    )
+    # These are independently routed reads. The Row's alias is not necessarily
+    # the Dataset's or Workspace's, and cached relations need no retry boundary.
+    dataset = _read_metadata_relation(row, "dataset")
+    return _read_metadata_relation(dataset, "workspace")
