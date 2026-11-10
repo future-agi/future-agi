@@ -190,7 +190,7 @@ func DecodeOpenAIMultipart(body []byte, contentType string) (OpenAICreate, error
 			return c, invalid("invalid_request", "body", "invalid multipart body")
 		}
 		// Text fields must be UTF-8; only an uploaded input_reference file is binary.
-		if p.FileName() == "" && !utf8.Valid(value) {
+		if (name != "input_reference" || p.FileName() == "") && !utf8.Valid(value) {
 			return c, invalid("invalid_parameter", name, "UTF-8 text required")
 		}
 		switch name {
