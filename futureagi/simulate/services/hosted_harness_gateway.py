@@ -4264,6 +4264,13 @@ class HostedHarnessGateway:
         return True
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
+        from simulate.services.harness_cancel import confirm_cancel
+
+        job = self._cancel(job, reason=reason)
+        confirm_cancel(job)
+        return job
+
+    def _cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
         from simulate.services.phone_telephony import cleanup_hosted_phone_rooms
 
         settled = HostedHarnessAttempt.no_workspace_objects.filter(

@@ -77,6 +77,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "simulate.tasks.chat_sim",
     "simulate.tasks.alk_sim",
     "simulate.tasks.hosted_harness_usage",
+    "simulate.tasks.hosted_harness_cancel",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",
     # integration tasks
