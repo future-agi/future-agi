@@ -474,3 +474,40 @@ func TestVideoMetricsEndpointRegistered(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+// TH8088-R1 over real HTTP: case-aliased explicit zero/null and invalid UTF-8
+// with a valid model are refused before any job is accepted or submitted.
+func TestVideoCaseAliasAndInvalidUTF8RefusedBeforeAccept(t *testing.T) {
+	f := newVideoHTTP(t)
+	head := strings.TrimSuffix(videoTestBody, "}")
+	for _, tc := range []struct{ name, body, code string }{
+		{"upper duration zero", head + `,"DURATION_SECONDS":0}`, "unknown_field"},
+		{"upper duration null", head + `,"DURATION_SECONDS":null}`, "unknown_field"},
+		{"mixed duration zero", head + `,"Duration_Seconds":0}`, "unknown_field"},
+		{"upper n zero", head + `,"N":0}`, "unknown_field"},
+		{"upper n null", head + `,"N":null}`, "unknown_field"},
+		{"mixed fps null", head + `,"Fps":null}`, "unknown_field"},
+		{"canonical duration null", head + `,"duration_seconds":null}`, "invalid_parameter"},
+		{"canonical n null", head + `,"n":null}`, "invalid_parameter"},
+		{"invalid utf8 valid model", strings.Replace(videoTestBody, "private prompt", "private \xff prompt", 1), "invalid_request"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := f.request("POST", "/v1/videos", f.keyA, video.NewID(), tc.body)
+			if w.Code != 400 || !strings.Contains(w.Body.String(), tc.code) {
+				t.Fatal(w.Code, w.Body.String())
+			}
+		})
+	}
+	jobs, e := f.store.ListAccounting(context.Background())
+	if e != nil || len(jobs) != 0 {
+		t.Fatal("refused request accepted", len(jobs), e)
+	}
+	// Control: the same valid model and prompt is accepted.
+	if w := f.request("POST", "/v1/videos", f.keyA, video.NewID(), videoTestBody); w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	jobs, e = f.store.ListAccounting(context.Background())
+	if e != nil || len(jobs) != 1 {
+		t.Fatal("control not accepted once", len(jobs), e)
+	}
+}

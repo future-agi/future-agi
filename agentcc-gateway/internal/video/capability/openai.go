@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	video "github.com/futureagi/agentcc-gateway/internal/providers/video"
 )
@@ -57,6 +58,10 @@ func DecodeOpenAIJSON(body []byte) (OpenAICreate, error) {
 	var raw map[string]json.RawMessage
 	if len(bytes.TrimSpace(body)) == 0 || bytes.TrimSpace(body)[0] != '{' || json.Unmarshal(body, &raw) != nil {
 		return OpenAICreate{}, invalid("invalid_request", "body", "object required")
+	}
+	// json.Unmarshal replaces invalid UTF-8 with U+FFFD instead of failing.
+	if !utf8.Valid(body) {
+		return OpenAICreate{}, invalid("invalid_request", "body", "UTF-8 JSON required")
 	}
 	if k, dup := duplicateKey(body); dup {
 		return OpenAICreate{}, invalid("invalid_parameter", k, "field repeated")
@@ -169,6 +174,10 @@ func DecodeOpenAIMultipart(body []byte, contentType string) (OpenAICreate, error
 		value, err := io.ReadAll(p)
 		if err != nil {
 			return c, invalid("invalid_request", "body", "invalid multipart body")
+		}
+		// Text fields must be UTF-8; only an uploaded input_reference file is binary.
+		if p.FileName() == "" && !utf8.Valid(value) {
+			return c, invalid("invalid_parameter", name, "UTF-8 text required")
 		}
 		switch name {
 		case "input_reference":
