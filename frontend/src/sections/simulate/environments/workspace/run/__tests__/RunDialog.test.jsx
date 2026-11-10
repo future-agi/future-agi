@@ -740,11 +740,26 @@ describe("RunDialog", () => {
       "pair_failed",
       "These versions failed their check together. Fix them and check again.",
     ],
-  ])("explains a %s refusal inline in our words", (code, text) => {
-    renderDialog({
-      error: { statusCode: 409, error: code, message: "server words" },
-    });
-    expect(screen.getByTestId("run-error")).toHaveTextContent(text);
+  ])(
+    "explains a %s refusal inline in our words when the server sends none",
+    (code, text) => {
+      renderDialog({ error: { statusCode: 409, error: code } });
+      expect(screen.getByTestId("run-error")).toHaveTextContent(text);
+    },
+  );
+
+  it.each([
+    [
+      "pair_validating",
+      "These versions are being checked together. Run them again when the check ends, at the latest in 45 minutes.",
+    ],
+    [
+      "pair_failed",
+      "These versions failed their check together: the agent did not pass this environment's checks. Fix them, or check again from Ready to run.",
+    ],
+  ])("shows the server's reason and wait for a %s refusal", (code, message) => {
+    renderDialog({ error: { statusCode: 409, error: code, message } });
+    expect(screen.getByTestId("run-error")).toHaveTextContent(message);
   });
 
   it("leaves other failures to the snackbar", () => {
