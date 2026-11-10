@@ -111,15 +111,21 @@ const AddNewDataset = ({
         axios.post(endpoints.project.addNewDataset, payload),
 
       onSuccess: (res) => {
+        const result = res?.data?.result;
+        const datasetId = result?.dataset_id ?? result?.datasetId;
+        // Rows are written by a background task; only "completed" means done.
+        const isProcessing = result?.status !== "completed";
+
         enqueueSnackbar(
           <>
-            Datapoints added to newly created dataset
+            {isProcessing
+              ? "Dataset created. Rows are still being added in the background, this can take a while for large selections."
+              : "Datapoints added to newly created dataset"}
             <span
               onClick={() =>
-                navigate(
-                  `/dashboard/develop/${res?.data?.result?.dataset_id ?? res?.data?.result?.datasetId}?tab=data`,
-                  { state: { from: location.pathname } },
-                )
+                navigate(`/dashboard/develop/${datasetId}?tab=data`, {
+                  state: { from: location.pathname },
+                })
               }
               style={{
                 textDecoration: "underline",
@@ -132,7 +138,7 @@ const AddNewDataset = ({
               View Dataset
             </span>
           </>,
-          { variant: "success" },
+          { variant: isProcessing ? "info" : "success" },
         );
         handleclose();
         if (onSuccess) {
