@@ -64,11 +64,37 @@ The script requires exactly one open PR targeting `main` from the same-repositor
 branch `release-please--branches--main`. API metadata must identify the author as
 `futureagi-release-bot[bot]` (type Bot), and the title must be exactly
 `chore(main): release X.Y.Z`, with a stable version. Drafts, closed/merged PRs,
-unknown mergeability, a `release-hold` label, incomplete file lists and changes
-outside release metadata all stop automation. The file allowlist follows the
-simple release-please config: `CHANGELOG.md`, `.release-please-manifest.json`,
-`version.txt`, and `deploy/helm/futureagi/Chart.yaml`; only additions/modifications
-are eligible. An intentional release-config change needs a policy update.
+unknown mergeability, a `release-hold` label (case-insensitive), malformed label
+data, incomplete file lists and changes outside release metadata all stop
+automation. The file allowlist follows the simple release-please config:
+`CHANGELOG.md`, `.release-please-manifest.json`, `version.txt`, and
+`deploy/helm/futureagi/Chart.yaml`; only additions/modifications are eligible.
+
+Paths alone are not approval evidence. The script reads those files **as data**
+at the API-reported immutable base and head commit SHAs, using Git trees and
+blobs rather than executing a checkout or trusting PR diff patches. Complete,
+untruncated trees prove file presence/absence and regular `100644` modes; symlinks,
+executable files, submodules and non-directory parents stop automation. Blobs must
+be valid nonempty UTF-8 without NULs, at most 2 MB each, with matching size and Git
+object hash. The changed-file list must agree with this evidence.
+
+- The manifest must contain exactly the single `.` package, whose stable version
+  must advance from the base and equal the PR title. Duplicate JSON keys, extra
+  packages, malformed content and inconsistent versions require a person.
+- Both base and head charts must parse as safe, duplicate-free YAML without
+  aliases. Only the top-level `version` and `appVersion` scalar values may change;
+  every other byte must stay identical, including `kubeVersion`, dependencies,
+  annotations and comments. Versions must match the corresponding manifest:
+  `X.Y.Z` and `vX.Y.Z`. Unsupported layouts stop automation rather than guessing.
+- `version.txt`, when present, must contain the corresponding manifest version,
+  with at most one trailing newline. Its initial creation is allowed; absence on
+  both sides is supported because the current repository has no version file.
+- Changelog prose may change. Missing base/head manifest or chart evidence is not
+  eligible, even if a PR claims to touch only the changelog.
+
+An intentional release-config or metadata-layout change needs a policy update.
+The chart parser is pinned to PyYAML 6.0.3; the image-environment guard remains
+stdlib-only and does not parse PR metadata.
 
 Required check runs and legacy statuses are fetched, with pagination, from the
 immutable **head SHA** endpoints. Old-SHA results do not count. Missing, queued,
@@ -84,8 +110,10 @@ Once reliable, an admin can add its exact aggregate check name to
 is not evidence that E2E passed.
 
 The policy re-reads the PR around each evidence collection and repeats the whole
-decision after recording its audit and approval. Approval and audit writes are
-idempotent per SHA. If they reset GitHub's `updated_at`, the merge waits another
+decision, including contents and case-insensitive holds, after recording its audit
+and approval. Policy-v2 approval and audit writes are idempotent per head/base SHA
+pair; older policy approvals are not reused as v2 evidence. If the writes reset
+GitHub's `updated_at`, the merge waits another
 configured cooldown; later runs reuse the existing approval/comment instead of
 resetting the clock forever. A dismissed or changes-requested Actions review on
 that head requires human resolution. The final merge uses the release App token
@@ -140,8 +168,9 @@ pending-migration check remains mandatory; migrations are never run by this bot.
 
 ## Hold, audit and rollout
 
-- To hold a release before merge, add `release-hold` to the release PR. Remove it
-  when ready; its update restarts the normal cooldown. To stop the entire PR
+- To hold a release before merge, add `release-hold` to the release PR. Displayed
+  spellings such as `Release-Hold` and `RELEASE-HOLD` also stop approval and merge.
+  Remove it when ready; its update restarts the normal cooldown. To stop the entire PR
   policy, unset `RELEASE_AUTOPILOT` or set it to `off`.
 - After merge/tagging, `release-hold` cannot undo the release. Set
   `RELEASE_AUTO_APPROVE=off` for future runs, cancel any already-running release
@@ -163,12 +192,21 @@ pending-migration check remains mandatory; migrations are never run by this bot.
 
 ## Verification and unchanged workflow sections
 
-Synthetic tests run with `python3 scripts/test_release_autopilot.py` (stdlib only),
-including Git histories, every merge predicate, current-SHA status handling,
-transaction rechecks, idempotent audit/approval, and environment decisions. Run
-workload tests only in E2B or CI, not on the shared development host. The existing
-`Release script checks` job discovers `scripts/test_*.py`; its path filter needs
-this new workflow/script/test added for future script-only changes.
+Synthetic tests run with `python3 scripts/test_release_autopilot.py` after
+installing `PyYAML==6.0.3`, including Git histories, every merge predicate,
+case-insensitive holds before/after approval, content/mode/version rejection,
+immutable Git API evidence, current-SHA status handling, transaction rechecks,
+idempotent audit/approval, and environment decisions. Run workload tests only in
+E2B or CI, not on the shared development host.
+
+**Integration prerequisite:** the existing `Release script checks` job discovers
+`scripts/test_*.py`, but its workflow is outside this lane's edit ownership. Before
+landing, its owner must add `.github/workflows/release-autopilot.yml`,
+`scripts/release_autopilot.py` and `scripts/test_release_autopilot.py` to the
+`pull_request.paths` filter in `.github/workflows/worker-release-checks.yml`, and
+install `PyYAML==6.0.3` before discovery. Without that change, policy-only/test-only
+PRs lack a regression gate and the discover-all run cannot rely on an installed
+parser. This is required wiring, not a documentation substitute for CI coverage.
 
 The `release-images.yml` diff is deliberately limited:
 

@@ -3,6 +3,8 @@
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
+import base64
+import hashlib
 import io
 import json
 import os
@@ -23,16 +25,36 @@ PR = {
     "user": {"login": policy.AUTHOR, "type": "Bot"},
     "head": {"ref": policy.BRANCH, "sha": SHA, "repo": {"full_name": policy.REPOSITORY}},
     "base": {"ref": "main", "sha": BASE, "repo": {"full_name": policy.REPOSITORY}},
-    "title": "chore(main): release 1.2.3", "labels": [], "changed_files": 1,
+    "title": "chore(main): release 1.2.3", "labels": [], "changed_files": 4,
     "updated_at": "2026-11-10T09:00:00Z", "mergeable": True,
 }
-FILES = [{"filename": "CHANGELOG.md", "status": "modified"}]
+FILES = [{"filename": path, "status": "modified"} for path in sorted(policy.RELEASE_FILES)]
 CHECK = {"id": 1, "name": "Backend Tests Pass", "head_sha": SHA,
          "app": {"id": 1}, "status": "completed", "conclusion": "success"}
 
 
-def evidence(pr=None):
-    return deepcopy((pr or PR, FILES, [CHECK], []))
+def blob_entry(text):
+    raw = text.encode("utf-8")
+    return {"mode": "100644", "type": "blob", "text": text,
+            "sha": hashlib.sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest()}
+
+
+def metadata_files(version):
+    return {policy.MANIFEST: blob_entry(json.dumps({".": version}) + "\n"),
+            policy.CHART: blob_entry("apiVersion: v2\nname: synthetic\ntype: application\n"
+                                     f"version: {version} # x-release-please-version\n"
+                                     f'appVersion: "v{version}" # x-release-please-version\n'
+                                     'kubeVersion: ">=1.27.0-0"\n'),
+            "version.txt": blob_entry(version + "\n"),
+            "CHANGELOG.md": blob_entry(f"# Changelog\n\n## {version}\n\nSynthetic release notes.\n")}
+
+
+METADATA = {"base_sha": BASE, "head_sha": SHA,
+            "base": metadata_files("1.2.2"), "head": metadata_files("1.2.3")}
+
+
+def evidence(pr=None, metadata=None):
+    return deepcopy((pr or PR, FILES, [CHECK], [], METADATA if metadata is None else metadata))
 
 
 class FrozenDatetime(datetime):
@@ -42,11 +64,12 @@ class FrozenDatetime(datetime):
 
 
 class MergePolicyTests(unittest.TestCase):
-    def decide(self, *, pr=None, files=None, checks=None, statuses=None, config=None, now=NOW):
+    def decide(self, *, pr=None, files=None, checks=None, statuses=None, metadata=None, config=None, now=NOW):
         return policy.merge_decision(deepcopy(PR if pr is None else pr),
                                      FILES if files is None else files,
                                      [CHECK] if checks is None else checks,
                                      [] if statuses is None else statuses,
+                                     METADATA if metadata is None else metadata,
                                      CONFIG if config is None else config, now)[0]
 
     def test_all_default_conditions_allow(self):
@@ -93,7 +116,8 @@ class MergePolicyTests(unittest.TestCase):
         for side in ("head", "base"):
             for field, value in (("ref", "other"), ("repo", {"full_name": "outsider/fork"})):
                 cases.append({**PR, side: {**PR[side], field: value}})
-        cases.append({**PR, "head": {**PR["head"], "sha": "not-a-sha"}})
+        for side in ("head", "base"):
+            cases.append({**PR, side: {**PR[side], "sha": "not-a-sha"}})
         for title in ("chore(main): release 1.2.3\nother", "chore(main): release 1.2.3-beta.1",
                       "chore(main): release 01.2.3", "chore(dev): release 1.2.3"):
             cases.append({**PR, "title": title})
@@ -102,20 +126,24 @@ class MergePolicyTests(unittest.TestCase):
                 self.assertFalse(self.decide(pr=candidate))
 
     def test_hold_and_missing_labels_block(self):
-        self.assertFalse(self.decide(pr={**PR, "labels": [{"name": "release-hold"}]}))
-        self.assertFalse(self.decide(pr={**PR, "labels": None}))
+        for name in ("release-hold", "Release-Hold", "RELEASE-HOLD", "ReLeAsE-hOlD"):
+            with self.subTest(name=name):
+                self.assertFalse(self.decide(pr={**PR, "labels": [{"name": name}]}))
+        for labels in (None, {}, [None], ["release-hold"], [{}], [{"name": None}],
+                       [{"name": 42}], [{"name": ""}]):
+            with self.subTest(labels=labels):
+                self.assertFalse(self.decide(pr={**PR, "labels": labels}))
         self.assertTrue(self.decide(pr={**PR, "labels": [{"name": "autorelease: pending"}]}))
 
     def test_only_complete_release_metadata_file_list_is_allowed(self):
-        for filename in policy.RELEASE_FILES:
-            self.assertTrue(self.decide(files=[{"filename": filename, "status": "modified"}]))
         for filename in (".github/workflows/release-images.yml", "futureagi/app/views.py",
                          "futureagi/accounts/migrations/0099_new.py", "other.md"):
-            self.assertFalse(self.decide(files=[{"filename": filename, "status": "modified"}]))
+            self.assertFalse(self.decide(files=[*FILES[:-1], {"filename": filename, "status": "modified"}]))
         self.assertFalse(self.decide(files=[]))
         self.assertFalse(self.decide(pr={**PR, "changed_files": 2}))
+        self.assertFalse(self.decide(files=[FILES[0]] * len(FILES)))
         for status in ("removed", "renamed", None):
-            self.assertFalse(self.decide(files=[{"filename": "CHANGELOG.md", "status": status}]))
+            self.assertFalse(self.decide(files=[*FILES[:-1], {**FILES[-1], "status": status}]))
 
     def test_age_boundary_configuration_unknown_and_future(self):
         self.assertTrue(self.decide(pr={**PR, "updated_at": "2026-11-10T09:30:00Z"}))
@@ -160,6 +188,123 @@ class MergePolicyTests(unittest.TestCase):
         self.assertFalse(self.decide(checks=[], statuses=[{**status, "sha": BASE}]))
         self.assertFalse(self.decide(statuses=[status, {**status, "id": 2, "state": "pending"}]))
         self.assertFalse(self.decide(checks=[{**CHECK, "conclusion": "failure"}], statuses=[status]))
+
+
+class MetadataPolicyTests(unittest.TestCase):
+    decide = MergePolicyTests.decide
+
+    def test_title_versions_agree_and_only_chart_version_scalars_change(self):
+        self.assertTrue(self.decide())
+        for ending in ("", "\n"):
+            metadata = deepcopy(METADATA)
+            metadata["head"]["version.txt"] = blob_entry("1.2.3" + ending)
+            self.assertTrue(self.decide(metadata=metadata))
+
+    def test_version_file_can_be_created_or_remain_absent(self):
+        metadata = deepcopy(METADATA)
+        metadata["base"]["version.txt"] = None
+        files = [{**row, "status": "added" if row["filename"] == "version.txt" else "modified"} for row in FILES]
+        self.assertTrue(self.decide(metadata=metadata, files=files))
+        self.assertFalse(self.decide(metadata=metadata))  # Incorrect modified evidence.
+        metadata["head"]["version.txt"] = None
+        files = [row for row in FILES if row["filename"] != "version.txt"]
+        self.assertTrue(self.decide(pr={**PR, "changed_files": 3}, metadata=metadata, files=files))
+
+    def test_non_version_chart_changes_are_not_release_metadata(self):
+        original = METADATA["head"][policy.CHART]["text"]
+        for text in (original.replace(">=1.27.0-0", ">=99.0.0"),
+                     original.replace("name: synthetic", "name: other"),
+                     original.replace("type: application", "type: library"),
+                     original + "dependencies:\n- name: other\n  version: 1.0.0\n",
+                     original + 'annotations:\n  other: "changed"\n',
+                     original + "# unrelated edit\n"):
+            with self.subTest(text=text):
+                metadata = deepcopy(METADATA)
+                metadata["head"][policy.CHART] = blob_entry(text)
+                self.assertFalse(self.decide(metadata=metadata))
+
+    def test_inconsistent_and_malformed_release_versions_block(self):
+        for path, text in ((policy.MANIFEST, '{".": "not-a-version"}'),
+                           (policy.MANIFEST, '{".": "1.2.4"}'),
+                           (policy.MANIFEST, '{".": "v1.2.3"}'),
+                           (policy.MANIFEST, '{".": "01.2.3"}'),
+                           (policy.MANIFEST, '{".": "1.2.3", "other": "1.2.3"}'),
+                           (policy.MANIFEST, '{".": "bad", ".": "1.2.3"}'),
+                           (policy.MANIFEST, '["1.2.3"]'), (policy.MANIFEST, '{'),
+                           ("version.txt", "1.2.4\n"), ("version.txt", "v1.2.3\n"),
+                           ("version.txt", "1.2.3\nextra\n"), ("version.txt", "1.2.3\n\n")):
+            with self.subTest(path=path, text=text):
+                metadata = deepcopy(METADATA)
+                metadata["head"][path] = blob_entry(text)
+                self.assertFalse(self.decide(metadata=metadata))
+        for field in ("version: 1.2.3", 'appVersion: "v1.2.3"'):
+            metadata = deepcopy(METADATA)
+            metadata["head"][policy.CHART] = blob_entry(metadata["head"][policy.CHART]["text"].replace(field, field.replace("1.2.3", "1.2.4")))
+            self.assertFalse(self.decide(metadata=metadata))
+
+    def test_malformed_duplicate_and_unsafe_yaml_block_even_in_base(self):
+        for suffix in ("broken: [\n", "version: 1.2.3\n", "appVersion: v1.2.3\n",
+                       "kubeVersion: other\n", "bad: !!python/object:os.system {}\n",
+                       "one: &one [1]\ntwo: *one\n", "---\nversion: 1.2.3\n"):
+            metadata = deepcopy(METADATA)
+            # Same unrelated bytes on both sides must not hide malformed YAML.
+            for side in ("base", "head"):
+                metadata[side][policy.CHART] = blob_entry(metadata[side][policy.CHART]["text"] + suffix)
+            with self.subTest(suffix=suffix):
+                self.assertFalse(self.decide(metadata=metadata))
+
+    def test_incomplete_stale_or_missing_content_blocks(self):
+        for key in ("base_sha", "head_sha", "base", "head"):
+            metadata = deepcopy(METADATA)
+            metadata.pop(key)
+            self.assertFalse(self.decide(metadata=metadata))
+        for key in ("base_sha", "head_sha"):
+            metadata = deepcopy(METADATA)
+            metadata[key] = "c" * 40
+            self.assertFalse(self.decide(metadata=metadata))
+        for side in ("base", "head"):
+            for path in policy.RELEASE_FILES:
+                metadata = deepcopy(METADATA)
+                metadata[side].pop(path)
+                self.assertFalse(self.decide(metadata=metadata))
+            for path in (policy.MANIFEST, policy.CHART):
+                metadata = deepcopy(METADATA)
+                metadata[side][path] = None
+                self.assertFalse(self.decide(metadata=metadata))
+
+    def test_symlinks_executables_submodules_and_invalid_text_block(self):
+        for side in ("base", "head"):
+            for path in policy.RELEASE_FILES:
+                for field, value in (("mode", "120000"), ("mode", "100755"), ("mode", "160000"),
+                                     ("type", "commit"), ("sha", "bad"), ("text", None),
+                                     ("text", ""), ("text", "bad\0text"), ("text", "x" * (policy.MAX_BLOB_BYTES + 1))):
+                    with self.subTest(side=side, path=path, field=field, value_type=type(value).__name__):
+                        metadata = deepcopy(METADATA)
+                        metadata[side][path][field] = value
+                        self.assertFalse(self.decide(metadata=metadata))
+
+    def test_unchanged_or_omitted_files_do_not_supply_complete_evidence(self):
+        metadata = deepcopy(METADATA)
+        metadata["head"][policy.CHART] = metadata["base"][policy.CHART]
+        self.assertFalse(self.decide(metadata=metadata))
+        files = [row for row in FILES if row["filename"] != policy.CHART]
+        self.assertFalse(self.decide(pr={**PR, "changed_files": 3}, files=files))
+        # The original reviewer counterexample: only kubeVersion changes.
+        metadata = deepcopy(METADATA)
+        metadata["head"] = deepcopy(metadata["base"])
+        metadata["head"][policy.CHART] = blob_entry(metadata["head"][policy.CHART]["text"].replace(">=1.27.0-0", ">=99.0.0"))
+        self.assertFalse(self.decide(pr={**PR, "changed_files": 1}, metadata=metadata,
+                                    files=[{"filename": policy.CHART, "status": "modified"}]))
+
+    def test_versions_must_advance_from_a_known_consistent_baseline(self):
+        for version in ("1.2.3", "1.2.4", "2.0.0"):
+            metadata = deepcopy(METADATA)
+            metadata["base"] = metadata_files(version)
+            self.assertFalse(self.decide(metadata=metadata))
+        for path in (policy.MANIFEST, policy.CHART, "version.txt"):
+            metadata = deepcopy(METADATA)
+            metadata["base"][path] = metadata_files("1.2.1")[path]
+            self.assertFalse(self.decide(metadata=metadata))
 
 
 class EnvironmentPolicyTests(unittest.TestCase):
@@ -318,6 +463,119 @@ class GitEvidenceTests(unittest.TestCase):
             git.assert_not_called()
 
 
+def metadata_api_responses(metadata):
+    """Synthetic Git REST objects, with no network or repository contents."""
+    responses = {}
+
+    def make_tree(nodes):
+        entries = []
+        for name, node in sorted(nodes.items()):
+            if "text" in node:
+                raw = node["text"].encode("utf-8")
+                responses[f"git/blobs/{node['sha']}"] = {
+                    "sha": node["sha"], "size": len(raw), "encoding": "base64",
+                    "content": base64.b64encode(raw).decode() + "\n"}
+                entries.append({"path": name, **{key: node[key] for key in ("sha", "mode", "type")}})
+            else:
+                entries.append({"path": name, "mode": "040000", "type": "tree", "sha": make_tree(node)})
+        sha = hashlib.sha1(json.dumps(entries, sort_keys=True).encode()).hexdigest()
+        responses[f"git/trees/{sha}"] = {"sha": sha, "truncated": False, "tree": entries}
+        return sha
+
+    for side in ("base", "head"):
+        nodes = {}
+        for path, entry in metadata[side].items():
+            if entry is None:
+                continue
+            parent = nodes
+            parts = path.split("/")
+            for part in parts[:-1]:
+                parent = parent.setdefault(part, {})
+            parent[parts[-1]] = entry
+        sha = metadata[f"{side}_sha"]
+        responses[f"git/commits/{sha}"] = {"sha": sha, "tree": {"sha": make_tree(nodes)}}
+    return responses
+
+
+class MetadataAdapterTests(unittest.TestCase):
+    def test_blobs_are_bound_to_both_immutable_commits_and_never_checked_out(self):
+        responses = metadata_api_responses(METADATA)
+        with patch.object(policy, "api", side_effect=lambda path: responses[path]) as api:
+            self.assertEqual(policy.release_metadata(BASE, SHA), METADATA)
+        requested = [call.args[0] for call in api.call_args_list]
+        self.assertIn(f"git/commits/{BASE}", requested)
+        self.assertIn(f"git/commits/{SHA}", requested)
+        self.assertEqual(len(requested), len(set(requested)))
+        self.assertTrue(all(path.startswith(("git/commits/", "git/trees/", "git/blobs/")) for path in requested))
+        self.assertTrue(all(len(path.rsplit("/", 1)[1]) == 40 for path in requested))
+        self.assertTrue(all(call.kwargs == {} for call in api.call_args_list))
+
+    def test_absence_requires_untruncated_tree_and_optional_addition_works(self):
+        metadata = deepcopy(METADATA)
+        metadata["base"]["version.txt"] = None
+        responses = metadata_api_responses(metadata)
+        with patch.object(policy, "api", side_effect=lambda path: responses[path]):
+            self.assertEqual(policy.release_metadata(BASE, SHA), metadata)
+        for field, value in (("truncated", True), ("truncated", None), ("tree", None), ("sha", "c" * 40)):
+            responses = metadata_api_responses(METADATA)
+            root = responses[f"git/commits/{BASE}"]["tree"]["sha"]
+            responses[f"git/trees/{root}"][field] = value
+            with self.subTest(field=field, value=value), patch.object(policy, "api", side_effect=lambda path: responses[path]), self.assertRaises(RuntimeError):
+                policy.release_metadata(BASE, SHA)
+
+    def test_tree_and_file_types_cannot_be_hidden_by_contents_api(self):
+        for mode, kind in (("120000", "blob"), ("100755", "blob"), ("160000", "commit"), ("040000", "tree")):
+            metadata = deepcopy(METADATA)
+            metadata["head"][policy.CHART].update(mode=mode, type=kind)
+            responses = metadata_api_responses(metadata)
+            with self.subTest(mode=mode), patch.object(policy, "api", side_effect=lambda path: responses[path]), self.assertRaises(RuntimeError):
+                policy.release_metadata(BASE, SHA)
+        responses = metadata_api_responses(METADATA)
+        root = responses[f"git/commits/{SHA}"]["tree"]["sha"]
+        parent = next(entry for entry in responses[f"git/trees/{root}"]["tree"] if entry["path"] == "deploy")
+        parent.update(mode="120000", type="blob")
+        with patch.object(policy, "api", side_effect=lambda path: responses[path]), self.assertRaises(RuntimeError):
+            policy.release_metadata(BASE, SHA)
+
+    def test_blob_size_encoding_hash_and_content_must_be_complete(self):
+        blob_path = f"git/blobs/{METADATA['head'][policy.MANIFEST]['sha']}"
+        for field, value in (("sha", "c" * 40), ("encoding", "none"), ("size", 0),
+                             ("size", True), ("size", policy.MAX_BLOB_BYTES + 1), ("size", 1),
+                             ("content", None), ("content", "not base64"),
+                             ("content", base64.b64encode(b'{".":"9.9.9"}').decode())):
+            responses = metadata_api_responses(METADATA)
+            responses[blob_path][field] = value
+            with self.subTest(field=field, value=value), patch.object(policy, "api", side_effect=lambda path: responses[path]), self.assertRaises(RuntimeError):
+                policy.release_metadata(BASE, SHA)
+        for raw in (b"\xff", b"text\0text"):
+            responses = metadata_api_responses(METADATA)
+            digest = hashlib.sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest()
+            root = responses[f"git/commits/{SHA}"]["tree"]["sha"]
+            entry = next(row for row in responses[f"git/trees/{root}"]["tree"] if row["path"] == policy.MANIFEST)
+            entry["sha"] = digest
+            responses[f"git/blobs/{digest}"] = {"sha": digest, "encoding": "base64", "size": len(raw),
+                                               "content": base64.b64encode(raw).decode()}
+            with patch.object(policy, "api", side_effect=lambda path: responses[path]), self.assertRaises(RuntimeError):
+                policy.release_metadata(BASE, SHA)
+
+    def test_missing_commit_or_duplicate_tree_evidence_blocks(self):
+        responses = metadata_api_responses(METADATA)
+        responses[f"git/commits/{BASE}"]["sha"] = "c" * 40
+        with patch.object(policy, "api", side_effect=lambda path: responses[path]), self.assertRaises(RuntimeError):
+            policy.release_metadata(BASE, SHA)
+        responses = metadata_api_responses(METADATA)
+        root = responses[f"git/commits/{BASE}"]["tree"]["sha"]
+        entries = responses[f"git/trees/{root}"]["tree"]
+        entries.append(deepcopy(entries[0]))
+        with patch.object(policy, "api", side_effect=lambda path: responses[path]), self.assertRaises(RuntimeError):
+            policy.release_metadata(BASE, SHA)
+        with patch.object(policy, "api", side_effect=RuntimeError("unavailable")), self.assertRaises(RuntimeError):
+            policy.release_metadata(BASE, SHA)
+        with patch.object(policy, "api") as api, self.assertRaises(RuntimeError):
+            policy.release_metadata("main", SHA)
+        api.assert_not_called()
+
+
 class ApiAdapterTests(unittest.TestCase):
     def test_lists_paginate_and_incomplete_responses_fail_closed(self):
         with patch.object(policy, "api", side_effect=[[{}] * 100, [{"id": 101}]]) as api:
@@ -337,11 +595,15 @@ class ApiAdapterTests(unittest.TestCase):
                 return [CHECK]
             self.assertIn(f"commits/{SHA}/statuses", path)
             return [{"id": 1, "context": "Backend Tests Pass", "state": "success"}]
-        with patch.object(policy, "api", return_value=PR), patch.object(policy, "pages", side_effect=listing):
+        with patch.object(policy, "api", return_value=PR), patch.object(policy, "pages", side_effect=listing), \
+                patch.object(policy, "release_metadata", return_value=METADATA) as metadata:
             result = policy.snapshot(42)
             self.assertEqual(result[3][0]["sha"], SHA)
+            self.assertEqual(result[4], METADATA)
+            metadata.assert_called_once_with(BASE, SHA)
         with patch.object(policy, "api", side_effect=[PR, {**PR, "labels": [{"name": "release-hold"}]}]), \
-                patch.object(policy, "pages", side_effect=listing), self.assertRaises(RuntimeError):
+                patch.object(policy, "pages", side_effect=listing), patch.object(policy, "release_metadata", return_value=METADATA), \
+                self.assertRaises(RuntimeError):
             policy.snapshot(42)
 
     def test_api_uses_stdin_payload_and_never_echoes_error_body(self):
@@ -356,19 +618,21 @@ class ApiAdapterTests(unittest.TestCase):
 
 
 class ExecutionTests(unittest.TestCase):
-    def run_merge(self, *, first=None, final=None, already_approved=False, merge_result=True):
+    def run_merge(self, *, first=None, final=None, first_metadata=None, final_metadata=None,
+                  already_approved=False, merge_result=True, prior_marker=None):
         first = deepcopy(first or PR)
         final = deepcopy(final or first)
-        marker = f"<!-- release-autopilot-v1:{SHA} -->"
+        marker = prior_marker or f"<!-- release-autopilot-v2:{SHA}:{BASE} -->"
         comments = [{"user": {"login": "github-actions[bot]"}, "body": marker}] if already_approved else []
         reviews = [{"id": 1, "user": {"login": "github-actions[bot]"}, "body": marker,
                     "state": "APPROVED", "commit_id": SHA}] if already_approved else []
         if already_approved:
-            first["labels"] = final["labels"] = [{"name": policy.APPROVED_LABEL}]
+            first["labels"].append({"name": policy.APPROVED_LABEL})
+            final["labels"].append({"name": policy.APPROVED_LABEL})
         env = {**CONFIG, "EXPECTED_PR": "42", "EXPECTED_HEAD_SHA": SHA,
                "RELEASE_APP_TOKEN": "synthetic-app", "GH_TOKEN": "synthetic-actions"}
         with patch.dict(os.environ, env, clear=True), patch.object(policy, "datetime", FrozenDatetime), \
-                patch.object(policy, "snapshot", side_effect=[evidence(first), evidence(final)]), \
+                patch.object(policy, "snapshot", side_effect=[evidence(first, first_metadata), evidence(final, final_metadata)]), \
                 patch.object(policy, "pages", side_effect=[comments, reviews]), \
                 patch.object(policy, "api", return_value={"merged": merge_result}) as api, \
                 patch("sys.stdout", new_callable=io.StringIO):
@@ -399,6 +663,15 @@ class ExecutionTests(unittest.TestCase):
         comments = [call for call in calls if call.args[0] == "issues/42/comments"]
         self.assertEqual(len(comments), 1)  # Success comment only, after merge.
 
+    def test_older_policy_or_base_approval_does_not_replace_current_audit(self):
+        for marker in (f"<!-- release-autopilot-v1:{SHA} -->",
+                       f"<!-- release-autopilot-v2:{SHA}:{'c' * 40} -->"):
+            calls = self.run_merge(already_approved=True, prior_marker=marker)
+            approval = next(call for call in calls if call.args[0] == "pulls/42/reviews")
+            self.assertTrue(approval.kwargs["data"]["body"].startswith(f"<!-- release-autopilot-v2:{SHA}:{BASE} -->"))
+            self.assertIn("content/mode allowlist", approval.kwargs["data"]["body"])
+            self.assertEqual(len([call for call in calls if call.args[0] == "issues/42/comments"]), 2)
+
     def test_changed_head_base_or_hold_after_approval_never_merges(self):
         cases = [{**PR, "head": {**PR["head"], "sha": "c" * 40}},
                  {**PR, "base": {**PR["base"], "sha": "c" * 40}},
@@ -407,6 +680,32 @@ class ExecutionTests(unittest.TestCase):
             with self.subTest(final=final):
                 calls = self.run_merge(final=final)
                 self.assertFalse(any(call.args[0].endswith("/merge") for call in calls))
+
+    def test_hold_capitalization_blocks_before_writes_and_after_approval(self):
+        for name in ("release-hold", "Release-Hold", "RELEASE-HOLD"):
+            with self.subTest(name=name):
+                held = {**PR, "labels": [{"name": name}]}
+                self.assertEqual(self.run_merge(first=held), [])
+                for approved in (False, True):
+                    calls = self.run_merge(final=held, already_approved=approved)
+                    self.assertFalse(any(call.args[0].endswith("/merge") for call in calls))
+
+    def test_missing_or_malformed_labels_never_approve_or_merge(self):
+        for labels in (None, [None], [{}], [{"name": None}], [{"name": ""}]):
+            candidate = {**PR, "labels": labels}
+            self.assertEqual(self.run_merge(first=candidate), [])
+            calls = self.run_merge(final=candidate)
+            self.assertFalse(any(call.args[0].endswith("/merge") for call in calls))
+
+    def test_metadata_contents_are_checked_initially_and_after_approval(self):
+        for path, text in ((policy.CHART, METADATA["head"][policy.CHART]["text"].replace(">=1.27.0-0", ">=99.0.0")),
+                           (policy.MANIFEST, '{".": "invalid"}'), ("version.txt", "1.2.4\n")):
+            metadata = deepcopy(METADATA)
+            metadata["head"][path] = blob_entry(text)
+            self.assertEqual(self.run_merge(first_metadata=metadata), [])
+            calls = self.run_merge(final_metadata=metadata)
+            self.assertTrue(any(call.args[0] == "pulls/42/reviews" for call in calls))
+            self.assertFalse(any(call.args[0].endswith("/merge") for call in calls))
 
     def test_changed_head_since_check_performs_no_writes(self):
         calls = self.run_merge(first={**PR, "head": {**PR["head"], "sha": "c" * 40}})
@@ -452,7 +751,8 @@ class WorkflowContractTests(unittest.TestCase):
         text = (Path(__file__).resolve().parents[1] / ".github/workflows/release-autopilot.yml").read_text()
         for fragment in ('cron: "*/15 * * * *"', 'workflows: ["Backend CI"]', "workflow_dispatch:",
                          "github.event.repository.default_branch", "persist-credentials: false", "checks: read",
-                         "statuses: read", "permission-contents: write", "permission-pull-requests: write"):
+                         "statuses: read", "permission-contents: write", "permission-pull-requests: write",
+                         "python3 -m pip install --disable-pip-version-check PyYAML==6.0.3"):
             self.assertIn(fragment, text)
         self.assertNotIn("pull_request_target:", text)
         self.assertNotIn("github.event.workflow_run.head_sha", text)
