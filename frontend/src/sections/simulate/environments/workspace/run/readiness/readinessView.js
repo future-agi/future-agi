@@ -20,6 +20,7 @@ const CHECK_STATES = {
   failed: "failed",
   check_unavailable: "ours",
   retry: "retry",
+  unavailable: "unavailable",
 };
 
 // A row nothing measures yet (browser, sub-agents) would keep its area

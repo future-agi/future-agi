@@ -40,6 +40,8 @@ const STATE_ROLE = {
   ours: "unavailable",
   retry: "untested",
   unchecked: "untested",
+  unavailable: "unavailable",
+  refused: "failed",
 };
 
 function stateText(state, reason) {
@@ -50,33 +52,42 @@ function stateText(state, reason) {
 const spinner = <CircularProgress size={12} color="inherit" />;
 
 const MAX_NAMES = 10;
+// The cases route reads at most 200 scenario keys.
+const MAX_KEYS = 200;
 
-// A header count that names its scenarios on hover, fetched when first shown.
-function CountTip({ envId, picks, keys, bucket, children }) {
+// A header count that names its scenarios on hover: the first page the
+// server lists, and how many more from the count itself.
+function CountTip({ envId, picks, keys, bucket, count, children }) {
   const [shown, setShown] = useState(false);
+  const tooMany = (keys?.length || 0) > MAX_KEYS;
   const cases = useReadinessCases(envId, {
     picks,
     bucket,
     keys,
-    enabled: shown,
+    enabled: shown && !tooMany,
   });
-  const names = (cases.data || []).map((one) => one.name || one.key);
-  const title = cases.data ? (
-    <Box component="ul" sx={{ m: 0, pl: 2 }}>
-      {names.slice(0, MAX_NAMES).map((name) => (
-        <Box component="li" key={name}>
-          {name}
-        </Box>
-      ))}
-      {names.length > MAX_NAMES && (
-        <Box component="li" sx={{ listStyle: "none", ml: -2 }}>
-          {COPY.namesMore(names.length - MAX_NAMES)}
-        </Box>
-      )}
-    </Box>
-  ) : (
-    COPY.namesLoading
-  );
+  const names = (cases.data || [])
+    .slice(0, MAX_NAMES)
+    .map((one) => ({ key: one.key, name: one.name || one.key }));
+  let title = COPY.namesLoading;
+  if (tooMany) title = COPY.namesTooMany;
+  else if (cases.isError) title = COPY.namesError;
+  else if (cases.data) {
+    title = (
+      <Box component="ul" sx={{ m: 0, pl: 2 }}>
+        {names.map((one) => (
+          <Box component="li" key={one.key}>
+            {one.name}
+          </Box>
+        ))}
+        {count > names.length && (
+          <Box component="li" sx={{ listStyle: "none", ml: -2 }}>
+            {COPY.namesMore(count - names.length)}
+          </Box>
+        )}
+      </Box>
+    );
+  }
   return (
     <CustomTooltip
       show
@@ -100,6 +111,7 @@ CountTip.propTypes = {
   picks: PropTypes.object,
   keys: PropTypes.arrayOf(PropTypes.string),
   bucket: PropTypes.string.isRequired,
+  count: PropTypes.number,
   children: PropTypes.node,
 };
 
@@ -239,13 +251,15 @@ export default function ReadyToRunSection({
   const [pressed, setPressed] = useState(null);
   // One fix open at a time keeps the section short; the popup body scrolls.
   const [openArea, setOpenArea] = useState(null);
+  // After an agent retry, until the report has been read again.
+  const [refreshing, setRefreshing] = useState(false);
   const view = useMemo(
     () => (readiness.data ? readinessView(readiness.data) : null),
     [readiness.data],
   );
 
   // From the click until the server says it is checking, Run waits too.
-  const sending = recheck.isPending || retryAgent.isPending;
+  const sending = recheck.isPending || retryAgent.isPending || refreshing;
   useEffect(() => {
     if (readiness.isLoading) onView?.(LOADING_VIEW);
     else onView?.(view && sending ? { ...view, canRun: false } : view);
@@ -275,9 +289,18 @@ export default function ReadyToRunSection({
   const agentId = readiness.data?.pairing?.agent_version?.id;
   const runRetryAgent = (from = null) => {
     setPressed(from);
+    setRefreshing(true);
     retryAgent.mutate(
       { versionId: agentId },
-      { onSettled: () => readiness.refetch() },
+      {
+        onSettled: async () => {
+          try {
+            await readiness.refetch();
+          } finally {
+            setRefreshing(false);
+          }
+        },
+      },
     );
   };
   const blockers = view.open.filter((line) => line.status === "blocked").length;
@@ -286,8 +309,17 @@ export default function ReadyToRunSection({
   if (view.grading.gradable > 0 && !view.grading.notGradable) {
     readyLabels.push(COPY.areas.grading);
   }
-  const noteState = checking ? "checking" : view.state;
-  const note = stateText(noteState, view.stateReason);
+  // A re-check or retry the server turned down says so, in its words.
+  const refusal = recheck.isError ? recheck.error : retryAgent.error;
+  const cantCheck = recheck.data?.validation?.state === "unavailable";
+  let noteState = view.state;
+  if (checking) noteState = "checking";
+  else if (refusal) noteState = "refused";
+  else if (cantCheck) noteState = "unavailable";
+  const note = stateText(
+    noteState,
+    refusal ? refusal.message || refusal.detail : view.stateReason,
+  );
 
   return (
     <Box data-testid="ready-to-run" sx={boxSx}>
@@ -318,6 +350,7 @@ export default function ReadyToRunSection({
                   picks={picks}
                   keys={keys}
                   bucket={part.bucket}
+                  count={part.count}
                 >
                   {part.text}
                 </CountTip>

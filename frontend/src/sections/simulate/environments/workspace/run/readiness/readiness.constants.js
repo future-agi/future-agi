@@ -22,6 +22,8 @@ export const READY_TO_RUN_COPY = {
     ].filter(Boolean),
   namesLoading: "Loading the scenarios…",
   namesMore: (n) => `and ${n} more`,
+  namesError: "Couldn't load these scenarios.",
+  namesTooMany: "Names show when 200 or fewer scenarios are selected.",
   recheck: "Re-check",
   checking: "Checking…",
   areas: {
@@ -40,6 +42,9 @@ export const READY_TO_RUN_COPY = {
     ours: (reason) =>
       `Check unavailable${reason ? `: ${reason}` : " on our side"}. Runs aren't held.`,
     retry: "The last check didn't finish. Re-check to try again.",
+    unavailable: "These versions can't be checked right now.",
+    refused: (reason) =>
+      `The check couldn't start${reason ? `: ${reason}` : ""}.`,
   },
   affected: (n) => `${n} affected`,
   fix: "Fix",
