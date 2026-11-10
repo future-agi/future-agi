@@ -125,7 +125,9 @@ def test_unauthorized_scope_never_touches_storage(download_case, change):
         c.ws_member.save()
     elif change == "sibling-workspace":
         c.kb.workspace = Workspace.objects.create(
-            name="Sibling", organization=c.request.organization
+            name="Sibling",
+            organization=c.request.organization,
+            created_by=c.request.user,
         )
         c.kb.save()
     elif change == "foreign-org":
