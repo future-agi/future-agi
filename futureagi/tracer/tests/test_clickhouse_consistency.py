@@ -34,6 +34,19 @@ def configure(monkeypatch, settings):
     settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
     monkeypatch.setattr(consistency, "is_clickhouse_enabled", lambda: True)
 
+    # Schema-only doubles represent the diagnostic connection. Real integration
+    # clients still exercise the production factory and its isolated transport.
+    health_client = getattr(consistency, "HealthCheckClient", None)
+    if health_client is not None:
+        factory = health_client.from_client
+        monkeypatch.setattr(
+            health_client,
+            "from_client",
+            lambda source, **kwargs: (
+                source if isinstance(source, Mock) else factory(source, **kwargs)
+            ),
+        )
+
     def apply(legacy, native=None, *, retired=False):
         monkeypatch.setattr(schema, "_DROP_LEGACY_CDC_CHAIN", retired)
         monkeypatch.setattr(consistency, "get_clickhouse_client", lambda: legacy)

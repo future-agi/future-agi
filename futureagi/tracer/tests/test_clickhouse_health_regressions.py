@@ -127,9 +127,67 @@ def test_health_budget_is_shared_and_does_not_leak_application_policy(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("fails", [False, True])
-def test_bounded_reads_also_clamp_and_restore_native_ping_timeout(fails):
+def test_ordinary_bounded_read_keeps_ping_and_packet_behavior():
     from tracer.services.clickhouse.client import ClickHouseClient
+
+    socket = Mock()
+    socket.gettimeout.return_value = 300
+    receive_packet = Mock()
+    connection = SimpleNamespace(
+        connected=True,
+        connect_timeout=10,
+        send_receive_timeout=300,
+        sync_request_timeout=5,
+        receive_packet=receive_packet,
+        socket=socket,
+    )
+
+    def execute(*args, **kwargs):
+        assert connection.sync_request_timeout == 5
+        assert connection.receive_packet is receive_packet
+        return ([(1,)], [])
+
+    driver = Mock(connection=connection, execute=Mock(side_effect=execute))
+    ClickHouseClient._execute_native_read_with_remaining_timeout(
+        driver,
+        "SELECT 1",
+        {},
+        query_settings=None,
+        started_at=monotonic(),
+        timeout_ms=1000,
+    )
+    socket.settimeout.assert_called_with(300)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("saturated", [False, True])
+def test_health_does_not_borrow_application_pool(
+    configure, real_clients, monkeypatch, saturated
+):
+    legacy, _, clients = real_clients
+    for table in health_tests.CDC_TABLES:
+        health_tests.create_cdc(legacy, table)
+    source = clients[0]
+    source.execute("SELECT 1")
+    get_client = Mock(wraps=source._get_client)
+    monkeypatch.setattr(source, "_get_client", get_client)
+    slots = source._pool_size if saturated else 0
+    for _ in range(slots):
+        assert source._read_admission.acquire(blocking=False)
+    try:
+        checker = configure(*clients)
+        with application_read_context():
+            assert checker.get_health_status().status == "healthy"
+        get_client.assert_not_called()
+    finally:
+        for _ in range(slots):
+            source._read_admission.release()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fails", [False, True])
+def test_health_reads_clamp_and_restore_native_ping_timeout(fails):
+    from tracer.services.clickhouse.health_client import HealthCheckClient
 
     socket = Mock()
     socket.gettimeout.return_value = 300
@@ -139,6 +197,7 @@ def test_bounded_reads_also_clamp_and_restore_native_ping_timeout(fails):
         send_receive_timeout=300,
         sync_request_timeout=5,
         socket=socket,
+        receive_packet=Mock(),
     )
     driver = Mock(connection=connection)
 
@@ -154,7 +213,7 @@ def test_bounded_reads_also_clamp_and_restore_native_ping_timeout(fails):
     try:
         if fails:
             with pytest.raises(TimeoutError):
-                ClickHouseClient._execute_native_read_with_remaining_timeout(
+                HealthCheckClient._execute_native_read_with_remaining_timeout(
                     driver,
                     "SELECT 1",
                     {},
@@ -163,7 +222,7 @@ def test_bounded_reads_also_clamp_and_restore_native_ping_timeout(fails):
                     timeout_ms=1000,
                 )
         else:
-            assert ClickHouseClient._execute_native_read_with_remaining_timeout(
+            assert HealthCheckClient._execute_native_read_with_remaining_timeout(
                 driver,
                 "SELECT 1",
                 {},
@@ -176,6 +235,81 @@ def test_bounded_reads_also_clamp_and_restore_native_ping_timeout(fails):
         assert connection.send_receive_timeout == 300
         assert connection.connect_timeout == 10
         socket.settimeout.assert_called_with(300)
+
+
+@pytest.mark.unit
+def test_health_progress_packets_share_one_deadline(monkeypatch):
+    from tracer.services.clickhouse import health_client
+
+    clock = [monotonic()]
+    monkeypatch.setattr(health_client, "monotonic", lambda: clock[0])
+    socket = Mock()
+    socket.gettimeout.return_value = 300
+
+    def progress_packet():
+        clock[0] += 0.4
+        return object()
+
+    connection = SimpleNamespace(
+        connected=True,
+        connect_timeout=10,
+        send_receive_timeout=300,
+        sync_request_timeout=5,
+        socket=socket,
+        receive_packet=progress_packet,
+    )
+
+    def execute(*args, **kwargs):
+        for _ in range(10):
+            connection.receive_packet()
+        pytest.fail("Progress packets extended the health deadline")
+
+    driver = Mock(connection=connection, execute=Mock(side_effect=execute))
+    # The base helper has its own clock; only the health packet guard's clock
+    # advances here, so the test specifically exercises packet-level bounding.
+    with pytest.raises(TimeoutError, match="health check deadline"):
+        health_client.HealthCheckClient._execute_native_read_with_remaining_timeout(
+            driver,
+            "SELECT 1",
+            {},
+            query_settings=None,
+            started_at=monotonic(),
+            timeout_ms=1000,
+        )
+    assert connection.receive_packet is progress_packet
+    assert connection.sync_request_timeout == 5
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("readonly", [False, True])
+def test_health_client_preserves_destination_and_profile_without_sharing_pool(readonly):
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.health_client import HealthCheckClient
+
+    source = ClickHouseClient(
+        host="synthetic-sidecar",
+        port=19000,
+        user="health_user",
+        password="synthetic-password",
+        database="test_health",
+        server_enforced_readonly=readonly,
+        allow_query_settings_with_server_readonly=readonly,
+    )
+    probe = HealthCheckClient.from_client(source, timeout_ms=500)
+    for field in (
+        "host",
+        "port",
+        "user",
+        "password",
+        "database",
+        "server_enforced_readonly",
+        "allow_query_settings_with_server_readonly",
+    ):
+        assert getattr(probe, field) == getattr(source, field)
+    assert probe._pool is not source._pool
+    assert probe._read_admission is not source._read_admission
+    assert probe.connect_timeout == probe.send_timeout == probe.receive_timeout == 0.5
+    assert source.receive_timeout == 300
 
 
 @pytest.mark.integration
@@ -198,32 +332,35 @@ def test_every_health_query_has_a_short_transport_timeout(
     client = clients[0]
     client.server_enforced_readonly = server_readonly
     if warm_pool:
+        with application_read_context():
+            client.execute_read("SELECT 1")
         assert checker.get_health_status().status == "healthy"
 
-    original_get = client._get_client
-    patched = set()
+    from tracer.services.clickhouse.health_client import HealthCheckClient
+
+    original_create = HealthCheckClient._create_client
+    drivers = []
     delayed = False
     needle = {"ping": "SELECT 1", "metadata": "system.columns", "lag": "max(_peerdb"}[
         stage
     ]
 
-    def get_client():
-        driver = original_get()
-        if id(driver) not in patched:
-            patched.add(id(driver))
-            execute = driver.execute
+    def create_client(self, **kwargs):
+        driver = original_create(self, **kwargs)
+        drivers.append(driver)
+        execute = driver.execute
 
-            def execute_with_delay(sql, *args, **kwargs):
-                nonlocal delayed
-                if needle in sql and not delayed:
-                    delayed = True
-                    execute("SELECT sleep(3)", settings=kwargs.get("settings"))
-                return execute(sql, *args, **kwargs)
+        def execute_with_delay(sql, *args, **kwargs):
+            nonlocal delayed
+            if needle in sql and not delayed:
+                delayed = True
+                execute("SELECT sleep(3)", settings=kwargs.get("settings"))
+            return execute(sql, *args, **kwargs)
 
-            monkeypatch.setattr(driver, "execute", execute_with_delay)
+        monkeypatch.setattr(driver, "execute", execute_with_delay)
         return driver
 
-    monkeypatch.setattr(client, "_get_client", get_client)
+    monkeypatch.setattr(HealthCheckClient, "_create_client", create_client)
     started = monotonic()
     with application_read_context():
         result = health_tests.response()
@@ -233,9 +370,13 @@ def test_every_health_query_has_a_short_transport_timeout(
     assert result.data["status"] == "unhealthy", result.data
     assert elapsed < 2.5, f"{stage} health query took {elapsed:.3f}s"
     assert health_tests.response().data["status"] == "healthy"
+    assert all(not driver.connection.connected for driver in drivers)
     driver = client._get_client()
     try:
-        assert driver.connection.socket.gettimeout() == 300
+        assert driver not in drivers
+        if warm_pool:
+            # The application's transport context restores its pool defaults.
+            assert driver.connection.socket.gettimeout() == 300
         assert driver.connection.send_receive_timeout == 300
         assert driver.connection.sync_request_timeout == 5
     finally:

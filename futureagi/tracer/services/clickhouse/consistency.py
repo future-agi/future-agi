@@ -16,6 +16,7 @@ from tracer.services.clickhouse.client import (
     is_clickhouse_enabled,
 )
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.health_client import HealthCheckClient
 from tracer.services.clickhouse.schema import (
     get_all_schema_ddl,
     should_drop_legacy_chain,
@@ -96,9 +97,14 @@ class ConsistencyChecker:
         remaining_ms = min(self.QUERY_TIMEOUT_MS, int((deadline - monotonic()) * 1000))
         if remaining_ms <= 0:
             raise TimeoutError("ClickHouse health check deadline exhausted")
-        with application_read_context(enabled=False):
-            rows, _, _ = client.execute_read(query, params, timeout_ms=remaining_ms)
-        return rows
+        probe = HealthCheckClient.from_client(client, timeout_ms=remaining_ms)
+        try:
+            with application_read_context(enabled=False):
+                rows, _, _ = probe.execute_read(query, params, timeout_ms=remaining_ms)
+            return rows
+        finally:
+            # Never return a partial health response/socket to a production pool.
+            probe.close()
 
     def _tables(self) -> list[_Table]:
         declared = {name for name, _ in get_all_schema_ddl()}
