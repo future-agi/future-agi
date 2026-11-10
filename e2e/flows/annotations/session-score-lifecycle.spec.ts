@@ -410,6 +410,15 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
             await property.click({ timeout: pickerRemaining() });
             // TraceFilterPanel/useMetricsCatalog sends source/project_ids/search.
             // Do NOT match on status: a cache 503 must fail here, not as a missing option.
+            // TEMPORARY FALLIBILITY PROOF: affect only this browser's minted search.
+            // The API-lane positive witness above and expected status stay unchanged.
+            await page.route(url => url.pathname === METRICS, async route => {
+              const request = route.request();
+              const params = request.method() === 'POST' ? request.postDataJSON() : null;
+              if (params?.source === 'traces' && params?.project_ids === projectId && params?.search === label.name)
+                await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ code: 'service_unavailable' }) });
+              else await route.continue();
+            });
             const metricsReady = page.waitForResponse(response => {
               if (new URL(response.url()).pathname !== METRICS || response.request().method() !== 'POST') return false;
               const params = response.request().postDataJSON();
