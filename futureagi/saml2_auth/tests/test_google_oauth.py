@@ -36,6 +36,7 @@ CODE = "synthetic-authorization-code-marker"
 ACCESS_TOKEN = "synthetic-access-token-marker"
 PROFILE = "synthetic-userinfo-marker"
 EMAIL = "google-oauth@example.test"
+CLAIM_MARKER = "synthetic-signed-subject-marker"
 
 
 def _base64_number(number):
@@ -81,7 +82,7 @@ def identity_server(signing_keys, settings, monkeypatch, tmp_path):
         payload = {
             "iss": "https://accounts.google.com",
             "aud": CLIENT_ID,
-            "sub": "synthetic-subject",
+            "sub": CLAIM_MARKER,
             "email": EMAIL,
             "email_verified": True,
             "iat": int(time.time()),
@@ -302,7 +303,7 @@ def test_google_callback_keeps_secrets_out_of_logs(
         assert request[2]["Authorization"] == f"Bearer {ACCESS_TOKEN}"
     else:
         _assert_denied(client, response, before)
-    for marker in (CODE, ACCESS_TOKEN, identity_server["id_token"], PROFILE):
+    for marker in (CODE, ACCESS_TOKEN, identity_server["id_token"], PROFILE, CLAIM_MARKER):
         assert marker not in caplog.text
 
 
@@ -396,7 +397,7 @@ def test_other_oauth_callbacks_do_not_log_secrets(
     else:
         assert "sso_token=" in response["Location"]
         assert AuthToken.objects.filter(user=google_user).count() == before + 1
-    for marker in (CODE, ACCESS_TOKEN, identity_server["id_token"], PROFILE):
+    for marker in (CODE, ACCESS_TOKEN, identity_server["id_token"], PROFILE, CLAIM_MARKER):
         assert marker not in caplog.text
 
 
@@ -457,3 +458,73 @@ def test_google_marketplace_callback_preserves_organization(
         assert marketplace.read_onboarding_token(token)["organization_id"] == str(
             org.id
         )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("provider", ["google", "github", "microsoft"])
+@pytest.mark.parametrize("valid", [True, False])
+def test_production_callback_logging_redacts_query_and_signed_claims(
+    identity_server, google_user, settings, monkeypatch, tmp_path, provider, valid
+):
+    from saml2_auth.tests.log_capture import capture_security_logging
+    from tfc.settings import settings as production
+
+    # Execute the production middleware and both real structured handlers, not
+    # the reduced pytest middleware or a structlog.testing processor bypass.
+    settings.MIDDLEWARE = production.MIDDLEWARE
+    settings.BASE_DIR = tmp_path
+    monkeypatch.setenv("ENV_TYPE", "production")
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    identity_server["issue"](name=True)
+    identity_server["status"] = 200 if valid else 400
+    callback = "auth0_callback" if provider == "google" else f"{provider}-callback"
+    client = APIClient()
+    before = AuthToken.objects.count()
+    with capture_security_logging() as logs:
+        response = client.get(
+            reverse(callback),
+            {
+                "code": CODE,
+                "id_token": identity_server["id_token"],
+                "access_token": ACCESS_TOKEN,
+                "customToken": "synthetic-custom-token-marker",
+                "TOKEN_value": "synthetic-uppercase-token-marker",
+            },
+        )
+        console = logs.rendered
+        file_log = (tmp_path / "logs" / "wsgi.log").read_text()
+    if valid:
+        assert response.status_code == 302
+        assert "sso_token=" in response["Location"]
+        assert AuthToken.objects.filter(user=google_user).count() == before + 1
+    else:
+        _assert_denied(client, response, before)
+    for rendered in (console, file_log):
+        events = [json.loads(line) for line in rendered.splitlines() if line.strip()]
+        requests = [e for e in events if e.get("event") == "request_started"]
+        assert len(requests) == 1
+        assert requests[0]["request"] == f"GET {reverse(callback)}"
+        assert any(e.get("event") == "request_finished" for e in events)
+        assert any(e.get("event") == "oauth_callback_received" for e in events)
+        if valid and provider == "google":
+            assert any(e.get("event") == "oauth_identity_decoded" for e in events)
+        for marker in (
+            CODE, ACCESS_TOKEN, identity_server["id_token"], PROFILE, CLAIM_MARKER,
+            "synthetic-custom-token-marker", "synthetic-uppercase-token-marker",
+        ):
+            assert marker not in rendered
+
+
+def test_request_logging_preserves_non_sso_queries_and_callback_input():
+    from django.test import RequestFactory
+    from tfc.logging.middleware import CredentialSafeRequestMiddleware
+
+    request = RequestFactory().get("/saml2_auth/auth/callback/", {"code": CODE})
+    assert CredentialSafeRequestMiddleware.format_request(request) == (
+        "GET /saml2_auth/auth/callback/"
+    )
+    assert request.GET["code"] == CODE
+    ordinary = RequestFactory().get("/health/", {"detail": "true"})
+    assert CredentialSafeRequestMiddleware.format_request(ordinary) == (
+        "GET /health/?detail=true"
+    )
