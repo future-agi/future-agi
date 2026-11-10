@@ -11,8 +11,10 @@ from contextlib import ExitStack, nullcontext
 from copy import deepcopy
 from datetime import timedelta
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
+from django.conf import settings as django_settings
 from django.db import connections
 from django.utils import timezone
 
@@ -29,6 +31,41 @@ pytestmark = [
     pytest.mark.django_db(databases=["default", "replica"]),
     pytest.mark.integration,
 ]
+
+
+@pytest.fixture(scope="module")
+def django_db_setup(django_db_setup, django_db_blocker):
+    """Add an independent replica only after the normal test DB is ready.
+
+    Overriding pytest-django's fixture here keeps registration ahead of each
+    test's transaction setup without changing session-wide database creation.
+    The unique database is always dropped, including under --reuse-db/xdist.
+    """
+    assert "replica" not in django_settings.DATABASES
+    assert "replica" not in connections
+    primary = connections["default"]
+    replica_config = deepcopy(primary.settings_dict)
+    replica_name = f"test_retell_replica_{uuid4().hex}"
+    replica_config["NAME"] = replica_name
+    replica_config["TEST"] = {**replica_config["TEST"], "NAME": replica_name}
+    quoted_name = primary.ops.quote_name(replica_name)
+    with django_db_blocker.unblock(), primary.cursor() as cursor:
+        cursor.execute(f"CREATE DATABASE {quoted_name}")
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            # Django caches its connection settings separately from settings.
+            # Restore both mappings and remove the cached wrapper on teardown.
+            patch.setitem(django_settings.DATABASES, "replica", replica_config)
+            patch.setitem(connections.databases, "replica", replica_config)
+            replica = connections["replica"]
+            try:
+                yield
+            finally:
+                replica.close()
+                del connections["replica"]
+    finally:
+        with django_db_blocker.unblock(), primary.cursor() as cursor:
+            cursor.execute(f"DROP DATABASE {quoted_name}")
 
 
 @pytest.fixture

@@ -57,14 +57,6 @@ DATABASES = {
     }
 }
 
-# Independent database for tests that deliberately hold replica state stale.
-# Created only when a test includes this alias in its django_db marker.
-# ReadReplicaRouter still requires explicit per-model opt-in for reads.
-DATABASES["replica"] = {
-    **DATABASES["default"],
-    "TEST": {"NAME": f'{DATABASES["default"]["TEST"]["NAME"]}_replica'},
-}
-
 # Prod settings register `default_direct` (the PgBouncer-bypass connection)
 # only when PG_DIRECT_HOST is set, but code such as backfill_eval_usage_version
 # defaults to that alias unconditionally. Mirror it onto the test database so
