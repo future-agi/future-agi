@@ -70,10 +70,14 @@ function FixLine({ line, onRecheck, onRetryAgent, busy }) {
       </Stack>
       {open && fix && (
         <Stack spacing={1} sx={{ pt: 1, pl: 2.5 }}>
-          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          <Typography sx={{ typography: "s3", color: "text.primary" }}>
             {fix.action}
-            {fix.would ? `. ${COPY.after(fix.would)}` : ""}
           </Typography>
+          {fix.would && (
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {COPY.after(fix.would)}
+            </Typography>
+          )}
           {fix.recheck && (
             <Box>
               <Button

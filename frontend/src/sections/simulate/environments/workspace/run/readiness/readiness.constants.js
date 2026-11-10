@@ -2,14 +2,17 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 export const READY_TO_RUN_COPY = {
   title: "Ready to run",
-  summary: ({ eligible, requested, blocked }, blockers) =>
+  summary: ({ eligible, requested, blocked, stale }, blockers) =>
     [
       `${eligible} of ${requested} eligible`,
       `${blocked} blocked`,
+      stale ? `${stale} not proved here` : null,
       blockers
         ? `${plural(blockers, "blocker", "blockers")} to fix`
         : "no blocker",
-    ].join(" · "),
+    ]
+      .filter(Boolean)
+      .join(" · "),
   recheck: "Re-check",
   checking: "Checking…",
   areas: {
@@ -43,4 +46,19 @@ export const READY_TO_RUN_COPY = {
   notGradable: (n) =>
     `${plural(n, "scenario has", "scenarios have")} no check that can grade it`,
   loadError: "Couldn't check whether these versions are ready to run.",
+};
+
+export const RUN_PLAN_COPY = {
+  title: "Run plan",
+  subtitle: (envName, envLabel) =>
+    [envName, envLabel && `environment ${envLabel}`]
+      .filter(Boolean)
+      .join(" · "),
+  heldBack: ({ requested, blocked }, label) =>
+    `${requested} selected · ${requested - blocked} will run · ${blocked} held back${
+      label ? ` (${label.toLowerCase()})` : ""
+    }, recorded as not run`,
+  allHeld: (label) =>
+    `No run: every selected scenario is held back${label ? ` (${label})` : ""}. Fix it, or pick scenarios it doesn't hold back.`,
+  runOf: (will, requested) => `Run ${will} of ${requested}`,
 };
