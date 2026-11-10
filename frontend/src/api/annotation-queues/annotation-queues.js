@@ -89,9 +89,9 @@ export const annotationQueueEndpoints = {
     apiPath("/model-hub/annotation-queues/{id}/export-to-dataset/", { id }),
   export: (id) => apiPath("/model-hub/annotation-queues/{id}/export/", { id }),
   exportJob: (id, jobId) =>
-    apiPath("/model-hub/annotation-queues/{id}/export-jobs/{jobId}/", {
+    apiPath("/model-hub/annotation-queues/{id}/export-jobs/{job_id}/", {
       id,
-      jobId,
+      job_id: jobId,
     }),
   progress: (id) =>
     apiPath("/model-hub/annotation-queues/{id}/progress/", { id }),

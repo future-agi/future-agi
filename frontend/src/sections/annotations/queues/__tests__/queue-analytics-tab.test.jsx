@@ -219,6 +219,26 @@ describe("QueueAnalyticsTab", () => {
     expect(mockCreateObjectURL).not.toHaveBeenCalled();
   });
 
+  it("shows the background job's failure reason", async () => {
+    const user = userEvent.setup();
+    mockUseQueueAnalytics.mockReturnValue({
+      isLoading: false,
+      data: { total: 1001, status_breakdown: {}, throughput: {},
+        annotator_performance: [], label_distribution: {} },
+    });
+    const payload = JSON.stringify({ job_id: "failed-job" });
+    const scheduled = new Blob([payload]);
+    scheduled.text = async () => payload;
+    mockAxiosGet.mockResolvedValue({ status: 202, data: scheduled });
+    mockWaitForExportJob.mockRejectedValue(new Error("Export storage is unavailable"));
+    render(<QueueAnalyticsTab queueId="queue-1" />);
+    await user.click(screen.getByRole("button", { name: /export csv/i }));
+    await waitFor(() => expect(mockEnqueueSnackbar).toHaveBeenCalledWith(
+      "Export storage is unavailable", { variant: "error" },
+    ));
+    expect(mockTriggerBrowserDownload).not.toHaveBeenCalled();
+  });
+
   it("waits for the background job and hands over the stored file on 202", async () => {
     const user = userEvent.setup();
     mockUseQueueAnalytics.mockReturnValue({

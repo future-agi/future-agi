@@ -273,7 +273,7 @@ export default function QueueAnalyticsTab({ queueId }) {
       URL.revokeObjectURL(url);
     } catch (err) {
       const { enqueueSnackbar } = await import("notistack");
-      let message = "Export failed";
+      let message = err?.message || "Export failed";
       // The request uses responseType:"blob", so an error body arrives as a Blob —
       // read and parse it to surface the server's actionable message instead of
       // a generic failure.

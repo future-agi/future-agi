@@ -366,7 +366,11 @@ def test_items_without_annotations_still_get_a_csv_line(organization, workspace,
     expected = {str(i.id) for i in QueueItem.objects.filter(queue=seed["queue"])}
     assert {row[0] for row in rows} == expected
     # Annotation columns blank, item columns filled.
-    assert all(row[11:] == ["", "", "", "", "", "", ""] for row in rows)
+    assert all(row[11:18] == ["", "", "", "", "", "", ""] for row in rows)
+    assert {row[18] for row in rows} == {str(row.id) for row in seed["rows"]}
+    assert [json.loads(row[19])["fields"]["col_0"] for row in rows] == [
+        "r0c0", "r1c0", "r2c0"
+    ]
 
 
 @pytest.mark.django_db
@@ -694,3 +698,68 @@ def test_cleanup_deletes_the_stored_object_for_the_reclaimed_job(
 
     bucket, key = client.remove_object.call_args.args
     assert key == f"annotation-exports/{job.queue_id}/{job.id}.json"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("workflow_status", ["FAILED", "TIMED_OUT", "CANCELED", "TERMINATED"])
+def test_poll_reports_worker_exit_without_mutating_on_get(
+    auth_client, organization, workspace, user, workflow_status
+):
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=1
+    )
+    job = _make_job(seed["queue"], organization, workspace, user)
+    job.workflow_id = f"annotation-export-{job.pk}"
+    job.status = AnnotationExportJobStatus.RUNNING.value
+    job.save()
+    with mock.patch(
+        "model_hub.selectors.annotation_exports.get_workflow_status_sync",
+        return_value={"status_name": workflow_status},
+    ):
+        response = auth_client.get(JOB_URL.format(queue_id=job.queue_id, job_id=job.id))
+        result = _unwrap(response.data)
+        assert result["status"] == "failed"
+        assert "Please retry" in result["error"]
+        job.refresh_from_db()
+        assert job.status == "running"
+        cleanup_expired_export_jobs._original_func()
+    job.refresh_from_db()
+    assert job.status == "failed"
+    assert job.finished_at is not None
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("workflow", [None, {"status_name": "RUNNING"}])
+def test_poll_does_not_fail_on_temporal_outage_or_retry(
+    auth_client, organization, workspace, user, workflow
+):
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=1
+    )
+    job = _make_job(seed["queue"], organization, workspace, user)
+    job.workflow_id = f"annotation-export-{job.pk}"
+    job.save()
+    with mock.patch(
+        "model_hub.selectors.annotation_exports.get_workflow_status_sync",
+        return_value=workflow,
+    ):
+        response = auth_client.get(JOB_URL.format(queue_id=job.queue_id, job_id=job.id))
+    assert _unwrap(response.data)["status"] == "pending"
+
+
+@pytest.mark.django_db
+def test_cleanup_removes_upload_even_when_saving_file_url_failed(organization, workspace, user):
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=1
+    )
+    job = _finished_job(
+        seed["queue"], organization, workspace, user,
+        status_value="failed", age_days=EXPORT_RETENTION_DAYS + 1,
+    )
+    job.file_url = None
+    job.save()
+    with mock.patch("tfc.utils.storage_client.get_storage_client") as storage:
+        cleanup_expired_export_jobs._original_func()
+    assert storage.return_value.remove_object.call_args.args[1] == (
+        f"annotation-exports/{job.queue_id}/{job.id}.json"
+    )

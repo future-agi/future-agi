@@ -3068,6 +3068,8 @@ QUEUE_EXPORT_CSV_HEADER = [
     "notes",
     "annotator_name",
     "created_at",
+    "source_id",
+    "source",
 ]
 
 
@@ -3150,8 +3152,14 @@ def write_queue_export_csv_rows(writer, rows):
     An item with no annotations still gets a line, with the annotation columns
     blank, so the file accounts for every item in the queue.
     """
+    from rest_framework.utils.encoders import JSONEncoder
+
     for item_data in rows:
         review = item_data.get("review") or {}
+        source_columns = [
+            item_data["source_id"],
+            json.dumps(item_data["source"], cls=JSONEncoder),
+        ]
         item_columns = [
             item_data["item_id"],
             item_data["source_type"],
@@ -3176,6 +3184,7 @@ def write_queue_export_csv_rows(writer, rows):
                     "",
                     "",
                     "",
+                    *source_columns,
                 ]
             )
         for ann in item_data["annotations"]:
@@ -3189,6 +3198,7 @@ def write_queue_export_csv_rows(writer, rows):
                     ann["notes"] or "",
                     ann["annotator_name"],
                     ann["created_at"],
+                    *source_columns,
                 ]
             )
 
@@ -3731,16 +3741,19 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         except (AnnotationExportJob.DoesNotExist, ValidationError, ValueError):
             return self._gm.not_found("Export job not found.")
 
+        from model_hub.selectors.annotation_exports import resolve_export_job_state
+
+        job_status, job_error = resolve_export_job_state(job)
         return self._gm.success_response(
             {
                 "job_id": str(job.id),
                 "queue_id": str(job.queue_id),
-                "status": job.status,
+                "status": job_status,
                 "export_format": job.export_format,
                 "item_count": job.item_count,
                 "file_url": job.file_url,
                 "file_name": job.file_name,
-                "error": job.error,
+                "error": job_error,
                 "created_at": job.created_at,
                 "started_at": job.started_at,
                 "finished_at": job.finished_at,

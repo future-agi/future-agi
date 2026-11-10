@@ -130,6 +130,7 @@ def _store_export_file(job, fileobj, size):
     extension = "csv" if _is_csv(job) else "json"
     content_type = "text/csv" if _is_csv(job) else "application/json"
     object_key = f"annotation-exports/{job.queue_id}/{job.id}.{extension}"
+    filename = f"queue_{job.queue_id}_annotations.{extension}"
 
     client = get_storage_client()
     ensure_bucket(client, UPLOAD_BUCKET_NAME)
@@ -139,12 +140,13 @@ def _store_export_file(job, fileobj, size):
         data=fileobj,
         length=size,
         content_type=content_type,
+        metadata={"Content-Disposition": f'attachment; filename="{filename}"'},
         part_size=10 * 1024 * 1024,
     )
 
     return (
         get_object_url(UPLOAD_BUCKET_NAME, object_key),
-        f"queue_{job.queue_id}_annotations.{extension}",
+        filename,
     )
 
 
@@ -152,12 +154,9 @@ def _delete_export_object(job):
     """Remove a job's stored export from object storage.
 
     The key is the same deterministic one ``_store_export_file`` wrote, so a
-    finished job's file is addressable without a list call. A job that never
-    produced a file (failed before the store) has nothing to remove.
+    finished job's file is addressable without a list call. Remove it even if
+    saving file_url failed after upload; deleting a missing object is idempotent.
     """
-    if not job.file_url:
-        return
-
     from tfc.settings.settings import UPLOAD_BUCKET_NAME
     from tfc.utils.storage_client import get_storage_client
 
@@ -266,6 +265,23 @@ def cleanup_expired_export_jobs():
     Only terminal jobs (``succeeded``/``failed``) past the cutoff are touched —
     an in-flight ``pending``/``running`` export is never deleted.
     """
+    from model_hub.selectors.annotation_exports import resolve_export_job_state
+
+    # Worker crashes/timeouts cannot execute the activity's exception handler.
+    # Persist confirmed terminal states so their files also enter retention.
+    active = AnnotationExportJob.objects.filter(
+        status__in=[
+            AnnotationExportJobStatus.PENDING.value,
+            AnnotationExportJobStatus.RUNNING.value,
+        ],
+    )
+    for job in active.iterator(chunk_size=200):
+        job_status, job_error = resolve_export_job_state(job)
+        if job_status == AnnotationExportJobStatus.FAILED.value:
+            AnnotationExportJob.objects.filter(
+                pk=job.pk, status=job.status
+            ).update(status=job_status, error=job_error, finished_at=timezone.now())
+
     cutoff = timezone.now() - timedelta(days=EXPORT_RETENTION_DAYS)
     stale = AnnotationExportJob.objects.filter(
         deleted=False,
@@ -283,7 +299,7 @@ def cleanup_expired_export_jobs():
             job.delete()  # BaseModel.delete is a soft delete.
             deleted += 1
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "annotation_export_cleanup_failed",
                 job_id=str(job.id),
                 error=str(exc),
