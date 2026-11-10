@@ -23,4 +23,5 @@ def get_displayable_transcript_roles() -> list[str]:
         CallTranscript.SpeakerRole.ASSISTANT,
         CallTranscript.SpeakerRole.SYSTEM,
         CallTranscript.SpeakerRole.ACTOR,
+        CallTranscript.SpeakerRole.TASK,
     ]
