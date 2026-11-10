@@ -92,8 +92,13 @@ build_target() {
     # built with that tag (CI builds them with its layer cache).
     standalone)
       local tag; tag=$(standalone_tag)
-      (cd "$ROOT" && build_local_images standalone all "$tag")
+      docker build -t "futureagi/future-agi:$tag" --build-arg IMAGE_VARIANT=slim -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
+      docker build --build-arg BASE_TAG="$tag" -t "futureagi/future-agi:$tag" -f "$ROOT/e2e/stack/backend/Dockerfile" "$ROOT"
+      docker build -t "futureagi/frontend:$tag" "$ROOT/frontend"
+      docker build -t "futureagi/fi-collector:$tag" "$ROOT/fi-collector"
+      docker build -t "futureagi/agentcc-gateway:$tag" "$ROOT/agentcc-gateway"
       docker build -t "futureagi/code-executor:$tag" "$ROOT/futureagi/code-executor"
+      (cd "$ROOT" && build_local_standalone_app "$tag")
       echo "built futureagi/standalone:$tag. run with: E2E_STACK=standalone bin/e2e up" ;;
     standalone-app)
       local tag; tag=$(standalone_tag)
