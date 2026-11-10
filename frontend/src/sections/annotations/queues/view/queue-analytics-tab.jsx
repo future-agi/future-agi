@@ -250,7 +250,9 @@ export default function QueueAnalyticsTab({ queueId }) {
           typeof scheduled?.message !== "string" ||
           !scheduled.message.trim()
         ) {
-          throw new Error("Invalid export scheduling response. Please try again.");
+          throw new Error(
+            "Invalid export scheduling response. Please try again.",
+          );
         }
         const { enqueueSnackbar } = await import("notistack");
         enqueueSnackbar(scheduled.message, { variant: "info" });
@@ -259,7 +261,11 @@ export default function QueueAnalyticsTab({ queueId }) {
           queueId,
           scheduled.job_id,
         );
-        await downloadStoredExport(axiosInstance, job, `queue-export.${format}`);
+        await downloadStoredExport(
+          axiosInstance,
+          job,
+          `queue-export.${format}`,
+        );
         enqueueSnackbar("Export ready", { variant: "success" });
         return;
       }

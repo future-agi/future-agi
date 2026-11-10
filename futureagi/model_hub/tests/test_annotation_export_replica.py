@@ -6,12 +6,12 @@ from django.db.models.query import QuerySet
 
 from model_hub.models.annotation_queues import AnnotationExportJob, AnnotationQueue
 from model_hub.services.annotation_export_storage import download_url
+from model_hub.tests import test_annotation_export_download
 from model_hub.tests.test_annotation_export_async import JOB_URL
-from model_hub.tests.test_annotation_export_download import (
-    completed_export as completed_export,
-    storage as storage,
-)
 from tfc.routers import ReadReplicaRouter
+
+completed_export = test_annotation_export_download.completed_export
+storage = test_annotation_export_download.storage
 
 
 @pytest.mark.django_db
@@ -29,8 +29,14 @@ from tfc.routers import ReadReplicaRouter
     [("poll", "pending"), ("poll", "succeeded"), ("download", "succeeded")],
 )
 def test_export_actions_read_primary_during_replica_lag(
-    auth_client, completed_export, storage, monkeypatch, opt_in, lagged_model,
-    action, job_status,
+    auth_client,
+    completed_export,
+    storage,
+    monkeypatch,
+    opt_in,
+    lagged_model,
+    action,
+    job_status,
 ):
     job = completed_export
     job.status = job_status

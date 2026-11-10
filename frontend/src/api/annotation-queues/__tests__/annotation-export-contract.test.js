@@ -17,15 +17,31 @@ const pending = {
 
 describe("generated export job contract", () => {
   it("accepts the pending wire response with nullable result fields", () => {
-    expect(ModelHubAnnotationQueuesExportJobResponse.parse({ status: true, result: pending }).result).toEqual(pending);
+    expect(
+      ModelHubAnnotationQueuesExportJobResponse.parse({
+        status: true,
+        result: pending,
+      }).result,
+    ).toEqual(pending);
   });
 
   it("accepts a failed job without a file", () => {
-    const result = { ...pending, status: "failed", error: "Export timed out", finished_at: "2026-11-10T01:00:00Z" };
-    expect(ModelHubAnnotationQueuesExportJobResponse.parse({ result }).result).toEqual(result);
+    const result = {
+      ...pending,
+      status: "failed",
+      error: "Export timed out",
+      finished_at: "2026-11-10T01:00:00Z",
+    };
+    expect(
+      ModelHubAnnotationQueuesExportJobResponse.parse({ result }).result,
+    ).toEqual(result);
   });
 
   it("rejects a string item count rather than silently coercing it", () => {
-    expect(ModelHubAnnotationQueuesExportJobResponse.safeParse({ result: { ...pending, item_count: "1001" } }).success).toBe(false);
+    expect(
+      ModelHubAnnotationQueuesExportJobResponse.safeParse({
+        result: { ...pending, item_count: "1001" },
+      }).success,
+    ).toBe(false);
   });
 });

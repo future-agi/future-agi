@@ -1796,13 +1796,19 @@ export const triggerBrowserDownload = (href, filename, { newTab } = {}) => {
   link.remove();
 };
 
-export const downloadStoredExport = async (axiosInstance, job, fallbackName) => {
+export const downloadStoredExport = async (
+  axiosInstance,
+  job,
+  fallbackName,
+) => {
   // Use the authenticated client, including the active org/workspace headers.
   // Never forward credentials to a storage origin supplied in a response.
   if (!job.file_url?.startsWith("/model-hub/annotation-queues/")) {
     throw new Error("Invalid export download URL");
   }
-  const response = await axiosInstance.get(job.file_url, { responseType: "blob" });
+  const response = await axiosInstance.get(job.file_url, {
+    responseType: "blob",
+  });
   const url = URL.createObjectURL(response.data);
   try {
     triggerBrowserDownload(url, job.file_name || fallbackName);
@@ -1831,7 +1837,11 @@ export const useDownloadAnnotationQueueExport = () => {
           { variant: "info" },
         );
         const job = await waitForExportJob(axios, queueId, jobId);
-        await downloadStoredExport(axios, job, `annotation-queue-${queueId}.json`);
+        await downloadStoredExport(
+          axios,
+          job,
+          `annotation-queue-${queueId}.json`,
+        );
         return { stored: job };
       }
 
