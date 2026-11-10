@@ -634,7 +634,9 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(
       screen.getByText("Ask, correct, or steer what it builds"),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Working…")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("builder-console-stop-orbit"),
+    ).not.toBeInTheDocument();
 
     axios.post.mockReturnValue(new Promise(() => {}));
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
