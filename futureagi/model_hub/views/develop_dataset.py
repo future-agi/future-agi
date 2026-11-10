@@ -12710,7 +12710,6 @@ def run_evaluation_task(evaluation_data):
             status=StatusType.FAILED.value
         )
         logger.error(f"Error in evaluation task: {str(e)}")
-        raise
 
 
 class DuplicateRowsView(APIView):

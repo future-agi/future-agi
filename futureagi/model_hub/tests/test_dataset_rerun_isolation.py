@@ -8,8 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from django.db import OperationalError
-from django.db.models.query import QuerySet
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
@@ -248,25 +246,29 @@ def test_runner_constructor_failure_finishes_all_selected_rows(rerun):
     assert rerun.metric.status == StatusType.FAILED.value
 
 
-def test_error_persistence_failure_is_not_acknowledged_as_success(rerun):
-    original_update = QuerySet.update
+def test_reporting_failure_does_not_request_replay_of_finished_evaluations(rerun):
+    evaluated = []
 
-    def update(self, **kwargs):
-        if self.model is Cell and kwargs.get("status") == CellStatus.ERROR.value:
-            raise OperationalError("synthetic terminal-state write failure")
-        return original_update(self, **kwargs)
+    def evaluate(self, row, mappings):
+        evaluated.append(row.id)
+        return result_for_row(self, row, mappings)
 
-    with (
-        patch(
-            "model_hub.views.develop_dataset.EvaluationRunner",
-            side_effect=RuntimeError("synthetic constructor failure"),
-        ),
-        patch.object(QuerySet, "update", update),
-        pytest.raises(OperationalError, match="synthetic terminal-state write failure"),
-    ):
+    def properties(**kwargs):
+        if "failed" in kwargs:
+            raise RuntimeError("synthetic completion reporting failure")
+        return {}
+
+    rerun.properties.side_effect = properties
+    with patch.object(EvaluationRunner, "_process_eval_result", evaluate):
+        # Preserve the activity's existing non-rethrowing outer failure handler.
+        # Requesting a retry here would replay already-completed billable calls.
         run_selected(rerun)
-    rerun.metric.refresh_from_db()
-    assert rerun.metric.status == StatusType.FAILED.value
+    assert set(evaluated) == {row.id for row in rerun.rows[:2]}
+    assert list(
+        Cell.objects.filter(column=rerun.column)
+        .order_by("row__order")
+        .values_list("value", flat=True)
+    ) == ["row-0", "row-1", "previous result"]
 
 
 def test_optimization_failure_only_updates_the_requested_column(rerun):
