@@ -10,6 +10,7 @@ import pytest
 
 from tracer.services.derived_metrics.frozen_relations import (
     RELATION_ROWS,
+    FrozenRelationOverflow,
     FrozenRelations,
 )
 from tracer.services.derived_metrics.publication import (
@@ -464,11 +465,55 @@ def test_handle_physical_budget_fails_before_insert_and_cleans_up(
     relations = FrozenRelations(
         store, org_id=uuid4(), project_id=uuid4(), attempt_id=uuid4(), source=[]
     )
-    with pytest.raises(ServerException, match="metric_frozen_relation_budget"):
+    with pytest.raises(FrozenRelationOverflow, match="capture budget") as raised:
         with relations:
             relations.materialize(
                 live_parts_select(definition, source), params, role="child"
             )
+    assert isinstance(raised.value.__cause__, ServerException)
+    assert raised.value.__cause__.code == 395
+    assert "metric_frozen_relation_budget" in raised.value.__cause__.message
+    assert relations.closed and not relations.handles
+    for name in relations.names:
+        assert store.execute(f"EXISTS TABLE {name}") == [(0,)]
+
+
+@pytest.mark.parametrize(
+    "code,message",
+    [
+        (
+            395,
+            "DB::Exception: unrelated_capture_failure: metric_frozen_relation_budget",
+        ),
+        (241, "DB::Exception: metric_frozen_relation_budget"),
+        (159, "DB::Exception: timeout"),
+        (60, "DB::Exception: missing table"),
+    ],
+)
+def test_capture_does_not_normalize_unrelated_server_failures(
+    publication_store, monkeypatch, code, message
+):
+    from clickhouse_driver.errors import ServerException
+
+    store = publication_store
+    execute = store.execute
+    failure = ServerException(message, code=code)
+
+    def fail_insert(sql, *args, **kwargs):
+        if sql.startswith("INSERT INTO metric_frozen_"):
+            raise failure
+        return execute(sql, *args, **kwargs)
+
+    monkeypatch.setattr(store, "execute", fail_insert)
+    relations = FrozenRelations(
+        store, org_id=uuid4(), project_id=uuid4(), attempt_id=uuid4(), source=[]
+    )
+    with pytest.raises(ServerException) as raised:
+        with relations:
+            relations.materialize(
+                "SELECT * FROM metric_bucket_retired_parts WHERE 0", {}, role="retired"
+            )
+    assert raised.value is failure
     assert relations.closed and not relations.handles
     for name in relations.names:
         assert store.execute(f"EXISTS TABLE {name}") == [(0,)]

@@ -33,6 +33,7 @@ from tracer.models.derived_metric import (
 )
 from tracer.services.derived_metrics.bounded_reads import (
     BUCKET_INPUT_ROWS,
+    MAX_KEY_IN_ITEMS,
     BucketFieldPlan,
     BucketRangeOverflow,
     capture_source_output,
@@ -74,6 +75,9 @@ from tracer.services.derived_metrics.unit_reads import unit_values_select
 
 MAX_PASS_UNITS = 50_000
 MAX_DELTAS_BEFORE_COMPACTION = 1
+# Reserve two memberships for the fixed metric/version. Existing physical
+# capture caps remain unchanged; overflowing sets split before any output.
+BUCKET_WINDOWS_PER_FOLD = MAX_KEY_IN_ITEMS - 2
 TABLE_KINDS = {
     "field_values": FIELD_VALUES,
     "bucket_totals": BUCKET_TOTALS,
@@ -845,13 +849,13 @@ class RefreshWriter:
             receipts={"synchronous_response": {"drained": 1}},
         )
 
-    def abort_stale(self):
+    def abort_stale(self, *, abort=True):
         """Return original work, including a retention checkpoint's durable handoff.
 
-        The caller holds project serialization until its successor ledger is
-        durable. Retention transfers these entries into its checkpoint BEFORE
-        aborting/purging predecessors; a crash cannot leave only an in-memory
-        copy. A normal refresh consumes the handoff in its own published plan.
+        With abort=True the caller holds project serialization until its successor
+        ledger is durable. Retention uses abort=False while classifying outside
+        that transaction, then atomically transfers the handoff and aborts its
+        predecessors. A crash must never leave only an in-memory copy.
         """
         entries = {part: [] for part in MetricAttemptLedgerChunk.Part.values}
         head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
@@ -867,9 +871,10 @@ class RefreshWriter:
                 # Output payload is never source truth for a replacement writer.
                 if chunk.part != "cleanup_intent":
                     entries[chunk.part].extend(chunk.payload)
-            MetricRefreshAttempt.abort(
-                attempt.id, reason="lease_takeover", **self.lease.check()
-            )
+            if abort:
+                MetricRefreshAttempt.abort(
+                    attempt.id, reason="lease_takeover", **self.lease.check()
+                )
         return entries
 
     def _publish_compaction(self, attempt, *, deadline):
@@ -944,22 +949,22 @@ class RefreshWriter:
             from tracer.services.derived_metrics.backfill import obsolete_versions
 
             obsolete = obsolete_versions(self.lease.project_id, now=self.lease.clock())
-            for table in TABLE_KINDS.values():
-                prefix = "field" if table == FIELD_VALUES else "metric"
-                versioned = table in {FIELD_VALUES, BUCKET_TOTALS, RETIRED_PARTS}
-                self.freeze_current(
-                    attempt,
-                    table,
-                    head,
-                    large_pages=True,
-                    where=f"({prefix}_id, {prefix}_version) NOT IN %(obsolete_versions)s"
-                    if obsolete and versioned
-                    else "1",
-                    params={"obsolete_versions": obsolete}
-                    if obsolete and versioned
-                    else None,
-                )
-            self.seal(attempt, publication={"retire_versions": obsolete})
+        for table in TABLE_KINDS.values():
+            prefix = "field" if table == FIELD_VALUES else "metric"
+            versioned = table in {FIELD_VALUES, BUCKET_TOTALS, RETIRED_PARTS}
+            self.freeze_current(
+                attempt,
+                table,
+                head,
+                large_pages=True,
+                where=f"({prefix}_id, {prefix}_version) NOT IN %(obsolete_versions)s"
+                if obsolete and versioned
+                else "1",
+                params={"obsolete_versions": obsolete}
+                if obsolete and versioned
+                else None,
+            )
+        self.seal(attempt, publication={"retire_versions": obsolete})
         try:
             return self._publish_compaction(attempt, deadline=deadline)
         finally:
@@ -983,7 +988,15 @@ class RefreshWriter:
             purge_by_scope,
         )
 
-        intent = collect_history(self.lease.project_id, now=self.lease.clock())
+        head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
+        # The first complete publication may be a delta, not a checkpoint. It is
+        # readable, but cannot authorize detaching history. Keep every PG root
+        # until ordinary compaction supplies the existing GC prerequisite.
+        intent = (
+            collect_history(self.lease.project_id, now=self.lease.clock())
+            if head is not None and head.checkpoint_attempt_id is not None
+            else None
+        )
         if intent is not None:
             purge_by_scope(self.store, intent)
         self.scrub_orphans()
@@ -1010,16 +1023,26 @@ class RefreshWriter:
                     project_id=self.lease.project_id
                 ).values_list("id", flat=True)
             ) or (UUID(int=0),)
+            params = {
+                "gc_org": str(self.org_id),
+                "gc_project": str(self.lease.project_id),
+                "gc_registered": registered,
+            }
+            predicate = (
+                "org_id = toUUID(%(gc_org)s) AND project_id = toUUID(%(gc_project)s) "
+                "AND attempt_id NOT IN %(gc_registered)s"
+            )
             for table in TABLES.values():
-                self.store.execute(
-                    f"ALTER TABLE {table.name} DELETE WHERE org_id = toUUID(%(gc_org)s) "
-                    "AND project_id = toUUID(%(gc_project)s) AND attempt_id NOT IN %(gc_registered)s SETTINGS mutations_sync=2",
-                    {
-                        "gc_org": str(self.org_id),
-                        "gc_project": str(self.lease.project_id),
-                        "gc_registered": registered,
-                    },
-                )
+                # An empty namespace needs no synchronous mutation/part rewrite.
+                # This is only a no-op optimization, never a drained-write proof:
+                # late excluded inserts are still reaped on the next scheduled pass.
+                if self.store.execute(
+                    f"SELECT 1 FROM {table.name} WHERE {predicate} LIMIT 1", params
+                ):
+                    self.store.execute(
+                        f"ALTER TABLE {table.name} DELETE WHERE {predicate} SETTINGS mutations_sync=2",
+                        params,
+                    )
 
     def refresh(
         self,
@@ -1322,81 +1345,140 @@ class RefreshWriter:
             for part, entries in prior.items():
                 if part != "cleanup_intent" and entries:
                     self.append(attempt, part, entries)
-            source_ids = [(k.trace_id, k.span_id) for k in change.source_keys]
-            source_ids.extend(
-                (entry["trace_id"], entry["span_id"])
-                for entry in prior["membership_preimage"]
-                if entry.get("trace_id") and entry.get("span_id")
-            )
-            recovered_dependencies = self.recover_dependencies(
-                prior["membership_preimage"], as_of=as_of
-            )
-            dependencies = {d.key: d for d in recovered_dependencies}
-            dependencies.update({d.key: d for d in change.dependencies})
-            ids.update(
-                d.canonical_session_id
-                for d in recovered_dependencies
-                if d.canonical_session_id
-            )
-            if len(ids) > MAX_PASS_UNITS:
-                raise ValueError("replacement owner set exceeds pass cap")
-            if any(d.level == "span" for d in definitions):
-                self._span_dirty_keys(attempt, change, head, source_ids)
-            for definition in definitions:
-                if definition.level == "span":
-                    from tracer.services.derived_metrics.span_evidence import (
-                        freeze_span_fields,
-                    )
+        source_ids = [(k.trace_id, k.span_id) for k in change.source_keys]
+        source_ids.extend(
+            (entry["trace_id"], entry["span_id"])
+            for entry in prior["membership_preimage"]
+            if entry.get("trace_id") and entry.get("span_id")
+        )
+        recovered_dependencies = self.recover_dependencies(
+            prior["membership_preimage"], as_of=as_of
+        )
+        dependencies = {d.key: d for d in recovered_dependencies}
+        dependencies.update({d.key: d for d in change.dependencies})
+        ids.update(
+            d.canonical_session_id
+            for d in recovered_dependencies
+            if d.canonical_session_id
+        )
+        if len(ids) > MAX_PASS_UNITS:
+            raise ValueError("replacement owner set exceeds pass cap")
+        if any(d.level == "span" for d in definitions):
+            self._span_dirty_keys(attempt, change, head, source_ids)
+        for definition in definitions:
+            if definition.level == "span":
+                from tracer.services.derived_metrics.span_evidence import (
+                    freeze_span_fields,
+                )
 
-                    freeze_span_fields(
-                        self,
-                        attempt,
-                        head,
-                        definition,
-                        scope,
-                        as_of=as_of,
-                        cutoff=cutoff,
-                    )
-                    continue
-                for offset in range(0, len(ids), MAX_BATCH_ROWS):
-                    candidates = tuple(sorted(ids))[offset : offset + MAX_BATCH_ROWS]
-                    where = (
-                        "field_id = toUUID(%(field)s) AND field_version = %(version)s"
-                    )
-                    candidate_params_fixed = {
-                        "field": str(definition.metric_id),
-                        "version": definition.version,
-                    }
-                    # Dirty-before is indexed by raw candidate owners. Keep its
-                    # membership separate from the remap-aware output-domain
-                    # readers below: their canonical unit_id can differ from
-                    # every candidate supplied to unit_values_select.
-                    before = []
-                    for membership in iter_key_membership_batches(
+                freeze_span_fields(
+                    self,
+                    attempt,
+                    head,
+                    definition,
+                    scope,
+                    as_of=as_of,
+                    cutoff=cutoff,
+                )
+                continue
+            for offset in range(0, len(ids), MAX_BATCH_ROWS):
+                candidates = tuple(sorted(ids))[offset : offset + MAX_BATCH_ROWS]
+                where = "field_id = toUUID(%(field)s) AND field_version = %(version)s"
+                candidate_params_fixed = {
+                    "field": str(definition.metric_id),
+                    "version": definition.version,
+                }
+                # Dirty-before is indexed by raw candidate owners. Keep its
+                # membership separate from the remap-aware output-domain
+                # readers below: their canonical unit_id can differ from
+                # every candidate supplied to unit_values_select.
+                before = []
+                for membership in iter_key_membership_batches(
+                    FIELD_VALUES,
+                    fixed={
+                        "field_id": (definition.metric_id,),
+                        "field_version": (definition.version,),
+                    },
+                    columns="unit_id",
+                    values=candidates,
+                ):
+                    candidate_sql, candidate_params = committed_rows_select(
                         FIELD_VALUES,
-                        fixed={
-                            "field_id": (definition.metric_id,),
-                            "field_version": (definition.version,),
-                        },
-                        columns="unit_id",
-                        values=candidates,
-                    ):
-                        candidate_sql, candidate_params = committed_rows_select(
-                            FIELD_VALUES,
-                            head,
-                            org_id=self.org_id,
-                            project_id=scope.project,
-                            key_in=membership,
-                            param_prefix="dirty_candidate",
+                        head,
+                        org_id=self.org_id,
+                        project_id=scope.project,
+                        key_in=membership,
+                        param_prefix="dirty_candidate",
+                    )
+                    before.extend(
+                        self.store.execute(
+                            f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum FROM ({candidate_sql}) WHERE {where}",
+                            merge_bindings(candidate_params, candidate_params_fixed),
                         )
-                        before.extend(
-                            self.store.execute(
-                                f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum FROM ({candidate_sql}) WHERE {where}",
-                                merge_bindings(
-                                    candidate_params, candidate_params_fixed
+                    )
+                self.append(
+                    attempt,
+                    "dirty_before",
+                    [
+                        dict(
+                            zip(
+                                (
+                                    "unit_id",
+                                    "bucket_start",
+                                    "group_key",
+                                    "scope_key",
+                                    "stratum_key",
                                 ),
+                                row,
+                                strict=True,
                             )
                         )
+                        for row in before
+                    ],
+                )
+                query, params = unit_values_select(
+                    definition,
+                    scope,
+                    candidates,
+                    start=start,
+                    end=end,
+                    as_of=as_of,
+                    filters=definition.filters,
+                    settle_minutes=settle_minutes,
+                    manifest=head,
+                    source_identities=source_ids,
+                )
+                captured = capture_source_output(
+                    self.store,
+                    query,
+                    params,
+                    field_id=definition.metric_id,
+                    field_version=definition.version,
+                    candidate_count=len(candidates),
+                )
+                for source_page in captured.pages():
+                    query, params = source_page.select()
+                    old_sql, old_params = committed_rows_select(
+                        FIELD_VALUES,
+                        head,
+                        org_id=self.org_id,
+                        project_id=scope.project,
+                        key_in={
+                            "field_id": (definition.metric_id,),
+                            "field_version": (definition.version,),
+                            "unit_id": source_page.unit_ids,
+                        },
+                        param_prefix="source_old_fields",
+                    )
+                    old_params = merge_bindings(old_params, candidate_params_fixed)
+                    # The raw candidate dirty-before/has_before guard above is
+                    # unchanged. Also invalidate prior buckets of emitted survivors
+                    # outside that domain; this must NOT change bool(before).
+                    supplemental = self.store.execute(
+                        f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum "
+                        f"FROM ({old_sql}) WHERE unit_id NOT IN %(raw_candidates)s",
+                        {**old_params, "raw_candidates": candidates},
+                    )
                     self.append(
                         attempt,
                         "dirty_before",
@@ -1414,266 +1496,194 @@ class RefreshWriter:
                                     strict=True,
                                 )
                             )
-                            for row in before
+                            for row in supplemental
                         ],
                     )
-                    query, params = unit_values_select(
-                        definition,
-                        scope,
-                        candidates,
-                        start=start,
-                        end=end,
-                        as_of=as_of,
-                        filters=definition.filters,
-                        settle_minutes=settle_minutes,
-                        manifest=head,
-                        source_identities=source_ids,
-                    )
-                    captured = capture_source_output(
-                        self.store,
-                        query,
-                        params,
-                        field_id=definition.metric_id,
-                        field_version=definition.version,
-                        candidate_count=len(candidates),
-                    )
-                    for source_page in captured.pages():
-                        query, params = source_page.select()
-                        old_sql, old_params = committed_rows_select(
-                            FIELD_VALUES,
-                            head,
-                            org_id=self.org_id,
-                            project_id=scope.project,
-                            key_in={
-                                "field_id": (definition.metric_id,),
-                                "field_version": (definition.version,),
-                                "unit_id": source_page.unit_ids,
-                            },
-                            param_prefix="source_old_fields",
-                        )
-                        old_params = merge_bindings(old_params, candidate_params_fixed)
-                        # The raw candidate dirty-before/has_before guard above is
-                        # unchanged. Also invalidate prior buckets of emitted survivors
-                        # outside that domain; this must NOT change bool(before).
-                        supplemental = self.store.execute(
-                            f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum "
-                            f"FROM ({old_sql}) WHERE unit_id NOT IN %(raw_candidates)s",
-                            {**old_params, "raw_candidates": candidates},
-                        )
-                        self.append(
-                            attempt,
-                            "dirty_before",
-                            [
-                                dict(
-                                    zip(
-                                        (
-                                            "unit_id",
-                                            "bucket_start",
-                                            "group_key",
-                                            "scope_key",
-                                            "stratum_key",
-                                        ),
-                                        row,
-                                        strict=True,
-                                    )
-                                )
-                                for row in supplemental
-                            ],
-                        )
-                        states, state_params = committed_rows_select(
-                            UNIT_STATE,
-                            head,
-                            org_id=self.org_id,
-                            project_id=scope.project,
-                            key_in={
-                                "level": ("conversation",),
-                                "unit_id": source_page.unit_ids,
-                            },
-                            param_prefix="state_floor",
-                        )
-                        # A deleted latest span can lower the live-source arrival.
-                        # Durable committed knowledge is a floor, never settle early.
-                        floor = (
-                            "greatest(f.last_arrival_ns, ifNull(p.last_arrival_ns, 0))"
-                        )
-                        due = f"fromUnixTimestamp64Nano(toInt64({floor}), 'UTC') + toIntervalMinute(%(floor_settle)s)"
-                        still_open = f"f.is_deleted = 0 AND {due} > toDateTime64(%(floor_as_of)s, 6, 'UTC')"
-                        provisional = ", ".join(
-                            f"if({still_open}, NULL, f.{c}) AS {c}"
-                            for c in ("value_bool", "value_number", "value_text")
-                        )
-                        query = (
-                            f"SELECT f.* REPLACE({floor} AS last_arrival_ns, "
-                            f"if({still_open}, 'open', f.status) AS status, "
-                            f"{provisional}, if({still_open}, NULL, f.settled_at) AS settled_at) "
-                            f"FROM ({query}) f LEFT JOIN ({states}) p ON f.level = p.level AND f.unit_id = p.unit_id"
-                        )
-                        params = merge_bindings(params, state_params)
-                        params.update(floor_settle=settle_minutes, floor_as_of=as_of)
-                        if cutoff is not None:
-                            # Keep an expired proposal for an EXISTING logical field:
-                            # the same publication must retire it and invalidate its
-                            # former bucket, not silently leave that field current.
-                            # Previously purged/unknown old evidence is not a backfill.
-                            query = (
-                                f"SELECT * FROM ({query}) WHERE unit_start >= "
-                                "toDateTime64(%(refresh_cutoff)s, 6, 'UTC') "
-                                f"OR unit_id IN (SELECT unit_id FROM ({old_sql}) WHERE {where})"
-                            )
-                            params = merge_bindings(params, old_params)
-                            params["refresh_cutoff"] = cutoff
-                            if (
-                                before
-                                and self.store.execute(
-                                    f"SELECT count() FROM ({query}) f INNER JOIN "
-                                    f"(SELECT unit_id, unit_start AS previous_start FROM ({old_sql}) WHERE {where}) o "
-                                    "ON f.unit_id = o.unit_id WHERE f.is_deleted = 0 "
-                                    "AND o.previous_start < toDateTime64(%(refresh_cutoff)s, 6, 'UTC') "
-                                    "AND f.unit_start >= toDateTime64(%(refresh_cutoff)s, 6, 'UTC')",
-                                    params,
-                                )[0][0]
-                            ):
-                                # Surviving young members alone cannot distinguish
-                                # physical pruning from an authoritative deletion.
-                                raise MetricAdmissionUnproven(
-                                    "metric_admission_unproven"
-                                )
-                        if inherited_floor and self._unproven_source_admission(
-                            head,
-                            source_page,
-                            query,
-                            params,
-                            old_sql,
-                            old_params,
-                            cutoff or inherited_floor,
-                        ):
-                            # Unknown or corrected anchors cannot be proven from a
-                            # recent raw row alone (TH-8975 remains held).
-                            raise MetricAdmissionUnproven("metric_admission_unproven")
-                        extra = {
-                            "field_id": "toUUID(%(metric)s)",
-                            "field_version": "toUInt32(%(metric_version)s)",
-                        }
-                        frozen = self.freeze(
-                            attempt,
-                            FIELD_VALUES,
-                            query,
-                            {
-                                **params,
-                                "metric": str(definition.metric_id),
-                                "metric_version": definition.version,
-                            },
-                            extra=extra,
-                        )
-                        new_sql, new_params = payload_select(
-                            FIELD_VALUES, frozen, prefix="new_fields"
-                        )
-                        after = self.store.execute(
-                            f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum, is_deleted FROM ({new_sql})",
-                            new_params,
-                        )
-                        self.append(
-                            attempt,
-                            "dirty_after",
-                            [
-                                dict(
-                                    zip(
-                                        (
-                                            "unit_id",
-                                            "bucket_start",
-                                            "group_key",
-                                            "scope_key",
-                                            "stratum_key",
-                                            "is_deleted",
-                                        ),
-                                        row,
-                                        strict=True,
-                                    )
-                                )
-                                for row in after
-                            ],
-                        )
-                        self.append(
-                            attempt,
-                            "vanished",
-                            [{"unit_id": row[0]} for row in after if row[-1]],
-                        )
-            # Dependencies/lifecycle are part of the SAME generation. B04 carries
-            # tombstones as well as old memberships; neither is an independent write.
-            self.freeze_dependencies(attempt, dependencies.values(), cutoff=cutoff)
-            # BL01-Q must qualify and byte-bound current-fact maintenance before
-            # it joins production refreshes. Copying full message inputs here can
-            # exceed the batch cap even when the scalar metric payload is small.
-            field_payloads = [
-                FrozenRows.from_plan(p)
-                for p in self.plans(attempt, kind="field_values")
-            ]
-            overlay, overlay_params = payload_select(
-                FIELD_VALUES, field_payloads, prefix="overlay"
-            )
-            if field_payloads:
-                # Retain ALL existing checked proposals, including losers and
-                # both open predicates. R01 changes only the prior lookup domain;
-                # a separate all-proposal scratch stream is deferred to R03.
-                lifecycle_keys = self.store.execute(
-                    f"SELECT DISTINCT level, unit_id FROM ({overlay}) WHERE level != 'span' ORDER BY level, unit_id",
-                    overlay_params,
-                )
-                for membership in iter_key_membership_batches(
-                    UNIT_STATE,
-                    fixed={},
-                    columns=("level", "unit_id"),
-                    values=lifecycle_keys,
-                    max_items=MAX_BATCH_ROWS,
-                ):
-                    prior_states, prior_params = committed_rows_select(
+                    states, state_params = committed_rows_select(
                         UNIT_STATE,
                         head,
                         org_id=self.org_id,
-                        project_id=self.lease.project_id,
-                        key_in=membership,
-                        param_prefix="prior_states",
-                    )
-                    state = f"""SELECT f.level AS level, f.unit_id AS unit_id, max(f.last_arrival_ns) AS last_arrival_ns,
-                        if(countIf(p.unit_id != '') > 0, min(p.first_seen), toDateTime64(%(state_first_seen)s, 6, 'UTC')) AS first_seen,
-                        toUInt8(max(p.reopened) OR (max(p.is_deleted) AND countIf(f.status = 'open') > 0)) AS reopened,
-                        toUInt8(countIf(f.is_deleted = 0 AND f.status = 'open') = 0) AS is_deleted,
-                        fromUnixTimestamp64Nano(toInt64(last_arrival_ns), 'UTC') + toIntervalMinute(%(settle)s) AS due_at
-                        FROM (SELECT * FROM ({overlay}) WHERE (level, unit_id) IN %(lifecycle_keys)s) f LEFT JOIN ({prior_states}) p ON f.level = p.level AND f.unit_id = p.unit_id
-                        GROUP BY f.level, f.unit_id"""
-                    self.freeze(
-                        attempt,
-                        UNIT_STATE,
-                        state,
-                        {
-                            **overlay_params,
-                            **prior_params,
-                            "lifecycle_keys": membership[("level", "unit_id")],
-                            "settle": settle_minutes,
-                            "state_first_seen": as_of,
+                        project_id=scope.project,
+                        key_in={
+                            "level": ("conversation",),
+                            "unit_id": source_page.unit_ids,
                         },
+                        param_prefix="state_floor",
                     )
-            for definition in definitions:
-                if definition.level != "user" and cutoff is None:
-                    self._freeze_buckets(
-                        attempt, head, definition, overlay, overlay_params
+                    # A deleted latest span can lower the live-source arrival.
+                    # Durable committed knowledge is a floor, never settle early.
+                    floor = "greatest(f.last_arrival_ns, ifNull(p.last_arrival_ns, 0))"
+                    due = f"fromUnixTimestamp64Nano(toInt64({floor}), 'UTC') + toIntervalMinute(%(floor_settle)s)"
+                    still_open = f"f.is_deleted = 0 AND {due} > toDateTime64(%(floor_as_of)s, 6, 'UTC')"
+                    provisional = ", ".join(
+                        f"if({still_open}, NULL, f.{c}) AS {c}"
+                        for c in ("value_bool", "value_number", "value_text")
                     )
-            if cutoff is not None:
-                from tracer.services.derived_metrics.backfill import (
-                    retirement_definitions,
-                )
-                from tracer.services.derived_metrics.retention import retirement_plan
-
-                attempt = retirement_plan(
-                    self,
-                    attempt,
-                    head,
-                    retirement_definitions(self, head, definitions),
-                    cutoff,
-                )
-            self.seal(
-                attempt, cursors=dict(change.cursor_updates), publication=publication
+                    query = (
+                        f"SELECT f.* REPLACE({floor} AS last_arrival_ns, "
+                        f"if({still_open}, 'open', f.status) AS status, "
+                        f"{provisional}, if({still_open}, NULL, f.settled_at) AS settled_at) "
+                        f"FROM ({query}) f LEFT JOIN ({states}) p ON f.level = p.level AND f.unit_id = p.unit_id"
+                    )
+                    params = merge_bindings(params, state_params)
+                    params.update(floor_settle=settle_minutes, floor_as_of=as_of)
+                    if cutoff is not None:
+                        # Keep an expired proposal for an EXISTING logical field:
+                        # the same publication must retire it and invalidate its
+                        # former bucket, not silently leave that field current.
+                        # Previously purged/unknown old evidence is not a backfill.
+                        query = (
+                            f"SELECT * FROM ({query}) WHERE unit_start >= "
+                            "toDateTime64(%(refresh_cutoff)s, 6, 'UTC') "
+                            f"OR unit_id IN (SELECT unit_id FROM ({old_sql}) WHERE {where})"
+                        )
+                        params = merge_bindings(params, old_params)
+                        params["refresh_cutoff"] = cutoff
+                        if (
+                            before
+                            and self.store.execute(
+                                f"SELECT count() FROM ({query}) f INNER JOIN "
+                                f"(SELECT unit_id, unit_start AS previous_start FROM ({old_sql}) WHERE {where}) o "
+                                "ON f.unit_id = o.unit_id WHERE f.is_deleted = 0 "
+                                "AND o.previous_start < toDateTime64(%(refresh_cutoff)s, 6, 'UTC') "
+                                "AND f.unit_start >= toDateTime64(%(refresh_cutoff)s, 6, 'UTC')",
+                                params,
+                            )[0][0]
+                        ):
+                            # Surviving young members alone cannot distinguish
+                            # physical pruning from an authoritative deletion.
+                            raise MetricAdmissionUnproven("metric_admission_unproven")
+                    if inherited_floor and self._unproven_source_admission(
+                        head,
+                        source_page,
+                        query,
+                        params,
+                        old_sql,
+                        old_params,
+                        cutoff or inherited_floor,
+                    ):
+                        # Unknown or corrected anchors cannot be proven from a
+                        # recent raw row alone (TH-8975 remains held).
+                        raise MetricAdmissionUnproven("metric_admission_unproven")
+                    extra = {
+                        "field_id": "toUUID(%(metric)s)",
+                        "field_version": "toUInt32(%(metric_version)s)",
+                    }
+                    frozen = self.freeze(
+                        attempt,
+                        FIELD_VALUES,
+                        query,
+                        {
+                            **params,
+                            "metric": str(definition.metric_id),
+                            "metric_version": definition.version,
+                        },
+                        extra=extra,
+                    )
+                    new_sql, new_params = payload_select(
+                        FIELD_VALUES, frozen, prefix="new_fields"
+                    )
+                    after = self.store.execute(
+                        f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum, is_deleted FROM ({new_sql})",
+                        new_params,
+                    )
+                    self.append(
+                        attempt,
+                        "dirty_after",
+                        [
+                            dict(
+                                zip(
+                                    (
+                                        "unit_id",
+                                        "bucket_start",
+                                        "group_key",
+                                        "scope_key",
+                                        "stratum_key",
+                                        "is_deleted",
+                                    ),
+                                    row,
+                                    strict=True,
+                                )
+                            )
+                            for row in after
+                        ],
+                    )
+                    self.append(
+                        attempt,
+                        "vanished",
+                        [{"unit_id": row[0]} for row in after if row[-1]],
+                    )
+        # Dependencies/lifecycle are part of the SAME generation. B04 carries
+        # tombstones as well as old memberships; neither is an independent write.
+        self.freeze_dependencies(attempt, dependencies.values(), cutoff=cutoff)
+        # BL01-Q must qualify and byte-bound current-fact maintenance before
+        # it joins production refreshes. Copying full message inputs here can
+        # exceed the batch cap even when the scalar metric payload is small.
+        field_payloads = [
+            FrozenRows.from_plan(p) for p in self.plans(attempt, kind="field_values")
+        ]
+        overlay, overlay_params = payload_select(
+            FIELD_VALUES, field_payloads, prefix="overlay"
+        )
+        if field_payloads:
+            # Retain ALL existing checked proposals, including losers and
+            # both open predicates. R01 changes only the prior lookup domain;
+            # a separate all-proposal scratch stream is deferred to R03.
+            lifecycle_keys = self.store.execute(
+                f"SELECT DISTINCT level, unit_id FROM ({overlay}) WHERE level != 'span' ORDER BY level, unit_id",
+                overlay_params,
             )
+            for membership in iter_key_membership_batches(
+                UNIT_STATE,
+                fixed={},
+                columns=("level", "unit_id"),
+                values=lifecycle_keys,
+                max_items=MAX_BATCH_ROWS,
+            ):
+                prior_states, prior_params = committed_rows_select(
+                    UNIT_STATE,
+                    head,
+                    org_id=self.org_id,
+                    project_id=self.lease.project_id,
+                    key_in=membership,
+                    param_prefix="prior_states",
+                )
+                state = f"""SELECT f.level AS level, f.unit_id AS unit_id, max(f.last_arrival_ns) AS last_arrival_ns,
+                    if(countIf(p.unit_id != '') > 0, min(p.first_seen), toDateTime64(%(state_first_seen)s, 6, 'UTC')) AS first_seen,
+                    toUInt8(max(p.reopened) OR (max(p.is_deleted) AND countIf(f.status = 'open') > 0)) AS reopened,
+                    toUInt8(countIf(f.is_deleted = 0 AND f.status = 'open') = 0) AS is_deleted,
+                    fromUnixTimestamp64Nano(toInt64(last_arrival_ns), 'UTC') + toIntervalMinute(%(settle)s) AS due_at
+                    FROM (SELECT * FROM ({overlay}) WHERE (level, unit_id) IN %(lifecycle_keys)s) f LEFT JOIN ({prior_states}) p ON f.level = p.level AND f.unit_id = p.unit_id
+                    GROUP BY f.level, f.unit_id"""
+                self.freeze(
+                    attempt,
+                    UNIT_STATE,
+                    state,
+                    {
+                        **overlay_params,
+                        **prior_params,
+                        "lifecycle_keys": membership[("level", "unit_id")],
+                        "settle": settle_minutes,
+                        "state_first_seen": as_of,
+                    },
+                )
+        for definition in definitions:
+            if definition.level != "user" and cutoff is None:
+                self._freeze_buckets(attempt, head, definition, overlay, overlay_params)
+        if cutoff is not None:
+            from tracer.services.derived_metrics.backfill import (
+                retirement_definitions,
+            )
+            from tracer.services.derived_metrics.retention import retirement_plan
+
+            attempt = retirement_plan(
+                self,
+                attempt,
+                head,
+                retirement_definitions(self, head, definitions),
+                cutoff,
+            )
+        self.seal(attempt, cursors=dict(change.cursor_updates), publication=publication)
         manifest = self.stage_and_publish(attempt)
         if cutoff is not None:
             from tracer.services.derived_metrics.retention import purge_checkpoint
@@ -2029,6 +2039,7 @@ class RefreshWriter:
         *,
         complete_fields=False,
         retired_override=None,
+        _dirty_starts=None,
     ):
         # Complete fields are already frozen final rows, not a SQL relation with
         # a hidden broad collapse. Proposal callers supply the raw overlay plus
@@ -2048,9 +2059,19 @@ class RefreshWriter:
                 for entry in chunk.payload
                 if "bucket_start" in entry
             )
-        for start in sorted(dirty):
-            p = {**params, "dirty_start": start}
-            predicate = "bucket_start = parseDateTimeBestEffort(%(dirty_start)s, 'UTC')"
+        if _dirty_starts is not None:
+            dirty = set(_dirty_starts)
+        # The exhaustive physical-key scan and frozen/digest ceremony are per
+        # bounded SET of dirty quarters, not per quarter. The same pre-fold
+        # statistics keep bucket_start in their key, so folding remains exact.
+        # Physical row/byte caps and subdivision still apply to every input page.
+        dirty = sorted(dirty)
+        for offset in range(0, len(dirty), BUCKET_WINDOWS_PER_FOLD):
+            starts = tuple(
+                str(value) for value in dirty[offset : offset + BUCKET_WINDOWS_PER_FOLD]
+            )
+            p = {**params, "dirty_starts": list(starts)}
+            predicate = "bucket_start IN (SELECT parseDateTimeBestEffort(arrayJoin(%(dirty_starts)s), 'UTC'))"
             self.lease.keepalive()
             subdivide = not complete_fields and field_window_requires_subdivision(
                 self.store,
@@ -2059,7 +2080,7 @@ class RefreshWriter:
                 project_id=self.lease.project_id,
                 field_id=definition.metric_id,
                 field_version=definition.version,
-                bucket_start=str(start),
+                bucket_start=starts,
                 overlay=(overlay, overlay_params),
             )
             fields = BucketFieldPlan(
@@ -2074,11 +2095,14 @@ class RefreshWriter:
                 subdivide=subdivide,
                 complete_fields=complete_fields,
             )
-            at = datetime.fromisoformat(str(start))
+            moments = tuple(datetime.fromisoformat(start) for start in starts)
             membership = {
                 "metric_id": (definition.metric_id,),
                 "metric_version": (definition.version,),
-                "bucket_start": (at.replace(tzinfo=UTC) if at.tzinfo is None else at,),
+                "bucket_start": tuple(
+                    at.replace(tzinfo=UTC) if at.tzinfo is None else at
+                    for at in moments
+                ),
             }
             retired, rp = committed_rows_select(
                 RETIRED_PARTS,
@@ -2105,30 +2129,54 @@ class RefreshWriter:
                     f"SELECT * FROM ({retired}) WHERE {metric_where} AND {predicate}"
                 )
             p = merge_bindings(p, rp, op)
-            with self._anonymous_bucket_parts(
-                attempt, definition, fields, retired, p
-            ) as parts:
-                replacement = replacement_select(parts, old)
-                vanished = self.store.execute(
-                    f"SELECT {', '.join(KEYS)} FROM ({old}) WHERE ({', '.join(KEYS)}) NOT IN (SELECT {', '.join(KEYS)} FROM ({parts}))",
-                    p,
-                )
-                self.append(
-                    attempt,
-                    "vanished",
-                    [dict(zip(KEYS, row, strict=True)) for row in vanished],
-                )
-                self.freeze(
-                    attempt,
-                    BUCKET_TOTALS,
-                    replacement,
-                    p,
-                    collect_payloads=False,
-                    extra={
-                        "metric_id": "toUUID(%(bucket_metric)s)",
-                        "metric_version": "toUInt32(%(bucket_metric_version)s)",
-                    },
-                )
+            from tracer.services.derived_metrics.frozen_relations import (
+                FrozenRelationOverflow,
+            )
+
+            captured = False
+            try:
+                with self._anonymous_bucket_parts(
+                    attempt, definition, fields, retired, p
+                ) as parts:
+                    captured = True
+                    replacement = replacement_select(parts, old)
+                    vanished = self.store.execute(
+                        f"SELECT {', '.join(KEYS)} FROM ({old}) WHERE ({', '.join(KEYS)}) NOT IN (SELECT {', '.join(KEYS)} FROM ({parts}))",
+                        p,
+                    )
+                    self.append(
+                        attempt,
+                        "vanished",
+                        [dict(zip(KEYS, row, strict=True)) for row in vanished],
+                    )
+                    self.freeze(
+                        attempt,
+                        BUCKET_TOTALS,
+                        replacement,
+                        p,
+                        collect_payloads=False,
+                        extra={
+                            "metric_id": "toUUID(%(bucket_metric)s)",
+                            "metric_version": "toUInt32(%(bucket_metric_version)s)",
+                        },
+                    )
+            except FrozenRelationOverflow:
+                # Only an INPUT capture can be retried. Once the consumer may
+                # have appended output, repeating the group would duplicate keys.
+                if captured or len(starts) == 1:
+                    raise
+                middle = len(starts) // 2
+                for half in (starts[:middle], starts[middle:]):
+                    self._freeze_buckets(
+                        attempt,
+                        head,
+                        definition,
+                        overlay,
+                        overlay_params,
+                        complete_fields=complete_fields,
+                        retired_override=retired_override,
+                        _dirty_starts=half,
+                    )
 
 
 def dependency_select(dependencies):

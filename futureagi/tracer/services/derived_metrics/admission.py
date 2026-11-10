@@ -52,9 +52,13 @@ from tracer.models.derived_metric import (
     MetricRefreshAttempt,
 )
 from tracer.models.project import Project
-from tracer.services.derived_metrics.deletion_protocol import serialized_project
+from tracer.services.derived_metrics.deletion_protocol import project_lock
 from tracer.services.derived_metrics.feature_flag import metrics_enabled
-from tracer.services.derived_metrics.lease import DEFAULT_LEASE_TTL, ProjectLease
+from tracer.services.derived_metrics.lease import (
+    DEFAULT_LEASE_TTL,
+    MetricPassDeadline,
+    ProjectLease,
+)
 from tracer.services.derived_metrics.refresh import RefreshWriter
 
 DISPATCH_SECONDS = 60
@@ -64,6 +68,10 @@ BACKOFF_BASE_SECONDS = 60
 BACKOFF_MAX_SECONDS = 900
 _LOCK_NAMESPACE = 0x4D455452
 _DISPATCH_LOCK = -1
+
+
+class RefreshAdmissionUnavailable(Exception):
+    """No queue row could be locked; the request was not acknowledged."""
 
 
 @dataclass(frozen=True)
@@ -259,7 +267,12 @@ def _project_admission(
     # Lifecycle -> parent -> refresh. Visibility linearizes at the locked claim;
     # cleanup authorization instead names an existing immutable publication debt.
     # Keep the existing global OFF and deleted-parent policies for both lanes.
-    with serialized_project(project_id):
+    with transaction.atomic():
+        # A privacy purge may legitimately hold lifecycle serialization while
+        # draining a mutation. Skip that project, never stall fleet dispatch.
+        if not project_lock(project_id, blocking=False):
+            yield False
+            return
         if expiry_id is None:
             yield metrics_enabled(project=project_id) and (
                 Project.no_workspace_objects.select_for_update()
@@ -304,7 +317,9 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
         reservations = []
         # Never hold a refresh row then acquire its project serialization lock:
         # the publication protocol acquires these locks in the opposite order.
-        for state in eligible_projects(now)[:free]:
+        for state in eligible_projects(now).iterator(chunk_size=100):
+            if len(reservations) >= free:
+                break
             lanes = ("incremental", "backfill", "repair")
             start = state.fencing_epoch % len(lanes)
             purpose = next(
@@ -356,10 +371,25 @@ def request_refresh(project_id: UUID, *, clock: Callable = timezone.now) -> bool
     if not metrics_enabled(project=project_id):
         return False
     now = clock()
-    with _project_admission(project_id) as admitted:
-        if not admitted:
-            return False
-        state = MetricProjectRefresh.for_project(project_id)
+    # Run now only records a coalesced request. It must not acquire the writer's
+    # lifecycle lock (including while a previous deployment has a stuck writer).
+    # Admission/visibility is rechecked by the dispatcher before taking a lease.
+    if not Project.no_workspace_objects.filter(pk=project_id).exists():
+        return False
+    # Saving a definition already enrolls its project. Never lazily recreate
+    # state here: a parent cascade may have committed after the visibility read.
+    with transaction.atomic():
+        state = (
+            MetricProjectRefresh.objects.select_for_update(
+                of=("self",), skip_locked=True
+            )
+            .filter(project_id=project_id, project__deleted=False)
+            .first()
+        )
+        if state is None:
+            # A skipped lock is NOT proof of a pending/throttled request. Missing
+            # state likewise cannot acknowledge delivery; the caller must retry.
+            raise RefreshAdmissionUnavailable
         if state.refresh_requested_at is not None or (
             state.last_started_at and now < state.last_started_at + RUN_NOW_THROTTLE
         ):
@@ -478,7 +508,9 @@ def execute_reservation(
     payload: dict, *, clock: Callable = timezone.now, runner: Callable | None = None
 ) -> bool:
     reservation = Reservation.from_payload(payload)
-    lease = ProjectLease(reservation.grant, clock=clock)
+    # The activity timeout cannot kill a synchronous Python thread. Leave a
+    # full minute for unwinding transports/locks before its 600-second timeout.
+    lease = ProjectLease(reservation.grant, clock=clock, deadline=monotonic() + 540)
     if not metrics_enabled(project=lease.project_id):
         _release_queued(reservation)
         return False
@@ -487,6 +519,7 @@ def execute_reservation(
             _release_queued(reservation)
             return False
         claimed = False
+        previous_head = None
         try:
             with _project_admission(lease.project_id, reservation.expiry_id) as visible:
                 if not visible:
@@ -504,6 +537,9 @@ def execute_reservation(
             # require their existing independent commit boundaries.
             if not metrics_enabled(project=lease.project_id):
                 return False
+            previous_head = MetricProjectRefresh.objects.values_list(
+                "head_manifest_id", flat=True
+            ).get(project_id=lease.project_id)
             if reservation.expiry_id:
                 run_project_cleanup(lease, reservation.expiry_id)
             else:
@@ -520,6 +556,19 @@ def execute_reservation(
                     updates["refresh_requested_at"] = None
                 MetricProjectRefresh.objects.filter(pk=state.pk).update(**updates)
             return True
+        except MetricPassDeadline:
+            # Published chunk cursors remain durable. A pass that made progress
+            # must not inherit the OLD failure's exponential backoff when yielding.
+            # Do not acknowledge Run now until the requested pass really finishes.
+            if claimed:
+                MetricProjectRefresh.objects.filter(
+                    project_id=lease.project_id,
+                    fencing_epoch=lease.grant.fencing_epoch,
+                    lease_token=lease.grant.lease_token,
+                ).exclude(head_manifest_id=previous_head).update(
+                    consecutive_failures=0, last_error_code=""
+                )
+            return False
         except MetricFencingError:
             return False
         except Exception:
@@ -560,7 +609,7 @@ def run_project_cleanup(lease: ProjectLease, expiry_id: UUID) -> None:
     try:
         writer = RefreshWriter(
             lease,
-            ClickHousePublicationStore(client),
+            ClickHousePublicationStore(client, lease=lease),
             org_id=state.project.organization_id,
         )
         finish_pending_expiry(writer, expiry_id=expiry_id)
@@ -573,14 +622,18 @@ class NativeMetricAnalytics:
 
     supports_per_query_read_settings = True
 
-    def __init__(self, client):
+    def __init__(self, client, *, lease=None):
         self.client = client
+        self.lease = lease
 
     def execute_ch_query(
         self, query, params, *, timeout_ms, settings, server_execution_cap_ms=None
     ):
         from tracer.services.clickhouse.query_service import QueryResult
 
+        if self.lease is not None:
+            self.lease.keepalive()
+            timeout_ms = min(timeout_ms, self.lease.remaining_seconds() * 1000)
         started = monotonic()
         rows, columns = self.client.execute(
             query,
@@ -612,6 +665,11 @@ class _ScheduledRefreshWriter(RefreshWriter):
     def __init__(self, *args, settle_minutes: int, **kwargs):
         super().__init__(*args, **kwargs)
         self.settle_minutes = settle_minutes
+        from tracer.services.derived_metrics.backfill import PAGE_SIZE
+
+        # Bound incremental owners as well as the separate history nomination;
+        # larger arrival bursts use PG's durable repair cursor, never truncation.
+        self.incremental_unit_limit = PAGE_SIZE
 
     def refresh(self, *args, **kwargs):
         kwargs.setdefault("settle_minutes", self.settle_minutes)
@@ -650,7 +708,7 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
         send_receive_timeout=60,
     )
     try:
-        store = ClickHousePublicationStore(client)
+        store = ClickHousePublicationStore(client, lease=lease)
         writer = _ScheduledRefreshWriter(
             lease,
             store,
@@ -666,13 +724,23 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
             MetricProjectRefresh.objects.filter(pk=locked.pk).update(
                 next_due_at=lease.clock()
             )
-        analytics = NativeMetricAnalytics(client)
-        runner = backfill.BackfillRunner(writer, analytics, scope)
-        if (
+        analytics = NativeMetricAnalytics(client, lease=lease)
+        runner = backfill.BackfillRunner(
+            writer, analytics, scope, exhaustive_initial=True
+        )
+        if backfill.pending_versions(lease.project_id).exists() and (
             purpose == "backfill"
-            and backfill.pending_versions(lease.project_id).exists()
+            or not DerivedMetricVersion.objects.filter(
+                metric__project_id=lease.project_id,
+                metric__deleted=False,
+                id=F("metric__active_version_id"),
+                pins_revoked_at__isnull=True,
+            ).exists()
         ):
-            runner.run_pass(max_chunks=1)
+            # Initial history has no serving version to keep fresh. Give every
+            # lane durable history progress instead of an uncheckpointed initial
+            # incremental sweep. Each chunk still includes incremental discovery.
+            runner.run_pass(max_chunks=backfill.MAX_CHUNKS_PER_PASS)
         elif purpose == "repair" and state.pending_repair:
             runner.run_repair_page()
         else:
