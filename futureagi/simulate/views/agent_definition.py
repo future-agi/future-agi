@@ -774,14 +774,19 @@ class EditAgentDefinitionView(APIView):
                 # Route livekit_* fields to ProviderCredentials so they
                 # actually persist (setattr on the model is a no-op for these
                 # since they aren't real columns).
-                if preserve_existing_api_key:
-                    version = agent.active_version or agent.latest_version
-                    existing_api_key = (
-                        resolve_api_key_for_version(version) if version else None
-                    )
-                else:
-                    existing_api_key = None
-                version = agent.active_version or agent.latest_version
+                versions = agent.versions.select_for_update(of=("self",)).order_by(
+                    "-version_number"
+                )
+                version = versions.filter(
+                    status=AgentVersion.StatusChoices.ACTIVE
+                ).first()
+                if version is None:
+                    version = versions.first()
+                existing_api_key = (
+                    resolve_api_key_for_version(version)
+                    if preserve_existing_api_key and version is not None
+                    else None
+                )
 
                 creds_input = ProviderCredentialsInput(
                     provider=validated.get("provider") or agent.provider or "",
@@ -801,6 +806,15 @@ class EditAgentDefinitionView(APIView):
                 )
                 if version:
                     sync_provider_credentials(version, creds_input)
+                    if "assistant_id" in validated:
+                        # Polling reads the assistant from this version, not the
+                        # mutable definition. Commit its snapshot and credentials
+                        # together without changing other historical versions.
+                        raw = version.configuration_snapshot
+                        snapshot = dict(raw) if isinstance(raw, dict) else {}
+                        snapshot["assistant_id"] = validated["assistant_id"]
+                        version.configuration_snapshot = snapshot
+                        version.save(update_fields=["configuration_snapshot"])
                 if "observability_enabled" in validated:
                     set_agent_observability(
                         agent_definition=agent,

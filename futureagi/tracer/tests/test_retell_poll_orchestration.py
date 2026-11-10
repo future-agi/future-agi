@@ -192,6 +192,10 @@ class _FakeManager:
         self._table = table
         self._soft_delete_filter = soft_delete_filter
 
+    def using(self, alias):
+        assert alias == "default", "Checkpoint CAS must read and write the primary"
+        return self
+
     def _rows(self):
         rows = list(self._table.values())
         if self._soft_delete_filter:

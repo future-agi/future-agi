@@ -260,8 +260,10 @@ def _read_retell_state(provider) -> dict:
 def _write_retell_state(provider_id, retell_state: dict) -> bool:
     # Compare-and-swap the JSON root so pagination cannot overwrite a concurrent
     # configuration-health transition (or another provider's state namespace).
+    # Read from the same primary that evaluates the conditional update. Replica
+    # lag cannot be resolved by retrying the same stale comparison value.
+    rows = ObservabilityProvider.all_objects.using("default").filter(id=provider_id)
     for _ in range(5):
-        rows = ObservabilityProvider.all_objects.filter(id=provider_id)
         previous = rows.values_list("poll_state", flat=True).first()
         merged = dict(previous) if isinstance(previous, dict) else {}
         merged["retell"] = retell_state
