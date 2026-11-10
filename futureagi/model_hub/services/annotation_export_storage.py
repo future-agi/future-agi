@@ -45,6 +45,64 @@ def export_bucket_name():
     )
 
 
+def _require_gcs_private_bucket(bucket):
+    # HMAC's XML API cannot establish IAM/default-ACL privacy. Fail closed unless
+    # the JSON API confirms both controls before any export bytes are written.
+    # Operators provision these controls and read-only ADC credentials; this
+    # path never changes a bucket's policy or falls back to a public upload.
+    from google.cloud import storage
+
+    configured = storage.Client().get_bucket(bucket, timeout=15, retry=None)
+    iam = configured.iam_configuration
+    if (
+        iam.public_access_prevention != "enforced"
+        or iam.uniform_bucket_level_access_enabled is not True
+    ):
+        raise ValueError(
+            "GCS export bucket requires enforced public access prevention "
+            "and uniform bucket-level access."
+        )
+
+
+def _require_s3_private_bucket(bucket):
+    import os
+
+    import boto3
+    from botocore.config import Config
+
+    from tfc.utils.storage_client import s3_endpoint
+
+    host, secure = s3_endpoint()
+    client = boto3.client(
+        "s3",
+        endpoint_url=f"{'https' if secure else 'http'}://{host}",
+        aws_access_key_id=os.getenv("S3_ACCESS_KEY")
+        or os.getenv("AWS_ACCESS_KEY_ID", ""),
+        aws_secret_access_key=os.getenv("S3_SECRET_KEY")
+        or os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+        region_name=os.getenv("S3_REGION")
+        or os.getenv("AWS_DEFAULT_REGION")
+        or "us-east-1",
+        config=Config(connect_timeout=15, read_timeout=15, retries={"max_attempts": 0}),
+    )
+    try:
+        controls = client.get_public_access_block(Bucket=bucket)[
+            "PublicAccessBlockConfiguration"
+        ]
+        if not all(
+            controls.get(name) is True
+            for name in (
+                "BlockPublicAcls",
+                "IgnorePublicAcls",
+                "BlockPublicPolicy",
+                "RestrictPublicBuckets",
+            )
+        ):
+            raise ValueError("S3 export bucket requires all public access blocks.")
+    finally:
+        client.close()
+
+
 def ensure_export_bucket(client):
     """Create without an anonymous policy; refuse a publicly configured bucket.
 
@@ -57,15 +115,14 @@ def ensure_export_bucket(client):
     if bucket == settings.UPLOAD_BUCKET_NAME:
         raise ValueError("Annotation exports require a separate private bucket.")
     if STORAGE_BACKEND == "gcs":
-        # GCS interoperable HMAC credentials cannot inspect the bucket's IAM
-        # policy. Require an explicitly provisioned bucket, never create one
-        # with unknown defaults; verify each uploaded object anonymously below.
+        # Require an explicit bucket with verifiable provider privacy controls.
         if not getattr(settings, "ANNOTATION_EXPORT_BUCKET_NAME", None):
             raise ValueError(
                 "GCS requires an explicitly configured private export bucket."
             )
         if not client.bucket_exists(bucket):
             raise ValueError("The private GCS export bucket must be provisioned first.")
+        _require_gcs_private_bucket(bucket)
         return bucket
     if not client.bucket_exists(bucket):
         try:
@@ -73,6 +130,9 @@ def ensure_export_bucket(client):
         except S3Error as exc:
             if exc.code != "BucketAlreadyOwnedByYou":
                 raise
+    if STORAGE_BACKEND == "s3":
+        # A missing bucket policy alone says nothing about existing public ACLs.
+        _require_s3_private_bucket(bucket)
     try:
         policy = json.loads(client.get_bucket_policy(bucket))
     except S3Error as exc:
@@ -99,22 +159,17 @@ def ensure_export_bucket(client):
 def verify_private_object(bucket, key):
     """Fail closed if the uploaded object is anonymously readable or untestable.
 
-    This also covers GCS bucket IAM and inherited/default object ACLs, which
-    its S3-interoperability API cannot reliably inspect. Never expose this URL
-    to a caller: it is only an anonymous probe from the storage worker.
+    Defense in depth only: ensure_export_bucket establishes privacy before
+    upload. Never expose this URL to a caller; it is a worker-only probe.
     """
     from tfc.utils.storage_client import (
         STORAGE_BACKEND,
-        _parse_endpoint,
         get_object_url,
+        s3_endpoint,
     )
 
-    if STORAGE_BACKEND == "minio":
-        import os
-
-        host, secure = _parse_endpoint(
-            os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
-        )
+    if STORAGE_BACKEND in {"minio", "s3"}:
+        host, secure = s3_endpoint()
         url = f"{'https' if secure else 'http'}://{host}/{bucket}/{key}"
     else:
         url = get_object_url(bucket, key)

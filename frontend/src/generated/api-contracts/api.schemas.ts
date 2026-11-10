@@ -7270,6 +7270,27 @@ export interface QueueExportFieldsResponseApi {
   result: QueueExportFieldsResultApi;
 }
 
+export interface QueueExportJobResultApi {
+  job_id: string;
+  queue_id: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  export_format: string;
+  item_count: number | null;
+  file_url: string | null;
+  file_name: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface QueueExportJobResponseApi {
+  status?: boolean;
+  result: QueueExportJobResultApi;
+}
+
 export interface QueueExportColumnMappingApi {
   field?: string;
   id?: string;
@@ -36586,27 +36607,6 @@ export interface ActivationResponseApi {
   scope: ActivationResponseApiScope;
 }
 
-export interface QueueExportJobResultApi {
-  job_id: string;
-  queue_id: string;
-  /** @minLength 1 */
-  status: string;
-  /** @minLength 1 */
-  export_format: string;
-  item_count: number | null;
-  file_url: string | null;
-  file_name: string | null;
-  error: string | null;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-}
-
-export interface QueueExportJobResponseApi {
-  status?: boolean;
-  result: QueueExportJobResultApi;
-}
-
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;
@@ -37660,6 +37660,10 @@ export const ModelHubAnnotationQueuesForSourceSourceType = {
   trace: "trace",
   trace_session: "trace_session",
 } as const;
+
+export type ModelHubAnnotationQueuesExportJobsExportDownloadParams = {
+  token: string;
+};
 
 export type ModelHubAnnotationQueuesExportAnnotationsParams = {
   export_format?: ModelHubAnnotationQueuesExportAnnotationsExportFormat;

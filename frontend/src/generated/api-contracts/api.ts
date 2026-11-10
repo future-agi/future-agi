@@ -813,6 +813,7 @@ import type {
   ModelHubAnnotationQueuesAutomationRulesList200,
   ModelHubAnnotationQueuesAutomationRulesListParams,
   ModelHubAnnotationQueuesExportAnnotationsParams,
+  ModelHubAnnotationQueuesExportJobsExportDownloadParams,
   ModelHubAnnotationQueuesForSourceParams,
   ModelHubAnnotationQueuesItemsAnnotateDetailParams,
   ModelHubAnnotationQueuesItemsList200,
@@ -24051,6 +24052,180 @@ export const modelHubAnnotationQueuesExportFields = async (
 ): Promise<modelHubAnnotationQueuesExportFieldsResponse> => {
   return apiMutator<modelHubAnnotationQueuesExportFieldsResponse>(
     getModelHubAnnotationQueuesExportFieldsUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubAnnotationQueuesExportJobResponse200 = {
+  data: QueueExportJobResponseApi;
+  status: 200;
+};
+
+export type modelHubAnnotationQueuesExportJobResponse400 = {
+  data: ApiTextErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubAnnotationQueuesExportJobResponse403 = {
+  data: ApiTextErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubAnnotationQueuesExportJobResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubAnnotationQueuesExportJobResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubAnnotationQueuesExportJobResponse500 = {
+  data: ApiTextErrorResponseApi;
+  status: 500;
+};
+
+export type modelHubAnnotationQueuesExportJobResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type modelHubAnnotationQueuesExportJobResponseSuccess =
+  modelHubAnnotationQueuesExportJobResponse200 & {
+    headers: Headers;
+  };
+export type modelHubAnnotationQueuesExportJobResponseError = (
+  | modelHubAnnotationQueuesExportJobResponse400
+  | modelHubAnnotationQueuesExportJobResponse403
+  | modelHubAnnotationQueuesExportJobResponse404
+  | modelHubAnnotationQueuesExportJobResponse409
+  | modelHubAnnotationQueuesExportJobResponse500
+  | modelHubAnnotationQueuesExportJobResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubAnnotationQueuesExportJobResponse =
+  | modelHubAnnotationQueuesExportJobResponseSuccess
+  | modelHubAnnotationQueuesExportJobResponseError;
+
+export const getModelHubAnnotationQueuesExportJobUrl = (
+  id: string,
+  jobId: string,
+) => {
+  return `/model-hub/annotation-queues/${id}/export-jobs/${jobId}/`;
+};
+
+/**
+ * Status of a background export, carrying the link once it is ready.
+ */
+export const modelHubAnnotationQueuesExportJob = async (
+  id: string,
+  jobId: string,
+  options?: RequestInit,
+): Promise<modelHubAnnotationQueuesExportJobResponse> => {
+  return apiMutator<modelHubAnnotationQueuesExportJobResponse>(
+    getModelHubAnnotationQueuesExportJobUrl(id, jobId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubAnnotationQueuesExportJobsExportDownloadResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type modelHubAnnotationQueuesExportJobsExportDownloadResponse400 = {
+  data: ApiTextErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubAnnotationQueuesExportJobsExportDownloadResponse403 = {
+  data: ApiTextErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubAnnotationQueuesExportJobsExportDownloadResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubAnnotationQueuesExportJobsExportDownloadResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubAnnotationQueuesExportJobsExportDownloadResponse500 = {
+  data: ApiTextErrorResponseApi;
+  status: 500;
+};
+
+export type modelHubAnnotationQueuesExportJobsExportDownloadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type modelHubAnnotationQueuesExportJobsExportDownloadResponseSuccess =
+  modelHubAnnotationQueuesExportJobsExportDownloadResponse200 & {
+    headers: Headers;
+  };
+export type modelHubAnnotationQueuesExportJobsExportDownloadResponseError = (
+  | modelHubAnnotationQueuesExportJobsExportDownloadResponse400
+  | modelHubAnnotationQueuesExportJobsExportDownloadResponse403
+  | modelHubAnnotationQueuesExportJobsExportDownloadResponse404
+  | modelHubAnnotationQueuesExportJobsExportDownloadResponse409
+  | modelHubAnnotationQueuesExportJobsExportDownloadResponse500
+  | modelHubAnnotationQueuesExportJobsExportDownloadResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubAnnotationQueuesExportJobsExportDownloadResponse =
+  | modelHubAnnotationQueuesExportJobsExportDownloadResponseSuccess
+  | modelHubAnnotationQueuesExportJobsExportDownloadResponseError;
+
+export const getModelHubAnnotationQueuesExportJobsExportDownloadUrl = (
+  id: string,
+  jobId: string,
+  params: ModelHubAnnotationQueuesExportJobsExportDownloadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/annotation-queues/${id}/export-jobs/${jobId}/download/?${stringifiedParams}`
+    : `/model-hub/annotation-queues/${id}/export-jobs/${jobId}/download/`;
+};
+
+/**
+ * Stream a private export only while this user can still read its queue.
+ */
+export const modelHubAnnotationQueuesExportJobsExportDownload = async (
+  id: string,
+  jobId: string,
+  params: ModelHubAnnotationQueuesExportJobsExportDownloadParams,
+  options?: RequestInit,
+): Promise<modelHubAnnotationQueuesExportJobsExportDownloadResponse> => {
+  return apiMutator<modelHubAnnotationQueuesExportJobsExportDownloadResponse>(
+    getModelHubAnnotationQueuesExportJobsExportDownloadUrl(id, jobId, params),
     {
       ...options,
       method: "GET",
@@ -96110,84 +96285,6 @@ export const v1SelfHostedActivationsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(activationRequestApi),
-    },
-  );
-};
-
-export type modelHubAnnotationQueuesExportJobResponse200 = {
-  data: QueueExportJobResponseApi;
-  status: 200;
-};
-
-export type modelHubAnnotationQueuesExportJobResponse400 = {
-  data: ApiTextErrorResponseApi;
-  status: 400;
-};
-
-export type modelHubAnnotationQueuesExportJobResponse403 = {
-  data: ApiTextErrorResponseApi;
-  status: 403;
-};
-
-export type modelHubAnnotationQueuesExportJobResponse404 = {
-  data: ApiTextErrorResponseApi;
-  status: 404;
-};
-
-export type modelHubAnnotationQueuesExportJobResponse409 = {
-  data: ApiTextErrorResponseApi;
-  status: 409;
-};
-
-export type modelHubAnnotationQueuesExportJobResponse500 = {
-  data: ApiTextErrorResponseApi;
-  status: 500;
-};
-
-export type modelHubAnnotationQueuesExportJobResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
-};
-
-export type modelHubAnnotationQueuesExportJobResponseSuccess =
-  modelHubAnnotationQueuesExportJobResponse200 & {
-    headers: Headers;
-  };
-export type modelHubAnnotationQueuesExportJobResponseError = (
-  | modelHubAnnotationQueuesExportJobResponse400
-  | modelHubAnnotationQueuesExportJobResponse403
-  | modelHubAnnotationQueuesExportJobResponse404
-  | modelHubAnnotationQueuesExportJobResponse409
-  | modelHubAnnotationQueuesExportJobResponse500
-  | modelHubAnnotationQueuesExportJobResponseDefault
-) & {
-  headers: Headers;
-};
-
-export type modelHubAnnotationQueuesExportJobResponse =
-  | modelHubAnnotationQueuesExportJobResponseSuccess
-  | modelHubAnnotationQueuesExportJobResponseError;
-
-export const getModelHubAnnotationQueuesExportJobUrl = (
-  id: string,
-  jobId: string,
-) => {
-  return `/model-hub/annotation-queues/${id}/export-jobs/${jobId}/`;
-};
-
-/**
- * Status of a background export, carrying the link once it is ready.
- */
-export const modelHubAnnotationQueuesExportJob = async (
-  id: string,
-  jobId: string,
-  options?: RequestInit,
-): Promise<modelHubAnnotationQueuesExportJobResponse> => {
-  return apiMutator<modelHubAnnotationQueuesExportJobResponse>(
-    getModelHubAnnotationQueuesExportJobUrl(id, jobId),
-    {
-      ...options,
-      method: "GET",
     },
   );
 };

@@ -1288,7 +1288,10 @@ UPLOAD_BUCKET_NAME = os.getenv(
     "UPLOAD_BUCKET_NAME", "fi-content-dev" if _is_local else "fi-content"
 )
 # Exports never share the anonymous-readable upload bucket. GCS requires an
-# explicitly provisioned private bucket; MinIO/S3 can create a separate one.
+# explicitly provisioned bucket with public access prevention enforced and
+# uniform bucket-level access, plus ADC permission to read bucket metadata.
+# S3 requires all four bucket public-access blocks enabled before upload.
+# MinIO/S3 can create a separate bucket; no backend changes existing policies.
 ANNOTATION_EXPORT_BUCKET_NAME = os.getenv("ANNOTATION_EXPORT_BUCKET_NAME", "")
 
 # Storage backend: "s3" (default/US), "gcs" (EU via S3-interop HMAC keys),

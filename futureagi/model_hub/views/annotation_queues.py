@@ -3631,7 +3631,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         """Export all items with their annotations."""
         query_params = request.validated_query_data
 
+        from model_hub.services.annotation_export_storage import can_download_export
+
         queue = self.get_object()
+        if not can_download_export(request, queue):
+            return self._gm.not_found("Queue not found.")
         items_qs = queue_export_items_queryset(queue, query_params.get("status"))
 
         # Fetch one past the cap so an oversize queue is caught before any of the

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1129,
+  endpointCount: 1130,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -11061,6 +11061,45 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/QueueExportJobResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/annotation-queues/{id}/export-jobs/{job_id}/download/": {
+      get: {
+        operationId: "model-hub_annotation-queues_export-jobs_export_download",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "file",
           },
           400: {
             $ref: "#/definitions/ApiTextErrorResponse",

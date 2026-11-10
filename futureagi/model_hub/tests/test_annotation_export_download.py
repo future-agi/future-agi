@@ -29,6 +29,12 @@ from model_hub.tests.test_annotation_export_batch_cap import (
 )
 
 
+@pytest.fixture(autouse=True)
+def minio_backend(monkeypatch):
+    # These tests use the bundled backend unless a provider case overrides it.
+    monkeypatch.setattr("tfc.utils.storage_client.STORAGE_BACKEND", "minio")
+
+
 @pytest.fixture
 def completed_export(organization, workspace, user):
     seed = _build_dataset_queue(
@@ -275,7 +281,14 @@ def test_gcs_requires_explicit_preprovisioned_bucket(settings):
         with pytest.raises(ValueError, match="provisioned first"):
             ensure_export_bucket(client)
         client.bucket_exists.return_value = True
-        assert ensure_export_bucket(client) == "private-synthetic-export"
+        with mock.patch("google.cloud.storage.Client") as api:
+            iam = api.return_value.get_bucket.return_value.iam_configuration
+            iam.public_access_prevention = "enforced"
+            iam.uniform_bucket_level_access_enabled = True
+            assert ensure_export_bucket(client) == "private-synthetic-export"
+            api.return_value.get_bucket.assert_called_once_with(
+                "private-synthetic-export", timeout=15, retry=None
+            )
         client.make_bucket.assert_not_called()
         client.set_bucket_policy.assert_not_called()
 
@@ -337,3 +350,24 @@ async def test_asgi_stream_reads_bounded_chunks():
     assert max(map(len, chunks)) == 64 * 1024
     file.close()
     stored.release_conn.assert_called_once()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("revocation", ["inactive", "deleted", "no_role"])
+def test_removed_member_cannot_start_export(
+    auth_client, completed_export, user, revocation
+):
+    changes = {
+        "inactive": {"is_active": False},
+        "deleted": {"deleted": True},
+        "no_role": {"level": 0},
+    }[revocation]
+    OrganizationMembership.no_workspace_objects.filter(user=user).update(**changes)
+    with mock.patch(
+        "model_hub.views.annotation_queues.queue_export_items_queryset"
+    ) as items:
+        response = auth_client.get(
+            f"/model-hub/annotation-queues/{completed_export.queue_id}/export/"
+        )
+    assert response.status_code == 404
+    items.assert_not_called()
