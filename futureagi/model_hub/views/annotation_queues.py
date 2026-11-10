@@ -3711,7 +3711,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         job.workflow_id = workflow_id
         job.save(update_fields=["workflow_id", "updated_at"])
 
-        return Response(
+        serializer = QueueExportScheduledResponseSerializer(
             {
                 "status": "scheduled",
                 "job_id": str(job.id),
@@ -3721,9 +3721,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     "This queue is too large to download in one request. "
                     "We're preparing the file — poll this job for the link."
                 ),
-            },
-            status=status.HTTP_202_ACCEPTED,
+            }
         )
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
     @swagger_auto_schema(
         responses={200: QueueExportJobResponseSerializer, **ERROR_RESPONSES}
@@ -3744,21 +3744,24 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         from model_hub.selectors.annotation_exports import resolve_export_job_state
 
         job_status, job_error = resolve_export_job_state(job)
-        return self._gm.success_response(
+        serializer = QueueExportJobResponseSerializer(
             {
-                "job_id": str(job.id),
-                "queue_id": str(job.queue_id),
-                "status": job_status,
-                "export_format": job.export_format,
-                "item_count": job.item_count,
-                "file_url": job.file_url,
-                "file_name": job.file_name,
-                "error": job_error,
-                "created_at": job.created_at,
-                "started_at": job.started_at,
-                "finished_at": job.finished_at,
+                "result": {
+                    "job_id": job.id,
+                    "queue_id": job.queue_id,
+                    "status": job_status,
+                    "export_format": job.export_format,
+                    "item_count": job.item_count,
+                    "file_url": job.file_url,
+                    "file_name": job.file_name,
+                    "error": job_error,
+                    "created_at": job.created_at,
+                    "started_at": job.started_at,
+                    "finished_at": job.finished_at,
+                }
             }
         )
+        return Response(serializer.data)
 
     @swagger_auto_schema(
         responses={200: QueueAnalyticsResponseSerializer, **ERROR_RESPONSES}

@@ -27,6 +27,10 @@ from model_hub.models.choices import (
     QueueItemSourceType,
     QueueItemStatus,
 )
+from model_hub.serializers.annotation_queues import (
+    QueueExportJobResponseSerializer,
+    QueueExportScheduledResponseSerializer,
+)
 from model_hub.tasks.annotation_export import (
     EXPORT_RETENTION_DAYS,
     cleanup_expired_export_jobs,
@@ -206,6 +210,102 @@ def test_activity_failure_records_real_error_and_reraises(
     assert "bucket is gone" in job.error
     assert job.file_url is None
     assert job.finished_at is not None
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(ANNOTATION_EXPORT_SYNC_MAX=1)
+def test_scheduled_export_uses_declared_response_serializer(
+    auth_client, organization, workspace, user
+):
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=2
+    )
+    with (
+        mock.patch(
+            "tfc.temporal.drop_in.runner.start_activity_sync",
+            return_value="export-contract-workflow",
+        ),
+        mock.patch(
+            "model_hub.views.annotation_queues.QueueExportScheduledResponseSerializer",
+            wraps=QueueExportScheduledResponseSerializer,
+        ) as serialize,
+    ):
+        response = auth_client.get(
+            EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=csv"
+        )
+
+    assert response.status_code == status.HTTP_202_ACCEPTED
+    serialize.assert_called_once()
+    job = AnnotationExportJob.objects.get(queue=seed["queue"])
+    assert response.json() == {
+        "status": "scheduled",
+        "job_id": str(job.id),
+        "workflow_id": "export-contract-workflow",
+        "export_format": "csv",
+        "message": (
+            "This queue is too large to download in one request. "
+            "We're preparing the file — poll this job for the link."
+        ),
+    }
+    contract = QueueExportScheduledResponseSerializer(data=response.json())
+    assert contract.is_valid(), contract.errors
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("job_status", ["pending", "succeeded", "failed"])
+def test_export_job_uses_declared_response_serializer(
+    auth_client, organization, workspace, user, job_status
+):
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=1
+    )
+    job = _make_job(seed["queue"], organization, workspace, user)
+    job.status = job_status
+    if job_status != "pending":
+        job.started_at = timezone.now()
+        job.finished_at = timezone.now()
+    if job_status == "succeeded":
+        job.file_url = "http://storage/contract.json"
+        job.file_name = "contract.json"
+        job.item_count = 1
+    elif job_status == "failed":
+        job.error = "Export storage is unavailable"
+    job.save()
+
+    with mock.patch(
+        "model_hub.views.annotation_queues.QueueExportJobResponseSerializer",
+        wraps=QueueExportJobResponseSerializer,
+    ) as serialize:
+        response = auth_client.get(
+            JOB_URL.format(queue_id=seed["queue"].id, job_id=job.id)
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    serialize.assert_called_once()
+    assert set(response.data) == {"status", "result"}
+    assert response.data["status"] is True
+    result = response.data["result"]
+    assert set(result) == {
+        "job_id", "queue_id", "status", "export_format", "item_count",
+        "file_url", "file_name", "error", "created_at", "started_at", "finished_at",
+    }
+    assert result["job_id"] == str(job.id)
+    assert result["queue_id"] == str(seed["queue"].id)
+    assert result["status"] == job_status
+    assert result["export_format"] == "json"
+    assert result["item_count"] == job.item_count
+    assert result["file_url"] == job.file_url
+    assert result["file_name"] == job.file_name
+    assert result["error"] == job.error
+    assert isinstance(result["created_at"], str)
+    if job_status == "pending":
+        assert result["started_at"] is None
+        assert result["finished_at"] is None
+    else:
+        assert isinstance(result["started_at"], str)
+        assert isinstance(result["finished_at"], str)
+    contract = QueueExportJobResponseSerializer(data=response.json())
+    assert contract.is_valid(), contract.errors
 
 
 @pytest.mark.django_db(transaction=True)

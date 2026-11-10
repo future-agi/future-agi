@@ -244,15 +244,21 @@ export default function QueueAnalyticsTab({ queueId }) {
       // has to be read before it can be told apart from an actual export.
       if (response.status === 202) {
         const scheduled = JSON.parse(await response.data.text());
+        if (
+          typeof scheduled?.job_id !== "string" ||
+          !scheduled.job_id.trim() ||
+          typeof scheduled?.message !== "string" ||
+          !scheduled.message.trim()
+        ) {
+          throw new Error("Invalid export scheduling response. Please try again.");
+        }
         const { enqueueSnackbar } = await import("notistack");
-        enqueueSnackbar(
-          scheduled?.result?.message ||
-            scheduled?.message ||
-            "This queue is large, so we're preparing the file.",
-          { variant: "info" },
+        enqueueSnackbar(scheduled.message, { variant: "info" });
+        const job = await waitForExportJob(
+          axiosInstance,
+          queueId,
+          scheduled.job_id,
         );
-        const jobId = scheduled?.result?.job_id || scheduled?.job_id;
-        const job = await waitForExportJob(axiosInstance, queueId, jobId);
         triggerBrowserDownload(
           job.file_url,
           job.file_name || `queue-export.${format}`,
