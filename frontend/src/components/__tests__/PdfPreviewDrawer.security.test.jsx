@@ -1,5 +1,5 @@
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "src/utils/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import localWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { safePdfDocumentOptions } from "../pdf-document-options.mjs";

@@ -1,10 +1,13 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render } from "src/utils/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { route, openPreview } = vi.hoisted(() => ({ route: {}, openPreview: vi.fn() }));
-vi.mock("react-router", () => ({ useParams: () => route }));
+vi.mock("react-router", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useParams: () => route,
+}));
 vi.mock("src/utils/CommonStores/pdfPreviewStore", () => ({
   usePdfPreviewStoreShallow: (select) => select({ setOpenPreviewPdfDrawer: openPreview }),
 }));
