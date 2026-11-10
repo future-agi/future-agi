@@ -2462,8 +2462,14 @@ describe("AnnotationComparisonPanel", () => {
           name: new RegExp(`feedback for ${label.name} / narda`, "i"),
         }),
       );
-      await user.type(
+      // This regression exercises a growing draft list, not per-keystroke
+      // handling. Paste through the real input event to avoid re-rendering all
+      // six review cards for every character under full-suite contention.
+      await user.click(
         screen.getByLabelText(`Feedback for ${label.name} / Narda`),
+      );
+      await user.paste(`adjust ${label.name}`);
+      expect(screen.getByLabelText(`Feedback for ${label.name} / Narda`)).toHaveValue(
         `adjust ${label.name}`,
       );
     }

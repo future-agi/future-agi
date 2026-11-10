@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { generate } from "orval";
 import prettier from "prettier";
+import { checkGeneratedOutput } from "./lib/check-generated-output.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(__dirname, "..");
@@ -18,8 +19,6 @@ const swaggerPath = path.join(
   "swagger.json",
 );
 const outputDir = path.join(frontendRoot, "src", "generated", "api-contracts");
-const apiOutputPath = path.join(outputDir, "api.ts");
-const zodOutputPath = path.join(outputDir, "api.zod.ts");
 const mutatorPath = path.join(
   frontendRoot,
   "src",
@@ -197,7 +196,7 @@ function restoreSnapshot(snapshot) {
   }
 }
 
-function normalizeGeneratedFileEndings() {
+function normalizeGeneratedFileEndings(outputDir) {
   if (!fs.existsSync(outputDir)) return;
   for (const name of fs.readdirSync(outputDir)) {
     if (!name.endsWith(".ts")) continue;
@@ -207,7 +206,7 @@ function normalizeGeneratedFileEndings() {
   }
 }
 
-async function formatGeneratedFiles() {
+async function formatGeneratedFiles(outputDir) {
   if (!fs.existsSync(outputDir)) return;
   for (const name of fs.readdirSync(outputDir)) {
     if (!name.endsWith(".ts")) continue;
@@ -220,7 +219,7 @@ async function formatGeneratedFiles() {
   }
 }
 
-function normalizeGeneratedQueryParamSerialization() {
+function normalizeGeneratedQueryParamSerialization(apiOutputPath) {
   if (!fs.existsSync(apiOutputPath)) return;
   const content = fs.readFileSync(apiOutputPath, "utf8");
   fs.writeFileSync(
@@ -240,7 +239,9 @@ function normalizeGeneratedQueryParamSerialization() {
   );
 }
 
-async function runGeneration(schemaPath, swagger) {
+async function runGeneration(schemaPath, swagger, outputDir, mutatorPath) {
+  const apiOutputPath = path.join(outputDir, "api.ts");
+  const zodOutputPath = path.join(outputDir, "api.zod.ts");
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
 
@@ -317,7 +318,7 @@ async function runGeneration(schemaPath, swagger) {
       throw new Error(`OpenAPI generation did not produce ${name}`);
     }
   }
-  normalizeGeneratedQueryParamSerialization();
+  normalizeGeneratedQueryParamSerialization(apiOutputPath);
 
   // Post-processing for orval-narrow types.
   //
@@ -710,8 +711,8 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
     }
     fs.writeFileSync(zodOutputPath, zod);
   }
-  await formatGeneratedFiles();
-  normalizeGeneratedFileEndings();
+  await formatGeneratedFiles(outputDir);
+  normalizeGeneratedFileEndings(outputDir);
 }
 
 async function main() {
@@ -724,35 +725,36 @@ async function main() {
     JSON.stringify(managementApiSwagger, null, 2),
   );
 
-  const before = snapshotGeneratedFiles();
-
   try {
-    await runGeneration(tempSchemaPath, swagger);
-  } catch (error) {
-    restoreSnapshot(before);
-    throw error;
+    if (process.argv.includes("--check")) {
+      const changed = await checkGeneratedOutput({
+        outputDir,
+        mutatorPath,
+        generate: (directory, mutator) =>
+          runGeneration(tempSchemaPath, swagger, directory, mutator),
+      });
+      if (changed.length) {
+        console.error(
+          [
+            "Generated OpenAPI clients are out of date. Run `yarn contracts:generate`.",
+            ...changed.map(
+              (name) => `  - ${path.relative(frontendRoot, path.join(outputDir, name))}`,
+            ),
+          ].join("\n"),
+        );
+        process.exitCode = 1;
+      }
+    } else {
+      const before = snapshotGeneratedFiles();
+      try {
+        await runGeneration(tempSchemaPath, swagger, outputDir, mutatorPath);
+      } catch (error) {
+        restoreSnapshot(before);
+        throw error;
+      }
+    }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-
-  if (process.argv.includes("--check")) {
-    const after = snapshotGeneratedFiles();
-    const filePaths = new Set([...before.keys(), ...after.keys()]);
-    const changed = [...filePaths].filter(
-      (filePath) => before.get(filePath) !== after.get(filePath),
-    );
-    restoreSnapshot(before);
-    if (changed.length) {
-      console.error(
-        [
-          "Generated OpenAPI clients are out of date. Run `yarn contracts:generate`.",
-          ...changed.map(
-            (filePath) => `  - ${path.relative(frontendRoot, filePath)}`,
-          ),
-        ].join("\n"),
-      );
-      process.exit(1);
-    }
   }
 }
 
