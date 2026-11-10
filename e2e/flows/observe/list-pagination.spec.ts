@@ -67,7 +67,7 @@ async function seedTraceProject(
   const projectName = `e2e-${suffix}`;
   const cfg = { collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey, projectName };
 
-  const first = await sendTrace(req, { ...cfg, rootName: `e2e.${suffix}-0` });
+  const startTimeUnixNano = BigInt(Date.now()) * 1_000_000n; const first = await sendTrace(req, { ...cfg, rootName: `e2e.${suffix}-0`, startTimeUnixNano });
   await expect.poll(async () => {
     const rows = await probe.ch<{ n: string }>(
       'SELECT count() AS n FROM spans FINAL WHERE trace_id = {t:String}', { t: first.traceId });
@@ -78,7 +78,7 @@ async function seedTraceProject(
   for (let i = 0; i < remaining.length; i += 10) {
     const batch = remaining.slice(i, i + 10);
     // eslint-disable-next-line no-await-in-loop
-    await Promise.all(batch.map((rootName) => sendTrace(req, { ...cfg, rootName })));
+    await Promise.all(batch.map((rootName) => sendTrace(req, label === 'edg01' && rootName === `e2e.${suffix}-${count - 1}` ? { ...cfg, rootName: `e2e.${suffix}-0`, startTimeUnixNano, traceId: first.traceId, rootSpanId: first.spanIds[0], childSpanId: first.spanIds[1] } : { ...cfg, rootName })));
   }
 
   const projects = await probe.pg<{ id: string }>(
