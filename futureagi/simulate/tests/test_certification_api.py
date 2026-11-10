@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.test import override_settings
+from django.utils import timezone
 
 from simulate.models import CertificationCampaign, CertificationCase
 from simulate.serializers.certification import CertificationCampaignCreateSerializer
@@ -111,7 +112,7 @@ def _enabled_suite_doc():
                 "authorization": {
                     "owner": "cert-team",
                     "automated_production_calls": "approved",
-                    "approved_by": "rishav",
+                    "approved_by": "production-certification-reviewer",
                     "approved_at": "2026-10-01T00:00:00Z",
                     "target_ownership": "futureagi",
                     "target_endpoint_reviewed": True,
@@ -205,6 +206,10 @@ def test_quick_and_full_are_distinct_campaigns(auth_client, organization):
         patch("simulate.temporal.client.start_certification_workflow"),
     ):
         quick = _post(auth_client, organization, {"tier": "quick"}, idem="quick-key")
+        CertificationCampaign.objects.filter(id=quick.json()["id"]).update(
+            state=CertificationCampaign.State.COMPLETED,
+            finished_at=timezone.now(),
+        )
         full = _post(auth_client, organization, {"tier": "full"}, idem="full-key")
 
     assert quick.status_code == 201, quick.json()

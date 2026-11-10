@@ -234,6 +234,25 @@ def create_campaign(
 
     try:
         with transaction.atomic():
+            active = (
+                CertificationCampaign.no_workspace_objects.select_for_update()
+                .filter(
+                    organization=organization,
+                    state__in=(
+                        CertificationCampaign.State.PENDING,
+                        CertificationCampaign.State.RUNNING,
+                        CertificationCampaign.State.CANCELING,
+                    ),
+                )
+                .exclude(deployment_id=deployment_id, suite_digest=digest)
+                .first()
+            )
+            if active is not None:
+                raise CertificationError(
+                    "campaign_active",
+                    f"campaign {active.id} is already active for this organization",
+                    status_code=409,
+                )
             campaign, created = (
                 CertificationCampaign.no_workspace_objects.get_or_create(
                     organization=organization,
@@ -275,14 +294,30 @@ def create_campaign(
                         "pending": pending_summary(normalized)["disabled"],
                     },
                 )
-    except IntegrityError:
-        # Concurrent admission of the same deployment+suite: the first writer
-        # wins; return the existing campaign.
-        campaign = CertificationCampaign.no_workspace_objects.get(
+    except IntegrityError as exc:
+        campaign = CertificationCampaign.no_workspace_objects.filter(
             organization=organization,
             deployment_id=deployment_id,
             suite_digest=digest,
-        )
+        ).first()
+        if campaign is None:
+            active = CertificationCampaign.no_workspace_objects.filter(
+                organization=organization,
+                state__in=(
+                    CertificationCampaign.State.PENDING,
+                    CertificationCampaign.State.RUNNING,
+                    CertificationCampaign.State.CANCELING,
+                ),
+            ).first()
+            if active is None:
+                raise
+            raise CertificationError(
+                "campaign_active",
+                f"campaign {active.id} is already active for this organization",
+                status_code=409,
+            ) from exc
+        # Concurrent admission of the same deployment and suite returns the
+        # first writer's campaign.
         created = False
 
     if campaign.deployment_identity != deployment_identity:
@@ -697,8 +732,7 @@ def classify_job_failure(job) -> str:
     return _TERMINAL_DOMAIN_CLASS.get(domain, "target")
 
 
-def detect_stable_behavior_failures(case) -> list[dict]:
-    """Return failed evaluations explicitly frozen as stable assertions."""
+def _failed_receipt_sub_goals(case) -> list[dict]:
     from simulate.models import HostedHarnessReceipt
 
     job = case.run_job or case.hosted_harness_job
@@ -707,20 +741,12 @@ def detect_stable_behavior_failures(case) -> list[dict]:
     attempt = job.attempts.filter(attempt_number=job.current_attempt_number).first()
     if attempt is None:
         return []
-    stable = {
-        name
-        for interaction in (case.spec or {}).get("interactions", [])
-        for name in interaction.get("stable_assertions", [])
-    }
     failures = []
     for receipt in HostedHarnessReceipt.no_workspace_objects.filter(
         job=job, attempt=attempt
     ).select_related("scenario"):
-        for evaluation in (receipt.body or {}).get("evaluations") or []:
-            if evaluation.get("name") in stable and evaluation.get("status") in {
-                "failed",
-                "error",
-            }:
+        for sub_goal in (receipt.body or {}).get("sub_goals") or []:
+            if sub_goal.get("held") is False and sub_goal.get("name"):
                 failures.append(
                     {
                         "scenario_key": (
@@ -729,43 +755,44 @@ def detect_stable_behavior_failures(case) -> list[dict]:
                             else None
                         ),
                         "receipt_id": str(receipt.id),
-                        "evaluation": evaluation["name"],
-                        "status": evaluation["status"],
+                        "evaluation": sub_goal["name"],
+                        "status": "failed",
                     }
                 )
     return failures
 
 
-def detect_exploratory_failures(case) -> list[dict]:
-    """Return evaluation failures not frozen as stable assertions."""
-    from simulate.models import HostedHarnessReceipt
-
-    job = case.run_job or case.hosted_harness_job
-    if job is None:
-        return []
-    attempt = job.attempts.filter(attempt_number=job.current_attempt_number).first()
-    if attempt is None:
-        return []
+def detect_stable_behavior_failures(case) -> list[dict]:
+    """Return failed sub-goals explicitly frozen as stable assertions."""
     stable = {
         name
         for interaction in (case.spec or {}).get("interactions", [])
         for name in interaction.get("stable_assertions", [])
     }
-    out = []
-    for r in HostedHarnessReceipt.no_workspace_objects.filter(
-        job=job, attempt=attempt
-    ).exclude(body__isnull=True):
-        for ev in (r.body or {}).get("evaluations") or []:
-            if ev.get("name") not in stable and ev.get("status") in {"failed", "error"}:
-                out.append(
-                    {
-                        "receipt_id": str(r.id),
-                        "evaluation": ev.get("name"),
-                        "status": ev.get("status"),
-                        "exploratory": bool(ev.get("exploratory")),
-                    }
-                )
-    return out
+    return [
+        failure
+        for failure in _failed_receipt_sub_goals(case)
+        if failure["evaluation"] in stable
+    ]
+
+
+def detect_exploratory_failures(case) -> list[dict]:
+    """Return failed sub-goals not frozen as stable assertions."""
+    stable = {
+        name
+        for interaction in (case.spec or {}).get("interactions", [])
+        for name in interaction.get("stable_assertions", [])
+    }
+    return [
+        {
+            "receipt_id": failure["receipt_id"],
+            "evaluation": failure["evaluation"],
+            "status": failure["status"],
+            "exploratory": False,
+        }
+        for failure in _failed_receipt_sub_goals(case)
+        if failure["evaluation"] not in stable
+    ]
 
 
 # ---------------------------------------------------------------------------

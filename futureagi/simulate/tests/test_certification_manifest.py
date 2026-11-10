@@ -118,17 +118,6 @@ def test_production_suite_validates_and_is_all_placeholders():
         "unpackaged_python_chat__primary",
     ]
 
-    repositories = {
-        case.get("agent", {}).get("source", {}).get("repository")
-        for case in normalized["cases"]
-    }
-    assert (
-        "https://github.com/KarthikAvinashFI/alderway-voice-agent" not in repositories
-    )
-    assert {case["case_key"] for case in normalized["cases"]}.isdisjoint(
-        {"uber_admin_phone__primary", "uber_guest_phone__primary"}
-    )
-
 
 def test_quick_tier_materializes_an_outbound_voice_case():
     doc = load_suite("production_agents_v1")

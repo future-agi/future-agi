@@ -52,10 +52,13 @@ def _case(campaign, case_key="ride_booking__veh002_single", **overrides):
 
 @pytest.mark.django_db(transaction=True)
 def test_campaign_unique_per_org_deployment_suite(organization):
-    _campaign(organization)
+    campaign = _campaign(organization)
     with pytest.raises(IntegrityError):
         _campaign(organization)
-    # A different deployment id is a different campaign.
+    campaign.state = CertificationCampaign.State.COMPLETED
+    campaign.save(update_fields=["state", "updated_at"])
+
+    # A different deployment id is a different campaign once the first is terminal.
     _campaign(
         organization,
         deployment_id="helm:futureagi:43@us-gcp",
