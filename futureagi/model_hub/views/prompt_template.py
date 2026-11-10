@@ -1466,6 +1466,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             source = request.data.get("source", "prompt")
             evaluation_configs = request.data.get("evaluation_configs", [])
             is_run = request.data.get("is_run", False)
+            # Released SDKs send "draft" to save without running.
+            is_run = False if is_run == "draft" else is_run
             run_index = request.data.get("run_index", None)
             placeholders = request.data.get("placeholders", {})
 
