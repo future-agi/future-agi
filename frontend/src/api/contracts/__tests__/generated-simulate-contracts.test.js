@@ -173,10 +173,18 @@ describe("generated drafts contract", () => {
     parent_label: "v1",
     default_label: "v1",
     changes: { added: 1, removed: 0, changed: 0 },
+    name: null,
+    candidate_state: null,
   };
 
   it("accepts a piece without a draft and an unnumbered draft", () => {
-    const body = { environment: null, suite: draft, set_aside: [] };
+    const body = {
+      environment: null,
+      suite: draft,
+      set_aside: [],
+      validation: null,
+      candidates: null,
+    };
 
     expect(SimulateApiHarnessEnvironmentsDraftsResponse.parse(body)).toEqual(
       body,

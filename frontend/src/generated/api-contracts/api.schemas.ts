@@ -20268,7 +20268,7 @@ export interface HarnessDraftItemApi {
    * The name a person gave the version, if any.
    * @minLength 1
    */
-  name: string;
+  name: string | null;
   status: HarnessDraftItemApiStatus;
   is_default: boolean;
   created_at: string;
@@ -20309,7 +20309,7 @@ export interface HarnessDraftItemApi {
   discardable: boolean | null;
   release_checks?: HarnessReleaseChecksApi;
   /** A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version. */
-  candidate_state: HarnessDraftItemApiCandidateState;
+  candidate_state: HarnessDraftItemApiCandidateState | null;
   /** Whether the default moved since the draft started; Save refuses it. */
   stale: boolean;
   /** Bumped on every edit to the draft. */
@@ -20384,8 +20384,8 @@ export interface HarnessDraftsApi {
   environment: HarnessDraftItemApi | null;
   suite: HarnessDraftItemApi | null;
   set_aside: HarnessDraftItemApi[];
-  validation: HarnessDraftValidationApi;
-  candidates: HarnessCandidatesApi;
+  validation: HarnessDraftValidationApi | null;
+  candidates: HarnessCandidatesApi | null;
 }
 
 export interface HarnessReviewDraftApi {
@@ -20639,7 +20639,7 @@ export interface HarnessVersionApi {
    * The name a person gave the version, if any.
    * @minLength 1
    */
-  name: string;
+  name: string | null;
   status: HarnessVersionApiStatus;
   is_default: boolean;
   created_at: string;
@@ -20680,7 +20680,7 @@ export interface HarnessVersionApi {
   discardable: boolean | null;
   release_checks?: HarnessReleaseChecksApi;
   /** A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version. */
-  candidate_state: HarnessVersionApiCandidateState;
+  candidate_state: HarnessVersionApiCandidateState | null;
 }
 
 /**
