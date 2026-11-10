@@ -135,10 +135,10 @@ export const ACTORS_COPY = {
     },
     form: {
       createTitle: "Add someone in the world",
-      moreDetails: "More details (not used by runs yet)",
+      moreDetails: "More details",
       lessDetails: "Hide more details",
       moreDetailsHelp:
-        "Saved with the actor, but a run plays them from each scenario's actions, so these do not change what happens yet.",
+        "Given to them whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them, and \"Brought in by\" is for reading only.",
       editTitle: (name) => `Edit ${name}`,
       id: "Id",
       // The rule's words are the schema's own, when it sends them.

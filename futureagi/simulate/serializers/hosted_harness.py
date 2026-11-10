@@ -76,7 +76,12 @@ class HarnessSubGoalSerializer(serializers.Serializer):
     reason = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     judged = serializers.BooleanField()
     verdict = serializers.ChoiceField(
-        choices=("pass", "fail", "not_applicable", "inconclusive"), required=False
+        choices=("pass", "fail", "not_applicable", "inconclusive", "unmeasured"),
+        required=False,
+    )
+    # What the sub-goal was decided from: world_state, transcript, recording, tool_calls.
+    evidence = serializers.ListField(
+        child=serializers.CharField(max_length=64), max_length=16, required=False
     )
 
 
