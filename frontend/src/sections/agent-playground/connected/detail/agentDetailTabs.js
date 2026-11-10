@@ -5,6 +5,7 @@ export const DETAIL_TABS = [
   { id: "definition", label: "Definition" },
   { id: "versions", label: "Versions" },
   { id: "environments", label: "Environments" },
+  { id: "skills", label: "Skills" },
 ];
 
 export const COMING_SOON_TABS = ["Constraints", "Improvements", "Connections"];

@@ -17,6 +17,7 @@ import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useHostUpdateAccess } from "src/api/hostUpdates/host-update-status";
 import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
+import { useSkillsEnabled } from "src/api/simulate-skills/skills";
 import {
   ROLES,
   showRoleSpecific,
@@ -108,6 +109,7 @@ export function useNavData() {
     userOrgRole === "Admin" || effectiveWsRole === "workspace_admin";
   // Orgs created after the cutoff see only Environments in Simulate.
   const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
+  const skillsEnabled = useSkillsEnabled();
   const agentsPath = agentsSidebarPath(usePathname());
   const data = useMemo(() => {
     const buildItems = [
@@ -254,6 +256,15 @@ export function useNavData() {
             path: paths.dashboard.simulate.environments.root,
             icon: <Iconify icon="solar:server-square-cloud-linear" />,
           },
+          ...(skillsEnabled
+            ? [
+                {
+                  title: "Skills",
+                  path: paths.dashboard.simulate.skills,
+                  icon: <Iconify icon="solar:lightbulb-bolt-linear" />,
+                },
+              ]
+            : []),
           ...(restrictSimulateToEnvironments
             ? []
             : [
@@ -307,7 +318,13 @@ export function useNavData() {
     });
 
     return sections;
-  }, [isOwner, isAdmin, agentsPath, restrictSimulateToEnvironments]);
+  }, [
+    isOwner,
+    isAdmin,
+    agentsPath,
+    restrictSimulateToEnvironments,
+    skillsEnabled,
+  ]);
   return data;
 }
 

@@ -322,6 +322,9 @@ const RunTests = lazyWithRetry(
 const SimulateEnvironmentsHome = lazyWithRetry(
   () => import("src/pages/dashboard/simulate/environments/EnvironmentsHome"),
 );
+const SimulateSkillsHome = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/skills/SkillsHome"),
+);
 const SimulatePrebuiltEnvironments = lazyWithRetry(
   () =>
     import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
@@ -514,6 +517,9 @@ const AgentEnvironmentsTab = lazyWithRetry(
     import(
       "src/sections/agent-playground/connected/detail/AgentEnvironmentsTab"
     ),
+);
+const AgentSkillsTab = lazyWithRetry(
+  () => import("src/sections/agent-playground/connected/detail/AgentSkillsTab"),
 );
 const AgentPlayground = lazyWithRetry(
   () => import("src/sections/agent-playground/AgentPlayground"),
@@ -1354,6 +1360,7 @@ export const dashboardRoutes = (
             { path: "definition", element: <AgentDefinitionTab /> },
             { path: "versions", element: <AgentVersionsTab /> },
             { path: "environments", element: <AgentEnvironmentsTab /> },
+            { path: "skills", element: <AgentSkillsTab /> },
           ],
         },
         {
@@ -1446,6 +1453,10 @@ export const dashboardRoutes = (
         {
           path: "environments",
           element: <SimulateEnvironmentsHome />,
+        },
+        {
+          path: "skills",
+          element: <SimulateSkillsHome />,
         },
         {
           path: "environments/templates",

@@ -233,6 +233,7 @@ export function useRunDetail(
       agentDiffers: Boolean(execution.agent_differs),
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
+      skills: execution.skills ?? [],
       // How far an interrupted run got and whether it can resume; null when the
       // backend does not say.
       resume: execution.resume
