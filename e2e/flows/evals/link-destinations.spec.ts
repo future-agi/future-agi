@@ -56,13 +56,15 @@ test('EVAL-E2E-013: shipped link evaluators accept approved links and refuse oth
       const contains = template.name === 'contains_valid_link';
       const casePrefix = `${prefix}-${template.name}`;
       // Independent literal expectations pinned from the two shipped evaluate functions.
+      // Put the reported email regression first so a pristine-dev run fails
+      // for that behavior, not merely for the revised URL-free explanation.
       const cases = [
+        { name: 'email', text: `Contact ${casePrefix}.support@allowed.example`, pass: !contains,
+          reason: contains ? 'No link found in output' : 'No links found in output, so none are invalid' },
         { name: 'approved', text: `http://allowed.example/ok/${casePrefix}-approved`, pass: true,
           reason: contains ? 'Link found and valid (status 200)' : 'All 1 link(s) are valid', path: `/ok/${casePrefix}-approved` },
         { name: 'punctuation', text: `(http://allowed.example/ok/${casePrefix}-punctuation).`, pass: true,
           reason: contains ? 'Link found and valid (status 200)' : 'All 1 link(s) are valid', path: `/ok/${casePrefix}-punctuation` },
-        { name: 'email', text: `Contact ${casePrefix}.support@allowed.example`, pass: !contains,
-          reason: contains ? 'No link found in output' : 'No links found in output, so none are invalid' },
         { name: 'decimal', text: `The value increased by 3.14 percent (${casePrefix})`, pass: !contains,
           reason: contains ? 'No link found in output' : 'No links found in output, so none are invalid' },
         { name: 'filename', text: `Read report.pdf and v1.2.3, e.g. ${casePrefix}`, pass: !contains,
