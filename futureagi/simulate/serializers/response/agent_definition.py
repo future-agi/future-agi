@@ -1,8 +1,13 @@
 from django.conf import settings
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentDefinition, AgentVersion
+from simulate.serializers.harness_environment import (
+    HarnessRunSummarySerializer,
+    RunEnvironmentRefSerializer,
+)
 
 MASKED_CREDENTIAL_VALUE = "********"
 
@@ -58,7 +63,21 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
     @staticmethod
     def _get_latest_creds(obj):
         """Get ProviderCredentials from the active or latest version."""
-        version = obj.active_version or obj.latest_version
+        prefetched_versions = getattr(obj, "_prefetched_versions", None)
+        if prefetched_versions is None:
+            active_version = obj.active_version
+            latest_version = obj.latest_version
+        else:
+            active_version = next(
+                (
+                    version
+                    for version in prefetched_versions
+                    if version.status == AgentVersion.StatusChoices.ACTIVE
+                ),
+                None,
+            )
+            latest_version = prefetched_versions[0] if prefetched_versions else None
+        version = active_version or latest_version
         if not version:
             return None
         try:
@@ -67,7 +86,7 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
             pass
         # Active version may exist without credentials (e.g. legacy data
         # with multiple active versions). Fall back to latest version.
-        fallback = obj.latest_version
+        fallback = latest_version
         if fallback and fallback.pk != version.pk:
             try:
                 return fallback.credentials
@@ -151,6 +170,15 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
 
     latest_version = serializers.SerializerMethodField()
     latest_version_id = serializers.SerializerMethodField()
+    agent_kind = serializers.CharField(
+        source="_agent_kind", allow_null=True, read_only=True
+    )
+    source = serializers.CharField(source="_source", allow_null=True, read_only=True)
+    version_count = serializers.IntegerField(source="_version_count", read_only=True)
+    environment_count = serializers.IntegerField(
+        source="_environment_count", read_only=True
+    )
+    environments = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentDefinition
@@ -177,8 +205,19 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
             "latest_version_id",
             "model_details",
             "model",
+            "agent_kind",
+            "source",
+            "version_count",
+            "environment_count",
+            "environments",
         ]
         read_only_fields = fields
+
+    @swagger_serializer_method(
+        serializer_or_field=RunEnvironmentRefSerializer(many=True)
+    )
+    def get_environments(self, obj) -> list[dict[str, str]]:
+        return self.context.get("environments", {}).get(obj.id, [])
 
     def get_latest_version(self, obj):
         """Get the latest version number for the agent."""
@@ -195,16 +234,36 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
         return version.id if version else None
 
 
-class AgentDefinitionDetailResponseSerializer(serializers.Serializer):
+class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer):
     """
     Response serializer for GET /agent-definitions/{id}/.
     Shape: {**agent_data, "versions": [...], "active_version": {...}, "version_count": N}
     """
 
-    # Agent fields are spread at top level via to_representation
     versions = serializers.ListField(read_only=True)
     active_version = serializers.DictField(read_only=True, allow_null=True)
     version_count = serializers.IntegerField(read_only=True)
+    agent_kind = serializers.CharField(read_only=True, allow_null=True)
+    source = serializers.CharField(read_only=True, allow_null=True)
+    environment_count = serializers.IntegerField(read_only=True)
+    observability_enabled = serializers.BooleanField(read_only=True)
+
+    class Meta(AgentDefinitionResponseSerializer.Meta):
+        fields = [
+            *AgentDefinitionResponseSerializer.Meta.fields,
+            "versions",
+            "active_version",
+            "version_count",
+            "agent_kind",
+            "source",
+            "environment_count",
+            "observability_enabled",
+        ]
+        read_only_fields = fields
+
+
+class AgentRunsResponseSerializer(serializers.Serializer):
+    results = HarnessRunSummarySerializer(many=True, read_only=True)
 
 
 class AgentDefinitionBulkDeleteResponseSerializer(serializers.Serializer):

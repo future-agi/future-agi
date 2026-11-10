@@ -9,16 +9,17 @@ from typing import Any, List
 import Levenshtein
 import numpy as np
 import requests
-from jinja2 import Environment
-from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
-from rouge_score import rouge_scorer
-from scipy.spatial.distance import cityblock, cosine, euclidean
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core_evals.fi_evals.grounded.similarity import CosineSimilarity
-from agentic_eval.core_evals.fi_utils.exceptions import NoOpenAiApiKeyException
+from agentic_eval.core_evals.fi_utils.exceptions import (
+    CodeEvalSetupError,
+    NoOpenAiApiKeyException,
+)
 from agentic_eval.core_evals.fi_utils.fi_code_execution import CodeExecution
 from agentic_eval.core_evals.fi_utils.json import extract_json_path, validate_json
 from agentic_eval.core_evals.fi_utils.logging import logger
+from agentic_eval.core_evals.fi_utils.sandbox import SETUP_ERROR_MESSAGES
 from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 from agentic_eval.core_evals.keys.openai_api import OpenAiApiKey
 from agentic_eval.core_evals.llm_services.openai_api import OpenAiService
@@ -155,6 +156,7 @@ def calculate_bleu(reference, hypothesis, **kwargs):
     Returns:
         float: BLEU score (0 to 1).
     """
+    from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu  # lazy
     reference_tokens = [reference.split()]
     hypothesis_tokens = hypothesis.split()
     smoothie = SmoothingFunction().method4
@@ -174,6 +176,7 @@ def calculate_rouge(reference, hypothesis):
         dict: ROUGE scores (precision, recall, fmeasure for each metric).
     """
 
+    from rouge_score import rouge_scorer  # lazy
     scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
     scores = scorer.score(reference, hypothesis)
 
@@ -188,8 +191,10 @@ def _pil_to_uint8_tensor(img, size: int = 299):
     Requires torch and torchvision to be installed.
     """
     import numpy as np
-    import torch
-    from torchvision.transforms import functional as TF
+    from tfc.utils.lazy_extras import load_extra
+
+    torch = load_extra("torch", "ml")
+    TF = load_extra("torchvision.transforms.functional", "ml")
 
     img = img.convert("RGB")
     img = TF.resize(img, [size, size], antialias=True)
@@ -375,6 +380,7 @@ def calculate_clip_score(
 
     import numpy as np
     from PIL import Image
+    from scipy.spatial.distance import cosine  # lazy
 
     from agentic_eval.core.embeddings.embedding_manager import model_manager
 
@@ -1051,6 +1057,8 @@ def calculate_embedding_similarity(output:str, expected: str, similarity_method=
     and provides a descriptive reason string. If embedding or similarity computation fails,
     raises an exception.
     """
+    from scipy.spatial.distance import cityblock, cosine, euclidean  # lazy
+
     from agentic_eval.core.embeddings.embedding_manager import model_manager
     model = model_manager.text_model
     emb1, emb2 = model([str(output)]), model([str(expected)])
@@ -1079,6 +1087,7 @@ def calculate_semantic_list_contains(output:str, expected:str, case_insensitive=
     and provides a descriptive reason string. If embedding or similarity computation fails,
     raises an exception.
     """
+    from scipy.spatial.distance import cosine  # lazy
     def _preprocess(text):
         if not isinstance(text, str):
             text = str(text)
@@ -1344,7 +1353,7 @@ def contains_valid_link(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except:
+            except Exception:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",
@@ -1380,7 +1389,7 @@ def no_invalid_links(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except:
+            except Exception:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",
@@ -1715,6 +1724,9 @@ def custom_code_eval(code, language=None, **kwargs):
         raise ValueError("Code eval function returned None (no result produced)")
     if status != "success":
         error_msg = result.get("data", "Unknown error in code eval")
+        # Only the sandbox's own texts: an eval script can print any result.
+        if isinstance(error_msg, str) and error_msg in SETUP_ERROR_MESSAGES:
+            raise CodeEvalSetupError(error_msg)
         raise ValueError(f"Code eval input validation failed: {error_msg}")
 
     data = result.get("data")
@@ -1831,7 +1843,7 @@ def _validate_llm_similarity(actual_value: str, expected_value: str, validation:
 
 def _get_messages(validation: dict, actual_value: Any, expected_value: Any) -> list:
     if validation.get("system_message") and validation.get("user_message"):
-        env = Environment(
+        env = SandboxedEnvironment(
             variable_start_string='{{',
             variable_end_string='}}',
             undefined=PreserveUndefined
@@ -2798,6 +2810,35 @@ def _levenshtein_distance_list(ref, hyp):
             cost = 0 if ref[i - 1] == hyp[j - 1] else 1
             dp[i][j] = min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
     return dp[n][m]
+
+
+def _align_counts(ref: list[str], hyp: list[str]) -> tuple[int, int, int, int]:
+    """Return hits, substitutions, deletions, and insertions for an alignment.
+
+    ``Levenshtein.opcodes`` is the repository's standard token-alignment
+    implementation.  Using its compact opcode stream avoids materializing a
+    Python ``len(ref) x len(hyp)`` matrix, which matters for long transcripts.
+    Word-information metrics depend on the hit count, so they must not derive
+    it by subtracting the full edit distance (which also includes insertions).
+    """
+    hits = substitutions = deletions = insertions = 0
+    for operation, ref_start, ref_end, hyp_start, hyp_end in Levenshtein.opcodes(
+        ref, hyp
+    ):
+        ref_count = ref_end - ref_start
+        hyp_count = hyp_end - hyp_start
+        if operation == "equal":
+            hits += ref_count
+        elif operation == "replace":
+            substitutions += min(ref_count, hyp_count)
+            deletions += max(ref_count - hyp_count, 0)
+            insertions += max(hyp_count - ref_count, 0)
+        elif operation == "delete":
+            deletions += ref_count
+        elif operation == "insert":
+            insertions += hyp_count
+
+    return hits, substitutions, deletions, insertions
 
 
 def calculate_word_error_rate(reference, hypothesis, **kwargs):
@@ -3818,14 +3859,13 @@ def calculate_match_error_rate(reference, hypothesis, **kwargs):
 
 def calculate_word_info_lost(reference, hypothesis, **kwargs):
     """Compute Word Information Lost (WIL). WIL = 1 - (hits/ref_len * hits/hyp_len)."""
-    ref_words = str(reference).strip().lower().split()
-    hyp_words = str(hypothesis).strip().lower().split()
+    ref_words = str(reference if reference is not None else "").strip().lower().split()
+    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIL: 0.0 (both empty)"}
     if not ref_words or not hyp_words:
         return {"result": 0.0, "reason": "WIL: 1.0 (one side empty)"}
-    distance = _levenshtein_distance_list(ref_words, hyp_words)
-    hits = max(0, len(ref_words) - distance)
+    hits, _, _, _ = _align_counts(ref_words, hyp_words)
     wil = 1.0 - (hits / len(ref_words)) * (hits / len(hyp_words)) if len(ref_words) > 0 and len(hyp_words) > 0 else 1.0
     score = max(0.0, 1.0 - wil)
     return {"result": score, "reason": f"WIL: {wil:.4f}, score={score:.4f}"}
@@ -3833,14 +3873,13 @@ def calculate_word_info_lost(reference, hypothesis, **kwargs):
 
 def calculate_word_info_preserved(reference, hypothesis, **kwargs):
     """Compute Word Information Preserved (WIP). WIP = hits/ref_len * hits/hyp_len."""
-    ref_words = str(reference).strip().lower().split()
-    hyp_words = str(hypothesis).strip().lower().split()
+    ref_words = str(reference if reference is not None else "").strip().lower().split()
+    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIP: 1.0 (both empty)"}
     if not ref_words or not hyp_words:
         return {"result": 0.0, "reason": "WIP: 0.0 (one side empty)"}
-    distance = _levenshtein_distance_list(ref_words, hyp_words)
-    hits = max(0, len(ref_words) - distance)
+    hits, _, _, _ = _align_counts(ref_words, hyp_words)
     wip = (hits / len(ref_words)) * (hits / len(hyp_words))
     return {"result": wip, "reason": f"WIP: {wip:.4f}"}
 

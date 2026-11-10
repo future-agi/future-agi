@@ -2,22 +2,24 @@ export const STATUS_TYPES = {
   PASS: "pass",
   ERROR: "error",
   UNSET: "unset",
+  RUNNING: "running",
+  CANCELED: "canceled",
 };
 
 export const STATUS_CONFIG = {
   [STATUS_TYPES.PASS]: {
     icon: "/assets/icons/status/success.svg",
-    color: "green.500",
-    bgColor: "green.o5",
-    borderColor: "green.500",
-    textColor: "green.500",
+    color: "status.success.fg",
+    bgColor: "status.success.bg",
+    borderColor: "status.success.border",
+    textColor: "status.success.fg",
   },
   [STATUS_TYPES.ERROR]: {
     icon: "/assets/icons/status/error.svg",
-    color: "red.500",
-    bgColor: "red.o5",
-    borderColor: "red.500",
-    textColor: "red.500",
+    color: "status.danger.fg",
+    bgColor: "status.danger.bg",
+    borderColor: "status.danger.border",
+    textColor: "status.danger.fg",
   },
   [STATUS_TYPES.UNSET]: {
     icon: "/assets/icons/status/unset.svg",
@@ -38,7 +40,7 @@ const normalize = (val) => val?.toString?.()?.toLowerCase?.() || "";
 /**
  * Infers status type from a value using flexible string matching
  * @param {any} value - Value to infer status from
- * @returns {string} Status type (pass, error, or unset)
+ * @returns {string} Status type (pass, error, running, or unset)
  */
 const inferStatus = (value) => {
   const norm = normalize(value);
@@ -46,6 +48,11 @@ const inferStatus = (value) => {
   if (norm.includes("pass") || norm.includes("ok")) return STATUS_TYPES.PASS;
   if (norm.includes("error") || norm.includes("fail"))
     return STATUS_TYPES.ERROR;
+  if (norm.includes("cancel")) return STATUS_TYPES.CANCELED;
+  // Matched after the terminal states so anything that already resolved to
+  // pass/error keeps resolving there (e.g. "run failed" stays ERROR).
+  if (norm.includes("running") || norm.includes("progress"))
+    return STATUS_TYPES.RUNNING;
   return STATUS_TYPES.UNSET;
 };
 

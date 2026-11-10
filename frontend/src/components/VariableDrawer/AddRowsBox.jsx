@@ -46,12 +46,9 @@ const AddRowsBox = ({ handleAddRows, currentRows }) => {
           variant="contained"
           color="primary"
           size="small"
-          sx={{ width: "80px", height: "30px" }}
+          sx={{ width: "80px" }}
           startIcon={
-            <SvgColor
-              src="/assets/icons/components/ic_add.svg"
-              sx={{ width: "16px", height: "16px" }}
-            />
+            <SvgColor src="/assets/icons/components/ic_add.svg" width="16px" />
           }
           onClick={handleAddRowMethod}
           disabled={currentRows === 10 || wouldExceedLimit || rowCount === 0}

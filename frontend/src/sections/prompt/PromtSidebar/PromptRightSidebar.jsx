@@ -11,22 +11,23 @@ import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import GeneratePrompt from "../PromptDrawer/GeneratePrompt";
 import ImprovePromptDrawer from "../NewPrompt/ImprovePrompt/ImprovePrompt";
 import logger from "src/utils/logger";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const PROMPT_MANAGEMENT_CARD = [
   {
-    icon: "humbleicons:prompt",
+    icon: "solar:chat-square-code-linear",
     text: "Write a prompt from scratch",
     navigate: "/dashboard/prompt/add/:id",
     showSidebar: false,
   },
   {
-    icon: "fluent:magic-wand-16-regular",
+    icon: "solar:stars-minimalistic-linear",
     text: "Generate a prompt",
     navigate: "/dashboard/prompt/add/generate",
     showSidebar: false,
   },
   {
-    icon: "ph:flow-arrow",
+    icon: "solar:graph-linear",
     text: "Improve an existing prompt",
     navigate: "/dashboard/prompt/add/:id",
     showSidebar: true,
@@ -159,6 +160,8 @@ const PromptRightSidebar = () => {
     setIsDirty(dirty);
   };
 
+  const covered = useDrawerCovered(openImprovePrompt);
+  const coveredSecond = useDrawerCovered(open);
   return (
     <Box
       sx={{
@@ -215,17 +218,13 @@ const PromptRightSidebar = () => {
               flexDirection: "column",
               justifyContent: "center",
               alignItems: "center",
-              padding: "17px",
               width: "100%",
               gap: "15px",
               maxWidth: "293px",
-              minHeight: "127px",
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "8px",
               "&:hover": {
-                border: "1px solid rgba(183, 102, 237, 1)",
-                height: "146px",
+                borderColor: "primary.main",
                 background: "background.paper",
               },
             }}
@@ -250,7 +249,7 @@ const PromptRightSidebar = () => {
           >
             <Iconify
               icon={card.icon}
-              sx={{ color: "#B766ED" }}
+              sx={{ color: "primary.main" }}
               width={45}
               height={45}
             />
@@ -267,6 +266,7 @@ const PromptRightSidebar = () => {
       <Drawer
         anchor="right"
         open={openImprovePrompt}
+        sx={coveredDrawerSx(covered)}
         onClose={handleClose}
         PaperProps={{
           sx: {
@@ -274,7 +274,7 @@ const PromptRightSidebar = () => {
             width: "calc(100% - 450px)",
             position: "fixed",
             zIndex: 1,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}
@@ -293,6 +293,7 @@ const PromptRightSidebar = () => {
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(coveredSecond)}
         onClose={handleClose}
         PaperProps={{
           sx: {
@@ -300,7 +301,7 @@ const PromptRightSidebar = () => {
             width: "calc(100% - 450px)",
             position: "fixed",
             zIndex: 1,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}

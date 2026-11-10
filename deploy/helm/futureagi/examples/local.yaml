@@ -1,0 +1,42 @@
+# A laptop or single-node cluster (Docker Desktop, k3s, OrbStack, Rancher
+# Desktop): every datastore in the release, and LoadBalancer Services on the
+# localhost ports the chart's default URLs point at, so the UI, the API, SDKs
+# and file downloads work without port-forwards. For evaluation only.
+#
+#   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
+#     -n futureagi --create-namespace -f local.yaml --timeout 20m
+#
+# Then open http://localhost:3000; SDKs use FI_BASE_URL=http://localhost:4318.
+#
+# Docker Desktop, OrbStack and Rancher Desktop publish LoadBalancer Services on
+# localhost, and k3s's ServiceLB on the node's address (localhost on the node
+# itself). Elsewhere a LoadBalancer needs a provider: `minikube tunnel`,
+# cloud-provider-kind for kind, or MetalLB; set urls.* to the addresses it
+# hands out when they are not localhost.
+postgres:
+  mode: bundled
+clickhouse:
+  mode: bundled
+redis:
+  mode: bundled
+temporal:
+  mode: bundled
+objectStorage:
+  mode: bundled
+  bundled:
+    service:
+      # Browser downloads on localhost:9005 (MINIO_URL).
+      type: LoadBalancer
+frontend:
+  service:
+    # The UI on localhost:3000 (APP_URL).
+    type: LoadBalancer
+    port: 3000
+backend:
+  service:
+    # The API on localhost:8000 (BASE_URL, the UI's API URL).
+    type: LoadBalancer
+fiCollector:
+  service:
+    # OTLP on localhost:4317 (gRPC) and localhost:4318 (HTTP).
+    type: LoadBalancer

@@ -1,12 +1,6 @@
-import {
-  Badge,
-  Box,
-  Button,
-  Divider,
-  LinearProgress,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import SelectionBar from "src/components/selection-bar";
+import ErrorState from "src/components/error-state";
+import { Badge, Box, Button, LinearProgress, Typography } from "@mui/material";
 import { styled } from "@mui/material/styles";
 import LoadingButton from "@mui/lab/LoadingButton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,9 +11,10 @@ import { Helmet } from "react-helmet-async";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import axiosInstance from "src/utils/axios";
 import { useSnackbar } from "notistack";
-import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import { readObserveProjectPage } from "src/api/project/observe-project-list";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 
 import ExperimentListView from "./ExperimentListView";
 import ObserveListView from "./ObserveListView";
@@ -47,6 +42,7 @@ export const SearchFieldBox = styled(Box)(({ theme }) => ({
 
 const ProjectWrapperView = () => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [observeFirstRun, setObserveFirstRun] = useState(false);
   const [selectedAll, setSelectedAll] = useState(false);
   const [selectedRowsData, setSelectedRowsData] = useState([]);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
@@ -57,27 +53,28 @@ const ProjectWrapperView = () => {
   const currentTab = location.pathname.split("/").pop();
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: [`project-${currentTab}-list`],
-    queryFn: () =>
-      axios.get(
-        currentTab === "observe"
-          ? endpoints.project.projectObserveList
-          : endpoints.project.projectExperimentList,
-        {
-          params: {
-            project_type: currentTab === "observe" ? "observe" : "experiment",
-          },
-        },
-      ),
-    select: (data) => data.data,
+    queryFn: ({ signal }) =>
+      currentTab === "observe"
+        ? readObserveProjectPage({ signal })
+        : axios.get(endpoints.project.projectExperimentList, {
+            signal,
+            params: {
+              project_type: "experiment",
+            },
+          }),
+    retry: currentTab === "observe" ? false : 1,
+    select: (response) => (currentTab === "observe" ? response : response.data),
   });
 
-  const theme = useTheme();
+  // Nothing traced yet: search and filter have nothing to act on, but Add
+  // Project stays so a first-run user can still create one.
+  const hideListControls = currentTab === "observe" && observeFirstRun;
 
   const isProjectCount =
     currentTab === "observe"
-      ? data?.result?.metadata?.total_rows > 0
+      ? data?.totalRows > 0
       : data?.result?.projects?.length > 0;
 
   const handleSearchChange = (e) => {
@@ -165,6 +162,16 @@ const ProjectWrapperView = () => {
     return <LinearProgress />;
   }
 
+  if (isError) {
+    return (
+      <ErrorState
+        title="Could not load projects"
+        detail={getRequestErrorMessage(error, "Could not load projects")}
+        onRetry={() => refetch()}
+      />
+    );
+  }
+
   if (!isProjectCount) {
     return <ProjectFtux />;
   }
@@ -194,7 +201,7 @@ const ProjectWrapperView = () => {
           >
             <Typography
               color="text.primary"
-              variant="m2"
+              variant="m1"
               fontWeight={"fontWeightSemiBold"}
             >
               {currentTab === "observe" ? "Tracing" : "Prototype"}
@@ -207,11 +214,11 @@ const ProjectWrapperView = () => {
               }}
             >
               <Typography
-                variant="s1"
-                color="text.primary"
+                variant="s2_1"
+                color="text.tertiary"
                 fontWeight={"fontWeightRegular"}
               >
-                Create a project to experiment on your model
+                Send traces from your agents to inspect every step, debug failures and track cost and latency.
               </Typography>
             </Box>
           </Box>
@@ -219,11 +226,17 @@ const ProjectWrapperView = () => {
           <Box
             sx={{
               display: "flex",
-              justifyContent: "space-between",
+              justifyContent: hideListControls ? "flex-end" : "space-between",
               alignItems: "center",
             }}
           >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Box
+              sx={{
+                display: hideListControls ? "none" : "flex",
+                alignItems: "center",
+                gap: 1,
+              }}
+            >
               <FormSearchField
                 size="small"
                 placeholder="Search"
@@ -241,17 +254,14 @@ const ProjectWrapperView = () => {
                   startIcon={
                     observeFilters?.length > 0 ? (
                       <Badge variant="dot" color="error" overlap="circular">
-                        <Iconify icon="mage:filter" width={14} />
+                        <Iconify icon="solar:filter-linear" width={14} />
                       </Badge>
                     ) : (
-                      <Iconify icon="mage:filter" width={14} />
+                      <Iconify icon="solar:filter-linear" width={14} />
                     )
                   }
                   onClick={(e) => setFilterAnchorEl(e.currentTarget)}
                   sx={{
-                    textTransform: "none",
-                    fontSize: 12,
-                    height: 36,
                     borderColor: "divider",
                     color: "text.secondary",
                   }}
@@ -261,63 +271,17 @@ const ProjectWrapperView = () => {
               )}
             </Box>
             {selectedRowsData.length > 0 ? (
-              <Box
-                sx={{
-                  display: "flex",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  paddingX: theme.spacing(2),
-                  paddingY: theme.spacing(0.5),
-                  alignItems: "center",
-                  gap: theme.spacing(2),
-                }}
-              >
-                <Typography
-                  fontWeight="fontWeightMedium"
-                  variant="s1"
-                  color="primary.main"
-                >
-                  {selectedRowsData.length} Selected
-                </Typography>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{ borderRightWidth: theme.spacing(0.25) }}
-                />
-                <Button
-                  startIcon={
-                    <SvgColor
-                      src="/assets/icons/ic_delete.svg"
-                      sx={{ width: 20, height: 20, color: "text.disabled" }}
-                    />
-                  }
-                  size="small"
-                  sx={{ color: "text.secondary" }}
-                  onClick={handleDelete}
-                >
-                  <Typography
-                    variant="s1"
-                    fontWeight={"fontWeightRegular"}
-                    color="text.primary"
-                  >
-                    Delete
-                  </Typography>
-                </Button>
-                <Button
-                  size="small"
-                  sx={{ color: "text.secondary" }}
-                  onClick={clearSelection}
-                >
-                  <Typography
-                    variant="s1"
-                    fontWeight={"fontWeightRegular"}
-                    color="text.primary"
-                  >
-                    Cancel
-                  </Typography>
-                </Button>
-              </Box>
+              <SelectionBar
+                count={selectedRowsData.length}
+                onCancel={clearSelection}
+                actions={[
+                  {
+                    label: "Delete",
+                    icon: "solar:trash-bin-trash-linear",
+                    onClick: handleDelete,
+                  },
+                ]}
+              />
             ) : (
               <ProjectRightSection isObserve={currentTab === "observe"} />
             )}
@@ -333,6 +297,7 @@ const ProjectWrapperView = () => {
                 setSelectedAll={setSelectedAll}
                 setSelectedRowsData={setSelectedRowsData}
                 filters={observeFilters}
+                onFirstRunChange={setObserveFirstRun}
               />
               <TraceFilterPanel
                 anchorEl={filterAnchorEl}

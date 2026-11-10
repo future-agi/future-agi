@@ -44,7 +44,13 @@ const RerunModal = ({
   );
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+      fullWidth
+    >
       <DialogTitle
         sx={{
           padding: 2,
@@ -65,7 +71,7 @@ const RerunModal = ({
           }}
           size="small"
         >
-          <Iconify icon="akar-icons:cross" width={16} height={16} />
+          <Iconify icon="solar:close-linear" width={16} height={16} />
         </IconButton>
       </DialogTitle>
       <DialogContent

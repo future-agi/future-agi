@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Future AGI host-side updater: check for, apply and roll back signed releases
+# on a Docker Compose install. It runs on the Docker host, never inside the app.
+#
+#   ./bin/update check                 # what an update would do; changes nothing
+#   ./bin/update apply                 # back up, update, verify
+#   ./bin/update apply --stage         # back up, pin, pull, verify; restart nothing
+#   ./bin/update rollback --yes        # undo the last update
+#   ./bin/update status                # installed versions and the last run
+#   ./bin/update --production ...      # a deploy/setup.sh production install
+#                                      # (it updates in two steps: apply --stage,
+#                                      # the release's initialization jobs, apply)
+#
+# Settings live in update.conf (deploy/update/README.md), never in .env.
+set -euo pipefail
+# An exported CDPATH would send `cd bin/..` (bin/update run as `bin/update`) elsewhere and make it print the
+# directory, which the $(...) below would capture with pwd's.
+unset CDPATH
+
+# A symlink to this script (say /usr/local/bin/fagi-update) still runs the
+# checkout it belongs to: follow the links to the script itself first.
+SCRIPT="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT" ]; do
+  LINK_DIR="$(cd -P -- "$(dirname -- "$SCRIPT")" && pwd)"
+  SCRIPT="$(readlink -- "$SCRIPT")"
+  case "$SCRIPT" in /*) ;; *) SCRIPT="$LINK_DIR/$SCRIPT" ;; esac
+done
+# -P: through a symlinked bin directory, .. is the checkout, not the directory holding the link.
+ROOT="$(cd -P -- "$(dirname -- "$SCRIPT")/.." && pwd)"
+PYTHON="${PYTHON:-python3}"
+# A relative path names a file in the caller's directory, and Python runs from the checkout (cd "$ROOT" below):
+# the interpreter checked here must be the one that runs.
+case "$PYTHON" in /*) ;; */*) PYTHON="$(pwd -P)/$PYTHON" ;; esac
+if ! FOUND="$(type -P -- "$PYTHON")"; then
+  echo "bin/update: needs Python 3.9 or newer on the Docker host ($PYTHON was not found)" >&2
+  exit 2
+fi
+# So does a name found through a relative PATH entry (PATH=venv/bin:...): it runs by its absolute path.
+case "$FOUND" in /*) PYTHON="$FOUND" ;; *) PYTHON="$(pwd -P)/$FOUND" ;; esac
+if ! "$PYTHON" -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
+  echo "bin/update: needs Python 3.9 or newer; $PYTHON is $("$PYTHON" -V 2>&1)" >&2
+  exit 2
+fi
+CALLER_PWD="$PWD"
+# Python runs isolated (-I): no PYTHON* variables, no user site-packages, and
+# neither the caller's directory nor the checkout on sys.path. deploy/ has no
+# __init__.py, so `import deploy.update` would let a regular `deploy` package
+# anywhere on sys.path (even the interpreter's site-packages) win over the
+# checkout. The checkout's deploy/update is loaded under a private name
+# instead; it imports its own modules relatively.
+cd "$ROOT"
+exec "$PYTHON" -I -c '
+import importlib.util, os, sys
+package = os.path.join(sys.argv[1], "deploy", "update")
+spec = importlib.util.spec_from_file_location(
+    "futureagi_update", os.path.join(package, "__init__.py"), submodule_search_locations=[package])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+from futureagi_update.__main__ import main
+sys.exit(main(sys.argv[2:]))
+' "$ROOT" --root "$ROOT" --cwd "$CALLER_PWD" "$@"

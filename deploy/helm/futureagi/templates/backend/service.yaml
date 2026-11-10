@@ -1,0 +1,30 @@
+{{- $b := .Values.backend -}}
+{{- $ctx := dict "root" . "component" "backend" -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- with $b.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $b.service.type }}
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $b.service.port }}
+      targetPort: http
+      protocol: TCP
+---
+{{- if $b.autoscaling.enabled }}
+{{ include "futureagi.hpa" (dict "root" . "component" "backend" "name" (include "futureagi.component" $ctx) "autoscaling" $b.autoscaling) }}
+---
+{{- end }}
+{{- if $b.pdb.enabled }}
+{{ include "futureagi.pdb" (dict "root" . "component" "backend" "name" (include "futureagi.component" $ctx) "pdb" $b.pdb) }}
+{{- end }}
