@@ -19,9 +19,19 @@ export const runPath = (run) =>
       )
     : `${paths.dashboard.simulate.test}/${run.runTestId}/${run.testExecutionId}`;
 
+// Calls left out of the rate (errored, or no score), so a rate over few measured calls is never read alone.
+export const unratedOf = (run) => {
+  const parts = [
+    run.errored ? `${run.errored} errored` : null,
+    run.noScore ? `${run.noScore} no score` : null,
+  ].filter(Boolean);
+  return parts.join(", ");
+};
+
 export function PassRateCell({ run }) {
   const rate = isRunning(run) ? null : run.passRate;
   const measured = (run.passed ?? 0) + (run.failed ?? 0);
+  const unrated = isRunning(run) ? "" : unratedOf(run);
   return (
     <Stack
       direction="row"
@@ -57,7 +67,8 @@ export function PassRateCell({ run }) {
           typography: "s3",
           fontWeight: 500,
           fontVariantNumeric: "tabular-nums",
-          width: 76,
+          minWidth: 76,
+          whiteSpace: "nowrap",
           textAlign: "right",
           color: rate == null ? "text.disabled" : rateTone(rate),
         }}
@@ -69,6 +80,14 @@ export function PassRateCell({ run }) {
             sx={{ color: "text.subtitle", fontWeight: 400 }}
           >
             {` ${run.passed}/${measured}`}
+          </Box>
+        )}
+        {unrated && (
+          <Box
+            component="span"
+            sx={{ color: "text.subtitle", fontWeight: 400 }}
+          >
+            {` · ${unrated}`}
           </Box>
         )}
       </Typography>

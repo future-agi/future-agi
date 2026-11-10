@@ -657,6 +657,8 @@ class CallTranscript(BaseModel):
         TOOL_CALLS = "tool_calls", "Tool Calls"
         TOOL_CALL_RESULT = "tool_call_result", "Tool Call Result"
         ACTOR = "actor", "Actor"
+        # A scenario's own start message, when no person or actor sent it.
+        TASK = "task", "Task"
         UNKNOWN = "unknown", "Unknown"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -1579,7 +1579,7 @@ def _store_alk_chat_messages(
         role = (seg.get("speaker_role") or "").lower()
         if not (seg.get("content") or "").strip():
             continue
-        if role in {"user", "customer", "actor"}:
+        if role in {"user", "customer", "actor", "task"}:
             # Someone else in the conversation (an actor) writes on the person's side, as their own turn.
             current = {"user": seg, "agent": []}
             exchanges.append(current)
@@ -1598,12 +1598,16 @@ def _store_alk_chat_messages(
         texts = [_text(seg) for seg in segs]
         content_items: list[dict] = []
         for seg in segs:
-            item = {"role": role_str, "content": _text(seg)}
+            speaker = (seg.get("speaker_role") or "").lower()
+            # The task's turn keeps its own role, so it is never read as the person's.
+            item = {
+                "role": "task" if speaker == "task" else role_str,
+                "content": _text(seg),
+            }
             if seg.get("actor"):
                 item["actor"] = seg["actor"]
             if seg.get("tool_calls"):
                 item["tool_calls"] = seg["tool_calls"]
-            speaker = (seg.get("speaker_role") or "").lower()
             if speaker in {"tool_calls", "tool_call_result"}:
                 item["kind"] = speaker
             if isinstance(seg.get("start_time_ms"), int):

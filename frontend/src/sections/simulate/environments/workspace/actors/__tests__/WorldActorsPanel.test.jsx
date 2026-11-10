@@ -635,7 +635,7 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByLabelText("What they want (optional)")).toBeVisible();
     // A live or speaking actor is given these; the form never says they are unused.
     expect(
-      screen.getByText(/Given to them whenever they speak or decide in the moment/),
+      screen.getByText(/Given to them as background whenever they speak or decide in the moment/),
     ).toBeVisible();
     expect(screen.queryByText(/not used by runs/)).toBeNull();
   });

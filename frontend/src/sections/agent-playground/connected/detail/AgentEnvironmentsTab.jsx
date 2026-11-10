@@ -8,7 +8,7 @@ import { paths } from "src/routes/paths";
 import StatusPill from "src/sections/simulate/environments/components/StatusPill";
 import { Card, LineSkeleton, Row } from "./bits";
 import { MONO, ago, rateTone } from "./format";
-import { isRunning } from "./runCells";
+import { isRunning, unratedOf } from "./runCells";
 import useAgentRoute from "./useAgentRoute";
 
 const COLUMNS = ["Environment", "Status", "Testing", "Last result"];
@@ -24,6 +24,7 @@ function LastResult({ env }) {
     );
   }
   const rest = [
+    isRunning(run) ? null : unratedOf(run) || null,
     run.agentVersion ? `agent v${run.agentVersion.number}` : null,
     run.completedAt ? ago(run.completedAt) : `started ${ago(run.startedAt)}`,
   ].filter(Boolean);

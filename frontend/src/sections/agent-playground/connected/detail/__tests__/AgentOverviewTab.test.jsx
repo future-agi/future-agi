@@ -89,6 +89,22 @@ describe("AgentOverviewTab", () => {
     ).toHaveTextContent("30% 3/10");
   });
 
+  it("shows errored and unscored calls beside a rate they are left out of", () => {
+    runsState.current = loaded([
+      {
+        ...ENVIRONMENT_RUN,
+        outcome_passed: 1,
+        outcome_failed: 0,
+        outcome_errored: 9,
+        outcome_no_score: 2,
+      },
+    ]);
+    renderTab();
+    expect(
+      screen.getByTestId("pass-rate-68dedb99-42b6-46e7-8e94-b511041fa2cb"),
+    ).toHaveTextContent("100% 1/1 · 9 errored, 2 no score");
+  });
+
   it("marks a running Simulate run and gives it no pass rate", () => {
     renderTab();
     expect(screen.getByText("Old refill check")).toBeInTheDocument();

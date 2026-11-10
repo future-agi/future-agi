@@ -29,6 +29,9 @@ export const toRun = (raw) => ({
   agentVersion: toVersionRef(raw.agent_version),
   passed: raw.outcome_passed ?? null,
   failed: raw.outcome_failed ?? null,
+  // Calls that errored or got no score: never in the rate, so shown beside it.
+  errored: raw.outcome_errored ?? null,
+  noScore: raw.outcome_no_score ?? null,
   skipped: raw.outcome_skipped ?? null,
   passRate: passRateOf({
     passed: raw.outcome_passed ?? null,

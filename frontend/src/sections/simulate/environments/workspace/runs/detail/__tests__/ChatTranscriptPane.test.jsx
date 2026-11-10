@@ -89,6 +89,21 @@ describe("ChatTranscriptPane", () => {
     expect(screen.queryByText("On the call:")).toBeNull();
   });
 
+  it("labels a scenario's own task as the task, with no customer", () => {
+    render(
+      <ChatTranscriptPane
+        customerName={null}
+        turns={[
+          { role: "task", text: "Nightly reconciliation: post deal 9." },
+          { role: "agent", text: "Posted." },
+        ]}
+      />,
+    );
+    expect(screen.getByText(/· Task$/)).toBeInTheDocument();
+    expect(screen.queryByText(/Customer/)).toBeNull();
+    expect(tabLabels()).toEqual(["All", "Assistant"]);
+  });
+
   it("names a world actor with their role and shows their action as an event", async () => {
     render(
       <ChatTranscriptPane

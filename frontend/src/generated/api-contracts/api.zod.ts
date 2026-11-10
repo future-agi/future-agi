@@ -37819,6 +37819,7 @@ export const SimulateApiAlkSimulateCallExecutionsResultBody = zod.object({
           "tool_calls",
           "tool_call_result",
           "actor",
+          "task",
           "unknown",
         ]),
         speaker_name: zod
@@ -49910,6 +49911,7 @@ export const SimulateCallExecutionsTranscriptsListResponse = zod.object({
             "tool_calls",
             "tool_call_result",
             "actor",
+            "task",
             "unknown",
           ])
           .optional()
@@ -54994,6 +54996,7 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
                   "tool_calls",
                   "tool_call_result",
                   "actor",
+                  "task",
                   "unknown",
                 ])
                 .optional()

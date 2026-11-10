@@ -71,6 +71,8 @@ def test_limits_are_settings_kept_beside_the_cast_and_none_is_no_limit(
     [
         {"max_active": 0},
         {"max_active": "two"},
+        {"max_active": 0.5},
+        {"live_turns_per_actor": 2.5},
         {"model": "some-other-model"},
         {"loop_guard_events": 6},
     ],

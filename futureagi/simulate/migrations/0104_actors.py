@@ -30,6 +30,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='calltranscript',
             name='speaker_role',
-            field=models.CharField(choices=[('user', 'User'), ('assistant', 'Assistant'), ('system', 'System'), ('tool_calls', 'Tool Calls'), ('tool_call_result', 'Tool Call Result'), ('actor', 'Actor'), ('unknown', 'Unknown')], default='unknown', help_text='Role of the speaker (user or assistant)', max_length=20),
+            field=models.CharField(choices=[('user', 'User'), ('assistant', 'Assistant'), ('system', 'System'), ('tool_calls', 'Tool Calls'), ('tool_call_result', 'Tool Call Result'), ('actor', 'Actor'), ('task', 'Task'), ('unknown', 'Unknown')], default='unknown', help_text='Role of the speaker (user or assistant)', max_length=20),
         ),
     ]

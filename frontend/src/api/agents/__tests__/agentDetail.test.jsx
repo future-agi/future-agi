@@ -104,6 +104,8 @@ describe("toRun", () => {
       agentVersion: { id: "93956ae6", number: 3 },
       passed: 3,
       failed: 7,
+      errored: 0,
+      noScore: 0,
       skipped: 0,
       passRate: 30,
       startedAt: "2026-10-14T11:58:53.368130+00:00",
