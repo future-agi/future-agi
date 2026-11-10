@@ -20,7 +20,9 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/cohere"
 	"github.com/futureagi/agentcc-gateway/internal/providers/gemini"
 	"github.com/futureagi/agentcc-gateway/internal/providers/openai"
+	"github.com/futureagi/agentcc-gateway/internal/testutil/policystream"
 	anthropicwire "github.com/futureagi/agentcc-gateway/internal/translation/anthropic"
+	geminiwire "github.com/futureagi/agentcc-gateway/internal/translation/gemini"
 )
 
 func TestToolPolicyAcceptance(t *testing.T) {
@@ -33,7 +35,7 @@ func TestToolPolicyAcceptance(t *testing.T) {
 		"bedrock":   func(id string, c config.ProviderConfig) (providers.Provider, error) { return bedrock.New(id, c) },
 	}
 	for provider, newProvider := range constructors {
-		for _, test := range []string{"permitted", "none", "allowed-auto", "allowed-required", "parallel", "callers", "empty-callers"} {
+		for _, test := range []string{"permitted", "none", "none-parallel", "allowed-auto", "allowed-required", "native-auto", "native-required", "parallel", "callers", "empty-callers"} {
 			for _, stream := range []bool{false, true} {
 				name := provider + "/" + test
 				if stream {
@@ -48,8 +50,7 @@ func TestToolPolicyAcceptance(t *testing.T) {
 						bodies <- string(data)
 						w.Header().Set("Content-Type", "application/json")
 						if stream {
-							w.Header().Set("Content-Type", "text/event-stream")
-							io.WriteString(w, "data: [DONE]\n\n")
+							policystream.Reply(w, provider, test == "allowed-required" || test == "native-required")
 							return
 						}
 						io.WriteString(w, `{"id":"synthetic","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"finish_reason":"COMPLETE","usage":{"input_tokens":1,"output_tokens":1}}`)
@@ -62,8 +63,11 @@ func TestToolPolicyAcceptance(t *testing.T) {
 					defer p.Close()
 					body := `{"model":"test-model","messages":[{"role":"user","content":"synthetic"}],"tools":[{"type":"function","function":{"name":"permitted_tool","parameters":{"type":"object","properties":{}}}},{"type":"function","function":{"name":"restricted_tool","parameters":{"type":"object","properties":{}}}}]`
 					switch test {
-					case "none":
+					case "none", "none-parallel":
 						body += `,"tool_choice":"none"`
+						if test == "none-parallel" {
+							body += `,"parallel_tool_calls":false`
+						}
 					case "allowed-auto", "allowed-required":
 						mode := "auto"
 						if test == "allowed-required" {
@@ -81,6 +85,15 @@ func TestToolPolicyAcceptance(t *testing.T) {
 							callers = `[]`
 						}
 						req, _, err = (&anthropicwire.Translator{}).RequestToCanonical([]byte(`{"model":"test-model","max_tokens":32,"messages":[{"role":"user","content":"synthetic"}],"tools":[{"name":"restricted_tool","allowed_callers":` + callers + `,"input_schema":{"type":"object"}}]}`))
+					} else if test == "native-auto" || test == "native-required" {
+						mode := "AUTO"
+						if test == "native-required" {
+							mode = "ANY"
+						}
+						req, _, err = (&geminiwire.Translator{}).RequestToCanonical([]byte(`{"contents":[{"role":"user","parts":[{"text":"synthetic"}]}],"tools":[{"functionDeclarations":[{"name":"permitted_tool","parameters":{"type":"object"}},{"name":"other_permitted","parameters":{"type":"object"}},{"name":"restricted_tool","parameters":{"type":"object"}}]}],"toolConfig":{"functionCallingConfig":{"mode":"` + mode + `","allowedFunctionNames":["permitted_tool","other_permitted"]}}}`))
+						if req != nil {
+							req.Model = "test-model"
+						}
 					} else {
 						req = &models.ChatCompletionRequest{}
 						err = json.Unmarshal([]byte(body), req)
@@ -88,15 +101,13 @@ func TestToolPolicyAcceptance(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					denied := (test == "parallel" && (provider == "gemini" || provider == "cohere")) || ((test == "callers" || test == "empty-callers") && provider != "anthropic") || (test == "allowed-required" && provider == "cohere")
+					denied := (test == "parallel" && (provider == "gemini" || provider == "cohere")) || ((test == "callers" || test == "empty-callers") && provider != "anthropic") || ((test == "allowed-required" || test == "native-required") && provider == "cohere")
 					if test == "empty-callers" {
 						denied = true
 					}
+					var received []models.StreamChunk
 					if stream {
-						chunks, errs := p.StreamChatCompletion(context.Background(), req)
-						for range chunks {
-						}
-						err = <-errs
+						received, err = policystream.Collect(p.StreamChatCompletion(context.Background(), req))
 					} else {
 						_, err = p.ChatCompletion(context.Background(), req)
 					}
@@ -110,8 +121,11 @@ func TestToolPolicyAcceptance(t *testing.T) {
 						}
 						return
 					}
-					if !stream && err != nil {
+					if err != nil {
 						t.Fatalf("permitted request failed: %v", err)
+					}
+					if stream {
+						policystream.CheckSuccess(t, received, test == "allowed-required" || test == "native-required")
 					}
 					if calls.Load() != 1 {
 						t.Fatalf("provider calls=%d, want 1", calls.Load())
@@ -127,15 +141,18 @@ func TestToolPolicyAcceptance(t *testing.T) {
 						if !strings.Contains(forwarded, "permitted_tool") {
 							t.Error("permitted tool missing")
 						}
-					case "none":
+					case "none", "none-parallel":
 						if len(wire["tools"]) > 0 && !strings.Contains(string(wire["tool_choice"]), "none") && !strings.Contains(string(wire["toolConfig"]), "NONE") {
 							t.Error("tool_choice none left callable tools")
 						}
-					case "allowed-auto", "allowed-required":
+					case "allowed-auto", "allowed-required", "native-auto", "native-required":
 						if strings.Contains(forwarded, "restricted_tool") || !strings.Contains(forwarded, "permitted_tool") {
 							t.Error("allowed subset not enforced")
 						}
-						if test == "allowed-required" && !strings.Contains(forwarded, "any") && !strings.Contains(forwarded, "ANY") && !strings.Contains(forwarded, "required") {
+						if strings.HasPrefix(test, "native-") && !strings.Contains(forwarded, "other_permitted") {
+							t.Error("second permitted tool missing")
+						}
+						if (test == "allowed-required" || test == "native-required") && !strings.Contains(forwarded, "any") && !strings.Contains(forwarded, "ANY") && !strings.Contains(forwarded, "required") {
 							t.Error("required mode missing")
 						}
 					case "parallel":

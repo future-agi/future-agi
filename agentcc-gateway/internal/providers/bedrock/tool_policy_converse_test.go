@@ -12,6 +12,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/testutil/policystream"
 )
 
 func TestConverseToolPolicies(t *testing.T) {
@@ -46,6 +47,10 @@ func TestConverseToolPolicies(t *testing.T) {
 							t.Error("named tool choice lost")
 						}
 					}
+					if stream {
+						policystream.Reply(w, "converse", policy == "required" || policy == "named")
+						return
+					}
 					io.WriteString(w, `{"output":{"message":{"role":"assistant","content":[{"text":"ok"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1}}`)
 				}))
 				defer upstream.Close()
@@ -74,11 +79,9 @@ func TestConverseToolPolicies(t *testing.T) {
 				if err = json.Unmarshal([]byte(body), &req); err != nil {
 					t.Fatal(err)
 				}
+				var received []models.StreamChunk
 				if stream {
-					chunks, errs := p.StreamChatCompletion(context.Background(), &req)
-					for range chunks {
-					}
-					err = <-errs
+					received, err = policystream.Collect(p.StreamChatCompletion(context.Background(), &req))
 				} else {
 					_, err = p.ChatCompletion(context.Background(), &req)
 				}
@@ -90,8 +93,11 @@ func TestConverseToolPolicies(t *testing.T) {
 						t.Errorf("unsupported policy dispatched %d calls", calls.Load())
 					}
 				} else {
-					if !stream && err != nil {
+					if err != nil {
 						t.Fatal(err)
+					}
+					if stream {
+						policystream.CheckSuccess(t, received, policy == "required" || policy == "named")
 					}
 					if calls.Load() != 1 {
 						t.Errorf("calls=%d, want 1", calls.Load())

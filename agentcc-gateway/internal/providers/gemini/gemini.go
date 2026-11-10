@@ -193,7 +193,10 @@ func (p *Provider) releaseSemaphore() {
 // Gemini cannot enforce a single call per turn or Anthropic's caller contexts.
 // Reject those restrictions before contacting the upstream provider.
 func validateToolPolicy(req *models.ChatCompletionRequest) error {
-	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(req.Tools) > 0 {
+	var choice string
+	_ = json.Unmarshal(req.ToolChoice, &choice)
+	// NONE permits zero function calls, so it also enforces a single-call limit.
+	if choice != "none" && req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(req.Tools) > 0 {
 		return models.ErrBadRequest("unsupported_tool_policy", "gemini cannot enforce parallel_tool_calls=false")
 	}
 	for _, tool := range req.Tools {
