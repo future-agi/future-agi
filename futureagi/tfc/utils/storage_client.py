@@ -17,6 +17,7 @@ import os
 from urllib.parse import urlparse
 
 import certifi
+import idna
 import structlog
 import urllib3
 from minio import Minio
@@ -62,13 +63,21 @@ def _parse_endpoint(raw_endpoint: str) -> tuple[str, bool | None]:
         host = parsed.hostname
         if ":" in host:
             ipaddress.IPv6Address(host)
-        elif any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-._" for c in host):
-            raise ValueError(error)
-        elif not host.strip("."):
-            raise ValueError(error)
+            host = f"[{host}]"
+        else:
+            # Public MinIO hosts may be internationalized even when the SDK
+            # connects to an ASCII internal endpoint. Validate the IDNA form
+            # and use it consistently for generated URLs and stored-URL matching.
+            if not host.isascii():
+                host = idna.encode(host, uts46=True).decode("ascii")
+            if any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-._" for c in host):
+                raise ValueError(error)
+            if not host.strip("."):
+                raise ValueError(error)
     except ValueError:
         raise ValueError(error) from None
-    return parsed.netloc, parsed.scheme == "https" if has_scheme else None
+    authority = f"{host}:{parsed.port}" if parsed.port is not None else host
+    return authority, parsed.scheme == "https" if has_scheme else None
 
 
 def _is_loopback(host: str | None) -> bool:
@@ -228,7 +237,11 @@ def server_reachable_url(file_url: str) -> str:
     if not browser_host or not internal_host or browser_host == internal_host:
         return file_url
     parsed = urlparse(file_url)
-    if parsed.netloc != browser_host:
+    try:
+        stored_host, _ = _parse_endpoint(parsed.netloc)
+    except ValueError:
+        return file_url
+    if stored_host != browser_host:
         return file_url
     scheme = "https" if internal_secure else "http"
     return parsed._replace(scheme=scheme, netloc=internal_host).geturl()

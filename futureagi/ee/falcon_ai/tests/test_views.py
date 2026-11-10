@@ -1,7 +1,9 @@
 import uuid
+from unittest.mock import Mock
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
+from structlog.testing import capture_logs
 
 from ee.falcon_ai.models import (
     Conversation,
@@ -314,6 +316,49 @@ class TestFileUploadView:
         assert FakeMinio.instances[0].put_calls[0]["content_type"] == "text/plain"
         # The proxy-aware transport the app's own storage client uses.
         assert type(FakeMinio.instances[0].http_client) is type(storage_http_client())
+
+    @pytest.mark.parametrize("setting", ["MINIO_ENDPOINT", "S3_ENDPOINT_URL", "MINIO_URL"])
+    @pytest.mark.parametrize(
+        "endpoint", ["", "http://", "minio:bad", "http://user:secret@storage.example"]
+    )
+    def test_invalid_storage_configuration_is_logged_without_creating_file(
+        self, auth_client, monkeypatch, setting, endpoint
+    ):
+        monkeypatch.setenv("MINIO_ENDPOINT", "")
+        monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+        if setting == "MINIO_URL":
+            monkeypatch.setattr("tfc.settings.settings.MINIO_URL", endpoint)
+        else:
+            monkeypatch.setenv(setting, endpoint)
+            if setting == "MINIO_ENDPOINT" and not endpoint:
+                monkeypatch.setenv("S3_ENDPOINT_URL", "")
+        client_factory = Mock()
+        monkeypatch.setattr("minio.Minio", client_factory)
+        upload = SimpleUploadedFile(
+            "notes.txt", b"Synthetic notes", content_type="text/plain"
+        )
+
+        with capture_logs() as logs:
+            resp = auth_client.post(self.URL, {"file": upload}, format="multipart")
+
+        assert resp.status_code == 400
+        assert resp.data["status"] is False
+        assert resp.data["code"] == "storage_configuration_error"
+        assert resp.data["detail"] == (
+            "File upload failed because the server storage endpoint is not configured "
+            "correctly. Contact your administrator."
+        )
+        assert FalconFile.objects.count() == 0
+        client_factory.assert_not_called()
+        errors = [
+            row for row in logs
+            if row["event"] == "falcon_upload_storage_configuration_error"
+        ]
+        assert len(errors) == 1
+        assert errors[0]["log_level"] == "error"
+        assert "secret" not in str(errors)
+        assert "secret" not in str(resp.data)
+        assert not errors[0].get("exc_info")
 
     def test_upload_rejects_unsupported_type(self, auth_client):
         upload = SimpleUploadedFile(

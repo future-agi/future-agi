@@ -1,6 +1,7 @@
 import io
 import uuid
 
+import structlog
 from django.db.models import Count, Max
 from drf_yasg import openapi
 from drf_yasg.utils import no_body, swagger_auto_schema
@@ -40,6 +41,7 @@ FALCON_FILE_UPLOAD_PARAMETERS = [
 ]
 
 _gm = GeneralMethods()
+logger = structlog.get_logger(__name__)
 
 
 class StreamStatusView(APIView):
@@ -434,10 +436,23 @@ class FileUploadView(APIView):
 
         # Keep Falcon's legacy endpoint/credential overrides, but share the
         # storage client's parser so bare host:port is not mistaken for a scheme.
-        minio_endpoint, scheme_hint = _parse_endpoint(
-            os.getenv("MINIO_ENDPOINT")
-            or os.getenv("S3_ENDPOINT_URL", "minio:9000")
-        )
+        try:
+            minio_endpoint, scheme_hint = _parse_endpoint(
+                os.getenv("MINIO_ENDPOINT")
+                or os.getenv("S3_ENDPOINT_URL", "minio:9000")
+            )
+            # Validate the public endpoint too, before writing any object or row.
+            _parse_endpoint(MINIO_URL)
+        except ValueError:
+            # Configuration may contain credentials. Log neither the value nor
+            # a traceback, and distinguish this from invalid user-supplied files.
+            logger.error("falcon_upload_storage_configuration_error")
+            return _gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST,
+                "File upload failed because the server storage endpoint is not "
+                "configured correctly. Contact your administrator.",
+                code="storage_configuration_error",
+            )
         secure = (
             scheme_hint if scheme_hint is not None else "amazonaws" in minio_endpoint
         )
