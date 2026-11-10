@@ -5,9 +5,9 @@ import { mapEvidenceRef } from './r3-mappers';
 import { humanAnnotationInput } from './r3-cases';
 import { mapV11Page } from './v11-mappers';
 
-const endpoint = (source, source_id, annotations = false) => apiPath(annotations
-  ? '/model-hub/skills/evidence/{source}/{source_id}/annotations/'
-  : '/model-hub/skills/evidence/{source}/{source_id}/', { source, source_id });
+const endpoint = (source, source_id, annotations = false) => annotations
+  ? apiPath('/model-hub/skills/evidence/{source}/{source_id}/annotations/', { source, source_id })
+  : apiPath('/model-hub/skills/evidence/{source}/{source_id}/', { source, source_id });
 const parts = (source, sourceId) => ['evidenceAnnotations', source, sourceId];
 const mapAnnotation = (value) => ({
   id: value.id, revision: value.revision, actorId: value.actor_id,

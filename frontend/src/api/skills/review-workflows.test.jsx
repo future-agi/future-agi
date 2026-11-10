@@ -84,6 +84,7 @@ it('does not treat inaccessible evidence as an empty annotation revision', async
   axios.get.mockRejectedValue({ response: { status: 410 } });
   const hook = renderHook(() => useEvidenceReference('skills_text', id), { wrapper });
   await waitFor(() => expect(hook.result.current.isError).toBe(true));
+  expect(axios.get.mock.calls[0][0]).toBe(`/model-hub/skills/evidence/skills_text/${id}/`);
   expect(hook.result.current.data).toBeUndefined();
 });
 it('appends only a revision-bound citation and invalidates release review currentness', async () => {
@@ -92,6 +93,7 @@ it('appends only a revision-bound citation and invalidates release review curren
   const hook = renderHook(() => useAppendEvidenceAnnotation('skills_text', id), { wrapper });
   const input = { source: 'skills_text', sourceId: id, annotationRevision: 2, checkId: id, attemptId: key, verdict: 'agree', citedText: 'retained text', comment: 'Confirmed', machineVerdict: 'pass' };
   await act(async () => { await hook.result.current.mutateAsync(input); });
+  expect(axios.post.mock.calls[0][0]).toBe(`/model-hub/skills/evidence/skills_text/${id}/annotations/`);
   expect(axios.post.mock.calls[0][1]).toEqual({ annotation_revision: 2, check_id: id, attempt_id: key, verdict: 'agree', cited_text: 'retained text', comment: 'Confirmed' });
   expect(invalidate).toHaveBeenCalledWith({ queryKey: skillsKeys.v11({ organizationId: 'org-a', workspaceId: 'ws-a', userId: 'author' }, 'release-request') });
   await act(async () => { await expect(hook.result.current.mutateAsync({ ...input, sourceId: key })).rejects.toThrow('selected evidence changed'); });
