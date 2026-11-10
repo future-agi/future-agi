@@ -1211,10 +1211,11 @@ def receipt_outcome_status(body: dict[str, Any]) -> str:
     sub-goal not applicable, inconclusive, or a mix of the two, and no evaluation decided. An execution
     error stays an error.
     """
+    # A worker's own check is reported beside the task's, never in the call's outcome.
     results = {
         sub_goal_result(one)
         for one in body.get("sub_goals") or []
-        if isinstance(one, dict)
+        if isinstance(one, dict) and not str(one.get("subject") or "").startswith("worker:")
     }
     decided = any(
         isinstance(one, dict)
