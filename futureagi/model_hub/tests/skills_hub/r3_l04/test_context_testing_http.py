@@ -184,3 +184,23 @@ def test_http_admission_executes_context_protocol_and_retains_reference(
     )
     assert retained.status_code == 200, retained.data
     assert retained.data["result"]["text"] == "Synthetic policy version 4."
+
+
+def test_context_testing_schema_coexists_with_leaf_contracts(settings):
+    from drf_yasg import openapi
+    from drf_yasg.generators import OpenAPISchemaGenerator
+
+    schema = OpenAPISchemaGenerator(
+        info=openapi.Info(title="Synthetic Skills contract", default_version="v1"),
+        patterns=auth.urlpatterns,
+    ).get_schema(public=True)
+    definitions = schema["definitions"]
+    for name in (
+        "ContextTestAck",
+        "ContextCancelAck",
+        "ContextShareAck",
+        "ContextSnapshotFileOut",
+    ):
+        assert f"Skills{name}Response" in definitions
+    assert "SkillsTestRunAckResponse" in definitions
+    assert "SkillsCancelAckResponse" in definitions

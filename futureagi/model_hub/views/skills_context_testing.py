@@ -54,7 +54,7 @@ class ContextTestRunsView(ContextTestingView):
         return self.output(request, s.ContextRunPage, value)
 
     @contract(
-        leaf.TestRunAck,
+        s.ContextTestAck,
         body=s.CreateContextTest,
         status=202,
         manual_parameters=[IDEMPOTENCY],
@@ -68,7 +68,7 @@ class ContextTestRunsView(ContextTestingView):
         )
         return self.output(
             request,
-            leaf.TestRunAck,
+            s.ContextTestAck,
             {
                 **job_ack(run.job),
                 "visibility": run.visibility,
@@ -116,7 +116,7 @@ class ContextTestAttemptView(ContextTestingView):
 
 
 class ContextTestFileView(ContextTestingView):
-    @contract(leaf.SnapshotFileOut, query=context.ContextSnapshotFileQuery)
+    @contract(s.ContextSnapshotFileOut, query=context.ContextSnapshotFileQuery)
     def get(self, request: Request, context_id: UUID, run_id: UUID) -> Response:
         value = selectors.get_snapshot_file(
             principal=request.skill_principal,
@@ -124,11 +124,11 @@ class ContextTestFileView(ContextTestingView):
             run_id=run_id,
             **request.validated_query_data,
         )
-        return self.output(request, leaf.SnapshotFileOut, value)
+        return self.output(request, s.ContextSnapshotFileOut, value)
 
 
 class ContextTestCancelView(ContextTestingView):
-    @contract(leaf.CancelAck, body=leaf.EmptyRequest, status=202)
+    @contract(s.ContextCancelAck, body=leaf.EmptyRequest, status=202)
     def post(self, request: Request, context_id: UUID, run_id: UUID) -> Response:
         selectors.get_visible_run(
             principal=request.skill_principal, skill_id=context_id, run_id=run_id
@@ -136,14 +136,14 @@ class ContextTestCancelView(ContextTestingView):
         job = jobs.cancel_job(principal=request.skill_principal, job_id=run_id)
         return self.output(
             request,
-            leaf.CancelAck,
+            s.ContextCancelAck,
             job,
             status=200 if job.status in TERMINAL_JOB_STATUSES else 202,
         )
 
 
 class ContextTestShareView(ContextTestingView):
-    @contract(leaf.ShareRunOut, body=leaf.ShareRunRequest)
+    @contract(s.ContextShareAck, body=leaf.ShareRunRequest)
     def post(self, request: Request, context_id: UUID, run_id: UUID) -> Response:
         selectors.get_visible_run(
             principal=request.skill_principal, skill_id=context_id, run_id=run_id
@@ -153,6 +153,6 @@ class ContextTestShareView(ContextTestingView):
         )
         return self.output(
             request,
-            leaf.ShareRunOut,
+            s.ContextShareAck,
             {"id": run.pk, "visibility": run.visibility, "shared_at": run.shared_at},
         )
