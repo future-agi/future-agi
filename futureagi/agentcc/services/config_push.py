@@ -242,16 +242,18 @@ def _transform_guardrails(guardrails_data, org_id=None):
             result["timeout_ms"] = guardrails_data["timeout_ms"]
         return result
 
-    # Checks as dict (from frontend saves via OrgConfig)
-    if isinstance(raw_checks, dict):
+    # Empty checks can coexist with active legacy rules (toggle-guardrail).
+    if isinstance(raw_checks, dict) and (raw_checks or not rules):
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
         _inject_guardrail_credentials(raw_checks, org_id)
 
         checks = {}
         for name, check_data in raw_checks.items():
-            if not isinstance(check_data, dict):
-                continue
             registry_name = _RULE_TO_REGISTRY.get(name, name)
+            if not isinstance(check_data, dict):
+                # Keep malformed checks visible to contract validation.
+                checks[registry_name] = check_data
+                continue
             cfg = dict(check_data.get("config") or {})
             provider = (
                 check_data.get("provider")
@@ -272,19 +274,20 @@ def _transform_guardrails(guardrails_data, org_id=None):
                 "confidence_threshold": threshold,
                 "config": cfg,
             }
-        if org_id and checks:
+        if org_id and isinstance(checks.get("futureagi-eval"), dict):
             _inject_fi_credentials(checks, org_id)
         result = {
             "checks": checks,
             "fail_open": guardrails_data.get(
-                "failOpen", guardrails_data.get("fail_open", False)
+                "fail_open", guardrails_data.get("failOpen", False)
             ),
-            "pipeline_mode": guardrails_data.get("pipeline_mode", "parallel"),
+            "pipeline_mode": guardrails_data.get(
+                "pipeline_mode", guardrails_data.get("pipelineMode", "parallel")
+            ),
         }
-        if guardrails_data.get("timeout_ms"):
-            result["timeout_ms"] = guardrails_data["timeout_ms"]
-        elif guardrails_data.get("timeoutMs"):
-            result["timeout_ms"] = guardrails_data["timeoutMs"]
+        timeout_ms = guardrails_data.get("timeout_ms", guardrails_data.get("timeoutMs"))
+        if timeout_ms is not None:
+            result["timeout_ms"] = timeout_ms
         return result
 
     # Convert rules array → checks map
