@@ -560,12 +560,13 @@ function SquaresPlot({
       }
       if (item.state === "failed")
         return {
-          fill: alpha(theme.palette.error.main, 0.12),
-          stroke: theme.palette.error.main,
+          fill: alpha(theme.palette.status.danger.solid, 0.12),
+          stroke: theme.palette.status.danger.solid,
         };
-      if (item.state === "skipped") return { fill: theme.palette.grey[300] };
+      if (item.state === "skipped")
+        return { fill: alpha(theme.palette.status.neutral.solid, 0.45) };
       if (item.state === "reading")
-        return { fill: alpha(theme.palette.primary.main, 0.3) };
+        return { fill: alpha(theme.palette.status.info.solid, 0.3) };
       return {
         fill: theme.palette.background.paper,
         stroke: alpha(theme.palette.text.disabled, 0.55),
@@ -674,8 +675,8 @@ function SquaresPlot({
               y={TOP - 4}
               width={(band.to - band.from + 1) * colW}
               height={plotH + 4}
-              fill={alpha(theme.palette.primary.main, 0.08)}
-              stroke={alpha(theme.palette.primary.main, 0.5)}
+              fill={theme.palette.action.selected}
+              stroke={theme.palette.border.strong}
               strokeWidth={1}
               rx={3}
             />
@@ -700,7 +701,7 @@ function SquaresPlot({
                   width={w}
                   height={RUG}
                   rx={1}
-                  fill={theme.palette.error.main}
+                  fill={theme.palette.status.danger.solid}
                 >
                   <title>{`${formatCount(column.errors)} had a trace error`}</title>
                 </rect>
@@ -738,7 +739,7 @@ function SquaresPlot({
                   x={cx}
                   y={y + 9.5}
                   textAnchor="middle"
-                  fill={theme.palette.common.white}
+                  fill={theme.palette.status.neutral.onSolid}
                   fontSize={9.5}
                   fontWeight={theme.typography.fontWeightSemiBold}
                   fontFamily={theme.typography.fontFamily}
@@ -1099,14 +1100,14 @@ function DensityPlot({
               <rect
                 width={4}
                 height={4}
-                fill={alpha(theme.palette.error.main, 0.1)}
+                fill={alpha(theme.palette.status.danger.solid, 0.1)}
               />
               <line
                 x1={0}
                 y1={0}
                 x2={0}
                 y2={4}
-                stroke={theme.palette.error.main}
+                stroke={theme.palette.status.danger.solid}
                 strokeWidth={1.5}
               />
             </pattern>
@@ -1163,8 +1164,8 @@ function DensityPlot({
               y={TOP - 4}
               width={(band.to - band.from + 1) * colW}
               height={baseY - TOP + 4}
-              fill={alpha(theme.palette.primary.main, 0.08)}
-              stroke={alpha(theme.palette.primary.main, 0.5)}
+              fill={theme.palette.action.selected}
+              stroke={theme.palette.border.strong}
               strokeWidth={1}
               rx={3}
             />
@@ -1230,7 +1231,7 @@ function DensityPlot({
               <path
                 key={`errors-${ERROR_STEPS[i]}`}
                 d={d}
-                fill={theme.palette.error.main}
+                fill={theme.palette.status.danger.solid}
                 opacity={ERROR_STEPS[i]}
               />
             ) : null,
@@ -1361,7 +1362,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
         )}
         {column.failed + column.skipped > 0 &&
           line(
-            theme.palette.error.main,
+            theme.palette.status.danger.solid,
             column.failed + column.skipped,
             "couldn't be answered",
             "failed",
@@ -1375,7 +1376,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
           )}
         {column.errors > 0 &&
           line(
-            theme.palette.error.main,
+            theme.palette.status.danger.solid,
             column.errors,
             "had a trace error",
             "errors",
@@ -1583,11 +1584,11 @@ export default function AskTimeline({
       key: "failed",
       label: "Couldn't answer",
       count: run.failed + run.skipped,
-      color: theme.palette.error.main,
+      color: theme.palette.status.danger.solid,
       ...(squares
         ? { hollow: true }
         : {
-            background: `repeating-linear-gradient(135deg, ${theme.palette.error.main} 0 1.5px, ${alpha(theme.palette.error.main, 0.1)} 1.5px 4px)`,
+            background: `repeating-linear-gradient(135deg, ${theme.palette.status.danger.solid} 0 1.5px, ${alpha(theme.palette.status.danger.solid, 0.1)} 1.5px 4px)`,
           }),
     },
     ...(counts
@@ -1596,7 +1597,7 @@ export default function AskTimeline({
             key: "reading",
             label: "Reading",
             count: reading,
-            color: alpha(theme.palette.primary.main, 0.3),
+            color: alpha(theme.palette.status.info.solid, 0.3),
           },
           (running || run.pending > reading) && {
             key: "waiting",
@@ -1619,7 +1620,7 @@ export default function AskTimeline({
       key: "errors",
       label: "Trace had an error",
       count: errors,
-      color: theme.palette.error.main,
+      color: theme.palette.status.danger.solid,
       swatch: { width: 12, height: RUG, borderRadius: "1px" },
     },
     unsure > 0 && {
@@ -1840,7 +1841,7 @@ function SquareCard({ item, question, colorOf }) {
       {record.facets?.error === true && (
         <Typography
           variant="caption"
-          color="error.main"
+          color="status.danger.fg"
           component="p"
           sx={{ m: 0, mt: 0.5 }}
         >

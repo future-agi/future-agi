@@ -324,7 +324,7 @@ export default function CellGrid({
         {layers.dots && (
           <path
             d={layers.dots}
-            fill={theme.palette.error.main}
+            fill={theme.palette.status.danger.solid}
             stroke={theme.palette.background.paper}
             strokeWidth={1}
             data-errors

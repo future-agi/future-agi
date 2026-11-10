@@ -123,8 +123,8 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
   const inkOn = (level, small) =>
     !small &&
     level >= 3 &&
-    getContrastRatio(ramp[level], theme.palette.common.white) >= 3
-      ? theme.palette.common.white
+    getContrastRatio(ramp[level], theme.palette.status.neutral.onSolid) >= 3
+      ? theme.palette.status.neutral.onSolid
       : theme.palette.text.primary;
   const overallShare = grid.overall.answered
     ? (grid.overall.byLabel.get(answer) || 0) / grid.overall.answered
@@ -317,7 +317,7 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
                     height: 6,
                     ml: 1.5,
                     borderRadius: "50%",
-                    bgcolor: "error.main",
+                    bgcolor: "status.danger.solid",
                   }}
                 />
                 <Typography variant="caption" color="text.disabled">

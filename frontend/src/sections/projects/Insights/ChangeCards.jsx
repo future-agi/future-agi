@@ -28,9 +28,7 @@ function ChangeCard({ card }) {
     ? theme.palette.text.disabled
     : card.kind === "metric"
       ? toneColor(theme, card.tone)
-      : card.kind === "new"
-        ? theme.palette.info.main
-        : theme.palette.text.primary;
+      : theme.palette.text.primary;
   const clickable = Boolean(category);
   const body = (
     <Box
@@ -66,12 +64,12 @@ function ChangeCard({ card }) {
           component="span"
           sx={{
             px: 0.5,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             fontSize: 11,
-            fontWeight: 600,
+            fontWeight: 500,
             lineHeight: "16px",
-            color: "info.dark",
-            bgcolor: "info.lighter",
+            color: "text.secondary",
+            bgcolor: "action.selected",
             flexShrink: 0,
           }}
         >

@@ -140,7 +140,7 @@ export default function QuestionEditor({
     <Box
       sx={{
         border: "1px solid",
-        borderColor: error ? "error.main" : "divider",
+        borderColor: error ? "status.danger.solid" : "divider",
         borderRadius: "8px",
         p: 1.5,
       }}

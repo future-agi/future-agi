@@ -145,8 +145,8 @@ function ChangeCell({ change }) {
         size="small"
         label="New"
         sx={{
-          color: "info.dark",
-          bgcolor: "info.lighter",
+          color: "text.secondary",
+          bgcolor: "action.selected",
         }}
       />
     );
@@ -396,8 +396,8 @@ function CategoryRow({
                     size="small"
                     label="New"
                     sx={{
-                      color: "info.dark",
-                      bgcolor: "info.lighter",
+                      color: "text.secondary",
+                      bgcolor: "action.selected",
                     }}
                   />
                 </Tooltip>

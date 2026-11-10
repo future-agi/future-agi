@@ -388,11 +388,11 @@ export function AttributePills({ attributes }) {
               fontWeight: 600,
               bgcolor:
                 pill.tone === "on"
-                  ? "success.lighter"
+                  ? "action.selected"
                   : pill.tone === "off"
                     ? "background.neutral"
                     : "action.hover",
-              color: pill.tone === "on" ? "success.darker" : "text.primary",
+              color: "text.primary",
             }}
           >
             {pill.value}

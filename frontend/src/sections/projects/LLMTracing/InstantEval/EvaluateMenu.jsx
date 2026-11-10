@@ -1,7 +1,6 @@
 import React, { useId, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Menu, MenuItem, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import EnterpriseMark from "src/components/capability-gate/EnterpriseMark";
 import Iconify from "src/components/iconify";
 import { CAPABILITY, useFeatureDenied } from "src/hooks/useCapabilities";
@@ -125,8 +124,8 @@ export default function EvaluateMenu({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: "primary.main",
-                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+                color: "text.secondary",
+                bgcolor: "action.hover",
               }}
             >
               <Iconify icon={action.icon} width={16} />

@@ -11,7 +11,6 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import { useNavigate } from "react-router";
 import Iconify from "src/components/iconify";
 import { UNITS } from "src/sections/projects/observePopulation";
@@ -96,7 +95,7 @@ function withSpeakers(text, brokeAt) {
           title={broke ? "The turn where it broke" : undefined}
           sx={
             broke
-              ? { color: "error.main", fontSize: 12, fontWeight: 600 }
+              ? { color: "status.danger.fg", fontSize: 12, fontWeight: 600 }
               : { color: "text.disabled", fontSize: 12 }
           }
         >
@@ -164,10 +163,9 @@ function HighlightedContent({ content, evidence, brokeAt }) {
         overflowWrap: "anywhere",
         "& mark": {
           color: "inherit",
-          bgcolor: (theme) => alpha(theme.palette.warning.main, 0.3),
+          bgcolor: "action.selected",
           borderRadius: "3px",
-          boxShadow: (theme) =>
-            `0 0 0 2px ${alpha(theme.palette.warning.main, 0.3)}`,
+          boxShadow: (theme) => `0 0 0 2px ${theme.palette.action.selected}`,
         },
       }}
     >

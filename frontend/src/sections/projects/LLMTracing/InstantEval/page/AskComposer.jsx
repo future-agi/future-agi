@@ -9,6 +9,7 @@ import {
   CircularProgress,
   Link,
   MenuItem,
+  Radio,
   Skeleton,
   Stack,
   TextField,
@@ -122,29 +123,15 @@ function ChoiceCard({
           alignItems="center"
           sx={{ pr: aside ? 16 : 0 }}
         >
-          <Box
-            aria-hidden
-            sx={{
-              width: 14,
-              height: 14,
-              borderRadius: "50%",
-              border: "2px solid",
-              borderColor: selected ? "primary.main" : "text.disabled",
-              display: "grid",
-              placeItems: "center",
-              flexShrink: 0,
-            }}
-          >
-            {selected && (
-              <Box
-                sx={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  bgcolor: "primary.main",
-                }}
-              />
-            )}
+          {/* The card is the radio; the themed box only shows its state. */}
+          <Box aria-hidden sx={{ display: "flex", flexShrink: 0 }}>
+            <Radio
+              checked={selected}
+              disabled={disabled}
+              tabIndex={-1}
+              disableRipple
+              sx={{ p: 0 }}
+            />
           </Box>
           <Typography
             variant="body2"
@@ -160,7 +147,7 @@ function ChoiceCard({
           variant="caption"
           color="text.secondary"
           component="p"
-          sx={{ mt: 0.5, pl: 3, fontVariantNumeric: "tabular-nums" }}
+          sx={{ mt: 0.5, pl: 3.25, fontVariantNumeric: "tabular-nums" }}
         >
           {detail}
         </Typography>
@@ -399,7 +386,7 @@ function ScopeCard({
           {population.isLoading ? (
             <Skeleton variant="text" width={300} height={18} />
           ) : population.isError ? (
-            <Typography variant="body2" color="error.main">
+            <Typography variant="body2" color="status.danger.fg">
               The {meta.plural} in that view couldn&apos;t be counted.{" "}
               <Link
                 component="button"

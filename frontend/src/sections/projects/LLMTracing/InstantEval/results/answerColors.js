@@ -49,8 +49,10 @@ export function categoryColor(index, mode = "light", label) {
 // One answer's color: Yes in purple, No in amber, categories by position,
 // failures and skips muted.
 export function answerColor(item, answer, theme) {
-  if (answer === ERROR_ANSWER) return alpha(theme.palette.error.main, 0.45);
-  if (answer === SKIPPED_ANSWER) return theme.palette.grey[400];
+  if (answer === ERROR_ANSWER)
+    return alpha(theme.palette.status.danger.solid, 0.45);
+  if (answer === SKIPPED_ANSWER)
+    return alpha(theme.palette.status.neutral.solid, 0.45);
   if (item.answerType === ANSWER_TYPES.CATEGORY)
     return categoryColor(
       item.labels.indexOf(answer),

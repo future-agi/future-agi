@@ -530,7 +530,7 @@ export default function TrendCard({
                   border: 0,
                   bgcolor: "transparent",
                   font: "inherit",
-                  color: "primary.main",
+                  color: "text.link",
                   cursor: "pointer",
                   "&:hover": { textDecoration: "underline" },
                 }}

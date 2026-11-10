@@ -1018,7 +1018,7 @@ export default function NewReport({
                 startedAt={starting.state.startedAt}
               />
             ) : starting.state.status === "error" ? (
-              <Typography variant="body2" color="error.main">
+              <Typography variant="body2" color="status.danger.fg">
                 <ErrorText
                   message={starting.state.error}
                   billing={starting.state.billing}

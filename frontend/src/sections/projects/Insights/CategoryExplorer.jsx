@@ -799,7 +799,7 @@ function ItemsTable({ units, unit, onOpen }) {
                 if (event.key === "Enter") onOpen(row);
               }}
               sx={{
-                "&:hover .go": { color: "primary.main" },
+                "&:hover .go": { color: "text.primary" },
                 "&:focus-visible": {
                   outline: "2px solid",
                   outlineColor: "primary.main",
@@ -835,7 +835,9 @@ function ItemsTable({ units, unit, onOpen }) {
               </TableCell>
               <TableCell
                 align="right"
-                sx={{ color: metrics.errors > 0 ? "error.main" : undefined }}
+                sx={{
+                  color: metrics.errors > 0 ? "status.danger.fg" : undefined,
+                }}
               >
                 {formatCount(metrics.errors)}
               </TableCell>

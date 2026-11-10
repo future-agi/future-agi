@@ -362,7 +362,7 @@ export default function AskRowsTable({
           role="alert"
           sx={{ px: 2, py: 2.5, display: "flex", alignItems: "center", gap: 1 }}
         >
-          <Typography variant="body2" color="error.main">
+          <Typography variant="body2" color="status.danger.fg">
             These {meta.plural} couldn&apos;t be loaded.
           </Typography>
           {onRetry && (

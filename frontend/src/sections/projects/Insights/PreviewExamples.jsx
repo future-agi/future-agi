@@ -56,7 +56,7 @@ export default function PreviewExamples({ units, lens, attributes = [] }) {
                 direction="row"
                 spacing={0.5}
                 alignItems="center"
-                sx={{ color: included ? "success.dark" : "text.secondary" }}
+                sx={{ color: included ? "text.primary" : "text.secondary" }}
               >
                 <Iconify
                   icon={

@@ -55,7 +55,7 @@ function StageRail({ current }) {
               sx={{
                 height: 4,
                 borderRadius: 2,
-                bgcolor: done || active ? "primary.main" : "action.hover",
+                bgcolor: done || active ? "text.primary" : "action.hover",
                 opacity: active ? 0.55 : 1,
               }}
             />
@@ -64,7 +64,7 @@ function StageRail({ current }) {
                 <Iconify
                   icon="mdi:check"
                   width={14}
-                  sx={{ color: "primary.main" }}
+                  sx={{ color: "text.primary" }}
                 />
               )}
               <Typography
@@ -258,7 +258,7 @@ export default function RunProgress({ run }) {
                   sx={{
                     pl: 1.5,
                     borderLeft: "2px solid",
-                    borderColor: index === 0 ? "primary.main" : "divider",
+                    borderColor: index === 0 ? "text.primary" : "divider",
                     animation: `${arrive} 300ms ease-out`,
                     opacity: Math.max(0.45, 1 - index * 0.12),
                   }}

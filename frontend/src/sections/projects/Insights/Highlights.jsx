@@ -129,8 +129,7 @@ export default function Highlights({ highlights }) {
         sx={{
           px: 0.75,
           ml: -0.75,
-
-          color: "primary.main",
+          color: "text.primary",
         }}
       >
         {open

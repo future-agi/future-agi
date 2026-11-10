@@ -160,7 +160,7 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry, disabled }) {
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography
               variant="body2"
-              color="error.main"
+              color="status.danger.fg"
               sx={{ fontSize: 13 }}
             >
               <ErrorText message={turn.error} billing={turn.billing} />

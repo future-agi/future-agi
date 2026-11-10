@@ -68,7 +68,7 @@ function SplitBar({ item, counts }) {
           data-testid="rail-failed"
           sx={{
             width: `${(failed / total) * 100}%`,
-            backgroundImage: `repeating-linear-gradient(135deg, ${theme.palette.error.main} 0 2px, transparent 2px 4px)`,
+            backgroundImage: `repeating-linear-gradient(135deg, ${theme.palette.status.danger.solid} 0 2px, transparent 2px 4px)`,
           }}
         />
       )}
@@ -511,7 +511,7 @@ export default function AskRail({
             No past questions to show.
           </Typography>
         ) : history.isError ? (
-          <Typography variant="body2" color="error.main">
+          <Typography variant="body2" color="status.danger.fg">
             Past questions couldn&apos;t be loaded.{" "}
             <Link
               component="button"

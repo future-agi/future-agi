@@ -125,7 +125,7 @@ function InlineName({ config }) {
           }}
         />
         {saving.state.status === "error" && (
-          <Typography variant="caption" color="error.main">
+          <Typography variant="caption" color="status.danger.fg">
             {saving.state.error}
           </Typography>
         )}

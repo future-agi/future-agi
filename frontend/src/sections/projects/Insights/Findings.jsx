@@ -21,9 +21,9 @@ const SEVERITY_LABEL = {
 
 const severityColor = (theme, severity) =>
   ({
-    high: theme.palette.error.main,
+    high: theme.palette.status.danger.fg,
     medium: cautionColor(theme),
-    low: theme.palette.info.main,
+    low: theme.palette.status.neutral.fg,
   })[severity] || theme.palette.text.disabled;
 
 function SeverityDot({ severity }) {
@@ -133,7 +133,7 @@ function Finding({ finding, index }) {
             <Iconify
               icon="mdi:arrow-right"
               width={14}
-              sx={{ color: "primary.main", mt: "3px", flexShrink: 0 }}
+              sx={{ color: "text.secondary", mt: "3px", flexShrink: 0 }}
             />
             <CitedText
               text={finding.action}
@@ -230,7 +230,7 @@ export default function Findings({ summary }) {
                 : "mdi:check-circle-outline"
           }
           width={14}
-          sx={{ color: note.checked ? "success.main" : "inherit" }}
+          sx={{ color: note.checked ? "status.success.fg" : "inherit" }}
         />
         <Typography variant="caption" color="inherit">
           {note.text}. Hover <b>#n</b> to preview an example.
