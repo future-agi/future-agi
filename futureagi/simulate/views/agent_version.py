@@ -256,7 +256,11 @@ class CreateAgentVersionView(APIView):
                     api_key=existing_api_key
                     if preserve_existing_api_key
                     else validated.get("api_key"),
-                    assistant_id=validated.get("assistant_id"),
+                    **(
+                        {"assistant_id": validated["assistant_id"]}
+                        if "assistant_id" in validated
+                        else {}
+                    ),
                     livekit_url=validated.get("livekit_url"),
                     livekit_api_key=(
                         existing_livekit_api_key
@@ -277,17 +281,20 @@ class CreateAgentVersionView(APIView):
                 # agent saved with every credential blank would get an empty row.
                 # A request with no credential fields writes no row, so the agent is
                 # only read when fields were sent.
-                sent_fields = creds_input.provider_was_provided or any(
-                    value is not None
-                    for value in (
-                        creds_input.api_key,
-                        creds_input.assistant_id,
-                        creds_input.livekit_url,
-                        creds_input.livekit_api_key,
-                        creds_input.livekit_api_secret,
-                        creds_input.livekit_agent_name,
-                        creds_input.livekit_config_json,
-                        creds_input.livekit_max_concurrency,
+                sent_fields = (
+                    creds_input.provider_was_provided
+                    or "assistant_id" in creds_input.model_fields_set
+                    or any(
+                        value is not None
+                        for value in (
+                            creds_input.api_key,
+                            creds_input.livekit_url,
+                            creds_input.livekit_api_key,
+                            creds_input.livekit_api_secret,
+                            creds_input.livekit_agent_name,
+                            creds_input.livekit_config_json,
+                            creds_input.livekit_max_concurrency,
+                        )
                     )
                 )
                 # Only the fields the provider's row would save count, so a LiveKit

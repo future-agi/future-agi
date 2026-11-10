@@ -310,7 +310,44 @@ def test_sync_updates_snapshot_from_saved_identity(agent_version, assistant):
     assert "api_key" not in agent_version.configuration_snapshot
 
 
-def test_sync_snapshot_failure_rolls_back_credentials(agent_version):
+@pytest.mark.parametrize("provider", ["vapi", "retell"])
+@pytest.mark.parametrize("key", [None, "********", "synthetic-key-B"])
+@pytest.mark.parametrize(
+    "identity,expected",
+    [({}, "assistant-A"), ({"assistant_id": None}, ""), ({"assistant_id": ""}, "")],
+    ids=["omitted", "explicit-null", "empty-string"],
+)
+def test_sync_distinguishes_null_identity_from_omission(
+    agent_version, provider, key, identity, expected
+):
+    snapshot = {"assistant_id": "assistant-A", "description": "preserved"}
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=snapshot
+    )
+    credentials = ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type=provider,
+        assistant_id="assistant-A",
+        api_key="synthetic-key-A",
+    )
+    sync_provider_credentials(
+        agent_version,
+        ProviderCredentialsInput(provider=provider, api_key=key, **identity),
+    )
+    agent_version.refresh_from_db()
+    credentials.refresh_from_db()
+    assert credentials.assistant_id == expected
+    assert agent_version.configuration_snapshot == {
+        **snapshot,
+        "assistant_id": expected,
+    }
+    assert credentials.get_api_key() == (
+        "synthetic-key-B" if key == "synthetic-key-B" else "synthetic-key-A"
+    )
+
+
+@pytest.mark.parametrize("assistant", ["assistant-B", None, ""])
+def test_sync_snapshot_failure_rolls_back_credentials(agent_version, assistant):
     from django.db import connection
 
     credentials = ProviderCredentials.objects.create(
@@ -333,7 +370,7 @@ def test_sync_snapshot_failure_rolls_back_credentials(agent_version):
                 agent_version,
                 ProviderCredentialsInput(
                     provider="vapi",
-                    assistant_id="assistant-B",
+                    assistant_id=assistant,
                     api_key="synthetic-key-B",
                 ),
             )

@@ -254,30 +254,116 @@ def test_edit_changes_only_the_selected_version(
     assert imported == [("call-for-assistant-B", "assistant-B")]
 
 
+@pytest.mark.parametrize("assistant", [None, ""], ids=["explicit-null", "empty-string"])
+@pytest.mark.parametrize("key", [None, "********", "synthetic-key-B"])
+@pytest.mark.parametrize("active", [True, False], ids=["active", "latest-fallback"])
+@pytest.mark.parametrize("empty_snapshot", [False, True])
+def test_explicit_assistant_clear_stops_selected_version_imports(
+    vapi_setup, monkeypatch, assistant, key, active, empty_snapshot, update_route
+):
+    provider, client = vapi_setup
+    agent, older, old_credentials = seed_version(
+        provider, "assistant-A", status="active" if active else "archived"
+    )
+    # Operations requires a phone target when its web-bridge assistant is cleared.
+    agent.contact_number = "+12025550123"
+    agent.save(update_fields=["contact_number"])
+    _, newer, new_credentials = seed_version(
+        provider, "assistant-C", number=2, status="draft", agent=agent
+    )
+    selected, untouched = (older, newer) if active else (newer, older)
+    credentials, untouched_credentials = (
+        (old_credentials, new_credentials)
+        if active
+        else (new_credentials, old_credentials)
+    )
+    original_snapshot = untouched.configuration_snapshot.copy()
+    original_key = untouched_credentials.api_key
+    if empty_snapshot:
+        # Legacy rows can lack a snapshot; null still needs to clear credentials.
+        AgentVersion.objects.filter(pk=selected.pk).update(configuration_snapshot={})
+    requests_seen, imported = fake_upstream(monkeypatch, timezone.now())
+    watermark = provider.last_fetched_at
+    if update_route == "operations":
+        # This route permits clearing only while observability is off.
+        provider.enabled = False
+        provider.save(update_fields=["enabled"])
+    payload = {"assistant_id": assistant}
+    if key is not None:
+        payload["api_key"] = key
+    response = update_agent(client, agent, payload, update_route)
+    assert response.status_code == 200, response.data
+    clear_workspace_context()
+    if update_route == "operations":
+        # A later scheduled poll must reject the cleared identity, not reuse it.
+        provider.enabled = True
+        provider.save(update_fields=["enabled"])
+    assert poll(provider) is None
+    provider.refresh_from_db()
+    assert requests_seen == []
+    assert imported == []
+    assert provider.last_fetched_at == watermark
+    assert (
+        provider.poll_state["configuration_health"]["reason_code"]
+        == "missing_assistant_id"
+    )
+    assert provider.poll_state["other"] == {"sentinel": "preserved"}
+    agent.refresh_from_db()
+    selected.refresh_from_db()
+    credentials.refresh_from_db()
+    untouched.refresh_from_db()
+    untouched_credentials.refresh_from_db()
+    assert agent.assistant_id == assistant
+    assert credentials.assistant_id == ""
+    assert selected.configuration_snapshot == (
+        {"assistant_id": ""}
+        if empty_snapshot
+        else {"assistant_id": "", "description": "preserved"}
+    )
+    expected_key = "synthetic-key-B" if key == "synthetic-key-B" else "synthetic-key-A"
+    assert credentials.get_api_key() == expected_key
+    assert untouched.configuration_snapshot == original_snapshot
+    assert untouched_credentials.assistant_id == original_snapshot["assistant_id"]
+    assert untouched_credentials.api_key == original_key
+
+
 @pytest.mark.parametrize(
     "payload", [{"description": "Edited"}, {"api_key": "synthetic-key-B"}]
 )
 def test_edit_without_assistant_preserves_selected_snapshot(
-    vapi_setup, payload, update_route
+    vapi_setup, monkeypatch, payload, update_route
 ):
     provider, client = vapi_setup
-    agent, version, _ = seed_version(provider, "assistant-A")
+    agent, version, credentials = seed_version(provider, "assistant-A")
     agent.assistant_id = "assistant-C"
     agent.save(update_fields=["assistant_id"])
     original = version.configuration_snapshot.copy()
     response = update_agent(client, agent, payload, update_route)
     assert response.status_code == 200, response.data
     version.refresh_from_db()
+    credentials.refresh_from_db()
     assert version.configuration_snapshot == original
+    assert credentials.assistant_id == "assistant-A"
+    requests_seen, imported = fake_upstream(monkeypatch, timezone.now())
+    assert poll(provider) == op.StoreOutcome(1, 0, 0)
+    expected_key = payload.get("api_key", "synthetic-key-A")
+    assert requests_seen == [(f"Bearer {expected_key}", "assistant-A")]
+    assert imported == [("call-for-assistant-A", "assistant-A")]
 
 
+@pytest.mark.parametrize("assistant", ["assistant-B", None, ""])
 def test_failed_snapshot_write_rolls_back_credentials_and_definition(
-    vapi_setup, update_route
+    vapi_setup, update_route, assistant
 ):
     from django.db import connection
 
     provider, client = vapi_setup
     agent, version, credentials = seed_version(provider, "assistant-A")
+    # Keep operations validation satisfied even when the identity is cleared.
+    agent.contact_number = "+12025550123"
+    agent.save(update_fields=["contact_number"])
+    provider.enabled = False
+    provider.save(update_fields=["enabled"])
     original_snapshot = version.configuration_snapshot.copy()
     original_key = credentials.api_key
 
@@ -291,7 +377,7 @@ def test_failed_snapshot_write_rolls_back_credentials_and_definition(
         response = update_agent(
             client,
             agent,
-            {"assistant_id": "assistant-B", "api_key": "synthetic-key-B"},
+            {"assistant_id": assistant, "api_key": "synthetic-key-B"},
             update_route,
         )
     assert response.status_code == 500
@@ -349,7 +435,19 @@ def test_edit_repairs_empty_snapshot(vapi_setup, monkeypatch, update_route):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("key", ["********", "synthetic-key-B"])
-def test_update_serializer_synchronizes_selected_version(vapi_setup, key):
+@pytest.mark.parametrize(
+    "identity,expected",
+    [
+        ({}, "assistant-A"),
+        ({"assistant_id": None}, ""),
+        ({"assistant_id": ""}, ""),
+        ({"assistant_id": "assistant-B"}, "assistant-B"),
+    ],
+    ids=["omitted", "explicit-null", "empty-string", "replace"],
+)
+def test_update_serializer_synchronizes_selected_version(
+    vapi_setup, key, identity, expected
+):
     from simulate.serializers.agent_definition import AgentDefinitionUpdateSerializer
 
     provider, _ = vapi_setup
@@ -360,7 +458,7 @@ def test_update_serializer_synchronizes_selected_version(vapi_setup, key):
     historical_snapshot = historical.configuration_snapshot.copy()
     historical_key = historical_credentials.api_key
     serializer = AgentDefinitionUpdateSerializer(
-        agent, data={"assistant_id": "assistant-B", "api_key": key}, partial=True
+        agent, data={**identity, "api_key": key}, partial=True
     )
     assert serializer.is_valid(), serializer.errors
     # This serializer must supply its own transaction, not rely on an API view.
@@ -370,8 +468,9 @@ def test_update_serializer_synchronizes_selected_version(vapi_setup, key):
     credentials.refresh_from_db()
     historical.refresh_from_db()
     historical_credentials.refresh_from_db()
-    assert selected.configuration_snapshot["assistant_id"] == "assistant-B"
-    assert credentials.assistant_id == "assistant-B"
+    assert selected.configuration_snapshot["assistant_id"] == expected
+    assert credentials.assistant_id == expected
+    assert agent.assistant_id == identity.get("assistant_id", "assistant-A")
     expected_key = "synthetic-key-A" if key == "********" else key
     assert credentials.get_api_key() == expected_key
     assert agent.api_key == expected_key

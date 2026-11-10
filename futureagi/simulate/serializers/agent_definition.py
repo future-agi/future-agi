@@ -39,7 +39,11 @@ def _extract_credentials_input(
     return ProviderCredentialsInput(
         provider=validated_data.get("provider") or fallback_provider,
         api_key=validated_data.get("api_key"),
-        assistant_id=validated_data.get("assistant_id"),
+        **(
+            {"assistant_id": validated_data["assistant_id"]}
+            if "assistant_id" in validated_data
+            else {}
+        ),
         livekit_url=validated_data.pop("livekit_url", None),
         livekit_api_key=validated_data.pop("livekit_api_key", None),
         livekit_api_secret=validated_data.pop("livekit_api_secret", None),

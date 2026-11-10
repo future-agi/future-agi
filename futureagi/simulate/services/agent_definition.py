@@ -21,18 +21,21 @@ def is_masked(value: str) -> bool:
 
 
 def _has_credential_fields(data: ProviderCredentialsInput) -> bool:
-    return data.provider_was_provided or any(
-        value is not None
-        for value in [
-            data.api_key,
-            data.assistant_id,
-            data.livekit_url,
-            data.livekit_api_key,
-            data.livekit_api_secret,
-            data.livekit_agent_name,
-            data.livekit_config_json,
-            data.livekit_max_concurrency,
-        ]
+    return (
+        data.provider_was_provided
+        or "assistant_id" in data.model_fields_set
+        or any(
+            value is not None
+            for value in [
+                data.api_key,
+                data.livekit_url,
+                data.livekit_api_key,
+                data.livekit_api_secret,
+                data.livekit_agent_name,
+                data.livekit_config_json,
+                data.livekit_max_concurrency,
+            ]
+        )
     )
 
 
@@ -114,6 +117,9 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         return
 
     provider = (data.provider or "").strip()
+    assistant_was_provided = "assistant_id" in data.model_fields_set
+    # Explicit null clears the non-null credential identity; omission preserves it.
+    assistant_id = (data.assistant_id or "").strip() if assistant_was_provided else None
 
     if provider in ("livekit", "livekit_bridge"):
         provider_type = ProviderCredentials.ProviderType.LIVEKIT
@@ -128,9 +134,6 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         provider_type = ProviderCredentials.ProviderType.RETELL
         api_key = (data.api_key or "").strip()
         api_secret = ""
-        assistant_id = (
-            data.assistant_id.strip() if data.assistant_id is not None else None
-        )
         server_url = ""
         agent_name = ""
         config_json = None
@@ -139,9 +142,6 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         provider_type = ProviderCredentials.ProviderType.VAPI
         api_key = (data.api_key or "").strip()
         api_secret = ""
-        assistant_id = (
-            data.assistant_id.strip() if data.assistant_id is not None else None
-        )
         server_url = ""
         agent_name = ""
         config_json = None
@@ -175,7 +175,7 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
     )
     creds.save()
 
-    if data.assistant_id is not None or provider_changed:
+    if assistant_was_provided or provider_changed:
         # Merge into the locked, current snapshot, not a caller's stale copy.
         # Never re-snapshot the whole definition over a historical version.
         raw = locked_version.configuration_snapshot
