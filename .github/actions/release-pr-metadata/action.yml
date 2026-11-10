@@ -1,0 +1,18 @@
+name: Detect release-only metadata
+description: Skip application tests only for the release bot's version and changelog updates.
+outputs:
+  skip:
+    description: Whether this PR contains only release metadata.
+    value: ${{ steps.detect.outputs.result }}
+runs:
+  using: composite
+  steps:
+    - name: Check release metadata detection
+      shell: bash
+      run: node --test "$GITHUB_ACTION_PATH/detect.test.cjs"
+    - id: detect
+      uses: actions/github-script@v7
+      env:
+        RELEASE_METADATA_SCRIPT: ${{ github.action_path }}/detect.cjs
+      with:
+        script: return await require(process.env.RELEASE_METADATA_SCRIPT)({github, context});
