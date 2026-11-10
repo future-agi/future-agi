@@ -37,6 +37,28 @@ describe("ChatTranscriptPane", () => {
     expect(screen.queryByText("Booked")).toBeNull();
   });
 
+  it("lists no customer on a run started by an actor's message, where no customer spoke", () => {
+    render(
+      <ChatTranscriptPane
+        customerName="Oliver"
+        turns={[
+          {
+            role: "actor",
+            speakerName: "Alex Vance",
+            actorRole: "Sales Manager",
+            channel: "chat_message",
+            text: "Apply the agreed 20% to deal 8.",
+          },
+          { role: "agent", text: "Requested approval." },
+        ]}
+      />,
+    );
+    expect(screen.queryByText("Oliver · Customer")).toBeNull();
+    expect(
+      screen.getAllByText("Alex Vance · Sales Manager").length,
+    ).toBeGreaterThan(0);
+  });
+
   it("falls back to All when Others was picked and the next call has none", async () => {
     const { rerender } = render(
       <ChatTranscriptPane

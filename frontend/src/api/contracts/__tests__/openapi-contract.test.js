@@ -178,6 +178,24 @@ describe("OpenAPI runtime contract", () => {
     }
   });
 
+  it("accepts actor limits as numbers, nulls and a model name", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-limits/",
+        method: "put",
+        data: {
+          limits: {
+            live_turns_per_actor: 7,
+            max_active: null,
+            max_messages: 12,
+            model: "gemini-3.7-flash",
+          },
+          expected_revision: 3,
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   it("accepts provider-ID harness requests without a source upload", () => {
     const payload = {
       schema_version: "futureagi.harness-job.v1",

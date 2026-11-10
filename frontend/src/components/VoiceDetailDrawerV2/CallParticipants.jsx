@@ -12,11 +12,18 @@ const customerParty = (customerName) =>
 // Who was on the call, shown only when someone besides the agent and the customer was. A world actor acts in the
 // world and never joins the call, so it is left out here; its actions are in the transcript.
 // Each person is one unit: they wrap whole, and a long role is cut rather than broken.
-export default function CallParticipants({ others, customerName }) {
+export default function CallParticipants({
+  others,
+  customerName,
+  withCustomer = true,
+}) {
   const speakers = others.filter((party) => party.role !== "world_actor");
   if (speakers.length === 0) return null;
   const line = [
-    { key: "customer", party: customerParty(customerName) },
+    // A run started by someone's message has no customer; they are listed only when one took part.
+    ...(withCustomer
+      ? [{ key: "customer", party: customerParty(customerName) }]
+      : []),
     ...speakers.map((party) => ({
       key: otherPartyKey(party),
       party,
@@ -48,4 +55,5 @@ export default function CallParticipants({ others, customerName }) {
 CallParticipants.propTypes = {
   others: PropTypes.arrayOf(PropTypes.object).isRequired,
   customerName: PropTypes.string,
+  withCustomer: PropTypes.bool,
 };
