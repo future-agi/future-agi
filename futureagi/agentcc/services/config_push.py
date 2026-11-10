@@ -115,7 +115,7 @@ def _normalize_eval_ids(cfg):
         raw = [cfg.get("eval_id")]
     if raw is None:
         return
-    if not isinstance(raw, (list, tuple)):
+    if not isinstance(raw, list | tuple):
         raw = [raw]
     eval_ids = [str(i) for i in raw if i not in (None, "")]
     if eval_ids:
@@ -190,6 +190,17 @@ def _inject_guardrail_credentials(checks, org_id):
                     del cfg[key]
 
 
+def _guardrail_config(check):
+    """Only objects can be inspected by the credential extraction boundary."""
+    config = check.get("config", {})
+    if not isinstance(config, dict):
+        raise OrgConfigRejected(
+            "The gateway cannot accept this config. "
+            "Guardrail check config must be a JSON object."
+        )
+    return config
+
+
 def _transform_guardrails(guardrails_data, org_id=None):
     """
     Transform Django org-config guardrails (rules array) into gateway tenant
@@ -219,7 +230,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
         for rule in raw_checks:
             rule_name = rule.get("name", "")
             registry_name = _RULE_TO_REGISTRY.get(rule_name, rule_name)
-            cfg = dict(rule.get("config") or {})
+            cfg = _guardrail_config(rule)
             if rule_name in _RULE_PROVIDER_DEFAULTS and "provider" not in cfg:
                 cfg["provider"] = _RULE_PROVIDER_DEFAULTS[rule_name]
             _normalize_eval_ids(cfg)
@@ -254,7 +265,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
                 # Keep malformed checks visible to contract validation.
                 checks[registry_name] = check_data
                 continue
-            cfg = dict(check_data.get("config") or {})
+            cfg = _guardrail_config(check_data)
             provider = (
                 check_data.get("provider")
                 or _RULE_PROVIDER_DEFAULTS.get(name)
@@ -301,7 +312,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     for rule in rules:
         rule_name = rule.get("name", "")
         registry_name = _RULE_TO_REGISTRY.get(rule_name, rule_name)
-        cfg = dict(rule.get("config") or {})
+        cfg = _guardrail_config(rule)
         if rule_name in _RULE_PROVIDER_DEFAULTS and "provider" not in cfg:
             cfg["provider"] = _RULE_PROVIDER_DEFAULTS[rule_name]
         _normalize_eval_ids(cfg)
@@ -358,7 +369,7 @@ def _inject_fi_credentials(checks, org_id):
     if not fi_check.get("enabled", False):
         return
 
-    cfg = fi_check.get("config") or {}
+    cfg = _guardrail_config(fi_check)
 
     cfg.setdefault("call_type", "protect")
     cfg.setdefault("base_url", django_settings.BASE_URL)
