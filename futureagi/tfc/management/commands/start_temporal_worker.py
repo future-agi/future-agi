@@ -54,6 +54,41 @@ def _workflow_cache_kwargs(queue_name: str) -> dict[str, int]:
     return {}
 
 
+async def _wait_for_namespace(client, shutdown_event, log, *, retry_seconds=5):
+    """Wait for persistence readiness before starting SDK worker validation.
+
+    A reachable Temporal frontend is not enough: its namespace lookup also
+    needs PostgreSQL. SDK validation is fatal after its bounded RPC retries,
+    unlike ordinary polling, so do not start workers during that outage.
+    """
+    from datetime import timedelta
+
+    from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
+    from temporalio.service import RPCError, RPCStatusCode
+
+    while not shutdown_event.is_set():
+        try:
+            await client.workflow_service.describe_namespace(
+                DescribeNamespaceRequest(namespace=client.namespace),
+                retry=False,
+                timeout=timedelta(seconds=5),
+            )
+            return not shutdown_event.is_set()
+        except RPCError as exc:
+            if exc.status not in (
+                RPCStatusCode.UNAVAILABLE,
+                RPCStatusCode.DEADLINE_EXCEEDED,
+                RPCStatusCode.RESOURCE_EXHAUSTED,
+            ):
+                raise
+            log.warning("temporal_namespace_unavailable", status=exc.status.name)
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=retry_seconds)
+        except TimeoutError:
+            pass
+    return False
+
+
 def disable_litellm_logging_worker() -> None:
     """Disable litellm's async logging worker to prevent event loop crashes.
 
@@ -301,6 +336,9 @@ class Command(BaseCommand):
                 interceptors=interceptors,
             )
 
+            if not await _wait_for_namespace(client, shutdown_event, log):
+                return
+
             # Send reload signal to dispatcher if enabled
             if reload_dispatcher:
                 try:
@@ -395,24 +433,16 @@ class Command(BaseCommand):
                 queues=queues_to_poll,
             )
 
-            # Run all workers concurrently until shutdown signal
-            async def run_single_worker(worker: Worker, queue_name: str):
-                async with worker:
-                    await shutdown_event.wait()
-                log.info("worker_shutdown", queue=queue_name)
-
-            # Start all workers concurrently
-            worker_tasks = [
-                asyncio.create_task(run_single_worker(w, q))
-                for w, q in zip(workers, queues_to_poll, strict=True)
-            ]
-
-            # Wait for shutdown signal, then wait for all workers to finish
-            await shutdown_event.wait()
-            log.info("shutdown_signal_received")
-
-            # Wait for all worker tasks to complete
-            await asyncio.gather(*worker_tasks, return_exceptions=True)
+            # Supervise runs directly. A fatal SDK validation/poller failure
+            # must reach the command, not leave a live process waiting forever
+            # on a shutdown signal with no task-queue pollers. TaskGroup also
+            # cancels sibling runs if one fails during startup or execution.
+            async with asyncio.TaskGroup() as group:
+                for worker in workers:
+                    group.create_task(worker.run())
+                await shutdown_event.wait()
+                log.info("shutdown_signal_received")
+                await asyncio.gather(*(worker.shutdown() for worker in workers))
 
             log.info("all_workers_shutdown_complete")
 
