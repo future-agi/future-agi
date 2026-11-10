@@ -44,11 +44,17 @@ export function TaskSamplingSummary({ control }) {
   // The field already shows the error for an invalid percentage; echoing the
   // value here ("About 0%") would read as a real selection.
   if (!policy && !isValidSamplingRate(rate)) return null;
-  // A cleared custom limit is missing, not zero.
+  // A cleared custom limit is missing, not zero; an out-of-range one is not a
+  // selection either (the API accepts whole numbers from 1 to 1,000,000).
+  const limitNumber = Number(limit);
   const limitText =
-    limit === "" || limit == null || !Number.isFinite(Number(limit))
+    limit === "" || limit == null
       ? " The processing limit is not set yet."
-      : ` Stop after processing ${Number(limit).toLocaleString()} matching rows, not after selecting that many evaluations.`;
+      : Number.isInteger(limitNumber) &&
+          limitNumber >= 1 &&
+          limitNumber <= 1000000
+        ? ` Stop after processing ${limitNumber.toLocaleString()} matching rows, not after selecting that many evaluations.`
+        : " The processing limit must be a whole number from 1 to 1,000,000.";
   return (
     <Typography
       variant="body2"

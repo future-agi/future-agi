@@ -247,6 +247,16 @@ describe("two-choice task data selection", () => {
     expect(
       screen.getByLabelText("Data selection summary"),
     ).not.toHaveTextContent(/\b0 matching rows/);
+    for (const invalid of ["0", "-5", "1000001", "2.5"]) {
+      await userEvent.clear(limit);
+      await userEvent.type(limit, invalid);
+      const summary = screen.getByLabelText("Data selection summary");
+      expect(summary).toHaveTextContent(
+        "About 25% of filter-matching spans. The processing limit must be a whole number from 1 to 1,000,000.",
+      );
+      expect(summary).not.toHaveTextContent(/Stop after processing/);
+    }
+    await userEvent.clear(limit);
     await userEvent.type(limit, "2500");
     expect(screen.getByLabelText("Data selection summary")).toHaveTextContent(
       "Stop after processing 2,500 matching rows",
