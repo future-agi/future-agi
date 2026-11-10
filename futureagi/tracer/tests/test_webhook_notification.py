@@ -138,14 +138,14 @@ class TestSendWebhookNotification:
     def test_skips_when_no_url(self):
         """Should return immediately when webhook_url is not set."""
         monitor = self._make_monitor(webhook_url=None)
-        with patch("tracer.utils.monitor.requests.post") as mock_post:
+        with patch("tracer.utils.monitor.post_webhook") as mock_post:
             _send_webhook_notification(monitor, "test msg", "critical")
             mock_post.assert_not_called()
 
     def test_skips_when_empty_url(self):
         """Should return immediately when webhook_url is empty string."""
         monitor = self._make_monitor(webhook_url="")
-        with patch("tracer.utils.monitor.requests.post") as mock_post:
+        with patch("tracer.utils.monitor.post_webhook") as mock_post:
             _send_webhook_notification(monitor, "test msg", "critical")
             mock_post.assert_not_called()
 
@@ -154,7 +154,7 @@ class TestSendWebhookNotification:
         """Should POST a JSON payload with required fields."""
         monitor = self._make_monitor(webhook_url="https://example.com/webhook")
 
-        with patch("tracer.utils.monitor.requests.post") as mock_post:
+        with patch("tracer.utils.monitor.post_webhook") as mock_post:
             mock_post.return_value = MagicMock(status_code=200)
             mock_post.return_value.raise_for_status = MagicMock()
 
@@ -186,7 +186,7 @@ class TestSendWebhookNotification:
         """Should include Content-Type and User-Agent headers."""
         monitor = self._make_monitor(webhook_url="https://example.com/webhook")
 
-        with patch("tracer.utils.monitor.requests.post") as mock_post:
+        with patch("tracer.utils.monitor.post_webhook") as mock_post:
             mock_post.return_value = MagicMock(status_code=200)
             mock_post.return_value.raise_for_status = MagicMock()
 
@@ -202,7 +202,7 @@ class TestSendWebhookNotification:
         url = "https://hooks.example.com/my-webhook"
         monitor = self._make_monitor(webhook_url=url)
 
-        with patch("tracer.utils.monitor.requests.post") as mock_post:
+        with patch("tracer.utils.monitor.post_webhook") as mock_post:
             mock_post.return_value = MagicMock(status_code=200)
             mock_post.return_value.raise_for_status = MagicMock()
 
@@ -214,7 +214,7 @@ class TestSendWebhookNotification:
         """Should set a reasonable timeout on the HTTP request."""
         monitor = self._make_monitor(webhook_url="https://example.com/webhook")
 
-        with patch("tracer.utils.monitor.requests.post") as mock_post:
+        with patch("tracer.utils.monitor.post_webhook") as mock_post:
             mock_post.return_value = MagicMock(status_code=200)
             mock_post.return_value.raise_for_status = MagicMock()
 
@@ -228,7 +228,7 @@ class TestSendWebhookNotification:
         """HTTP errors should be logged, not raised."""
         monitor = self._make_monitor(webhook_url="https://example.com/webhook")
 
-        with patch("tracer.utils.monitor.requests.post") as mock_post:
+        with patch("tracer.utils.monitor.post_webhook") as mock_post:
             mock_post.side_effect = Exception("Connection refused")
 
             # Should NOT raise
@@ -238,20 +238,39 @@ class TestSendWebhookNotification:
         """Non-2xx responses should be caught by raise_for_status."""
         monitor = self._make_monitor(webhook_url="https://example.com/webhook")
 
-        with patch("tracer.utils.monitor.requests.post") as mock_post:
-            mock_resp = MagicMock(status_code=500)
-            mock_resp.raise_for_status.side_effect = Exception("500 Server Error")
-            mock_post.return_value = mock_resp
+        with patch("tracer.utils.monitor.post_webhook") as mock_post:
+            mock_post.side_effect = ValueError(
+                "Webhook destination did not accept the notification."
+            )
 
             # Should NOT raise
             _send_webhook_notification(monitor, "msg", "critical")
+            mock_post.assert_called_once()
+
+    def test_failure_log_never_contains_destination_or_exception(self):
+        monitor = self._make_monitor(
+            "https://receiver.invalid/hook?token=private-token"
+        )
+        with (
+            patch(
+                "tracer.utils.monitor.post_webhook",
+                side_effect=ValueError(monitor.webhook_url),
+            ),
+            patch("tracer.utils.monitor.logger") as logger,
+        ):
+            _send_webhook_notification(monitor, "private-payload", "critical")
+        logger.error.assert_called_once_with(
+            "monitor_webhook_failed", monitor_id=str(monitor.id)
+        )
+        assert "private-token" not in str(logger.mock_calls)
+        assert "private-payload" not in str(logger.mock_calls)
 
     @override_settings(APP_URL=None)
     def test_empty_dashboard_url_when_no_app_url(self):
         """When APP_URL is not configured, dashboard_url should be empty."""
         monitor = self._make_monitor(webhook_url="https://example.com/webhook")
 
-        with patch("tracer.utils.monitor.requests.post") as mock_post:
+        with patch("tracer.utils.monitor.post_webhook") as mock_post:
             mock_post.return_value = MagicMock(status_code=200)
             mock_post.return_value.raise_for_status = MagicMock()
 
@@ -308,7 +327,7 @@ class TestHandleAlertTriggerWebhook:
         with (
             patch("tracer.utils.monitor._send_alert_email") as mock_email,
             patch("tracer.utils.monitor._send_slack_notification") as mock_slack,
-            patch("tracer.utils.monitor.requests.post") as mock_post,
+            patch("tracer.utils.monitor.post_webhook") as mock_post,
         ):
             mock_post.side_effect = Exception("Connection refused")
 

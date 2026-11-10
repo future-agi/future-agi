@@ -1,7 +1,10 @@
 import json
 
-from accounts.serializers.user import UserSerializer
 from rest_framework import serializers
+
+from accounts.serializers.user import UserSerializer
+from tfc.utils.ssrf_guard import SsrfBlocked
+from tfc.utils.webhook_delivery import validate_webhook_url
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -112,6 +115,14 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     return metric_name
                 return "Invalid Eval"
         return obj.get_metric_type_display()
+
+    def validate_webhook_url(self, value):
+        if value:
+            try:
+                validate_webhook_url(value)
+            except SsrfBlocked as error:
+                raise serializers.ValidationError(str(error)) from None
+        return value
 
     def validate_notification_emails(self, value):
         if value and len(value) > 5:

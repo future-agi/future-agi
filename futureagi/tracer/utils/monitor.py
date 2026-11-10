@@ -6,7 +6,6 @@ if TYPE_CHECKING:
         MonitorMetricsQueryBuilder,
     )
 
-import requests
 import structlog
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -15,9 +14,11 @@ from django.db.models.functions import Now
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from slack_sdk.webhook import WebhookClient
+
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
 from tfc.utils.error_codes import get_error_message
+from tfc.utils.webhook_delivery import post_webhook
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -230,15 +231,12 @@ def _send_webhook_notification(
     }
 
     try:
-        resp = requests.post(
-            monitor.webhook_url, json=payload, headers=headers, timeout=10
-        )
-        resp.raise_for_status()
-        logger.info(f"Sent {alert_type} webhook notification for monitor {monitor.id}")
-    except Exception as e:
-        logger.error(
-            f"Failed to send {alert_type} webhook notification for monitor {monitor.id}: {e}"
-        )
+        post_webhook(monitor.webhook_url, json=payload, headers=headers, timeout=10)
+        logger.info("monitor_webhook_sent", monitor_id=str(monitor.id))
+    except Exception:
+        # Transport exceptions can embed the entire URL, including secret query
+        # parameters. Keep destination, payload and exception text out of logs.
+        logger.error("monitor_webhook_failed", monitor_id=str(monitor.id))
 
 
 def _handle_alert_trigger(
