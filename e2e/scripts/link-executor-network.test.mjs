@@ -66,9 +66,10 @@ test('standalone supplies the same listeners and source-selected internal execut
     assert.equal(config.services[service].networks['link-public'].ipv4_address, ip);
     assert.ok(config.services[service].ports.some(p => p.published === port && p.host_ip === '127.0.0.1'));
   }
-  assert.equal(executor.extra_hosts['allowed.example'], '11.23.0.10');
-  assert.equal(executor.extra_hosts['worker-allowed.example'], '11.23.0.11');
-  assert.equal(executor.extra_hosts['private.example'], '172.30.91.10');
+  const hosts = Array.isArray(executor.extra_hosts)
+    ? Object.fromEntries(executor.extra_hosts.map(value => value.split('='))) : executor.extra_hosts;
+  assert.deepEqual(hosts, { 'allowed.example': '11.23.0.10', 'denied.example': '11.23.0.10',
+    'worker-allowed.example': '11.23.0.11', 'private.example': '172.30.91.10' });
   const runner = readFileSync(new URL('../../bin/e2e', import.meta.url), 'utf8');
   assert.match(runner, /SERVICES=\(app postgres clickhouse mock-llm code-executor link-canary link-worker-canary\)/);
 });
