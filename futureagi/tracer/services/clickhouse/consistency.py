@@ -2,12 +2,14 @@
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any
 
 import structlog
 from django.conf import settings
 from django.db import connection as pg_connection
 
+from tracer.services.clickhouse.application_read_policy import application_read_context
 from tracer.services.clickhouse.client import (
     ClickHouseClient,
     get_clickhouse_client,
@@ -74,8 +76,29 @@ class ConsistencyChecker:
         ("tracer_eval_logger", "tracer_eval_logger"),
     ]
 
+    # Diagnostics must not inherit the application's long-running read policy.
+    # Bound each statement's server work AND socket wait, with a shared budget
+    # so sequential probes cannot each restart the endpoint's timeout.
+    QUERY_TIMEOUT_MS = 1000
+    CHECK_TIMEOUT_SECONDS = 5
+
     def __init__(self):
         self._ch_client = get_clickhouse_client()
+
+    def _read(
+        self,
+        client: ClickHouseClient,
+        query: str,
+        params: dict[str, Any] | None = None,
+        *,
+        deadline: float,
+    ) -> list[tuple]:
+        remaining_ms = min(self.QUERY_TIMEOUT_MS, int((deadline - monotonic()) * 1000))
+        if remaining_ms <= 0:
+            raise TimeoutError("ClickHouse health check deadline exhausted")
+        with application_read_context(enabled=False):
+            rows, _, _ = client.execute_read(query, params, timeout_ms=remaining_ms)
+        return rows
 
     def _tables(self) -> list[_Table]:
         declared = {name for name, _ in get_all_schema_ddl()}
@@ -108,8 +131,8 @@ class ConsistencyChecker:
                 ]
             )
             eval_table, _ = eval_logger_source()
-            # After retirement no monitored read needs the legacy connection.
-            # During a mixed rollout both destinations must remain ready.
+            # Retirement removes legacy table probes, not connection readiness:
+            # monitor and dataset/dashboard readers still use that destination.
             if should_drop_legacy_chain():
                 tables = [
                     table for table in tables if table.pg_table != "tracer_eval_logger"
@@ -125,7 +148,7 @@ class ConsistencyChecker:
         return tables
 
     def _inspect(
-        self, tables: list[_Table], *, row_counts: bool = False
+        self, tables: list[_Table], *, deadline: float, row_counts: bool = False
     ) -> tuple[dict[str, ClickHouseClient], dict[str, str], bool]:
         """Return clients, per-table readiness and aggregate connectivity.
 
@@ -136,19 +159,23 @@ class ConsistencyChecker:
         clients = {}
         checks = {}
         connected = True
-        for role in dict.fromkeys(table.connection for table in tables):
+        # Connection dependencies outlive the legacy trace-table inventory.
+        for role in dict.fromkeys(["legacy", *(table.connection for table in tables)]):
             client = self._ch_client if role == "legacy" else get_v2_query_client()
             clients[role] = client
             selected = [table for table in tables if table.connection == role]
+            reachable = False
             try:
-                if not client.ping():
-                    connected = False
-                    checks.update({table.key: "unavailable" for table in selected})
+                self._read(client, "SELECT 1", deadline=deadline)
+                reachable = True
+                if not selected:
                     continue
-                rows = client.execute(
+                rows = self._read(
+                    client,
                     "SELECT table, name FROM system.columns "
                     "WHERE database = currentDatabase() AND table IN %(tables)s",
                     {"tables": tuple(table.name for table in selected)},
+                    deadline=deadline,
                 )
                 columns: dict[str, set[str]] = {}
                 for table_name, column in rows:
@@ -189,6 +216,8 @@ class ConsistencyChecker:
                     else:
                         checks[table.key] = "ready"
             except Exception as exc:
+                if not reachable:
+                    connected = False
                 logger.warning(
                     "ClickHouse schema check failed",
                     connection=role,
@@ -207,7 +236,8 @@ class ConsistencyChecker:
     ) -> list[ConsistencyResult]:
         """Compare only declared CDC mirrors; native writes are not PG mirrors."""
         tables = [table for table in self._tables() if table.cdc]
-        clients, checks, _ = self._inspect(tables, row_counts=True)
+        deadline = monotonic() + self.CHECK_TIMEOUT_SECONDS
+        clients, checks, _ = self._inspect(tables, deadline=deadline, row_counts=True)
         results = []
         for table in tables:
             pg_count = ch_count = diff = diff_pct = -1
@@ -220,13 +250,15 @@ class ConsistencyChecker:
                             [project_id, start_date, end_date],
                         )
                         pg_count = cursor.fetchone()[0]
-                    ch_result = clients[table.connection].execute(
+                    ch_result = self._read(
+                        clients[table.connection],
                         f"SELECT count() FROM {table.name} FINAL WHERE project_id = %(project_id)s AND created_at >= %(start)s AND created_at <= %(end)s AND _peerdb_is_deleted = 0",
                         {
                             "project_id": project_id,
                             "start": start_date,
                             "end": end_date,
                         },
+                        deadline=deadline,
                     )
                     ch_count = ch_result[0][0]
                     diff = abs(pg_count - ch_count)
@@ -252,6 +284,8 @@ class ConsistencyChecker:
         tables: list[_Table],
         clients: dict[str, ClickHouseClient],
         checks: dict[str, str],
+        *,
+        deadline: float,
     ) -> dict[str, float]:
         lag = {}
         for table in tables:
@@ -261,8 +295,10 @@ class ConsistencyChecker:
             if checks[table.key] == "ready":
                 try:
                     # max() alone returns an epoch default on an empty table.
-                    rows = clients[table.connection].execute(
-                        f"SELECT count(), max(_peerdb_synced_at) FROM {table.name}"
+                    rows = self._read(
+                        clients[table.connection],
+                        f"SELECT count(), max(_peerdb_synced_at) FROM {table.name}",
+                        deadline=deadline,
                     )
                     if rows and rows[0][0] == 0:
                         checks[table.key] = "empty"
@@ -294,8 +330,9 @@ class ConsistencyChecker:
     def get_cdc_lag(self) -> dict[str, float]:
         """Lag for declared CDC tables; omit native/retired tables, use -1 if unknown."""
         tables = [table for table in self._tables() if table.cdc]
-        clients, checks, _ = self._inspect(tables)
-        return self._lag(tables, clients, checks)
+        deadline = monotonic() + self.CHECK_TIMEOUT_SECONDS
+        clients, checks, _ = self._inspect(tables, deadline=deadline)
+        return self._lag(tables, clients, checks, deadline=deadline)
 
     def get_health_status(self) -> HealthStatus:
         if not is_clickhouse_enabled():
@@ -304,8 +341,9 @@ class ConsistencyChecker:
             )
 
         tables = self._tables()
-        clients, checks, connected = self._inspect(tables)
-        cdc_lag = self._lag(tables, clients, checks)
+        deadline = monotonic() + self.CHECK_TIMEOUT_SECONDS
+        clients, checks, connected = self._inspect(tables, deadline=deadline)
+        cdc_lag = self._lag(tables, clients, checks, deadline=deadline)
         if (
             not connected
             or not tables

@@ -842,9 +842,13 @@ class ClickHouseClient:
         original_send_receive_timeout = getattr(
             connection, "send_receive_timeout", None
         )
+        original_sync_request_timeout = getattr(
+            connection, "sync_request_timeout", None
+        )
         socket = None
         original_socket_timeout = None
         original_socket_timeout_known = False
+        original_receive_packet = getattr(connection, "receive_packet", None)
         try:
             if connected is False:
                 remaining = deadline - time.monotonic()
@@ -867,11 +871,42 @@ class ClickHouseClient:
                 connection.send_receive_timeout = min(
                     float(original_send_receive_timeout), remaining
                 )
+            # A reused driver's force_connect() pings before the query, and
+            # ping() replaces the socket timeout with sync_request_timeout.
+            # Clamp that separate wait too, then restore it for the next user.
+            if original_sync_request_timeout is not None:
+                connection.sync_request_timeout = min(
+                    float(original_sync_request_timeout), remaining
+                )
             socket = getattr(connection, "socket", None)
             if socket is not None:
-                original_socket_timeout = socket.gettimeout()
+                # A lazy connect created its socket using our temporary timeout.
+                # Do not leak that shortened timeout into subsequent pooled work.
+                original_socket_timeout = (
+                    original_send_receive_timeout
+                    if connected is False
+                    else socket.gettimeout()
+                )
                 original_socket_timeout_known = True
                 socket.settimeout(remaining)
+
+            if callable(original_receive_packet):
+                # Progress packets can keep an idle socket timeout alive forever,
+                # especially on readonly=1 profiles that disallow query settings.
+                # Recompute the wall budget before every packet, not just once.
+                def receive_packet():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("ClickHouse read deadline exhausted")
+                    current_socket = getattr(connection, "socket", None)
+                    if current_socket is not None:
+                        current_socket.settimeout(remaining)
+                    packet = original_receive_packet()
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("ClickHouse read deadline exhausted")
+                    return packet
+
+                connection.receive_packet = receive_packet
 
             return client.execute(
                 query,
@@ -880,6 +915,10 @@ class ClickHouseClient:
                 settings=query_settings,
             )
         finally:
+            if callable(original_receive_packet):
+                connection.receive_packet = original_receive_packet
+            # force_connect() can replace a stale socket while executing.
+            socket = getattr(connection, "socket", None)
             if socket is not None and original_socket_timeout_known:
                 try:
                     socket.settimeout(original_socket_timeout)
@@ -889,6 +928,8 @@ class ClickHouseClient:
                 connection.connect_timeout = original_connect_timeout
             if original_send_receive_timeout is not None:
                 connection.send_receive_timeout = original_send_receive_timeout
+            if original_sync_request_timeout is not None:
+                connection.sync_request_timeout = original_sync_request_timeout
 
     def execute_read_block_stream(
         self,

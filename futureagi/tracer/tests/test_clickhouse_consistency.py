@@ -1,7 +1,7 @@
 """Schema-aware health checks: declared requirements, not discovered optionality."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import pytest
 from rest_framework.test import APIRequestFactory
@@ -53,6 +53,8 @@ def fake_client(columns, *, sample=None):
         sample = (1, datetime.now(UTC))
 
     def execute(sql, params=None):
+        if sql == "SELECT 1":
+            return [(1,)]
         if "system.columns" in sql:
             return [
                 (table, column) for table, names in columns.items() for column in names
@@ -69,6 +71,11 @@ def fake_client(columns, *, sample=None):
     client = Mock()
     client.ping.return_value = True
     client.execute.side_effect = execute
+    client.execute_read.side_effect = lambda sql, params=None, **kwargs: (
+        execute(sql, params),
+        [],
+        0,
+    )
     return client
 
 
@@ -102,11 +109,11 @@ class TestSchemaAwareHealth:
         health = checker.get_health_status()
         assert health.status == "healthy"
         assert set(health.cdc_lag) == {"tracer_eval_logger"}
-        legacy.ping.assert_not_called()
+        legacy.execute_read.assert_called_once_with("SELECT 1", None, timeout_ms=ANY)
         legacy.execute.assert_not_called()
         assert not any(
             "FROM tracer_trace" in str(call) or "FROM trace_session " in str(call)
-            for call in native.execute.call_args_list
+            for call in native.execute_read.call_args_list
         )
 
     def test_native_eval_has_no_cdc_probe(self, configure, settings):
@@ -118,7 +125,9 @@ class TestSchemaAwareHealth:
         health = checker.get_health_status()
         assert health.status == "healthy"
         assert health.cdc_lag == {}
-        assert not any("_peerdb" in str(call) for call in native.execute.call_args_list)
+        assert not any(
+            "_peerdb" in str(call) for call in native.execute_read.call_args_list
+        )
 
     @pytest.mark.parametrize(
         "columns,reason",
@@ -136,7 +145,8 @@ class TestSchemaAwareHealth:
         assert health.cdc_lag["trace_session"] == -1
         assert health.details["checks"]["legacy.trace_session"] == reason
         assert not any(
-            "FROM trace_session" in str(call) for call in client.execute.call_args_list
+            "FROM trace_session" in str(call)
+            for call in client.execute_read.call_args_list
         )
 
     def test_empty_metadata_does_not_disable_requirements(self, configure):
@@ -145,12 +155,19 @@ class TestSchemaAwareHealth:
         assert health.status == "unhealthy"
         assert health.cdc_lag == dict.fromkeys(CDC_TABLES, -1)
         assert not any(
-            "max(_peerdb" in str(call) for call in client.execute.call_args_list
+            "max(_peerdb" in str(call) for call in client.execute_read.call_args_list
         )
 
     def test_metadata_failure_is_not_healthy(self, configure):
         client = fake_client({})
-        client.execute.side_effect = RuntimeError("private database details")
+        read = client.execute_read.side_effect
+
+        def unavailable(sql, *args, **kwargs):
+            if "system.columns" in sql:
+                raise RuntimeError("private database details")
+            return read(sql, *args, **kwargs)
+
+        client.execute_read.side_effect = unavailable
         configure(client)
         result = response()
         assert result.status_code == 200  # Existing monitoring contract.
@@ -165,7 +182,7 @@ class TestSchemaAwareHealth:
 
     def test_disconnected_keeps_http_contract_but_reports_unhealthy(self, configure):
         client = fake_client({})
-        client.ping.return_value = False
+        client.execute_read.side_effect = ConnectionError("synthetic outage")
         configure(client)
         result = response()
         assert result.status_code == 200
@@ -179,7 +196,7 @@ class TestSchemaAwareHealth:
         assert health.status == "unhealthy"
         assert health.details["checks"]["native.traces"] == "missing_required_table"
         assert not any(
-            "FROM traces" in str(call) for call in native.execute.call_args_list
+            "FROM traces" in str(call) for call in native.execute_read.call_args_list
         )
 
     def test_split_destinations_are_both_checked_in_mixed_routing(
@@ -190,7 +207,7 @@ class TestSchemaAwareHealth:
         native = fake_client({**NATIVE_COLUMNS, "tracer_eval_logger": CDC_COLUMNS})
         checker = configure(legacy, native)
         assert checker.get_health_status().status == "healthy"
-        native.ping.return_value = False
+        native.execute_read.side_effect = ConnectionError("synthetic outage")
         assert checker.get_health_status().status == "unhealthy"
 
     @pytest.mark.parametrize(
@@ -241,7 +258,9 @@ class TestSchemaAwareHealth:
         assert len(results) == 3
         assert not any(result.is_consistent for result in results)
         pg.cursor.assert_not_called()
-        assert not any("FINAL" in str(call) for call in client.execute.call_args_list)
+        assert not any(
+            "FINAL" in str(call) for call in client.execute_read.call_args_list
+        )
 
     def test_empty_destination_does_not_hide_lag_in_other_destination(
         self, configure, settings
@@ -257,14 +276,14 @@ class TestSchemaAwareHealth:
 
     def test_failed_aggregate_is_not_healthy(self, configure):
         client = fake_client(dict.fromkeys(CDC_TABLES, CDC_COLUMNS))
-        execute = client.execute.side_effect
+        read = client.execute_read.side_effect
 
-        def unavailable(sql, params=None):
+        def unavailable(sql, params=None, **kwargs):
             if "max(_peerdb" in sql:
                 raise RuntimeError("synthetic query failure")
-            return execute(sql, params)
+            return read(sql, params, **kwargs)
 
-        client.execute.side_effect = unavailable
+        client.execute_read.side_effect = unavailable
         assert configure(client).get_health_status().status == "unhealthy"
 
 
@@ -283,13 +302,13 @@ def real_clients(configure):
         ):
             clients = [
                 ClickHouseClient(
-                    host="localhost",
-                    port=legacy.connection.port,
-                    database=db,
-                    user="default",
-                    password="",
+                    host=driver.connection.host,
+                    port=driver.connection.port,
+                    database=driver.connection.database,
+                    user=driver.connection.user,
+                    password=driver.connection.password,
                 )
-                for db in (legacy_db, native_db)
+                for driver in (legacy, native)
             ]
             try:
                 yield legacy, native, clients
