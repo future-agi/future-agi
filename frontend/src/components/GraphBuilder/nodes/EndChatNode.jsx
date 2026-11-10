@@ -7,13 +7,12 @@ import PropTypes from "prop-types";
 import NodeHeader from "./NodeHeader";
 import { ShowComponent } from "src/components/show";
 import ActionButtons from "../ActionButtons";
-import { getNodeColors } from "../common";
+import { getNodeColors, NODE_ACTIONS_CLASS_NAME } from "../common";
 
 const EndChatNode = ({ id, data, isConnectable }) => {
   const deleteNode = useGraphStore((state) => state.deleteNode);
   const setActiveNode = useGraphStore((state) => state.setActiveNode);
   const activeNodeId = useGraphStore((state) => state.activeNodeId);
-  const uniqueClassName = `end-chat-node-${id}`;
   const duplicateNode = useGraphStore((state) => state.duplicateNode);
   const theme = useTheme();
 
@@ -52,7 +51,7 @@ const EndChatNode = ({ id, data, isConnectable }) => {
         "&:hover": {
           borderColor: hoverBorderColor,
         },
-        [`&:hover .${uniqueClassName}`]: {
+        [`&:hover .${NODE_ACTIONS_CLASS_NAME}`]: {
           opacity: 1,
         },
       }}
@@ -72,7 +71,12 @@ const EndChatNode = ({ id, data, isConnectable }) => {
             : theme.palette.red[600],
         }}
       />
-      <NodeHeader type="endChat" title={data?.name} />
+      <NodeHeader
+        type="endChat"
+        title={data?.name}
+        nodeId={id}
+        editable={data?.editMode}
+      />
       <Box>
         <Typography typography="s1" fontWeight="fontWeightMedium">
           Message
@@ -97,9 +101,10 @@ const EndChatNode = ({ id, data, isConnectable }) => {
             gap: 1,
             flexDirection: "column",
           }}
-          className={uniqueClassName}
+          className={NODE_ACTIONS_CLASS_NAME}
         >
           <ActionButtons
+            aria-label="Delete node"
             onClick={handleDelete}
             icon={
               <SvgColor
@@ -109,8 +114,9 @@ const EndChatNode = ({ id, data, isConnectable }) => {
             }
           />
           <ActionButtons
+            aria-label="Duplicate node"
             sx={{ opacity: 0 }}
-            className={uniqueClassName}
+            className={NODE_ACTIONS_CLASS_NAME}
             onClick={handleDuplicate}
             icon={
               <SvgColor
