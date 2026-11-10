@@ -18,6 +18,7 @@ from model_hub.tasks.annotation_export import (
 from model_hub.tests.test_annotation_export_async import _make_job
 from model_hub.tests.test_annotation_export_batch_cap import _build_dataset_queue
 from model_hub.views.annotation_queues import queue_export_items_queryset
+from tfc.utils.audit import mute_audit_signals
 
 
 @pytest.mark.django_db
@@ -87,7 +88,10 @@ def test_parent_hard_delete_preserves_key_until_artifact_cleanup(organization, w
     job.save()
     target = {"queue": seed["queue"], "workspace": workspace, "organization": organization}[parent]
     # Match AnnotationQueueViewSet.hard_delete, bypassing BaseModel's soft delete.
-    models.Model.delete(target)
+    # Membership audit rows cannot reference an organization being removed.
+    # Keep its unrelated signal out of this artifact-retention regression.
+    with mute_audit_signals():
+        models.Model.delete(target)
     surviving = AnnotationExportJob.no_workspace_objects.get(pk=job.pk)
     assert surviving.storage_key == key
     assert surviving.queue_id is None
@@ -116,3 +120,20 @@ def test_queue_deleted_during_render_does_not_upload(organization, workspace, us
     job.refresh_from_db()
     assert job.status == "failed"
     assert job.storage_key
+
+
+@pytest.mark.django_db
+def test_retention_migration_preserves_existing_object_keys(organization, workspace, user):
+    from importlib import import_module
+    from types import SimpleNamespace
+    from django.apps import apps
+
+    seed = _build_dataset_queue(organization=organization, workspace=workspace, user=user, n_rows=1)
+    jobs = [_make_job(seed["queue"], organization, workspace, user, fmt) for fmt in ("csv", "json")]
+    migration = import_module("model_hub.migrations.0124_annotation_export_retention")
+    editor = SimpleNamespace(connection=connection)
+    migration.preserve_export_storage_keys(apps, editor)
+    migration.preserve_export_storage_keys(apps, editor)
+    for job in jobs:
+        job.refresh_from_db()
+        assert job.storage_key == f"annotation-exports/{job.queue_id}/{job.pk}.{job.export_format}"
