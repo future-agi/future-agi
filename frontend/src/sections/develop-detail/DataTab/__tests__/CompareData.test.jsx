@@ -1,9 +1,9 @@
 import React from "react";
-import { act, render } from "@testing-library/react";
+import { act, render } from "src/utils/test-utils.jsx";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { grid, post, deleteCompare, Null, Passthrough } = vi.hoisted(() => ({
-  grid: { props: null },
+  grid: { props: null, inRouterContext: false, spacing: null },
   post: vi.fn(),
   deleteCompare: vi.fn(),
   Null: () => null,
@@ -15,9 +15,13 @@ const { grid, post, deleteCompare, Null, Passthrough } = vi.hoisted(() => ({
 // jsdom layout. The browser check covers the actual rendered grid.
 vi.mock("ag-grid-react", async () => {
   const { forwardRef } = await import("react");
+  const { useInRouterContext } = await import("react-router-dom");
+  const { useTheme } = await import("@mui/material/styles");
   return {
     AgGridReact: forwardRef(function Grid(props, _ref) {
       grid.props = props;
+      grid.inRouterContext = useInRouterContext();
+      grid.spacing = useTheme().spacing(1);
       return null;
     }),
   };
@@ -143,6 +147,13 @@ describe("CompareData API response", () => {
     post.mockImplementation((_url, body) =>
       Promise.resolve(response(body.current_page_index)),
     );
+  });
+
+  it("renders the datasource with the shared router and theme providers", () => {
+    renderCompare();
+
+    expect(grid.inRouterContext).toBe(true);
+    expect(grid.spacing).toBe("0.25rem");
   });
 
   it("delivers joined rows and grouped columns from the snake_case response", async () => {

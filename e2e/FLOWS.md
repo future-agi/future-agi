@@ -814,6 +814,26 @@
 - current property label, value choices and filtered UI/API rows agree after editing
 - removed columns and datasets cannot be rediscovered through metadata or value requests
 
+### DATA-E2E-003 — compared datasets show joined rows across both result blocks
+
+**Goal:** Compare two uploaded datasets and inspect every matching input with both outputs across result blocks
+
+**Spec:** `flows/datasets/compare-datasets.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload two synthetic CSV datasets with twelve shared inputs and one unmatched input each
+2. open Compare from the first dataset, select the second and join on input
+3. open Data and read the first ten joined input and output pairs
+4. scroll to the final two joined rows and verify that unmatched inputs are absent
+
+**Backend state verified:**
+
+- both uploaded datasets retain the actor scope and exact independently seeded input/output pairs in Postgres
+- the browser comparison and API replay return exactly twelve joined pairs across ten-row blocks with one stable compare_id
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
