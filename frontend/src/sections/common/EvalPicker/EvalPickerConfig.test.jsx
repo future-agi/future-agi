@@ -56,3 +56,62 @@ describe("EvalPickerConfig source mapping", () => {
     );
   });
 });
+
+describe("EvalPickerConfig variable mapping", () => {
+  const configTree = (evalData) => (
+    <EvalPickerProvider source="task" onClose={() => {}}>
+      <EvalPickerConfig
+        evalData={evalData}
+        onBack={() => {}}
+        onSave={() => {}}
+        isSaving={false}
+      />
+    </EvalPickerProvider>
+  );
+
+  it("lists a variable from the instructions that is missing from required keys", () => {
+    render(
+      configTree({
+        id: "eval-template",
+        name: "Live instructions eval",
+        eval_type: "llm",
+        required_keys: [],
+        instructions: "Compare {{newVar}} with {{output}}",
+      }),
+    );
+
+    expect(screen.getByText("Variable Mapping")).toBeInTheDocument();
+    expect(screen.getByText("{{newVar}}")).toBeInTheDocument();
+    expect(screen.getByText("{{output}}")).toBeInTheDocument();
+  });
+
+  it("drops a variable once it is removed from the instructions", () => {
+    const evalData = {
+      id: "eval-template",
+      name: "Live instructions eval",
+      eval_type: "llm",
+      required_keys: ["newVar", "output"],
+      instructions: "Compare {{newVar}} with {{output}}",
+    };
+    const { rerender } = render(configTree(evalData));
+    expect(screen.getByText("{{newVar}}")).toBeInTheDocument();
+
+    rerender(configTree({ ...evalData, instructions: "Score {{output}}" }));
+
+    expect(screen.queryByText("{{newVar}}")).not.toBeInTheDocument();
+    expect(screen.getByText("{{output}}")).toBeInTheDocument();
+  });
+
+  it("falls back to required keys when there is no instructions text", () => {
+    render(
+      configTree({
+        id: "eval-template",
+        name: "Stored keys eval",
+        eval_type: "llm",
+        required_keys: ["input"],
+      }),
+    );
+
+    expect(screen.getByText("{{input}}")).toBeInTheDocument();
+  });
+});

@@ -23,6 +23,7 @@ import {
 import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
 import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 import { FUTUREAGI_LLM_MODELS } from "src/sections/common/EvaluationDrawer/validation";
+import { extractVariables } from "src/utils/utils";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { normalizeEvalPickerEval } from "./evalPickerValue";
 
@@ -131,8 +132,14 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
     [evalData],
   );
 
-  // Extract required variables from eval template
+  // Prefer `{{var}}` patterns in the instructions text so the mapping matches
+  // the current template; fall back to the stored required keys.
   const variables = useMemo(() => {
+    const templateVars = extractVariables(
+      normalizedEvalData?.instructions || "",
+      "mustache",
+    );
+    if (templateVars.length > 0) return templateVars;
     const keys = normalizedEvalData?.requiredKeys || [];
     return [...new Set(keys)];
   }, [normalizedEvalData]);
