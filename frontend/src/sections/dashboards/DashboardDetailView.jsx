@@ -44,6 +44,7 @@ import {
   useDuplicateWidget,
   useCreateWidget,
 } from "src/hooks/useDashboards";
+import { useDebounce } from "src/hooks/use-debounce";
 import { format } from "date-fns";
 import Iconify from "src/components/iconify";
 import {
@@ -94,6 +95,10 @@ function computeRows(widgets) {
 
   return rows;
 }
+
+// How long the date filter must stay put before widgets refetch, so clicking
+// through several presets sends one round of widget queries, not one per click.
+const DATE_FILTER_DEBOUNCE_MS = 300;
 
 const widgetPropType = PropTypes.shape({
   id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
@@ -640,11 +645,13 @@ function DraggableWidgetCard({
 
           {/* Chart */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            {/* Keyed on the debounced range only: the preset changes on every
+                click, and remounting per click would refetch per click. */}
             <WidgetChart
-              key={`${widget.id}:${datePreset || "default"}${
+              key={`${widget.id}:${
                 globalDateRange
-                  ? `:${globalDateRange.start}:${globalDateRange.end}`
-                  : ""
+                  ? `${globalDateRange.start}:${globalDateRange.end}`
+                  : "default"
               }`}
               widget={widget}
               dashboardId={dashboardId}
@@ -759,6 +766,11 @@ export default function DashboardDetailView() {
   const globalDateRange = useMemo(
     () => resolveGlobalDateRange(datePreset, customDateRange),
     [datePreset, customDateRange],
+  );
+  // Chips reflect `datePreset` at once; widgets only see the settled range.
+  const debouncedGlobalDateRange = useDebounce(
+    globalDateRange,
+    DATE_FILTER_DEBOUNCE_MS,
   );
 
   // Widget context menu
@@ -1570,7 +1582,7 @@ export default function DashboardDetailView() {
                               dashboardId={dashboardId}
                               navigate={navigate}
                               onMenuOpen={handleWidgetMenuOpen}
-                              globalDateRange={globalDateRange}
+                              globalDateRange={debouncedGlobalDateRange}
                               isDragActive={!!activeWidget}
                               rowHeight={rowHeight}
                               datePreset={datePreset}
