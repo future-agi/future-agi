@@ -173,3 +173,27 @@ async def test_eventual_reconcile_success_reaps_before_first_claim(monkeypatch) 
         "reap",
         "claim",
     ]
+
+
+def _backoff_seconds(policy) -> float:
+    """Total wait across every retry the policy allows."""
+    total, delay = 0.0, policy.initial_interval.total_seconds()
+    for _ in range(policy.maximum_attempts - 1):
+        total += min(delay, policy.maximum_interval.total_seconds())
+        delay *= policy.backoff_coefficient
+    return total
+
+
+def test_control_retries_outlast_a_database_outage() -> None:
+    """One exhausted control activity fails the whole workflow, so the retry
+    window must cover a connection-pooler restart or a database failover."""
+    from tfc.temporal.eval_tasks.workflows import CONTROL_RETRY_POLICY
+
+    assert _backoff_seconds(CONTROL_RETRY_POLICY) >= 5 * 60
+
+
+def test_reconcile_keeps_its_short_retry_window() -> None:
+    """Reconcile reads ClickHouse; longer retries there only add read pressure."""
+    from tfc.temporal.eval_tasks.workflows import RECONCILE_RETRY_POLICY
+
+    assert _backoff_seconds(RECONCILE_RETRY_POLICY) <= 60
