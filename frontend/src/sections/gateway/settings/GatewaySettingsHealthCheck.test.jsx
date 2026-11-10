@@ -9,7 +9,12 @@ import {
   it,
   vi,
 } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationCache,
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { SnackbarProvider } from "notistack";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -21,6 +26,7 @@ import {
   waitFor,
 } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
+import { handleError } from "src/utils/queryErrorHandler";
 import { GatewayProvider } from "../context/GatewayContext";
 import GatewaySettingsSection from "./GatewaySettingsSection";
 
@@ -51,7 +57,11 @@ beforeEach(() => {
   healthRequests = 0;
   lastHealthCheck = beforeCheck;
   gatewayStatus = "healthy";
+  // Wire the app's real query/mutation error handler (src/app.jsx) so duplicate
+  // toasts from the global handler are visible to these tests.
   queryClient = new QueryClient({
+    queryCache: new QueryCache({ onError: handleError }),
+    mutationCache: new MutationCache({ onError: handleError }),
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   server.use(
@@ -145,32 +155,37 @@ describe("Settings health check", () => {
     );
   });
 
-  it("shows the server error and refreshes the timestamp after an unreachable check", async () => {
+  it("shows one sanitized error and refreshes the timestamp after an unreachable check", async () => {
     await startCheck();
     lastHealthCheck = afterCheck;
     gatewayStatus = "unreachable";
+    const message = "The gateway could not be reached.";
     completeCheck(
       HttpResponse.json(
         {
           status: false,
           result: {
             status: "unreachable",
-            error: "Connection refused",
+            error: message,
             last_health_check: afterCheck,
           },
-          detail: "Connection refused",
-          details: { status: ["unreachable"], error: ["Connection refused"] },
+          detail: message,
+          details: { status: ["unreachable"], error: [message] },
         },
         { status: 400 },
       ),
     );
     expect(
-      await screen.findByText("Health check failed: Connection refused"),
+      await screen.findByText(`Health check failed: ${message}`),
     ).toBeVisible();
     expect(
       await screen.findByText(new Date(afterCheck).toLocaleString()),
     ).toBeVisible();
     expect(screen.getByText("unreachable")).toBeVisible();
+    // The global MutationCache handler must not add its raw
+    // "unreachable, <timestamp>, <error>" toast next to the hook's message.
+    expect(screen.getAllByText(new RegExp(message))).toHaveLength(1);
+    expect(screen.queryByText(/^unreachable, /)).not.toBeInTheDocument();
     expect(screen.queryByText("Health check complete")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Health Check" })).toBeEnabled();
   });
