@@ -6,7 +6,6 @@ import {
   Tabs,
   Tab,
   TextField,
-  Badge,
   InputAdornment,
   Chip,
   Menu,
@@ -21,8 +20,11 @@ import axiosInstance, { endpoints } from "src/utils/axios";
 import useFilters from "./hooks/useFilters";
 import RequestTable from "./RequestTable";
 import RequestDetailDrawer from "./RequestDetailDrawer";
-import FilterPanel from "./FilterPanel";
+import RequestFilterButton from "./RequestFilterButton";
 import SessionExplorer from "./SessionExplorer";
+import useRequestColumns from "./columns/useRequestColumns";
+import ColumnsPickerPopover from "./columns/ColumnsPickerPopover";
+import { COLUMNS_POPOVER_ID } from "./columns/columnModel";
 
 // ---------------------------------------------------------------------------
 // Quick filter definitions
@@ -58,15 +60,14 @@ function activeQuickFilter(filters) {
 
 const RequestExplorerSection = () => {
   // --- URL-synced filters ---------------------------------------------------
-  const { filters, setFilter, setFilters, clearFilters, activeFilterCount } =
-    useFilters();
+  const { filters, setFilter, setFilters, clearFilters } = useFilters();
 
   // --- Local UI state -------------------------------------------------------
   const [selectedLogId, setSelectedLogId] = useState(null);
-  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [searchValue, setSearchValue] = useState(filters.search || "");
   const [exportAnchor, setExportAnchor] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [columnsAnchor, setColumnsAnchor] = useState(null);
 
   // --- Debounced search -----------------------------------------------------
   useEffect(() => {
@@ -87,6 +88,11 @@ const RequestExplorerSection = () => {
 
   // --- View tab -------------------------------------------------------------
   const currentView = filters.view || "requests";
+
+  // --- Configurable columns --------------------------------------
+  const requestColumns = useRequestColumns({
+    enabled: currentView === "requests",
+  });
 
   const handleViewChange = useCallback(
     (_event, newValue) => {
@@ -127,6 +133,9 @@ const RequestExplorerSection = () => {
         if (filters.search) params.search = filters.search;
         if (filters.model) params.model = filters.model;
         if (filters.provider) params.provider = filters.provider;
+        if (filters.application) params.application = filters.application;
+        if (filters.service) params.service = filters.service;
+        if (filters.tags) params.tags = filters.tags;
         if (filters.startedAfter) params.started_after = filters.startedAfter;
         if (filters.startedBefore)
           params.started_before = filters.startedBefore;
@@ -180,15 +189,6 @@ const RequestExplorerSection = () => {
     [filters],
   );
 
-  // --- Filter panel apply ---------------------------------------------------
-  const handleApplyFilters = useCallback(
-    (newFilters) => {
-      setFilters(newFilters);
-      setFilterPanelOpen(false);
-    },
-    [setFilters],
-  );
-
   // =========================================================================
   // Render
   // =========================================================================
@@ -203,7 +203,9 @@ const RequestExplorerSection = () => {
         <Button
           variant="outlined"
           size="small"
-          startIcon={<Iconify icon="mdi:download-outline" width={20} />}
+          startIcon={
+            <Iconify icon="solar:download-minimalistic-linear" width={20} />
+          }
           onClick={handleExportOpen}
           disabled={isExporting}
         >
@@ -219,13 +221,13 @@ const RequestExplorerSection = () => {
         >
           <MenuItem onClick={() => handleExport("csv")}>
             <ListItemIcon>
-              <Iconify icon="mdi:file-document-outline" width={18} />
+              <Iconify icon="solar:document-text-linear" width={16} />
             </ListItemIcon>
             <ListItemText>Export CSV</ListItemText>
           </MenuItem>
           <MenuItem onClick={() => handleExport("json")}>
             <ListItemIcon>
-              <Iconify icon="mdi:code-json" width={18} />
+              <Iconify icon="solar:code-linear" width={16} />
             </ListItemIcon>
             <ListItemText>Export JSON</ListItemText>
           </MenuItem>
@@ -243,22 +245,51 @@ const RequestExplorerSection = () => {
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="eva:search-outline" width={18} />
+                <Iconify icon="solar:magnifier-linear" width={16} />
               </InputAdornment>
             ),
           }}
         />
-        <Badge badgeContent={activeFilterCount} color="primary">
+        <RequestFilterButton filters={filters} onApply={setFilters} />
+        {currentView === "requests" && (
           <Button
             variant="outlined"
-            startIcon={<Iconify icon="mdi:filter-outline" width={20} />}
-            onClick={() => setFilterPanelOpen(true)}
+            startIcon={<Iconify icon="solar:columns-3-linear" width={16} />}
+            onClick={(event) => setColumnsAnchor(event.currentTarget)}
+            // Edits need the user/org storage key to be saved.
+            disabled={!requestColumns.storageKey}
+            aria-haspopup="dialog"
+            aria-expanded={Boolean(columnsAnchor)}
+            aria-controls={columnsAnchor ? COLUMNS_POPOVER_ID : undefined}
             sx={{ whiteSpace: "nowrap" }}
           >
-            Filters
+            Columns
           </Button>
-        </Badge>
+        )}
       </Stack>
+
+      {currentView === "requests" && (
+        <ColumnsPickerPopover
+          anchorEl={columnsAnchor}
+          open={Boolean(columnsAnchor)}
+          onClose={() => setColumnsAnchor(null)}
+          entries={requestColumns.pickerEntries}
+          stale={requestColumns.stale}
+          visibleCount={requestColumns.visibleCount}
+          totalCount={requestColumns.totalCount}
+          atCap={requestColumns.atCap}
+          declarationStatus={requestColumns.declarationStatus}
+          declarationsAvailable={requestColumns.declarationsAvailable}
+          declarationsFetching={requestColumns.declarationsFetching}
+          reservedDeclared={requestColumns.reservedDeclared}
+          unavailableCustomCount={requestColumns.unavailableCustomCount}
+          onToggle={requestColumns.toggle}
+          onMove={requestColumns.move}
+          onRemove={requestColumns.remove}
+          onReset={requestColumns.reset}
+          onRetryDeclarations={requestColumns.retryDeclarations}
+        />
+      )}
 
       {/* ---- Quick filter chips ---- */}
       <Stack
@@ -296,7 +327,8 @@ const RequestExplorerSection = () => {
           filters={filters}
           setFilter={setFilter}
           setFilters={setFilters}
-          onSelectLog={(logId) => setSelectedLogId(logId)}
+          onSelectLog={setSelectedLogId}
+          columns={requestColumns.columns}
         />
       ) : (
         <SessionExplorer
@@ -310,14 +342,6 @@ const RequestExplorerSection = () => {
         logId={selectedLogId}
         open={Boolean(selectedLogId)}
         onClose={() => setSelectedLogId(null)}
-      />
-
-      {/* ---- Filter panel drawer ---- */}
-      <FilterPanel
-        open={filterPanelOpen}
-        onClose={() => setFilterPanelOpen(false)}
-        filters={filters}
-        onApply={handleApplyFilters}
       />
     </Box>
   );

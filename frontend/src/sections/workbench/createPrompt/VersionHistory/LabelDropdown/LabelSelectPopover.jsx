@@ -27,7 +27,7 @@ const LabelSelectPopover = ({
   return (
     <ModalWrapper
       open={ModalOpen}
-      modalWidth="500px"
+      modalWidth="560px"
       onClose={handleCloseModal}
       title="Add Tags"
       subTitle="Save the prompt along with tags to track changes and support prompt reusability."

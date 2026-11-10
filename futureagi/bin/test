@@ -159,7 +159,11 @@ run_migrations() {
     local log_file
     log_file="$(mktemp "${TMPDIR:-/tmp}/futureagi-test-migrate.XXXXXX")"
 
-    if ! "$PYTHON_BIN" manage.py migrate --run-syncdb > "$log_file" 2>&1; then
+    # migrate is a one-shot operator command, not application startup. A stray
+    # load_dotenv() pulls CLOUD_DEPLOYMENT=DEV in, so NO_STARTUP_DB_MUTATIONS is
+    # not enough here.
+    if ! STARTUP_DB_MUTATION_MODE=operator SERVICE_TYPE=bootstrap \
+        "$PYTHON_BIN" manage.py migrate --run-syncdb > "$log_file" 2>&1; then
         echo -e "${RED}Error: migrations failed${NC}" >&2
         tail -n 80 "$log_file" >&2 || true
         echo "Full migration log: $log_file" >&2

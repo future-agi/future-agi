@@ -93,3 +93,19 @@ class AgentccSessionSerializer(serializers.Serializer):
     error_count = serializers.IntegerField()
     models = serializers.ListField(child=serializers.CharField())
     providers = serializers.ListField(child=serializers.CharField())
+
+
+class AgentccRequestLogMetadataValuesSerializer(serializers.Serializer):
+    """Options for the Application, Service and Custom Tags filters."""
+
+    application = serializers.ListField(child=serializers.CharField())
+    service = serializers.ListField(child=serializers.CharField())
+    tags = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="key:value pairs, for keys declared as custom properties.",
+    )
+
+
+class AgentccRequestLogMetadataValuesResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = AgentccRequestLogMetadataValuesSerializer()

@@ -1,7 +1,15 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
+import ButtonBase from "@mui/material/ButtonBase";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
+import Alert from "@mui/material/Alert";
 import IconButton from "@mui/material/IconButton";
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
@@ -14,6 +22,7 @@ import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   listSkills,
   fetchConnectors,
@@ -22,6 +31,15 @@ import {
   discoverConnectorTools,
 } from "../hooks/useFalconAPI";
 import useFalconStore from "../store/useFalconStore";
+import ToolsSkeleton from "./ToolsSkeleton";
+import ConnectorDetailError from "./ConnectorDetailError";
+import { useConnectorToolPermissions } from "../hooks/useConnectorToolPermissions";
+import {
+  LAST_ENABLED_TOOL_HINT,
+  isOnlyEnabledTool,
+  resolveEnabledNames,
+  toolActionErrorMessage,
+} from "./connectorTools";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -51,14 +69,14 @@ function getConnectorIcon(connector) {
   if (name.includes("jira")) return "mdi:jira";
   if (name.includes("slack")) return "mdi:slack";
   if (name.includes("notion")) return "simple-icons:notion";
-  if (name.includes("postgres")) return "mdi:database";
-  if (name.includes("mysql")) return "mdi:database-outline";
-  if (name.includes("redis")) return "mdi:database-arrow-right";
+  if (name.includes("postgres")) return "solar:database-linear";
+  if (name.includes("mysql")) return "solar:database-linear";
+  if (name.includes("redis")) return "solar:database-linear";
   if (name.includes("aws")) return "mdi:aws";
   if (name.includes("gcp")) return "mdi:google-cloud";
   if (name.includes("azure")) return "mdi:microsoft-azure";
   if (name.includes("vscode")) return "mdi:microsoft-visual-studio-code";
-  return "mdi:puzzle-outline";
+  return "solar:widget-linear";
 }
 
 // ---------------------------------------------------------------------------
@@ -72,10 +90,11 @@ function Panel1NavItem({ icon, label, active, onClick }) {
       selected={active}
       onClick={onClick}
       sx={{
-        borderRadius: "8px",
+        borderRadius: "6px",
         mb: "2px",
         px: 1.5,
-        py: "7px",
+        py: 0,
+        height: 28,
         minHeight: 0,
         color: active ? "text.primary" : "text.secondary",
         bgcolor: active ? theme.palette.action.selected : "transparent",
@@ -87,14 +106,14 @@ function Panel1NavItem({ icon, label, active, onClick }) {
         },
       }}
     >
-      <ListItemIcon sx={{ minWidth: 28, color: "inherit" }}>
-        <Iconify icon={icon} width={18} />
+      <ListItemIcon sx={{ minWidth: 24, color: "inherit" }}>
+        <Iconify icon={icon} width={16} />
       </ListItemIcon>
       <ListItemText
         primary={label}
         primaryTypographyProps={{
           fontSize: 13,
-          fontWeight: active ? 600 : 500,
+          fontWeight: active ? 500 : 400,
         }}
       />
     </ListItemButton>
@@ -112,21 +131,16 @@ Panel1NavItem.propTypes = {
 // Panel 1: Navigation sidebar
 // ---------------------------------------------------------------------------
 function NavigationPanel({ selectedTab, onTabChange }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   return (
     <Box
       sx={{
-        width: 200,
-        minWidth: 200,
+        width: 224,
+        minWidth: 224,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        borderRight: (t) => `solid 1px ${t.palette.divider}`,
-        bgcolor: isDark
-          ? alpha(theme.palette.primary.main, 0.04)
-          : alpha(theme.palette.primary.main, 0.02),
+        borderRight: "1px solid",
+        borderColor: "border.default",
         height: "100%",
       }}
     >
@@ -144,14 +158,14 @@ function NavigationPanel({ selectedTab, onTabChange }) {
         <IconButton
           size="small"
           onClick={() => useFalconStore.getState().setShowCustomize(false)}
-          sx={{ width: 24, height: 24, color: "text.secondary" }}
+          sx={{ color: "text.secondary" }}
         >
-          <Iconify icon="mdi:arrow-left" width={18} />
+          <Iconify icon="solar:arrow-left-linear" width={20} />
         </IconButton>
         <Typography
           sx={{
-            fontSize: 14,
-            fontWeight: 700,
+            fontSize: 13,
+            fontWeight: 600,
             color: "text.primary",
           }}
         >
@@ -162,13 +176,13 @@ function NavigationPanel({ selectedTab, onTabChange }) {
       {/* Nav items */}
       <Box sx={{ px: 0.75, flex: 1 }}>
         <Panel1NavItem
-          icon="mdi:lightning-bolt"
+          icon="solar:bolt-linear"
           label="Skills"
           active={selectedTab === "skills"}
           onClick={() => onTabChange("skills")}
         />
         <Panel1NavItem
-          icon="mdi:puzzle-outline"
+          icon="solar:widget-linear"
           label="Connectors"
           active={selectedTab === "connectors"}
           onClick={() => onTabChange("connectors")}
@@ -185,7 +199,7 @@ function NavigationPanel({ selectedTab, onTabChange }) {
       >
         <Typography
           sx={{
-            fontSize: 11,
+            fontSize: 12,
             color: "text.disabled",
             lineHeight: 1.4,
           }}
@@ -212,8 +226,6 @@ function SkillsListPanel({
   onCreateClick,
   loading,
 }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [search, setSearch] = useState("");
 
   const filtered = useMemo(() => {
@@ -229,12 +241,13 @@ function SkillsListPanel({
   return (
     <Box
       sx={{
-        width: 250,
-        minWidth: 250,
+        width: 224,
+        minWidth: 224,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        borderRight: (t) => `solid 1px ${t.palette.divider}`,
+        borderRight: "1px solid",
+        borderColor: "border.default",
         height: "100%",
       }}
     >
@@ -250,7 +263,7 @@ function SkillsListPanel({
         }}
       >
         <Typography
-          sx={{ fontSize: 13, fontWeight: 700, color: "text.primary" }}
+          sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
         >
           Skills
         </Typography>
@@ -259,9 +272,9 @@ function SkillsListPanel({
             size="small"
             onClick={onCreateClick}
             title="Create skill"
-            sx={{ width: 24, height: 24, color: "text.secondary" }}
+            sx={{ color: "text.secondary" }}
           >
-            <Iconify icon="mdi:plus" width={18} />
+            <Iconify icon="solar:add-linear" width={20} />
           </IconButton>
         </Box>
       </Box>
@@ -278,7 +291,7 @@ function SkillsListPanel({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifier-linear"
                   width={14}
                   sx={{ color: "text.disabled" }}
                 />
@@ -293,9 +306,7 @@ function SkillsListPanel({
               bgcolor: "transparent",
             },
             "& .MuiOutlinedInput-notchedOutline": {
-              borderColor: isDark
-                ? alpha(theme.palette.common.white, 0.06)
-                : alpha(theme.palette.common.black, 0.06),
+              borderColor: "divider",
             },
           }}
         />
@@ -312,7 +323,7 @@ function SkillsListPanel({
         {!loading && filtered.length === 0 && (
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.disabled",
               textAlign: "center",
               py: 3,
@@ -333,48 +344,37 @@ function SkillsListPanel({
                 borderRadius: "6px",
                 mb: "1px",
                 px: 1,
-                py: "6px",
+                py: 0,
+                height: 28,
                 minHeight: 0,
-                color: isActive ? "primary.main" : "text.primary",
-                bgcolor: isActive
-                  ? alpha(theme.palette.primary.main, 0.08)
-                  : "transparent",
+                color: "text.primary",
+                bgcolor: isActive ? "action.selected" : "transparent",
                 "&:hover": {
-                  bgcolor: isActive
-                    ? alpha(theme.palette.primary.main, 0.12)
-                    : theme.palette.action.hover,
+                  bgcolor: isActive ? "action.selected" : "action.hover",
                 },
                 "&.Mui-selected": {
-                  bgcolor: alpha(theme.palette.primary.main, 0.08),
+                  bgcolor: "action.selected",
+                  "&:hover": { bgcolor: "action.selected" },
                 },
               }}
             >
               <ListItemIcon sx={{ minWidth: 26, color: "inherit" }}>
-                <Iconify icon={skill.icon || "mdi:star-outline"} width={16} />
+                <Iconify icon={skill.icon || "solar:star-linear"} width={16} />
               </ListItemIcon>
               <ListItemText
                 primary={
                   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                    <Typography
-                      noWrap
-                      sx={{ fontSize: 12, fontWeight: isActive ? 600 : 500 }}
-                    >
+                    <Typography variant="body2" noWrap>
                       {skill.name}
                     </Typography>
                     {(skill.is_builtin || skill.is_system) && (
-                      <Chip
-                        label="SYS"
-                        size="small"
-                        variant="outlined"
-                        sx={{
-                          height: 14,
-                          fontSize: 8,
-                          fontWeight: 700,
-                          borderColor: alpha(theme.palette.info.main, 0.4),
-                          color: "info.main",
-                          "& .MuiChip-label": { px: 0.4 },
-                        }}
-                      />
+                      <Typography
+                        component="span"
+                        variant="caption"
+                        color="text.tertiary"
+                      >
+                        SYS
+                      </Typography>
                     )}
                   </Box>
                 }
@@ -397,7 +397,7 @@ function SkillsListPanel({
           }}
         >
           <ListItemIcon sx={{ minWidth: 26, color: "primary.main" }}>
-            <Iconify icon="mdi:plus" width={16} />
+            <Iconify icon="solar:add-linear" width={16} />
           </ListItemIcon>
           <ListItemText
             primary="Create Skill"
@@ -442,8 +442,6 @@ function ConnectorsListPanel({
   onCreateClick,
   loading,
 }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [search, setSearch] = useState("");
 
   const grouped = useMemo(() => {
@@ -470,12 +468,13 @@ function ConnectorsListPanel({
   return (
     <Box
       sx={{
-        width: 250,
-        minWidth: 250,
+        width: 224,
+        minWidth: 224,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        borderRight: (t) => `solid 1px ${t.palette.divider}`,
+        borderRight: "1px solid",
+        borderColor: "border.default",
         height: "100%",
       }}
     >
@@ -491,7 +490,7 @@ function ConnectorsListPanel({
         }}
       >
         <Typography
-          sx={{ fontSize: 13, fontWeight: 700, color: "text.primary" }}
+          sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
         >
           Connectors
         </Typography>
@@ -499,9 +498,9 @@ function ConnectorsListPanel({
           size="small"
           onClick={onCreateClick}
           title="Add connector"
-          sx={{ width: 24, height: 24, color: "text.secondary" }}
+          sx={{ color: "text.secondary" }}
         >
-          <Iconify icon="mdi:plus" width={18} />
+          <Iconify icon="solar:add-linear" width={20} />
         </IconButton>
       </Box>
 
@@ -517,7 +516,7 @@ function ConnectorsListPanel({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifier-linear"
                   width={14}
                   sx={{ color: "text.disabled" }}
                 />
@@ -532,9 +531,7 @@ function ConnectorsListPanel({
               bgcolor: "transparent",
             },
             "& .MuiOutlinedInput-notchedOutline": {
-              borderColor: isDark
-                ? alpha(theme.palette.common.white, 0.06)
-                : alpha(theme.palette.common.black, 0.06),
+              borderColor: "divider",
             },
           }}
         />
@@ -556,10 +553,10 @@ function ConnectorsListPanel({
               <React.Fragment key={cat}>
                 <Typography
                   sx={{
-                    fontSize: 10,
+                    fontSize: 12,
                     fontWeight: 600,
-                    color: "text.disabled",
-                    textTransform: "uppercase",
+                    color: "text.tertiary",
+                    textTransform: "none",
                     letterSpacing: 0.5,
                     px: 0.5,
                     pt: 1.5,
@@ -580,19 +577,19 @@ function ConnectorsListPanel({
                         borderRadius: "6px",
                         mb: "1px",
                         px: 1,
-                        py: "6px",
+                        py: 0,
+                        height: 28,
                         minHeight: 0,
-                        color: isActive ? "primary.main" : "text.primary",
-                        bgcolor: isActive
-                          ? alpha(theme.palette.primary.main, 0.08)
-                          : "transparent",
+                        color: "text.primary",
+                        bgcolor: isActive ? "action.selected" : "transparent",
                         "&:hover": {
                           bgcolor: isActive
-                            ? alpha(theme.palette.primary.main, 0.12)
-                            : theme.palette.action.hover,
+                            ? "action.selected"
+                            : "action.hover",
                         },
                         "&.Mui-selected": {
-                          bgcolor: alpha(theme.palette.primary.main, 0.08),
+                          bgcolor: "action.selected",
+                          "&:hover": { bgcolor: "action.selected" },
                         },
                       }}
                     >
@@ -609,10 +606,8 @@ function ConnectorsListPanel({
                             }}
                           >
                             <Typography
+                              variant="body2"
                               sx={{
-                                fontSize: 12,
-                                fontWeight: isActive ? 600 : 500,
-                                noWrap: true,
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
                               }}
@@ -620,23 +615,13 @@ function ConnectorsListPanel({
                               {conn.name}
                             </Typography>
                             {isCustom && (
-                              <Chip
-                                label="CUSTOM"
-                                size="small"
-                                variant="outlined"
-                                sx={{
-                                  height: 16,
-                                  fontSize: 9,
-                                  fontWeight: 700,
-                                  letterSpacing: 0.3,
-                                  borderColor: alpha(
-                                    theme.palette.warning.main,
-                                    0.5,
-                                  ),
-                                  color: "warning.main",
-                                  "& .MuiChip-label": { px: 0.5 },
-                                }}
-                              />
+                              <Typography
+                                component="span"
+                                variant="caption"
+                                color="text.tertiary"
+                              >
+                                CUSTOM
+                              </Typography>
                             )}
                           </Box>
                         }
@@ -651,7 +636,7 @@ function ConnectorsListPanel({
         {!loading && Object.keys(grouped).length === 0 && (
           <Box sx={{ textAlign: "center", py: 4, px: 2 }}>
             <Iconify
-              icon="mdi:puzzle-outline"
+              icon="solar:widget-linear"
               width={32}
               sx={{ color: "text.disabled", mb: 1 }}
             />
@@ -659,16 +644,7 @@ function ConnectorsListPanel({
               {search ? "No matching connectors" : "No connectors added yet"}
             </Typography>
             {!search && (
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={onCreateClick}
-                sx={{
-                  fontSize: 11,
-                  textTransform: "none",
-                  borderRadius: "8px",
-                }}
-              >
+              <Button size="small" variant="outlined" onClick={onCreateClick}>
                 Add connector
               </Button>
             )}
@@ -707,14 +683,13 @@ function SkillDetailPanel({
   onCancelEdit,
 }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const isSystem = skill?.is_builtin || skill?.is_system;
 
   // ── Inline editor state ──
   const [form, setForm] = useState({
     name: "",
     description: "",
-    icon: "mdi:star-outline",
+    icon: "solar:star-linear",
     instructions: "",
     trigger_phrases: [],
   });
@@ -727,7 +702,7 @@ function SkillDetailPanel({
       setForm({
         name: skill.name || "",
         description: skill.description || "",
-        icon: skill.icon || "mdi:star-outline",
+        icon: skill.icon || "solar:star-linear",
         instructions: skill.instructions || "",
         trigger_phrases: skill.trigger_phrases || [],
       });
@@ -735,7 +710,7 @@ function SkillDetailPanel({
       setForm({
         name: "",
         description: "",
-        icon: "mdi:star-outline",
+        icon: "solar:star-linear",
         instructions: "",
         trigger_phrases: [],
       });
@@ -826,11 +801,11 @@ function SkillDetailPanel({
         }}
       >
         <Iconify
-          icon="mdi:lightning-bolt"
+          icon="solar:bolt-linear"
           width={48}
           sx={{ color: "text.disabled", mb: 2 }}
         />
-        <Typography sx={{ fontSize: 15, fontWeight: 600, mb: 0.5 }}>
+        <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 0.5 }}>
           Create new skills
         </Typography>
         <Typography
@@ -860,7 +835,7 @@ function SkillDetailPanel({
           p: 3,
         }}
       >
-        <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 2.5 }}>
+        <Typography sx={{ fontSize: 16, fontWeight: 600, mb: 2.5 }}>
           {skill?.id ? "Edit Skill" : "Create Skill"}
         </Typography>
 
@@ -967,7 +942,7 @@ function SkillDetailPanel({
           </Typography>{" "}
           <Typography
             component="span"
-            sx={{ fontSize: 11, color: "text.disabled" }}
+            sx={{ fontSize: 12, color: "text.disabled" }}
           >
             (press Enter to add)
           </Typography>
@@ -1000,7 +975,6 @@ function SkillDetailPanel({
                     ),
                   }))
                 }
-                sx={{ fontSize: 11, height: 24 }}
               />
             ))}
           </Box>
@@ -1012,21 +986,10 @@ function SkillDetailPanel({
             size="small"
             onClick={handleSave}
             disabled={saving}
-            sx={{
-              textTransform: "none",
-              borderRadius: "8px",
-              fontSize: 13,
-              px: 3,
-            }}
           >
             {saving ? "Saving..." : "Save"}
           </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={onCancelEdit}
-            sx={{ textTransform: "none", borderRadius: "8px", fontSize: 13 }}
-          >
+          <Button variant="outlined" size="small" onClick={onCancelEdit}>
             Cancel
           </Button>
           {skill?.id && !isSystem && (
@@ -1037,9 +1000,6 @@ function SkillDetailPanel({
               onClick={handleDelete}
               disabled={saving}
               sx={{
-                textTransform: "none",
-                borderRadius: "8px",
-                fontSize: 13,
                 ml: "auto",
               }}
             >
@@ -1076,7 +1036,7 @@ function SkillDetailPanel({
             sx={{
               width: 40,
               height: 40,
-              borderRadius: "10px",
+              borderRadius: "8px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1084,11 +1044,11 @@ function SkillDetailPanel({
               color: "primary.main",
             }}
           >
-            <Iconify icon={skill.icon || "mdi:star-outline"} width={22} />
+            <Iconify icon={skill.icon || "solar:star-linear"} width={20} />
           </Box>
           <Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography sx={{ fontSize: 16, fontWeight: 700 }}>
+              <Typography sx={{ fontSize: 16, fontWeight: 600 }}>
                 {skill.name}
               </Typography>
               {isSystem && (
@@ -1097,9 +1057,6 @@ function SkillDetailPanel({
                   size="small"
                   variant="outlined"
                   sx={{
-                    height: 18,
-                    fontSize: 9,
-                    fontWeight: 700,
                     letterSpacing: 0.5,
                     borderColor: alpha(theme.palette.info.main, 0.4),
                     color: "info.main",
@@ -1122,9 +1079,8 @@ function SkillDetailPanel({
             <Button
               size="small"
               variant="outlined"
-              startIcon={<Iconify icon="mdi:content-copy" width={14} />}
+              startIcon={<Iconify icon="solar:copy-linear" width={14} />}
               onClick={() => onDuplicate(skill)}
-              sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
             >
               Duplicate
             </Button>
@@ -1135,7 +1091,7 @@ function SkillDetailPanel({
               title="Edit"
               sx={{ color: "text.secondary" }}
             >
-              <Iconify icon="mdi:pencil-outline" width={18} />
+              <Iconify icon="solar:pen-linear" width={20} />
             </IconButton>
           )}
         </Box>
@@ -1146,7 +1102,7 @@ function SkillDetailPanel({
         <Box>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.disabled",
               mb: 0.25,
@@ -1165,7 +1121,7 @@ function SkillDetailPanel({
         <Box sx={{ mb: 2 }}>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.disabled",
               mb: 0.5,
@@ -1180,10 +1136,6 @@ function SkillDetailPanel({
                 label={phrase}
                 size="small"
                 variant="outlined"
-                sx={{
-                  fontSize: 11,
-                  height: 24,
-                }}
               />
             ))}
           </Box>
@@ -1195,7 +1147,7 @@ function SkillDetailPanel({
         <Box sx={{ mb: 2 }}>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.disabled",
               mb: 0.5,
@@ -1215,7 +1167,7 @@ function SkillDetailPanel({
       <Box sx={{ mb: 2 }}>
         <Typography
           sx={{
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.disabled",
             mb: 0.5,
@@ -1228,9 +1180,7 @@ function SkillDetailPanel({
             sx={{
               p: 2,
               borderRadius: "8px",
-              bgcolor: isDark
-                ? alpha(theme.palette.common.white, 0.03)
-                : alpha(theme.palette.common.black, 0.02),
+              bgcolor: "background.neutral",
               border: (t) => `1px solid ${t.palette.divider}`,
             }}
           >
@@ -1268,9 +1218,8 @@ function SkillDetailPanel({
           <Button
             fullWidth
             variant="outlined"
-            startIcon={<Iconify icon="mdi:pencil-outline" width={16} />}
+            startIcon={<Iconify icon="solar:pen-linear" width={16} />}
             onClick={() => onEdit(skill)}
-            sx={{ textTransform: "none", borderRadius: "8px", fontSize: 13 }}
           >
             Edit skill
           </Button>
@@ -1308,12 +1257,17 @@ function ConnectorDetailPanel({
   onDisconnect,
   onReauth,
   onToolToggle,
+  onToolsAllow,
+  toolError,
+  pendingNames,
+  loading,
+  detailError,
+  onRetry,
   onSaved,
   onCancelEdit,
   onEdit,
 }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
 
   // ── Inline editor state ──
   const [form, setForm] = useState({
@@ -1429,11 +1383,11 @@ function ConnectorDetailPanel({
         }}
       >
         <Iconify
-          icon="mdi:puzzle-outline"
+          icon="solar:widget-linear"
           width={48}
           sx={{ color: "text.disabled", mb: 2 }}
         />
-        <Typography sx={{ fontSize: 15, fontWeight: 600, mb: 0.5 }}>
+        <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 0.5 }}>
           Connect your tools
         </Typography>
         <Typography
@@ -1457,17 +1411,13 @@ function ConnectorDetailPanel({
     const inputSx = {
       mb: 2,
       "& .MuiInputBase-root": {
-        fontSize: 14,
-        borderRadius: "10px",
+        fontSize: 13,
+        borderRadius: "8px",
         height: 48,
-        bgcolor: isDark
-          ? alpha(theme.palette.common.white, 0.04)
-          : alpha(theme.palette.common.black, 0.02),
+        bgcolor: "background.neutral",
       },
       "& .MuiOutlinedInput-notchedOutline": {
-        borderColor: isDark
-          ? alpha(theme.palette.common.white, 0.12)
-          : alpha(theme.palette.common.black, 0.15),
+        borderColor: "border.default",
       },
     };
 
@@ -1483,7 +1433,7 @@ function ConnectorDetailPanel({
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-          <Typography sx={{ fontSize: 20, fontWeight: 700 }}>
+          <Typography sx={{ fontSize: 20, fontWeight: 600 }}>
             {isNew ? "Add custom connector" : "Edit connector"}
           </Typography>
           {isNew && (
@@ -1492,9 +1442,6 @@ function ConnectorDetailPanel({
               size="small"
               variant="outlined"
               sx={{
-                height: 20,
-                fontSize: 10,
-                fontWeight: 700,
                 borderColor: alpha(theme.palette.info.main, 0.4),
                 color: "info.main",
               }}
@@ -1537,9 +1484,12 @@ function ConnectorDetailPanel({
         />
 
         {/* Advanced settings — collapsible */}
-        <Box
+        <ButtonBase
+          component="div"
           onClick={() => setShowAdvanced(!showAdvanced)}
           sx={{
+            justifyContent: "flex-start",
+            textAlign: "left",
             display: "flex",
             alignItems: "center",
             gap: 0.75,
@@ -1549,14 +1499,18 @@ function ConnectorDetailPanel({
           }}
         >
           <Iconify
-            icon={showAdvanced ? "mdi:chevron-up" : "mdi:chevron-down"}
+            icon={
+              showAdvanced
+                ? "solar:alt-arrow-up-linear"
+                : "solar:alt-arrow-down-linear"
+            }
             width={20}
             sx={{ color: "text.secondary" }}
           />
-          <Typography sx={{ fontSize: 14, fontWeight: 600 }}>
+          <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
             Advanced settings
           </Typography>
-        </Box>
+        </ButtonBase>
 
         {showAdvanced && (
           <>
@@ -1601,11 +1555,6 @@ function ConnectorDetailPanel({
             variant="outlined"
             onClick={onCancelEdit}
             sx={{
-              textTransform: "none",
-              borderRadius: "10px",
-              fontSize: 14,
-              px: 3,
-              py: 1,
               minWidth: 100,
             }}
           >
@@ -1616,11 +1565,6 @@ function ConnectorDetailPanel({
             onClick={handleSave}
             disabled={saving}
             sx={{
-              textTransform: "none",
-              borderRadius: "10px",
-              fontSize: 14,
-              px: 3,
-              py: 1,
               minWidth: 100,
             }}
           >
@@ -1684,7 +1628,7 @@ function ConnectorDetailPanel({
             sx={{
               width: 40,
               height: 40,
-              borderRadius: "10px",
+              borderRadius: "8px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1692,11 +1636,11 @@ function ConnectorDetailPanel({
               color: "primary.main",
             }}
           >
-            <Iconify icon={getConnectorIcon(connector)} width={22} />
+            <Iconify icon={getConnectorIcon(connector)} width={20} />
           </Box>
           <Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography sx={{ fontSize: 16, fontWeight: 700 }}>
+              <Typography sx={{ fontSize: 16, fontWeight: 600 }}>
                 {connector.name}
               </Typography>
               <Chip
@@ -1712,7 +1656,6 @@ function ConnectorDetailPanel({
                       ? "warning"
                       : "default"
                 }
-                sx={{ height: 20, fontSize: 10, fontWeight: 600 }}
               />
             </Box>
             {connector.description && (
@@ -1732,12 +1675,10 @@ function ConnectorDetailPanel({
           mb: 2,
           p: 1.5,
           borderRadius: "8px",
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.03)
-            : alpha(theme.palette.common.black, 0.02),
+          bgcolor: "background.neutral",
         }}
       >
-        <Typography sx={{ fontSize: 11, color: "text.disabled", mb: 0.25 }}>
+        <Typography sx={{ fontSize: 12, color: "text.disabled", mb: 0.25 }}>
           Server URL
         </Typography>
         <Typography
@@ -1751,7 +1692,7 @@ function ConnectorDetailPanel({
         </Typography>
         {authType !== "none" && (
           <Box sx={{ mt: 0.75 }}>
-            <Typography sx={{ fontSize: 11, color: "text.disabled", mb: 0.25 }}>
+            <Typography sx={{ fontSize: 12, color: "text.disabled", mb: 0.25 }}>
               Authentication
             </Typography>
             <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
@@ -1767,19 +1708,9 @@ function ConnectorDetailPanel({
 
       {/* Error banner */}
       {lastError && (
-        <Box
-          sx={{
-            mb: 2,
-            p: 1.5,
-            borderRadius: "8px",
-            bgcolor: alpha(theme.palette.error.main, 0.08),
-            border: `1px solid ${alpha(theme.palette.error.main, 0.2)}`,
-          }}
-        >
-          <Typography sx={{ fontSize: 12, color: "error.main" }}>
-            {lastError}
-          </Typography>
-        </Box>
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {lastError}
+        </Alert>
       )}
 
       {/* Action buttons */}
@@ -1787,18 +1718,16 @@ function ConnectorDetailPanel({
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:pencil-outline" width={14} />}
+          startIcon={<Iconify icon="solar:pen-linear" width={14} />}
           onClick={() => onEdit(connector)}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
         >
           Edit
         </Button>
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:refresh" width={14} />}
+          startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
           onClick={() => onReauth?.(connector.id)}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
         >
           Re-authenticate
         </Button>
@@ -1806,9 +1735,8 @@ function ConnectorDetailPanel({
           size="small"
           variant="outlined"
           color="error"
-          startIcon={<Iconify icon="mdi:link-variant-off" width={14} />}
+          startIcon={<Iconify icon="solar:link-broken-linear" width={14} />}
           onClick={() => onDisconnect(connector.id)}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
         >
           Disconnect
         </Button>
@@ -1824,6 +1752,16 @@ function ConnectorDetailPanel({
             Choose when Falcon is allowed to use these tools.
           </Typography>
 
+          {toolError && (
+            <Typography
+              role="alert"
+              typography="s2"
+              sx={{ color: "error.main", mb: 2 }}
+            >
+              {toolError}
+            </Typography>
+          )}
+
           {/* Interactive tools */}
           {interactiveTools.length > 0 && (
             <Box sx={{ mb: 2 }}>
@@ -1837,7 +1775,7 @@ function ConnectorDetailPanel({
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
                   <Iconify
-                    icon="mdi:cursor-default-click"
+                    icon="solar:cursor-linear"
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
@@ -1854,7 +1792,6 @@ function ConnectorDetailPanel({
                     label={interactiveTools.length}
                     size="small"
                     variant="outlined"
-                    sx={{ height: 18, fontSize: 10 }}
                   />
                 </Box>
                 <Chip
@@ -1862,15 +1799,13 @@ function ConnectorDetailPanel({
                   size="small"
                   variant="outlined"
                   sx={{
-                    height: 22,
-                    fontSize: 10,
-                    borderRadius: "6px",
                     cursor: "pointer",
                   }}
                   onClick={() =>
-                    interactiveTools.forEach((t) => {
-                      if (!isToolEnabled(t)) onToolToggle(connector.id, t);
-                    })
+                    onToolsAllow(
+                      connector.id,
+                      interactiveTools.map((t) => t.name),
+                    )
                   }
                 />
               </Box>
@@ -1886,10 +1821,10 @@ function ConnectorDetailPanel({
                     key={tool.name || idx}
                     tool={tool}
                     enabled={isToolEnabled(tool)}
-                    onToggle={() => onToolToggle(connector.id, tool)}
+                    onlyEnabled={isOnlyEnabledTool(connector, tool.name)}
+                    pending={pendingNames.includes(tool.name)}
+                    onToggle={() => onToolToggle(connector.id, tool.name)}
                     isLast={idx === interactiveTools.length - 1}
-                    isDark={isDark}
-                    theme={theme}
                   />
                 ))}
               </Box>
@@ -1909,7 +1844,7 @@ function ConnectorDetailPanel({
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
                   <Iconify
-                    icon="mdi:eye-outline"
+                    icon="solar:eye-linear"
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
@@ -1926,7 +1861,6 @@ function ConnectorDetailPanel({
                     label={readOnlyTools.length}
                     size="small"
                     variant="outlined"
-                    sx={{ height: 18, fontSize: 10 }}
                   />
                 </Box>
                 <Chip
@@ -1934,15 +1868,13 @@ function ConnectorDetailPanel({
                   size="small"
                   variant="outlined"
                   sx={{
-                    height: 22,
-                    fontSize: 10,
-                    borderRadius: "6px",
                     cursor: "pointer",
                   }}
                   onClick={() =>
-                    readOnlyTools.forEach((t) => {
-                      if (!isToolEnabled(t)) onToolToggle(connector.id, t);
-                    })
+                    onToolsAllow(
+                      connector.id,
+                      readOnlyTools.map((t) => t.name),
+                    )
                   }
                 />
               </Box>
@@ -1958,10 +1890,10 @@ function ConnectorDetailPanel({
                     key={tool.name || idx}
                     tool={tool}
                     enabled={isToolEnabled(tool)}
-                    onToggle={() => onToolToggle(connector.id, tool)}
+                    onlyEnabled={isOnlyEnabledTool(connector, tool.name)}
+                    pending={pendingNames.includes(tool.name)}
+                    onToggle={() => onToolToggle(connector.id, tool.name)}
                     isLast={idx === readOnlyTools.length - 1}
-                    isDark={isDark}
-                    theme={theme}
                   />
                 ))}
               </Box>
@@ -1970,10 +1902,18 @@ function ConnectorDetailPanel({
         </Box>
       )}
 
-      {tools.length === 0 && (
+      {/* The list row carries no tools, so without this the pane would answer
+          "nothing discovered" for every connector until its detail lands. */}
+      {loading && <ToolsSkeleton />}
+
+      {!loading && detailError && (
+        <ConnectorDetailError message={detailError} onRetry={onRetry} />
+      )}
+
+      {!loading && !detailError && tools.length === 0 && (
         <Box sx={{ textAlign: "center", py: 3 }}>
           <Iconify
-            icon="mdi:tools"
+            icon="solar:toolbox-linear"
             width={28}
             sx={{ color: "text.disabled", mb: 1 }}
           />
@@ -2018,13 +1958,19 @@ ConnectorDetailPanel.propTypes = {
   onDisconnect: PropTypes.func,
   onReauth: PropTypes.func,
   onToolToggle: PropTypes.func,
+  onToolsAllow: PropTypes.func,
+  toolError: PropTypes.string,
+  pendingNames: PropTypes.arrayOf(PropTypes.string),
+  loading: PropTypes.bool,
+  detailError: PropTypes.string,
+  onRetry: PropTypes.func,
   onSaved: PropTypes.func,
   onCancelEdit: PropTypes.func,
   onEdit: PropTypes.func,
 };
 
 // Tool row component for clean per-item rendering
-function ToolRow({ tool, enabled, onToggle, isLast, isDark, theme }) {
+function ToolRow({ tool, enabled, onlyEnabled, pending, onToggle, isLast }) {
   return (
     <Box
       sx={{
@@ -2033,11 +1979,10 @@ function ToolRow({ tool, enabled, onToggle, isLast, isDark, theme }) {
         justifyContent: "space-between",
         px: 2,
         py: 1,
-        borderBottom: isLast ? "none" : (t) => `1px solid ${t.palette.divider}`,
+        borderBottom: isLast ? "none" : "1px solid",
+        borderColor: "border.subtle",
         "&:hover": {
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.02)
-            : alpha(theme.palette.common.black, 0.01),
+          bgcolor: "action.hover",
         },
       }}
     >
@@ -2049,7 +1994,7 @@ function ToolRow({ tool, enabled, onToggle, isLast, isDark, theme }) {
           <Typography
             noWrap
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.secondary",
               mt: 0.15,
               maxWidth: 400,
@@ -2060,21 +2005,40 @@ function ToolRow({ tool, enabled, onToggle, isLast, isDark, theme }) {
         )}
       </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
-        <IconButton
+        {/* The guard refuses this click; say so before it, not after. */}
+        <CustomTooltip
+          show={onlyEnabled}
+          arrow
           size="small"
-          onClick={onToggle}
-          title={enabled ? "Allowed" : "Denied"}
-          sx={{
-            width: 26,
-            height: 26,
-            color: enabled ? "success.main" : "text.disabled",
-          }}
+          placement="left"
+          title={LAST_ENABLED_TOOL_HINT}
         >
-          <Iconify
-            icon={enabled ? "mdi:check-circle" : "mdi:close-circle-outline"}
-            width={18}
-          />
-        </IconButton>
+          <IconButton
+            size="small"
+            onClick={onToggle}
+            // The accessible name stays put; the native title is suppressed
+            // under the tooltip so the two don't stack on hover.
+            aria-label={enabled ? "Allowed" : "Denied"}
+            title={onlyEnabled ? undefined : enabled ? "Allowed" : "Denied"}
+            sx={{
+              width: 26,
+              color: enabled ? "success.main" : "text.disabled",
+            }}
+          >
+            {pending ? (
+              <CircularProgress size={16} role="status" aria-label="Saving" />
+            ) : (
+              <Iconify
+                icon={
+                  enabled
+                    ? "solar:check-circle-bold"
+                    : "solar:close-circle-linear"
+                }
+                width={20}
+              />
+            )}
+          </IconButton>
+        </CustomTooltip>
       </Box>
     </Box>
   );
@@ -2088,27 +2052,66 @@ ToolRow.propTypes = {
     enabled: PropTypes.bool,
   }).isRequired,
   enabled: PropTypes.bool,
+  onlyEnabled: PropTypes.bool,
+  pending: PropTypes.bool,
   onToggle: PropTypes.func.isRequired,
   isLast: PropTypes.bool,
-  isDark: PropTypes.bool,
-  theme: PropTypes.object,
 };
 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export default function CustomizePanel() {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   const [selectedTab, setSelectedTab] = useState("skills");
   const [skills, setSkills] = useState([]);
   const [connectors, setConnectors] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [connectorDetailLoading, setConnectorDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(null);
+  const applyToolNames = useCallback(
+    (connectorId, names) => {
+      setSelectedItem((prev) =>
+        prev?.id === connectorId
+          ? { ...prev, enabled_tool_names: names }
+          : prev,
+      );
+      // tool_count is the only tool-derived field the list carries.
+      setConnectors((prev) =>
+        prev.map((c) =>
+          c.id === connectorId ? { ...c, tool_count: names.length } : c,
+        ),
+      );
+    },
+    [setSelectedItem, setConnectors],
+  );
+
+  const {
+    toolError,
+    setToolError,
+    pendingNames,
+    handleToolToggle,
+    handleToolsAllow,
+  } = useConnectorToolPermissions({
+    connector: selectedItem,
+    onApply: applyToolNames,
+  });
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [loadingConnectors, setLoadingConnectors] = useState(false);
   const [isEditingSkill, setIsEditingSkill] = useState(false);
   const [isEditingConnector, setIsEditingConnector] = useState(false);
+
+  // Monotonic ticket for the detail fetch kicked off by handleSelectItem.
+  // Bumped whenever the selection is cleared/changed out from under it, so a
+  // response that lands after a newer selection can't overwrite it.
+  const detailRequestRef = useRef(0);
+
+  // Abandon any in-flight detail fetch. Its response is ignored once the
+  // ticket moves, which means its `finally` no longer clears the loading flag
+  // either — so clear it here, or the pane keeps a skeleton up forever.
+  const abandonDetailRequest = useCallback(() => {
+    detailRequestRef.current += 1;
+    setConnectorDetailLoading(false);
+  }, []);
 
   // ---- Load data ----
   const loadSkills = useCallback(async () => {
@@ -2146,75 +2149,122 @@ export default function CustomizePanel() {
   }, [loadSkills, loadConnectors]);
 
   // ---- Handlers ----
-  const handleTabChange = useCallback((tab) => {
-    setSelectedTab(tab);
-    setSelectedItem(null);
-  }, []);
+  const handleTabChange = useCallback(
+    (tab) => {
+      abandonDetailRequest();
+      setSelectedTab(tab);
+      setSelectedItem(null);
+    },
+    [abandonDetailRequest],
+  );
 
   const handleSelectItem = useCallback(
     async (item) => {
       setSelectedItem(item); // show immediately with list data
       setIsEditingSkill(false);
       setIsEditingConnector(false);
+      setToolError(null); // stale error from the previously selected connector
+      setDetailError(null);
 
-      // For skills, fetch full detail (includes instructions)
-      if (selectedTab === "skills" && item?.id) {
-        try {
-          const { getSkill } = await import("../hooks/useFalconAPI");
-          const resp = await getSkill(item.id);
-          const fullSkill = resp.result || resp;
-          setSelectedItem(fullSkill);
-        } catch {
-          // keep partial data from list
+      if (!item?.id) {
+        abandonDetailRequest();
+        return;
+      }
+
+      // Each call gets its own ticket; a response is only applied if it's
+      // still the most recent one requested. Without this, selecting B while
+      // A's detail fetch is still in flight lets A's late response clobber
+      // B's once it resolves out of order.
+      const ticket = ++detailRequestRef.current;
+      const isStale = () => ticket !== detailRequestRef.current;
+
+      // Both tabs list from an endpoint whose serializer is a summary: skills
+      // arrive without instructions, connectors without discovered_tools or
+      // enabled_tool_names. Either pane needs the detail record before it can
+      // render what it is for.
+      setConnectorDetailLoading(selectedTab === "connectors");
+      try {
+        const api = await import("../hooks/useFalconAPI");
+        if (selectedTab === "skills") {
+          const resp = await api.getSkill(item.id);
+          if (isStale()) return;
+          setSelectedItem(resp.result || resp);
+        } else if (selectedTab === "connectors") {
+          const detail = await api.getConnector(item.id);
+          if (isStale()) return;
+          setSelectedItem(detail);
         }
+      } catch (error) {
+        if (isStale()) return;
+        setDetailError(
+          toolActionErrorMessage(error, "Couldn't load this connector."),
+        );
+      } finally {
+        if (!isStale()) setConnectorDetailLoading(false);
       }
     },
-    [selectedTab],
+    [selectedTab, abandonDetailRequest],
   );
 
   const handleCreateSkill = useCallback(() => {
+    abandonDetailRequest();
     setSelectedItem(null);
     setIsEditingSkill(true);
-  }, []);
+  }, [abandonDetailRequest]);
 
-  const handleEditSkill = useCallback((skill) => {
-    setSelectedItem(skill);
-    setIsEditingSkill(true);
-  }, []);
+  const handleEditSkill = useCallback(
+    (skill) => {
+      abandonDetailRequest();
+      setSelectedItem(skill);
+      setIsEditingSkill(true);
+    },
+    [abandonDetailRequest],
+  );
 
-  const handleDuplicateSkill = useCallback((skill) => {
-    // Pre-fill form with skill data but clear id so it creates a new one
-    setSelectedItem({
-      ...skill,
-      id: null,
-      name: `${skill.name} (copy)`,
-      is_system: false,
-      is_builtin: false,
-    });
-    setIsEditingSkill(true);
-  }, []);
+  const handleDuplicateSkill = useCallback(
+    (skill) => {
+      abandonDetailRequest();
+      // Pre-fill form with skill data but clear id so it creates a new one
+      setSelectedItem({
+        ...skill,
+        id: null,
+        name: `${skill.name} (copy)`,
+        is_system: false,
+        is_builtin: false,
+      });
+      setIsEditingSkill(true);
+    },
+    [abandonDetailRequest],
+  );
 
   const handleSkillSaved = useCallback(() => {
+    abandonDetailRequest();
     loadSkills();
     setSelectedItem(null);
     setIsEditingSkill(false);
-  }, [loadSkills]);
+  }, [loadSkills, abandonDetailRequest]);
 
   const handleCreateConnector = useCallback(() => {
+    abandonDetailRequest();
     setSelectedItem(null);
     setIsEditingConnector(true);
-  }, []);
+  }, [abandonDetailRequest]);
 
-  const handleEditConnector = useCallback((conn) => {
-    setSelectedItem(conn);
-    setIsEditingConnector(true);
-  }, []);
+  const handleEditConnector = useCallback(
+    (conn) => {
+      abandonDetailRequest();
+      setSelectedItem(conn);
+      setIsEditingConnector(true);
+    },
+    [abandonDetailRequest],
+  );
 
   const handleConnectorSaved = useCallback(() => {
+    abandonDetailRequest();
     loadConnectors();
     setSelectedItem(null);
     setIsEditingConnector(false);
-  }, [loadConnectors]);
+  }, [loadConnectors, abandonDetailRequest]);
 
   // Listen for OAuth callback postMessage from popup
   useEffect(() => {
@@ -2239,12 +2289,16 @@ export default function CustomizePanel() {
           // if this fails, the connector data from loadConnectors is still valid.
         }
 
-        // Fetch the updated connector list to get the connector with tools
+        // Re-select through handleSelectItem rather than assigning the row:
+        // the list serializer carries neither discovered_tools nor
+        // enabled_tool_names, so assigning it would blank the tools the user
+        // just authorised. handleSelectItem fetches the detail record and
+        // takes a ticket, so a slow response can't land on a newer selection.
         try {
           const data = await fetchConnectors();
           const results = data.results || data || [];
           const updated = results.find((c) => c.id === connectorId);
-          if (updated) setSelectedItem(updated);
+          if (updated) await handleSelectItem(updated);
         } catch {
           // silent — loadConnectors already refreshed the list
         }
@@ -2252,7 +2306,7 @@ export default function CustomizePanel() {
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [loadConnectors, selectedItem?.id]);
+  }, [loadConnectors, selectedItem?.id, handleSelectItem]);
 
   const handleReauth = useCallback(
     async (connectorId) => {
@@ -2297,40 +2351,18 @@ export default function CustomizePanel() {
     [loadConnectors, connectors],
   );
 
-  const handleDisconnect = useCallback(async (connectorId) => {
-    try {
-      await deleteConnector(connectorId);
-      setConnectors((prev) => prev.filter((c) => c.id !== connectorId));
-      setSelectedItem(null);
-    } catch {
-      // silent
-    }
-  }, []);
-
-  const handleToolToggle = useCallback(
-    async (connectorId, tool) => {
-      const conn = connectors.find((c) => c.id === connectorId);
-      if (!conn) return;
-      const updatedTools = (conn.tools || []).map((t) =>
-        (t.name || t.id) === (tool.name || tool.id)
-          ? { ...t, enabled: t.enabled === false }
-          : t,
-      );
+  const handleDisconnect = useCallback(
+    async (connectorId) => {
       try {
-        await updateConnectorTools(connectorId, updatedTools);
-        setConnectors((prev) =>
-          prev.map((c) =>
-            c.id === connectorId ? { ...c, tools: updatedTools } : c,
-          ),
-        );
-        setSelectedItem((prev) =>
-          prev?.id === connectorId ? { ...prev, tools: updatedTools } : prev,
-        );
+        await deleteConnector(connectorId);
+        abandonDetailRequest();
+        setConnectors((prev) => prev.filter((c) => c.id !== connectorId));
+        setSelectedItem(null);
       } catch {
         // silent
       }
     },
-    [connectors],
+    [abandonDetailRequest],
   );
 
   // ---- Render ----
@@ -2341,9 +2373,7 @@ export default function CustomizePanel() {
           display: "flex",
           height: "100%",
           width: "100%",
-          bgcolor: isDark
-            ? alpha(theme.palette.background.default, 0.6)
-            : theme.palette.background.default,
+          bgcolor: "background.default",
         }}
       >
         {/* Panel 1: Navigation */}
@@ -2388,6 +2418,12 @@ export default function CustomizePanel() {
             onDisconnect={handleDisconnect}
             onReauth={handleReauth}
             onToolToggle={handleToolToggle}
+            onToolsAllow={handleToolsAllow}
+            toolError={toolError}
+            pendingNames={pendingNames}
+            loading={connectorDetailLoading}
+            detailError={detailError}
+            onRetry={() => handleSelectItem(selectedItem)}
             onEdit={handleEditConnector}
             onSaved={handleConnectorSaved}
             onCancelEdit={() => setIsEditingConnector(false)}

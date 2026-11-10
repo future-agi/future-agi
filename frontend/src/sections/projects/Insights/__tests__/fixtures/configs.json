@@ -1,0 +1,168 @@
+{
+  "status": true,
+  "result": {
+    "configs": [
+      {
+        "id": "8897a24d-b51e-4a8e-9a87-69213669f295",
+        "name": "users/personas test",
+        "unit": "users",
+        "lens": "personas",
+        "question": "Who are our customers?",
+        "agent_description": "Harbor, a customer support assistant for Harbor & Pine, an online outdoor apparel store.",
+        "instructions": "",
+        "attributes": [
+          {
+            "key": "asked_for_human",
+            "type": "boolean",
+            "description": "The customer asked for a human agent"
+          }
+        ],
+        "sample_size": 300,
+        "scope": {},
+        "has_taxonomy": true,
+        "taxonomy": {
+          "subs": [],
+          "tops": [
+            {
+              "id": "2943478cbccc",
+              "name": "Order Tracking and Delivery Chasers",
+              "level": 1,
+              "status": "active",
+              "parent_id": null,
+              "description": "Customers who come back to check on pending or late orders, including those who grow frustrated when lookups stall or details are repeatedly requested."
+            },
+            {
+              "id": "ca6096ec8b53",
+              "name": "Shoppers, Account Holders, and Escalators",
+              "level": 1,
+              "status": "active",
+              "parent_id": null,
+              "description": "Customers researching or buying apparel, seeking discounts, changing account details, or demanding a human agent rather than resolving issues with the assistant."
+            }
+          ],
+          "frozen_at": "2026-10-15T09:52:33.703666+00:00",
+          "source_run_id": "fa547eb2-f8bf-4774-a19f-7dc9d44f41b9"
+        },
+        "created_at": "2026-10-15T09:50:44.884992Z",
+        "latest_run": {
+          "id": "fa547eb2-f8bf-4774-a19f-7dc9d44f41b9",
+          "status": "completed",
+          "stage": "done",
+          "created_at": "2026-10-15T09:50:44.955044Z",
+          "finished_at": "2026-10-15T09:52:33.606814Z",
+          "population_size": 46,
+          "sample_size": 46,
+          "analysed_count": 40,
+          "taxonomy_mode": "discover",
+          "distribution": [
+            {
+              "category_id": "ca6096ec8b53",
+              "name": "Shoppers, Account Holders, and Escalators",
+              "share": 0.625,
+              "count": 25,
+              "status": "active"
+            },
+            {
+              "category_id": "2943478cbccc",
+              "name": "Order Tracking and Delivery Chasers",
+              "share": 0.375,
+              "count": 15,
+              "status": "active"
+            }
+          ],
+          "scope": {
+            "label": "All"
+          }
+        }
+      },
+      {
+        "id": "0e9dd030-567a-4911-966c-55f9e68f921f",
+        "name": "sessions/failures test",
+        "unit": "sessions",
+        "lens": "failures",
+        "question": "Where does the agent fall short?",
+        "agent_description": "Harbor, a customer support assistant for Harbor & Pine, an online outdoor apparel store.",
+        "instructions": "",
+        "attributes": [
+          {
+            "key": "asked_for_human",
+            "type": "boolean",
+            "description": "The customer asked for a human agent"
+          }
+        ],
+        "sample_size": 300,
+        "scope": {},
+        "has_taxonomy": true,
+        "taxonomy": {
+          "subs": [],
+          "tops": [
+            {
+              "id": "a55e9078defc",
+              "name": "Unverified Claims and Fabricated Facts",
+              "level": 1,
+              "status": "active",
+              "parent_id": null,
+              "description": "Agent asserts order, policy, product, or stock and shipping facts as certain without any shown lookup or source."
+            },
+            {
+              "id": "ea1800426229",
+              "name": "Policy and Security Control Failures",
+              "level": 1,
+              "status": "active",
+              "parent_id": null,
+              "description": "Agent abandons stated policy or skips required verification, granting refunds, codes, or account changes it should not have."
+            },
+            {
+              "id": "3ffe0720fc9b",
+              "name": "Unresponsive Support and No Escalation",
+              "level": 1,
+              "status": "active",
+              "parent_id": null,
+              "description": "Agent loops on repeated prompts or deflections and ignores customer requests for a human, a language, or a real resolution."
+            }
+          ],
+          "frozen_at": "2026-10-15T09:46:54.432249+00:00",
+          "source_run_id": "4a335c22-89f1-4fa4-aef0-b002e3ce8d43"
+        },
+        "created_at": "2026-10-15T09:44:09.841263Z",
+        "latest_run": {
+          "id": "4a335c22-89f1-4fa4-aef0-b002e3ce8d43",
+          "status": "completed",
+          "stage": "done",
+          "created_at": "2026-10-15T09:44:09.871575Z",
+          "finished_at": "2026-10-15T09:46:54.284132Z",
+          "population_size": 108,
+          "sample_size": 108,
+          "analysed_count": 72,
+          "taxonomy_mode": "discover",
+          "distribution": [
+            {
+              "category_id": "a55e9078defc",
+              "name": "Unverified Claims and Fabricated Facts",
+              "share": 0.3888888888888889,
+              "count": 28,
+              "status": "active"
+            },
+            {
+              "category_id": "3ffe0720fc9b",
+              "name": "Unresponsive Support and No Escalation",
+              "share": 0.3611111111111111,
+              "count": 26,
+              "status": "active"
+            },
+            {
+              "category_id": "ea1800426229",
+              "name": "Policy and Security Control Failures",
+              "share": 0.25,
+              "count": 18,
+              "status": "active"
+            }
+          ],
+          "scope": {
+            "label": "All"
+          }
+        }
+      }
+    ]
+  }
+}

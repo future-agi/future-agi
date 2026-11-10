@@ -1,4 +1,3 @@
-import { useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -7,29 +6,27 @@ import {
   ListItemText,
   TextField,
   InputAdornment,
-  Chip,
+  Typography,
+  Button,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-const TYPE_COLORS = {
-  string: "info",
-  number: "warning",
-  boolean: "success",
-};
-
-const AttributeKeyList = ({ keys, selectedKey, onSelectKey }) => {
-  const [search, setSearch] = useState("");
-
-  const filtered = keys.filter((k) =>
-    k.key.toLowerCase().includes(search.toLowerCase()),
-  );
-
+const AttributeKeyList = ({
+  keys,
+  selectedKey,
+  onSelectKey,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
+  search,
+  onSearchChange,
+}) => {
   return (
     <Box
       sx={{
-        width: 300,
+        width: 280,
         borderRight: 1,
-        borderColor: "divider",
+        borderColor: "border.default",
         display: "flex",
         flexDirection: "column",
       }}
@@ -38,14 +35,14 @@ const AttributeKeyList = ({ keys, selectedKey, onSelectKey }) => {
         <TextField
           size="small"
           fullWidth
-          placeholder="Search attributes..."
+          placeholder="Enter exact attribute key..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => onSearchChange(e.target.value)}
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
                   width={16}
                   sx={{ color: "text.disabled" }}
                 />
@@ -54,36 +51,67 @@ const AttributeKeyList = ({ keys, selectedKey, onSelectKey }) => {
           }}
         />
       </Box>
-      <List sx={{ overflow: "auto", flex: 1, p: 1 }} dense>
-        {filtered.map(({ key, type, count }) => (
+      <List
+        sx={{ overflow: "auto", flex: 1, p: 1 }}
+        dense
+        onScroll={(event) => {
+          const list = event.currentTarget;
+          if (
+            hasMore &&
+            !isLoadingMore &&
+            list.scrollTop + list.clientHeight >= list.scrollHeight - 32
+          ) {
+            onLoadMore?.();
+          }
+        }}
+      >
+        {keys.map(({ key, type, count, count_exact: countExact }) => (
           <ListItemButton
             key={key}
             selected={selectedKey === key}
             onClick={() => onSelectKey(key)}
-            sx={{ borderRadius: 1, py: 0.75 }}
+            sx={{ borderRadius: "6px", py: 0.5 }}
           >
             <ListItemText
               primary={key}
-              secondary={count.toLocaleString() + " spans"}
+              secondary={
+                countExact && Number.isFinite(count)
+                  ? count.toLocaleString() + " spans"
+                  : "Recent attribute"
+              }
               primaryTypographyProps={{
-                variant: "body2",
-                fontWeight: selectedKey === key ? 600 : 400,
+                fontSize: 13,
+                fontWeight: selectedKey === key ? 500 : 400,
                 noWrap: true,
               }}
-              secondaryTypographyProps={{ variant: "caption" }}
+              secondaryTypographyProps={{
+                fontSize: 12,
+                color: "text.tertiary",
+              }}
             />
-            <Chip
-              label={type}
-              size="small"
-              color={TYPE_COLORS[type] || "default"}
-              variant="outlined"
-              sx={{ ml: 1, height: 20, fontSize: "0.65rem" }}
-            />
+            <Typography
+              component="span"
+              sx={{ ml: 1, fontSize: 12, color: "text.tertiary" }}
+            >
+              {type}
+            </Typography>
           </ListItemButton>
         ))}
-        {filtered.length === 0 && (
+        {keys.length === 0 && !hasMore && (
           <Box sx={{ p: 2, textAlign: "center", color: "text.secondary" }}>
             No attributes found
+          </Box>
+        )}
+        {isLoadingMore && (
+          <Box sx={{ p: 1, textAlign: "center", color: "text.secondary" }}>
+            Loading more…
+          </Box>
+        )}
+        {hasMore && !isLoadingMore && (
+          <Box sx={{ p: 1, textAlign: "center" }}>
+            <Button size="small" onClick={() => onLoadMore?.()}>
+              Load more attributes
+            </Button>
           </Box>
         )}
       </List>
@@ -101,6 +129,11 @@ AttributeKeyList.propTypes = {
   ).isRequired,
   selectedKey: PropTypes.string,
   onSelectKey: PropTypes.func.isRequired,
+  hasMore: PropTypes.bool,
+  isLoadingMore: PropTypes.bool,
+  onLoadMore: PropTypes.func,
+  search: PropTypes.string.isRequired,
+  onSearchChange: PropTypes.func.isRequired,
 };
 
 export default AttributeKeyList;

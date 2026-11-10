@@ -8,19 +8,15 @@ import traceback
 from dataclasses import dataclass
 from typing import Any
 
-import docx
 import structlog
 from django.db import close_old_connections
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-# LangChain imports
-from langchain_community.document_loaders import PyPDFLoader
 from striprtf.striprtf import rtf_to_text
 
 from agentic_eval.core.embeddings.embedding_manager import (
     EmbeddingManager,
     log_performance,
 )
+from agentic_eval.core.embeddings.serving_client import SERVING_START_HINT
 from tfc.telemetry import wrap_for_thread
 
 logger = structlog.get_logger(__name__)
@@ -30,6 +26,16 @@ from tfc.utils.storage_client import get_storage_client
 KB_TABLE_NAME = "syn"
 KB_INDEX_COL_TYPE = "text"
 KB_INDEX_COL_NAME = "chunk_text"
+
+# Shown to the user as the file's / knowledge base's error.
+KB_EMBEDDINGS_UNAVAILABLE_ERROR = (
+    "Knowledge bases need the model serving service to embed documents, and it "
+    f"is not reachable. {SERVING_START_HINT} Then upload the file again."
+)
+
+
+class KnowledgeBaseIndexingError(RuntimeError):
+    """A file could not be indexed; the message is meant for the user."""
 
 
 @dataclass
@@ -62,10 +68,16 @@ class KBIndexer:
 
     def load_pdf(self, pdf_path: str) -> str:
         """Load and extract text from a PDF file."""
+        from pypdf import PdfReader  # lazy: keep pypdf off the startup path
+
         try:
-            loader = PyPDFLoader(pdf_path)
-            pages = loader.load()
-            text = "\n\n".join(page.page_content for page in pages)
+            # The same extraction langchain-community's PyPDFLoader did (pypdf
+            # extract_text() per page, stripped, pages joined by a blank line),
+            # without shipping langchain-community + SQLAlchemy in the image.
+            reader = PdfReader(pdf_path)
+            text = "\n\n".join(
+                (page.extract_text() or "").strip() for page in reader.pages
+            )
 
             cleaned_text = self._clean_text(text)
 
@@ -136,6 +148,8 @@ class KBIndexer:
         Args:
             docx_path: Path to the docx file
         """
+        import docx  # lazy: keep heavy import off the startup path
+
         with open(docx_path, "rb") as file:
             doc = docx.Document(file)
             text = "\n\n".join([paragraph.text for paragraph in doc.paragraphs])
@@ -158,11 +172,22 @@ class KBIndexer:
         else:
             return text
 
+    def _require_embeddings(self) -> None:
+        if not self.embedding_manager.text_embeddings_available():
+            raise KnowledgeBaseIndexingError(KB_EMBEDDINGS_UNAVAILABLE_ERROR)
+
     @log_performance
     def process_content(
         self, text: str, file_id: str, kb_id: str, organization_id: str
     ):
+        # Embedding failures are logged per chunk and skipped further down, so
+        # without serving every chunk would be dropped and the file still
+        # reported as indexed. Fail up front with a reason the user can act on.
+        self._require_embeddings()
+
         # Optimize chunk size based on text length
+        from langchain_text_splitters import RecursiveCharacterTextSplitter  # lazy
+
         chunk_size = 800
         chunk_overlap = 150
 
@@ -213,7 +238,7 @@ class KBIndexer:
 
                 # Process batch in parallel
                 try:
-                    self.embedding_manager.parallel_process_metadata(
+                    inserted_ids = self.embedding_manager.parallel_process_metadata(
                         eval_id=kb_id,
                         metadatas=metadatas,
                         inputs_formater=[KB_INDEX_COL_NAME],
@@ -222,7 +247,7 @@ class KBIndexer:
                     logger.info(
                         f"Processed batch {batch_idx + 1} of {(len(documents) + batch_size - 1) // batch_size}"
                     )
-                    return new_chunks
+                    return new_chunks, len(inserted_ids or [])
                 except Exception as e:
                     error_msg = (
                         f"Error in parallel processing for batch {batch_idx}: {str(e)}"
@@ -238,6 +263,7 @@ class KBIndexer:
 
         # Use ThreadPoolExecutor to process batches concurrently
         errors = []
+        embedded_count = 0
 
         # Wrap function with OTel context propagation for thread safety
         wrapped_process_batch = wrap_for_thread(process_batch)
@@ -253,8 +279,9 @@ class KBIndexer:
             for future in concurrent.futures.as_completed(future_to_batch):
                 batch_idx = future_to_batch[future]
                 try:
-                    batch_chunks = future.result()
+                    batch_chunks, batch_embedded = future.result()
                     all_chunks.extend(batch_chunks)
+                    embedded_count += batch_embedded
                 except Exception as e:
                     error_msg = f"Error in batch {batch_idx}: {str(e)}"
                     logger.exception(error_msg)
@@ -265,6 +292,15 @@ class KBIndexer:
             error_summary = "\n".join(errors)
             raise RuntimeError(
                 f"Errors occurred during batch processing:\n{error_summary}"
+            )
+
+        # Rows whose embedding failed are skipped, not raised.
+        if embedded_count < len(documents):
+            self._require_embeddings()
+            raise KnowledgeBaseIndexingError(
+                f"{len(documents) - embedded_count} of {len(documents)} chunks of "
+                "this file could not be embedded, so it was not indexed. The "
+                "backend logs have the embedding error."
             )
 
         # Update the chunks list with all processed chunks

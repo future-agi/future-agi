@@ -5,7 +5,7 @@ import React from "react";
 const WeightSliderSection = ({ title, children, listSx }) => {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-      <Typography fontWeight={600} fontSize="14px" color="text.primary">
+      <Typography fontWeight={600} fontSize="13px" color="text.primary">
         {title}
       </Typography>
       <Box

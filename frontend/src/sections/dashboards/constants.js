@@ -12,10 +12,10 @@ export const DATE_PRESETS = [
 ];
 
 export const WIDTH_OPTIONS = [
-  { label: "1/4 width", value: 3, icon: "mdi:view-column-outline" },
-  { label: "1/3 width", value: 4, icon: "mdi:view-column-outline" },
-  { label: "1/2 width", value: 6, icon: "mdi:view-split-vertical" },
-  { label: "Full width", value: 12, icon: "mdi:view-sequential-outline" },
+  { label: "1/4 width", value: 3, icon: "solar:columns-3-linear" },
+  { label: "1/3 width", value: 4, icon: "solar:columns-3-linear" },
+  { label: "1/2 width", value: 6, icon: "solar:columns-2-linear" },
+  { label: "Full width", value: 12, icon: "solar:list-linear" },
 ];
 
 export const MIN_WIDGET_HEIGHT = 120;
@@ -54,3 +54,10 @@ export const DATE_CHIP_SX = {
 // the editor preview and the saved widget cannot answer that case differently.
 export const NO_DATA_FOR_RANGE_MESSAGE =
   "No data available for this time period. Try a broader range.";
+
+export const DESCRIPTION_TOOLTIP_SX = {
+  maxHeight: 260,
+  overflowY: "auto",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+};

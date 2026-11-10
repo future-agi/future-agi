@@ -84,6 +84,36 @@ export const applySavedColumns = (
     columnStateToOrder(columnState),
   );
 
+// Replace a slot's custom columns with the persisted set once its base column
+// definitions exist. Persisted display state can hydrate after a warm grid has
+// already fired its config callback, so relying only on a "pending" ref loses
+// the selected custom columns on reload. Keep this helper pure and idempotent
+// so both the immediate and callback-driven hydration paths can use it safely.
+export const mergePersistedCustomColumns = (
+  slotColumns,
+  persistedCustomColumns,
+) => {
+  const slot = Array.isArray(slotColumns) ? slotColumns : [];
+  const persisted = Array.isArray(persistedCustomColumns)
+    ? persistedCustomColumns
+    : [];
+  const nonCustom = slot.filter((col) => col?.groupBy !== "Custom Columns");
+  const seen = new Set();
+  const custom = persisted.filter((col) => {
+    if (!col?.id || seen.has(col.id)) return false;
+    seen.add(col.id);
+    return true;
+  });
+  const currentCustom = slot.filter((col) => col?.groupBy === "Custom Columns");
+  const unchanged =
+    nonCustom.length + custom.length === slot.length &&
+    currentCustom.length === custom.length &&
+    currentCustom.every((col, index) => col?.id === custom[index]?.id);
+  return unchanged
+    ? slot
+    : [...nonCustom, ...custom.map((col) => ({ ...col }))];
+};
+
 // True when a current column's visibility diverges from the saved view's
 // columnState. Only compares cols the baseline knows about; ignores custom cols.
 export const isColumnVisibilityDirty = (slotColumns, columnState) => {
