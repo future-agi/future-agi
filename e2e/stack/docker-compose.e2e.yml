@@ -62,6 +62,8 @@ services:
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
   worker:
+    # Async code evals use the same isolated executor as the playground.
+    networks: [default, link-public]
     restart: "no"
     # Keep the worker mount-free for the managed-mock attestation as well.
     volumes: !reset []
@@ -71,6 +73,24 @@ services:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
+  # Keep explicit queue workers connected too when a profile selects them.
+  # Their base YAML anchor is expanded before this overlay is merged.
+  worker-default:
+    networks: [default, link-public]
+  worker-tasks-s:
+    networks: [default, link-public]
+  worker-tasks-l:
+    networks: [default, link-public]
+  worker-tasks-xl:
+    networks: [default, link-public]
+  worker-exact-aggregation:
+    networks: [default, link-public]
+  worker-trace-ingestion:
+    networks: [default, link-public]
+  worker-agent-compass:
+    networks: [default, link-public]
+  worker-simulation-runner:
+    networks: [default, link-public]
   fi-collector:
     # Collector and consumer must run the same checked-out transport protocol.
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
