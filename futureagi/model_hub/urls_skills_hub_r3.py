@@ -27,9 +27,21 @@ from model_hub.views.skills_workflows import (
 
 # J1 retained migration: no source writes or release-label movement.
 urlpatterns = [
-    path("intake/langfuse/preview/", LangfusePreviewView.as_view(), name="skills-langfuse-preview"),
-    path("intake/<uuid:plan_id>/review/", MigrationReviewView.as_view(), name="skills-migration-review"),
-    path("<uuid:resource_id>/versions/<int:number>/migration-export/", MigrationExportView.as_view(), name="skills-migration-export"),
+    path(
+        "intake/langfuse/preview/",
+        LangfusePreviewView.as_view(),
+        name="skills-langfuse-preview",
+    ),
+    path(
+        "intake/<uuid:plan_id>/review/",
+        MigrationReviewView.as_view(),
+        name="skills-migration-review",
+    ),
+    path(
+        "<uuid:resource_id>/versions/<int:number>/migration-export/",
+        MigrationExportView.as_view(),
+        name="skills-migration-export",
+    ),
     path("intake/preview/", IntakePreviewView.as_view(), name="skills-intake-preview"),
     path("intake/<uuid:plan_id>/", IntakePlanView.as_view(), name="skills-intake-plan"),
     path(
