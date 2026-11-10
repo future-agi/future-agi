@@ -486,6 +486,99 @@ class TestRows:
         assert routing["reason_code"] != "production_only"
         assert routing["status"] != "blocked"
 
+    def test_a_service_of_the_agent_s_own_compose_app_is_not_production(
+        self, user, workspace, storage
+    ):
+        # Tools the agent's code calls over HTTP on a service its own compose file runs: the build runs that file.
+        contract = {
+            "runtime": {"execution": "compose", "compose_file": "docker-compose.yml"},
+            "tool_entrypoints": [
+                {"tool": "read_deal", "mode": "construct", "service": ""},
+                {"tool": "update_deal", "mode": "construct", "service": ""},
+            ],
+            "dependencies": [
+                {
+                    "kind": "service",
+                    "name": "tools-api",
+                    "engine": "",
+                    "reached": {
+                        "host": "tools-api",
+                        "port": 8080,
+                        "dsn_env": "TOOLS_API_URL",
+                    },
+                    "used_by": ["read_deal", "update_deal"],
+                }
+            ],
+        }
+        environment = _environment(user, workspace, storage, "rd-compose-service")
+        _certify(environment, storage)
+        _built(environment, contract=contract)
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["reason_code"] != "production_only"
+        assert routing["status"] != "blocked"
+
+    def test_a_service_of_the_agent_s_source_its_code_calls_is_not_production(
+        self, user, workspace, storage
+    ):
+        # The agent's own code calls the tools service a tool entrypoint names, with no host recorded for it.
+        contract = {
+            "tool_entrypoints": [
+                {"tool": "read_deal", "mode": "construct", "service": "tools-api"},
+                {"tool": "update_deal", "mode": "construct", "service": "tools-api"},
+            ],
+            "dependencies": [
+                {
+                    "kind": "service",
+                    "name": "tools-api",
+                    "engine": "fastapi",
+                    "reached": {},
+                    "used_by": ["read_deal", "update_deal"],
+                }
+            ],
+        }
+        environment = _environment(user, workspace, storage, "rd-construct-service")
+        _certify(environment, storage)
+        _built(environment, contract=contract)
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["reason_code"] != "production_only"
+        assert routing["status"] != "blocked"
+
+    def test_a_named_host_outside_the_compose_app_is_still_production(
+        self, user, workspace, storage
+    ):
+        contract = {
+            "runtime": {"execution": "compose", "compose_file": "docker-compose.yml"},
+            "tool_entrypoints": [
+                {"tool": "charge", "mode": "construct", "service": ""}
+            ],
+            "dependencies": [
+                {
+                    "kind": "service",
+                    "name": "payments",
+                    "engine": "",
+                    "reached": {
+                        "host": "api.payments.example",
+                        "dsn_env": "PAYMENTS_URL",
+                    },
+                    "used_by": ["charge"],
+                }
+            ],
+        }
+        environment = _environment(user, workspace, storage, "rd-compose-external")
+        _certify(environment, storage)
+        _built(environment, contract=contract)
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "blocked",
+            "production_only",
+        )
+
     def test_a_service_no_tool_entrypoint_serves_is_still_production(
         self, user, workspace, storage
     ):
