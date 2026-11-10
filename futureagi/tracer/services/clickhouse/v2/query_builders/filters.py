@@ -418,6 +418,116 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
     _TRACE_TAGS_VERSION = "_version"
     _TRACE_TAGS_DELETED = "is_deleted"
 
+    def _build_condition(
+        self,
+        col_id,
+        col_type,
+        filter_type,
+        filter_op,
+        filter_value,
+        *,
+        attribute_value_types=None,
+    ):
+        if col_id in {"tag", "tags"} and col_type in {
+            "",
+            self.NORMAL,
+            self.SYSTEM_METRIC,
+        }:
+            return self._effective_tag_condition(col_id, filter_op, filter_value)
+        return super()._build_condition(
+            col_id,
+            col_type,
+            filter_type,
+            filter_op,
+            filter_value,
+            attribute_value_types=attribute_value_types,
+        )
+
+    def _effective_tag_condition(self, column, operation, value):
+        from tracer.services.clickhouse.query_builders.filters import (
+            normalize_filter_op,
+        )
+        from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+            _normalize_json_array_values,
+        )
+        from tracer.services.clickhouse.v2.effective_tags import (
+            TAG_RELATION_TYPE,
+            EffectiveTagRelation,
+        )
+
+        operation = normalize_filter_op(operation)
+        if operation not in {
+            "equals",
+            "not_equals",
+            "in",
+            "not_in",
+            "contains",
+            "not_contains",
+            "is_null",
+            "is_not_null",
+        }:
+            raise ValueError("unsupported tag membership operation")
+        negate = operation in {"not_equals", "not_in", "not_contains", "is_null"}
+        relation = self._next_param("effective_tag_rows")
+        self._params[relation] = EffectiveTagRelation(tuple(self.project_ids or ()))
+        if operation in {"is_null", "is_not_null"}:
+            predicate = "notEmpty(tag_row.8)"
+        else:
+            values = value if isinstance(value, list) else [value]
+            if not values or any(
+                not isinstance(item, str) or not item for item in values
+            ):
+                raise ValueError("tag membership requires non-empty tag names")
+            # Filter the source vocabulary with the public filter limits, not
+            # the narrower UI-assignment name limit. SDK names remain intact.
+            _normalize_json_array_values(
+                {"filter_op": "contains", "filter_value": values}
+            )
+            parameter = self._next_param("effective_tag_names")
+            self._params[parameter] = values
+            predicate = f"hasAny(tag_row.8, %({parameter})s)"
+        selected_root = (
+            column == "tags"
+            and self.query_mode == self.QUERY_MODE_TRACE
+            and self.candidate_ids_param == "candidate_trace_ids"
+        )
+        if selected_root:
+            # The classifier has already selected the physical root after
+            # project-version and datetime exclusions. Match THAT row, not a
+            # second independently chosen root in the prepared relation.
+            outer_fields = (
+                "toString(trace_id), toString(root_span_id), "
+                "toInt64(toUnixTimestamp(_root_start_hour)), "
+                "toString(_root_observation_type), toString(_root_service_name)"
+            )
+            inner_fields = "tag_row.2, tag_row.3, tag_row.4, tag_row.5, tag_row.6"
+            if self._org_scoped:
+                outer_fields = "toString(project_id), " + outer_fields
+                inner_fields = "tag_row.1, " + inner_fields
+            outer, inner = f"tuple({outer_fields})", f"tuple({inner_fields})"
+        elif self.query_mode == self.QUERY_MODE_TRACE:
+            if column == "tags":
+                predicate += " AND tag_row.7 = 1"
+            outer = (
+                "tuple(toString(project_id), toString(trace_id))"
+                if self._org_scoped
+                else "toString(trace_id)"
+            )
+            inner = "tuple(tag_row.1, tag_row.2)" if self._org_scoped else "tag_row.2"
+        else:
+            outer = (
+                "tuple(toString(project_id), toString(trace_id), toString(id), "
+                "toInt64(toUnixTimestamp(toStartOfHour(start_time))), "
+                "toString(observation_type), toString(service_name))"
+            )
+            inner = "tuple(tag_row.1, tag_row.2, tag_row.3, tag_row.4, tag_row.5, tag_row.6)"
+        membership = "NOT IN" if negate else "IN"
+        return (
+            f"{outer} {membership} (SELECT {inner} FROM "
+            f"(SELECT arrayJoin(CAST(%({relation})s, '{TAG_RELATION_TYPE}')) AS tag_row) "
+            f"WHERE {predicate})"
+        )
+
     def _score_resolved_span_columns_sql(self) -> str:
         return "project_id, id, trace_id, start_time, observation_type, service_name"
 

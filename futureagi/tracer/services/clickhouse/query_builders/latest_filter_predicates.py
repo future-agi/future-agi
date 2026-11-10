@@ -2174,9 +2174,9 @@ def _is_candidate_residual_filter(item: dict[str, Any]) -> bool:
     col_type = str(config.get("col_type") or config.get("colType") or "").upper()
     if col_type == "SPAN_ATTRIBUTE":
         return False
-    if key == "tags" and col_type in {"", "NORMAL", "SYSTEM_METRIC"}:
-        # Native tags are a mutable trace dimension, not a per-span aggregate.
-        # The relational compiler replays the candidate trace records exactly.
+    if key in {"tag", "tags"} and col_type in {"", "NORMAL", "SYSTEM_METRIC"}:
+        # Effective tags include UI assignments absent from raw telemetry.
+        # Both native domains require exact residuals, never a source-only seed.
         return True
     return key in _CANDIDATE_RESIDUAL_KEYS or col_type in _CANDIDATE_RESIDUAL_TYPES
 

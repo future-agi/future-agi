@@ -46,6 +46,7 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
 from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
     VoiceCallListQueryBuilderV2,
 )
+from tracer.tests.tag_read_fixtures import empty_tag_assignments  # noqa: F401
 from tracer.tests.test_trace_root_physical_replay import (
     assert_coherent_classifier,
     complete_root_row,

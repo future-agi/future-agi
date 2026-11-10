@@ -331,6 +331,22 @@ class UserEnrichmentLimitExceeded(ReadDeadlineExceeded):
 class _TraceRootReplayV2:
     """CH25 physical replacement and hydration, independent of acquisition policy."""
 
+    def build_filter_match_query(self, candidate_ids, **kwargs):
+        query, params = super().build_filter_match_query(candidate_ids, **kwargs)
+        from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+
+        if any(isinstance(value, EffectiveTagRelation) for value in params.values()):
+            # Tag membership is explicitly scoped to the requested event-time
+            # window. Replay full physical hours before mutable time/liveness
+            # checks, rather than scanning the entire history of candidate IDs.
+            query = query.replace(
+                "AND trace_id IN %(candidate_trace_ids)s",
+                "AND trace_id IN %(candidate_trace_ids)s\n"
+                "AND start_time >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))\n"
+                "AND start_time < toStartOfHour(toDateTime64(%(end_date)s, 6, 'UTC')) + INTERVAL 1 HOUR",
+            )
+        return query, params
+
     @staticmethod
     def filter_classifier_has_exact_start_time_identity() -> bool:
         """CH25 replacement identity uses start hour, not exact producer time."""

@@ -64,6 +64,53 @@ class V2AnalyticsQueryService(AnalyticsQueryService):
             read_timeout_ceiling_ms=read_timeout_ceiling_ms,
         )
 
+    def execute_ch_query(
+        self,
+        query,
+        params=None,
+        timeout_ms=None,
+        settings=None,
+        *,
+        server_execution_cap_ms=None,
+    ):
+        # Selectors bind finite classifier batches themselves so preparation is
+        # charged to their query/deadline budget. Direct graph/count callers use
+        # the same relation, with a strict finite window/row cap (never an
+        # unbounded project assignment lookup or a source-only approximation).
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.clickhouse.v2.effective_tags import (
+            EffectiveTagRelation,
+            prepare_effective_tag_params,
+        )
+        from tracer.services.entity_tags import TagReadUnavailable
+
+        if params and any(
+            isinstance(value, EffectiveTagRelation) for value in params.values()
+        ):
+            if not self.supports_per_query_read_settings:
+                raise TagReadUnavailable("tag_source_unavailable")
+            deadline = ReadDeadline.start(
+                min(
+                    timeout_ms or self.read_timeout_ceiling_ms,
+                    server_execution_cap_ms or self.read_timeout_ceiling_ms,
+                ),
+                enforce_on_server=True,
+            )
+            params = prepare_effective_tag_params(
+                super().execute_ch_query,
+                params,
+                deadline=deadline,
+                allow_window_scan=True,
+            )
+            timeout_ms = server_execution_cap_ms = deadline.remaining_ms()
+        return super().execute_ch_query(
+            query,
+            params,
+            timeout_ms=timeout_ms,
+            settings=settings,
+            server_execution_cap_ms=server_execution_cap_ms,
+        )
+
     @staticmethod
     def _configured_eval_logger_table() -> str:
         """Return the authoritative eval table on the CH25 connection.

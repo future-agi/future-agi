@@ -168,6 +168,7 @@ from tracer.services.dataset_filter_values import (
     read_column_values,
     read_dataset_metadata_values,
 )
+from tracer.services.entity_tags import TagReadUnavailable
 from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
 )
@@ -4209,7 +4210,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             for row in result.data
                         ]
                     except Exception as exc:
-                        if is_clickhouse_api_read_unavailable_error(exc):
+                        if isinstance(
+                            exc, TagReadUnavailable
+                        ) or is_clickhouse_api_read_unavailable_error(exc):
                             logger.warning(
                                 "filter_values_ch_query_unavailable",
                                 metric_name=metric_name,
@@ -4268,7 +4271,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
                     values = list(value_read.values)
                 except Exception as exc:
-                    if is_clickhouse_api_read_unavailable_error(exc):
+                    if isinstance(
+                        exc, TagReadUnavailable
+                    ) or is_clickhouse_api_read_unavailable_error(exc):
                         logger.warning(
                             "filter_values_ch_query_unavailable",
                             metric_name=metric_name,
@@ -5330,7 +5335,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 code=exc.code,
             )
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if isinstance(
+                exc, TagReadUnavailable
+            ) or is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "fetch_filter_values_unavailable",
                     error_type=type(exc).__name__,
@@ -5530,7 +5537,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if isinstance(
+                exc, TagReadUnavailable
+            ) or is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "fetch_dataset_filter_values_unavailable",
                     error_type=type(exc).__name__,
@@ -5894,7 +5903,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 code="service_unavailable",
             )
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
+            if isinstance(
+                exc, TagReadUnavailable
+            ) or is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
                     "fetch_simulation_filter_values_unavailable",
                     error_type=type(exc).__name__,
