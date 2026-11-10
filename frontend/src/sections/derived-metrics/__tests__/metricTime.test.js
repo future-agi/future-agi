@@ -5,6 +5,7 @@ import {
   formatMetricWindow,
   formatRelativeMetricTime,
   localTime,
+  metricBucketWindow,
   metricWindow,
 } from "../metricTime";
 
@@ -37,6 +38,25 @@ describe("metric time and closed windows", () => {
     expect(formatLocalMetricWindow(null)).toBe(
       "Unavailable to Unavailable (local time)",
     );
+  });
+
+  it("rounds both ends down to 15-minute UTC buckets, like the server", () => {
+    const selection = {
+      window_start: "2026-11-02T14:09:54.321Z",
+      window_end: "2026-11-09T14:15:00.000Z",
+    };
+    expect(metricBucketWindow(selection)).toEqual({
+      window_start: "2026-11-02T14:00:00.000Z",
+      window_end: "2026-11-09T14:15:00.000Z",
+    });
+    expect(metricBucketWindow({ window_start: "invalid-date" })).toEqual({
+      window_start: null,
+      window_end: null,
+    });
+    expect(metricBucketWindow(null)).toEqual({
+      window_start: null,
+      window_end: null,
+    });
   });
 
   it("creates a fixed elapsed UTC range across the daylight-saving boundary", () => {

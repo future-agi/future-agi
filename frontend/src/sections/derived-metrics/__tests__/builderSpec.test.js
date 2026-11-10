@@ -134,6 +134,18 @@ describe("builder typed wire", () => {
       );
     },
   );
+  it("names an input by the label it is given in messages, defaulting to its alias", () => {
+    const form = condition(recipe("share", 2), null);
+    const alias = form.inputs[0].alias;
+    expect(builderProblems(form, capabilities)).toContain(
+      `Choose a number comparison value for ${alias}.`,
+    );
+    const named = builderProblems(form, capabilities, {
+      labelFor: (name) => (name === alias ? "Price" : name),
+    });
+    expect(named).toContain("Choose a number comparison value for Price.");
+    expect(named.join(" ")).not.toContain(alias);
+  });
   it("refuses unsupported type/reducer/operator pairs and same-span predicates", () => {
     const form = condition(recipe(), "fr", "gte");
     form.inputs[0].reducer = "sum";

@@ -11,10 +11,15 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
+  IconButton,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
+import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge";
 import { useAuthContext } from "src/auth/hooks";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
@@ -38,6 +43,7 @@ import {
   newBuilder,
   previewDefinition,
   rebuildAsUser,
+  sourceMatches,
   supportedSourceOptions,
 } from "./builderSpec";
 import {
@@ -48,10 +54,17 @@ import {
 import MetricProjectSelect from "./MetricProjectSelect";
 import SentenceBuilder from "./SentenceBuilder";
 import MetricPreviewPanel from "./MetricPreviewPanel";
+import { inputLabel } from "./metricPresentation";
 import useMetricNavigationGuard from "./use_metric_navigation_guard";
 import usePreview from "./usePreview";
 
 const ROOT = "/dashboard/metrics";
+// Text fields, selects and searchable pickers share one 32px height here so
+// a row of mixed controls reads as one line.
+const FIELD_SX = {
+  "& .MuiOutlinedInput-root:not(.MuiInputBase-multiline)": { height: 32 },
+  "& .MuiAutocomplete-root .MuiOutlinedInput-root": { py: 0 },
+};
 export default function MetricBuilderPage() {
   const { metricId } = useParams();
   const [params] = useSearchParams();
@@ -78,7 +91,47 @@ export default function MetricBuilderPage() {
   );
 }
 
+/** The editor's title bar. The loading and error states render the same bar,
+ * back button included, so nothing shifts when the form mounts and there is
+ * always an in-page way back. */
+function BuilderTitleBar({ title, onBack, children }) {
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      gap={1}
+      sx={{
+        px: 2,
+        minHeight: 52,
+        flexShrink: 0,
+        borderBottom: 1,
+        borderColor: "divider",
+      }}
+    >
+      <Tooltip title="Back to metrics">
+        <IconButton size="small" aria-label="Back to metrics" onClick={onBack}>
+          <Iconify icon="solar:arrow-left-linear" width={18} />
+        </IconButton>
+      </Tooltip>
+      <Typography
+        component="h1"
+        variant="m1"
+        sx={{ fontWeight: 600, color: "text.primary" }}
+      >
+        {title}
+      </Typography>
+      {children}
+    </Stack>
+  );
+}
+BuilderTitleBar.propTypes = {
+  title: PropTypes.string.isRequired,
+  onBack: PropTypes.func.isRequired,
+  children: PropTypes.node,
+};
+
 function BuilderLoader({ scope, metricId, projectId, canWrite }) {
+  const navigate = useNavigate();
   const query = useMetricDetail({ scope, metricId });
   // Pin the edit baseline. Background refetch must not unmount a dirty editor
   // or replace its recipe; expected_version protects the subsequent write.
@@ -86,26 +139,35 @@ function BuilderLoader({ scope, metricId, projectId, canWrite }) {
   useEffect(() => {
     if (!metric && query.data) setMetric(query.data);
   }, [metric, query.data]);
+  // Before the form mounts: the same title bar, whose back button goes where
+  // the loaded editor's does (the metric's page).
+  const pending = (body) => (
+    <Stack sx={{ height: "100%", bgcolor: "background.paper" }}>
+      <BuilderTitleBar
+        title="Edit metric"
+        onBack={() => navigate(`${ROOT}/${metricId}`)}
+      />
+      <Box sx={{ p: 3 }}>{body}</Box>
+    </Stack>
+  );
   if (metricId && !metric)
-    return (
-      <Box sx={{ p: 3 }}>
-        {["loading", "idle", "ready"].includes(query.readState) ? (
-          <CircularProgress size={20} aria-label="Loading metric" />
-        ) : (
-          <Alert
-            severity="warning"
-            action={<Button onClick={() => query.refetch()}>Retry</Button>}
-          >
-            Metric definition unavailable.
-          </Alert>
-        )}
-      </Box>
+    return pending(
+      ["loading", "idle", "ready"].includes(query.readState) ? (
+        <CircularProgress size={20} aria-label="Loading metric" />
+      ) : (
+        <Alert
+          severity="warning"
+          action={<Button onClick={() => query.refetch()}>Retry</Button>}
+        >
+          Metric definition unavailable.
+        </Alert>
+      ),
     );
   if (metricId && !(metric?.draft_definition || metric?.definition))
-    return (
+    return pending(
       <Alert severity="warning">
         The saved definition is unavailable. No replacement has been created.
-      </Alert>
+      </Alert>,
     );
   return (
     <BuilderForm
@@ -250,7 +312,16 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
     capabilities.data,
     projectName,
   );
-  const problems = builderProblems(form, capabilities.data);
+  const sourceLabels = Object.fromEntries(
+    (form.inputs || []).flatMap((input) => {
+      const option = options.find((item) => sourceMatches(input, item));
+      return option ? [[input.alias, option.label]] : [];
+    }),
+  );
+  // Messages name a source the way the person picked it, never by its alias.
+  const labelFor = (alias) =>
+    inputLabel(alias, { inputs: form.inputs, sourceLabels });
+  const problems = builderProblems(form, capabilities.data, { labelFor });
   const previewProblems = builderProblems(form, capabilities.data, {
     metadata: false,
   });
@@ -317,206 +388,269 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
       if (mounted.current) setSaving(false);
     }
   };
+  const hint = saveError
+    ? null
+    : problems[0] ||
+      (metric
+        ? `Saving creates version ${metric.current_version + 1} and queues recalculation of history. The active version stays available until the new one is ready.`
+        : null);
   return (
     <Stack sx={{ height: "100%", minHeight: 0, bgcolor: "background.paper" }}>
-      <Stack
-        direction="row"
-        alignItems="center"
-        gap={2}
-        sx={{ px: 3, py: 2, borderBottom: 1, borderColor: "divider" }}
+      <BuilderTitleBar
+        title={metric ? "Edit metric" : "New metric"}
+        onBack={cancel}
       >
-        <Button color="inherit" onClick={cancel}>
-          Back to metrics
-        </Button>
-        <Typography component="h1" variant="h6" fontWeight={600}>
-          {metric ? "Edit metric" : "New metric"}
-        </Typography>
-        {dirty && (
-          <Typography variant="caption" color="text.secondary">
-            Unsaved changes
+        {metric && (
+          <Typography variant="body2" color="text.secondary" noWrap>
+            {metric.name}
           </Typography>
         )}
-      </Stack>
+        {dirty && (
+          <StatusBadge
+            status="draft"
+            label="Unsaved changes"
+            variant="dot"
+            sx={{ ml: 0.5 }}
+          />
+        )}
+      </BuilderTitleBar>
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: "minmax(440px, 1fr) minmax(360px, 0.85fr)",
+          gridTemplateColumns: "minmax(480px, 1fr) minmax(400px, 520px)",
           flex: 1,
           minHeight: 0,
-          overflow: "auto",
         }}
       >
-        <Stack
-          gap={3}
-          sx={{ p: 3, borderRight: 1, borderColor: "divider", minWidth: 0 }}
+        <Box
+          sx={{
+            minWidth: 0,
+            minHeight: 0,
+            overflow: "auto",
+            borderRight: 1,
+            borderColor: "divider",
+          }}
         >
-          {!canWrite && (
-            <Alert severity="info">
-              You can view this definition. A workspace member must save
-              changes.
-            </Alert>
-          )}
-          {legacy && (
-            <Alert severity="warning">
-              <Typography variant="subtitle2">
-                This legacy user metric needs a rebuild
-              </Typography>
-              <Typography variant="body2">
-                The old definition is preserved read-only. Rebuild explicitly as
-                a new user-level version; it will not be converted
-                automatically.
-              </Typography>
-              {!rebuilding && canWrite && (
-                <Button
-                  color="inherit"
-                  onClick={() => {
-                    setForm(rebuildAsUser(baseline));
-                    setRebuilding(true);
-                  }}
-                >
-                  Rebuild as user metric
-                </Button>
-              )}
-              <Box
-                component="pre"
-                sx={{
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                  fontSize: 12,
-                }}
-              >
-                {JSON.stringify(previewDefinition(baseline), null, 2)}
-              </Box>
-            </Alert>
-          )}
-          <TextField
-            label="Metric name"
-            size="small"
-            value={form.name}
-            disabled={disabled}
-            inputProps={{ maxLength: 160 }}
-            onChange={(event) => setForm({ ...form, name: event.target.value })}
-          />
-          <MetricProjectSelect
-            value={form.project_id}
-            projects={projectOptions}
-            search={projectSearch}
-            page={0}
-            onSearch={setProjectSearch}
-            readOnly={Boolean(metric) || readOnly}
-            disabled={saving}
-            onChange={(id) => {
-              setForm({
-                ...newBuilder(id),
-                name: form.name,
-                description: form.description,
-              });
-              searchSources("");
-            }}
-          />
-          {projects.isError && (
-            <Alert
-              severity="warning"
-              action={<Button onClick={() => projects.refetch()}>Retry</Button>}
-            >
-              Projects unavailable.
-            </Alert>
-          )}
-          <TextField
-            label="Description (optional)"
-            size="small"
-            value={form.description}
-            disabled={disabled}
-            inputProps={{ maxLength: 2000 }}
-            onChange={(event) =>
-              setForm({ ...form, description: event.target.value })
-            }
-          />
-          {!capabilities.data && (
-            <Alert
-              severity="info"
-              action={
-                <Button onClick={() => capabilities.refetch()}>Retry</Button>
-              }
-            >
-              {capabilities.readState === "loading"
-                ? "Loading source capabilities…"
-                : "Source capabilities unavailable. Saving and preview are disabled."}
-            </Alert>
-          )}
-          <SentenceBuilder
-            key={`${form.project_id}:${rebuilding}`}
-            form={form}
-            capabilities={capabilities.data}
-            options={options}
-            loading={
-              catalog.readState === "loading" ||
-              evaluators.readState === "loading"
-            }
-            disabled={disabled || !capabilities.data}
-            onChange={setForm}
-            onSearch={searchSources}
-            rebuilding={rebuilding}
-          />
-          {form.project_id &&
-            [catalog, evaluators].some(
-              (query) =>
-                !["idle", "ready", "loading"].includes(query.readState),
-            ) && (
-              <Alert
-                severity="warning"
-                action={
-                  <Button
-                    onClick={() => {
-                      catalog.refetch();
-                      evaluators.refetch();
-                    }}
-                  >
-                    Retry sources
-                  </Button>
-                }
-              >
-                Some sources are unavailable. Saved bindings are preserved.
+          <Stack gap={3} sx={{ px: 3, py: 2.5, maxWidth: 760, ...FIELD_SX }}>
+            {!canWrite && (
+              <Alert severity="info">
+                You can view this definition. A workspace member must save
+                changes.
               </Alert>
             )}
-          {catalog.data?.result?.next_cursor && (
-            <Button
-              color="inherit"
-              disabled={catalog.readState === "loading"}
-              onClick={() => setCursor(catalog.data.result.next_cursor)}
-            >
-              Load more fields
-            </Button>
-          )}
-          {evaluators.data?.truncated && (
-            <Typography variant="caption" color="text.secondary">
-              More saved evaluations are available. Search to narrow the list.
-            </Typography>
-          )}
-          {metric && (
-            <Typography variant="body2" color="text.secondary">
-              Saving creates version {metric.current_version + 1} and queues
-              recalculation of history. The active version stays available until
-              the new one is ready.
-            </Typography>
-          )}
-          {saveError && <Alert severity="error">{saveError}</Alert>}
-          {problems.length > 0 && (
-            <Typography variant="caption" color="text.secondary" role="status">
-              {problems[0]}
-            </Typography>
-          )}
-        </Stack>
-        <Box sx={{ minWidth: 0 }}>
-          <MetricPreviewPanel preview={preview} form={form} />
+            {legacy && (
+              <Alert severity="warning">
+                <Typography variant="subtitle2">
+                  This legacy user metric needs a rebuild
+                </Typography>
+                <Typography variant="body2">
+                  The old definition is preserved read-only. Rebuild explicitly
+                  as a new user-level version; it will not be converted
+                  automatically.
+                </Typography>
+                {!rebuilding && canWrite && (
+                  <Button
+                    color="inherit"
+                    onClick={() => {
+                      setForm(rebuildAsUser(baseline));
+                      setRebuilding(true);
+                    }}
+                  >
+                    Rebuild as user metric
+                  </Button>
+                )}
+                <Box
+                  component="pre"
+                  sx={{
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                    typography: "s1",
+                  }}
+                >
+                  {JSON.stringify(previewDefinition(baseline), null, 2)}
+                </Box>
+              </Alert>
+            )}
+            <Stack component="section" aria-label="Details" gap={2}>
+              <Typography component="h2" variant="subtitle1" fontWeight={600}>
+                Details
+              </Typography>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                  gap: 2,
+                }}
+              >
+                <TextField
+                  label="Metric name"
+                  size="small"
+                  placeholder="e.g. Resolution share"
+                  value={form.name}
+                  disabled={disabled}
+                  inputProps={{ maxLength: 160 }}
+                  onChange={(event) =>
+                    setForm({ ...form, name: event.target.value })
+                  }
+                />
+                <MetricProjectSelect
+                  value={form.project_id}
+                  projects={projectOptions}
+                  search={projectSearch}
+                  page={0}
+                  onSearch={setProjectSearch}
+                  readOnly={Boolean(metric) || readOnly}
+                  disabled={saving}
+                  onChange={(id) => {
+                    setForm({
+                      ...newBuilder(id),
+                      name: form.name,
+                      description: form.description,
+                    });
+                    searchSources("");
+                  }}
+                />
+              </Box>
+              {projects.isError && (
+                <Alert
+                  severity="warning"
+                  action={
+                    <Button onClick={() => projects.refetch()}>Retry</Button>
+                  }
+                >
+                  Projects unavailable.
+                </Alert>
+              )}
+              <TextField
+                label="Description (optional)"
+                size="small"
+                placeholder="What this metric tells your team"
+                value={form.description}
+                disabled={disabled}
+                inputProps={{ maxLength: 2000 }}
+                onChange={(event) =>
+                  setForm({ ...form, description: event.target.value })
+                }
+              />
+            </Stack>
+            <Divider />
+            {!capabilities.data && (
+              <Alert
+                severity="info"
+                action={
+                  <Button onClick={() => capabilities.refetch()}>Retry</Button>
+                }
+              >
+                {capabilities.readState === "loading"
+                  ? "Loading source capabilities…"
+                  : "Source capabilities unavailable. Saving and preview are disabled."}
+              </Alert>
+            )}
+            <SentenceBuilder
+              key={`${form.project_id}:${rebuilding}`}
+              form={form}
+              capabilities={capabilities.data}
+              options={options}
+              loading={
+                catalog.readState === "loading" ||
+                evaluators.readState === "loading"
+              }
+              disabled={disabled || !capabilities.data}
+              onChange={setForm}
+              onSearch={searchSources}
+              rebuilding={rebuilding}
+              sourceLabels={sourceLabels}
+            />
+            {form.project_id &&
+              [catalog, evaluators].some(
+                (query) =>
+                  !["idle", "ready", "loading"].includes(query.readState),
+              ) && (
+                <Alert
+                  severity="warning"
+                  action={
+                    <Button
+                      onClick={() => {
+                        catalog.refetch();
+                        evaluators.refetch();
+                      }}
+                    >
+                      Retry sources
+                    </Button>
+                  }
+                >
+                  Some sources are unavailable. Saved bindings are preserved.
+                </Alert>
+              )}
+            {(catalog.data?.result?.next_cursor ||
+              evaluators.data?.truncated) && (
+              <Stack direction="row" alignItems="center" gap={1.5}>
+                {catalog.data?.result?.next_cursor && (
+                  <Button
+                    color="inherit"
+                    variant="outlined"
+                    size="small"
+                    disabled={catalog.readState === "loading"}
+                    onClick={() => setCursor(catalog.data.result.next_cursor)}
+                  >
+                    Load more fields
+                  </Button>
+                )}
+                {evaluators.data?.truncated && (
+                  <Typography variant="caption" color="text.secondary">
+                    More saved evaluations are available. Search to narrow the
+                    list.
+                  </Typography>
+                )}
+              </Stack>
+            )}
+          </Stack>
+        </Box>
+        <Box sx={{ minWidth: 0, minHeight: 0, overflow: "auto" }}>
+          <MetricPreviewPanel
+            preview={preview}
+            form={form}
+            sourceLabels={sourceLabels}
+            idleMessage={
+              legacy && !rebuilding
+                ? "Rebuild this metric to see a preview."
+                : capabilities.data
+                  ? undefined
+                  : capabilities.readState === "loading"
+                    ? "The preview starts once sources load."
+                    : "Preview is unavailable until sources load."
+            }
+          />
         </Box>
       </Box>
       <Stack
         direction="row"
+        alignItems="center"
         gap={1}
-        justifyContent="flex-end"
-        sx={{ px: 3, py: 1.5, borderTop: 1, borderColor: "divider" }}
+        sx={{
+          px: 3,
+          py: 1.25,
+          flexShrink: 0,
+          borderTop: 1,
+          borderColor: "divider",
+        }}
       >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          {saveError && (
+            <Alert severity="error" sx={{ py: 0 }}>
+              {saveError}
+            </Alert>
+          )}
+          {hint && (
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              role={problems.length ? "status" : undefined}
+            >
+              {hint}
+            </Typography>
+          )}
+        </Box>
         <Button
           color="inherit"
           variant="outlined"

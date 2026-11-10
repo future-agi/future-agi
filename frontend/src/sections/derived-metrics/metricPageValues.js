@@ -1,3 +1,4 @@
+import { windowNotCalculatedCopy } from "./copy";
 import { formatMetricValue } from "./formatMetricValue";
 import { pointValueState } from "./unitValueState";
 
@@ -71,8 +72,7 @@ const unavailableMessages = {
     "Evidence is outside data retention. Aggregate values may still be available.",
   metric_recalculating:
     "Not calculated yet. A completed active definition is not available.",
-  window_not_calculated:
-    "This window has not been calculated. Choose a later start date.",
+  window_not_calculated: windowNotCalculatedCopy,
   metric_version_changed:
     "The active definition changed. Reload the metric to read the new version.",
 };

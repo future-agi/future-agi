@@ -18,6 +18,8 @@ export default function MetricProjectSelect({
   readOnly,
   label = "Project",
   placeholder,
+  hideLabel = false,
+  sx,
 }) {
   const [catalog, setCatalog] = useState({ search, rows: [] });
   const [selected, setSelected] = useState(null);
@@ -59,6 +61,7 @@ export default function MetricProjectSelect({
     <Autocomplete
       fullWidth
       size="small"
+      sx={sx}
       open={open && !readOnly}
       onOpen={() => setOpen(true)}
       onClose={(_, reason) => {
@@ -129,7 +132,14 @@ export default function MetricProjectSelect({
       renderInput={(params) => (
         <TextField
           {...params}
-          label={label}
+          // A toolbar filter is named by its placeholder row, not a stacked
+          // label; it keeps the same accessible name.
+          label={hideLabel ? undefined : label}
+          inputProps={
+            hideLabel
+              ? { ...params.inputProps, "aria-label": label }
+              : params.inputProps
+          }
           placeholder={placeholder}
           size="small"
           helperText={
@@ -152,4 +162,6 @@ MetricProjectSelect.propTypes = {
   readOnly: PropTypes.bool,
   label: PropTypes.string,
   placeholder: PropTypes.string,
+  hideLabel: PropTypes.bool,
+  sx: PropTypes.object,
 };

@@ -1,16 +1,19 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   Alert,
   Box,
   Button,
   Checkbox,
   FormControlLabel,
+  IconButton,
   MenuItem,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
+import Iconify from "src/components/iconify";
 import MetricInputs from "./MetricInputs";
 import FieldPicker from "./FieldPicker";
 import ConditionRow from "./ConditionRow";
@@ -24,6 +27,8 @@ import {
   setRecipeInputs,
   sourceCapability,
 } from "./builderSpec";
+import { conditionParts, inputLabel } from "./metricPresentation";
+import { ConditionText } from "./MetricSentence";
 
 export default function SentenceBuilder({
   form,
@@ -34,7 +39,9 @@ export default function SentenceBuilder({
   onChange,
   onSearch,
   rebuilding = false,
+  sourceLabels = {},
 }) {
+  const idBase = useId();
   const [customLabels, setCustomLabels] = useState(
     Object.entries(form.value_labels || {}).some(
       ([key, value]) => value !== DEFAULT_LABELS[key],
@@ -47,6 +54,9 @@ export default function SentenceBuilder({
   const level =
     form.level ||
     (form.selection_unit === "session" ? "conversation" : form.selection_unit);
+  // The same names the preview sentence uses, so both read identically.
+  const labelFor = (alias) =>
+    inputLabel(alias, { inputs: form.inputs, sourceLabels });
   const updateInput = (index, patch) =>
     onChange(
       setRecipeInputs(
@@ -113,17 +123,23 @@ export default function SentenceBuilder({
   };
   return (
     <Stack spacing={2.5} component="section" aria-label="What to calculate">
-      <Typography component="h2" variant="subtitle2">
-        What to calculate
-      </Typography>
-      <Stack direction="row" gap={1} alignItems="center">
+      <Box>
+        <Typography component="h2" variant="subtitle1" fontWeight={600}>
+          What to calculate
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Pick a calculation and the unit it runs over, then the sources it
+          reads.
+        </Typography>
+      </Box>
+      <Stack direction="row" gap={1.5} alignItems="flex-end">
         <TextField
           select
           size="small"
           label="Calculation"
           value={form.kind || "custom"}
           disabled={disabled}
-          sx={{ flex: 1 }}
+          sx={{ flex: 1, minWidth: 0 }}
           onChange={(event) => {
             setAdding(false);
             onChange(changeKind(form, event.target.value));
@@ -146,14 +162,21 @@ export default function SentenceBuilder({
             </MenuItem>
           )}
         </TextField>
-        <Typography variant="body2">of</Typography>
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          aria-hidden
+          sx={{ height: 32, display: "flex", alignItems: "center" }}
+        >
+          of
+        </Typography>
         <TextField
           select
           size="small"
           label="Unit"
           value={level}
           disabled={disabled || rebuilding}
-          sx={{ flex: 1 }}
+          sx={{ flex: 1, minWidth: 0 }}
           onChange={(event) =>
             onChange({
               ...form,
@@ -228,13 +251,14 @@ export default function SentenceBuilder({
               onChange({ ...form, formula: event.target.value })
             }
             helperText="The server validates custom formulas before saving."
+            sx={{ "& textarea": { fontFamily: "monospace" } }}
           />
         </>
       ) : (
-        <>
+        <Stack spacing={1.5}>
           {boolean && (
-            <Typography variant="body2" color="text.secondary">
-              where all of these conditions match
+            <Typography variant="subtitle2" color="text.secondary">
+              {`Count a ${LEVEL_LABELS[level] ? level : "unit"} when all of these conditions match`}
             </Typography>
           )}
           {form.inputs.map((input, index) => {
@@ -246,23 +270,125 @@ export default function SentenceBuilder({
               input.condition_stage === "observation"
                 ? { alias: input.alias, ...input.condition }
                 : conditions.find((item) => item.alias === input.alias);
+            const removable = form.inputs.length > 1;
+            const sentenceId = `${idBase}-condition-${index}`;
             return (
               <Stack
                 key={input.alias}
                 gap={1.5}
-                sx={{ pb: 2, borderBottom: 1, borderColor: "divider" }}
+                role="group"
+                aria-label={boolean ? `Condition ${index + 1}` : "Source"}
+                aria-describedby={boolean ? sentenceId : undefined}
+                sx={{
+                  p: 1.5,
+                  border: 1,
+                  borderColor: "divider",
+                  borderRadius: 1,
+                }}
               >
-                <FieldPicker
-                  input={input}
-                  options={options}
-                  disabled={disabled}
-                  loading={loading}
-                  label={`Source ${index + 1}`}
-                  onSearch={onSearch}
-                  onChange={(option) =>
-                    onChange(selectSource(form, index, option, capabilities))
-                  }
-                />
+                {boolean && (
+                  <Stack
+                    direction="row"
+                    alignItems="flex-start"
+                    justifyContent="space-between"
+                    gap={1}
+                    sx={{ minHeight: 24, mb: -0.25 }}
+                  >
+                    {/* The condition as one sentence, in the preview's words;
+                        the fields below edit each part of it. */}
+                    <Typography
+                      id={sentenceId}
+                      variant="body2"
+                      sx={{ pt: 0.25, minWidth: 0, overflowWrap: "anywhere" }}
+                    >
+                      <Box component="span" sx={{ color: "text.secondary" }}>
+                        {index === 0 ? "Where" : "And"}
+                      </Box>{" "}
+                      <Box
+                        component="span"
+                        sx={{ color: "text.primary", fontWeight: 500 }}
+                      >
+                        <ConditionText
+                          parts={conditionParts(form, input, labelFor)}
+                        />
+                      </Box>
+                    </Typography>
+                    {removable && (
+                      <Tooltip title="Remove condition">
+                        <IconButton
+                          size="small"
+                          aria-label={`Remove condition ${index + 1}`}
+                          disabled={disabled}
+                          onClick={() =>
+                            onChange(
+                              setRecipeInputs(
+                                form,
+                                form.inputs.filter((_, i) => i !== index),
+                                conditions.filter(
+                                  (item) => item.alias !== input.alias,
+                                ),
+                              ),
+                            )
+                          }
+                        >
+                          <Iconify
+                            icon="solar:trash-bin-minimalistic-linear"
+                            width={16}
+                          />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </Stack>
+                )}
+                <Stack direction="row" gap={1.5} alignItems="flex-end">
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <FieldPicker
+                      input={input}
+                      options={options}
+                      disabled={disabled}
+                      loading={loading}
+                      label={`Source ${index + 1}`}
+                      onSearch={onSearch}
+                      onChange={(option) =>
+                        onChange(
+                          selectSource(form, index, option, capabilities),
+                        )
+                      }
+                    />
+                  </Box>
+                  <TextField
+                    select
+                    size="small"
+                    label={`When a ${level} has several values, use`}
+                    value={
+                      input.condition_stage === "observation"
+                        ? `observation:${input.reducer}`
+                        : input.reducer
+                    }
+                    disabled={disabled}
+                    sx={{ width: 300, flexShrink: 0 }}
+                    onChange={(event) =>
+                      chooseReduction(input, index, event.target.value)
+                    }
+                  >
+                    {(capability?.reducers || []).map((reducer) => (
+                      <MenuItem key={reducer} value={reducer}>
+                        {reducer}
+                      </MenuItem>
+                    ))}
+                    {boolean &&
+                      (capability?.observation_reducers || []).map(
+                        (reducer) => (
+                          <MenuItem
+                            key={`observation:${reducer}`}
+                            value={`observation:${reducer}`}
+                          >
+                            {reducer} observation matches the condition
+                          </MenuItem>
+                        ),
+                      )}
+                  </TextField>
+                </Stack>
                 {input.source === "eval" && (
                   <TextField
                     select
@@ -300,35 +426,6 @@ export default function SentenceBuilder({
                     ))}
                   </TextField>
                 )}
-                <TextField
-                  select
-                  size="small"
-                  label={`When a ${level} has several values, use`}
-                  value={
-                    input.condition_stage === "observation"
-                      ? `observation:${input.reducer}`
-                      : input.reducer
-                  }
-                  disabled={disabled}
-                  onChange={(event) =>
-                    chooseReduction(input, index, event.target.value)
-                  }
-                >
-                  {(capability?.reducers || []).map((reducer) => (
-                    <MenuItem key={reducer} value={reducer}>
-                      {reducer}
-                    </MenuItem>
-                  ))}
-                  {boolean &&
-                    (capability?.observation_reducers || []).map((reducer) => (
-                      <MenuItem
-                        key={`observation:${reducer}`}
-                        value={`observation:${reducer}`}
-                      >
-                        {reducer} observation matches the condition
-                      </MenuItem>
-                    ))}
-                </TextField>
                 {boolean && condition && (
                   <ConditionRow
                     key={`${form.project_id}:${input.alias}:${input.field}:${input.reducer}:${input.condition_stage}`}
@@ -340,7 +437,7 @@ export default function SentenceBuilder({
                     onChange={(next) => updateCondition(input, next)}
                   />
                 )}
-                {form.inputs.length > 1 && (
+                {!boolean && removable && (
                   <Button
                     color="inherit"
                     size="small"
@@ -365,23 +462,41 @@ export default function SentenceBuilder({
             );
           })}
           {(!form.inputs.length || adding) && (
-            <FieldPicker
-              options={options}
-              loading={loading}
-              disabled={disabled}
-              label="Choose a source"
-              onSearch={onSearch}
-              onChange={(option) => {
-                onChange(
-                  selectSource(form, form.inputs.length, option, capabilities),
-                );
-                setAdding(false);
+            <Box
+              sx={{
+                p: 1.5,
+                border: 1,
+                borderStyle: "dashed",
+                borderColor: "divider",
+                borderRadius: 1,
               }}
-            />
+            >
+              <FieldPicker
+                options={options}
+                loading={loading}
+                disabled={disabled}
+                label="Choose a source"
+                onSearch={onSearch}
+                onChange={(option) => {
+                  onChange(
+                    selectSource(
+                      form,
+                      form.inputs.length,
+                      option,
+                      capabilities,
+                    ),
+                  );
+                  setAdding(false);
+                }}
+              />
+            </Box>
           )}
           {boolean && form.inputs.length > 0 && !adding && (
             <Button
               color="inherit"
+              variant="outlined"
+              size="small"
+              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
               sx={{ alignSelf: "flex-start" }}
               disabled={disabled || form.inputs.length >= 16}
               onClick={() => setAdding(true)}
@@ -389,18 +504,27 @@ export default function SentenceBuilder({
               Add condition
             </Button>
           )}
-          <Typography variant="caption" color="text.secondary">
-            Each source is reduced independently before conditions are combined.
-            Different sources need not occur on the same span. Missing values
-            never become zero or false.
-          </Typography>
-        </>
+          <Stack direction="row" gap={0.75} alignItems="flex-start">
+            <Iconify
+              icon="solar:info-circle-linear"
+              width={14}
+              sx={{ color: "text.disabled", mt: "1px", flexShrink: 0 }}
+            />
+            <Typography variant="caption" color="text.secondary">
+              Each source is reduced independently before conditions are
+              combined. Different sources need not occur on the same span.
+              Missing values never become zero or false.
+            </Typography>
+          </Stack>
+        </Stack>
       )}
       {boolean && (
         <Box>
           <FormControlLabel
+            sx={{ ml: -0.75, mr: 0 }}
             control={
               <Checkbox
+                size="small"
                 checked={customLabels}
                 disabled={disabled}
                 onChange={(event) => {
@@ -414,10 +538,14 @@ export default function SentenceBuilder({
                 }}
               />
             }
-            label="Customize match labels"
+            label={
+              <Typography variant="body2" fontWeight={500}>
+                Customize match labels
+              </Typography>
+            }
           />
           {customLabels ? (
-            <Stack direction="row" gap={1} sx={{ mt: 1 }}>
+            <Stack direction="row" gap={1.5} sx={{ mt: 1 }}>
               <TextField
                 fullWidth
                 size="small"
@@ -454,7 +582,12 @@ export default function SentenceBuilder({
               />
             </Stack>
           ) : (
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              component="p"
+              sx={{ pl: 3.5 }}
+            >
               Matches show as Counts; the rest as Doesn’t count. Missing inputs
               show No value.
             </Typography>
@@ -473,4 +606,5 @@ SentenceBuilder.propTypes = {
   onChange: PropTypes.func.isRequired,
   onSearch: PropTypes.func,
   rebuilding: PropTypes.bool,
+  sourceLabels: PropTypes.objectOf(PropTypes.string),
 };

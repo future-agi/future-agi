@@ -65,6 +65,25 @@ export function metricWindow(days, now = new Date()) {
   };
 }
 
+const BUCKET_MS = 15 * 60000;
+
+/** The window the server reads or saves for a request: both ends rounded down
+ * to a 15-minute UTC bucket, like its effective_window. An end that is not a
+ * valid instant stays null; it is never replaced by a guess.
+ */
+export function metricBucketWindow(window) {
+  const floor = (value) => {
+    const date = metricDate(value);
+    if (!date) return null;
+    const bucket = Math.floor(date.getTime() / BUCKET_MS) * BUCKET_MS;
+    return new Date(bucket).toISOString();
+  };
+  return {
+    window_start: floor(window?.window_start),
+    window_end: floor(window?.window_end),
+  };
+}
+
 /** Pass provenance.updated_at, never definition.updated_at, for read freshness.
  * Future instants remain future (clock skew), not an invented 'just updated'.
  */

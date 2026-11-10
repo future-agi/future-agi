@@ -1,5 +1,7 @@
 import PropTypes from "prop-types";
-import { Alert, Box, Button, Divider, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, Stack, Typography } from "@mui/material";
+import EmptyState from "src/components/empty-state";
+import Iconify from "src/components/iconify";
 import { useMetricKpi, useMetricTrend } from "./api";
 import { metricCopy, metricCountCopy } from "./copy";
 import { formatMetricInterval, formatMetricValue } from "./formatMetricValue";
@@ -11,13 +13,18 @@ import MetricTrendChart from "./MetricTrendChart";
 
 import { formatMetricDifference, sameMetricRead } from "./metricPageValues";
 
-function PreviousPeriod({ data }) {
+// The KPI read has not settled yet; its card may still state the window.
+const KPI_PENDING = ["idle", "loading"];
+
+function previousPeriod(data) {
   const current = pointValueState(data.current);
   const previous = pointValueState(data.previous);
   const canCompare = current.state === "value" && previous.state === "value";
-  const delta = canCompare
-    ? formatMetricDifference(data.delta, data.current)
-    : null;
+  return canCompare ? formatMetricDifference(data.delta, data.current) : null;
+}
+
+function PreviousPeriod({ data }) {
+  const delta = previousPeriod(data);
   const end = Date.parse(data.effective_window.window_start);
   const duration = Date.parse(data.effective_window.window_end) - end;
   const previousWindow =
@@ -35,8 +42,11 @@ function PreviousPeriod({ data }) {
     Number.isFinite(uncertainty.ci_high) &&
     uncertainty.ci_low <= uncertainty.ci_high;
   return (
-    <Stack spacing={1.5} sx={{ minWidth: 280, maxWidth: 440 }}>
-      <Typography variant="body2" fontWeight={600}>
+    <Stack
+      spacing={1}
+      sx={{ p: 2.5, minWidth: 0, borderLeft: 1, borderColor: "divider" }}
+    >
+      <Typography variant="subtitle2" color="text.secondary">
         Previous period
       </Typography>
       {previousWindow && (
@@ -51,9 +61,6 @@ function PreviousPeriod({ data }) {
           Previous period unavailable
         </Typography>
       )}
-      <Typography variant="body2">
-        {delta ? `${delta} vs previous period` : "Comparison unavailable"}
-      </Typography>
       {delta && (
         <Typography variant="caption" color="text.secondary">
           {hasInterval
@@ -68,7 +75,66 @@ function PreviousPeriod({ data }) {
 }
 PreviousPeriod.propTypes = { data: PropTypes.object.isRequired };
 
-export default function MetricOverview({ metric, scope, window }) {
+function Change({ data }) {
+  const delta = previousPeriod(data);
+  if (!delta)
+    return (
+      <Typography variant="body2" color="text.secondary">
+        Comparison unavailable
+      </Typography>
+    );
+  // Whether up is good depends on the metric, so the change stays neutral.
+  const icon =
+    data.delta > 0
+      ? "solar:arrow-right-up-linear"
+      : data.delta < 0
+        ? "solar:arrow-right-down-linear"
+        : "solar:arrow-right-linear";
+  return (
+    <Stack direction="row" spacing={0.5} alignItems="center">
+      <Iconify icon={icon} width={16} sx={{ color: "text.secondary" }} />
+      <Typography
+        variant="body2"
+        color="text.secondary"
+        sx={{ fontVariantNumeric: "tabular-nums" }}
+      >
+        {`${delta} vs previous period`}
+      </Typography>
+    </Stack>
+  );
+}
+Change.propTypes = { data: PropTypes.object.isRequired };
+
+function NotCalculated({ definition }) {
+  return (
+    <Box
+      sx={{ border: 1, borderColor: "divider", borderRadius: 1, pb: 3 }}
+      data-testid="metric-not-calculated"
+    >
+      <EmptyState
+        variant="no-results"
+        icon="solar:clock-circle-linear"
+        title="Not calculated yet"
+        description="Values, the trend and drivers appear here after the first calculation of this definition completes. Nothing is shown as zero in the meantime."
+        sx={{ pb: 2 }}
+      />
+      <Box
+        sx={{
+          maxWidth: 360,
+          mx: "auto",
+          px: 3,
+          textAlign: "center",
+          "& .MuiStack-root": { mx: "auto" },
+        }}
+      >
+        <MetricStatusLine definition={definition} showFreshness={false} />
+      </Box>
+    </Box>
+  );
+}
+NotCalculated.propTypes = { definition: PropTypes.object };
+
+export default function MetricOverview({ metric, scope, window, windowLabel }) {
   const args = {
     scope,
     metricId: metric?.id,
@@ -91,40 +157,41 @@ export default function MetricOverview({ metric, scope, window }) {
       </Alert>
     );
   if (metric && !metric.definition)
-    return <MetricStatusLine definition={metric.draft_definition} />;
+    return <NotCalculated definition={metric.draft_definition} />;
   const data = kpi.data;
   const state = pointValueState(data?.current);
   const hasValue = state.state === "value";
   const current = data?.current;
   const mismatch = data && trend.data && !sameMetricRead(data, trend.data);
   return (
-    <Stack spacing={3}>
+    <Stack spacing={2.5}>
       <MetricReadNotice query={kpi} label="Metric value" />
       {data && (
-        <>
-          <Stack
-            direction="row"
-            spacing={4}
-            alignItems="flex-start"
-            divider={<Divider orientation="vertical" flexItem />}
+        <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1.6fr) minmax(300px, 1fr)",
+            }}
           >
-            <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
-              <Typography variant="body2" color="text.secondary">
-                {formatMetricWindow(data.effective_window)}
+            <Stack spacing={1} sx={{ p: 2.5, minWidth: 0 }}>
+              <Typography variant="subtitle2" color="text.secondary">
+                {windowLabel || "Selected window"}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {data.effective_window.rounding}
-              </Typography>
-              <Box>
+              <Stack
+                direction="row"
+                alignItems="baseline"
+                columnGap={2}
+                rowGap={0.5}
+                flexWrap="wrap"
+              >
                 <Typography
                   component="p"
                   data-testid="metric-hero"
+                  variant={hasValue ? "display" : "title_md"}
+                  color={hasValue ? "text.primary" : "text.secondary"}
                   sx={{
-                    fontSize: hasValue ? 44 : 24,
-                    lineHeight: 1.2,
-                    fontWeight: 600,
-                    letterSpacing: "-0.02em",
-                    color: hasValue ? "text.primary" : "text.secondary",
+                    fontVariantNumeric: "tabular-nums",
                     overflowWrap: "anywhere",
                   }}
                 >
@@ -132,36 +199,61 @@ export default function MetricOverview({ metric, scope, window }) {
                     ? `${current.weighted ? "≈ " : ""}${formatMetricValue(current.value, { ...current, value_type: "number" })}`
                     : state.label}
                 </Typography>
-                {hasValue && current.weighted && (
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ mt: 1 }}
-                  >
-                    Estimate · {metricCopy.estimateExplanation}
-                  </Typography>
-                )}
-              </Box>
-              {hasValue && (
+                <Change data={data} />
+              </Stack>
+              {hasValue && current.weighted && (
                 <Typography variant="body2" color="text.secondary">
+                  Estimate · {metricCopy.estimateExplanation}
+                </Typography>
+              )}
+              {hasValue && (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ fontVariantNumeric: "tabular-nums" }}
+                >
                   {formatMetricInterval(current)}
                 </Typography>
               )}
               {metricCountCopy(current, current?.unit_noun).map((line) => (
-                <Typography key={line} variant="body2" color="text.secondary">
+                <Typography
+                  key={line}
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ fontVariantNumeric: "tabular-nums" }}
+                >
                   {line}
                 </Typography>
               ))}
             </Stack>
             <PreviousPeriod data={data} />
+          </Box>
+          <Stack
+            direction="row"
+            alignItems="flex-start"
+            justifyContent="space-between"
+            spacing={3}
+            sx={{
+              px: 2.5,
+              py: 1.25,
+              borderTop: 1,
+              borderColor: "divider",
+            }}
+          >
+            <Typography variant="caption" color="text.secondary">
+              {formatMetricWindow(data.effective_window)} ·{" "}
+              {data.effective_window.rounding}
+            </Typography>
+            <Box sx={{ flexShrink: 0, maxWidth: "50%" }}>
+              <MetricStatusLine
+                provenance={data.provenance}
+                definition={metric.definition}
+              />
+            </Box>
           </Stack>
-          <MetricStatusLine
-            provenance={data.provenance}
-            definition={metric.definition}
-          />
-        </>
+        </Box>
       )}
-      <Box sx={{ pt: 3, borderTop: 1, borderColor: "divider" }}>
+      <Box>
         <MetricReadNotice query={trend} label="Trend" />
         {mismatch && (
           <Alert
@@ -182,9 +274,15 @@ export default function MetricOverview({ metric, scope, window }) {
             trend.
           </Alert>
         )}
+        {/* The window and rounding line is stated once: in the KPI footer,
+            or under the trend only once the KPI read has settled into a
+            failure. While the KPI loads the line waits, so it never jumps
+            between the two. A different trend window is a mismatch, which
+            the alert above already covers. */}
         <MetricTrendChart
           data={mismatch ? undefined : trend.data}
           name={metric?.name}
+          showWindow={!data && !KPI_PENDING.includes(kpi.readState)}
         />
       </Box>
     </Stack>
@@ -194,4 +292,5 @@ MetricOverview.propTypes = {
   metric: PropTypes.object,
   scope: PropTypes.object.isRequired,
   window: PropTypes.object.isRequired,
+  windowLabel: PropTypes.string,
 };

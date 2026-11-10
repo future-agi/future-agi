@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Box,
@@ -10,11 +9,21 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { visuallyHidden } from "@mui/utils";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import DataTable from "src/components/data-table/DataTable";
-import { readObserveProjectPage } from "src/api/project/observe-project-list";
+import ListToolbar from "src/components/list-toolbar";
+import EmptyState from "src/components/empty-state";
+import StatusBadge from "src/components/status-badge";
+import ContentSkeleton from "src/components/content-skeleton";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { useMetricKpi } from "./api";
 import MetricValueCell from "./MetricValueCell";
+import { isMetricFirstUse } from "./metricPresentation";
+import {
+  metricProjectLabel,
+  useMetricProjectNames,
+} from "./useMetricProjectNames";
 import {
   formatMetricTime,
   formatMetricWindow,
@@ -42,6 +51,15 @@ function stopActivationKey(event) {
   if (event.key === "Enter" || event.key === " ") event.stopPropagation();
 }
 
+// One line per cell line; a list row holds at most two.
+const line = {
+  display: "block",
+  minWidth: 0,
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+
 function MetricReadCell({ metric, scope, window, freshness = false }) {
   const query = useMetricKpi({
     scope: { ...scope, projectId: metric.project_id },
@@ -52,10 +70,19 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
     enabled: Boolean(metric.definition && window),
   });
   if (!metric.definition) {
-    return (
-      <Typography variant="body2" color="text.secondary">
-        {freshness ? "No active definition" : "Not calculated yet"}
-      </Typography>
+    // The Value column already says "Not calculated yet"; freshness stays a
+    // quiet dash with the reason for assistive tech and on hover.
+    return freshness ? (
+      <Tooltip title="No active definition yet" placement="top-start">
+        <Typography variant="body2" color="text.secondary" sx={line}>
+          <span aria-hidden="true">—</span>
+          <Box component="span" sx={visuallyHidden}>
+            No active definition
+          </Box>
+        </Typography>
+      </Tooltip>
+    ) : (
+      <StatusBadge status="pending" label="Not calculated yet" variant="dot" />
     );
   }
   const loading = query.readState === "loading";
@@ -69,14 +96,16 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
             ? `Effective window: ${formatMetricWindow(data.effective_window)}`
             : ""
         }
+        placement="top-start"
       >
-        <Box sx={{ width: "100%" }}>
+        <Box sx={{ width: "100%", minWidth: 0 }}>
           <MetricValueCell
             source="point"
             value={summaryPoint(data?.current)}
             loading={loading}
             error={error}
             valueMode={metric.value_mode}
+            dense
           />
         </Box>
       </Tooltip>
@@ -84,7 +113,7 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
   }
   if (loading)
     return (
-      <Typography variant="body2" color="text.secondary">
+      <Typography variant="body2" color="text.secondary" sx={line}>
         {metric.value_mode === "on_demand" ? "On demand" : "Loading freshness…"}
       </Typography>
     );
@@ -96,8 +125,13 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
         conflict: "Definition changed — refresh the list",
       }[query.readState] || "Freshness unavailable";
     return (
-      <Stack spacing={0.5} alignItems="flex-start">
-        <Typography variant="caption" color="text.secondary">
+      <Stack
+        direction="row"
+        spacing={0.5}
+        alignItems="center"
+        sx={{ minWidth: 0 }}
+      >
+        <Typography variant="body2" color="text.secondary" sx={line}>
           {message}
         </Typography>
         <Button
@@ -110,6 +144,7 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
           }}
           onKeyDown={stopActivationKey}
           onKeyUp={stopActivationKey}
+          sx={{ flexShrink: 0 }}
         >
           Retry
         </Button>
@@ -126,22 +161,33 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
     done < total;
   const updated = formatRelativeMetricTime(provenance?.updated_at);
   return (
-    <Stack spacing={0.5}>
-      <Tooltip title={formatMetricTime(provenance?.updated_at)}>
-        <Typography variant="body2" color="text.secondary" tabIndex={0}>
-          {updated === "Unavailable"
-            ? "Freshness unavailable"
-            : `Updated ${updated}`}
-        </Typography>
-      </Tooltip>
+    <Stack spacing={0.25} sx={{ minWidth: 0, width: "100%" }}>
+      <Stack direction="row" spacing={0.75} sx={{ minWidth: 0 }}>
+        <Tooltip title={formatMetricTime(provenance?.updated_at)}>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            tabIndex={0}
+            sx={line}
+          >
+            {updated === "Unavailable"
+              ? "Freshness unavailable"
+              : `Updated ${updated}`}
+          </Typography>
+        </Tooltip>
+        {metric.value_mode === "on_demand" && (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ ...line, flexShrink: 0 }}
+          >
+            · On demand
+          </Typography>
+        )}
+      </Stack>
       {recalculating && (
-        <Typography variant="caption" color="text.secondary">
+        <Typography variant="caption" color="text.secondary" sx={line}>
           Recalculating · {done} of {total} days
-        </Typography>
-      )}
-      {metric.value_mode === "on_demand" && (
-        <Typography variant="caption" color="text.secondary">
-          On demand
         </Typography>
       )}
     </Stack>
@@ -158,8 +204,11 @@ export default function MetricList({
   definitions,
   scope,
   window,
+  windowLabel = "Last 7 days",
   onSelect,
   toolbar,
+  actions,
+  createAction,
   pagination = { page: 0, pageSize: 25 },
   onPageChange,
   onPageSizeChange,
@@ -179,39 +228,13 @@ export default function MetricList({
   const projectIds = [
     ...new Set(rows.map((metric) => metric.project_id)),
   ].sort();
-  const projectNames = useQuery({
-    queryKey: ["metric-list-projects", scope, projectIds],
-    enabled: projectIds.length > 0,
-    staleTime: 30000,
-    retry: false,
-    placeholderData: undefined,
-    meta: { errorHandled: true },
-    queryFn: async ({ signal }) => {
-      const names = {};
-      const remaining = new Set(projectIds);
-      for (let pageNumber = 0; remaining.size > 0; pageNumber += 1) {
-        const page = await readObserveProjectPage({
-          signal,
-          params: { page_number: pageNumber, page_size: 50, name: "" },
-        });
-        signal.throwIfAborted();
-        for (const project of page.rows) {
-          if (remaining.has(project.id) && project.name) {
-            names[project.id] = project.name;
-            remaining.delete(project.id);
-          }
-        }
-        if (pageNumber + 1 >= page.totalPages) break;
-      }
-      return names;
-    },
-  });
+  const projectNames = useMetricProjectNames(scope, projectIds);
   const columns = [
     {
       accessorKey: "name",
       header: "Name",
-      minSize: 220,
-      meta: { flex: 2 },
+      minSize: 240,
+      meta: { flex: 1.6 },
       enableSorting: false,
       cell: ({ row: { original: item } }) => (
         <Button
@@ -230,8 +253,11 @@ export default function MetricList({
             textAlign: "left",
             width: "100%",
             minWidth: 0,
+            px: 0,
+            color: "text.primary",
             whiteSpace: "nowrap",
             overflow: "hidden",
+            "&:hover": { bgcolor: "transparent", textDecoration: "underline" },
             "&:focus-visible": {
               outline: "2px solid",
               outlineColor: "text.primary",
@@ -239,20 +265,35 @@ export default function MetricList({
             },
           }}
         >
-          <Box
+          {/* Same size as the other cells, and the heaviest text in the row. */}
+          <Typography
             component="span"
-            sx={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}
+            variant="body2"
+            sx={{
+              fontWeight: 500,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
           >
             {item.name}
-          </Box>
+          </Typography>
         </Button>
       ),
     },
     {
       id: "value",
-      header: "Value · Last 7 days",
-      minSize: 320,
-      meta: { flex: 2 },
+      header: `Value · ${windowLabel}`,
+      renderHeader: () => (
+        <Tooltip
+          title={window ? formatMetricWindow(window) : ""}
+          placement="top-start"
+        >
+          <span>Value · {windowLabel}</span>
+        </Tooltip>
+      ),
+      minSize: 220,
+      meta: { flex: 1.3 },
       enableSorting: false,
       cell: ({ row: { original: item } }) => (
         <MetricReadCell metric={item} scope={scope} window={window} />
@@ -261,7 +302,7 @@ export default function MetricList({
     {
       id: "updated",
       header: "Updated",
-      minSize: 230,
+      minSize: 180,
       meta: { flex: 1 },
       enableSorting: false,
       cell: ({ row: { original: item } }) => (
@@ -269,34 +310,21 @@ export default function MetricList({
       ),
     },
     {
-      id: "version",
-      header: "Version",
-      size: 80,
-      enableSorting: false,
-      cell: ({ row: { original: item } }) =>
-        item.definition?.version != null
-          ? `v${item.definition.version}`
-          : "Draft",
-    },
-    {
       accessorKey: "project_id",
       header: "Project",
-      minSize: 180,
+      minSize: 160,
       meta: { flex: 1 },
       enableSorting: false,
       cell: ({ getValue }) => {
-        const name =
-          (!projectNames.isError && projectNames.data?.[getValue()]) ||
-          (projectNames.isPending
-            ? "Loading project…"
-            : "Project name unavailable");
+        const name = metricProjectLabel(projectNames, getValue());
         return (
           <Tooltip title={name}>
             <Typography
               component="span"
               variant="body2"
+              color="text.secondary"
               noWrap
-              sx={{ display: "block", width: "100%", fontSize: 13 }}
+              sx={{ display: "block", width: "100%" }}
             >
               {name}
             </Typography>
@@ -304,20 +332,34 @@ export default function MetricList({
         );
       },
     },
+    {
+      id: "version",
+      header: "Version",
+      size: 96,
+      enableSorting: false,
+      // A draft-only metric reads exactly as its page header does.
+      cell: ({ row: { original: item } }) =>
+        item.definition?.version != null ? (
+          <Typography component="span" variant="body2" color="text.secondary">
+            {`v${item.definition.version}`}
+          </Typography>
+        ) : (
+          <StatusBadge
+            status="draft"
+            variant="dot"
+            label={
+              item.draft_definition?.version != null
+                ? `Draft v${item.draft_definition.version}`
+                : "Draft"
+            }
+          />
+        ),
+    },
   ];
-  const firstUse =
-    !loading &&
-    !error &&
-    metrics.length === 0 &&
-    pagination.page === 0 &&
-    !scope.projectId;
+  const firstUse = isMetricFirstUse(definitions, pagination, scope);
   return (
-    <Stack
-      spacing={2}
-      sx={{ flex: 1, minHeight: 0 }}
-      aria-label="Saved metrics"
-    >
-      <Stack direction="row" spacing={2} alignItems="center">
+    <Stack sx={{ flex: 1, minHeight: 0 }} aria-label="Saved metrics">
+      <ListToolbar>
         <FormSearchField
           placeholder="Search this page"
           inputProps={{ "aria-label": "Search metrics on this page" }}
@@ -326,10 +368,14 @@ export default function MetricList({
           sx={{ width: 250, "& .MuiOutlinedInput-root": { height: "30px" } }}
         />
         {toolbar}
-      </Stack>
+        <Box sx={{ flex: 1 }} />
+        {actions}
+        {!firstUse && createAction}
+      </ListToolbar>
       {error ? (
         <Alert
           severity="error"
+          sx={{ mt: 1 }}
           action={
             <Button color="inherit" onClick={() => definitions.refetch()}>
               Retry list
@@ -339,26 +385,30 @@ export default function MetricList({
           Metrics could not be loaded. Try again.
         </Alert>
       ) : loading ? (
-        <Box
-          role="status"
-          sx={{ py: 8, textAlign: "center", color: "text.secondary" }}
-        >
-          Loading metrics…
+        <Box role="status" aria-live="polite" sx={{ pt: 1 }}>
+          <Box component="span" sx={visuallyHidden}>
+            Loading metrics…
+          </Box>
+          <ContentSkeleton
+            variant="rows"
+            rows={5}
+            role="presentation"
+            label=""
+          />
         </Box>
       ) : firstUse ? (
-        <Box sx={{ py: 8, textAlign: "center" }}>
-          <Typography variant="h6">No metrics yet</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Create a metric to track an outcome across conversations, spans or
-            users.
-          </Typography>
-        </Box>
+        <EmptyState
+          icon="solar:graph-up-linear"
+          title="No metrics yet"
+          description="Create a metric to track an outcome across conversations, spans or users."
+          action={createAction}
+        />
       ) : (
-        <Box sx={{ flex: 1, minHeight: 300, overflow: "auto" }}>
+        <Box sx={{ flex: 1, minHeight: 240, overflow: "auto", pt: 1 }}>
           <DataTable
             columns={columns}
             data={rows}
-            rowHeight={80}
+            rowHeight={ROW_HEIGHT.twoLine}
             emptyMessage={
               search.trim()
                 ? "No metrics match your search"
@@ -370,7 +420,7 @@ export default function MetricList({
           />
         </Box>
       )}
-      {!loading && !error && (
+      {!loading && !error && !firstUse && (
         <TablePagination
           component="div"
           rowsPerPageOptions={[10, 25, 50]}
@@ -411,9 +461,10 @@ export default function MetricList({
             borderTop: 1,
             borderColor: "divider",
             flexShrink: 0,
-            "& .MuiTablePagination-toolbar": { minHeight: 44, px: 2 },
-            "& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows":
-              { fontSize: 14 },
+            color: "text.secondary",
+            "& .MuiTablePagination-toolbar": { minHeight: 44, px: 1 },
+            "& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows, & .MuiTablePagination-select":
+              { typography: "s1" },
           }}
         />
       )}
@@ -424,8 +475,11 @@ MetricList.propTypes = {
   definitions: PropTypes.object.isRequired,
   scope: PropTypes.object.isRequired,
   window: PropTypes.object,
+  windowLabel: PropTypes.string,
   onSelect: PropTypes.func.isRequired,
   toolbar: PropTypes.node,
+  actions: PropTypes.node,
+  createAction: PropTypes.node,
   pagination: PropTypes.object,
   onPageChange: PropTypes.func,
   onPageSizeChange: PropTypes.func,

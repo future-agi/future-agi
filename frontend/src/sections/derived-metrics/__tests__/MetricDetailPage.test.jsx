@@ -21,6 +21,7 @@ const mock = vi.hoisted(() => ({
   org: {},
   workspace: {},
   enabled: true,
+  projectsFail: false,
 }));
 vi.mock("src/utils/axios", () => ({
   default: { get: mock.get, post: mock.post, delete: mock.delete },
@@ -62,6 +63,17 @@ vi.mock("src/sections/projects/TracesDrawer/TracesDrawer", () => ({
         <button onClick={onClose}>Close source</button>
       </div>
     ) : null,
+}));
+// The header names the project from the same Observe project read as the list.
+vi.mock("src/api/project/observe-project-list", () => ({
+  readObserveProjectPage: async () => {
+    if (mock.projectsFail) throw new Error("projects unavailable");
+    return {
+      rows: [{ id: "project-a", name: "Customer care" }],
+      totalRows: 1,
+      totalPages: 1,
+    };
+  },
 }));
 vi.mock("src/sections/tasks/components/TaskRunTraceDrawer", () => ({
   default: ({ open, traceId, projectId }) =>
@@ -116,6 +128,7 @@ beforeEach(() => {
     isReady: true,
   };
   mock.enabled = true;
+  mock.projectsFail = false;
   responses = structuredClone({
     detail: metric,
     kpi,
@@ -279,6 +292,20 @@ it.each(["span", "user", "trace"])(
   },
 );
 
+it("names the metric's project in the header, or says it is unavailable", async () => {
+  mount();
+  await screen.findByRole("heading", { name: "Resolution rate" });
+  expect(await screen.findByText("Customer care")).toBeVisible();
+  expect(screen.getByText("Project:", { exact: false })).toBeInTheDocument();
+  cleanup();
+  client.clear();
+  mock.projectsFail = true;
+  mount();
+  await screen.findByRole("heading", { name: "Resolution rate" });
+  expect(await screen.findByText("Project name unavailable")).toBeVisible();
+  expect(screen.queryByText("Customer care")).not.toBeInTheDocument();
+});
+
 it("keeps loading separate from empty data", async () => {
   const pending = deferred();
   mock.get.mockReturnValue(pending.promise);
@@ -326,6 +353,97 @@ it("allows keyboard tabs and date presets without querying hidden tabs", async (
     86400000,
   );
   expect(calls("history")).toHaveLength(0);
+});
+
+it("re-anchors a preset to a fresh window ending now from the active range and Refresh, and keeps a custom window", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-11-08T12:00:00Z"));
+    mount();
+    await screen.findByTestId("metric-hero");
+    const lastKpi = () => calls("kpi").at(-1)[1].params;
+    expect(lastKpi().window_end).toBe("2026-11-08T12:00:00.000Z");
+
+    // Clicking the range that is already selected reads it again, ending now.
+    vi.setSystemTime(new Date("2026-11-08T13:00:00Z"));
+    fireEvent.click(screen.getByRole("button", { name: "7 days" }));
+    await waitFor(() =>
+      expect(lastKpi().window_end).toBe("2026-11-08T13:00:00.000Z"),
+    );
+    expect(
+      Date.parse(lastKpi().window_end) - Date.parse(lastKpi().window_start),
+    ).toBe(7 * 86400000);
+    expect(screen.getByRole("button", { name: "7 days" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    // Refresh does the same, like the list page's Refresh.
+    vi.setSystemTime(new Date("2026-11-08T14:00:00Z"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh values" }));
+    await waitFor(() =>
+      expect(lastKpi().window_end).toBe("2026-11-08T14:00:00.000Z"),
+    );
+    await screen.findByTestId("metric-hero");
+
+    // A custom window is explicit: Refresh reads the same window again.
+    fireEvent.click(screen.getByRole("button", { name: "Custom" }));
+    const dialog = screen.getByRole("dialog", { name: "Custom window" });
+    fireEvent.change(within(dialog).getByLabelText("Window start"), {
+      target: { value: "2026-11-01T00:00" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Window end"), {
+      target: { value: "2026-11-02T00:00" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Apply window" }),
+    );
+    const customEnd = new Date("2026-11-02T00:00").toISOString();
+    await waitFor(() => expect(lastKpi().window_end).toBe(customEnd));
+    await screen.findByTestId("metric-hero");
+    const readsBefore = calls("kpi").length;
+    vi.setSystemTime(new Date("2026-11-08T15:00:00Z"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh values" }));
+    await waitFor(() =>
+      expect(calls("kpi").length).toBeGreaterThan(readsBefore),
+    );
+    expect(lastKpi().window_end).toBe(customEnd);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("reads only the fresh window on a preset Refresh, never the window it leaves", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-11-08T12:00:00Z"));
+    mount();
+    await screen.findByTestId("metric-hero");
+    const oldEnd = "2026-11-08T12:00:00.000Z";
+    const readsOf = (kind, end) =>
+      calls(kind).filter(([, config]) => config.params.window_end === end)
+        .length;
+    const oldReads = {
+      kpi: readsOf("kpi", oldEnd),
+      trend: readsOf("trend", oldEnd),
+    };
+    expect(oldReads.kpi).toBeGreaterThan(0);
+    const details = calls("detail").length;
+    vi.setSystemTime(new Date("2026-11-08T14:00:00Z"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh values" }));
+    await waitFor(() =>
+      expect(calls("kpi").at(-1)[1].params.window_end).toBe(
+        "2026-11-08T14:00:00.000Z",
+      ),
+    );
+    await screen.findByTestId("metric-hero");
+    // No read of the window being left, and the metric itself is read again.
+    expect(readsOf("kpi", oldEnd)).toBe(oldReads.kpi);
+    expect(readsOf("trend", oldEnd)).toBe(oldReads.trend);
+    expect(calls("detail").length).toBeGreaterThan(details);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("validates custom windows before starting reads", async () => {
@@ -547,6 +665,79 @@ it("pages drivers with the returned cursor and resets it on a new range", async 
   await waitFor(() =>
     expect(calls("drivers").at(-1)[1].params.after).toBeUndefined(),
   );
+});
+
+it("scopes an empty drivers page to the drivers, and names an empty later page", async () => {
+  responses.drivers.results = [];
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "Drivers" }));
+  expect(await screen.findByText("No drivers in this window")).toBeVisible();
+  // Only the returned drivers are known, never every unit in the window.
+  expect(
+    screen.getByText(
+      "No unit pulling the value down has a settled value in this window. Try a longer window.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(/No unit has a settled value/),
+  ).not.toBeInTheDocument();
+  cleanup();
+  client.clear();
+
+  responses.drivers.results = [driver];
+  responses.drivers.next_cursor = "signed-driver-page";
+  mock.get.mockImplementation(async (url, config) => {
+    const kind = url.split("/").at(-1);
+    if (kind === "drivers" && config.params.after)
+      return {
+        data: { ...responses.drivers, results: [], next_cursor: null },
+      };
+    return { data: responses[kind] };
+  });
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "Drivers" }));
+  await screen.findByRole("table", { name: "Metric drivers" });
+  fireEvent.click(screen.getByRole("button", { name: "Next drivers" }));
+  expect(await screen.findByText("No more drivers")).toBeVisible();
+  expect(
+    screen.getByText("No more drivers on this page. Use Previous to go back."),
+  ).toBeVisible();
+  expect(
+    screen.queryByText("No drivers in this window"),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("Page 2")).toBeVisible();
+  cleanup();
+  client.clear();
+
+  // Every returned unit is still open, and more pages follow: the copy says
+  // so for this page only, never that the window has no drivers.
+  responses.drivers.results = [
+    {
+      ...driver,
+      unit_id: "open-unit",
+      status: "in_progress",
+      no_value_reason: "not_evaluated",
+    },
+  ];
+  responses.drivers.next_cursor = "signed-driver-page";
+  mock.get.mockImplementation(async (url) => ({
+    data: responses[url.split("/").at(-1)],
+  }));
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "Drivers" }));
+  expect(await screen.findByText("No drivers on this page")).toBeVisible();
+  expect(
+    screen.getByText(
+      "No unit on this page has a settled value. Use Next to see more.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByText("No drivers in this window"),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Next drivers" })).toBeEnabled();
 });
 
 it("does not apply field labels from a concurrently activated definition", async () => {
@@ -828,4 +1019,273 @@ it("reads the active definition instead of silently substituting the newer draft
       "Draft v3 is not active. Its changes are not reflected in these values.",
     ),
   ).toBeVisible();
+});
+
+// Merge of B18 snapshots with the polished History: every snapshot state, its
+// captions, the read-only reason and the pending and error states.
+const snapshotWindowText =
+  "01 Nov 2026, 00:00:00 UTC – 08 Nov 2026, 00:00:00 UTC";
+const erasure = { changed_at: "2026-11-09T02:00:00Z", removed_unit_count: 3 };
+const erasureNote =
+  "Changed 09 Nov 2026, 02:00:00 UTC: 3 conversations removed after a data erasure request";
+const expiredNote =
+  "Snapshot not saved: the data changed before it could be copied. Try again.";
+const deletionNote =
+  "Deletion requested 09 Nov 2026, 01:00:00 UTC. Its stored results are being removed.";
+const deletion = (cleanup_status) => ({
+  deleted_at: "2026-11-09T01:00:00Z",
+  cleanup_status,
+});
+const readOnlyReason =
+  "A workspace member role is required to delete snapshots.";
+
+async function openSnapshotHistory(fields = {}) {
+  const snapshot = {
+    id: "snapshot-a",
+    metric_version: 2,
+    window_start: "2026-11-01T00:00:00Z",
+    window_end: "2026-11-08T00:00:00Z",
+    captured_at: "2026-11-09T00:00:00Z",
+    status: "complete",
+    ...fields,
+  };
+  responses.history.results = [
+    {
+      kind: "snapshot",
+      created_at: snapshot.captured_at,
+      status: snapshot.status,
+      snapshot,
+    },
+  ];
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "History" }));
+  const table = await screen.findByRole("table", { name: "Metric history" });
+  return within(table).getByText("Snapshot · v2").closest("tr");
+}
+
+it.each([
+  {
+    name: "queued",
+    fields: { status: "queued" },
+    label: "Queued",
+    notes: [],
+  },
+  {
+    name: "capturing",
+    fields: { status: "running" },
+    label: "Capturing",
+    notes: [],
+  },
+  {
+    name: "saved",
+    fields: {},
+    label: "Saved",
+    notes: [],
+  },
+  {
+    name: "failed: window not calculated",
+    fields: { status: "failed", error: "window_not_calculated" },
+    label: "Failed",
+    notes: [
+      "Not saved. This window has not been calculated. Choose a later start date.",
+    ],
+  },
+  {
+    name: "failed: capture did not finish",
+    fields: { status: "failed", error: "capture_failed" },
+    label: "Failed",
+    notes: ["Not saved. The capture did not finish. Try again."],
+  },
+  {
+    name: "failed: unknown code",
+    fields: { status: "failed", error: "a_new_server_code" },
+    label: "Failed",
+    notes: [],
+  },
+  {
+    name: "expired",
+    fields: { status: "failed", error: "expired" },
+    label: "Expired",
+    notes: [expiredNote],
+  },
+  {
+    name: "changed, count not returned",
+    fields: { changed_at: "2026-11-09T02:00:00Z", removed_unit_count: null },
+    label: "Changed by data erasure",
+    notes: ["Snapshot changed after a data erasure request"],
+  },
+  {
+    name: "changed, none removed",
+    fields: { changed_at: "2026-11-09T02:00:00Z", removed_unit_count: 0 },
+    label: "Changed by data erasure",
+    notes: [
+      "Changed 09 Nov 2026, 02:00:00 UTC: 0 conversations removed after a data erasure request",
+    ],
+  },
+  {
+    name: "expired and changed",
+    fields: { ...erasure, status: "failed", error: "expired" },
+    label: "Expired",
+    notes: [expiredNote, erasureNote],
+  },
+  {
+    name: "cleanup pending",
+    fields: deletion("pending"),
+    label: "Cleanup pending",
+    notes: [deletionNote],
+  },
+  {
+    name: "cleanup pending and changed",
+    fields: { ...deletion("pending"), ...erasure },
+    label: "Cleanup pending",
+    notes: [deletionNote, erasureNote],
+  },
+  {
+    name: "deleted",
+    fields: deletion("done"),
+    label: "Deleted",
+    notes: [],
+  },
+  {
+    name: "deleted and changed",
+    fields: { ...deletion("done"), ...erasure },
+    label: "Deleted",
+    notes: [erasureNote],
+  },
+])(
+  "labels a $name snapshot and shows only the captions that apply",
+  async ({ fields, label, notes }) => {
+    const row = await openSnapshotHistory(fields);
+    const status = within(row).getAllByRole("cell")[2];
+    // The label and its captions are the whole cell: no other text or number.
+    expect(status.textContent).toBe([label, ...notes].join(""));
+    expect(within(status).getByText(label)).toBeVisible();
+    for (const note of notes) {
+      expect(within(status).getByText(note)).toBeVisible();
+    }
+    if (fields.deleted_at) {
+      expect(within(row).getByText("No longer available")).toBeVisible();
+      expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+    } else {
+      expect(
+        within(row).getByRole("button", { name: "Delete snapshot" }),
+      ).toBeEnabled();
+    }
+  },
+);
+
+it("lets a Viewer reach why Delete snapshot is disabled, by keyboard", async () => {
+  mock.workspace.currentWorkspaceRole = "workspace_viewer";
+  const row = await openSnapshotHistory();
+  const button = within(row).getByRole("button", { name: "Delete snapshot" });
+  expect(button).toBeDisabled();
+  // Each row's button says which captured window it deletes.
+  expect(button).toHaveAccessibleDescription(snapshotWindowText);
+  const reason = button.parentElement;
+  expect(reason).toHaveAttribute("tabindex", "0");
+  const user = userEvent.setup();
+  for (let step = 0; step < 30; step += 1) {
+    if (document.activeElement === reason) break;
+    await user.tab();
+  }
+  expect(reason).toHaveFocus();
+  await waitFor(() =>
+    expect(screen.getByRole("tooltip")).toHaveTextContent(readOnlyReason),
+  );
+  expect(reason).toHaveAccessibleDescription(readOnlyReason);
+  expect(mock.delete).not.toHaveBeenCalled();
+});
+
+it("shows Deleting… while pending, then keeps the confirmation and its error", async () => {
+  const pending = deferred();
+  mock.delete.mockReturnValueOnce(pending.promise);
+  const row = await openSnapshotHistory();
+  expect(
+    within(row).getByRole("button", { name: "Delete snapshot" }),
+  ).toHaveAccessibleDescription(snapshotWindowText);
+  fireEvent.click(within(row).getByRole("button", { name: "Delete snapshot" }));
+  const dialog = screen.getByRole("dialog", { name: "Delete snapshot?" });
+  expect(within(dialog).getByText(snapshotWindowText)).toBeVisible();
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Delete snapshot" }),
+  );
+  expect(
+    await within(dialog).findByRole("button", { name: "Deleting…" }),
+  ).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  expect(
+    within(dialog).queryByRole("button", { name: "Close" }),
+  ).not.toBeInTheDocument();
+  await act(async () => pending.reject({ statusCode: 503 }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    /snapshot deletion/,
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Delete snapshot?" }),
+  ).toBeVisible();
+  expect(
+    within(dialog).getByRole("button", { name: "Delete snapshot" }),
+  ).toBeEnabled();
+  expect(within(dialog).getByRole("button", { name: "Close" })).toBeEnabled();
+  expect(mock.delete).toHaveBeenCalledTimes(1);
+});
+
+it("shows Queuing… while a snapshot request is pending, with no way to close", async () => {
+  const pending = deferred();
+  mock.post.mockReturnValueOnce(pending.promise);
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("button", { name: "Save snapshot" }));
+  const dialog = screen.getByRole("dialog", { name: "Save snapshot" });
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Save snapshot" }),
+  );
+  expect(
+    await within(dialog).findByRole("button", { name: "Queuing…" }),
+  ).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  expect(
+    within(dialog).queryByRole("button", { name: "Close" }),
+  ).not.toBeInTheDocument();
+  await act(async () => pending.resolve({ data: { status: "queued" } }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Save snapshot" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(mock.post).toHaveBeenCalledTimes(1);
+});
+
+it("shows the bucket-aligned window a snapshot saves, and sends the selection", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-09T14:09:54.321Z"));
+  try {
+    mount();
+    await screen.findByTestId("metric-hero");
+    fireEvent.click(screen.getByRole("button", { name: "Save snapshot" }));
+    const dialog = screen.getByRole("dialog", { name: "Save snapshot" });
+    expect(
+      within(dialog).getByText(
+        "02 Nov 2026, 14:00:00 UTC – 09 Nov 2026, 14:00:00 UTC",
+      ),
+    ).toBeVisible();
+    expect(within(dialog).queryByText(/14:09:54/)).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "Your selected range, with both ends rounded down to 15-minute UTC buckets.",
+      ),
+    ).toBeVisible();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Save snapshot" }),
+    );
+    await waitFor(() => expect(mock.post).toHaveBeenCalledTimes(1));
+    // The server rounds the request itself; the client sends what was chosen.
+    expect(mock.post.mock.calls[0][1]).toMatchObject({
+      window_start: "2026-11-02T14:09:54.321Z",
+      window_end: "2026-11-09T14:09:54.321Z",
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -6,19 +6,27 @@ import {
   Box,
   Breadcrumbs,
   Button,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Link,
+  ListItemIcon,
   Menu,
   MenuItem,
   Stack,
   Tab,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@mui/material";
+import { visuallyHidden } from "@mui/utils";
+import Iconify from "src/components/iconify";
+import PageHeader from "src/components/page-header";
+import StatusBadge from "src/components/status-badge";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useParams, useRouter } from "src/routes/hooks";
@@ -34,8 +42,20 @@ import MetricDrivers from "./MetricDrivers";
 import MetricHistory from "./MetricHistory";
 import MetricDefinition from "./MetricDefinition";
 import SaveSnapshot from "./SaveSnapshot";
+import { definitionSummary } from "./metricPresentation";
+import {
+  metricProjectLabel,
+  useMetricProjectNames,
+} from "./useMetricProjectNames";
 
 const tabs = ["Overview", "Drivers", "History", "Definition"];
+const WINDOWS = [
+  [1, "24h", "Last 24 hours"],
+  [7, "7 days", "Last 7 days"],
+  [30, "30 days", "Last 30 days"],
+];
+// Reads whose query key carries the window (as in api.js).
+const WINDOW_READS = new Set(["kpi", "trend", "drivers", "unitValues"]);
 
 export default function MetricDetailPage() {
   const { metricId } = useParams();
@@ -49,11 +69,15 @@ export default function MetricDetailPage() {
     currentWorkspaceRole,
     isReady: workspaceReady,
   } = useWorkspace();
+  // Like the list page, the header stays in place while the workspace loads.
   if (!organizationReady || !workspaceReady)
     return (
-      <Typography role="status" sx={{ p: 4 }}>
-        Loading workspace…
-      </Typography>
+      <Box sx={{ p: 2 }}>
+        <PageHeader title="Metric" />
+        <Typography role="status" variant="body2" color="text.secondary">
+          Loading workspace…
+        </Typography>
+      </Box>
     );
   if (!currentOrganizationId || !currentWorkspaceId)
     return (
@@ -80,10 +104,15 @@ export default function MetricDetailPage() {
 function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
   const router = useRouter();
   const client = useQueryClient();
-  const reload = () => {
+  // windowReads: false skips the reads keyed by the window. A preset Refresh
+  // moves to a new window, so those reads start fresh under their new keys;
+  // invalidating the old keys would only refetch a window being left.
+  const reload = ({ windowReads = true } = {}) => {
     void client.invalidateQueries({
       queryKey: metricKeys.workspace(scope),
-      predicate: ({ queryKey }) => queryKey[5] === metricId,
+      predicate: ({ queryKey }) =>
+        queryKey[5] === metricId &&
+        (windowReads || !WINDOW_READS.has(queryKey[4])),
     });
   };
   const detail = useMetricDetail({ scope, metricId });
@@ -109,181 +138,271 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
     (!metric?.definition && metric?.draft_definition?.level === "user");
   const scopeWithProject = { ...scope, projectId: metric?.project_id };
   const readKey = `${definitionId}:${window.window_start}:${window.window_end}:${readRevision}`;
+  const summary = definitionSummary(
+    metric?.definition || metric?.draft_definition,
+  );
+  // The same project read the Metrics list uses; no extra endpoint.
+  const projectNames = useMetricProjectNames(
+    scope,
+    metric?.project_id ? [metric.project_id] : [],
+  );
+  const statusBadge = !metric ? null : metric.definition ? (
+    <StatusBadge
+      status="active"
+      label={`Active · v${metric.definition.version}`}
+      size="sm"
+    />
+  ) : (
+    <StatusBadge
+      status="draft"
+      label={
+        metric.draft_definition?.version != null
+          ? `Draft v${metric.draft_definition.version}`
+          : "Draft"
+      }
+      variant="dot"
+    />
+  );
+  const projectLabel =
+    metric?.project_id && metricProjectLabel(projectNames, metric.project_id);
+  // Project first, then status, as the Tasks header shows them.
+  const badge = metric ? (
+    <>
+      {projectLabel && (
+        <Chip
+          size="small"
+          variant="outlined"
+          title={projectLabel}
+          icon={<Iconify icon="solar:folder-linear" width={14} />}
+          label={
+            <>
+              <Box component="span" sx={visuallyHidden}>
+                Project:{" "}
+              </Box>
+              {projectLabel}
+            </>
+          }
+          sx={{
+            maxWidth: 280,
+            borderColor: "divider",
+            "& .MuiChip-icon": { ml: 0.5 },
+          }}
+        />
+      )}
+      {statusBadge}
+    </>
+  ) : null;
+  const windowLabel =
+    range === "custom"
+      ? "Custom window"
+      : WINDOWS.find(([days]) => days === range)?.[2];
+  // Like the list page's Refresh: a preset re-anchors to a fresh window ending
+  // now. A custom window is explicit, so it is read again unchanged.
+  const reanchor = () => {
+    if (range !== "custom") setWindow(metricWindow(range));
+  };
+  const refreshValues = () => {
+    setReadRevision((value) => value + 1);
+    if (range === "custom") reload();
+    else {
+      reanchor();
+      reload({ windowReads: false });
+    }
+  };
   return (
-    <Stack
-      spacing={2}
-      sx={{ p: 2, minHeight: "100%", bgcolor: "background.paper" }}
-    >
-      <Breadcrumbs aria-label="Breadcrumb">
+    <Stack sx={{ p: 2, minHeight: "100%", bgcolor: "background.paper" }}>
+      <Breadcrumbs
+        aria-label="Breadcrumb"
+        sx={{ typography: "s1", "& .MuiBreadcrumbs-separator": { mx: 0.75 } }}
+      >
         <Link
-          color="inherit"
+          color="text.secondary"
           href={paths.dashboard.metrics.root}
           underline="hover"
         >
           Metrics
         </Link>
-        <Typography variant="body2" color="text.primary">
+        <Typography variant="body2" color="text.primary" noWrap>
           {metric?.name || "Metric"}
         </Typography>
       </Breadcrumbs>
-      <Stack
-        direction="row"
-        alignItems="center"
-        justifyContent="space-between"
-        spacing={4}
-      >
-        <Box sx={{ minWidth: 0 }}>
-          <Typography
-            component="h1"
-            variant="h6"
-            fontWeight={600}
-            sx={{ overflowWrap: "anywhere" }}
-          >
-            {metric?.name || "Metric"}
-          </Typography>
-          {metric?.description && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              {metric.description}
-            </Typography>
-          )}
-        </Box>
-        <Stack direction="row" spacing={2} sx={{ flexShrink: 0 }}>
-          <SaveSnapshot
-            metric={metric}
-            scope={scopeWithProject}
-            window={window}
-            canWrite={canWrite}
-            onSaved={() => {
-              setTab("History");
-              setReadRevision((value) => value + 1);
-              reload();
-            }}
-          />
-          <Tooltip
-            title={
-              canWrite
-                ? ""
-                : "A workspace member role is required to edit metrics."
-            }
-          >
-            <span>
-              <Button
-                variant="outlined"
-                color="inherit"
-                disabled={!canWrite || !metric}
-                onClick={() =>
-                  router.push(paths.dashboard.metrics.edit(metricId))
-                }
-              >
-                Edit
-              </Button>
-            </span>
-          </Tooltip>
-          <Tooltip
-            title={
-              userMetric
-                ? "User-level metrics are not available yet."
-                : canWrite
-                  ? "Queue a recalculation. Existing values change only after it commits."
-                  : "A workspace member role is required to run metrics."
-            }
-          >
-            <span>
-              <Button
-                variant="outlined"
-                color="inherit"
-                disabled={
-                  !canWrite || !metric || userMetric || refresh.isPending
-                }
-                onClick={() => refresh.mutate({ confirm: true })}
-              >
-                {refresh.isPending ? "Queuing…" : "Run now"}
-              </Button>
-            </span>
-          </Tooltip>
-          <Button
-            color="inherit"
-            variant="outlined"
-            aria-haspopup="menu"
-            aria-expanded={Boolean(menu)}
-            aria-controls={menu ? "metric-more-menu" : undefined}
-            disabled={!metric}
-            onClick={(event) => setMenu(event.currentTarget)}
-          >
-            More
-          </Button>
-          <Menu
-            id="metric-more-menu"
-            anchorEl={menu}
-            open={Boolean(menu)}
-            onClose={() => setMenu(null)}
-          >
-            <Typography
-              variant="caption"
-              component="li"
-              sx={{ px: 3, py: 2, color: "text.secondary" }}
-            >
-              These actions are not available yet.
-            </Typography>
-            {["Add to dashboard", "Create alert", "Duplicate"].map((action) => (
-              <MenuItem key={action} disabled>
-                {action}
-              </MenuItem>
-            ))}
-          </Menu>
-        </Stack>
-      </Stack>
-      {refresh.isError && (
-        <Alert severity="warning">
-          {metricReadMessage(refresh.error, "Refresh request")}
-        </Alert>
-      )}
-      {refresh.isSuccess && (
-        <Alert
-          severity="info"
-          action={
-            <Button
-              color="inherit"
-              onClick={() => {
+      <PageHeader
+        title={metric?.name || "Metric"}
+        badge={badge}
+        description={metric?.description || summary || undefined}
+        sx={{ mt: 1, mb: 0 }}
+        actions={
+          <>
+            <SaveSnapshot
+              metric={metric}
+              scope={scopeWithProject}
+              window={window}
+              canWrite={canWrite}
+              onSaved={() => {
+                setTab("History");
                 setReadRevision((value) => value + 1);
                 reload();
               }}
+            />
+            <Tooltip
+              title={
+                canWrite
+                  ? ""
+                  : "A workspace member role is required to edit metrics."
+              }
             >
-              Check for updates
+              <span>
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  size="small"
+                  startIcon={<Iconify icon="solar:pen-linear" width={16} />}
+                  disabled={!canWrite || !metric}
+                  onClick={() =>
+                    router.push(paths.dashboard.metrics.edit(metricId))
+                  }
+                >
+                  Edit
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip
+              title={
+                userMetric
+                  ? "User-level metrics are not available yet."
+                  : canWrite
+                    ? "Queue a recalculation. Existing values change only after it commits."
+                    : "A workspace member role is required to run metrics."
+              }
+            >
+              <span>
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  size="small"
+                  startIcon={<Iconify icon="solar:play-linear" width={16} />}
+                  disabled={
+                    !canWrite || !metric || userMetric || refresh.isPending
+                  }
+                  onClick={() => refresh.mutate({ confirm: true })}
+                >
+                  {refresh.isPending ? "Queuing…" : "Run now"}
+                </Button>
+              </span>
+            </Tooltip>
+            <Button
+              variant="outlined"
+              color="inherit"
+              size="small"
+              aria-label="More"
+              aria-haspopup="menu"
+              aria-expanded={Boolean(menu)}
+              aria-controls={menu ? "metric-more-menu" : undefined}
+              disabled={!metric}
+              onClick={(event) => setMenu(event.currentTarget)}
+              sx={{ minWidth: 0, px: 0.75 }}
+            >
+              <Iconify icon="solar:menu-dots-bold" width={16} />
             </Button>
-          }
-        >
-          {refresh.data?.status === "already_queued"
-            ? "A recalculation is already queued."
-            : "Recalculation queued."}{" "}
-          Values change only after a successful commit.
-        </Alert>
-      )}
-      <MetricReadNotice query={detail} label="Metric" />
-      {metric && (
-        <>
-          {userMetric && (
-            <Alert severity="info">
-              User-level metrics are not available yet.
-            </Alert>
-          )}
-          {metric.definition &&
-            metric.draft_definition &&
-            metric.draft_definition.id !== metric.definition.id && (
-              <Stack
-                spacing={1.5}
-                sx={{ p: 2, bgcolor: "background.neutral", borderRadius: 1 }}
+            <Menu
+              id="metric-more-menu"
+              anchorEl={menu}
+              open={Boolean(menu)}
+              onClose={() => setMenu(null)}
+            >
+              <Typography
+                variant="caption"
+                component="li"
+                sx={{
+                  display: "block",
+                  px: 1.5,
+                  py: 1,
+                  color: "text.secondary",
+                }}
               >
-                <Typography variant="body2" color="text.secondary">
-                  Draft v{metric.draft_definition.version} is not active. Values
-                  below still use v{metric.definition.version}.
-                </Typography>
-                <MetricStatusLine
-                  definition={metric.draft_definition}
-                  showFreshness={false}
-                />
-              </Stack>
-            )}
+                These actions are not available yet.
+              </Typography>
+              {[
+                ["Add to dashboard", "solar:widget-add-linear"],
+                ["Create alert", "solar:bell-linear"],
+                ["Duplicate", "solar:copy-linear"],
+              ].map(([action, icon]) => (
+                <MenuItem key={action} disabled>
+                  <ListItemIcon>
+                    <Iconify icon={icon} width={16} />
+                  </ListItemIcon>
+                  {action}
+                </MenuItem>
+              ))}
+            </Menu>
+          </>
+        }
+      />
+      <Stack spacing={1.5} sx={{ mt: 1.5 }}>
+        {refresh.isError && (
+          <Alert severity="warning">
+            {metricReadMessage(refresh.error, "Refresh request")}
+          </Alert>
+        )}
+        {refresh.isSuccess && (
+          <Alert
+            severity="info"
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => {
+                  setReadRevision((value) => value + 1);
+                  reload();
+                }}
+              >
+                Check for updates
+              </Button>
+            }
+          >
+            {refresh.data?.status === "already_queued"
+              ? "A recalculation is already queued."
+              : "Recalculation queued."}{" "}
+            Values change only after a successful commit.
+          </Alert>
+        )}
+        <MetricReadNotice query={detail} label="Metric" />
+        {metric && userMetric && (
+          <Alert severity="info">
+            User-level metrics are not available yet.
+          </Alert>
+        )}
+        {metric?.definition &&
+          metric.draft_definition &&
+          metric.draft_definition.id !== metric.definition.id && (
+            <Stack
+              spacing={1}
+              sx={{
+                p: 1.5,
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 1,
+              }}
+            >
+              <Typography variant="body2" color="text.secondary">
+                Draft v{metric.draft_definition.version} is not active. Values
+                below still use v{metric.definition.version}.
+              </Typography>
+              <MetricStatusLine
+                definition={metric.draft_definition}
+                showFreshness={false}
+              />
+            </Stack>
+          )}
+      </Stack>
+      {metric && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          spacing={2}
+          sx={{ mt: 2 }}
+        >
           <SegmentedTabs
             value={tab}
             onChange={(_, value) => setTab(value)}
@@ -299,65 +418,84 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
               />
             ))}
           </SegmentedTabs>
-          {["Overview", "Drivers"].includes(tab) && (
+          {["Overview", "Drivers"].includes(tab) && metric.definition && (
             <Stack
               direction="row"
-              spacing={1.5}
+              spacing={1}
               alignItems="center"
               aria-label="Metric date range"
             >
-              <Typography variant="body2" color="text.secondary" sx={{ mr: 2 }}>
-                Window
-              </Typography>
-              {[
-                [1, "24h"],
-                [7, "7 days"],
-                [30, "30 days"],
-              ].map(([days, label]) => (
-                <Button
-                  key={days}
-                  color="inherit"
-                  variant={range === days ? "outlined" : "text"}
-                  aria-pressed={range === days}
-                  size="small"
-                  onClick={() => {
-                    setRange(days);
-                    setWindow(metricWindow(days));
-                  }}
-                >
-                  {label}
-                </Button>
-              ))}
-              <Button
-                color="inherit"
+              <ToggleButtonGroup
+                exclusive
                 size="small"
-                variant={range === "custom" ? "outlined" : "text"}
-                aria-pressed={range === "custom"}
-                onClick={() => setCustom(true)}
-              >
-                Custom
-              </Button>
-              <Button
-                color="inherit"
-                size="small"
-                onClick={() => {
-                  setReadRevision((value) => value + 1);
-                  reload();
+                value={range}
+                aria-label="Window"
+                onChange={(_, value) => {
+                  // An exclusive group reports a click on the active preset as
+                  // null; it still means "this range, ending now".
+                  if (value == null) reanchor();
+                  else if (value !== "custom") {
+                    setRange(value);
+                    setWindow(metricWindow(value));
+                  }
                 }}
               >
-                Refresh values
-              </Button>
+                {WINDOWS.map(([days, label]) => (
+                  <ToggleButton key={days} value={days}>
+                    {label}
+                  </ToggleButton>
+                ))}
+                <ToggleButton
+                  value="custom"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    setCustom(true);
+                  }}
+                >
+                  Custom
+                </ToggleButton>
+              </ToggleButtonGroup>
+              <Tooltip
+                title={
+                  range === "custom"
+                    ? "Read values again for the custom window"
+                    : "Read values again for a fresh window ending now"
+                }
+              >
+                {/* Labelled like the list page's Refresh, which it matches. */}
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  size="small"
+                  aria-label="Refresh values"
+                  startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
+                  onClick={refreshValues}
+                >
+                  Refresh
+                </Button>
+              </Tooltip>
             </Stack>
           )}
-        </>
+        </Stack>
       )}
+      {/* Focusable because the Definition panel has no control of its own;
+          the ring matches the list and value cells so the stop is visible. */}
       <Box
         role="tabpanel"
         id={`metric-panel-${tab}`}
         aria-labelledby={`metric-tab-${tab}`}
         tabIndex={0}
         hidden={!metric}
-        sx={{ pt: 3, minWidth: 0 }}
+        sx={{
+          mt: 2.5,
+          minWidth: 0,
+          borderRadius: 0.5,
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "text.primary",
+            outlineOffset: 4,
+          },
+        }}
       >
         {tab === "Overview" && (
           <MetricOverview
@@ -365,6 +503,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
             metric={metric}
             scope={scopeWithProject}
             window={window}
+            windowLabel={windowLabel}
           />
         )}
         {tab === "Drivers" && (
@@ -383,7 +522,16 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
             scope={scopeWithProject}
           />
         )}
-        {tab === "Definition" && metric && <MetricDefinition metric={metric} />}
+        {tab === "Definition" && metric && (
+          <MetricDefinition
+            metric={metric}
+            onEditDraft={
+              canWrite
+                ? () => router.push(paths.dashboard.metrics.edit(metricId))
+                : undefined
+            }
+          />
+        )}
       </Box>
       {custom && (
         <CustomWindow

@@ -103,6 +103,11 @@ export function metricCountCopy(value, unitNoun, locale) {
   return lines;
 }
 
+/** One wording for a window the active definition has not calculated, whether
+ * a read or a snapshot capture ran into it. */
+export const windowNotCalculatedCopy =
+  "This window has not been calculated. Choose a later start date.";
+
 /** Dates/counts are supplied by callers from the snapshot contract, not inferred. */
 export function snapshotStateCopy(state, { date, removedCount, locale } = {}) {
   switch (state) {

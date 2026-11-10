@@ -1,5 +1,11 @@
-import { afterEach, expect, it } from "vitest";
-import { cleanup, render, screen, within } from "src/utils/test-utils";
+import { afterEach, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "src/utils/test-utils";
 import MetricDefinition from "../MetricDefinition";
 import { metric, percentileMetrics } from "./metricPageFixtures";
 afterEach(cleanup);
@@ -22,8 +28,32 @@ it("renders the exact typed source, reducer and observation condition", () => {
   render(<MetricDefinition metric={{ ...metric, definition }} />);
   const table = screen.getByRole("table", { name: "Definition inputs" });
   expect(within(table).getByText('is not "fr"')).toBeVisible();
-  expect(within(table).getByText("any")).toBeVisible();
-  expect(within(table).getByText("text")).toBeVisible();
+  // Reducer and type read as words; the stored value stays on hover.
+  expect(within(table).getByText("Any observation matches")).toHaveAttribute(
+    "title",
+    "Stored as any",
+  );
+  expect(within(table).getByText("Text")).toHaveAttribute(
+    "title",
+    "Stored as text",
+  );
+  expect(within(table).getByText("locale")).toBeVisible();
+  expect(within(table).getByText("Span attribute")).toBeVisible();
+  // A sentence recipe's generated alias is not a user-facing name.
+  expect(
+    within(table).queryByRole("columnheader", { name: "Alias" }),
+  ).not.toBeInTheDocument();
+});
+it("names definition settings in words instead of stored enums", () => {
+  render(<MetricDefinition metric={metric} />);
+  for (const [label, value] of [
+    ["Per-unit result", "Yes or no"],
+    ["Format", "Percentage"],
+    ["Weighting", "None"],
+  ])
+    expect(
+      screen.getByText(label, { selector: "dt" }).nextSibling,
+    ).toHaveTextContent(value);
 });
 it("preserves zero, false, empty string and alias comparisons without truthiness fallbacks", () => {
   const definition = {
@@ -111,8 +141,21 @@ it("preserves an exact custom formula even if field metadata contains a percenti
 });
 it("never substitutes an unactivated draft when the active definition is absent", () => {
   render(<MetricDefinition metric={{ ...metric, definition: null }} />);
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "No active definition yet",
-  );
+  // An expected state, not an error: no assertive alert is announced.
+  expect(screen.getByText("No active definition yet")).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(screen.queryByText(/Active definition · v3/)).not.toBeInTheDocument();
+});
+it("offers the saved draft only when the viewer can edit it", () => {
+  const onEditDraft = vi.fn();
+  const draftOnly = { ...metric, definition: null };
+  const view = render(<MetricDefinition metric={draftOnly} />);
+  expect(
+    screen.queryByRole("button", { name: "Open draft" }),
+  ).not.toBeInTheDocument();
+  view.rerender(
+    <MetricDefinition metric={draftOnly} onEditDraft={onEditDraft} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Open draft" }));
+  expect(onEditDraft).toHaveBeenCalledTimes(1);
 });

@@ -134,11 +134,11 @@ it("matches the sibling search field, shared default rows, project ellipsis/tool
   });
   expect(screen.queryByText("Search this page")).not.toBeInTheDocument();
   const name = await screen.findByRole("button", { name: metric.name });
-  // V2 rows reserve room for the shared value's returned interval and freshness.
-  // Keep the table bounded rather than clipping the second line at legacy 36px.
+  // V2 rows use the shared two-line row: the value plus its returned interval,
+  // or freshness plus recalculation progress, each held to one line.
   expect(name.closest('[role="row"]')).toHaveStyle({
-    minHeight: "80px",
-    maxHeight: "80px",
+    minHeight: "48px",
+    maxHeight: "48px",
   });
   const project = await screen.findByText(projectName);
   expect(project).toHaveStyle({

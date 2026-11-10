@@ -10,6 +10,7 @@ import {
 import { palette } from "src/theme/palette";
 import MetricTrendChart from "../MetricTrendChart";
 import { metricTrendPoints } from "../metricPageValues";
+import { formatMetricWindow } from "../metricTime";
 import { trend } from "./metricPageFixtures";
 const mock = vi.hoisted(() => ({ props: null }));
 vi.mock("react-apexcharts", () => ({
@@ -48,6 +49,17 @@ it("provides a keyboard-accessible table with coverage, intervals and no-value r
   expect(within(table).getByText("0%")).toBeVisible();
   expect(within(table).getAllByText("95% interval: 51% – 70%")).toHaveLength(2);
   expect(screen.queryByTestId("chart")).not.toBeInTheDocument();
+});
+it("states the effective window once, unless the caller already shows it", () => {
+  const line = `${formatMetricWindow(trend.effective_window)} · ${trend.effective_window.rounding}`;
+  const { rerender } = render(
+    <MetricTrendChart data={trend} name="Resolution rate" />,
+  );
+  expect(screen.getByText(line)).toBeVisible();
+  rerender(
+    <MetricTrendChart data={trend} name="Resolution rate" showWindow={false} />,
+  );
+  expect(screen.queryByText(line)).not.toBeInTheDocument();
 });
 it("shows no-values state without plotting a fabricated line", () => {
   render(<MetricTrendChart data={{ ...trend, results: [] }} name="Cost" />);
