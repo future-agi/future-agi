@@ -53,14 +53,20 @@ func TestToolPolicyAcceptance(t *testing.T) {
 							policystream.Reply(w, provider, test == "allowed-required" || test == "native-required")
 							return
 						}
-						io.WriteString(w, `{"id":"synthetic","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"finish_reason":"COMPLETE","usage":{"input_tokens":1,"output_tokens":1}}`)
+						if _, err := io.WriteString(w, `{"id":"synthetic","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"finish_reason":"COMPLETE","usage":{"input_tokens":1,"output_tokens":1}}`); err != nil {
+							t.Error(err)
+						}
 					}))
 					defer upstream.Close()
 					p, err := newProvider("synthetic", config.ProviderConfig{BaseURL: upstream.URL, APIKey: "synthetic-key", DefaultTimeout: 5 * time.Second, AWSRegion: "us-east-1", AWSAccessKeyID: "synthetic", AWSSecretAccessKey: "synthetic"})
 					if err != nil {
 						t.Fatal(err)
 					}
-					defer p.Close()
+					defer func() {
+						if err := p.Close(); err != nil {
+							t.Error(err)
+						}
+					}()
 					body := `{"model":"test-model","messages":[{"role":"user","content":"synthetic"}],"tools":[{"type":"function","function":{"name":"permitted_tool","parameters":{"type":"object","properties":{}}}},{"type":"function","function":{"name":"restricted_tool","parameters":{"type":"object","properties":{}}}}]`
 					switch test {
 					case "none", "none-parallel":
@@ -79,13 +85,14 @@ func TestToolPolicyAcceptance(t *testing.T) {
 					}
 					body += "}"
 					var req *models.ChatCompletionRequest
-					if test == "callers" || test == "empty-callers" {
+					switch test {
+					case "callers", "empty-callers":
 						callers := `["code_execution_20260120"]`
 						if test == "empty-callers" {
 							callers = `[]`
 						}
 						req, _, err = (&anthropicwire.Translator{}).RequestToCanonical([]byte(`{"model":"test-model","max_tokens":32,"messages":[{"role":"user","content":"synthetic"}],"tools":[{"name":"restricted_tool","allowed_callers":` + callers + `,"input_schema":{"type":"object"}}]}`))
-					} else if test == "native-auto" || test == "native-required" {
+					case "native-auto", "native-required":
 						mode := "AUTO"
 						if test == "native-required" {
 							mode = "ANY"
@@ -94,7 +101,7 @@ func TestToolPolicyAcceptance(t *testing.T) {
 						if req != nil {
 							req.Model = "test-model"
 						}
-					} else {
+					default:
 						req = &models.ChatCompletionRequest{}
 						err = json.Unmarshal([]byte(body), req)
 					}

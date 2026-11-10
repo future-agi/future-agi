@@ -34,12 +34,18 @@ func TestResponsesBridgePreservesNativeSingleCallPolicy(t *testing.T) {
 					w.Header().Set("Content-Type", "text/event-stream")
 					sse(w, `{"type":"response.completed","response":{"id":"synthetic","model":"test","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}`)
 				} else {
-					io.WriteString(w, `{"id":"synthetic","model":"test","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
+					if _, err := io.WriteString(w, `{"id":"synthetic","model":"test","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`); err != nil {
+						t.Error(err)
+					}
 				}
 			}))
 			defer upstream.Close()
 			p := newTestProvider(t, upstream.URL)
-			defer p.Close()
+			defer func() {
+				if err := p.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			req, _, err := anthropicwire.New().RequestToCanonical([]byte(`{"model":"test","max_tokens":32,"messages":[{"role":"user","content":"synthetic"}],"tools":[{"name":"permitted_tool","input_schema":{"type":"object"}}],"tool_choice":{"type":"auto","disable_parallel_tool_use":true}}`))
 			if err != nil {
 				t.Fatal(err)
@@ -66,11 +72,17 @@ func TestResponsesBridgeRefusesCallerContextsBeforeDispatch(t *testing.T) {
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		io.WriteString(w, `{"id":"synthetic","output":[]}`)
+		if _, err := io.WriteString(w, `{"id":"synthetic","output":[]}`); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer upstream.Close()
 	p := newTestProvider(t, upstream.URL)
-	defer p.Close()
+	defer func() {
+		if err := p.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	req, _, err := anthropicwire.New().RequestToCanonical([]byte(`{"model":"test","max_tokens":32,"messages":[{"role":"user","content":"synthetic"}],"tools":[{"name":"restricted_tool","allowed_callers":["code_execution_20260120"],"input_schema":{"type":"object"}}]}`))
 	if err != nil {
 		t.Fatal(err)

@@ -44,7 +44,11 @@ func TestAllowedToolsUnknownNameFailsBeforeAnthropicRequest(t *testing.T) {
 	}))
 	defer server.Close()
 	p := newTestProvider(t, server.URL)
-	defer p.Close()
+	defer func() {
+		if err := p.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	req := &models.ChatCompletionRequest{
 		Model:      "claude-sonnet-4-20250514",
 		Messages:   []models.Message{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
@@ -89,17 +93,29 @@ func TestIntegration_ToolChoiceNone(t *testing.T) {
 				}
 				if stream {
 					w.Header().Set("Content-Type", "text/event-stream")
-					fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_none\",\"model\":\"claude-sonnet-4-20250514\"}}\n\n")
-					fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n")
-					fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+					if _, err := fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_none\",\"model\":\"claude-sonnet-4-20250514\"}}\n\n"); err != nil {
+						t.Error(err)
+					}
+					if _, err := fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n"); err != nil {
+						t.Error(err)
+					}
+					if _, err := fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"); err != nil {
+						t.Error(err)
+					}
 				} else {
 					w.Header().Set("Content-Type", "application/json")
-					fmt.Fprint(w, `{"id":"msg_none","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"Hi"}],"stop_reason":"end_turn"}`)
+					if _, err := fmt.Fprint(w, `{"id":"msg_none","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"Hi"}],"stop_reason":"end_turn"}`); err != nil {
+						t.Error(err)
+					}
 				}
 			}))
 			defer server.Close()
 			p := newTestProvider(t, server.URL)
-			defer p.Close()
+			defer func() {
+				if err := p.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			parallel := false
 			req := &models.ChatCompletionRequest{
 				Model:             "claude-sonnet-4-20250514",

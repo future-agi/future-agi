@@ -51,14 +51,20 @@ func TestConverseToolPolicies(t *testing.T) {
 						policystream.Reply(w, "converse", policy == "required" || policy == "named")
 						return
 					}
-					io.WriteString(w, `{"output":{"message":{"role":"assistant","content":[{"text":"ok"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1}}`)
+					if _, err := io.WriteString(w, `{"output":{"message":{"role":"assistant","content":[{"text":"ok"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1}}`); err != nil {
+						t.Error(err)
+					}
 				}))
 				defer upstream.Close()
 				p, err := New("synthetic", config.ProviderConfig{BaseURL: upstream.URL, AWSRegion: "us-east-1", AWSAccessKeyID: "synthetic", AWSSecretAccessKey: "synthetic"})
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer p.Close()
+				defer func() {
+					if err := p.Close(); err != nil {
+						t.Error(err)
+					}
+				}()
 				body := `{"model":"us.test-profile","messages":[{"role":"user","content":"synthetic"}],"tools":[{"type":"function","function":{"name":"permitted_tool","parameters":{"type":"object"}}},{"type":"function","function":{"name":"restricted_tool","parameters":{"type":"object"}}}]`
 				switch policy {
 				case "none":
