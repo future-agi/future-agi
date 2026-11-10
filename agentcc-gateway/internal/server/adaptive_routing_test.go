@@ -38,14 +38,14 @@ func adaptiveUpstream(t *testing.T, fail bool, delay time.Duration, calls *atomi
 	return upstream
 }
 
-func adaptiveServer(t *testing.T, cfg *config.Config) (*Server, *httptest.Server) {
+func adaptiveServer(t *testing.T, cfg *config.Config, plugins ...pipeline.Plugin) (*Server, *httptest.Server) {
 	t.Helper()
 	cfg.Auth.Enabled = false
 	registry, err := providers.NewRegistry(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	srv := New(cfg, "", registry, pipeline.NewEngine(plugins...), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
 	srv.ready.Store(true)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

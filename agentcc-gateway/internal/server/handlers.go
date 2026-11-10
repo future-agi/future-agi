@@ -475,7 +475,11 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 		}
 		return routing.NewFailover(foCfg, h.registry.Router(), retryer, nil)
 	}
-	return h.failover.Load()
+	fo := h.failover.Load()
+	if orgCfg != nil && len(orgCfg.Providers) > 0 {
+		return fo.WithoutCircuitBreaker()
+	}
+	return fo
 }
 
 func (h *Handlers) resolveFallbackProvider(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string) (providers.Provider, string, string, bool) {
@@ -1209,19 +1213,6 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	// Note: x-agentcc-timeout-ms is set via setAgentccHeaders (before WriteHeader)
 	// using rc.Metadata["timeout_ms"] which was populated above.
 
-	// Keep health and latency in the shared monitor, including before routing
-	// is enabled or while it is temporarily disabled by a config reload.
-	if h.healthMonitor != nil && rc.Provider != "" {
-		if d, ok := rc.Timings["provider"]; ok {
-			h.healthMonitor.RecordLatency(rc.Provider, d)
-		}
-		if len(rc.Errors) > 0 {
-			h.healthMonitor.RecordError(rc.Provider, rc.Errors[0])
-		} else {
-			h.healthMonitor.RecordSuccess(rc.Provider)
-		}
-	}
-
 	// Traffic mirroring (async, fire-and-forget).
 	// Copy request fields before rc is released to the pool.
 	if m := h.mirror.Load(); m != nil && len(rc.Errors) == 0 && !rc.IsStream {
@@ -1424,7 +1415,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	servingProvider := provider
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		resp, err := provider.ChatCompletion(ctx, rc.Request)
+		resp, err := h.callChatProvider(ctx, provider, rc.Request)
 		if err == nil {
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
@@ -1444,7 +1435,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			rc.Provider = fbProviderID
 			rc.Request.Model = resolvedModel
 
-			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
+			fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 			if fbCallErr == nil {
 				servingProvider = fbProvider
 				rc.Response = fbResp
@@ -1503,7 +1494,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Request.Model = originalModel
 			}
 
-			resp, err := p.ChatCompletion(ctx, rc.Request)
+			resp, err := h.callChatProvider(ctx, p, rc.Request)
 			if err != nil {
 				return err
 			}
@@ -1537,7 +1528,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Provider = fbProviderID
 				rc.Request.Model = resolvedModel
 
-				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
+				fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 				if fbCallErr == nil {
 					servingProvider = fbProvider
 					rc.Response = fbResp
@@ -1592,6 +1583,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	var firstChunk *models.StreamChunk
 	var servingProvider providers.Provider
 	var upstreamStreamCancel context.CancelFunc
+	var upstreamStart time.Time
 	defer func() {
 		if upstreamStreamCancel != nil {
 			upstreamStreamCancel()
@@ -1604,17 +1596,22 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// attempt returns, which would otherwise end the stream after one chunk.
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
+		start := time.Now()
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()
-			return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			err := models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			h.recordProviderOutcome(callProvider, time.Since(start), err)
+			return err
 		}
 
 		chunk, err := waitForFirstStreamChunk(callCtx, candidateChunks, candidateErrCh)
 		if err != nil {
+			h.recordProviderOutcome(callProvider, time.Since(start), err)
 			cancelAndDrainStream(attemptCancel, candidateChunks)
 			return err
 		}
+		upstreamStart = start
 
 		if upstreamStreamCancel != nil {
 			cancelAndDrainStream(upstreamStreamCancel, chunks)
@@ -1838,12 +1835,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if !ok {
 				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
 					if apiErr != nil {
+						h.recordProviderOutcome(servingProvider, time.Since(upstreamStart), apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
+				h.recordProviderOutcome(servingProvider, time.Since(upstreamStart), nil)
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1906,6 +1905,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
+				h.recordProviderOutcome(servingProvider, time.Since(upstreamStart), err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
 					apiErr = models.ErrInternal(err.Error())
@@ -1922,6 +1922,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			// guardrail goroutines. Drain remaining chunks to unblock the
 			// provider goroutine.
 			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
+				h.recordProviderOutcome(servingProvider, time.Since(upstreamStart), ctx.Err())
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}

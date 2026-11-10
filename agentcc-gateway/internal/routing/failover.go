@@ -59,6 +59,18 @@ func NewFailover(cfg config.FailoverConfig, router *Router, retryer *Retryer, cb
 	}
 }
 
+// WithoutCircuitBreaker retains routing/retries for requests that may replace
+// operator providers with org instances. Those outcomes must not update the
+// operator's breakers or its adaptive health view.
+func (f *Failover) WithoutCircuitBreaker() *Failover {
+	if f == nil {
+		return nil
+	}
+	scoped := *f
+	scoped.cbReg = nil
+	return &scoped
+}
+
 // IsEnabled returns true if failover is enabled and a router is available.
 func (f *Failover) IsEnabled() bool {
 	return f != nil && f.cfg.Enabled && f.router != nil
