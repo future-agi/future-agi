@@ -1528,7 +1528,9 @@ def _ingest_hosted_transcript(
                     segment["start_time_ms"] = int(round((at - base_time) * 1000))
                 segments.append(segment)
             ChatMessageModel.objects.filter(call_execution=call).delete()
-            CallTranscript.objects.filter(call_execution=call).delete()
+            CallTranscript.delete_with_actor_turns(
+                CallTranscript.objects.filter(call_execution=call)
+            )
             if segments:
                 _store_alk_chat_messages(call, segments)
             return _placed_world_actions(metadata, base_time)
@@ -1629,9 +1631,12 @@ def _ingest_hosted_transcript(
                     content=str(payload["transcript"]),
                 )
             )
-        CallTranscript.objects.filter(call_execution=call).delete()
+        CallTranscript.delete_with_actor_turns(
+            CallTranscript.objects.filter(call_execution=call)
+        )
         if rows:
             CallTranscript.objects.bulk_create(rows)
+            CallTranscript.create_actor_turns(rows)
         return _placed_world_actions(metadata, base_time)
     finally:
         if response is not None:

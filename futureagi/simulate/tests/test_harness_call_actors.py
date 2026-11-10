@@ -291,32 +291,145 @@ def test_a_call_actor_s_turns_are_shown_in_the_transcript_view():
     assert "actor" in get_displayable_transcript_roles()
 
 
+_ACTOR_CALL = {
+    "messages": [
+        {"role": "assistant", "content": "Where to?"},
+        {"role": "actor", "actor": "friend", "name": "Rowan", "content": "Add a stop."},
+        {"role": "user", "content": "Just the airport."},
+        {
+            "role": "actor",
+            "actor": "partner",
+            "name": "Sam",
+            "content": "And a coffee.",
+        },
+    ]
+}
+
+
 @pytest.mark.django_db
-def test_a_transcript_written_without_a_speaker_name_is_stored_with_none(
+def test_who_spoke_an_actor_turn_is_kept_beside_the_transcript_only_for_actor_turns(
+    organization, workspace
+):
+    from simulate.models import CallTranscriptActor
+
+    call = _ingest(
+        organization,
+        workspace,
+        "actor-turns-table",
+        CallExecution.SimulationCallType.VOICE,
+        _ACTOR_CALL,
+        {},
+    )
+    stored = CallTranscriptActor.objects.filter(transcript__call_execution=call)
+    assert sorted(stored.values_list("actor_id", "speaker_name")) == [
+        ("friend", "Rowan"),
+        ("partner", "Sam"),
+    ]
+    assert {turn.transcript.speaker_role for turn in stored} == {"actor"}
+
+
+@pytest.mark.django_db
+def test_a_transcript_without_actors_stores_no_actor_turns(organization, workspace):
+    from simulate.models import CallTranscriptActor
+
+    call = _ingest(
+        organization,
+        workspace,
+        "no-actor-turns",
+        CallExecution.SimulationCallType.VOICE,
+        {
+            "messages": [
+                {"role": "assistant", "content": "Hi."},
+                {"role": "user", "content": "Hello."},
+            ]
+        },
+        {},
+    )
+    assert call.transcripts.count() == 2
+    assert not CallTranscriptActor.objects.filter(
+        transcript__call_execution=call
+    ).exists()
+    assert [(row.speaker_name, row.actor_id) for row in call.transcripts.all()] == [
+        ("", None),
+        ("", None),
+    ]
+
+
+@pytest.mark.django_db
+def test_ingesting_a_call_again_replaces_its_actor_turns(organization, workspace):
+    from simulate.models import CallTranscriptActor
+    from simulate.services.hosted_harness_ingestion import _ingest_hosted_transcript
+
+    call = _ingest(
+        organization,
+        workspace,
+        "actor-turns-again",
+        CallExecution.SimulationCallType.VOICE,
+        _ACTOR_CALL,
+        {},
+    )
+    response = MagicMock()
+    response.read.return_value = json.dumps(
+        {"messages": [{"role": "user", "content": "Hello."}]}
+    ).encode()
+    storage = MagicMock()
+    storage.get_object.return_value = response
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        _ingest_hosted_transcript(
+            call, SimpleNamespace(object_key="transcript.json"), {}
+        )
+    # The earlier turns' rows go with them, rather than being left behind.
+    assert not CallTranscriptActor.objects.filter(
+        actor_id__in=["friend", "partner"]
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_a_call_s_transcript_is_read_with_who_spoke_in_one_query(
     organization, workspace
 ):
     from django.db import connection
+    from django.test.utils import CaptureQueriesContext
 
-    from simulate.models.test_execution import CallTranscript
+    from simulate.tasks.alk_sim import _build_transcript_text
 
-    call_execution = _ingest(
+    call = _ingest(
         organization,
         workspace,
-        "old-release",
+        "actor-turns-queries",
         CallExecution.SimulationCallType.VOICE,
-        {"messages": []},
+        _ACTOR_CALL,
+        {},
     )
-    # A process still on the previous release writes transcript rows without the column.
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f"INSERT INTO {CallTranscript._meta.db_table} "
-            "(id, created_at, updated_at, deleted, call_execution_id, speaker_role, "
-            "content, start_time_ms, end_time_ms, confidence_score) "
-            "VALUES (gen_random_uuid(), now(), now(), false, %s, 'user', 'Hi', 0, 0, 1)",
-            [call_execution.id],
-        )
-    row = CallTranscript.objects.get(call_execution=call_execution)
-    assert (row.speaker_name, row.actor_id) == ("", None)
+    with CaptureQueriesContext(connection) as queries:
+        text = _build_transcript_text(call)
+    assert len(queries) == 1
+    assert text.splitlines() == [
+        "Agent: Where to?",
+        "Rowan (not the person being served): Add a stop.",
+        "Customer: Just the airport.",
+        "Sam (not the person being served): And a coffee.",
+    ]
+
+
+def test_adding_actors_changes_no_column_of_the_transcript_table():
+    import importlib
+
+    from django.db import migrations
+
+    actors = importlib.import_module("simulate.migrations.0104_actors")
+    on_transcripts = [
+        operation
+        for operation in actors.Migration.operations
+        if getattr(operation, "model_name", None) == "calltranscript"
+    ]
+    # Only the speaker_role choices change on the transcript table, which writes no SQL.
+    assert [(type(op), op.name) for op in on_transcripts] == [
+        (migrations.AlterField, "speaker_role")
+    ]
 
 
 @pytest.mark.django_db

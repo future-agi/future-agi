@@ -413,6 +413,9 @@ def write_actor_limits(
             isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0
         ):
             problems.append(f"{key} is a positive number, or null for no limit")
+        elif kind is int and value != int(value):
+            # Counts are whole: int(0.5) would store 0, which the harness refuses.
+            problems.append(f"{key} is a whole number, or null for no limit")
         else:
             clean[key] = kind(value)
     if problems:

@@ -56,7 +56,11 @@ export default function ActorLimits({
     const typed = String(value(key)).trim();
     if (typed === "") continue;
     if (typed.toLowerCase() === L.none) parsed[key] = null;
-    else if (Number(typed) > 0) parsed[key] = Number(typed);
+    else if (
+      Number(typed) > 0 &&
+      (key === "actor_seconds_per_call" || Number.isInteger(Number(typed)))
+    )
+      parsed[key] = Number(typed);
     else problems.push(L.labels[key]);
   }
   if (value("model")) parsed.model = value("model");
@@ -75,7 +79,11 @@ export default function ActorLimits({
             placeholder={L.defaults[key]}
             error={problems.includes(L.labels[key])}
             helperText={
-              problems.includes(L.labels[key]) ? L.badNumber : undefined
+              problems.includes(L.labels[key])
+                ? key === "actor_seconds_per_call"
+                  ? L.badNumber
+                  : L.badWholeNumber
+                : undefined
             }
           />
         ))}
