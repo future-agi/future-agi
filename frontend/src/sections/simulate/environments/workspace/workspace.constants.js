@@ -509,7 +509,7 @@ export const DRAFTS_COPY = {
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
     validation_required:
-      "Some of these changes were accepted or rejected in review, so they must pass Validate before they are saved. Validate isn't on this page yet: run it through the API, or discard the changes.",
+      "Some of these changes were accepted or rejected in review, so they need Validate before they can be saved. Validate isn't in the web app yet, so they can't be saved from here; discard them to start over.",
   },
   // The Scenarios tab and the run dialog.
   unsaved: "Unsaved",
