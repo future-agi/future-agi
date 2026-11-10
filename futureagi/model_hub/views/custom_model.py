@@ -236,7 +236,9 @@ class CustomAIModelCreateView(APIView):
                 if str(model_provider).strip().lower() == "bedrock" and (
                     invalid_bedrock_model_id(model_name)
                 ):
-                    return self._gm.bad_request(BEDROCK_MODEL_ID_MESSAGE)
+                    return self._gm.bad_request(
+                        {"model_name": [BEDROCK_MODEL_ID_MESSAGE]}
+                    )
                 if (
                     not all(
                         key in config_json
@@ -406,7 +408,9 @@ class CustomAIModelDetailsView(APIView):
                 ).strip().lower() == "bedrock" and invalid_bedrock_model_id(
                     new_model_name
                 ):
-                    return self._gm.bad_request(BEDROCK_MODEL_ID_MESSAGE)
+                    return self._gm.bad_request(
+                        {"model_name": [BEDROCK_MODEL_ID_MESSAGE]}
+                    )
                 ai_model.user_model_id = new_model_name
             _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
@@ -640,7 +644,7 @@ class EditCustomModel(APIView):
                 and str(model.provider or "").strip().lower() == "bedrock"
                 and invalid_bedrock_model_id(model_name)
             ):
-                return self._gm.bad_request(BEDROCK_MODEL_ID_MESSAGE)
+                return self._gm.bad_request({"model_name": [BEDROCK_MODEL_ID_MESSAGE]})
             if (key or config_json) and _vertex_sdk_missing(model.provider, model_name):
                 return self._gm.bad_request(VERTEX_SDK_MISSING_MESSAGE)
             if key or config_json:

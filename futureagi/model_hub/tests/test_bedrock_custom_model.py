@@ -8,6 +8,7 @@ error is:
 """
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from rest_framework.test import APIClient
@@ -51,6 +52,14 @@ def _fake_completion(seen):
 
 def _fail_if_called(**kwargs):
     raise AssertionError(f"provider was called with {kwargs.get('model_name')}")
+
+
+def _assert_model_name_field_error(response):
+    from model_hub.views.custom_model import BEDROCK_MODEL_ID_MESSAGE
+
+    assert response.status_code == 400
+    assert response.data["attr"] == "model_name"
+    assert response.data["details"]["model_name"] == [BEDROCK_MODEL_ID_MESSAGE]
 
 
 @pytest.fixture
@@ -108,16 +117,15 @@ def _payload(model_name):
 def test_friendly_label_is_rejected_before_provider_or_persistence(
     client, organization, monkeypatch
 ):
-    def fail_if_called(**kwargs):
-        raise AssertionError(f"provider was called with {kwargs.get('model')}")
-
+    validate_model = Mock(side_effect=_fail_if_called)
     monkeypatch.setattr(
-        "model_hub.views.custom_model.validate_model_working", fail_if_called
+        "model_hub.views.custom_model.validate_model_working", validate_model
     )
 
     response = client.post(CREATE_URL, _payload("Claude"), format="json")
 
-    assert response.status_code == 400
+    _assert_model_name_field_error(response)
+    validate_model.assert_not_called()
     body = str(response.data)
     assert "Bedrock model ID" in body
     assert "Claude" in body
@@ -168,11 +176,9 @@ def test_edit_rejects_friendly_label_before_provider(
         },
     )
 
-    def fail_if_called(**kwargs):
-        raise AssertionError(f"provider was called with {kwargs.get('model_name')}")
-
+    validate_model = Mock(side_effect=_fail_if_called)
     monkeypatch.setattr(
-        "model_hub.views.custom_model.validate_model_working", fail_if_called
+        "model_hub.views.custom_model.validate_model_working", validate_model
     )
 
     response = client.patch(
@@ -189,7 +195,8 @@ def test_edit_rejects_friendly_label_before_provider(
         format="json",
     )
 
-    assert response.status_code == 400
+    _assert_model_name_field_error(response)
+    validate_model.assert_not_called()
     assert "Bedrock model ID" in str(response.data)
     saved.refresh_from_db()
     assert saved.user_model_id == FOUNDATION_ID
@@ -262,9 +269,13 @@ def test_identifier_helper_accepts_invocation_ids(model_id):
 
 @pytest.mark.django_db
 def test_details_update_rejects_display_label_before_save(
-    client, organization, user, workspace
+    client, organization, user, workspace, monkeypatch
 ):
     saved = _saved_bedrock_model(organization, workspace, user, FOUNDATION_ID)
+    validate_model = Mock(side_effect=_fail_if_called)
+    monkeypatch.setattr(
+        "model_hub.views.custom_model.validate_model_working", validate_model
+    )
 
     response = client.post(
         _details_url(saved.id),
@@ -272,7 +283,8 @@ def test_details_update_rejects_display_label_before_save(
         format="json",
     )
 
-    assert response.status_code == 400
+    _assert_model_name_field_error(response)
+    validate_model.assert_not_called()
     assert "Bedrock model ID" in str(response.data)
     fresh = CustomAIModel.objects.get(id=saved.id)
     assert fresh.user_model_id == FOUNDATION_ID
@@ -299,8 +311,9 @@ def test_credential_edit_of_legacy_label_row_is_rejected_before_provider(
     client, organization, user, workspace, monkeypatch
 ):
     legacy = _saved_bedrock_model(organization, workspace, user, "Claude")
+    validate_model = Mock(side_effect=_fail_if_called)
     monkeypatch.setattr(
-        "model_hub.views.custom_model.validate_model_working", _fail_if_called
+        "model_hub.views.custom_model.validate_model_working", validate_model
     )
 
     response = client.patch(
@@ -312,7 +325,8 @@ def test_credential_edit_of_legacy_label_row_is_rejected_before_provider(
         format="json",
     )
 
-    assert response.status_code == 400
+    _assert_model_name_field_error(response)
+    validate_model.assert_not_called()
     assert "Bedrock model ID" in str(response.data)
     fresh = CustomAIModel.objects.get(id=legacy.id)
     assert fresh.actual_json["aws_secret_access_key"] == "secret-example"
