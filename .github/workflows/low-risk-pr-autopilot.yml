@@ -1,0 +1,190 @@
+name: Low-risk PR autopilot
+
+on:
+  # This event uses dev's trusted workflow, not the PR's proposed workflow.
+  pull_request_target:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
+  # Tests of proposed policy code run separately, without secrets or write rights.
+  pull_request:
+    branches: [dev]
+    paths:
+      - .github/pr-autopilot.yml
+      - .github/workflows/low-risk-pr-autopilot.yml
+      - scripts/pr_risk.py
+      - scripts/test_pr_risk.py
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR into dev to re-evaluate (dispatch this workflow on dev)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Serialize all review reservations and approvals for one PR, including dispatch
+# and pull_request_target runs. Cancellation must never reset the review budget.
+concurrency:
+  group: pr-autopilot-${{ github.event_name == 'pull_request' && 'tests-' || '' }}${{ github.event.pull_request.number || inputs.pr_number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  policy-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Synthetic policy and merge-decision tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/test_pr_risk.py
+
+  prepare:
+    if: github.event_name != 'pull_request' && vars.PR_AUTOPILOT == 'on'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: write
+      actions: write # schedule -> workflow_dispatch on dev; no PR code runs here
+    outputs:
+      review: ${{ steps.policy.outputs.review }}
+      context: ${{ steps.policy.outputs.context }}
+      prompt: ${{ steps.policy.outputs.prompt }}
+      policy_sha: ${{ steps.checkout-sha.outputs.sha }}
+    steps:
+      - name: Check out only trusted controller and policy from dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/pr-autopilot.yml
+            /scripts/pr_risk.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Record the trusted policy revision
+        id: checkout-sha
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Classify, check protection and reserve at most one review round
+        id: policy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_AUTOPILOT: ${{ vars.PR_AUTOPILOT }}
+          PR_AUTOPILOT_TRUSTED_AUTHORS: ${{ vars.PR_AUTOPILOT_TRUSTED_AUTHORS }}
+          AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
+          REVIEW_KEY_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          POLICY_SHA: ${{ steps.checkout-sha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 -I scripts/pr_risk.py prepare
+
+  ai-review:
+    name: Diff-only AI review
+    needs: prepare
+    if: needs.prepare.outputs.review == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The model never shares a runner or token with approval/merge steps.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      verdict: ${{ steps.claude.outputs.structured_output }}
+    steps:
+      - name: Check out the same trusted sparse revision, never the PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.policy_sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/pr-autopilot.yml
+            /scripts/pr_risk.py
+      # Explicit prompt selects agent mode, which does not check out the PR or
+      # load its context. Confirmed in this tag's README, usage and mode source.
+      - name: Review the supplied diff as data and return a structured verdict
+        id: claude
+        uses: anthropics/claude-code-action@v1.0.120
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          allowed_bots: 'github-actions[bot]'
+          track_progress: 'false'
+          include_fix_links: 'false'
+          display_report: 'false'
+          show_full_output: 'false'
+          prompt: ${{ needs.prepare.outputs.prompt }}
+          claude_args: >-
+            --model claude-opus-5-5
+            --max-turns 3
+            --tools ""
+            --disallowedTools "mcp__*"
+            --disable-slash-commands
+            --strict-mcp-config
+            --mcp-config '{"mcpServers":{}}'
+            --json-schema '{"type":"object","additionalProperties":false,"properties":{"blocking_findings":{"type":"boolean"},"complete":{"type":"boolean"},"reasons":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"string","minLength":1,"maxLength":2000}},"head_sha":{"type":"string","pattern":"^[0-9a-f]{40}$"},"base_sha":{"type":"string","pattern":"^[0-9a-f]{40}$"}},"required":["blocking_findings","complete","reasons","head_sha","base_sha"]}'
+
+  review-gate-and-merge:
+    name: Publish review gate and recheck merge
+    needs: [prepare, ai-review]
+    if: >-
+      always() && !cancelled() &&
+      needs.prepare.result == 'success' && needs.prepare.outputs.context != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      checks: write
+      actions: write # explicit post-merge CI/dev frontend dispatches; push runs are suppressed
+    steps:
+      - name: Check out only the same trusted controller revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.policy_sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/pr-autopilot.yml
+            /scripts/pr_risk.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Publish head-bound PR Autopilot review check, then re-read every merge gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_AUTOPILOT: ${{ vars.PR_AUTOPILOT }}
+          PR_AUTOPILOT_TRUSTED_AUTHORS: ${{ vars.PR_AUTOPILOT_TRUSTED_AUTHORS }}
+          AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
+          REVIEW_KEY_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          DEV_CDN_AUTO_DEPLOY: ${{ vars.DEV_CDN_AUTO_DEPLOY }}
+          PR_CONTEXT: ${{ needs.prepare.outputs.context }}
+          AI_VERDICT: ${{ needs.ai-review.outputs.verdict }}
+          AI_JOB_RESULT: ${{ needs.ai-review.result }}
+        # Model output is parsed as JSON from the environment, never shell code.
+        run: |
+          set -euo pipefail
+          python3 -I scripts/pr_risk.py finish
