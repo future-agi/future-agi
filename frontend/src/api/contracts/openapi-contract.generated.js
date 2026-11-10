@@ -13241,13 +13241,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/api/models_list/": {
       get: {
         operationId: "model-hub_api_models_list_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          model_type: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          exclude_providers: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+          },
+        },
         responses: {
           200: {
-            $ref: "#/definitions/ModelHubPaginatedResponse",
+            $ref: "#/definitions/ModelListResponse",
           },
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -75360,6 +75388,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ModelListResponse: {
+      required: ["count", "results"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          "x-nullable": true,
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ModelListEntry",
+          },
+        },
+      },
+    },
     ModelParametersResponse: {
       required: ["status", "result"],
       type: "object",
@@ -107277,6 +107331,130 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ModelListEntry: {
+      required: ["model_name", "type"],
+      type: "object",
+      properties: {
+        model_name: {
+          title: "Model name",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        author: {
+          title: "Author",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+        question_types: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        min_choices: {
+          title: "Min choices",
+          type: "integer",
+          minimum: 1,
+        },
+        max_choices: {
+          title: "Max choices",
+          type: "integer",
+          minimum: 1,
+        },
+        max_state_bytes: {
+          title: "Max state bytes",
+          type: "integer",
+          minimum: 1,
+        },
+        notice: {
+          title: "Notice",
+          type: "string",
+        },
+        unavailable_reason: {
+          title: "Unavailable reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        connections: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DecisionConnection",
+          },
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+        },
+        providers: {
+          title: "Providers",
+          type: "string",
+        },
+        is_available: {
+          title: "Is available",
+          type: "boolean",
+        },
+        logo_url: {
+          title: "Logo url",
+          type: "string",
+          "x-nullable": true,
+        },
+        best_for: {
+          title: "Best for",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        use_case: {
+          title: "Use case",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        cutoff: {
+          title: "Cutoff",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        rate_limits: {
+          title: "Rate limits",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        latency: {
+          title: "Latency",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        pricing: {
+          title: "Pricing",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+      },
+    },
     ModelParametersResult: {
       type: "object",
       properties: {
@@ -124307,6 +124485,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         y: {
           title: "Y",
           type: "integer",
+        },
+      },
+    },
+    DecisionConnection: {
+      required: ["model_name", "provider", "label", "is_available"],
+      type: "object",
+      properties: {
+        model_name: {
+          title: "Model name",
+          type: "string",
+          minLength: 1,
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        is_available: {
+          title: "Is available",
+          type: "boolean",
         },
       },
     },
