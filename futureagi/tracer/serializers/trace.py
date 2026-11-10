@@ -148,6 +148,8 @@ class TraceSerializer(serializers.ModelSerializer):
 
 
 class CommaSeparatedStringListField(serializers.Field):
+    swagger_empty_input_default = ""
+
     def to_internal_value(self, data):
         if data in (None, ""):
             return []
