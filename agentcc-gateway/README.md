@@ -492,6 +492,10 @@ missing/duplicate evaluation IDs and an invalid webhook URL also refuse before
 vendor dial. External-provider adapters without an explicit validated realtime
 verdict contract are not supported for blocking speech checks; these configurations
 refuse admission rather than interpreting legacy fallback results as approvals.
+Malformed or missing expressions and validation patterns that cannot compile are
+also unsupported for blocking speech checks: admission returns HTTP 403
+`realtime_guardrail_unsupported`, with no vendor dial. Legacy HTTP checker behavior
+is unchanged by these realtime readiness checks.
 
 | Protocol | Inspectable direction and boundary |
 |---|---|
@@ -511,9 +515,15 @@ Supported text units are checked synchronously before any held frame is released
 Execution failure is separate from the score: a checker HTTP error, malformed or
 missing verdict, incomplete evaluation results or invalid score cannot approve
 speech, even with a threshold of 1. A genuine scored decision still follows the
-configured threshold. A blocking decision, checker timeout/panic/missing result, or a rewrite that cannot
-be applied to the original wire payload closes the client with WebSocket 1008 and
-reason `realtime_guardrail_blocked`, then terminates both connections. Realtime
+configured threshold. Webhook verdicts require one exact boolean `pass` key and an
+optional finite numeric `score` in [0,1]. Duplicate keys, case aliases and oversized
+envelopes are unavailable verdicts, not approvals.
+A blocking content decision closes with WebSocket 1008 and reason
+`realtime_guardrail_blocked`. Checker execution failures (including timeouts, panics,
+missing results and unapplied wire rewrites) close with 1008 and reason
+`guardrail_unavailable`, never a content-denial classification. An already-upgraded
+connection cannot return an HTTP 503; both connections terminate without releasing
+unchecked content. Realtime
 blocking checks fail closed even when ordinary chat is configured fail-open or the
 rule is marked asynchronous. Warning/log decisions do not block approved protocol
 units. Audio-only warning/log checks are not evaluated.

@@ -172,7 +172,7 @@ func TestSpeechGuardrailsWebhookAvailability(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.blocked {
-				requireSpeechClose(t, client, "realtime_guardrail_blocked")
+				requireSpeechClose(t, client, "guardrail_unavailable")
 				f.mu.Lock()
 				defer f.mu.Unlock()
 				if len(f.received) != 0 {

@@ -173,6 +173,11 @@ func (p *RealtimePolicy) Check(ctx context.Context, stage Stage, text string) er
 		result, err := runRealtimeCheck(ctx, rule, input)
 		if err != nil || shouldTrigger(result, rule.threshold) {
 			if rule.action == ActionBlock {
+				if err != nil {
+					// The connection is already upgraded: preserve the unavailable
+					// classification in its terminal reason, not a content verdict.
+					return errors.New("guardrail_unavailable")
+				}
 				return errors.New("realtime_guardrail_blocked")
 			}
 			slog.Info("realtime guardrail triggered", "guardrail", rule.guardrail.Name(), "action", actionString(rule.action))
