@@ -210,6 +210,92 @@ def test_add_rows_from_existing_rejects_other_workspace_source(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("num_rows", "expected_values"),
+    [
+        (2, ["row 0", "row 1"]),
+        (10, ["row 0", "row 1", "row 2"]),
+        (None, ["row 0", "row 1", "row 2"]),
+    ],
+)
+def test_add_rows_from_existing_imports_first_num_rows_by_order(
+    auth_client, dataset_factory, monkeypatch, num_rows, expected_values
+):
+    source_dataset, source_input, _source_output = dataset_factory(
+        "Existing rows limit source"
+    )
+    target_dataset, target_input, _target_output = dataset_factory(
+        "Existing rows limit target"
+    )
+    # Created out of order so the import has to follow ``order``.
+    add_row(source_dataset, {source_input: "row 2"}, order=2)
+    add_row(source_dataset, {source_input: "row 0"}, order=0)
+    add_row(source_dataset, {source_input: "row 1"}, order=1)
+    add_row(target_dataset, {target_input: "already here"}, order=0)
+    usage_calls = []
+
+    def record_usage(*args, **kwargs):
+        usage_calls.append((args, kwargs))
+        return _SuccessfulResourceCallLog()
+
+    monkeypatch.setattr(
+        "model_hub.views.datasets.add_rows.existing_dataset."
+        "log_and_deduct_cost_for_resource_request",
+        record_usage,
+    )
+    payload = {
+        "source_dataset_id": str(source_dataset.id),
+        "column_mapping": {str(source_input.id): str(target_input.id)},
+    }
+    if num_rows is not None:
+        payload["num_rows"] = num_rows
+
+    response = auth_client.post(
+        f"/model-hub/develops/{target_dataset.id}/add_rows_from_existing_dataset/",
+        payload,
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["result"]["rows_added"] == len(expected_values)
+    assert [kwargs["config"] for _args, kwargs in usage_calls] == [
+        {"total_rows": len(expected_values) + 1}
+    ]
+    imported_rows = Row.objects.filter(
+        dataset=target_dataset, deleted=False, order__gt=0
+    ).order_by("order")
+    assert [
+        Cell.objects.get(row=row, column=target_input).value for row in imported_rows
+    ] == expected_values
+
+
+@pytest.mark.django_db
+def test_add_rows_from_existing_rejects_num_rows_below_one(
+    auth_client, dataset_factory
+):
+    source_dataset, source_input, _source_output = dataset_factory(
+        "Existing rows zero source"
+    )
+    target_dataset, target_input, _target_output = dataset_factory(
+        "Existing rows zero target"
+    )
+    add_row(source_dataset, {source_input: "source"}, order=0)
+
+    response = auth_client.post(
+        f"/model-hub/develops/{target_dataset.id}/add_rows_from_existing_dataset/",
+        {
+            "source_dataset_id": str(source_dataset.id),
+            "column_mapping": {str(source_input.id): str(target_input.id)},
+            "num_rows": 0,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert Row.objects.filter(dataset=target_dataset, deleted=False).count() == 0
+
+
+@pytest.mark.django_db
 def test_duplicate_dataset_rejects_other_workspace_before_usage_charge(
     auth_client, organization, user, dataset_factory, monkeypatch
 ):

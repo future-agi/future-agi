@@ -10593,6 +10593,8 @@ export type DatasetAddRowsFromExistingRequestApiColumnMapping = {
 export interface DatasetAddRowsFromExistingRequestApi {
   source_dataset_id: string;
   column_mapping: DatasetAddRowsFromExistingRequestApiColumnMapping;
+  /** @minimum 1 */
+  num_rows?: number;
 }
 
 export interface DatasetRowsImportedResultApi {
