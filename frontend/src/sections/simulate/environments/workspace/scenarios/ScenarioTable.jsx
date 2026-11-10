@@ -23,6 +23,7 @@ import {
 } from "./scenarios.constants";
 import { personaSubline } from "./personaLabels";
 import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
+import ReadinessMark from "./ReadinessMark";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // on the table carries this on a tooltip so the disabled state reads as
@@ -80,7 +81,7 @@ const stopRowClick = (e) => e.stopPropagation();
 // anywhere else on the row opens it in full through onOpen. Stripped from the
 // source: the twin-seed override icon (twinSeedPrompt) — twin-only, not on
 // either entry path.
-export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false, rowHeight = "Short" }) {
+export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false, rowHeight = "Short", readiness }) {
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
   const [widths, setWidths] = useState(readWidths);
   const widthsRef = useRef(widths);
@@ -353,6 +354,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                           </Tooltip>
                         )}
                         <UnsavedMark row={row} />
+                        <ReadinessMark status={readiness?.get(row.scenarioKey)} />
                       </Stack>
                       <TruncTooltip title={row.summary || row.title}>
                         <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{row.summary || row.title}</Typography>
@@ -431,6 +433,8 @@ ScenarioTable.propTypes = {
   selection: PropTypes.object,
   pageIds: PropTypes.arrayOf(PropTypes.string),
   onTogglePage: PropTypes.func,
+  // Scenario key → readiness for the default versions (ReadinessMark).
+  readiness: PropTypes.instanceOf(Map),
   locked: PropTypes.bool,
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
 };

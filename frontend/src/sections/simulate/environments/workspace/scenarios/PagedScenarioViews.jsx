@@ -20,7 +20,7 @@ import { SCENARIOS_COPY } from "./scenarios.constants";
 export default function PagedScenarioViews({
   pageData, selection, env, view, hiddenGroupIds, onHideGroup, onEdit, onRemove,
   page, onPageChange, query, filters, groupBy, showInspector, locked, rowHeight,
-  readout, onOpen,
+  readout, onOpen, readiness,
 }) {
   const [inspect, setInspect] = useState(false);
   const { rows, total, pageCount, limit, pageGroups, pageIds, loading } = pageData;
@@ -91,6 +91,7 @@ export default function PagedScenarioViews({
             onTogglePage={onTogglePage}
             locked={locked}
             rowHeight={rowHeight}
+            readiness={readiness}
           />
         ) : (
           <GroupedScenarioList
@@ -170,6 +171,8 @@ PagedScenarioViews.propTypes = {
   pageData: PropTypes.object.isRequired,
   selection: PropTypes.object.isRequired,
   env: PropTypes.object,
+  // Scenario key → readiness for the default versions.
+  readiness: PropTypes.instanceOf(Map),
   view: PropTypes.oneOf(["table", "list"]).isRequired,
   hiddenGroupIds: PropTypes.arrayOf(PropTypes.string).isRequired,
   onHideGroup: PropTypes.func.isRequired,
