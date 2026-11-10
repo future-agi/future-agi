@@ -54,6 +54,21 @@ from .scenario_graph import NodeType, ScenarioGraph
 from .scenarios import Scenarios
 from .simulation_phone_number import SimulationPhoneNumber
 from .simulator_agent import SimulatorAgent
+from .skills import (
+    AgentVersionSkillScan,
+    AgentVersionSkillScanStatus,
+    Skill,
+    SkillAttachment,
+    SkillKind,
+    SkillOrigin,
+    SkillPromotion,
+    SkillTag,
+    SkillTagName,
+    SkillTest,
+    SkillTestState,
+    SkillTestVerdict,
+    SkillVersion,
+)
 from .test_execution import (
     CallExecution,
     CallExecutionSnapshot,
@@ -89,6 +104,19 @@ __all__ = [
     "HarnessSuiteVersion",
     "PromptTrial",
     "SimulatorAgent",
+    "AgentVersionSkillScan",
+    "AgentVersionSkillScanStatus",
+    "Skill",
+    "SkillAttachment",
+    "SkillKind",
+    "SkillOrigin",
+    "SkillPromotion",
+    "SkillTag",
+    "SkillTagName",
+    "SkillTest",
+    "SkillTestState",
+    "SkillTestVerdict",
+    "SkillVersion",
     "RunTest",
     "SimulateEvalConfig",
     "TestExecution",

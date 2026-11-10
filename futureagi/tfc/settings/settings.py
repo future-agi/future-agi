@@ -1182,6 +1182,11 @@ HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+HARNESS_SKILLS_ENABLED = os.getenv("HARNESS_SKILLS_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.
