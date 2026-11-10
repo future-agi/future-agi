@@ -1223,6 +1223,65 @@ class TestDatasetExperimentsView:
 
         assert response.status_code == status.HTTP_200_OK
 
+    @pytest.mark.parametrize(
+        "eval_name",
+        ["accuracy", "no-reason-check", "gives-reason", "no-reason-check-reason"],
+    )
+    @pytest.mark.parametrize("column_config_only", ["true", "false"])
+    def test_reason_column_groups_preserve_eval_names(
+        self,
+        auth_client,
+        experiment,
+        dataset,
+        organization,
+        user,
+        workspace,
+        eval_template,
+        eval_name,
+        column_config_only,
+    ):
+        metric = UserEvalMetric.objects.create(
+            name=eval_name,
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=eval_template,
+            config={},
+            status=StatusType.EXPERIMENT_EVALUATION.value,
+            source_id=str(experiment.id),
+            user=user,
+        )
+        experiment.user_eval_template_ids.add(metric)
+        value_column = Column.objects.create(
+            name=eval_name,
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        reason_column = Column.objects.create(
+            name=f"{eval_name}-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{value_column.id}-sourceid-{metric.id}",
+        )
+
+        response = auth_client.get(
+            f"/model-hub/experiments/{experiment.id}/",
+            {"column_config_only": column_config_only},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        configs = {
+            column["id"]: column
+            for column in response.json()["result"]["column_config"]
+        }
+        for column in (value_column, reason_column):
+            assert configs[str(column.id)]["name"] == column.name
+            assert configs[str(column.id)]["group"]["id"] == str(metric.id)
+            assert configs[str(column.id)]["group"]["name"] == eval_name
+
     def test_get_experiment_data_invalid_id(self, auth_client):
         """Test that invalid experiment_id returns error."""
         fake_experiment_id = uuid.uuid4()
