@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -14,6 +14,7 @@ import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import {
   useReadiness,
+  useReadinessCases,
   useRecheck,
 } from "src/api/simulate-environments/readiness";
 import { useRetryAgentVersion } from "src/api/simulate-environments/versions";
@@ -47,6 +48,60 @@ function stateText(state, reason) {
 }
 
 const spinner = <CircularProgress size={12} color="inherit" />;
+
+const MAX_NAMES = 10;
+
+// A header count that names its scenarios on hover, fetched when first shown.
+function CountTip({ envId, picks, keys, bucket, children }) {
+  const [shown, setShown] = useState(false);
+  const cases = useReadinessCases(envId, {
+    picks,
+    bucket,
+    keys,
+    enabled: shown,
+  });
+  const names = (cases.data || []).map((one) => one.name || one.key);
+  const title = cases.data ? (
+    <Box component="ul" sx={{ m: 0, pl: 2 }}>
+      {names.slice(0, MAX_NAMES).map((name) => (
+        <Box component="li" key={name}>
+          {name}
+        </Box>
+      ))}
+      {names.length > MAX_NAMES && (
+        <Box component="li" sx={{ listStyle: "none", ml: -2 }}>
+          {COPY.namesMore(names.length - MAX_NAMES)}
+        </Box>
+      )}
+    </Box>
+  ) : (
+    COPY.namesLoading
+  );
+  return (
+    <CustomTooltip
+      show
+      title={title}
+      size="small"
+      arrow
+      onOpen={() => setShown(true)}
+    >
+      <Box
+        component="span"
+        sx={{ textDecoration: "underline dotted", cursor: "default" }}
+      >
+        {children}
+      </Box>
+    </CustomTooltip>
+  );
+}
+
+CountTip.propTypes = {
+  envId: PropTypes.string,
+  picks: PropTypes.object,
+  keys: PropTypes.arrayOf(PropTypes.string),
+  bucket: PropTypes.string.isRequired,
+  children: PropTypes.node,
+};
 
 function FixLine({
   line,
@@ -254,7 +309,23 @@ export default function ReadyToRunSection({
             minWidth: 0,
           }}
         >
-          {COPY.summary(view.summary, blockers)}
+          {COPY.summary(view.summary, blockers).map((part, at) => (
+            <Fragment key={part.bucket || "blockers"}>
+              {at > 0 && " · "}
+              {part.bucket && part.count > 0 ? (
+                <CountTip
+                  envId={envId}
+                  picks={picks}
+                  keys={keys}
+                  bucket={part.bucket}
+                >
+                  {part.text}
+                </CountTip>
+              ) : (
+                part.text
+              )}
+            </Fragment>
+          ))}
         </Typography>
         <Button
           size="small"

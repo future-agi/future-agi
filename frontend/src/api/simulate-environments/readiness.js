@@ -90,28 +90,36 @@ export const useRecheck = (envId) => {
   });
 };
 
-// Every scenario key in one bucket, page by page (50 a page), for a suite too
-// big for the report's lists, which stop at 200.
-export const getReadinessCases = async (envId, picks, bucket) => {
-  const keys = [];
+// The scenarios in one bucket (eligible, blocked, stale, untested) with their
+// names as the server gives them, page by page (50 a page). `keys` narrows it
+// to the scenarios a run would send; none means the whole suite.
+export const getReadinessCases = async (envId, picks, bucket, keys = null) => {
+  const items = [];
   let cursor = null;
   do {
     const params = { ...versionPickFields(picks), bucket };
+    if (keys) params.keys = keys;
     if (cursor) params.cursor = cursor;
-    const page = (await axios.get(casesPath(envId), { params })).data;
-    keys.push(...(page.items || []).map((item) => item.key));
+    const page = (
+      await axios.get(casesPath(envId), {
+        params,
+        // Repeated `keys=a&keys=b`, as the route reads them.
+        paramsSerializer: { indexes: null },
+      })
+    ).data;
+    items.push(...(page.items || []));
     cursor = page.next || null;
   } while (cursor);
-  return keys;
+  return items;
 };
 
 export function useReadinessCases(
   envId,
-  { picks = {}, bucket, enabled = true } = {},
+  { picks = {}, bucket, keys = null, enabled = true } = {},
 ) {
   return useQuery({
-    queryKey: [...readinessKey(envId, picks), "cases", bucket],
-    queryFn: () => getReadinessCases(envId, picks, bucket),
+    queryKey: [...readinessKey(envId, picks, keys), "cases", bucket],
+    queryFn: () => getReadinessCases(envId, picks, bucket, keys),
     enabled: Boolean(envId) && Boolean(bucket) && enabled,
     retry: retryServerFailures,
     meta: { errorHandled: true },
