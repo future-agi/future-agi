@@ -6,6 +6,7 @@ import Iconify from "src/components/iconify";
 import Markdown from "react-markdown";
 import { ToolCallCard } from "src/components/tool-call/ToolCallCard";
 import { normalizeMessageRole } from "src/utils/message-role";
+import { messageBlockText, serializeMessageValue } from "src/utils/message-text";
 
 // Role badge colors — keyed into palette.accent so each mode gets its own hue;
 // bg/border derive from the resolved accent via alpha for transparency
@@ -20,8 +21,8 @@ const ROLE_STYLES = {
 };
 
 const getRoleStyle = (role) => {
-  const base =
-    ROLE_STYLES[normalizeMessageRole(role).toLowerCase()] || ROLE_STYLES.user;
+  const key = normalizeMessageRole(role).toLowerCase();
+  const base = Object.hasOwn(ROLE_STYLES, key) ? ROLE_STYLES[key] : ROLE_STYLES.user;
   return {
     ...base,
     color: `accent.${base.accent}`,
@@ -45,12 +46,14 @@ export function isOpenAIMessages(input) {
   if (
     Array.isArray(data) &&
     data.length > 0 &&
+    data[0] != null &&
     typeof data[0] === "object" &&
     "role" in data[0]
   )
     return true;
   // Gemini/Vertex format: {contents: [{role, parts}], model: "..."}
   if (
+    data != null &&
     typeof data === "object" &&
     !Array.isArray(data) &&
     data.contents &&
@@ -77,6 +80,7 @@ function parseMessages(input) {
   }
   // Gemini format: {contents: [{role, parts}], model: "..."}
   if (
+    data != null &&
     typeof data === "object" &&
     data.contents &&
     Array.isArray(data.contents)
@@ -89,7 +93,7 @@ function parseMessages(input) {
 /** Normalize a message to {role, content} format (handles Gemini parts) */
 function normalizeMessage(msg) {
   if (!msg || typeof msg !== "object")
-    return { role: "unknown", content: [String(msg)] };
+    return { role: "unknown", content: [messageBlockText(msg)] };
   const role = normalizeMessageRole(msg.role);
   // OpenAI format: {role, content: "text" or [{type, text}]}
   if (msg.content != null) {
@@ -98,27 +102,24 @@ function normalizeMessage(msg) {
     if (Array.isArray(msg.content)) {
       return {
         role,
-        content: msg.content.map((c) =>
-          typeof c === "string" ? c : c?.text || JSON.stringify(c),
-        ),
+        content: msg.content.map(messageBlockText),
       };
     }
-    return { role, content: [JSON.stringify(msg.content)] };
+    return { role, content: [serializeMessageValue(msg.content)] };
   }
   // Gemini format: {role, parts: [{text: "..."}]}
   if (msg.parts && Array.isArray(msg.parts)) {
     const texts = msg.parts.map((p) => {
       if (typeof p === "string") return p;
-      if (p?.text) return p.text;
-      if (p?.functionCall)
-        return `**Tool call:** \`${p.functionCall.name}\`\n\`\`\`json\n${JSON.stringify(p.functionCall.args, null, 2)}\n\`\`\``;
-      if (p?.function_call)
-        return `**Tool call:** \`${p.function_call.name}\`\n\`\`\`json\n${JSON.stringify(p.function_call.args, null, 2)}\n\`\`\``;
-      return JSON.stringify(p);
+      if (p && Object.hasOwn(p, "text")) return messageBlockText(p);
+      const call = p?.functionCall || p?.function_call;
+      if (call)
+        return `**Tool call:** \`${messageBlockText(call.name)}\`\n\`\`\`json\n${serializeMessageValue(call.args, 2)}\n\`\`\``;
+      return messageBlockText(p);
     });
     return { role, content: texts };
   }
-  return { role, content: [JSON.stringify(msg)] };
+  return { role, content: [serializeMessageValue(msg)] };
 }
 
 // ── Single Message Card ──
@@ -135,16 +136,9 @@ const MessageCard = ({ message }) => {
     if (content == null) return "";
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
-      return content
-        .map((p) => {
-          if (typeof p === "string") return p;
-          if (p?.type === "text") return p.text;
-          if (p?.text) return p.text;
-          return JSON.stringify(p);
-        })
-        .join("\n\n");
+      return content.map(messageBlockText).join("\n\n");
     }
-    return JSON.stringify(content, null, 2);
+    return serializeMessageValue(content, 2);
   }, [content]);
 
   return (
