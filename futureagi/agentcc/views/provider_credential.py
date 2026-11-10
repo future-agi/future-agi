@@ -214,6 +214,8 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         """Rotate credentials — accepts new credentials, encrypts, and updates."""
         try:
             instance = self.get_object()
+            if not isinstance(request.data, dict):
+                return self._gm.bad_request("Request body must be a JSON object")
             credentials = request.data.get("credentials")
             if not credentials or not isinstance(credentials, dict):
                 return self._gm.bad_request(

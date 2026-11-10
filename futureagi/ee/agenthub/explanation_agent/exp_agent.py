@@ -431,7 +431,10 @@ class ExplanationAgent:
             explanation_ids.append(str(item_id) if item_id is not None else str(idx))
 
         if len(texts) < 5:
-            input_count = len(explanation or [])
+            # Dataset collection filters blank reasons, but keeps every evaluation
+            # value. Use that original count so missing reasons do not look like a
+            # genuinely small run. Other callers may only supply explanations.
+            input_count = max(len(explanation or []), len(eval_values or []))
             if input_count >= 5:
                 # A sufficiently sized run losing its reasons is not a small run.
                 logger.error(
