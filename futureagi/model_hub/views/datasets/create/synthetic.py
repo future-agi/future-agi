@@ -20,6 +20,7 @@ from model_hub.serializers.develop_dataset_contracts import (
     SyntheticDatasetUpdateResponseSerializer,
 )
 from model_hub.tasks.develop_dataset import (
+    SYNTHETIC_GENERATION_ERROR_KEY,
     create_synthetic_dataset,
     generate_new_columns,
     generate_new_rows,
@@ -398,6 +399,10 @@ class UpdateSyntheticDatasetConfigView(APIView):
                 if config_data.get("kb_id"):
                     config_data["kb_id"] = str(config_data["kb_id"])
                 dataset.synthetic_dataset_config = config_data
+                # The data tab must not show the last run's failure while
+                # this one is starting.
+                if isinstance(dataset.dataset_config, dict):
+                    dataset.dataset_config.pop(SYNTHETIC_GENERATION_ERROR_KEY, None)
                 dataset.save()
 
                 request_uuid = task_manager.start_task(str(dataset.id))

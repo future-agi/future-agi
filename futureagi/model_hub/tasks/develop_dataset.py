@@ -344,6 +344,34 @@ def generate_new_columns(
             cell.save()
 
 
+# dataset_config key holding why the last synthetic generation failed. The
+# dataset table response returns dataset_config, and the data tab shows it.
+SYNTHETIC_GENERATION_ERROR_KEY = "synthetic_generation_error"
+
+
+def _set_synthetic_generation_error(dataset_id, request_uuid, error):
+    """Record why synthetic generation failed, or clear it when ``error`` is None.
+
+    A run that a newer request has replaced leaves the reason alone.
+    """
+    if request_uuid and not SyntheticTaskManager().is_latest_request(
+        str(dataset_id), request_uuid
+    ):
+        return
+    dataset = Dataset.objects.get(id=dataset_id)
+    dataset_config = (
+        dict(dataset.dataset_config) if isinstance(dataset.dataset_config, dict) else {}
+    )
+    if error is None:
+        if SYNTHETIC_GENERATION_ERROR_KEY not in dataset_config:
+            return
+        del dataset_config[SYNTHETIC_GENERATION_ERROR_KEY]
+    else:
+        dataset_config[SYNTHETIC_GENERATION_ERROR_KEY] = error[:1000]
+    dataset.dataset_config = dataset_config
+    dataset.save(update_fields=["dataset_config"])
+
+
 @temporal_activity(time_limit=3600 * 12, queue="tasks_xl")
 def create_synthetic_dataset(
     validated_data,
@@ -359,6 +387,9 @@ def create_synthetic_dataset(
         task_manager = SyntheticTaskManager()
         if not request_uuid:
             request_uuid = task_manager.start_task(str(dataset_id))
+
+        # A new run, or a retry of this one, must not show the last failure.
+        _set_synthetic_generation_error(dataset_id, request_uuid, None)
 
         from tfc.constants.api_calls import APICallTypeChoices
         try:
@@ -570,11 +601,15 @@ def create_synthetic_dataset(
     except Exception as e:
         logger.exception(f"Error in create_synthetic_dataset: {str(e)}")
         try:
-            dataset = Dataset.objects.get(id=dataset_id)
-            dataset.status = StatusType.FAILED.value
-            dataset.save()
+            # Dataset has no status field, so keep the reason where the data
+            # tab reads it instead of only in the server log.
+            _set_synthetic_generation_error(
+                dataset_id, request_uuid, str(e) or type(e).__name__
+            )
         except Exception as inner_e:
-            logger.error(f"Error updating dataset status: {str(inner_e)}")
+            logger.error(
+                f"Error recording synthetic generation failure: {str(inner_e)}"
+            )
         raise e
 
 
