@@ -8,8 +8,8 @@ const serverURL = new URL('../stack/mock-llm/server.mjs', import.meta.url);
 assert.match(readFileSync(serverURL, 'utf8'), /export function handleRequest\(/);
 const { handleRequest } = await import(serverURL.href);
 
-function call(method, url, body = '', chunks) {
-  const req = Object.assign(new EventEmitter(), { method, url });
+function call(method, url, body = '', chunks, headers = {}) {
+  const req = Object.assign(new EventEmitter(), { method, url, headers });
   const res = { status: 0, headers: {}, data: '', ended: false,
     writeHead(status, headers) { this.status = status; this.headers = headers; },
     write(data) { this.data += data; },
@@ -22,6 +22,61 @@ function call(method, url, body = '', chunks) {
   return { status: res.status, headers: res.headers, raw: res.data,
     body: res.headers['Content-Type'] === 'application/json' ? JSON.parse(res.data) : null };
 }
+
+test('decision fixtures preserve native envelopes, identifiers, probabilities and usage', () => {
+  for (const [url, model, key] of [
+    ['/v1/systemone', 'jev-1.14.0', 'typesafe'],
+    ['/v1/decisions', 'pplx-decider-v1.2', 'perplexity'],
+    ['/api/alpha/decisions', 'openai/gpt-6-luna-decisions', 'openrouter'],
+  ]) {
+    const body = { model, state: 'e2e-decision:pass unique-fixture',
+      questions: { check: { type: 'noul', instructions: 'synthetic only' } },
+      ...(key === 'openrouter' ? { provider: { allow_fallbacks: true, require_parameters: true } } : {}) };
+    const headers = { authorization: `Bearer e2e-decision-${key}-key` };
+    assert.deepEqual(call('POST', url, body, undefined, headers).body, {
+      model, answers: { check: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 37, output_tokens: 0 },
+    });
+    const failed = call('POST', url, { ...body, state: 'e2e-decision:fail' }, undefined, headers);
+    assert.deepEqual(failed.body.answers, { check: { type: 'noul', noul: 0.1 } });
+    const refusal = call('POST', url, { ...body, state: 'e2e-decision:refuse' }, undefined, headers);
+    assert.deepEqual(refusal.body.answers, { check: { type: 'refusal' } });
+  }
+  const native = call('POST', '/v1/decisions', {
+    model: 'gpt-6-luna', input: 'e2e-decision:pass',
+    questions: [{ name: 'check', type: 'predicate', instructions: 'synthetic only' }],
+  }, undefined, { authorization: 'Bearer e2e-decision-openai-key' });
+  assert.deepEqual(native.body, { model: 'gpt-6-luna', answers: [{ name: 'check', type: 'predicate', probability: 0.9 }],
+    usage: { input_tokens: 37, output_tokens: 0 } });
+});
+
+test('decision fixtures refuse wrong keys, fallback policy, invalid input and oversized bodies', () => {
+  const body = { model: 'openai/gpt-6-luna-decisions', state: 'e2e-decision:pass',
+    questions: { q: { type: 'noul', instructions: 'synthetic only' } } };
+  const auth = { authorization: 'Bearer e2e-decision-openrouter-key' };
+  assert.equal(call('POST', '/api/alpha/decisions', body).status, 401);
+  assert.equal(call('POST', '/api/alpha/decisions', body, undefined, { authorization: 'Bearer e2e-decision-openai-key' }).status, 401);
+  assert.equal(call('POST', '/api/alpha/decisions', body, undefined, auth).status, 400);
+  const routed = { ...body, provider: { allow_fallbacks: true, require_parameters: true } };
+  assert.equal(call('POST', '/api/alpha/decisions', routed, undefined, auth).status, 200);
+  // The old single-host policy is refused, so the gateway must send the current one.
+  assert.equal(call('POST', '/api/alpha/decisions', { ...body, provider: { allow_fallbacks: false, require_parameters: true } }, undefined, auth).status, 400);
+  for (const override of [{ questions: {} }, { questions: [] }, { model: 'not-a-model' }, { models: ['other'] }, { questions: { q: { type: 'unknown' } } }]) {
+    assert.equal(call('POST', '/api/alpha/decisions', { ...routed, ...override }, undefined, auth).status, 400);
+  }
+  assert.equal(call('GET', '/v1/decisions', {}, undefined, auth).status, 405);
+  assert.equal(call('POST', '/v1/decisions', '', ['x'.repeat(262145)], auth).status, 413);
+});
+
+test('decision choice and score fixtures keep labels and ordinal positions', () => {
+  const response = call('POST', '/v1/decisions', { model: 'gpt-6-luna', input: 'e2e-decision:pass', questions: [
+    { name: 'label', type: 'choice', choices: [{ value: 'bad' }, { value: 'good' }] },
+    { name: 'grade', type: 'score', levels: [{ label: '0', description: 'bad' }, { label: '1', description: 'good' }] },
+  ] }, undefined, { authorization: 'Bearer e2e-decision-openai-key' });
+  assert.deepEqual(response.body.answers, [
+    { name: 'label', type: 'choice', confidence: 1, choice: 'good', probabilities: [{ value: 'bad', probability: 0 }, { value: 'good', probability: 1 }] },
+    { name: 'grade', type: 'score', confidence: 1, score: 1, probabilities: [{ value: 0, label: '0', probability: 0 }, { value: 1, label: '1', probability: 1 }] },
+  ]);
+});
 
 test('serving health and scalar/batch embeddings are finite nonzero eight-vectors', () => {
   assert.deepEqual(call('GET', '/model/v1/models').body, { models: ['text_embedding'] });
