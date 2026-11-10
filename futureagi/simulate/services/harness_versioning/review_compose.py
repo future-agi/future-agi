@@ -148,7 +148,51 @@ def compose_accepted(
                 [change["id"]],
             ) from exc
     _carry_amendments(default, draft, files, changes, decisions)
+    _compose_suite_index(default, draft, files, changes, decisions)
     return files
+
+
+def _compose_suite_index(
+    default: Mapping[str, bytes],
+    draft: Mapping[str, bytes],
+    files: dict[str, bytes],
+    changes: list[dict[str, Any]],
+    decisions: Mapping[str, str],
+) -> None:
+    """The suite index lists the scenarios a version runs: each accepted scenario change takes the draft's entry (or
+    drops it when the scenario was removed), every other scenario keeps the default's entry, in the default's order;
+    an entry with no scenario folder in the composed tree is left out.
+    """
+    accepted = {
+        change["key"]
+        for change in changes
+        if change["kind"] == "scenario" and decisions.get(change["id"]) == "accepted"
+    }
+    before = read_json(default.get("scenarios.json", b"null"))
+    if not accepted or not isinstance(before, list):
+        return
+    after = read_json(draft.get("scenarios.json", b"null"))
+    drafted = {
+        str(one.get("name")): one
+        for one in (after if isinstance(after, list) else [])
+        if isinstance(one, dict)
+    }
+    index, listed = [], set()
+    for one in before:
+        name = str(one.get("name")) if isinstance(one, dict) else ""
+        listed.add(name)
+        if name not in accepted:
+            index.append(one)
+        elif name in drafted:
+            index.append(drafted[name])
+    index += [
+        one for name, one in drafted.items() if name in accepted and name not in listed
+    ]
+    # An entry whose scenario folder is not in the composed tree names a scenario the version does not have.
+    index = [
+        one for one in index if f"scenarios/{one.get('name')}/scenario.json" in files
+    ]
+    _put(files, "scenarios.json", index)
 
 
 # The em dash the harness puts between an amendment's action and its subject.
