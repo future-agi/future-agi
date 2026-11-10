@@ -6,7 +6,9 @@ from django.utils import timezone
 from simulate.models import (
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
+    HarnessSuiteMember,
     HarnessSuiteValidation,
+    HarnessSuiteVersion,
 )
 from simulate.services import harness_readiness
 from simulate.tests.test_harness_affected_scenarios import (
@@ -20,6 +22,7 @@ from simulate.tests.test_harness_readiness import (
     _built,
     _environment,
     _pairing,
+    _with_a2,
 )
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     readiness_on as readiness_on,
@@ -91,6 +94,19 @@ class TestProofState:
         assert {one["proof"]["state"] for one in flags.values()} == {"proved"}
         assert {one["bucket"] for one in flags.values()} == {"eligible"}
 
+    def test_a_pairing_certified_with_another_agent_proves_the_same_versions(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "sr-other-agent")
+        assert harness_readiness.readiness_report(_pairing(environment))[
+            "validation"
+        ]["state"] in ("ready", "certified")
+
+        flags = harness_readiness.scenario_readiness(_pairing(environment, a2))
+
+        assert flags
+        assert {one["proof"]["state"] for one in flags.values()} == {"proved"}
+
     def test_a_proof_from_an_earlier_environment_version_names_it(
         self, user, workspace, storage
     ):
@@ -112,6 +128,35 @@ class TestProofState:
         assert proof["last_proved"] == {
             "environment_version": earlier.version_number,
             "suite_version": environment.suite_version.version_number,
+        }
+
+    def test_a_certified_earlier_pairing_counts_as_the_last_proof(
+        self, user, workspace, storage
+    ):
+        environment = _ten_certified(user, workspace, storage, "sr-cert-earlier")
+        certified_suite = environment.suite_version
+        edited = HarnessSuiteVersion.no_workspace_objects.get(id=certified_suite.id)
+        edited.pk = None
+        edited.version_number = (certified_suite.version_number or 1) + 1
+        edited.hash = edited.certify_hash = "sha256:" + "f" * 64
+        edited.save()
+        for member in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=certified_suite
+        ):
+            member.pk = None
+            member.suite_version = edited
+            member.save()
+        environment.suite_version = edited
+        environment.save(update_fields=["suite_version"])
+
+        proof = _flags(environment)[LOOKUP_KEYS[0]]["proof"]
+
+        assert proof == {
+            "state": "not_proved",
+            "last_proved": {
+                "environment_version": environment.environment_version.version_number,
+                "suite_version": certified_suite.version_number,
+            },
         }
 
     def test_a_case_never_proved_anywhere_has_no_last_proof(

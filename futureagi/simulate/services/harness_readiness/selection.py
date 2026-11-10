@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Literal, TypedDict
 
 from simulate.models import (
@@ -273,11 +274,12 @@ def scenario_readiness(pairing: Pairing) -> dict[str, ScenarioReadiness]:
 def _proof_views(pairing: Pairing, ready: bool):
     """Where each scenario's proof stands for this suite and environment version:
     proved (or the pairing is certified), failed, or not proved; and, when not proved
-    here, the latest versions it was last proved on. One query."""
+    here, the latest versions it was last proved on, by a proof or a certified
+    pairing. Three queries."""
     from simulate.services.hosted_harness_gateway import _scenario_token
 
     here: Mapping[str, object] = {}
-    earlier: list[tuple[dict[str, object], LastProved]] = []
+    earlier: list[tuple[object, dict[str, object], LastProved]] = []
     for row in (
         HarnessSuiteValidation.no_workspace_objects.filter(
             suite_version__job_id=pairing.environment.id
@@ -298,6 +300,7 @@ def _proof_views(pairing: Pairing, ready: bool):
         else:
             earlier.append(
                 (
+                    row.proved_at,
                     proofs,
                     {
                         "environment_version": row.environment_version.version_number,
@@ -305,6 +308,47 @@ def _proof_views(pairing: Pairing, ready: bool):
                     },
                 )
             )
+    # A certified pairing proved every scenario of its suite version, on its
+    # environment version, whichever agent version it was certified with.
+    bundles = []
+    for bundle in (
+        HarnessAssembledBundle._base_manager.filter(
+            job_id=pairing.environment.id, state=HarnessAssembledBundle.State.READY
+        )
+        .exclude(object_key="")
+        .exclude(object_key__isnull=True)
+        .select_related("environment_version", "suite_version")
+    ):
+        if (bundle.environment_version_id, bundle.suite_version_id) == (
+            pairing.environment_version.id,
+            pairing.suite_version.id,
+        ):
+            ready = True
+        else:
+            bundles.append(bundle)
+    members: dict[object, list[str]] = {}
+    for suite_id, key in HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id__in={bundle.suite_version_id for bundle in bundles}
+    ).values_list("suite_version_id", "scenario_key"):
+        members.setdefault(suite_id, []).append(key)
+    for bundle in bundles:
+        earlier.append(
+            (
+                bundle.updated_at,
+                {
+                    _scenario_token(key): {"holds": True}
+                    for key in members.get(bundle.suite_version_id, [])
+                },
+                {
+                    "environment_version": bundle.environment_version.version_number,
+                    "suite_version": bundle.suite_version.version_number,
+                },
+            )
+        )
+    earlier.sort(
+        key=lambda one: one[0] or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
 
     def view(key: str) -> ProofView:
         token = _scenario_token(key)
@@ -314,7 +358,7 @@ def _proof_views(pairing: Pairing, ready: bool):
         last = next(
             (
                 versions
-                for proofs, versions in earlier
+                for _, proofs, versions in earlier
                 if isinstance(proofs.get(token), Mapping)
                 and proofs[token].get("holds") is True
             ),
