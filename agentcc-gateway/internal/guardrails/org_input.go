@@ -39,8 +39,8 @@ func cloneCheckInput(input *CheckInput) (*CheckInput, error) {
 func (p *GuardrailPlugin) runOrgCheck(ctx context.Context, g Guardrail, input *CheckInput, timeout time.Duration, failOpen bool) *CheckResult {
 	owned, err := cloneCheckInput(input)
 	if err != nil {
-		// No check ran. Never silently dispatch uninspectable content.
-		return &CheckResult{Err: err, Message: "could not snapshot guardrail input"}
+		// No check ran. Apply the same explicit failure policy and record it.
+		return &CheckResult{Err: err, FailureAdmitted: failOpen, Message: "guardrail_unavailable: could not snapshot guardrail input"}
 	}
 	cr := p.runGuardrailSafe(ctx, g, owned, timeout, failOpen)
 	if mutatesInput(g) && cr != nil && cr.Err == nil {

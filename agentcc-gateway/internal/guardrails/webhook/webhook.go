@@ -76,7 +76,7 @@ func New(name string, cfg map[string]interface{}) *WebhookGuardrail {
 	return g
 }
 
-func (g *WebhookGuardrail) Name() string           { return g.name }
+func (g *WebhookGuardrail) Name() string            { return g.name }
 func (g *WebhookGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check calls the webhook endpoint.
@@ -161,7 +161,7 @@ func (g *WebhookGuardrail) doRequest(ctx context.Context, body []byte) (*guardra
 
 func errorResult(msg string) *guardrails.CheckResult {
 	return &guardrails.CheckResult{
-		Err: fmt.Errorf("%s", msg),
+		Err:     fmt.Errorf("%s", msg),
 		Pass:    false,
 		Score:   1.0,
 		Message: msg,

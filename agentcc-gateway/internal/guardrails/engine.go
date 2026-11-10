@@ -153,6 +153,11 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 			continue
 		}
 
+		// Failure policy precedes scoring; admission remains an auditable outcome.
+		if checkResult.FailureAdmitted {
+			effectiveAction = ActionLog
+		}
+
 		// Apply threshold.
 		triggered := shouldTrigger(checkResult, effectiveThreshold)
 		if !triggered {
@@ -212,28 +217,21 @@ func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInp
 		ch <- result{cr: cr}
 	}()
 
+	var res result
 	select {
-	case res := <-ch:
-		if res.err != nil {
-			return e.handleError(rule, res.err)
-		}
-		return res.cr
+	case res = <-ch:
 	case <-checkCtx.Done():
-		slog.Warn("guardrail timed out",
-			"guardrail", rule.guardrail.Name(),
-			"timeout", rule.timeout,
-			"fail_open", e.failOpen,
-		)
-		if e.failOpen {
-			return nil // pass
-		}
-		return &CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Action:  rule.action,
-			Message: fmt.Sprintf("guardrail %q timed out", rule.guardrail.Name()),
-		}
 	}
+	if checkCtx.Err() != nil {
+		return e.handleError(rule, checkCtx.Err())
+	}
+	if res.err == nil {
+		res.err = checkResultError(res.cr)
+	}
+	if res.err != nil {
+		return e.handleError(rule, res.err)
+	}
+	return res.cr
 }
 
 func (e *Engine) runAsync(rule resolvedRule, input *CheckInput) {
@@ -279,14 +277,10 @@ func (e *Engine) handleError(rule resolvedRule, err error) *CheckResult {
 		"error", err,
 		"fail_open", e.failOpen,
 	)
-	if e.failOpen {
-		return nil
-	}
 	return &CheckResult{
-		Pass:    false,
-		Score:   1.0,
-		Action:  rule.action,
-		Message: fmt.Sprintf("guardrail %q error: %v", rule.guardrail.Name(), err),
+		Pass: false, Score: 1.0, Action: rule.action,
+		Err: err, FailureAdmitted: e.failOpen,
+		Message: fmt.Sprintf("guardrail_unavailable: %q", rule.guardrail.Name()),
 	}
 }
 

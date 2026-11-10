@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	g "github.com/futureagi/agentcc-gateway/internal/guardrails"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/pii"
+	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/webhook"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -212,8 +214,14 @@ func TestWQ2CompletedWarningRetained(t *testing.T) {
 func TestWQ2ParallelPIIRemediation(t *testing.T) {
 	var wg sync.WaitGroup
 	var requests atomic.Int32
+	var received string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		received = string(body)
 		fmt.Fprint(w, `{"pass":true,"score":0}`)
 	}))
 	defer srv.Close()
@@ -255,5 +263,70 @@ func TestWQ2ParallelPIIRemediation(t *testing.T) {
 	}
 	if requests.Load() != 1 {
 		t.Fatalf("local webhook calls=%d", requests.Load())
+	}
+	if strings.Contains(received, "synthetic@example.test") || !strings.Contains(received, "[REDACTED") {
+		t.Fatalf("outgoing webhook body was not remediated: %.300s", received)
+	}
+}
+
+func TestCompletedWarningRetentionIndependently(t *testing.T) {
+	warnDone := make(chan struct{})
+	registry := map[string]g.Guardrail{
+		"a-warn": acceptanceCheck{name: "a-warn", fn: func(context.Context, *g.CheckInput) *g.CheckResult {
+			close(warnDone)
+			return &g.CheckResult{Pass: false, Score: 0.9, Message: "completed warning"}
+		}},
+		"b-block": acceptanceCheck{name: "b-block", fn: func(context.Context, *g.CheckInput) *g.CheckResult {
+			<-warnDone
+			time.Sleep(30 * time.Millisecond)
+			return &g.CheckResult{Pass: false, Score: 0.9, Message: "blocked"}
+		}},
+	}
+	p := acceptancePlugin(t, false, `{"pipeline_mode":"parallel","checks":{"a-warn":{"enabled":true,"action":"warn","confidence_threshold":0.5},"b-block":{"enabled":true,"action":"block","confidence_threshold":0.5}}}`, registry)
+	rc := acceptanceRC()
+	defer rc.Release()
+	p.ProcessRequest(context.Background(), rc)
+	found := false
+	for _, result := range rc.GuardrailResults {
+		if result.Name == "a-warn" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("completed warning erased when another parallel check blocked")
+	}
+}
+
+func TestStaticWebhookExecutionPolicy(t *testing.T) {
+	for _, open := range []bool{false, true} {
+		for _, threshold := range []float64{0.5, 1} {
+			for _, kind := range []string{"unavailable", "content", "safe"} {
+				t.Run(fmt.Sprintf("open=%v/threshold=%g/%s", open, threshold, kind), func(t *testing.T) {
+					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if kind == "unavailable" {
+							w.WriteHeader(503)
+							return
+						}
+						if kind == "content" {
+							fmt.Fprint(w, `{"pass":false}`)
+						} else {
+							fmt.Fprint(w, `{"pass":true}`)
+						}
+					}))
+					defer srv.Close()
+					engine := g.NewEngine(config.GuardrailsConfig{FailOpen: open, Rules: []config.GuardrailRuleConfig{{Name: "hook", Stage: "pre", Mode: "sync", Action: "block", Threshold: threshold}}}, map[string]g.Guardrail{"hook": webhook.New("hook", map[string]interface{}{"url": srv.URL})})
+					rc := acceptanceRC()
+					defer rc.Release()
+					result := engine.RunPre(context.Background(), &g.CheckInput{Request: rc.Request}, nil, policy.RequestPolicyNone)
+					want := kind == "content" || kind == "unavailable" && !open
+					if result.Blocked != want {
+						t.Fatalf("blocked=%v want=%v", result.Blocked, want)
+					}
+					if kind == "unavailable" && (len(result.Triggered) != 1 || !strings.Contains(result.Triggered[0].Message, "guardrail_unavailable")) {
+						t.Fatalf("unavailable outcome not recorded: %+v", result)
+					}
+				})
+			}
+		}
 	}
 }

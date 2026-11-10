@@ -39,11 +39,8 @@ func TestOrgCheckTimeoutOwnsEntireInput(t *testing.T) {
 			g := &inputMutationCheck{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 			p := &GuardrailPlugin{}
 			result := p.runOrgCheck(context.Background(), g, input, 20*time.Millisecond, failOpen)
-			if failOpen && result != nil {
-				t.Fatalf("opted-in outage should continue: %+v", result)
-			}
-			if !failOpen && (result == nil || result.Err == nil) {
-				t.Fatalf("closed outage must retain error: %+v", result)
+			if result == nil || result.Err == nil || result.FailureAdmitted != failOpen {
+				t.Fatalf("outage must retain its error and explicit admission policy: %+v", result)
 			}
 			close(g.finish)
 			<-g.done

@@ -38,8 +38,8 @@ test('GW-E2E-004: an organization explicitly opts into continuing after a guardr
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  // Four UI_READY waits plus ASYNC_JOB push visibility and HTTP/seeding headroom.
-  test.setTimeout(360_000);
+  // Seven UI waits, three pushes, three HTTP requests and seeding headroom.
+  test.setTimeout(720_000);
   const name = `e2e-optin-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const provider = `${name}-provider`;
   const check = `${name}-check`;

@@ -42,12 +42,14 @@ type CheckResult struct {
 	// Err marks an execution failure, not a scored content decision. Engines
 	// apply fail_open before threshold evaluation; implementations must set it
 	// for transport, parsing, or evaluation errors.
-	Err     error                  `json:"-"`
-	Pass    bool                   // true = safe, false = triggered
-	Score   float64                // 0.0 = safe, 1.0 = max violation
-	Action  Action                 // what action to take if triggered
-	Message string                 // human-readable explanation
-	Details map[string]interface{} // guardrail-specific metadata
+	Err error `json:"-"`
+	// FailureAdmitted records an unavailable check admitted by explicit policy.
+	FailureAdmitted bool                   `json:"-"`
+	Pass            bool                   // true = safe, false = triggered
+	Score           float64                // 0.0 = safe, 1.0 = max violation
+	Action          Action                 // what action to take if triggered
+	Message         string                 // human-readable explanation
+	Details         map[string]interface{} // guardrail-specific metadata
 }
 
 // Guardrail is the interface that all guardrail implementations must satisfy.

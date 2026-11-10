@@ -17,6 +17,8 @@ class AgentccOrgConfigSerializer(serializers.ModelSerializer):
             data.get("cost_tracking")
         )
         data["cache"] = normalize_cache_config(data.get("cache"))
+        # Legacy aliases must not survive hydration: UI edits use canonical keys.
+        data["guardrails"] = normalize_guardrail_settings(data.get("guardrails") or {})
         return data
 
     class Meta:

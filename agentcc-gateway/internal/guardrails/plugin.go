@@ -248,7 +248,7 @@ func (p *GuardrailPlugin) collectOrgChecks(orgID string, gcfg *tenant.GuardrailC
 
 // orgCheckBlocks reports whether a check outcome blocks the request.
 func orgCheckBlocks(c orgCheck, cr *CheckResult) bool {
-	return shouldTrigger(cr, c.check.ConfidenceThreshold) && parseAction(c.check.Action) == ActionBlock
+	return cr != nil && !cr.FailureAdmitted && shouldTrigger(cr, c.check.ConfidenceThreshold) && parseAction(c.check.Action) == ActionBlock
 }
 
 // runOrgChecksSequential runs checks one at a time, stopping at the first
@@ -300,7 +300,7 @@ func (p *GuardrailPlugin) runOrgChecksParallel(ctx context.Context, checks []org
 		pending++
 		owned, err := cloneCheckInput(input)
 		if err != nil {
-			ch <- outcome{idx: i, cr: &CheckResult{Err: err, Message: "could not snapshot guardrail input"}}
+			ch <- outcome{idx: i, cr: &CheckResult{Err: err, FailureAdmitted: failOpen, Message: "guardrail_unavailable: could not snapshot guardrail input"}}
 			continue
 		}
 		go func(i int, c orgCheck, owned *CheckInput) {
@@ -330,6 +330,9 @@ func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string,
 	}
 
 	action := parseAction(c.check.Action)
+	if cr.FailureAdmitted {
+		action = ActionLog
+	}
 	result.Triggered = append(result.Triggered, TriggeredGuardrail{
 		Name:      c.name,
 		Score:     cr.Score,
@@ -491,14 +494,12 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 			"timeout", timeout,
 			"fail_open", failOpen,
 		)
-		if failOpen {
-			return nil
-		}
 		return &CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Message: fmt.Sprintf("guardrail %q timed out", g.Name()),
-			Err:     checkCtx.Err(),
+			FailureAdmitted: failOpen,
+			Pass:            false,
+			Score:           1.0,
+			Message:         fmt.Sprintf("guardrail_unavailable: %q", g.Name()),
+			Err:             checkCtx.Err(),
 		}
 	}
 	if res.err == nil {
@@ -510,14 +511,12 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 			"error", res.err,
 			"fail_open", failOpen,
 		)
-		if failOpen {
-			return nil
-		}
 		return &CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Message: fmt.Sprintf("guardrail %q error: %v", g.Name(), res.err),
-			Err:     res.err,
+			FailureAdmitted: failOpen,
+			Pass:            false,
+			Score:           1.0,
+			Message:         fmt.Sprintf("guardrail_unavailable: %q", g.Name()),
+			Err:             res.err,
 		}
 	}
 	return res.cr

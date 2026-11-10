@@ -212,7 +212,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     rules = guardrails_data.get("rules")
 
     # Checks as list (from guardrail_sync — merged policies)
-    if isinstance(raw_checks, list) and raw_checks:
+    if isinstance(raw_checks, list):
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
         _inject_guardrail_credentials(raw_checks, org_id)
 
@@ -244,7 +244,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
         return result
 
     # Checks as dict (from frontend saves via OrgConfig)
-    if isinstance(raw_checks, dict) and raw_checks:
+    if isinstance(raw_checks, dict):
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
         _inject_guardrail_credentials(raw_checks, org_id)
 
@@ -265,7 +265,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
         return {**guardrails_data, "checks": mapped}
 
     # Convert rules array → checks map
-    if not isinstance(rules, list) or not rules:
+    if not isinstance(rules, list):
         return guardrails_data
 
     # Inject decrypted guardrail credentials before transformation
