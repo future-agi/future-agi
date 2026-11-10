@@ -26,6 +26,18 @@ from typing import Any, Optional
 import httpx
 import structlog
 
+from ee.licensing.activation_client import (
+    MANAGED_STREAM_TIMEOUT_SECONDS,
+    MAX_RETRY_AFTER_SECONDS,
+)
+
+# One initial request and one shared transport/structured recovery, including
+# the longest accepted Retry-After. HTTP timeouts bound inactivity, so the
+# worker also owns a cancellable wall-clock deadline for the whole agent run.
+AGENT_RUN_TIMEOUT_SECONDS = (
+    2 * MANAGED_STREAM_TIMEOUT_SECONDS + MAX_RETRY_AFTER_SECONDS
+)
+
 
 def _extract_gateway_diagnostics(exc: BaseException | None) -> dict:
     """Pull gateway request_id / resolved model / status / body off any
@@ -2405,8 +2417,16 @@ class AgentEvaluator:
             """Run the agent in a fresh event loop via asyncio.run()."""
             from django.db import close_old_connections
 
+            async def run_with_deadline():
+                # Cancelling the async task closes in-flight streams/backoff
+                # before returning. A Future timeout alone cannot stop a thread
+                # and used to discard successful (billable) recovery results.
+                return await asyncio.wait_for(
+                    run_async(), timeout=AGENT_RUN_TIMEOUT_SECONDS
+                )
+
             close_old_connections()
-            return asyncio.run(run_async())
+            return asyncio.run(run_with_deadline())
 
         from ee.falcon_ai.llm_client import (
             RETRYABLE_MANAGED_CODES,
@@ -2417,7 +2437,7 @@ class AgentEvaluator:
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                result = pool.submit(_run_in_thread).result(timeout=300)
+                result = pool.submit(_run_in_thread).result()
         except GradingError:
             raise
         except EmptyStreamError as exc:

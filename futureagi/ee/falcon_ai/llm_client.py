@@ -775,6 +775,8 @@ class FalconLLMClient:
 
                 base_delay = min(2**attempt, 30)
                 delay = base_delay + base_delay * 0.25 * random.random()
+                if e.retry_after is not None:
+                    delay = e.retry_after
                 logger.warning(
                     "llm_retry_managed",
                     error_code=e.code,
@@ -821,9 +823,20 @@ class FalconLLMClient:
                     )
                 await asyncio.sleep(delay)
                 continue
-            except (httpx.TimeoutException, httpx.ConnectError) as e:
+            except (
+                httpx.TimeoutException,
+                httpx.ConnectError,
+                httpx.RemoteProtocolError,
+                httpx.ReadError,
+            ) as e:
                 if (
-                    attempt >= max_retries - 1
+                    # Read/protocol recovery is evaluation-only; chat keeps its
+                    # existing propagation policy for these failures.
+                    (
+                        self.retry_budget is None
+                        and isinstance(e, (httpx.RemoteProtocolError, httpx.ReadError))
+                    )
+                    or attempt >= max_retries - 1
                     or (self.retry_budget is not None and yielded_any_chunk)
                     or not self.take_retry()
                 ):
