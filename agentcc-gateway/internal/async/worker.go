@@ -119,9 +119,6 @@ func (w *Worker) processJob(jobID string) {
 	if !w.store.start(jobID, cancel) {
 		return
 	}
-	if ctx.Err() != nil {
-		return
-	}
 
 	slog.Debug("processing async job", "job_id", jobID, "model", snap.Request.Model)
 
