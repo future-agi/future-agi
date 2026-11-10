@@ -31,7 +31,8 @@ logger = structlog.get_logger(__name__)
 # 25: matthews_correlation computes multiclass MCC instead of rescaled accuracy.
 # 26: the 24 ndcg_at_k fix landed after 25, so it ships as 26.
 # 29: retrieval evals normalize scalar references and hypotheses as single items.
-SYSTEM_EVALS_VERSION = 29
+# 30: BLEU and CodeBLEU score short answers over the available n-gram orders.
+SYSTEM_EVALS_VERSION = 30
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
