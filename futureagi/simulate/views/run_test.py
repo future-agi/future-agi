@@ -151,6 +151,7 @@ from simulate.services.harness_evals import (
     effective_simulation_mapping,
     is_harness_run_test,
     is_regrading_a_finished_harness_run,
+    regrade_mapping,
     runnable_eval_config_ids,
 )
 from simulate.services.harness_run_evals import stamp_eval_queued
@@ -161,6 +162,7 @@ from simulate.services.run_regrade import (
     RegradeEvalNotFound,
     RegradeNoCalls,
     RegradeNoCompletedCall,
+    RegradeNothingToGrade,
     RegradeRefused,
     RegradeStillFinishing,
     regrade_run_evals,
@@ -6940,6 +6942,202 @@ def _dispatch_hosted_rerun(test_execution, call_execution_ids=None) -> str:
     )
 
 
+def _regrade_evals_on_harness_run(gm, run_test, execution_ids, calls, *, bulk):
+    """Grade again, on a harness run, only the evals the platform can grade.
+
+    The Temporal eval-only re-run empties a call's results and grades every
+    eval on the test, so the checks the harness wrote during the call would
+    be lost and its result columns graded with no inputs. Run-new-evals'
+    service writes "pending" only for the evals it grades and keeps a
+    harness verdict under it, so both eval-only routes come here instead.
+
+    ``calls`` are the selected calls of ``execution_ids``. Only completed
+    ones are graded: a failed call would be graded, or marked skipped over
+    its earlier results. Every refusal is answered before anything is
+    written, except a failed dispatch, which the service has already put
+    back.
+
+    Returns ``(refusal, calls_by_execution)``: a refusal response, or for
+    each run the ids of its graded calls and the calls left out.
+    """
+    run_test_id = str(run_test.id)
+    no_completed_call = "Nothing to grade again: no selected call completed."
+    nothing_to_grade = (
+        "This test's evals are scored by the harness during the call. "
+        "Only rerunning the call refreshes them."
+    )
+
+    def refuse(status_code, code, message):
+        logger.info(
+            "rerun_evals_refused",
+            code=code,
+            run_test_id=run_test_id,
+            test_execution_ids=list(execution_ids),
+        )
+        return gm.custom_error_response(status_code, message, code=code), None
+
+    def listed(ids):
+        shown = ", ".join(ids[:3])
+        return f"{shown} and {len(ids) - 3} more" if len(ids) > 3 else shown
+
+    try:
+        regrade_still_finishing(execution_ids, harness_run=True)
+    except RegradeStillFinishing as still_finishing:
+        return refuse(
+            status.HTTP_409_CONFLICT,
+            "rerun_evals_still_finishing",
+            str(still_finishing),
+        )
+
+    # Read after the job check: teardown commits the job's end and the run's
+    # status together, so this read sees whatever teardown wrote.
+    previous_test_execution_statuses = {
+        str(execution_id): execution_status
+        for execution_id, execution_status in TestExecution.objects.filter(
+            id__in=execution_ids
+        ).values_list("id", "status")
+    }
+    not_completed = [
+        execution_id
+        for execution_id in execution_ids
+        if previous_test_execution_statuses.get(execution_id)
+        != TestExecution.ExecutionStatus.COMPLETED
+    ]
+    if not_completed:
+        if bulk:
+            message = (
+                "Evals can be re-run only on runs that completed. "
+                f"{len(not_completed)} of the selected runs did not: "
+                f"{listed(not_completed)}."
+            )
+        else:
+            run_status = previous_test_execution_statuses.get(
+                not_completed[0], "deleted"
+            )
+            message = (
+                "Evals can be re-run only on a run that completed. "
+                f"This run is {run_status}."
+            )
+        return refuse(
+            status.HTTP_409_CONFLICT, "rerun_evals_run_not_completed", message
+        )
+
+    graded = {execution_id: [] for execution_id in execution_ids}
+    left_out = {execution_id: [] for execution_id in execution_ids}
+    for call_id, execution_id, call_status in calls.values_list(
+        "id", "test_execution_id", "status"
+    ):
+        by_execution = (
+            graded if call_status == CallExecution.CallStatus.COMPLETED else left_out
+        )
+        by_execution.setdefault(str(execution_id), []).append(str(call_id))
+    without_a_completed_call = [
+        execution_id for execution_id in execution_ids if not graded[execution_id]
+    ]
+    if without_a_completed_call:
+        if bulk:
+            missing = len(without_a_completed_call)
+            message = (
+                f"Nothing to grade again: {missing} of the selected runs "
+                f"{'has' if missing == 1 else 'have'} no completed call: "
+                f"{listed(without_a_completed_call)}."
+            )
+        else:
+            message = no_completed_call
+        return refuse(
+            status.HTTP_400_BAD_REQUEST, "rerun_evals_no_completed_call", message
+        )
+
+    eval_config_ids = [
+        str(eval_config.id)
+        for eval_config in SimulateEvalConfig.objects.filter(
+            run_test=run_test, deleted=False
+        ).select_related("eval_template")
+        if regrade_mapping(eval_config) is not None
+    ]
+    if not eval_config_ids:
+        return refuse(
+            status.HTTP_400_BAD_REQUEST,
+            "rerun_evals_nothing_to_grade",
+            nothing_to_grade,
+        )
+
+    graded_call_ids = [
+        call_id for execution_id in execution_ids for call_id in graded[execution_id]
+    ]
+    try:
+        graded_call_count = regrade_run_evals(
+            run_test,
+            execution_ids,
+            previous_test_execution_statuses,
+            eval_config_ids,
+            harness_run=True,
+            call_execution_ids=graded_call_ids,
+            snapshot_eval_outputs=True,
+        )
+    except RegradeStillFinishing as still_finishing:
+        return refuse(
+            status.HTTP_409_CONFLICT,
+            "rerun_evals_still_finishing",
+            str(still_finishing),
+        )
+    except (RegradeEvalNotFound, RegradeRefused):
+        # The service's text names an eval this request did not choose: the
+        # evals changed under it.
+        return refuse(
+            status.HTTP_409_CONFLICT,
+            "rerun_evals_changed",
+            "This test's evals changed while the request was being made. Try again.",
+        )
+    except (RegradeNoCompletedCall, RegradeNoCalls) as refused:
+        # A bare exception carries no text, and an empty message tells the
+        # page nothing.
+        return refuse(
+            status.HTTP_400_BAD_REQUEST,
+            "rerun_evals_no_completed_call",
+            str(refused) or no_completed_call,
+        )
+    except RegradeNothingToGrade as refused:
+        return refuse(
+            status.HTTP_400_BAD_REQUEST,
+            "rerun_evals_nothing_to_grade",
+            str(refused) or nothing_to_grade,
+        )
+    except RegradeAlreadyRunning:
+        return refuse(
+            status.HTTP_409_CONFLICT,
+            "rerun_evals_already_running",
+            "Grading is already running on this run.",
+        )
+    except RegradeDispatchFailed:
+        return refuse(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "rerun_evals_dispatch_failed",
+            "Evals may not have started: dispatch failed. The earlier results "
+            "are back, and it is safe to retry.",
+        )
+
+    logger.info(
+        "rerun_evals_on_harness_run",
+        test_execution_ids=list(execution_ids),
+        run_test_id=run_test_id,
+        selected_call_count=len(graded_call_ids)
+        + sum(len(call_ids) for call_ids in left_out.values()),
+        graded_call_count=graded_call_count,
+        eval_config_count=len(eval_config_ids),
+    )
+    return None, {
+        execution_id: (
+            graded[execution_id],
+            [
+                {"call_execution_id": call_id, "error": "The call did not complete."}
+                for call_id in left_out[execution_id]
+            ],
+        )
+        for execution_id in execution_ids
+    }
+
+
 class CallExecutionRerunView(APIView):
     """
     API View to handle bulk call execution rerun requests
@@ -7102,6 +7300,39 @@ class CallExecutionRerunView(APIView):
             if not call_executions.exists():
                 return self._gm.bad_request(
                     "No call executions found that can be rerun."
+                )
+
+            if rerun_type == "eval_only" and is_harness_run_test(
+                test_execution.run_test_id
+            ):
+                refusal, calls_by_execution = _regrade_evals_on_harness_run(
+                    self._gm,
+                    test_execution.run_test,
+                    [str(test_execution.id)],
+                    call_executions,
+                    bulk=False,
+                )
+                if refusal is not None:
+                    return refusal
+                graded, left_out = calls_by_execution[str(test_execution.id)]
+                return Response(
+                    RerunCallsResponseSerializer(
+                        {
+                            "message": (
+                                "Bulk call execution rerun prepared and "
+                                "initiated successfully (eval_only)"
+                            ),
+                            "test_execution_id": str(test_execution_id),
+                            "rerun_type": rerun_type,
+                            "total_processed": len(graded) + len(left_out),
+                            "successful_reruns": graded,
+                            "failed_reruns": left_out,
+                            "success_count": len(graded),
+                            "failure_count": len(left_out),
+                            "dispatch_error": None,
+                        }
+                    ).data,
+                    status=status.HTTP_200_OK,
                 )
 
             # A repository-backed ALK execution owns the target environment lifecycle. Its rerun
@@ -7725,7 +7956,9 @@ class TestExecutionRerunView(APIView):
             200: TestExecutionRerunResponseSerializer,
             400: ApiTextErrorResponseSerializer,
             404: ErrorResponseSerializer,
+            409: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
+            503: ErrorResponseSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -7811,6 +8044,51 @@ class TestExecutionRerunView(APIView):
                 return self._gm.bad_request(
                     "No test executions found that can be rerun. "
                     "Executions in pending, running, or cancelling status cannot be rerun."
+                )
+
+            if rerun_type == "eval_only" and is_harness_run_test(run_test.id):
+                execution_ids = [
+                    str(execution_id)
+                    for execution_id in test_executions.values_list("id", flat=True)
+                ]
+                refusal, calls_by_execution = _regrade_evals_on_harness_run(
+                    self._gm,
+                    run_test,
+                    execution_ids,
+                    CallExecution.objects.filter(test_execution_id__in=execution_ids),
+                    bulk=True,
+                )
+                if refusal is not None:
+                    return refusal
+                results = [
+                    {
+                        "test_execution_id": execution_id,
+                        "success_count": len(graded),
+                        "failure_count": len(left_out),
+                        "successful_reruns": graded,
+                        "failed_reruns": left_out,
+                        "dispatch_error": None,
+                    }
+                    for execution_id, (graded, left_out) in calls_by_execution.items()
+                ]
+                return Response(
+                    {
+                        "message": (
+                            "Bulk test execution rerun prepared and initiated "
+                            "successfully (eval_only)"
+                        ),
+                        "run_test_id": str(run_test_id),
+                        "rerun_type": rerun_type,
+                        "total_test_executions": len(results),
+                        "results": results,
+                        "overall_success_count": sum(
+                            result["success_count"] for result in results
+                        ),
+                        "overall_failure_count": sum(
+                            result["failure_count"] for result in results
+                        ),
+                    },
+                    status=status.HTTP_200_OK,
                 )
 
             # The simulation-grid rerun action is a second UI route to the same operation as

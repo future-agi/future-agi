@@ -7,18 +7,22 @@ caller keeps its own request parsing and words its own answers; this module
 raises a typed exception for every refusal.
 """
 
+import copy
+
 import structlog
 from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
     CallExecution,
+    CallExecutionSnapshot,
     HostedHarnessJob,
     SimulateEvalConfig,
     TestExecution,
 )
 from simulate.services.harness_evals import regrade_mapping
 from simulate.services.harness_run_evals import EVAL_QUEUED_KEY, stamp_eval_queued
+from simulate.services.kept_harness_entry import pending_placeholder
 from simulate.services.test_executor import run_new_evals_on_call_executions_task
 
 logger = structlog.get_logger(__name__)
@@ -46,6 +50,10 @@ class RegradeNoCalls(Exception):
     """The chosen runs have no calls to grade. Nothing was written."""
 
 
+class RegradeNothingToGrade(Exception):
+    """eval_config_ids is empty. Nothing was written."""
+
+
 class RegradeNoCompletedCall(Exception):
     """A chosen run has no completed call. Nothing was written.
 
@@ -68,8 +76,9 @@ class RegradeAlreadyRunning(Exception):
 class RegradeDispatchFailed(Exception):
     """The grading job could not be queued.
 
-    Raised after every call's previous outputs and every run's previous
-    status were put back; the markers that say the dispatch failed stay.
+    Raised after every call's previous outputs, and the previous status of
+    every run still evaluating, were put back; the markers that say the
+    dispatch failed stay.
     """
 
     def __init__(self, call_execution_count):
@@ -111,6 +120,8 @@ def regrade_run_evals(
     *,
     harness_run,
     enable_tool_evaluation=None,
+    call_execution_ids=None,
+    snapshot_eval_outputs=False,
 ):
     """Mark the runs evaluating and queue one grading job for all their calls.
 
@@ -120,7 +131,18 @@ def regrade_run_evals(
     so neither caller can queue the grader with another run test's config.
     Every refusal leaves the database as it was. Returns how many calls
     were queued.
+
+    ``call_execution_ids``, when given, limits the grading to those of the
+    listed calls that belong to these runs and completed. With
+    ``snapshot_eval_outputs``, each graded call's earlier results are saved
+    as an eval-only snapshot in the claim's transaction, so a refused or
+    lost claim leaves none behind.
     """
+    # With no eval, the claim below would move the runs to EVALUATING with
+    # nothing queued that could ever move them back.
+    if not eval_config_ids:
+        raise RegradeNothingToGrade()
+
     # The grader loads these ids without a run-test scope, so the scope is
     # enforced here, where both callers share it.
     eval_configs = SimulateEvalConfig.objects.filter(
@@ -143,36 +165,54 @@ def regrade_run_evals(
                     "refreshes it."
                 )
 
-    # Bulk-fetch all matching CallExecution ids in a single query
-    # rather than one query per test execution (N+1).
-    call_execution_ids = [
-        str(ce_id)
-        for ce_id in CallExecution.objects.filter(test_execution_id__in=execution_ids)
-        .values_list("id", flat=True)
-        .iterator(chunk_size=1000)
-    ]
-    if not call_execution_ids:
-        raise RegradeNoCalls()
+    if call_execution_ids is None:
+        # Bulk-fetch all matching CallExecution ids in a single query
+        # rather than one query per test execution (N+1).
+        call_execution_ids = [
+            str(ce_id)
+            for ce_id in CallExecution.objects.filter(
+                test_execution_id__in=execution_ids
+            )
+            .values_list("id", flat=True)
+            .iterator(chunk_size=1000)
+        ]
+        if not call_execution_ids:
+            raise RegradeNoCalls()
 
-    # A run returns to COMPLETED only once a completed call of it has
-    # been graded, so a run with none would stay EVALUATING for good.
-    executions_with_a_completed_call = {
-        str(execution_id)
-        for execution_id in CallExecution.objects.filter(
-            test_execution_id__in=execution_ids,
-            status=CallExecution.CallStatus.COMPLETED,
+        # A run returns to COMPLETED only once a completed call of it has
+        # been graded, so a run with none would stay EVALUATING for good.
+        executions_with_a_completed_call = {
+            str(execution_id)
+            for execution_id in CallExecution.objects.filter(
+                test_execution_id__in=execution_ids,
+                status=CallExecution.CallStatus.COMPLETED,
+            )
+            .order_by()
+            .values_list("test_execution_id", flat=True)
+            .distinct()
+        }
+    else:
+        # The graders skip a call that did not complete, so a placeholder on
+        # one would never be scored. A run is judged by the calls kept here
+        # alone: its other calls are not graded, so they never settle it.
+        selected = list(
+            CallExecution.objects.filter(
+                id__in=call_execution_ids,
+                test_execution_id__in=execution_ids,
+                status=CallExecution.CallStatus.COMPLETED,
+            ).values_list("id", "test_execution_id")
         )
-        .order_by()
-        .values_list("test_execution_id", flat=True)
-        .distinct()
-    }
+        call_execution_ids = [str(call_id) for call_id, _ in selected]
+        executions_with_a_completed_call = {
+            str(execution_id) for _, execution_id in selected
+        }
     without_a_completed_call = [
         execution_id
         for execution_id in execution_ids
         if execution_id not in executions_with_a_completed_call
     ]
-    if without_a_completed_call:
-        if len(execution_ids) == 1:
+    if without_a_completed_call or not call_execution_ids:
+        if len(execution_ids) <= 1:
             raise RegradeNoCompletedCall(
                 "Nothing to grade again: no call in this run completed."
             )
@@ -299,9 +339,26 @@ def regrade_run_evals(
         eval_config_ids_str = [str(ec_id) for ec_id in eval_config_ids]
 
         # Bulk update eval_started flag and initialize eval_outputs for all call executions before triggering tasks
-        call_executions_to_update = CallExecution.objects.filter(
-            id__in=call_execution_ids
+        call_executions_to_update = list(
+            CallExecution.objects.filter(id__in=call_execution_ids)
         )
+        if snapshot_eval_outputs:
+            # Copied before any placeholder is written: a placeholder holds
+            # the harness entry itself, so the snapshot must not share it.
+            CallExecutionSnapshot.objects.bulk_create(
+                [
+                    CallExecutionSnapshot(
+                        call_execution=call_execution,
+                        rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
+                        eval_outputs=copy.deepcopy(call_execution.eval_outputs),
+                        provider_call_data=call_execution.provider_call_data,
+                        overall_score=call_execution.overall_score,
+                        tool_outputs=copy.deepcopy(call_execution.tool_outputs),
+                    )
+                    for call_execution in call_executions_to_update
+                ],
+                batch_size=1000,
+            )
         call_executions_list = []
         # What each call held for these evals before the placeholders, so
         # a failed dispatch can put back a score (a harness one included)
@@ -345,7 +402,9 @@ def regrade_run_evals(
 
             # Set placeholder values for each eval config that will be run
             for eval_config in eval_configs:
-                call_execution.eval_outputs[str(eval_config.id)] = {"status": "pending"}
+                call_execution.eval_outputs[str(eval_config.id)] = pending_placeholder(
+                    call_execution.eval_outputs.get(str(eval_config.id))
+                )
 
             call_executions_list.append(call_execution)
 
@@ -398,19 +457,24 @@ def regrade_run_evals(
             TestExecution.objects.filter(id__in=updated_test_executions)
         )
         for test_execution in failed_test_executions:
-            test_execution.status = previous_test_execution_statuses.get(
-                str(test_execution.id), test_execution.status
-            )
-            test_execution.picked_up_by_executor = False
             test_execution.execution_metadata = test_execution.execution_metadata or {}
             test_execution.execution_metadata["eval_dispatch_failed"] = str(
                 dispatch_error
             )
         if failed_test_executions:
             TestExecution.objects.bulk_update(
-                failed_test_executions,
-                ["status", "picked_up_by_executor", "execution_metadata"],
+                failed_test_executions, ["execution_metadata"]
             )
+        # A run that moved on since the claim, such as an SDK batch turning
+        # it RUNNING, is no longer this request's to put back.
+        for execution_id in updated_test_executions:
+            restore = {"picked_up_by_executor": False}
+            previous_status = previous_test_execution_statuses.get(execution_id)
+            if previous_status is not None:
+                restore["status"] = previous_status
+            TestExecution.objects.filter(
+                id=execution_id, status=TestExecution.ExecutionStatus.EVALUATING
+            ).update(**restore)
         logger.exception(
             "run_new_evals_dispatch_failed",
             run_test_id=str(run_test.id),

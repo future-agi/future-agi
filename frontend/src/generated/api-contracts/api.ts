@@ -67327,14 +67327,24 @@ export type simulateRunTestsRerunTestExecutionsCreateResponse404 = {
   status: 404;
 };
 
+export type simulateRunTestsRerunTestExecutionsCreateResponse409 = {
+  data: ErrorResponseApi;
+  status: 409;
+};
+
 export type simulateRunTestsRerunTestExecutionsCreateResponse500 = {
   data: ErrorResponseApi;
   status: 500;
 };
 
+export type simulateRunTestsRerunTestExecutionsCreateResponse503 = {
+  data: ErrorResponseApi;
+  status: 503;
+};
+
 export type simulateRunTestsRerunTestExecutionsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500 | 503>;
 };
 
 export type simulateRunTestsRerunTestExecutionsCreateResponseSuccess =
@@ -67344,7 +67354,9 @@ export type simulateRunTestsRerunTestExecutionsCreateResponseSuccess =
 export type simulateRunTestsRerunTestExecutionsCreateResponseError = (
   | simulateRunTestsRerunTestExecutionsCreateResponse400
   | simulateRunTestsRerunTestExecutionsCreateResponse404
+  | simulateRunTestsRerunTestExecutionsCreateResponse409
   | simulateRunTestsRerunTestExecutionsCreateResponse500
+  | simulateRunTestsRerunTestExecutionsCreateResponse503
   | simulateRunTestsRerunTestExecutionsCreateResponseDefault
 ) & {
   headers: Headers;
