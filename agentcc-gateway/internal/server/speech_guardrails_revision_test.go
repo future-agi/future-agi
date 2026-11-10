@@ -195,13 +195,15 @@ func TestSpeechGuardrailsUnavailableConfigurationBeforeDial(t *testing.T) {
 	t.Setenv("FI_API_KEY", "")
 	t.Setenv("FI_SECRET_KEY", "")
 	for _, tc := range []struct {
-		name  string
-		check guardrails.Guardrail
+		name   string
+		check  guardrails.Guardrail
+		status int
+		code   string
 	}{
-		{"credentials", futureagi.New("speech-test", map[string]interface{}{"base_url": "http://127.0.0.1:9", "eval_id": "synthetic"})},
-		{"eval_ids", futureagi.New("speech-test", map[string]interface{}{"base_url": "http://127.0.0.1:9", "api_key": "synthetic", "secret_key": "synthetic"})},
-		{"webhook_url", webhook.New("speech-test", nil)},
-		{"external_unvalidated", external.New("speech-test", nil)},
+		{"credentials", futureagi.New("speech-test", map[string]interface{}{"base_url": "http://127.0.0.1:9", "eval_id": "synthetic"}), 503, "guardrail_unavailable"},
+		{"eval_ids", futureagi.New("speech-test", map[string]interface{}{"base_url": "http://127.0.0.1:9", "api_key": "synthetic", "secret_key": "synthetic"}), 503, "guardrail_unavailable"},
+		{"webhook_url", webhook.New("speech-test", nil), 503, "guardrail_unavailable"},
+		{"external_unvalidated", external.New("speech-test", nil), 403, "realtime_guardrail_unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSpeechFixture(t, "cartesia", "pre", "static", "block", nil, speechRule(tc.check, 1))
@@ -214,7 +216,7 @@ func TestSpeechGuardrailsUnavailableConfigurationBeforeDial(t *testing.T) {
 			}
 			defer func() { _ = resp.Body.Close() }()
 			body, _ := io.ReadAll(resp.Body)
-			if err == nil || resp.StatusCode != 403 || !strings.Contains(string(body), "realtime_guardrail_unsupported") {
+			if err == nil || resp.StatusCode != tc.status || !strings.Contains(string(body), `"code":"`+tc.code+`"`) || !strings.Contains(string(body), `"type":"guardrail_error"`) {
 				t.Fatalf("unavailable admitted: status=%d body=%s err=%v", resp.StatusCode, body, err)
 			}
 			f.mu.Lock()

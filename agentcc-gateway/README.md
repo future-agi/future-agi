@@ -488,8 +488,10 @@ then applies the key policy and authorized `X-Guardrail-Policy` override using t
 same precedence as chat. Reconnect after a policy change. A disabled guardrail plugin
 cannot silently ignore a configured blocking check: unavailable implementations
 refuse the session before connecting to the vendor. Missing evaluation credentials,
-missing/duplicate evaluation IDs and an invalid webhook URL also refuse before
-vendor dial. External-provider adapters without an explicit validated realtime
+missing/duplicate evaluation IDs and an invalid webhook URL return HTTP 503 with
+error type `guardrail_error` and code `guardrail_unavailable` before vendor dial:
+these are unavailable supported checkers, not unsupported speech directions.
+External-provider adapters without an explicit validated realtime
 verdict contract are not supported for blocking speech checks; these configurations
 refuse admission rather than interpreting legacy fallback results as approvals.
 Malformed or missing expressions and validation patterns that cannot compile are

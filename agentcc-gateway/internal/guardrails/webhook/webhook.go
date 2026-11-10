@@ -87,7 +87,7 @@ func (g *WebhookGuardrail) Stage() guardrails.Stage { return guardrails.StagePre
 func (g *WebhookGuardrail) RealtimeReady() error {
 	u, err := url.Parse(g.url)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || g.retry < 0 {
-		return errors.New("webhook is not configured")
+		return fmt.Errorf("%w: webhook is not configured", guardrails.ErrRealtimeUnavailable)
 	}
 	return nil
 }

@@ -157,12 +157,12 @@ func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StageP
 func (g *FutureAGIGuardrail) RealtimeReady() error {
 	u, err := url.Parse(g.baseURL)
 	if strings.TrimSpace(g.apiKey) == "" || strings.TrimSpace(g.secretKey) == "" || len(g.evalIDs) == 0 || err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || g.retry < 0 {
-		return errors.New("evaluation credentials, URL or ids are unavailable")
+		return fmt.Errorf("%w: evaluation credentials, URL or ids are unavailable", guardrails.ErrRealtimeUnavailable)
 	}
 	seen := make(map[string]bool)
 	for _, id := range g.evalIDs {
 		if strings.TrimSpace(id) == "" || seen[id] {
-			return errors.New("evaluation ids are invalid")
+			return fmt.Errorf("%w: evaluation ids are invalid", guardrails.ErrRealtimeUnavailable)
 		}
 		seen[id] = true
 	}

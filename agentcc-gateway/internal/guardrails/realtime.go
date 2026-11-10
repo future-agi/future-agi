@@ -14,6 +14,11 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
+// ErrRealtimeUnavailable marks a supported checker whose required dependency
+// configuration is unavailable. Unsupported protocols or invalid local rules do
+// not use this classification.
+var ErrRealtimeUnavailable = errors.New("realtime guardrail unavailable")
+
 // RealtimePolicy is an immutable session snapshot. Blocking checks run synchronously,
 // fail closed, and never share a request with another check or with the relay.
 // Reconnect after changing org/key policy to start a session with the new policy.
@@ -131,7 +136,11 @@ func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePoli
 				return nil, realtimeUnsupported("configured guardrail threshold is invalid")
 			}
 			if ready, ok := rule.guardrail.(interface{ RealtimeReady() error }); ok {
-				if ready.RealtimeReady() != nil {
+				if err := ready.RealtimeReady(); err != nil {
+					if errors.Is(err, ErrRealtimeUnavailable) {
+						return nil, &models.APIError{Status: 503, Type: models.ErrTypeGuardrail,
+							Code: "guardrail_unavailable", Message: "configured guardrail is unavailable for realtime checks"}
+					}
 					return nil, realtimeUnsupported("configured guardrail is unavailable for realtime checks")
 				}
 			}
