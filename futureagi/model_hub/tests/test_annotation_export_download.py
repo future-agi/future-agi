@@ -371,3 +371,22 @@ def test_removed_member_cannot_start_export(
         )
     assert response.status_code == 404
     items.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_missing_storage_key_never_exposes_a_download(
+    auth_client, completed_export, storage
+):
+    completed_export.storage_key = ""
+    completed_export.save(update_fields=["storage_key"])
+    result = _unwrap(
+        auth_client.get(
+            JOB_URL.format(
+                queue_id=completed_export.queue_id, job_id=completed_export.pk
+            )
+        ).data
+    )
+    assert result["status"] == "failed"
+    assert result["file_url"] is None
+    assert auth_client.get(download_url(completed_export)).status_code == 404
+    storage.get_object.assert_not_called()

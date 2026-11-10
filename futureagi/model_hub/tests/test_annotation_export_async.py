@@ -13,6 +13,7 @@ import io
 import json
 from datetime import timedelta
 from unittest import mock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from django.db import connection
@@ -30,6 +31,10 @@ from model_hub.models.choices import (
 from model_hub.serializers.annotation_queues import (
     QueueExportJobResponseSerializer,
     QueueExportScheduledResponseSerializer,
+)
+from model_hub.services.annotation_export_storage import (
+    download_path,
+    valid_download_token,
 )
 from model_hub.tasks.annotation_export import (
     EXPORT_RETENTION_DAYS,
@@ -266,6 +271,7 @@ def test_export_job_uses_declared_response_serializer(
         job.finished_at = timezone.now()
     if job_status == "succeeded":
         job.file_url = "http://storage/contract.json"
+        job.storage_key = f"annotation-exports/{job.queue_id}/{job.id}.json"
         job.file_name = "contract.json"
         job.item_count = 1
     elif job_status == "failed":
@@ -303,7 +309,14 @@ def test_export_job_uses_declared_response_serializer(
     assert result["status"] == job_status
     assert result["export_format"] == "json"
     assert result["item_count"] == job.item_count
-    assert result["file_url"] == job.file_url
+    if job_status == "succeeded":
+        link = urlsplit(result["file_url"])
+        assert not link.scheme and not link.netloc
+        assert link.path == download_path(job)
+        assert valid_download_token(job, parse_qs(link.query)["token"][0])
+        assert result["file_url"] != job.file_url
+    else:
+        assert result["file_url"] is None
     assert result["file_name"] == job.file_name
     assert result["error"] == job.error
     assert isinstance(result["created_at"], str)
