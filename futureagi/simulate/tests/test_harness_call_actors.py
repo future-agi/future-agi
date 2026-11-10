@@ -796,3 +796,25 @@ def test_a_sandbox_list_adds_at_most_the_cap_to_a_call():
 
     assert len(record["events"]) == MAX_RECORDED_ENTRIES
     assert record["events"][0]["n"] == 0
+
+
+def test_a_pre_run_message_keeps_its_actor_s_name_in_the_served_trial_state():
+    from simulate.views.run_results_v3 import TrialStateSerializer
+
+    served = TrialStateSerializer(
+        {
+            "decisions": [
+                {
+                    "actor": "lead",
+                    "name": "Sam Lee",
+                    "play": "history",
+                    "action": "chat.post_message",
+                },
+                {"actor": "manager", "play": "history", "action": "chat.post_message"},
+            ]
+        }
+    ).data
+    assert [(one["actor"], one.get("name")) for one in served["decisions"]] == [
+        ("lead", "Sam Lee"),
+        ("manager", None),
+    ]

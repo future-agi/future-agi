@@ -53570,6 +53570,13 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .array(
         zod.object({
           actor: zod.string().min(1),
+          name: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "The actor's name, so a pre-run writer who changed nothing in the trial is named, not shown by id.",
+            ),
           play: zod.enum([
             "mocked",
             "live",
