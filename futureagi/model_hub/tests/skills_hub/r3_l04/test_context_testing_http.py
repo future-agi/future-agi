@@ -10,12 +10,11 @@ import pytest
 
 from model_hub.models import HubSkillJob
 from model_hub.tests.skills_hub import test_i2_integration as auth
-from model_hub.tests.skills_hub.r3_l04.test_context_plan import (
-    configuration,
-    context,
-)
+from model_hub.tests.skills_hub.r3_l04 import test_context_plan as plan
 
 admin = auth.admin
+context = plan.context
+configuration = plan.configuration
 pytestmark = pytest.mark.django_db
 
 
@@ -54,6 +53,14 @@ def test_context_preview_rejects_leaf_semantics(admin, context, fault):
 
 def test_context_test_routes_do_not_accept_leaf_resources(admin, hub_skill):
     response = admin.get(f"/model-hub/skills/contexts/{hub_skill.pk}/test-runs/")
+    assert response.status_code == 404, response.data
+
+
+def test_context_test_routes_hide_other_workspace(admin, context, other_workspace):
+    skill, _ = context
+    skill.workspace = other_workspace
+    skill.save(update_fields=["workspace"])
+    response = admin.get(f"/model-hub/skills/contexts/{skill.pk}/test-runs/")
     assert response.status_code == 404, response.data
 
 
@@ -135,7 +142,12 @@ def test_http_admission_executes_context_protocol_and_retains_reference(
         assert body["answer_verdict"] == "pass"
         assert body["root_fully_delivered"] is True
         assert body["receipts"][0]["path"] == "AGENTS.md"
+        assert body["receipts"][0]["source_version_id"] is None
+        assert body["reference"]["version"] == 4
         assert body["case"]["expected_trigger"] is None
+        assert body["case"]["reviewed_by"]["id"] == str(user.pk)
+        assert body["case"]["origin"] == "manual"
+        assert body["case"]["exposed_to_assist"] is False
     jobs.finish_job(scope=principal.scope, job_id=run.pk)
     summary = admin.get(root + f"{run.pk}/")
     assert summary.status_code == 200, summary.data
@@ -146,3 +158,11 @@ def test_http_admission_executes_context_protocol_and_retains_reference(
     assert result.status_code == 200, result.data
     assert {row["variant"] for row in result.data["result"]["results"][0]["variants"]} == {"candidate", "reference"}
     assert transport.await_count == 2
+    listing = admin.get(root)
+    assert listing.status_code == 200, listing.data
+    assert [row["id"] for row in listing.data["result"]["results"]] == [str(run.pk)]
+    retained = admin.get(root + f"{run.pk}/files/", {
+        "snapshot_skill_id": str(skill.pk), "variant": "reference", "path": "AGENTS.md",
+    })
+    assert retained.status_code == 200, retained.data
+    assert retained.data["result"]["text"] == "Synthetic policy version 4."
