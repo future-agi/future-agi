@@ -2508,7 +2508,7 @@ class GetDatasetTableView(APIView):
                     deleted=False,
                 )
             except Dataset.DoesNotExist:
-                return self._gm.bad_request(get_error_message("DATASET_NOT_FOUND"))
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
             if exact_snapshot:
                 try:

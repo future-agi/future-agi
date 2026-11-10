@@ -113,6 +113,24 @@ from tracer.utils.property_registry import validate_property_graph_namespace
 logger = structlog.get_logger(__name__)
 
 
+def _has_invalid_tag_string(value):
+    """JSON parsing permits NUL and lone surrogates; PostgreSQL jsonb does not.
+
+    Keep the existing JSON-list contract, including nested keys and values.
+    Valid escaped surrogate pairs have already been combined by the parser.
+    """
+    if isinstance(value, str):
+        return any(char == "\x00" or "\ud800" <= char <= "\udfff" for char in value)
+    if isinstance(value, list):
+        return any(_has_invalid_tag_string(item) for item in value)
+    if isinstance(value, dict):
+        return any(
+            _has_invalid_tag_string(key) or _has_invalid_tag_string(item)
+            for key, item in value.items()
+        )
+    return False
+
+
 def sdk_key_snippets():
     """The keys block of the in-app SDK snippet, per language, with placeholder
     keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's
@@ -897,6 +915,10 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.bad_request("tags field is required")
         if not isinstance(tags, list):
             return self._gm.bad_request("tags must be a list")
+        if _has_invalid_tag_string(tags):
+            return self._gm.bad_request(
+                "tags must not contain null characters or unpaired Unicode surrogates"
+            )
         project.tags = tags
         project.save(update_fields=["tags", "updated_at"])
         return self._gm.success_response({"id": str(project.id), "tags": project.tags})
