@@ -1246,6 +1246,11 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	// Traffic mirroring (async, fire-and-forget).
 	// Copy request fields before rc is released to the pool.
 	if m := h.mirror.Load(); m != nil && len(rc.Errors) == 0 && !rc.IsStream {
+		// Select once so admission and dispatch use the same sampled target.
+		rule, ok := m.ShouldMirror(rc.Request.Model)
+		if !ok || h.orgFailoverAdmission(rc, orgCfg)(rule.TargetProvider) != nil {
+			return
+		}
 		reqCopy := *rc.Request
 
 		// Build production info for shadow result capture.
@@ -1268,7 +1273,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 				StatusCode: 200,
 			}
 		}
-		m.ExecuteAsync(&reqCopy, rc.Provider, rc.Model, prod)
+		m.ExecuteRuleAsync(&reqCopy, *rule, rc.Provider, rc.Model, prod)
 	}
 }
 
