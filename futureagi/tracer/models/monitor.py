@@ -1,10 +1,11 @@
 import uuid
 
-from accounts.models.organization import Organization
-from accounts.models.user import User
 from django.contrib.postgres.fields import ArrayField
 from django.core.validators import MinValueValidator
 from django.db import models
+
+from accounts.models.organization import Organization
+from accounts.models.user import User
 from tfc.utils.base_model import BaseModel
 from tracer.models.project import Project
 
