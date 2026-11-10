@@ -9,16 +9,16 @@ const CustomHeader = (props) => {
   // Determine the icon based on the data type
   const icon =
     dataType === "text"
-      ? "material-symbols:notes"
+      ? "solar:notes-linear"
       : dataType === "integer"
-        ? "gg:check-o"
-        : "material-symbols:help"; // Default icon if data type is unknown
+        ? "solar:check-circle-linear"
+        : "solar:question-circle-linear"; // Default icon if data type is unknown
   const iconColor =
     dataType === "text"
       ? "text.primary"
       : dataType === "integer"
-        ? "#4595AB"
-        : "#2196f3";
+        ? "status.info.fg"
+        : "text.disabled";
   return (
     <div
       style={{
@@ -32,7 +32,7 @@ const CustomHeader = (props) => {
         icon={icon}
         width={24}
         style={{ marginRight: "8px" }}
-        color={iconColor}
+        sx={{ color: iconColor }}
       />
       {/* Display Header Name */}
       {displayName}

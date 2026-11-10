@@ -58,6 +58,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tracer.tasks",
     "tracer.tasks.trace_scanner",
     "tracer.tasks.eval_task_sweeper",
+    # The sweep-lost-insight-runs schedule's activity
+    "tfc.temporal.insights.activities",
     "tracer.tasks.outbox_cdc",
     "tracer.utils.span",
     "tracer.utils.eval",
@@ -304,6 +306,35 @@ def _ensure_workflows_registered() -> None:
 
         get_logger(__name__).warning("could_not_load_imagine_workflows", error=str(e))
 
+    # Register Insight report workflows for tasks_xl queue
+    try:
+        from tfc.temporal.insights.activities import (
+            insight_extract,
+            insight_fail,
+            insight_finish,
+            insight_organise,
+            insight_prepare,
+            insight_retry_failed,
+        )
+        from tfc.temporal.insights.workflows import InsightReportWorkflow
+
+        register_for_queues(
+            queues=["tasks_xl"],
+            workflows=[InsightReportWorkflow],
+            activities=[
+                insight_prepare,
+                insight_extract,
+                insight_retry_failed,
+                insight_organise,
+                insight_finish,
+                insight_fail,
+            ],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning("could_not_load_insight_workflows", error=str(e))
+
     # Register drop-in TaskRunnerWorkflow for all queues
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
@@ -440,6 +471,7 @@ def _ensure_workflows_registered() -> None:
     # (plan §9); it runs on `simulation_runner`, not the native call queues.
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
+        from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
         from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
             HostedHarnessGatewayWorkflow,
         )
@@ -452,6 +484,7 @@ def _ensure_workflows_registered() -> None:
             workflows=[
                 SimulationRunnerWorkflow,
                 HostedHarnessGatewayWorkflow,
+                AgentFixWorkflow,
             ],
         )
     except ImportError as e:
@@ -734,6 +767,12 @@ def _ensure_activities_registered() -> None:
     # runner spawns the released SDK as a child process; these do not run on the
     # native voice queues.
     try:
+        from simulate.temporal.activities.agent_fix import (
+            close_agent_fix_run,
+            launch_agent_fix_sandbox,
+            release_agent_fix_sandbox,
+            watch_agent_fix_engine,
+        )
         from simulate.temporal.activities.hosted_harness_gateway import (
             cancel_hosted_harness_attempt,
             launch_hosted_harness_job,
@@ -757,9 +796,13 @@ def _ensure_activities_registered() -> None:
                 record_hosted_harness_launch_failure,
                 poll_hosted_harness_attempt,
                 cancel_hosted_harness_attempt,
+                launch_agent_fix_sandbox,
+                watch_agent_fix_engine,
+                release_agent_fix_sandbox,
+                close_agent_fix_run,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=7)
+        log.info("registered_hosted_runner_activities", count=11)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

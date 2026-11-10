@@ -295,7 +295,15 @@ def test_native_leaf_never_narrows_acquisition_on_the_attribute_maps(
     assert "attrs_" not in manager._walk_witness.sql
     query, _params = builder.build_dimension_candidate_query(limit=26, **WINDOW)
     assert "span_attr_" not in query
-    assert "attrs_" not in query
+    # Compact usage coverage is projected from maps, never an acquisition
+    # witness on a same-named custom attribute.
+    from tracer.tests.test_user_latest_window_replay import cte
+
+    latest = cte(query, "latest_candidate_spans")
+    assert "AS latest_usage_state" in latest
+    acquisition = latest.split("PREWHERE", 1)[1].split("GROUP BY", 1)[0]
+    assert "attrs_" not in acquisition
+    assert "attrs_" not in cte(query, "candidate_users")
 
 
 def test_a_raw_attribute_of_a_native_name_still_narrows_acquisition():

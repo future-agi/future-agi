@@ -103,7 +103,13 @@ const CreateEditPropertyDialog = ({
     !defaultValueError;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>
         {isEdit ? "Edit Property Schema" : "Create Property Schema"}
       </DialogTitle>

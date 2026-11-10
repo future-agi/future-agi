@@ -12,7 +12,13 @@ import Iconify from "../../../components/iconify";
 
 const ViewIssueBox = ({ open, onClose, breakdown, description }) => {
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle
         sx={{
           padding: 2,
@@ -27,7 +33,7 @@ const ViewIssueBox = ({ open, onClose, breakdown, description }) => {
           Evidence for this suggestion
         </Typography>
         <IconButton onClick={onClose}>
-          <Iconify icon="mdi:close" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
       <DialogContent

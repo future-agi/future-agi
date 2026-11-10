@@ -68,7 +68,7 @@ def query(days, change, *, window_start=START, window_end=None):
         },
         CONTEXT,
     )
-    prefix = f"""WITH spans AS (SELECT * FROM values({literals["schema"]},{literals["rows"][1:-1]})),
+    prefix = f"""WITH spans AS (SELECT *, '' AS name, '' AS parent_span_id, CAST(map(), 'Map(String, String)') AS attrs_string FROM values({literals["schema"]},{literals["rows"][1:-1]})),
 end_users AS (SELECT toUUID({literals["p"]}) AS project_id,toUUID({literals["p"]}) AS organization_id,toUUID({literals["u"]}) AS end_user_id,'fixture-user' AS user_id,'custom' AS user_id_type,toUInt64(1) AS user_id_hash,toDateTime64({literals["time"]},6,'UTC') AS first_seen,first_seen AS version,toUInt8(0) AS is_deleted),
 end_user_id_remap AS (SELECT * FROM values('old_id UUID, new_id UUID',({literals["u"]},{literals["r"]}),({literals["a"]},{literals["r"]}))),"""
 
@@ -250,9 +250,9 @@ def test_unseeded_read_replays_hours_and_keeps_dimension_membership():
     assert "candidate_span_identities AS (" not in sql
     assert HOUR_LOWER in sql
     assert HOUR_UPPER in sql
-    # The identity superset is the only thing removed: the exact_usage
-    # semijoin still bounds aggregation to the curated dimension.
-    assert DIMENSION_SEMIJOIN in cte(sql, "exact_usage")
+    # The curated dimension fences the per-trace reducer before user totals.
+    assert DIMENSION_SEMIJOIN in cte(sql, "user_trace_usage")
+    assert "FROM user_trace_usage" in cte(sql, "exact_usage")
 
 
 def test_seeded_read_retains_the_identity_superset():

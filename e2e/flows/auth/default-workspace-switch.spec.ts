@@ -87,7 +87,10 @@ test('AUTH-E2E-002: workspace switching updates implicit scope without replacing
   page.on('request', watch);
   const wire = async (request: Request, label: string, afterPrime: boolean): Promise<WireReceipt> => {
     const url = new URL(request.url());
-    const headers = await request.allHeaders();
+    // These explicit bearer/scope headers are present on the request event.
+    // allHeaders waits for Chromium extra-info that aborted navigation reads
+    // may never emit; this flow does not inspect Cookie or browser-added headers.
+    const headers = request.headers();
     return { phase: label, method: request.method(), path: url.pathname, afterPrime,
       organization: headers['x-organization-id'] ?? null,
       workspace: headers['x-workspace-id'] ?? null,

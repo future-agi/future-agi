@@ -28,7 +28,7 @@ export default function CopyLinkButton({ text, label = "Copy", sx }) {
         startIcon={
           <Iconify
             icon={copied ? "solar:check-read-linear" : "solar:copy-linear"}
-            width={15}
+            width={16}
           />
         }
         sx={{ flexShrink: 0, minWidth: 96, ...sx }}

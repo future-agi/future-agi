@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
-import { addMonths, subMonths, format, parseISO, isValid } from "date-fns";
+import {
+  addDays,
+  addMonths,
+  subMonths,
+  format,
+  parseISO,
+  isValid,
+  startOfDay,
+  subMilliseconds,
+} from "date-fns";
 import Calendar from "./Calender.jsx";
 import { Box, Button, Divider, Popover } from "@mui/material";
 import { useForm } from "react-hook-form";
@@ -13,6 +22,7 @@ export default function CustomDateRangePicker({
   setDateFilter,
   setDateOption,
   value,
+  rangeConvention = "half-open",
 }) {
   const { control } = useForm();
   const [range, setRange] = useState({ start: null, end: null });
@@ -25,14 +35,30 @@ export default function CustomDateRangePicker({
   useEffect(() => {
     const justOpened = open && !prevOpenRef.current;
     prevOpenRef.current = open;
-    if (!justOpened || !value?.[0] || !value?.[1]) return;
+    if (!justOpened) return;
+    setRange({ start: null, end: null });
+    if (!value?.[0] || !value?.[1]) return;
     const start = new Date(value[0]);
     const end = new Date(value[1]);
-    if (!isValid(start) || !isValid(end)) return;
-    setRange({ start, end });
+    if (
+      !isValid(start) ||
+      !isValid(end) ||
+      end < start ||
+      (rangeConvention === "half-open" && +end === +start)
+    )
+      return;
+    // Preserve exact stored timestamps until the user makes a date selection.
+    // Performance alone uses inclusive local dates; Observe uses half-open bounds.
+    setRange({
+      start: startOfDay(start),
+      end: startOfDay(
+        rangeConvention === "inclusive-local" ? end : subMilliseconds(end, 1),
+      ),
+      original: value,
+    });
     setCurrentDate1(start);
     setCurrentDate2(addMonths(start, 1));
-  }, [open, value]);
+  }, [open, value, rangeConvention]);
 
   const handleSelectDate = (date) => {
     if (!range.start || (range.start && range.end)) {
@@ -48,47 +74,55 @@ export default function CustomDateRangePicker({
 
   const handleInputChange = (value, type) => {
     const parsedDate = parseISO(value);
-    if (!isValid(parsedDate)) return;
+    if (!isValid(parsedDate)) {
+      setRange((prev) => ({ ...prev, [type]: null, original: null }));
+      return;
+    }
 
     setRange((prev) => {
       if (type === "start") {
         if (prev.end && parsedDate > prev.end) {
           return { start: prev.end, end: parsedDate };
         }
-        return { ...prev, start: parsedDate };
+        return { ...prev, start: parsedDate, original: null };
       }
 
       if (type === "end") {
         if (prev.start && parsedDate < prev.start) {
           return { start: parsedDate, end: prev.start };
         }
-        return { ...prev, end: parsedDate };
+        return { ...prev, end: parsedDate, original: null };
       }
 
       return prev;
     });
   };
 
+  const isInvalidRange = Boolean(
+    range.start && range.end && range.start > range.end,
+  );
+  const isButtonActive =
+    isValid(range.start) && isValid(range.end) && !isInvalidRange;
+
   const handleCustomDate = () => {
-    if (!range.start || !range.end) {
-      alert("Please select both start and end dates.");
-      return;
-    }
-    if (range.start > range.end) {
-      alert("Start date cannot be after end date.");
-      return;
-    }
-    setDateFilter([
-      format(range.start, "yyyy-MM-dd HH:mm:ss"),
-      format(range.end, "yyyy-MM-dd HH:mm:ss"),
-    ]);
+    if (!isButtonActive) return;
+    // Performance's backend parses local timestamps and adds the day itself.
+    // Observe uses ISO instants with a calendar-day (not 24-hour) exclusive end.
+    setDateFilter(
+      range.original ||
+        (rangeConvention === "inclusive-local"
+          ? [
+              format(range.start, "yyyy-MM-dd HH:mm:ss"),
+              format(range.end, "yyyy-MM-dd HH:mm:ss"),
+            ]
+          : [
+              startOfDay(range.start).toISOString(),
+              addDays(startOfDay(range.end), 1).toISOString(),
+            ]),
+    );
     setDateOption("Custom");
     onClose();
   };
-
-  const isInvalidRange = range.start && range.end && range.start > range.end;
-  const isButtonActive =
-    isValid(range.start) && isValid(range.end) && !isInvalidRange;
 
   return (
     <Popover
@@ -214,5 +248,8 @@ CustomDateRangePicker.propTypes = {
   anchorEl: PropType.any,
   setDateFilter: PropType.func,
   setDateOption: PropType.func,
-  value: PropType.arrayOf(PropType.instanceOf(Date)),
+  rangeConvention: PropType.oneOf(["half-open", "inclusive-local"]),
+  value: PropType.arrayOf(
+    PropType.oneOfType([PropType.instanceOf(Date), PropType.string]),
+  ),
 };

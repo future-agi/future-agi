@@ -27,7 +27,6 @@ vi.mock("src/api/simulate-environments/compareRuns", () => ({
 const { useEnvironmentRuns } = await import("src/api/simulate-environments/runs");
 const { default: RunsSummary } = await import("../RunsSummary");
 const { STATUS_META } = await import("../../runs.constants");
-const { BUILD_TONES } = await import("../../../../buildEnvironment/buildTones");
 
 const RUNS = [
   {
@@ -98,12 +97,12 @@ describe("RunsSummary", () => {
     renderSummary();
     const graphControls = screen.getByLabelText("Runs in graph");
     const tableTitle = screen.getByText("Runs (2)");
-    for (const name of ["Add Evals", /Choose winner/]) {
+    for (const name of ["Add evals", /Choose winner/]) {
       const area = closestCommon(tableTitle, screen.getByRole("button", { name }));
       expect(area.contains(graphControls)).toBe(false);
     }
-    const runsBar = closestCommon(tableTitle, screen.getByRole("button", { name: "Add Evals" }));
-    expect(within(runsBar).getByRole("button", { name: "Add Evals" })).toBeEnabled();
+    const runsBar = closestCommon(tableTitle, screen.getByRole("button", { name: "Add evals" }));
+    expect(within(runsBar).getByRole("button", { name: "Add evals" })).toBeEnabled();
   });
 
   it("says scenario, not scenarios, for one", () => {
@@ -226,8 +225,8 @@ describe("RunsSummary", () => {
     expect(stops[0].closest("td")).toContainElement(screen.getByText("Queued"));
     expect(stops[1].closest("td")).toContainElement(screen.getByText("Running"));
     expect(screen.getByText("Completed").closest("td").querySelector("button")).toBeNull();
-    // A finished run reads green in the table, like the design.
-    expect(STATUS_META.finished).toEqual({ color: BUILD_TONES.green, label: "Completed" });
+    // A finished run reads Completed in the table, in the shared status map's role.
+    expect(STATUS_META.finished).toEqual({ role: "neutral", label: "Completed" });
   });
 
   it("shows a stopped run as Cancelling, without a second Stop", () => {

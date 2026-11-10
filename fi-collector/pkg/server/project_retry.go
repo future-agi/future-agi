@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
+	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc/codes"
 )
@@ -20,6 +21,8 @@ type preparedExport struct {
 	req                     ptraceotlp.ExportRequest
 	routed                  auth.RouteOutcome
 	rejectedSpans           int64
+	originalSpans           int64
+	ingestionHold           string
 	organization, workspace string
 	projects, hidden        map[string]struct{}
 }
@@ -72,7 +75,7 @@ func (s *Server) prepareExportAttempt(ctx context.Context, decode exportDecoder,
 	if _, err := auth.ApplyProjectNameHeader(req.Traces(), headers); err != nil {
 		return preparedExport{}, &rejection{reason: "project", msg: err.Error()}
 	}
-	out := preparedExport{ctx: ctx, req: req}
+	out := preparedExport{ctx: ctx, req: req, originalSpans: int64(req.Traces().SpanCount()), ingestionHold: normalization.IngestionHold(req.Traces())}
 	if result := auth.FromContext(ctx); result != nil {
 		out.organization, out.workspace = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(ctx)
