@@ -196,3 +196,201 @@ def test_a_receipt_with_unmeasured_and_not_applicable_sub_goals_and_their_eviden
     assert kept["waits_for_manager"]["evidence"] == ["tool_calls"]
     assert kept["applies_approved_discount"]["evidence"] == ["world_state"]
     assert call.call_metadata["harness_eval_coverage"]["unmeasured"] == 1
+
+
+@pytest.mark.django_db
+def test_a_receipt_with_an_actor_transcript_through_the_real_endpoints_is_served_on_the_call_detail(
+    organization, workspace, auth_client
+):
+    """What the harness uploads for a trial with actors (who spoke, who took part, what each did, the trial's notices)
+    goes through the artifact and result endpoints and comes back on the call detail the web app reads.
+    """
+    import hashlib
+    import json
+    from datetime import UTC, datetime, timedelta
+    from unittest.mock import MagicMock, patch
+
+    from rest_framework.test import APIClient
+
+    from simulate.services.hosted_harness import (
+        canonical_digest,
+        create_hosted_job,
+        register_attempt,
+    )
+    from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
+
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="actor-transcript-receipt",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client, headers = APIClient(), _headers(capability)
+    provisioned = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Actors",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "nego",
+                    "name": "Rep",
+                    "situation": "Asks",
+                    "outcome": "Policy",
+                }
+            ],
+        },
+        format="json",
+        **headers,
+    ).json()["result"]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["nego"],
+        },
+        format="json",
+        **headers,
+    )
+    document = {
+        "messages": [
+            {"role": "user", "content": "Can I get 25% on deal 7?"},
+            {
+                "role": "actor",
+                "actor": "manager",
+                "name": "Alex Vance",
+                "content": "25% is too high; 18% is my limit.",
+            },
+            {"role": "assistant", "content": "Applied 18% once Alex approved it."},
+        ],
+        "call_actors": {
+            "resolved": [
+                {
+                    "id": "manager",
+                    "name": "Alex Vance",
+                    "role": "Sales manager",
+                    "channel": "chat_message",
+                }
+            ],
+            "summary": [{"actor": "manager", "triggered": True, "delivered": 1}],
+            "events": [
+                {
+                    "kind": "delivered",
+                    "actor": "manager",
+                    "name": "Alex Vance",
+                    "text": "25% is too high",
+                }
+            ],
+        },
+        "world_actors": {
+            "actions": [
+                {
+                    "actor": "manager",
+                    "action": "approvals.change",
+                    "outcome": "committed",
+                }
+            ],
+            "decisions": [
+                {
+                    "play": "live",
+                    "actor": "manager",
+                    "action": "approvals.change",
+                    "outcome": "committed",
+                }
+            ],
+        },
+        "notices": [
+            {
+                "code": "fault_not_applied",
+                "message": "The timeout on apply_discount never fired.",
+            }
+        ],
+    }
+    content = json.dumps(document).encode()
+    digest = hashlib.sha256(content).hexdigest()
+    storage = MagicMock()
+    stored = MagicMock()
+    stored.read.return_value = content
+    storage.get_object.return_value = stored
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        uploaded = client.generic(
+            "PUT",
+            f"{BASE}/{capability.attempt.id}/artifacts/{digest}/",
+            content,
+            content_type="application/json",
+            HTTP_X_ARTIFACT_KIND="transcript",
+            HTTP_X_ARTIFACT_SIZE=str(len(content)),
+            HTTP_X_SCENARIO_KEY="nego",
+            **headers,
+        )
+        assert uploaded.status_code == 201, uploaded.content
+        started = datetime(2026, 11, 10, 9, 0, tzinfo=UTC)
+        receipt = {
+            "schema_version": "futureagi.harness-result.v1",
+            "job_id": str(job.id),
+            "attempt_id": str(capability.attempt.id),
+            "attempt_number": 1,
+            "scenario_key": "nego",
+            "scenario_id": provisioned["scenarios"][0]["scenario_id"],
+            "scenario_attempt": 1,
+            "world_index": 0,
+            "status": "passed",
+            "sub_goals": [
+                {
+                    "name": "applies_approved_discount",
+                    "held": True,
+                    "reason": "",
+                    "judged": False,
+                    "verdict": "pass",
+                    "evidence": ["world_state"],
+                }
+            ],
+            "evaluations": [],
+            "call": {
+                "started_at": started.isoformat(),
+                "ended_at": (started + timedelta(seconds=30)).isoformat(),
+                "duration_ms": 30000,
+                "turns": 3,
+                "transcript_artifact": f"sha256:{digest}",
+                "recording_artifacts": [],
+            },
+            "failure": None,
+        }
+        receipt["digest"] = canonical_digest(receipt)
+        result = client.post(
+            f"{BASE}/{capability.attempt.id}/results/",
+            receipt,
+            format="json",
+            **headers,
+        )
+    assert result.status_code == 200, result.content
+
+    call = (
+        job.scenario_registrations.select_related("call_execution").get().call_execution
+    )
+    detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
+    assert detail.status_code == 200, detail.content
+    body = detail.json()
+    body = body.get("result", body)
+    assert body["call_actors"] == [
+        {
+            "id": "manager",
+            "name": "Alex Vance",
+            "role": "Sales manager",
+            "channel": "chat_message",
+            "delivery": "delivered",
+        }
+    ]
+    assert body["trial_state"]["decisions"][0]["actor"] == "manager"
+    assert (
+        body["trial_state"]["notices"][0]["message"]
+        == "The timeout on apply_discount never fired."
+    )
+    spoken = json.dumps(body)
+    assert "25% is too high; 18% is my limit." in spoken and "Alex Vance" in spoken
