@@ -1,11 +1,16 @@
 import datetime
+import json
 import os
+import re
 import uuid
 
 import structlog
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, Max, Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
@@ -50,12 +55,22 @@ from agentcc.serializers.contracts import (
     GatewayProviderUpdateRequestSerializer,
     GatewayToggleGuardrailRequestSerializer,
 )
-from agentcc.services.config_push import push_all_org_configs, push_org_config
+from agentcc.serializers.provider_credential import (
+    ProviderBaseURLField,
+    allows_keyless_system_one,
+)
+from agentcc.services.config_push import (
+    _RULE_TO_REGISTRY,
+    push_all_org_configs,
+    push_org_config,
+    validate_org_config,
+)
 from agentcc.services.gateway_client import (
     AGENTCC_GATEWAY_URL,
     GatewayClientError,
     get_gateway_client,
 )
+from agentcc.services.url_safety import ensure_provider_base_url_allowed
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
@@ -64,6 +79,56 @@ logger = structlog.get_logger(__name__)
 _GATEWAY_SYNC_WARNING = (
     "Config saved but gateway sync failed. Changes will apply on next gateway restart."
 )
+
+
+def _prepare_vertex_provider_config(provider_config):
+    """Build a Vertex endpoint from validated GCP fields, never from a supplied URL."""
+    config = dict(provider_config)
+    raw_key = config.get("service_account_json")
+    if raw_key is not None:
+        if not isinstance(raw_key, str) or len(raw_key) > 65536:
+            raise ValueError("Paste valid Google service-account JSON (64 KB maximum).")
+        try:
+            key = json.loads(raw_key)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Paste valid Google service-account JSON.") from exc
+        if (
+            not isinstance(key, dict)
+            or key.get("type") != "service_account"
+            or not all(
+                isinstance(key.get(field), str) and key[field]
+                for field in ("client_email", "private_key", "project_id")
+            )
+            or key.get("token_uri") != "https://oauth2.googleapis.com/token"
+        ):
+            raise ValueError("The JSON must be a Google service-account key with a project ID.")
+        try:
+            private_key = serialization.load_pem_private_key(
+                key["private_key"].encode(), password=None
+            )
+        except (TypeError, ValueError, UnsupportedAlgorithm) as exc:
+            raise ValueError("The service-account private key is invalid.") from exc
+        if not isinstance(private_key, rsa.RSAPrivateKey):
+            raise ValueError("The service-account private key must be RSA.")
+        config["service_account_json"] = json.dumps(key, separators=(",", ":"))
+
+    project = str(config.pop("gcp_project", "") or "").strip()
+    location = str(config.pop("gcp_location", "") or "").strip()
+    if not re.fullmatch(r"[a-z][a-z0-9-]{4,62}", project):
+        raise ValueError("Enter a valid Google Cloud project ID.")
+    if not re.fullmatch(r"[a-z][a-z0-9-]{1,62}", location):
+        raise ValueError("Enter a valid Vertex AI location.")
+    host = (
+        "aiplatform.googleapis.com"
+        if location == "global"
+        else f"{location}-aiplatform.googleapis.com"
+    )
+    config["base_url"] = (
+        f"https://{host}/v1beta1/projects/{project}/locations/{location}"
+    )
+    config["api_format"] = "gemini"
+    config.pop("api_key", None)
+    return config
 
 # Public-facing URL shown to users in the dashboard (e.g. https://gateway.futureagi.com).
 # Falls back to AGENTCC_GATEWAY_URL if not set.
@@ -119,6 +184,42 @@ def _remove_budget_level_config(budgets, level):
     updated.pop(level, None)
     updated.pop(normalized_level, None)
     return updated
+
+
+def _guardrail_checks_map(guardrails):
+    """
+    Return the checks{} map when guardrails use the Settings editor's shape.
+
+    The gateway contract has no rules[] next to a non-empty checks{} map (see
+    config_push._transform_guardrails), so edits must go into the map.
+    """
+    checks = guardrails.get("checks")
+    if isinstance(checks, dict) and checks:
+        return checks
+    return None
+
+
+def _guardrail_check_key(checks, name):
+    """
+    The checks{} key that `name` refers to. A rule name and its registry name
+    (pii-detector / pii-detection) are the same check at the gateway, so an
+    existing entry under either is reused instead of adding a duplicate.
+    """
+    aliases = [name, _RULE_TO_REGISTRY.get(name, name)]
+    aliases += [rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name]
+    return next((alias for alias in aliases if alias in checks), name)
+
+
+def _guardrail_check_fields(guardrail_config):
+    """Map a rules-style guardrail config onto the fields a checks{} entry has."""
+    fields = {
+        key: guardrail_config[key]
+        for key in ("enabled", "action", "confidence_threshold", "config")
+        if key in guardrail_config
+    }
+    if "threshold" in guardrail_config:
+        fields["confidence_threshold"] = guardrail_config["threshold"]
+    return fields
 
 
 def _build_virtual_gateway(status="healthy", health=None):
@@ -337,6 +438,7 @@ class AgentccGatewayViewSet(ViewSet):
                     "base_url",
                     "api_format",
                     "models_list",
+                    "extra_config",
                     "is_active",
                     "default_timeout_seconds",
                     "max_concurrent",
@@ -346,12 +448,14 @@ class AgentccGatewayViewSet(ViewSet):
             )
             providers_map = {}
             for p in providers:
+                extra_config = p.get("extra_config") or {}
                 providers_map[p["provider_name"]] = {
                     "id": str(p["id"]),
                     "name": p["provider_name"],
                     "display_name": p["display_name"] or p["provider_name"],
                     "base_url": p["base_url"],
                     "api_format": p["api_format"],
+                    "api_path_prefix": extra_config.get("api_path_prefix", "/v1"),
                     "models": p["models_list"] or [],
                     "is_active": p["is_active"],
                     "default_timeout": p["default_timeout_seconds"],
@@ -492,10 +596,36 @@ class AgentccGatewayViewSet(ViewSet):
             provider_config = request.validated_data.get("config")
             if not provider_name or not provider_config:
                 return self._gm.bad_request("name and config are required")
+            if provider_name == "vertex":
+                provider_config = _prepare_vertex_provider_config(provider_config)
+            elif "service_account_json" in provider_config:
+                return self._gm.bad_request(
+                    "Google service-account credentials can only be used with Vertex AI."
+                )
+            provider_config["base_url"] = ProviderBaseURLField(
+                max_length=500, allow_blank=True
+            ).run_validation(provider_config.get("base_url", ""))
+            saved_base_url = (
+                AgentccProviderCredential.no_workspace_objects.filter(
+                    organization=org, provider_name=provider_name, deleted=False
+                )
+                .values_list("base_url", flat=True)
+                .first()
+            )
+            try:
+                ensure_provider_base_url_allowed(
+                    provider_config.get("base_url", ""), saved_base_url=saved_base_url
+                )
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
 
             from integrations.services.credentials import CredentialManager
 
             api_key = provider_config.pop("api_key", None)
+            if api_key is not None and not isinstance(api_key, str):
+                return self._gm.bad_request("API key must be a string")
+            if isinstance(api_key, str):
+                api_key = api_key.strip()
             credential_fields = (
                 "api_secret",
                 "access_key",
@@ -505,6 +635,7 @@ class AgentccGatewayViewSet(ViewSet):
                 "aws_secret_access_key",
                 "aws_region",
                 "aws_session_token",
+                "service_account_json",
             )
             new_cred_values = {
                 k: provider_config.pop(k)
@@ -538,9 +669,11 @@ class AgentccGatewayViewSet(ViewSet):
                         "aws_secret_access_key",
                         "aws_region",
                         "aws_session_token",
+                        "service_account_json",
                         "base_url",
                         "api_format",
                         "models",
+                        "display_name",
                         "default_timeout",
                         "default_timeout_seconds",
                         "max_concurrent",
@@ -561,21 +694,48 @@ class AgentccGatewayViewSet(ViewSet):
                     cred = AgentccProviderCredential.no_workspace_objects.select_for_update().get(
                         **lookup
                     )
+                except AgentccProviderCredential.DoesNotExist:
+                    cred = None
+
+                # Omitted keys keep the stored credentials; an explicit empty
+                # key must still pass the same rules as a new provider.
+                credentials = (
+                    CredentialManager.decrypt(bytes(cred.encrypted_credentials))
+                    if cred is not None
+                    else {}
+                )
+                credentials.update(new_cred_values)
+                has_credentials = isinstance(credentials.get("api_key"), str) and bool(
+                    credentials["api_key"].strip()
+                )
+                if (
+                    provider_name in ("bedrock", "vertex")
+                    or defaults["api_format"] == "bedrock"
+                ):
+                    has_credentials = any(
+                        isinstance(value, str) and value.strip()
+                        for value in credentials.values()
+                    )
+                if not has_credentials and not allows_keyless_system_one(
+                    provider_name, defaults["api_format"], defaults["base_url"]
+                ):
+                    return self._gm.bad_request(
+                        "API key or provider credentials are required"
+                    )
+
+                if cred is not None:
                     for k, v in defaults.items():
                         setattr(cred, k, v)
-                    # Merge new credential values into existing encrypted credentials.
                     if new_cred_values:
-                        existing = CredentialManager.decrypt(cred.encrypted_credentials)
-                        existing.update(new_cred_values)
-                        cred.encrypted_credentials = CredentialManager.encrypt(existing)
-                    cred.save()
-                except AgentccProviderCredential.DoesNotExist:
-                    if not new_cred_values:
-                        return self._gm.bad_request(
-                            "credentials are required for new providers"
+                        cred.encrypted_credentials = CredentialManager.encrypt(
+                            credentials
                         )
+                    cred.save()
+                else:
+                    # Encrypt even an empty dict: config push decrypts every
+                    # provider row, including a keyless Generic endpoint.
                     defaults["encrypted_credentials"] = CredentialManager.encrypt(
-                        new_cred_values
+                        credentials
                     )
                     cred = AgentccProviderCredential.no_workspace_objects.create(
                         **lookup, **defaults
@@ -658,6 +818,17 @@ class AgentccGatewayViewSet(ViewSet):
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
+                checks = _guardrail_checks_map(guardrails)
+                if checks is not None:
+                    # Same upsert defaults as a new rule below
+                    check = checks.setdefault(
+                        _guardrail_check_key(checks, guardrail_name),
+                        {"action": "block", "confidence_threshold": 0.8, "config": {}},
+                    )
+                    check["enabled"] = enabled
+                    cfg.guardrails = guardrails
+                    return
+
                 rules = guardrails.get("rules", [])
 
                 # Find existing rule or create one with defaults
@@ -773,6 +944,19 @@ class AgentccGatewayViewSet(ViewSet):
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
+                checks = _guardrail_checks_map(guardrails)
+                if checks is not None:
+                    # Merge, so _policy and fields the payload leaves out stay.
+                    # A new check is enabled unless the payload says otherwise,
+                    # as a new rule is (rules default enabled when pushed).
+                    key = _guardrail_check_key(checks, guardrail_name)
+                    checks[key] = {
+                        **checks.get(key, {"enabled": True}),
+                        **_guardrail_check_fields(guardrail_config),
+                    }
+                    cfg.guardrails = guardrails
+                    return
+
                 rules = guardrails.get("rules", [])
                 found = False
                 for i, rule in enumerate(rules):
@@ -865,10 +1049,14 @@ class AgentccGatewayViewSet(ViewSet):
 
             # Extract guardrail info from response
             guardrail_info = {}
+            triggered = False
             for key, val in headers.items():
                 lk = key.lower()
                 if "guardrail" in lk or "x-agentcc" in lk:
                     guardrail_info[key] = val
+                if lk == "x-agentcc-guardrail-triggered":
+                    triggered = str(val).lower() == "true"
+            blocked = status_code in (403, 446)
 
             return self._gm.success_response(
                 {
@@ -876,8 +1064,11 @@ class AgentccGatewayViewSet(ViewSet):
                     "body": body,
                     "guardrail_headers": guardrail_info,
                     "model": model,
-                    "blocked": status_code in (403, 446),
-                    "warned": status_code == 246,
+                    "blocked": blocked,
+                    # A warn or log hit goes through and is marked by the
+                    # guardrail-triggered header; 246 is the legacy warn code.
+                    "warned": status_code == 246
+                    or (triggered and not blocked and status_code < 400),
                 }
             )
         except GatewayClientError as e:
@@ -1591,9 +1782,15 @@ class AgentccGatewayViewSet(ViewSet):
                     change_description=desc or "Config update v1",
                 )
             else:
-                # Derive next version from locked active config — safe because
-                # select_for_update prevents concurrent reads of this row.
-                next_version = active_config.version + 1
+                # The active version is not always the highest: after a rollback
+                # an older version is active. The lock on the active row
+                # serializes savers, so the max is stable here.
+                next_version = (
+                    AgentccOrgConfig.no_workspace_objects.filter(
+                        organization=org, deleted=False
+                    ).aggregate(Max("version"))["version__max"]
+                    + 1
+                )
 
                 AgentccOrgConfig.no_workspace_objects.filter(
                     organization=org,
@@ -1626,6 +1823,9 @@ class AgentccGatewayViewSet(ViewSet):
                     change_description=desc or f"Config update v{next_version}",
                 )
             updater_fn(new_config)
+            # Fail closed: a version the gateway contract rejects must not
+            # become active. Raising here rolls the whole save back.
+            validate_org_config(new_config)
             new_config.save()
 
         synced = self._push_current_config(org, new_config)

@@ -14,8 +14,6 @@ import json
 import uuid
 
 import pytest
-from rest_framework import status
-
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
@@ -24,6 +22,7 @@ from conftest import WorkspaceAwareAPIClient
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Files, KnowledgeBaseFile
 from model_hub.models.kb import KnowledgeBase as StructuredKnowledgeBase
+from rest_framework import status
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import (
@@ -232,11 +231,11 @@ class TestStructuredKbEeGating:
     """
 
     def test_create_is_blocked_when_feature_unavailable(self, mocker, auth_client):
-        from tfc.ee_gating import EEFeature, FeatureUnavailable
+        from tfc.ee_gating import FeatureUnavailable
 
         mocker.patch(
             "tfc.ee_gating.check_ee_feature",
-            side_effect=FeatureUnavailable(EEFeature.KNOWLEDGE_BASE),
+            side_effect=FeatureUnavailable("knowledge_base"),
         )
 
         response = auth_client.post(
@@ -257,18 +256,17 @@ class TestStructuredKbEeGating:
     def test_read_update_delete_are_not_gated(
         self, mocker, auth_client, organization, workspace
     ):
-        from tfc.ee_gating import EEFeature, FeatureUnavailable
+        from tfc.ee_gating import FeatureUnavailable
 
         kb = _create_structured_kb(organization, workspace, "ungated-kb")
         mocker.patch(
             "tfc.ee_gating.check_ee_feature",
-            side_effect=FeatureUnavailable(EEFeature.KNOWLEDGE_BASE),
+            side_effect=FeatureUnavailable("knowledge_base"),
         )
 
         assert auth_client.get("/model-hub/kb/").status_code == status.HTTP_200_OK
         assert (
-            auth_client.get(f"/model-hub/kb/{kb.id}/").status_code
-            == status.HTTP_200_OK
+            auth_client.get(f"/model-hub/kb/{kb.id}/").status_code == status.HTTP_200_OK
         )
 
         patched = auth_client.patch(
@@ -361,13 +359,9 @@ class TestLegacyKbCrossOrg:
         kb_file.refresh_from_db()
         assert kb_file.status == StatusType.COMPLETED.value
 
-    def test_table_view_excludes_other_org_kb(
-        self, organization, workspace, other_org
-    ):
+    def test_table_view_excludes_other_org_kb(self, organization, workspace, other_org):
         own = _create_legacy_kb(organization, workspace, "org-a-table-kb")
-        _create_legacy_kb(
-            other_org["org"], other_org["workspace"], "org-b-table-kb"
-        )
+        _create_legacy_kb(other_org["org"], other_org["workspace"], "org-b-table-kb")
 
         response = other_org["client"].get("/model-hub/knowledge-base/get/")
 

@@ -35,6 +35,7 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 
 import { CreateOptimizationValidation } from "./validation";
 import NoMetricAdded from "./NoMetricAdded";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const optimizeTypeOptions = [
   { label: "Prompt Template", value: "PromptTemplate" },
@@ -282,7 +283,7 @@ const OptimizeDrawerForm = ({ onClose, initialData, viewData }) => {
           Optimize dataset
         </Typography>
         <IconButton onClick={() => onClose()}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <FormTextFieldV2
@@ -290,7 +291,7 @@ const OptimizeDrawerForm = ({ onClose, initialData, viewData }) => {
         sx={{
           "& .MuiInputBase-input": {
             fontSize: "16px",
-            fontWeight: 700,
+            fontWeight: 600,
           },
           "& .MuiInputLabel-root": {
             fontSize: "16px",
@@ -367,7 +368,7 @@ const OptimizeDrawerForm = ({ onClose, initialData, viewData }) => {
             addMetric({ ...selectedMetric });
             setSelectedMetric(null);
           }}
-          startIcon={<Iconify icon="ic:round-plus" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
         />
       </Box>
       {/* <Box sx={{ display: "flex", flexDirection: "column", paddingX: 1 }}>
@@ -411,8 +412,8 @@ const OptimizeDrawerForm = ({ onClose, initialData, viewData }) => {
         <Box
           sx={{
             padding: "12px 16px",
-            fontWeight: 700,
-            fontSize: "14px",
+            fontWeight: 600,
+            fontSize: "13px",
             color: theme.palette.text.disabled,
             backgroundColor: theme.palette.divider,
           }}
@@ -438,7 +439,6 @@ const OptimizeDrawerForm = ({ onClose, initialData, viewData }) => {
               label={label}
               onDelete={() => removeMetric(idx)}
               key={value}
-              sx={{ minHeight: "32px" }}
             />
           ))}
         </Box>
@@ -469,18 +469,21 @@ OptimizeDrawerForm.propTypes = {
 
 const OptimizeDrawer = (props) => {
   const { open, onClose } = props;
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "550px",
+          width: "480px",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

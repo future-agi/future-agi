@@ -217,3 +217,137 @@ class TestProgressReads:
         assert has_undrained_work(task) is False
         _entries(task, custom_eval_config, 1, status=EvalEntryStatus.PENDING)
         assert has_undrained_work(task) is True
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestProgressSerializer:
+    """``EvalTaskSerializer.get_progress`` is the historical task's "X of Y
+    complete" bar. It counted a skipped row as done, so a task whose every row
+    was skipped for a missing mapped attribute reported 100% complete with zero
+    results — the single most common way a user is told everything is fine when
+    nothing ran."""
+
+    def _progress(self, task):
+        from tracer.serializers.eval_task import EvalTaskSerializer
+
+        return EvalTaskSerializer().get_progress(task)
+
+    def test_a_task_that_skipped_every_row_does_not_read_as_complete(
+        self, project, custom_eval_config
+    ):
+        task = _task(project, custom_eval_config)
+        _entries(task, custom_eval_config, 5, status=EvalEntryStatus.SKIPPED)
+
+        progress = self._progress(task)
+
+        assert progress["completed"] == 0
+        assert progress["percent"] == 0.0
+        assert progress["skipped"] == 5
+        assert progress["dispatched"] == 5
+        assert progress["missing"] == 0
+
+    def test_skipped_rows_stay_in_the_total_but_out_of_the_percentage(
+        self, project, custom_eval_config
+    ):
+        task = _task(project, custom_eval_config)
+        _entries(task, custom_eval_config, 1, status=EvalEntryStatus.COMPLETED)
+        _entries(task, custom_eval_config, 1, status=EvalEntryStatus.ERRORED)
+        _entries(task, custom_eval_config, 2, status=EvalEntryStatus.SKIPPED)
+
+        progress = self._progress(task)
+
+        assert progress["dispatched"] == 4
+        assert progress["completed"] == 2
+        assert progress["skipped"] == 2
+        # Nothing is outstanding, and the bar still does not read 100: skipped
+        # rows stay in the denominator, so a drained task carrying any skip
+        # tops out below 100 by design. The alternative -- dropping them from
+        # the total too -- would make an all-skipped task read 100% complete
+        # again, which is the defect this change exists to remove.
+        assert progress["missing"] == 0
+        assert progress["percent"] == 50.0
+
+    def test_a_draining_task_still_reports_what_is_left(
+        self, project, custom_eval_config
+    ):
+        task = _task(project, custom_eval_config)
+        _entries(task, custom_eval_config, 1, status=EvalEntryStatus.COMPLETED)
+        _entries(task, custom_eval_config, 3, status=EvalEntryStatus.PENDING)
+
+        progress = self._progress(task)
+
+        assert progress["missing"] == 3
+        assert progress["skipped"] == 0
+        assert progress["percent"] == 25.0
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestProgressIsReportedTheSameOnBothRoutes:
+    """The root list route does not use the serializer's ``progress`` field.
+
+    ``EvalTaskView.list`` pops it and refills the column from
+    ``_eval_task_progress_by_id``, a second implementation of the same
+    contract. It carried the old arithmetic — skipped counted as done, and no
+    ``skipped`` key at all — so the two endpoints answered differently about
+    the same task and ``progress.completed`` meant one thing on the detail
+    route and another on the one that renders the task table. Both now read
+    the arithmetic from ``progress_block``.
+    """
+
+    def _detail(self, task):
+        from tracer.serializers.eval_task import EvalTaskSerializer
+
+        return EvalTaskSerializer().get_progress(task)
+
+    def _list(self, task):
+        from tracer.views.eval_task import _eval_task_progress_by_id
+
+        return _eval_task_progress_by_id([task])[str(task.id)]
+
+    def test_the_list_route_does_not_call_an_all_skipped_task_complete(
+        self, project, custom_eval_config
+    ):
+        task = _task(project, custom_eval_config)
+        _entries(task, custom_eval_config, 4, status=EvalEntryStatus.SKIPPED)
+
+        row = self._list(task)
+
+        assert row["percent"] == 0.0
+        assert row["completed"] == 0
+        assert row["skipped"] == 4
+        assert row["dispatched"] == 4
+        assert row["missing"] == 0
+
+    def test_both_routes_agree_on_a_mixed_task(self, project, custom_eval_config):
+        task = _task(project, custom_eval_config)
+        _entries(task, custom_eval_config, 2, status=EvalEntryStatus.COMPLETED)
+        _entries(task, custom_eval_config, 1, status=EvalEntryStatus.ERRORED)
+        _entries(task, custom_eval_config, 2, status=EvalEntryStatus.SKIPPED)
+        _entries(task, custom_eval_config, 1, status=EvalEntryStatus.PENDING)
+
+        assert self._list(task) == self._detail(task)
+        assert self._detail(task) == {
+            "dispatched": 6,
+            "completed": 3,
+            "skipped": 2,
+            "missing": 1,
+            "percent": 50.0,
+        }
+
+    def test_a_continuous_task_is_absent_from_the_batched_read(
+        self, project, custom_eval_config
+    ):
+        """Unchanged, and pinned here because the shared helper is now the only
+        arithmetic: the list route reports progress for historical tasks only,
+        the same rule the serializer applies by returning None."""
+        task = _task(project, custom_eval_config)
+        EvalTask.objects.filter(id=task.id).update(run_type=RunType.CONTINUOUS)
+        task.refresh_from_db()
+        _entries(task, custom_eval_config, 2, status=EvalEntryStatus.COMPLETED)
+
+        from tracer.views.eval_task import _eval_task_progress_by_id
+
+        assert _eval_task_progress_by_id([task]) == {}
+        assert self._detail(task) is None

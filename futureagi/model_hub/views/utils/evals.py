@@ -8,8 +8,6 @@ import structlog
 from django.db import close_old_connections
 
 from accounts.models.organization import Organization
-
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
@@ -21,11 +19,17 @@ from model_hub.views.eval_runner import (
     _extract_column_id_and_path,
     process_mapping,
 )
-from sdk.utils.helpers import _get_api_call_type
+from sdk.utils.helpers import (
+    _emit_jev_usage,
+    _get_api_call_type,
+    _get_billing_event_type,
+)
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
+
+logger = structlog.get_logger(__name__)
 
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
@@ -42,9 +46,7 @@ def _canonical_playground_output(value, response, template, api_call_log_row):
         model=response.get("model"),
         metadata=response.get("metadata"),
         output_type=template.config.get("output"),
-        log_id=(
-            str(api_call_log_row.log_id) if api_call_log_row is not None else None
-        ),
+        log_id=(str(api_call_log_row.log_id) if api_call_log_row is not None else None),
         ground_truth_examples=response.get("ground_truth_examples"),
         warnings=response.get("warnings") or None,
     ).model_dump()
@@ -66,11 +68,32 @@ def run_eval_func(
 ):
     api_call_log_row = None
     try:
-        # Block agent-type evals in OSS mode — AgentEvaluator requires ee/
+        # Agent-type evals need the ee/ AgentEvaluator. Gate via the
+        # capability service: self-hosted runs them on any user-keyed model
+        # (turing/protect model choice is licensed separately by the turing
+        # gates), so only a capability denial — or genuinely absent ee code
+        # before the service is configured — blocks here.
         if getattr(template, "eval_type", "") == "agent":
-            from tfc.ee_loader import _is_oss_mode
+            try:
+                from tfc.capabilities import service as capability_service
 
-            if _is_oss_mode():
+                if capability_service.is_configured():
+                    decision = capability_service.check(
+                        "agentic_eval",
+                        org_id=str(org.id) if org is not None else None,
+                    )
+                    denied = not decision.allowed
+                else:
+                    from tfc.ee_loader import has_ee
+
+                    denied = not has_ee("ee.evals")
+            except Exception:
+                # A permission check must fail closed. Do not fall back to
+                # has_ee() (True on every build shipping ee/) — that would
+                # silently allow. Deny and log with the stack trace.
+                logger.exception("agentic_eval_capability_check_failed")
+                denied = True
+            if denied:
                 raise ValueError(
                     "Agent evaluations are not available on OSS. "
                     "Use LLM-as-a-Judge or Code evaluations instead."
@@ -265,7 +288,7 @@ def run_eval_func(
         api_call_type = (
             BillingEventType.CODE_EVALUATOR.value
             if _is_code_eval and BillingEventType is not None
-            else _get_api_call_type(model)
+            else _get_api_call_type(model, template=template, runtime_config=config)
         )
 
         # Pre-check: enforce free tier limits before running eval
@@ -435,7 +458,9 @@ def run_eval_func(
             try:
                 from ee.usage.utils.event_properties import token_usage_properties
             except ImportError:
-                token_usage_properties = lambda token_usage: {}
+
+                def token_usage_properties(token_usage):
+                    return {}
 
             billing_config = None
             if BillingConfig is not None:
@@ -505,12 +530,18 @@ def run_eval_func(
                 emit is not None
                 and UsageEvent is not None
                 and BillingEventType is not None
+                and not _emit_jev_usage(
+                    eval_instance,
+                    org_id=str(org.id),
+                    run_id=str(api_call_log_row.log_id),
+                )
             ):
-
                 emit(
                     UsageEvent(
                         org_id=str(org.id),
-                        event_type=api_call_type,
+                        event_type=_get_billing_event_type(
+                            api_call_type, model, evaluator=eval_instance
+                        ),
                         amount=credits,
                         properties={
                             "source": source,
@@ -554,11 +585,16 @@ def run_eval_func(
     except Exception as e:
         try:
             if api_call_log_row:
+                from tfc.ee_gates import jev_error_message
+
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
                 current_config.update(
                     {
-                        "output": {"output": None, "reason": str(e)},
+                        "output": {
+                            "output": None,
+                            "reason": jev_error_message(e) or str(e),
+                        },
                         "mappings": mappings,
                         "required_keys": list(mappings.keys()),
                     }

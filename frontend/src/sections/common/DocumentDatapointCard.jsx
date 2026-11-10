@@ -53,7 +53,7 @@ const DocumentDatapointCard = ({ value, column }) => {
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <SvgColor
             src={`/assets/icons/files/ic_file_head.svg`}
-            sx={{ width: 20, height: 20, color: "text.secondary" }}
+            sx={{ width: 16, height: 16, color: "text.secondary" }}
           />
           <Typography
             variant="s1"

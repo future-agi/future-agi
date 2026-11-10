@@ -121,9 +121,11 @@ def test_api_key_bulk_response_is_typed():
                     "name": "Production key",
                     "owner": "platform",
                     "key_hash": "sha256:abc",
+                    "key_prefix": "sk-agentcc-a...",
                     "models": ["gpt-4o"],
                     "providers": ["openai"],
                     "metadata": {"purpose": "gateway-startup"},
+                    "expires_at": None,
                 }
             ],
         }
@@ -171,6 +173,7 @@ def test_org_config_bulk_response_is_typed_by_org_id():
                     "model_map": {},
                 }
             },
+            "unbuilt_org_ids": ["5b0c2b1e-8f0a-4d7e-9c3a-2f1d6e4b7a90"],
         }
     )
 

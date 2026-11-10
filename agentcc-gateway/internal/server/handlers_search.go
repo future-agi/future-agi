@@ -61,6 +61,7 @@ func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
 	rc.SearchRequest = &req
 
 	setAuthMetadataFromRequest(rc, r)
+	applyCallerMetadata(rc, r, nil)
 
 	// Resolve timeout.
 	timeout := h.resolveTimeout(rc, r)
@@ -78,7 +79,7 @@ func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	// Resolve provider using search_provider as the provider key.
-	provider, err := h.resolveProvider(ctx, rc, req.SearchProvider)
+	provider, _, err := h.resolveProvider(ctx, rc, req.SearchProvider)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
 			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.SearchProvider); orgP != nil {

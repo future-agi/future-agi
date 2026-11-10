@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 
 // Mirrors `DeepAnalysisResponse.status` on the backend
 // (futureagi/tracer/types/feed_types.py:DeepAnalysisResponse).
@@ -14,6 +15,7 @@ const KEYS = {
   list: (params) => ["errorFeed", "list", params],
   stats: (params) => ["errorFeed", "stats", params],
   detail: (clusterId) => ["errorFeed", "detail", clusterId],
+  redirect: (clusterId) => ["errorFeed", "redirect", clusterId],
   overview: (clusterId) => ["errorFeed", "overview", clusterId],
   traces: (clusterId, params) => ["errorFeed", "traces", clusterId, params],
   trends: (clusterId, params) => ["errorFeed", "trends", clusterId, params],
@@ -36,19 +38,11 @@ export const useObserveProjectList = (options = {}) => {
   return useQuery({
     ...options,
     queryKey: KEYS.projects,
-    queryFn: () =>
-      axios.get(endpoints.project.projectObserveList, {
-        params: {
-          project_type: "observe",
-          page_number: 0,
-          page_size: 200,
-        },
-      }),
-    select: (res) => {
-      const rows = res?.data?.result?.table ?? [];
-      return rows.map((p) => ({ value: p.id, label: p.name }));
-    },
+    queryFn: ({ signal }) => fetchAllObserveProjects({ signal }),
+    select: (rows) =>
+      rows.map((project) => ({ value: project.id, label: project.name })),
     staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 };
 
@@ -97,6 +91,19 @@ export const useErrorFeedDetail = (clusterId, options = {}) => {
   });
 };
 
+export const useErrorFeedRedirect = (clusterId, options = {}) => {
+  const enabled = !!clusterId && (options.enabled ?? true);
+
+  return useQuery({
+    ...options,
+    queryKey: KEYS.redirect(clusterId),
+    queryFn: () => axios.get(endpoints.errorFeed.redirect(clusterId)),
+    select: (res) => res?.data?.result,
+    enabled,
+    retry: false,
+  });
+};
+
 /**
  * Overview tab: events over time, pattern summary, representative traces.
  */
@@ -109,6 +116,24 @@ export const useErrorFeedOverview = (clusterId, options = {}) => {
     queryFn: () => axios.get(endpoints.errorFeed.overview(clusterId)),
     select: (res) => res?.data?.result,
     enabled,
+  });
+};
+
+// The overview endpoint's `rep_limit` max, so one request covers the export.
+export const EXPORT_TRACE_LIMIT = 200;
+
+/**
+ * One-shot Overview read for the traces CSV export. Kept apart from
+ * useErrorFeedOverview so the larger payload never replaces the tab's cache.
+ */
+export const useExportErrorFeedTraces = () => {
+  return useMutation({
+    mutationFn: (clusterId) =>
+      axios
+        .get(endpoints.errorFeed.overview(clusterId), {
+          params: { rep_limit: EXPORT_TRACE_LIMIT },
+        })
+        .then((res) => res?.data?.result),
   });
 };
 

@@ -13,14 +13,17 @@ import { getRandomId, sanitizeContent } from "src/utils/utils";
 import { useDebouncedFunction } from "src/hooks/use-debounced-function";
 import { useSnackbar } from "src/components/snackbar";
 import { useUrlState } from "src/routes/hooks/use-url-state";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { DefaultMessages } from "../constant";
 import { isContentNotEmpty } from "./Playground/common";
 import { modelConfigDefault, PromptWorkbenchContext } from "./WorkbenchContext";
+import { visibleWorkbenchTab } from "./workbenchTab";
 import {
   getVariables,
   handleAuthFailClose,
   normalizeConfigurationForLoad,
   normalizeConfigurationForSave,
+  normalizeMessagesForLoad,
   runPromptOverSocket,
 } from "./common";
 import logger from "src/utils/logger";
@@ -77,7 +80,12 @@ const WorkbenchProvider = ({ children }) => {
   const queryClient = useQueryClient();
 
   //Multi States
-  const [currentTab, setCurrentTab] = useUrlState("tab", "Playground");
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
+  const [urlTab, setCurrentTab] = useUrlState("tab", "Playground");
+  const currentTab = visibleWorkbenchTab(
+    urlTab,
+    restrictSimulateToEnvironments,
+  );
   const [selectedVersions, setSelectedVersions] = useUrlState(
     "selected-versions",
     [],
@@ -599,9 +607,11 @@ const WorkbenchProvider = ({ children }) => {
     const isVersionSwitch = loadedVersion !== data?.version;
     if (
       data?.prompt_config?.[0]?.messages &&
-      (!prompts?.[0]?.prompts.length || isVersionSwitch)
+      (!prompts?.[0]?.prompts?.length || isVersionSwitch)
     ) {
-      const newPrompts = data?.prompt_config?.[0]?.messages?.map((prompt) => ({
+      const newPrompts = normalizeMessagesForLoad(
+        data?.prompt_config?.[0]?.messages,
+      ).map((prompt) => ({
         ...prompt,
         id: getRandomId(),
       }));
@@ -760,7 +770,9 @@ const WorkbenchProvider = ({ children }) => {
       });
 
       newPrompts.push({
-        prompts: version?.prompt_config_snapshot?.messages,
+        prompts: normalizeMessagesForLoad(
+          version?.prompt_config_snapshot?.messages,
+        ),
         id: getRandomId(),
       });
 
@@ -1304,11 +1316,12 @@ const WorkbenchProvider = ({ children }) => {
       };
     });
 
-    const newPrompts =
-      version?.prompt_config_snapshot?.messages?.map((rest) => ({
-        ...rest,
-        id: getRandomId(),
-      })) || [];
+    const newPrompts = normalizeMessagesForLoad(
+      version?.prompt_config_snapshot?.messages,
+    ).map((rest) => ({
+      ...rest,
+      id: getRandomId(),
+    }));
 
     setPrompts([{ prompts: newPrompts, id: getRandomId() }]);
 
@@ -1463,7 +1476,9 @@ const WorkbenchProvider = ({ children }) => {
       });
 
       newPrompts.push({
-        prompts: eachCompareVersions.prompt_config_snapshot.messages,
+        prompts: normalizeMessagesForLoad(
+          eachCompareVersions.prompt_config_snapshot.messages,
+        ),
         id: getRandomId(),
       });
 

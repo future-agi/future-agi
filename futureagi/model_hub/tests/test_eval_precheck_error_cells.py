@@ -88,9 +88,7 @@ class TestMarkCellsUsageLimitErrorCreatesMissingCells:
         )
 
         eval_cells = list(Cell.objects.filter(column_id=eval_col.id, deleted=False))
-        reason_cells = list(
-            Cell.objects.filter(column_id=reason_col.id, deleted=False)
-        )
+        reason_cells = list(Cell.objects.filter(column_id=reason_col.id, deleted=False))
         assert len(eval_cells) == 2
         assert len(reason_cells) == 2
         for cell in eval_cells + reason_cells:
@@ -100,6 +98,11 @@ class TestMarkCellsUsageLimitErrorCreatesMissingCells:
             assert infos.get("error_code") == "ENTITLEMENT_DENIED"
 
     def test_oss_agent_block_writes_error_cells(self, organization, workspace):
+        # Agent evals run self-hosted on user keys — deployment mode alone
+        # must not deny (see process_single_evaluation). Simulate a
+        # capability denial instead to cover the full block-and-mark flow.
+        from types import SimpleNamespace
+
         from model_hub.models.choices import StatusType
         from model_hub.tasks.user_evaluation import process_single_evaluation
 
@@ -109,13 +112,18 @@ class TestMarkCellsUsageLimitErrorCreatesMissingCells:
         uem.status = StatusType.NOT_STARTED.value
         uem.save(update_fields=["status"])
 
-        with patch("model_hub.tasks.user_evaluation.evaluation_tracker") as tracker, patch(
-            "model_hub.tasks.user_evaluation.track_mixpanel_event"
-        ), patch(
-            "model_hub.tasks.user_evaluation.get_mixpanel_properties",
-            return_value={},
-        ), patch(
-            "tfc.ee_gating.is_oss", return_value=True
+        with (
+            patch("model_hub.tasks.user_evaluation.evaluation_tracker") as tracker,
+            patch("model_hub.tasks.user_evaluation.track_mixpanel_event"),
+            patch(
+                "model_hub.tasks.user_evaluation.get_mixpanel_properties",
+                return_value={},
+            ),
+            patch("tfc.capabilities.service.is_configured", return_value=True),
+            patch(
+                "tfc.capabilities.service.check",
+                return_value=SimpleNamespace(allowed=False),
+            ),
         ):
             tracker.is_running.return_value = False
             tracker.instance_id = "test"

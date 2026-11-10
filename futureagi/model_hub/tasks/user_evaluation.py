@@ -3,15 +3,14 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from django.db import close_old_connections
-
 from accounts.models import workspace
 from accounts.models.workspace import Workspace
 from agentic_eval.core.utils.functions import detect_input_type
+from django.db import close_old_connections
 
 logger = structlog.get_logger(__name__)
 try:
-    from ee.evals.localizer.error_localizer import ErrorLocalizer
+    from ee.evals.localizer.claude_harness import create_localizer as ErrorLocalizer
 except ImportError:
     # Activity-aware stub: runs inside Temporal evaluation activities.
     from tfc.ee_stub import _ee_activity_stub
@@ -44,6 +43,7 @@ from model_hub.views.develop_optimiser import DevelopOptimizer
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.experiment_runner import ExperimentRunner
 from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.temporal import temporal_activity
 from tfc.utils.distributed_locks import distributed_lock_manager
 
@@ -51,7 +51,6 @@ from tfc.utils.distributed_locks import distributed_lock_manager
 from tfc.utils.distributed_state import evaluation_tracker
 from tfc.utils.error_codes import get_error_for_api_status
 from tracer.models.observation_span import EvalLogger
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 if TYPE_CHECKING:
     from simulate.models.eval_config import SimulateEvalConfig
@@ -220,11 +219,31 @@ def process_single_evaluation(user_eval_metric):
     )
     track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
 
-    # Block agent-type evals when ee is absent.
+    # Agent-type evals need the ee/ AgentEvaluator. Gate via the capability
+    # service (self-hosted runs them on user-keyed models; deployment mode
+    # alone must not deny) — deny only on capability denial, or genuinely
+    # absent ee code before the service is configured.
     if getattr(user_eval_metric.template, "eval_type", "") == "agent":
-        from tfc.ee_gating import is_oss
+        try:
+            from tfc.capabilities import service as capability_service
 
-        if is_oss():
+            if capability_service.is_configured():
+                _decision = capability_service.check(
+                    "agentic_eval",
+                    org_id=str(user_eval_metric.organization.id),
+                )
+                _agent_denied = not _decision.allowed
+            else:
+                from tfc.ee_loader import has_ee
+
+                _agent_denied = not has_ee("ee.evals")
+        except Exception:
+            # Permission checks fail closed. Do not fall back to has_ee()
+            # (True on every build shipping ee/) — deny and log the trace.
+            logger.exception("agentic_eval_capability_check_failed")
+            _agent_denied = True
+
+        if _agent_denied:
             user_eval_metric.status = StatusType.FAILED.value
             user_eval_metric.save(update_fields=["status"])
             _err_msg = (
@@ -898,9 +917,7 @@ def trigger_error_localization_for_span(
         if task_exists:
             task = ErrorLocalizerTask.objects.get(source_id=eval_logger.id)
             metadata = task.metadata or {}
-            metadata.update(
-                {"log_id": str(log_id), "pass_threshold": pass_threshold}
-            )
+            metadata.update({"log_id": str(log_id), "pass_threshold": pass_threshold})
             task.eval_result = value
             task.eval_explanation = eval_explanation
             task.input_data = input_data_dict
@@ -1133,6 +1150,11 @@ def trigger_error_localization_for_simulate(
             uuid.NAMESPACE_OID,
             f"simulate:{call_execution.id}:{eval_config.id}",
         )
+        from ee.evals.localizer.conversation_audio import simulation_audio_snapshot
+
+        simulation_audio = simulation_audio_snapshot(
+            call_execution, eval_config, input_type_dict
+        )
         task, _created = ErrorLocalizerTask.no_workspace_objects.update_or_create(
             source_id=source_id,
             deleted=False,
@@ -1151,9 +1173,8 @@ def trigger_error_localization_for_simulate(
                     "log_id": log_id,
                     "call_execution_id": str(call_execution.id),
                     "eval_config_id": str(eval_config.id),
-                    "pass_threshold": resolve_pass_threshold(
-                        eval_template, config
-                    ),
+                    "simulation_audio": simulation_audio,
+                    "pass_threshold": resolve_pass_threshold(eval_template, config),
                 },
                 "status": initial_status,
                 "error_message": error_message,
@@ -1167,7 +1188,10 @@ def trigger_error_localization_for_simulate(
         logger.error(f"Error in trigger_error_localization_for_simulate: {str(e)}")
 
 
-@temporal_activity(time_limit=3600, queue="tasks_s", rate_limit="100/s")
+# Error localization launches a Claude Agent SDK subprocess and can make several
+# model/tool turns.  Treat it as XL work so a burst of failed evals cannot launch
+# hundreds of SDK sessions on the high-concurrency ``tasks_s`` worker.
+@temporal_activity(time_limit=3600, queue="tasks_xl", rate_limit="100/s")
 def process_single_error_localization(task_id):
     """
     Process a single error localization task.
@@ -1255,7 +1279,18 @@ def process_single_error_localization(task_id):
                 input_type=task.input_types,
                 evaluation_result=task.eval_result,
                 evaluation_explanation=task.eval_explanation,
+                simulation_audio=(
+                    (task.metadata or {}).get("simulation_audio") or {}
+                    if task.source == ErrorLocalizerSource.SIMULATE
+                    and "audio" in (task.input_types or {}).values()
+                    else None
+                ),
             )
+            localizer.gateway_metadata = {
+                "organization_id": str(task.organization_id),
+                "workspace_id": str(task.workspace_id),
+                "error_localizer_task_id": str(task.id),
+            }
 
             result = localizer.localize_errors()
         except Exception as e:
@@ -1274,8 +1309,7 @@ def process_single_error_localization(task_id):
 
         if not error_analysis:
             skip_reason = (
-                result.skip_reason
-                or "Error localization did not produce any results."
+                result.skip_reason or "Error localization did not produce any results."
             )
             logger.warning(
                 "error_localizer_empty_results",
@@ -1295,7 +1329,7 @@ def process_single_error_localization(task_id):
             )
             task.save(update_fields=["error_message"])
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save(update_fields=["status"])
+        api_call_log_row.save(update_fields=["status", "updated_at"])
 
         # Dual-write: emit usage event for new billing system (cost-based)
         try:

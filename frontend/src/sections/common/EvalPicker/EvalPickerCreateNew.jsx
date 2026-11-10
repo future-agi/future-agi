@@ -7,10 +7,10 @@ import {
   IconButton,
   Slider,
   Tab,
-  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { LoadingButton } from "@mui/lab";
 import PropTypes from "prop-types";
 import React, {
@@ -29,7 +29,7 @@ import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
 import { ROW_TYPE_LABELS } from "src/utils/constants";
 import { useSnackbar } from "notistack";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 
 // Same components as EvalCreatePage
 import { useCreateEval } from "src/sections/evals/hooks/useCreateEval";
@@ -57,6 +57,7 @@ import {
   extractCodeEvaluateParams,
 } from "./evalPickerConfigUtils";
 import { useParams } from "react-router";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const TRACING_ROW_TYPE_TO_KEY = {
   Span: "spans",
@@ -124,9 +125,19 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     onFiltersChange,
     sourceTimeWindow,
     filterForm: localFilterForm,
+    requireInputs,
+    hideCompositeCreate,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
+  // Fail closed while capabilities load (both flags true) so we never flash
+  // Turing models or agent evals as available before the fetch resolves.
+  const { locked: fagiLocked, isLoading: capabilitiesLoading } =
+    useFeatureLocked(CAPABILITY.TURING_MODELS);
+  const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  // Confirmed denial (loaded AND not allowed). Seed model/evalType defaults raw
+  // and only strip them on confirmed denial — seeding off `locked` (true while
+  // loading) blanks the default model / flips the eval type for entitled users.
+  const fagiModelsDenied = fagiLocked && !capabilitiesLoading;
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const sourceRef = useRef(null);
@@ -134,11 +145,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   // Form state (same as EvalCreatePage)
   const [name, setName] = useState("");
   const [mode, setMode] = useState("single");
-  const [evalType, setEvalType] = useState(isOSS ? "llm" : "agent");
+  const [evalType, setEvalType] = useState("agent");
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
-  const [model, setModel] = useState(isOSS ? "" : "turing_large");
+  const [model, setModel] = useState("turing_large");
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
@@ -156,10 +167,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   const evalTypeDefaulted = useRef(false);
   useEffect(() => {
-    if (deploymentModeLoading || evalTypeDefaulted.current) return;
+    if (capabilitiesLoading || evalTypeDefaulted.current) return;
     evalTypeDefaulted.current = true;
-    setEvalType(isOSS ? "llm" : "agent");
-  }, [deploymentModeLoading, isOSS]);
+    setEvalType(agentEvalLocked ? "llm" : "agent");
+  }, [capabilitiesLoading, agentEvalLocked]);
+
+  // Drop the seeded Turing default only once denial is confirmed, so entitled
+  // users keep "turing_large" through the capabilities fetch.
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
 
   const handleSourceRowTypeChange = useCallback((rt) => {
     const map = TRACING_ROW_TYPE_TO_KEY;
@@ -348,7 +365,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   // Test
   const handleTestEvaluation = useCallback(async () => {
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -362,11 +379,14 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       sourceRef.current?.runTest?.(draftId);
       setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
     } catch (error) {
-      handleTestResult(false, error?.message || "Failed to test");
+      handleTestResult(
+        false,
+        getSafeActionErrorMessage(error, "Failed to test evaluation"),
+      );
     }
   }, [
     draftId,
-    isOSS,
+    fagiLocked,
     evalType,
     model,
     buildPayload,
@@ -503,27 +523,37 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   // Save & Add
   const handleSaveAndAdd = useCallback(async () => {
-    if (isOSS && evalType === "agent") {
+    if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (fagiLocked && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
-        "Turing models are not available in OSS. Please select your own model.",
+        "Turing models aren't enabled for this workspace. Please select your own model.",
         { variant: "error" },
       );
       setOpenModelMenuSignal((n) => n + 1);
       return;
     }
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     if (!validate()) return;
+    if (requireInputs && Object.keys(sourceMapping || {}).length === 0) {
+      // Defensive: the mapping step normally guarantees at least one mapped
+      // input, but an eval stored with an empty mapping reads back as a
+      // result column and is never graded, so never save one here.
+      enqueueSnackbar(
+        "This evaluation has no inputs to map, so it can't run in an environment.",
+        { variant: "error" },
+      );
+      return;
+    }
     if (!draftId) {
       enqueueSnackbar("Draft not ready, please wait a moment", {
         variant: "warning",
@@ -561,12 +591,15 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
             : undefined,
       });
     } catch (error) {
-      enqueueSnackbar(error?.message || "Failed to save", { variant: "error" });
+      enqueueSnackbar(getSafeActionErrorMessage(error, "Failed to save"), {
+        variant: "error",
+      });
     } finally {
       setIsSaving(false);
     }
   }, [
     validate,
+    requireInputs,
     draftId,
     name,
     description,
@@ -581,7 +614,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     instructions,
     contextOptions,
     enqueueSnackbar,
-    isOSS,
+    agentEvalLocked,
+    fagiLocked,
     source,
     onFiltersChange,
     localFilterForm,
@@ -638,9 +672,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       setStep("config");
     } catch (error) {
       enqueueSnackbar(
-        error?.response?.data?.result ||
-          error?.message ||
+        getSafeActionErrorMessage(
+          error,
           "Failed to create composite evaluation",
+        ),
         { variant: "error" },
       );
     } finally {
@@ -723,7 +758,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     return [...new Set(vars)];
   }, [instructions, evalType, templateFormat, code, codeLanguage]);
 
-  if (deploymentModeLoading) {
+  if (capabilitiesLoading) {
     return null;
   }
 
@@ -748,7 +783,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <IconButton size="small" onClick={onBack} sx={{ p: 0.5 }}>
-            <Iconify icon="solar:arrow-left-linear" width={18} />
+            <Iconify icon="solar:arrow-left-linear" width={20} />
           </IconButton>
           <Typography variant="subtitle1" fontWeight={600}>
             Create New Evaluation
@@ -758,7 +793,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               variant="caption"
               sx={{
                 fontFamily: "monospace",
-                fontSize: "10px",
+                fontSize: "12px",
                 color: "text.disabled",
                 bgcolor: "action.hover",
                 px: 0.75,
@@ -803,59 +838,20 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 <Typography variant="subtitle1" fontWeight={600}>
                   Eval details
                 </Typography>
-                <Tabs
-                  value={mode}
-                  onChange={(_, val) => setMode(val)}
-                  TabIndicatorProps={{ style: { display: "none" } }}
-                  sx={{
-                    minHeight: 28,
-                    "& .MuiTab-root": {
-                      minHeight: 28,
-                      px: 1.5,
-                      py: 0,
-                      mr: "0px !important",
-                      textTransform: "none",
-                      fontSize: "13px",
-                      borderRadius: "6px",
-                    },
-                    border: "1px solid",
-                    borderColor: "divider",
-                    p: "2px",
-                    borderRadius: "8px",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "background.neutral",
-                  }}
-                >
-                  {MODE_TABS.map((tab) => (
-                    <Tab
-                      key={tab.value}
-                      value={tab.value}
-                      label={tab.label}
-                      sx={{
-                        bgcolor:
-                          mode === tab.value
-                            ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.12)"
-                                  : "background.paper"
-                            : "transparent",
-                        boxShadow:
-                          mode === tab.value
-                            ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "none"
-                                  : "0 1px 3px rgba(0,0,0,0.08)"
-                            : "none",
-                        borderRadius: "6px",
-                        fontWeight: mode === tab.value ? 600 : 400,
-                        color:
-                          mode === tab.value ? "text.primary" : "text.disabled",
-                      }}
-                    />
-                  ))}
-                </Tabs>
+                {!hideCompositeCreate && (
+                  <SegmentedTabs
+                    value={mode}
+                    onChange={(_, val) => setMode(val)}
+                  >
+                    {MODE_TABS.map((tab) => (
+                      <Tab
+                        key={tab.value}
+                        value={tab.value}
+                        label={tab.label}
+                      />
+                    ))}
+                  </SegmentedTabs>
+                )}
               </Box>
 
               {/* Eval Name — CompositeDetailPanel has its own name field,
@@ -925,47 +921,22 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
               {/* Single branch: eval-type tabs + the matching editor */}
               {!isComposite && (
-                <Tabs
+                <SegmentedTabs
                   value={evalType}
                   onChange={(_, val) => {
-                    if (isOSS && val === "agent") {
+                    if (agentEvalLocked && val === "agent") {
                       enqueueSnackbar(
-                        "Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable.",
+                        "Agent evaluations aren't enabled for this workspace.",
                         { variant: "info" },
                       );
                       return;
                     }
                     setEvalType(val);
                   }}
-                  variant="standard"
-                  TabIndicatorProps={{ style: { display: "none" } }}
-                  sx={{
-                    width: "fit-content",
-                    minHeight: 32,
-                    "& .MuiTab-root": {
-                      height: 28,
-                      minHeight: 28,
-                      maxHeight: 28,
-                      px: 1.5,
-                      py: 0,
-                      mr: "0px !important",
-                      textTransform: "none",
-                      fontSize: "13px",
-                      lineHeight: "28px",
-                      borderRadius: "6px",
-                    },
-                    border: "1px solid",
-                    borderColor: "divider",
-                    p: "2px",
-                    borderRadius: "8px",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "background.neutral",
-                  }}
+                  sx={{ width: "fit-content" }}
                 >
                   {EVAL_TYPE_TABS.map((tab) => {
-                    const locked = isOSS && tab.value === "agent";
+                    const locked = agentEvalLocked && tab.value === "agent";
                     return (
                       <Tab
                         key={tab.value}
@@ -976,7 +947,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                               show
                               type=""
                               arrow
-                              title="Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable."
+                              title="Agent evaluations aren't enabled for this workspace."
                             >
                               <Box
                                 sx={{
@@ -986,40 +957,17 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                                 }}
                               >
                                 {tab.label}
-                                <Iconify icon="mdi:lock-outline" width={14} />
+                                <Iconify icon="solar:lock-linear" width={14} />
                               </Box>
                             </CustomTooltip>
                           ) : (
                             tab.label
                           )
                         }
-                        sx={{
-                          bgcolor:
-                            evalType === tab.value
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.12)"
-                                    : "background.paper"
-                              : "transparent",
-                          boxShadow:
-                            evalType === tab.value
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "none"
-                                    : "0 1px 3px rgba(0,0,0,0.08)"
-                              : "none",
-                          borderRadius: "6px",
-                          fontWeight: evalType === tab.value ? 600 : 400,
-                          opacity: locked ? 0.6 : 1,
-                          color:
-                            evalType === tab.value
-                              ? "text.primary"
-                              : "text.disabled",
-                        }}
                       />
                     );
                   })}
-                </Tabs>
+                </SegmentedTabs>
               )}
 
               {/* Agent type */}
@@ -1211,8 +1159,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     label={ROW_TYPE_LABELS[sourceRowType]}
                     size="small"
                     sx={{
-                      height: 18,
-                      fontSize: "10px",
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.75 },
@@ -1243,7 +1189,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
-              <Box sx={{ flex: 1, overflow: "auto" }}>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
                 {(source === "dataset" ||
                   source === "workbench" ||
                   source === "custom" ||
@@ -1279,6 +1225,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     isComposite={isComposite}
                     compositeAdhocConfig={compositeAdhocConfig}
                     localFilters={localApiFilters}
+                    allowCustomFieldPath
                   />
                 )}
                 {source === "tracing" && (
@@ -1375,7 +1322,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
             sx={{ display: "flex", alignItems: "center", gap: 0.5, mr: "auto" }}
           >
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               width={16}
               sx={{ color: "success.main" }}
             />
@@ -1392,7 +1339,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ mr: "auto", fontSize: "11px" }}
+            sx={{ mr: "auto", fontSize: "12px" }}
           >
             Map all variables to enable{" "}
             {source === "workbench" ? "saving" : "testing & saving"}
@@ -1425,10 +1372,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   isTesting ? (
                     <CircularProgress size={14} />
                   ) : (
-                    <Iconify icon="mdi:play-circle-outline" width={16} />
+                    <Iconify icon="solar:play-circle-linear" width={16} />
                   )
                 }
-                sx={{ textTransform: "none" }}
               >
                 {isTesting ? "Testing..." : "Test Evaluation"}
               </Button>
@@ -1453,7 +1399,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               onClick={
                 isComposite ? handleSaveAndAddComposite : handleSaveAndAdd
               }
-              sx={{ textTransform: "none" }}
             >
               {isComposite ? "Create & Configure" : "Save & Add Evaluation"}
             </LoadingButton>

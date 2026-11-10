@@ -59,7 +59,7 @@ import {
   DEFAULT_EVAL_MODEL,
 } from "src/sections/common/EvaluationDrawer/common";
 import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 
 const generateValidationSchema = (
   evalConfig,
@@ -377,7 +377,7 @@ const generateValidationSchema = (
   });
 };
 
-const getDefaultValues = (evalConfig, editMode, allColumns, isOSS) => {
+const getDefaultValues = (evalConfig, editMode, allColumns, fagiLocked) => {
   const mapping = {};
   const config = {};
   const allColumnsMap = allColumns?.reduce((acc, col) => {
@@ -393,19 +393,20 @@ const getDefaultValues = (evalConfig, editMode, allColumns, isOSS) => {
   }
   for (const key of canonicalKeys(evalConfig?.config || {})) {
     const defaultVal = evalConfig?.config[key]?.default;
-    // Auto-select preferred model (turing_large) for model field. OSS has no
-    // Turing/Protect access, so it starts blank and the user must pick.
+    // Auto-select preferred model (turing_large) for model field. Without
+    // Turing access (no license/plan) it starts blank and the user must pick.
     if (key === "model") {
       const modelOptions =
         evalConfig?.configParamsOption?.[key] ||
         evalConfig?.config_params_option?.[key] ||
         [];
       const allowed = modelOptions.filter(
-        (m) => !isOSS || !FAGI_MODEL_VALUES.has(m),
+        (m) => !fagiLocked || !FAGI_MODEL_VALUES.has(m),
       );
       const safeDefault =
-        isOSS && FAGI_MODEL_VALUES.has(defaultVal) ? "" : defaultVal;
-      const hasTuringLarge = !isOSS && allowed.includes(DEFAULT_EVAL_MODEL);
+        fagiLocked && FAGI_MODEL_VALUES.has(defaultVal) ? "" : defaultVal;
+      const hasTuringLarge =
+        !fagiLocked && allowed.includes(DEFAULT_EVAL_MODEL);
       config[key] = editMode
         ? safeDefault ||
           (hasTuringLarge ? DEFAULT_EVAL_MODEL : allowed[0] || "")
@@ -908,7 +909,9 @@ const EvaluationConfigureForm = ({
 }) => {
   const isPreviouslyConfigured =
     selectedEval?.eval_type === "previouslyConfigured";
-  const { isOSS } = useDeploymentMode();
+  // Fail closed while capabilities load (locked===true) so form defaults never
+  // seed a Turing model the deployment can't run.
+  const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
 
   const [testData, setTestData] = useState(null);
 
@@ -1006,7 +1009,7 @@ const EvaluationConfigureForm = ({
       evalConfig,
       isUserEval,
       allowedColumns,
-      isOSS,
+      fagiLocked,
     ),
     resolver: zodResolver(validationSchema),
   });
@@ -1117,15 +1120,15 @@ const EvaluationConfigureForm = ({
         >
           <Typography
             color={"text.primary"}
-            fontSize="14px"
-            fontWeight={700}
+            fontSize="13px"
+            fontWeight={600}
             sx={{ mt: 1 }}
           >
             {"Evaluation Test"}
           </Typography>
           <Typography
-            fontSize="14px"
-            fontWeight={700}
+            fontSize="13px"
+            fontWeight={600}
             sx={{ mb: "1.5rem", mt: "0.2rem" }}
           >
             <HelperText text="Run a sample evals to see how it works" />
@@ -1149,7 +1152,7 @@ const EvaluationConfigureForm = ({
             bottom: 0,
           }}
         >
-          <Typography fontSize="14px" fontWeight={700} sx={{ mb: 1 }}>
+          <Typography fontSize="13px" fontWeight={600} sx={{ mb: 1 }}>
             <Box
               sx={{
                 display: "flex",
@@ -1170,7 +1173,7 @@ const EvaluationConfigureForm = ({
               paddingY: "12px",
               backgroundColor: `${testData?.responses[0]?.output_type == "score" ? interpolateColorBasedOnScore(testData?.responses[0]?.output, 1) : testData?.responses[0]?.output_type == "Pass/Fail" ? (testData?.responses[0]?.output == "Passed" ? interpolateColorBasedOnScore(1, 1) : interpolateColorBasedOnScore(0, 1)) : "background.neutral"}`,
               overflowWrap: "break-word",
-              borderRadius: "10px",
+              borderRadius: "8px",
             }}
           >
             {testData && testData?.responses?.length > 0 ? (
@@ -1241,7 +1244,7 @@ const EvaluationConfigureForm = ({
             size="small"
             startIcon={
               <Iconify
-                icon="octicon:chevron-left-24"
+                icon="solar:alt-arrow-left-linear"
                 width="24px"
                 sx={{ color: "primary.main" }}
               />
@@ -1254,7 +1257,7 @@ const EvaluationConfigureForm = ({
             Back
           </Button>
           <Iconify
-            icon="flowbite:x-outline"
+            icon="solar:close-linear"
             sx={{ cursor: "pointer" }}
             onClick={() => {
               setLogIds([]);
@@ -1264,9 +1267,9 @@ const EvaluationConfigureForm = ({
           />
         </Box>
 
-        <Typography color={"text.primary"} fontSize="14px" fontWeight={700}>
+        <Typography color={"text.primary"} fontSize="13px" fontWeight={600}>
           {selectedEval?.name || evalConfig?.name}
-          <Typography fontSize="14px" fontWeight={700} sx={{ mt: "0.2rem" }}>
+          <Typography fontSize="13px" fontWeight={600} sx={{ mt: "0.2rem" }}>
             <HelperText text={selectedEval?.description} />
           </Typography>
         </Typography>

@@ -38,10 +38,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from django.utils import timezone
-from rest_framework import status
-
 from conftest import WorkspaceAwareAPIClient, create_categorical_label
+from django.utils import timezone
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
@@ -59,6 +57,7 @@ from model_hub.models.choices import (
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.develop_dataset import Dataset, Row
 from model_hub.models.score import Score
+from rest_framework import status
 
 QUEUE_URL = "/model-hub/annotation-queues/"
 
@@ -314,7 +313,11 @@ class TestAssignItems:
 
         add = auth_client.post(
             _assign_url(queue_id),
-            {"item_ids": [str(item.id)], "user_ids": [str(annotator.id)], "action": "add"},
+            {
+                "item_ids": [str(item.id)],
+                "user_ids": [str(annotator.id)],
+                "action": "add",
+            },
             format="json",
         )
         assert add.status_code == status.HTTP_200_OK, add.data
@@ -349,7 +352,11 @@ class TestAssignItems:
 
         resp = auth_client.post(
             _assign_url(queue_id),
-            {"item_ids": [str(item.id)], "user_ids": [str(outsider.id)], "action": "add"},
+            {
+                "item_ids": [str(item.id)],
+                "user_ids": [str(outsider.id)],
+                "action": "add",
+            },
             format="json",
         )
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
@@ -367,7 +374,11 @@ class TestAssignItems:
 
         auth_client.post(
             _assign_url(queue_id),
-            {"item_ids": [str(item.id)], "user_ids": [str(annotator.id)], "action": "add"},
+            {
+                "item_ids": [str(item.id)],
+                "user_ids": [str(annotator.id)],
+                "action": "add",
+            },
             format="json",
         )
         QueueItemAssignment.objects.filter(queue_item=item, user=annotator).update(
@@ -376,7 +387,11 @@ class TestAssignItems:
 
         readd = auth_client.post(
             _assign_url(queue_id),
-            {"item_ids": [str(item.id)], "user_ids": [str(annotator.id)], "action": "add"},
+            {
+                "item_ids": [str(item.id)],
+                "user_ids": [str(annotator.id)],
+                "action": "add",
+            },
             format="json",
         )
         assert readd.status_code == status.HTTP_200_OK, readd.data
@@ -682,7 +697,9 @@ class TestHardDeleteCascade:
         # CASCADE children are gone entirely.
         assert not AnnotationQueue.all_objects.filter(id=queue_id).exists()
         assert not QueueItem.all_objects.filter(id=item.id).exists()
-        assert not QueueItemAssignment.all_objects.filter(queue_item_id=item.id).exists()
+        assert not QueueItemAssignment.all_objects.filter(
+            queue_item_id=item.id
+        ).exists()
         assert not QueueItemReviewThread.all_objects.filter(id=thread.id).exists()
 
         # Score.queue_item is SET_NULL, so the Score row SURVIVES (orphaned),
@@ -767,7 +784,9 @@ class TestReviewComment:
         )
         _, row = _create_dataset_row(organization, workspace)
         item = _add_item(auth_client, queue_id, row)
-        _score_for(item, label, user, organization)  # comment skips own-annotation guard
+        _score_for(
+            item, label, user, organization
+        )  # comment skips own-annotation guard
 
         before_status = QueueItem.objects.get(id=item.id).status
 
@@ -871,9 +890,9 @@ class TestUpdateRequiresReviewGate:
         assert resp.status_code == status.HTTP_200_OK, resp.data
         assert gate.called
         called_feature = gate.call_args.args[0] if gate.call_args.args else None
-        from tfc.ee_gating import EEFeature
-
-        assert called_feature == EEFeature.REVIEW_WORKFLOW
+        # review_workflow is oss_baseline (not paid), so the gate is invoked
+        # with its string id — check_ee_feature passes it through silently.
+        assert called_feature == "review_workflow"
 
 
 # ===========================================================================
@@ -1081,7 +1100,9 @@ class TestSkipTargetedRework:
 
 @pytest.mark.django_db
 class TestNextItemBefore:
-    def test_before_nonexistent_returns_null(self, auth_client, organization, workspace):
+    def test_before_nonexistent_returns_null(
+        self, auth_client, organization, workspace
+    ):
         queue_id = _create_queue(auth_client, name="Before Q")
         _, row = _create_dataset_row(organization, workspace)
         _add_item(auth_client, queue_id, row)
@@ -1095,7 +1116,9 @@ class TestNextItemBefore:
 
 @pytest.mark.django_db
 class TestReleaseNoReservation:
-    def test_release_without_active_reservation(self, auth_client, organization, workspace):
+    def test_release_without_active_reservation(
+        self, auth_client, organization, workspace
+    ):
         queue_id = _create_queue(auth_client, name="Release Q")
         _, row = _create_dataset_row(organization, workspace)
         item = _add_item(auth_client, queue_id, row)
@@ -1148,7 +1171,9 @@ class TestDiscussionInvalidUuid:
 
 @pytest.mark.django_db
 class TestImportInvalidScoreSource:
-    def test_invalid_score_source_is_skipped(self, auth_client, organization, workspace):
+    def test_invalid_score_source_is_skipped(
+        self, auth_client, organization, workspace
+    ):
         queue_id = _create_queue(auth_client, name="Import Src Q")
         label = _create_label(organization, workspace, name="ImpSrc-Label")
         AnnotationQueueLabel.objects.get_or_create(
@@ -1285,7 +1310,9 @@ class TestNotFoundPaths:
 
     def test_annotations_list_unknown_item_404(self, auth_client):
         queue_id = _create_queue(auth_client, name="NF List Q")
-        resp = auth_client.get(f"{QUEUE_URL}{queue_id}/items/{uuid.uuid4()}/annotations/")
+        resp = auth_client.get(
+            f"{QUEUE_URL}{queue_id}/items/{uuid.uuid4()}/annotations/"
+        )
         assert resp.status_code == status.HTTP_404_NOT_FOUND
         assert "Queue item not found" in str(resp.data)
 
@@ -1383,9 +1410,7 @@ class TestNotFoundPaths:
 
 @pytest.mark.django_db
 class TestItemPermissionGates:
-    def test_item_create_by_non_manager_403(
-        self, auth_client, organization, workspace
-    ):
+    def test_item_create_by_non_manager_403(self, auth_client, organization, workspace):
         queue_id = _create_queue(auth_client, name="Perm Create Q")
         annotator = _second_user(organization, workspace)
         _add_annotator(queue_id, annotator)  # annotator, not manager
@@ -1649,9 +1674,7 @@ class TestImportSkipBranches:
         assert _result(resp)["imported"] == 0
 
     def test_unknown_label_is_skipped(self, auth_client, organization, workspace):
-        queue_id, _, item = self._queue_label_item(
-            auth_client, organization, workspace
-        )
+        queue_id, _, item = self._queue_label_item(auth_client, organization, workspace)
         resp = auth_client.post(
             _import_url(queue_id, item.id),
             {"annotations": [{"label_id": str(uuid.uuid4()), "value": "Positive"}]},
@@ -1659,7 +1682,6 @@ class TestImportSkipBranches:
         )
         assert resp.status_code == status.HTTP_200_OK, resp.data
         assert _result(resp)["imported"] == 0
-
 
 
 def _second_org_client():

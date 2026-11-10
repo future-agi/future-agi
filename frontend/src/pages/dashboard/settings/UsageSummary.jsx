@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import Typography from "@mui/material/Typography";
-import { Box, CircularProgress } from "@mui/material";
+import { Box, CircularProgress, IconButton, useTheme } from "@mui/material";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import axios, { endpoints } from "src/utils/axios";
 import { trackEvent, Events } from "src/utils/Mixpanel";
 import { useForm } from "react-hook-form";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
+import { seriesColor } from "src/theme/data-colors";
 
 const UsageSummary = () => {
+  const theme = useTheme();
   const [isLoading, setIsLoading] = useState(false);
 
   // Form setup
@@ -178,7 +180,7 @@ const UsageSummary = () => {
         <Typography
           variant="body2"
           sx={{
-            fontWeight: "700",
+            fontWeight: "600",
             textAlign: "left",
             marginBottom: "20px",
             marginTop: "10px",
@@ -191,7 +193,7 @@ const UsageSummary = () => {
         <div
           style={{
             border: "1px solid lightgray",
-            borderRadius: "15px",
+            borderRadius: "12px",
             padding: "10px",
           }}
           ref={chartContainerRef}
@@ -212,39 +214,31 @@ const UsageSummary = () => {
                 marginLeft: "20px",
               }}
             >
-              <button
+              <IconButton
+                size="small"
+                aria-label="Previous month"
                 onClick={handlePreviousMonth}
-                style={{
-                  border: "none",
-                  backgroundColor: "transparent",
-                  fontSize: "1.0rem",
-                  cursor: "pointer",
-                }}
               >
                 &lt;
-              </button>
+              </IconButton>
               <Typography
                 variant="body2"
                 style={{
                   margin: "0 2px 0 2px",
                   width: "180px",
                   textAlign: "center",
-                  fontWeight: "bold",
+                  fontWeight: "600",
                 }}
               >
                 {displayString}
               </Typography>
-              <button
+              <IconButton
+                size="small"
+                aria-label="Next month"
                 onClick={handleNextMonth}
-                style={{
-                  border: "none",
-                  backgroundColor: "transparent",
-                  fontSize: "1.0rem",
-                  cursor: "pointer",
-                }}
               >
                 &gt;
-              </button>
+              </IconButton>
               {isLoading && (
                 <CircularProgress size={20} style={{ marginLeft: "10px" }} />
               )}
@@ -265,8 +259,8 @@ const UsageSummary = () => {
 
           <div
             style={{
-              border: "0px solid #000",
-              borderRadius: "15px",
+              border: "none",
+              borderRadius: "12px",
               padding: "10px",
             }}
           >
@@ -278,7 +272,7 @@ const UsageSummary = () => {
               <XAxis
                 dataKey="name"
                 stroke=""
-                tick={{ fontSize: "0.675rem", fontWeight: "normal" }}
+                tick={{ fontSize: "0.75rem", fontWeight: 400 }}
                 ticks={[
                   barChartData[0]?.name,
                   barChartData[7]?.name,
@@ -289,13 +283,17 @@ const UsageSummary = () => {
               />
               <YAxis
                 stroke=""
-                tick={{ fontSize: "0.675rem", fontWeight: "normal" }}
+                tick={{ fontSize: "0.75rem", fontWeight: 400 }}
                 tickFormatter={(value) =>
                   value > 1000 ? `${(value / 1000).toFixed(1)}k` : `${value}`
                 }
               />
               <Tooltip />
-              <Bar dataKey="value" fill="#D3B2E2" radius={[3, 3, 0, 0]} />
+              <Bar
+                dataKey="value"
+                fill={seriesColor(theme, 0)}
+                radius={[3, 3, 0, 0]}
+              />
             </BarChart>
           </div>
         </div>

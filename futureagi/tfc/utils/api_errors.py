@@ -40,6 +40,12 @@ class ApiErrorCode(StrEnum):
     # Domain-specific 413 variants: a specific cap was exceeded, so the FE can
     # distinguish "narrow your selection" from a generic request-too-large.
     ITEMS_TOO_LARGE = "items_too_large"
+    # Domain-specific codes a client can act on; each message lives in
+    # tfc/utils/error_codes.py under the same name in upper case.
+    USER_FILTER_REQUIRES_CURSOR = "user_filter_requires_cursor"
+    SCORE_PROJECT_MISMATCH = "score_project_mismatch"
+    DATASET_LIMIT_CHECK_FAILED = "dataset_limit_check_failed"
+    FILTER_VALUE_INVENTORY_TOO_BROAD = "filter_value_inventory_too_broad"
 
 
 API_ERROR_TYPE_CHOICES = [(item.value, item.value) for item in ApiErrorType]
@@ -53,6 +59,7 @@ ERROR_TYPE_BY_STATUS = {
     status.HTTP_409_CONFLICT: ApiErrorType.CONFLICT,
     status.HTTP_410_GONE: ApiErrorType.CLIENT_ERROR,
     status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: ApiErrorType.CLIENT_ERROR,
+    status.HTTP_422_UNPROCESSABLE_ENTITY: ApiErrorType.CLIENT_ERROR,
     status.HTTP_429_TOO_MANY_REQUESTS: ApiErrorType.RATE_LIMIT,
     status.HTTP_500_INTERNAL_SERVER_ERROR: ApiErrorType.SERVER_ERROR,
     status.HTTP_503_SERVICE_UNAVAILABLE: ApiErrorType.SERVICE_UNAVAILABLE,
@@ -68,6 +75,7 @@ DEFAULT_CODE_BY_STATUS = {
     status.HTTP_409_CONFLICT: ApiErrorCode.CONFLICT,
     status.HTTP_410_GONE: ApiErrorCode.GONE,
     status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: ApiErrorCode.REQUEST_TOO_LARGE,
+    status.HTTP_422_UNPROCESSABLE_ENTITY: ApiErrorCode.INVALID,
     status.HTTP_429_TOO_MANY_REQUESTS: ApiErrorCode.RATE_LIMITED,
     status.HTTP_500_INTERNAL_SERVER_ERROR: ApiErrorCode.SERVER_ERROR,
     status.HTTP_503_SERVICE_UNAVAILABLE: ApiErrorCode.SERVICE_UNAVAILABLE,
@@ -200,9 +208,10 @@ def build_error_envelope(
         resolved_code = default_code
     else:
         resolved_code = first_error_code(value, default_code)
-    resolved_type = error_type or ERROR_TYPE_BY_STATUS.get(
-        status_code, ApiErrorType.API_ERROR
-    ).value
+    resolved_type = (
+        error_type
+        or ERROR_TYPE_BY_STATUS.get(status_code, ApiErrorType.API_ERROR).value
+    )
     message = error_message(value)
 
     # When the caller passes a dict with an explicit ``error_code`` key (e.g.

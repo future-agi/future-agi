@@ -1,4 +1,4 @@
-name: core-backend
+name: core-backend-test
 
 # ===========================================
 # PeerDB shared config (YAML anchors)
@@ -47,6 +47,9 @@ services:
       - "50051:50051"
     volumes:
       - ".:/app/backend"
+      # Optional local EE source mount. Keep the distributable compose portable;
+      # use EE_SOURCE_PATH only for local development.
+      - "${EE_SOURCE_PATH:-./ee}:/app/backend/ee"
     env_file:
       - .env
     environment:
@@ -56,10 +59,11 @@ services:
       - TEMPORAL_HOST=temporal:7233
       - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
       - FAST_STARTUP=${FAST_STARTUP:-true}
-      - AGENTCC_INTERNAL_URL=http://agentcc-gateway:8090
-      - AGENTCC_GATEWAY_INTERNAL_URL=http://agentcc-gateway:8090
+      - AGENTCC_INTERNAL_URL=http://agentcc-gateway:8080
+      - AGENTCC_GATEWAY_INTERNAL_URL=http://agentcc-gateway:8080
       - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
       - CH25_DATABASE=${CH25_DATABASE:-futureagi}
+      - CH25_EVAL_LOGGER_TABLE=${CH25_EVAL_LOGGER_TABLE:-tracer_eval_logger}
       # Read replica: uncomment to test read/write split locally (points to same DB).
       # Both PGBOUNCER_READ_HOST and READ_REPLICA_OPT_IN must be set for any
       # routing to happen. See .env.example for the full list of feature keys.
@@ -110,9 +114,11 @@ services:
       context: ../agentcc-gateway
       dockerfile: Dockerfile
     ports:
-      - "${AGENTCC_GATEWAY_PORT:-8090}:8090"
+      - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
     volumes:
-      - ../${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
+      # Use the committed example by default; private credentials belong in a
+      # separately supplied AGENTCC_CONFIG_PATH file.
+      - ${AGENTCC_CONFIG_PATH:-../agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
       - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/Vertex_AI_Creds.json:ro
     env_file:
       - .env
@@ -416,7 +422,12 @@ services:
   # ===========================================
 
   minio:
-    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    # MinIO stopped publishing images (Docker Hub removed minio/minio, quay.io
+    # refuses anonymous pulls). This is a frozen build of the last community
+    # release (Coolify's, pinned by digest): same binary, flags, env vars and
+    # data format, so existing volumes keep working. It gets no more fixes;
+    # moving to a maintained S3 server is tracked separately.
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
     container_name: minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -427,20 +438,6 @@ services:
       - "${MINIO_API_PORT:-9005}:9000"
       - "${MINIO_CONSOLE_PORT:-9006}:9001"
     command: server /data --console-address ":9001"
-
-  # ===========================================
-  # Docker Proxy (for container orchestration)
-  # ===========================================
-
-  docker-proxy:
-    image: alpine/socat
-    container_name: docker-proxy
-    command: -t 900 TCP-LISTEN:2375,fork,reuseaddr UNIX-CONNECT:/var/run/docker.sock
-    ports:
-      - "2375"
-    user: root
-    volumes:
-      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
 
   # ===========================================
   # Temporal Services
@@ -511,6 +508,10 @@ services:
     working_dir: /app/backend
     volumes:
       - ".:/app/backend"
+      # EE source mount: defaults to the in-repo ee/ for local dev. Point
+      # EE_SOURCE_PATH at a stub/empty dir to simulate an OSS image (no ee/),
+      # exercising the ee-absent code paths against a DB with no ee tables.
+      - "${EE_SOURCE_PATH:-./ee}:/app/backend/ee"
     env_file:
       - .env
     environment:
@@ -537,6 +538,10 @@ services:
     working_dir: /app/backend
     volumes:
       - ".:/app/backend"
+      # EE source mount: defaults to the in-repo ee/ for local dev. Point
+      # EE_SOURCE_PATH at a stub/empty dir to simulate an OSS image (no ee/),
+      # exercising the ee-absent code paths against a DB with no ee tables.
+      - "${EE_SOURCE_PATH:-./ee}:/app/backend/ee"
     env_file:
       - .env
     environment:
@@ -563,6 +568,10 @@ services:
     working_dir: /app/backend
     volumes:
       - ".:/app/backend"
+      # EE source mount: defaults to the in-repo ee/ for local dev. Point
+      # EE_SOURCE_PATH at a stub/empty dir to simulate an OSS image (no ee/),
+      # exercising the ee-absent code paths against a DB with no ee tables.
+      - "${EE_SOURCE_PATH:-./ee}:/app/backend/ee"
     env_file:
       - .env
     environment:
@@ -589,6 +598,10 @@ services:
     working_dir: /app/backend
     volumes:
       - ".:/app/backend"
+      # EE source mount: defaults to the in-repo ee/ for local dev. Point
+      # EE_SOURCE_PATH at a stub/empty dir to simulate an OSS image (no ee/),
+      # exercising the ee-absent code paths against a DB with no ee tables.
+      - "${EE_SOURCE_PATH:-./ee}:/app/backend/ee"
     env_file:
       - .env
     environment:
@@ -615,6 +628,10 @@ services:
     working_dir: /app/backend
     volumes:
       - ".:/app/backend"
+      # EE source mount: defaults to the in-repo ee/ for local dev. Point
+      # EE_SOURCE_PATH at a stub/empty dir to simulate an OSS image (no ee/),
+      # exercising the ee-absent code paths against a DB with no ee tables.
+      - "${EE_SOURCE_PATH:-./ee}:/app/backend/ee"
     env_file:
       - .env
     environment:
@@ -641,6 +658,10 @@ services:
     working_dir: /app/backend
     volumes:
       - ".:/app/backend"
+      # EE source mount: defaults to the in-repo ee/ for local dev. Point
+      # EE_SOURCE_PATH at a stub/empty dir to simulate an OSS image (no ee/),
+      # exercising the ee-absent code paths against a DB with no ee tables.
+      - "${EE_SOURCE_PATH:-./ee}:/app/backend/ee"
     env_file:
       - .env
     environment:
@@ -851,7 +872,8 @@ services:
     entrypoint: ["bash", "/setup.sh"]
 
   peerdb-minio:
-    image: minio/minio:latest
+    # Same frozen MinIO build as the minio service.
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
     container_name: peerdb-minio
     restart: unless-stopped
     volumes:

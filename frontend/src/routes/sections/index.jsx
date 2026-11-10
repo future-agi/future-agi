@@ -32,12 +32,13 @@ export default function Router() {
     isOSS,
     isSuccess: isDeploymentModeConfirmed,
     isLoading: isDeploymentModeLoading,
+    isCloud,
   } = useDeploymentMode();
   const postLoginPath = usePostLoginPath();
 
   const dashboardRoutesArray = useMemo(
-    () => dashboardRoutes(user, currentWorkspaceRole, { isOSS }),
-    [user, currentWorkspaceRole, isOSS],
+    () => dashboardRoutes(user, currentWorkspaceRole, { isCloud }),
+    [user, currentWorkspaceRole, isCloud],
   );
 
   // Confirmed read required, or a failed probe sends cloud users to /setup.
@@ -100,8 +101,8 @@ export default function Router() {
   ]);
 
   // Wait for deployment-mode resolution before rendering the route tree.
-  // Otherwise the first render uses the hook's default `isOSS=true`, which
-  // omits non-OSS routes (billing/pricing/etc.). Stripe Checkout redirects
+  // Otherwise the first render uses the hook's default (self-hosted), which
+  // omits cloud routes (billing/pricing/etc.). Stripe Checkout redirects
   // back to /dashboard/settings/pricing?upgrade=success&session_id=... — if
   // that route isn't registered yet, the catch-all sends users to /404 and
   // the session_id is lost before PricingPage can confirm the upgrade.

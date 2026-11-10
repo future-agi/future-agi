@@ -16,7 +16,8 @@ import {
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "notistack";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
 import PropTypes from "prop-types";
 import React, {
@@ -71,6 +72,7 @@ import {
   extractVariablesFromMessages,
 } from "src/utils/utils";
 import { format } from "date-fns";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import {
   buildEvalTemplateConfig,
   buildCompositeSourceModeProps,
@@ -81,9 +83,10 @@ import {
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 import RequiredMark from "src/components/RequiredMark";
+import ContentSkeleton from "src/components/content-skeleton";
 
-const ERROR_LOCALIZER_OSS_TOOLTIP =
-  "Error Localization is not available on self-hosted (OSS) deployments.";
+const ERROR_LOCALIZER_LOCKED_TOOLTIP =
+  "Error Localization isn't enabled for this workspace.";
 
 const build_tools_payload = (selected_tools) =>
   (selected_tools || []).reduce((acc, tool_name) => {
@@ -119,8 +122,26 @@ const SOURCE_NAME_SLUGS = {
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
-const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
-  const { isOSS } = useDeploymentMode();
+const EvalPickerConfigFull = ({
+  evalData,
+  onBack,
+  onSave,
+  isSaving,
+  progress = null,
+  primaryLabel = null,
+  showClose = false,
+}) => {
+  // Fail closed while capabilities load (both flags true) so gated controls
+  // never flash as available before the fetch resolves.
+  const { locked: fagiLocked, isLoading: capsLoading } = useFeatureLocked(
+    CAPABILITY.TURING_MODELS,
+  );
+  const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
+  // Confirmed denial (loaded AND not allowed) — seed the model default raw and
+  // only strip it here, never off `locked` (true while loading), so entitled
+  // users keep "turing_large" through the fetch.
+  const fagiModelsDenied = fagiLocked && !capsLoading;
   const {
     source,
     sourceId,
@@ -133,6 +154,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     onFiltersChange,
     sourceTimeWindow,
     filterForm: localFilterForm,
+    onClose,
+    requireInputs,
   } = useEvalPickerContext();
   const normalizedEvalData = useMemo(
     () => normalizeEvalPickerEval(evalData),
@@ -158,7 +181,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("python");
-  const [model, setModel] = useState(isOSS ? "" : "turing_large");
+  const [model, setModel] = useState("turing_large");
+  // Drop the seeded Turing default only once denial is confirmed, so entitled
+  // users keep it through the capabilities fetch (and any config load).
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
@@ -177,7 +205,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
-  const errorLocalizerActive = errorLocalizerEnabled && !isOSS;
+  const errorLocalizerActive =
+    errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
   // Name for the UserEvalMetric — defaults to template name, user can customise
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
@@ -503,6 +532,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         evalData?.config?.run_config ||
         evalData?.config?.runConfig ||
         {};
+      const bindingConfig =
+        evalData?.bindingConfig || evalData?.binding_config || {};
 
       const normalizedRunConfig = {
         ...rawRunConfig,
@@ -558,8 +589,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           evalData?.config?.messages ??
           fullEval?.config?.messages,
       };
+      Object.keys(normalizedRunConfig).forEach((key) => {
+        if (normalizedRunConfig[key] === undefined)
+          delete normalizedRunConfig[key];
+      });
       const config = {
         ...(fullEval.config || {}),
+        ...bindingConfig,
         ...normalizedRunConfig,
       };
       const promptText = getEvalPromptText(fullEval, config);
@@ -589,6 +625,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // ("small") for built-in templates while detail returns the full
       // canonical value, so we intentionally prefer `fullEval.model`
       // over `evalData.model` to avoid the chip rendering "small".
+      // Do NOT map `model` into `normalizedRunConfig` to "restore" the
+      // saved value: `config` is spread run-config-last, so an explicit
+      // `evalData.model` there lands in `config.model` and wins over
+      // `fullEval.model`, reintroducing the stripped-form bug. The saved
+      // model already arrives via `...rawRunConfig` once the backend
+      // stops filtering it out of `run_config` (see `build_run_config_view`).
       setModel(
         config?.model || fullEval?.model || evalData?.model || "turing_large",
       );
@@ -825,22 +867,22 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   // "Add Evaluation" button.
   const handleSaveVersion = useCallback(async () => {
     if (isSystemEval) return;
-    if (isOSS && evalType === "agent") {
+    if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (fagiLocked && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
-        "Turing models are not available in OSS. Please select your own model.",
+        "Turing models aren't enabled for this workspace. Please select your own model.",
         { variant: "error" },
       );
       setOpenModelMenuSignal((n) => n + 1);
       return;
     }
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -902,16 +944,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         setSelectedVersionId(newVersion.id);
       }
     } catch (err) {
-      const message =
-        err?.response?.data?.result || err?.message || "Failed to save version";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
+        getSafeActionErrorMessage(err, "Failed to save version"),
         { variant: "error" },
       );
     }
   }, [
     isSystemEval,
-    isOSS,
+    agentEvalLocked,
+    fagiLocked,
     evalType,
     instructions,
     code,
@@ -947,7 +988,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   }, []);
 
   const handleTestEvaluation = useCallback(() => {
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -958,10 +999,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     sourceRef.current?.runTest?.(templateId);
     // Safety timeout
     setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
-  }, [templateId, isOSS, evalType, model]);
+  }, [templateId, fagiLocked, evalType, model, isComposite]);
 
   const handleAdd = useCallback(() => {
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -1008,7 +1049,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       evalData?.template_type;
 
     const resolvedConfig = buildEvalTemplateConfig({
-      baseConfig: fullEval?.config || evalData?.config || {},
+      baseConfig: {
+        ...(fullEval?.config || {}),
+        ...(isEditMode ? evalData?.bindingConfig || {} : {}),
+      },
       evalType,
       instructions,
       code,
@@ -1103,7 +1147,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     evalData,
     evalName,
     isEditMode,
-    isOSS,
+    fagiLocked,
     model,
     sourceMapping,
     evalType,
@@ -1124,6 +1168,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
+    isComposite,
     compositeChildWeights,
     errorLocalizerActive,
     hasValidPromptMessages,
@@ -1147,7 +1192,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           py: 8,
         }}
       >
-        <CircularProgress size={32} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -1166,7 +1211,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         }}
       >
         <Iconify
-          icon="mdi:alert-circle-outline"
+          icon="solar:danger-circle-linear"
           width={40}
           sx={{ color: "text.disabled" }}
         />
@@ -1180,7 +1225,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           variant="outlined"
           onClick={onBack}
           startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
-          sx={{ textTransform: "none" }}
         >
           Back to list
         </Button>
@@ -1211,7 +1255,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}
         >
           <IconButton size="small" onClick={onBack} sx={{ p: 0.5 }}>
-            <Iconify icon="solar:arrow-left-linear" width={18} />
+            <Iconify icon="solar:arrow-left-linear" width={20} />
           </IconButton>
           <Typography variant="subtitle1" fontWeight={600} noWrap>
             {fullEval?.name || evalData?.name}
@@ -1226,11 +1270,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
               size="small"
               color="warning"
               variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
             />
           )}
         </Box>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+          {/* Host-supplied progress (multi-eval queue walk). Built-in evals
+              hide the version controls, so a bar floating mid-header reads as
+              misplaced — it sits with the version controls instead. */}
+          {progress}
           {/* Save-as-new-version — user evals only. System evals are
               read-only by product policy (editing triggers Copy flow).
               Sits beside the existing version dropdown so the user can
@@ -1245,12 +1292,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
               disabled={updateEval.isPending || createVersion.isPending}
               onClick={handleSaveVersion}
               startIcon={<Iconify icon="solar:diskette-bold" width={14} />}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                height: 30,
-                px: 1.25,
-              }}
             >
               Save version
             </LoadingButton>
@@ -1263,16 +1304,19 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
               displayEmpty
               sx={{ fontSize: "12px", minWidth: 130, height: 30 }}
             >
-              <MenuItem value="" sx={{ fontSize: "12px" }}>
-                Default version
-              </MenuItem>
+              <MenuItem value="">Default version</MenuItem>
               {versions.map((v) => (
-                <MenuItem key={v.id} value={v.id} sx={{ fontSize: "12px" }}>
+                <MenuItem key={v.id} value={v.id}>
                   V{v.version_number}
                   {v.is_default ? " (default)" : ""}
                 </MenuItem>
               ))}
             </Select>
+          )}
+          {showClose && (
+            <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
+              <Iconify icon="solar:close-linear" width={16} />
+            </IconButton>
           )}
         </Box>
       </Box>
@@ -1306,8 +1350,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 ? "Name can't be longer than 50 characters"
                 : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
           }
-          FormHelperTextProps={{ sx: { fontSize: "11px", mt: 0.25, mx: 0 } }}
-          sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 34 } }}
+          FormHelperTextProps={{ sx: { fontSize: "12px", mt: 0.25, mx: 0 } }}
+          sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 32 } }}
         />
       </Box>
 
@@ -1347,10 +1391,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                       borderRadius: 1,
                       border: "1px solid",
                       borderColor: "divider",
-                      backgroundColor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.02)"
-                          : "rgba(0,0,0,0.01)",
+                      backgroundColor: "background.neutral",
                     }}
                   >
                     <Typography
@@ -1433,7 +1474,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                               <Typography
                                 variant="caption"
                                 color="text.secondary"
-                                sx={{ fontSize: "11px" }}
+                                sx={{ fontSize: "12px" }}
                               >
                                 Weight
                               </Typography>
@@ -1459,8 +1500,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                                   padding: "2px 6px",
                                   fontSize: "12px",
                                   borderRadius: 4,
-                                  border:
-                                    "1px solid var(--mui-palette-divider, #444)",
+                                  border: "1px solid var(--border-default)",
                                   background: "transparent",
                                   color: "inherit",
                                   textAlign: "center",
@@ -1493,13 +1533,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     }}
                   >
                     <Iconify
-                      icon="eva:info-outline"
+                      icon="solar:info-circle-linear"
                       width={14}
                       sx={{ flexShrink: 0 }}
                     />
                     <Typography
                       variant="caption"
-                      sx={{ fontSize: "11px", lineHeight: 1.4 }}
+                      sx={{ fontSize: "12px", lineHeight: 1.4 }}
                     >
                       Built-in evaluation: prompt is pre-configured and shown
                       for reference only.
@@ -1708,47 +1748,48 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 />
               )}
 
-              {/* Error Localization (single-eval concern, LLM/Agent only).
-                  Code evals don't support error localization — the feature
-                  introspects model traces, which code evals don't produce. */}
-              {!isComposite && evalType !== "code" && (
-                <CustomTooltip
-                  show={isOSS}
-                  type=""
-                  arrow
-                  title={ERROR_LOCALIZER_OSS_TOOLTIP}
-                >
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={errorLocalizerActive}
-                        disabled={isOSS}
-                        onChange={(e) => {
-                          setErrorLocalizerEnabled(e.target.checked);
-                          setIsDirty(true);
-                        }}
-                        size="small"
-                      />
-                    }
-                    label={
-                      <Box>
-                        <Typography variant="body2" fontWeight={500}>
-                          Error Localization
-                        </Typography>
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ display: "block" }}
-                        >
-                          Pinpoints which parts of the input caused evaluation
-                          failures
-                        </Typography>
-                      </Box>
-                    }
-                    sx={{ alignItems: "flex-start" }}
-                  />
-                </CustomTooltip>
-              )}
+              {/* Single-eval concern, LLM/Agent only — code evals don't produce
+                  the model traces the feature introspects. */}
+              {errorLocalizerAvailable &&
+                !isComposite &&
+                evalType !== "code" && (
+                  <CustomTooltip
+                    show={agentEvalLocked}
+                    type=""
+                    arrow
+                    title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
+                  >
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={errorLocalizerActive}
+                          disabled={agentEvalLocked}
+                          onChange={(e) => {
+                            setErrorLocalizerEnabled(e.target.checked);
+                            setIsDirty(true);
+                          }}
+                          size="small"
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2" fontWeight={500}>
+                            Error Localization
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: "block" }}
+                          >
+                            Pinpoints which parts of the input caused evaluation
+                            failures
+                          </Typography>
+                        </Box>
+                      }
+                      sx={{ alignItems: "flex-start" }}
+                    />
+                  </CustomTooltip>
+                )}
             </Box>
           }
           rightPanel={
@@ -1784,8 +1825,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     label={ROW_TYPE_LABELS[sourceRowType]}
                     size="small"
                     sx={{
-                      height: 18,
-                      fontSize: "10px",
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.75 },
@@ -1817,7 +1856,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 </Box>
               )}
 
-              <Box sx={{ flex: 1, overflow: "auto", pb: 2 }}>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", pb: 2 }}>
                 {(source === "dataset" ||
                   source === "experiment" ||
                   source === "workbench" ||
@@ -2035,7 +2074,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             sx={{ display: "flex", alignItems: "center", gap: 0.5, mr: "auto" }}
           >
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               width={16}
               sx={{ color: "success.main" }}
             />
@@ -2060,7 +2099,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ mr: "auto", fontSize: "11px" }}
+              sx={{ mr: "auto", fontSize: "12px" }}
             >
               Map all variables to enable testing & adding
             </Typography>
@@ -2069,7 +2108,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           <Typography
             variant="caption"
             color="warning.main"
-            sx={{ mr: "auto", fontSize: "11px" }}
+            sx={{ mr: "auto", fontSize: "12px" }}
           >
             Unsaved changes
           </Typography>
@@ -2158,10 +2197,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                         isTesting ? (
                           <CircularProgress size={14} />
                         ) : (
-                          <Iconify icon="mdi:play-circle-outline" width={16} />
+                          <Iconify icon="solar:play-circle-linear" width={16} />
                         )
                       }
-                      sx={{ textTransform: "none" }}
                     >
                       {isTesting ? "Testing..." : "Test Evaluation"}
                     </Button>
@@ -2224,10 +2262,22 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             addDisabledReason = `Add instructions before ${actionLabel}.`;
           } else if (!hasVariables && !hasDataInjection) {
             addDisabled = true;
+            // A system eval's template can't be edited here (isSystemEval
+            // locks it read-only), so with requireInputs on, telling the
+            // user to add a {{variable}} to it is a dead end — say why the
+            // add is actually blocked instead.
             addDisabledReason =
-              templateFormat === "jinja"
-                ? `Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) before ${actionLabel}.`
-                : `Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) before ${actionLabel}.`;
+              requireInputs && isSystemEval
+                ? "This evaluation has no inputs to map, so it can't run in an environment."
+                : templateFormat === "jinja"
+                  ? `Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) before ${actionLabel}.`
+                  : `Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) before ${actionLabel}.`;
+          }
+
+          if (!addDisabled && requireInputs && variables.length === 0) {
+            addDisabled = true;
+            addDisabledReason =
+              "This evaluation has no inputs to map, so it can't run in an environment.";
           }
 
           if (
@@ -2255,13 +2305,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   loading={isSaving}
                   onClick={handleAdd}
                   disabled={addDisabled}
-                  sx={{ textTransform: "none" }}
                 >
-                  {source === "composite"
-                    ? "Add to Composite"
-                    : isEditMode
-                      ? "Update Evaluation"
-                      : "Add Evaluation"}
+                  {primaryLabel ||
+                    (source === "composite"
+                      ? "Add to Composite"
+                      : isEditMode
+                        ? "Update Evaluation"
+                        : "Add Evaluation")}
                 </LoadingButton>
               </span>
             </CustomTooltip>
@@ -2277,6 +2327,9 @@ EvalPickerConfigFull.propTypes = {
   onBack: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   isSaving: PropTypes.bool,
+  progress: PropTypes.node,
+  primaryLabel: PropTypes.string,
+  showClose: PropTypes.bool,
 };
 
 export default EvalPickerConfigFull;

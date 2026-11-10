@@ -58,9 +58,16 @@ def _generate_monthly_invoices_sync(
     and admin "Generate Invoice" page all share identical logic.
     """
     try:
-        from ee.usage.services.invoice_generation import InvoiceGenerationService
+        from ee.cloud.billing.invoice_generation import InvoiceGenerationService
     except ImportError:
         InvoiceGenerationService = None
+
+    if InvoiceGenerationService is None:
+        # billing lives in the private cloud overlay (ee/cloud/); it is
+        # absent from OSS and self-hosted EE images. Skip cleanly instead
+        # of calling None.run_for_period(...) and crash-looping Temporal.
+        activity.logger.info("invoice_generation_skipped_billing_is_cloud_only")
+        return 0, 0, 0
 
     close_old_connections()
     try:
@@ -90,10 +97,22 @@ def _generate_monthly_invoices_sync(
 
 
 def _run_monthly_reset_sync(period: str) -> None:
+    try:
+        from ee.cloud.tasks.monthly_reset import run_monthly_reset
+    except ImportError:
+        run_monthly_reset = None
+
+    if run_monthly_reset is None:
+        # monthly_reset lives in the private cloud overlay (ee/cloud/); it is
+        # absent from OSS and self-hosted EE images. Skip cleanly instead of raising
+        # ImportError, which would fail monthly_closing_activity on the 1st of
+        # every month on every self-hosted install — before the guarded invoice
+        # step below even runs.
+        activity.logger.info("monthly_reset_skipped_billing_is_cloud_only")
+        return
+
     close_old_connections()
     try:
-        from ee.usage.tasks.monthly_reset import run_monthly_reset
-
         run_monthly_reset(period=period)
     finally:
         close_old_connections()
@@ -130,7 +149,7 @@ async def monthly_closing_activity(
         except (TypeError, ValueError):
             raise ValueError(
                 f"monthly_closing_activity requires YYYY-MM period, got {period_closed!r}"
-            )
+            ) from None
         period_billed = _next_period_str(period_closed)
         activity.logger.info(
             f"monthly_closing_start closed={period_closed} billed={period_billed}"

@@ -4,7 +4,7 @@ import Fab from "@mui/material/Fab";
 import SvgIcon from "@mui/material/SvgIcon";
 import CustomTooltip from "src/components/tooltip";
 import useFalconStore from "../store/useFalconStore";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureAllowed } from "src/hooks/useCapabilities";
 
 function FalconIcon(props) {
   return (
@@ -62,18 +62,18 @@ function FalconIcon(props) {
 export default function FalconAIFab() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { isOSS } = useDeploymentMode();
+  const { allowed: falconAllowed } = useFeatureAllowed("falcon_ai");
   const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
   const toggleSidebar = useFalconStore((s) => s.toggleSidebar);
 
-
   const openFalconAI = useCallback(() => {
-    if (isOSS) {
+    if (!falconAllowed) {
+      // Full page shows the capability upsell for unlicensed deployments.
       navigate("/dashboard/falcon-ai");
       return;
     }
     toggleSidebar();
-  }, [isOSS, navigate, toggleSidebar]);
+  }, [falconAllowed, navigate, toggleSidebar]);
 
   // Global keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Windows)
   useEffect(() => {
@@ -105,14 +105,16 @@ export default function FalconAIFab() {
           bottom: 72,
           right: 12,
           zIndex: 1200,
-          bgcolor: "#7857FC",
-          color: "#fff",
+          bgcolor: "primary.main",
+          color: "primary.contrastText",
           width: 40,
           height: 40,
           minHeight: 40,
+          // eslint-disable-next-line no-restricted-syntax -- ds: brand (Falcon button glow)
           boxShadow: "0 3px 12px 0 rgba(120, 87, 252, 0.4)",
           "&:hover": {
-            bgcolor: "#6344e0",
+            bgcolor: "primary.dark",
+            // eslint-disable-next-line no-restricted-syntax -- ds: brand (Falcon button glow)
             boxShadow: "0 4px 18px 0 rgba(120, 87, 252, 0.55)",
             transform: "scale(1.08)",
           },
