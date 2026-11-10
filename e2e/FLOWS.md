@@ -1102,7 +1102,7 @@
 
 **Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:269`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:280`
 
 **Tags:** —
 
@@ -1118,7 +1118,7 @@
 
 **Browser observations:**
 
-- both Jev rows are enabled and prompt for a TypeSafe API key
+- all three Jev rows are enabled and prompt for a TypeSafe API key
 - choosing Jev latest closes the picker and opens the keys drawer with TypeSafe as its first provider
 - the drawer takes input (Add enables) and the evaluator model stays unselected
 
@@ -1126,13 +1126,13 @@
 
 **Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:340`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:351`
 
 **Tags:** —
 
 **User steps:**
 
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
 2. author an LLM-As-A-Judge evaluator and choose Jev latest
 3. keep Pass/fail and describe a pass and a fail
 4. save the evaluation
@@ -1151,13 +1151,13 @@
 
 **Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:395`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:406`
 
 **Tags:** —
 
 **User steps:**
 
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
 2. author an LLM-As-A-Judge evaluator and choose Jev latest
 3. choose Choices and enter Resolved (Pass), Escalated (Neutral), No (Fail), describing Escalated
 4. save the evaluation
@@ -1176,13 +1176,13 @@
 
 **Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:474`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:485`
 
 **Tags:** —
 
 **User steps:**
 
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
 2. author an LLM-As-A-Judge evaluator and choose Jev latest
 3. choose Scoring and add four ordered levels
 4. save the evaluation
@@ -1201,7 +1201,7 @@
 
 **Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:171`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:182`
 
 **Tags:** —
 
@@ -1222,8 +1222,33 @@
 
 **Browser observations:**
 
-- the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models
-- both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models
+- all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
+
+### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload
+
+**Goal:** Choose a decision model’s direct or OpenRouter connection, run a Pass/Fail evaluation through it, and retain the explicit choice after reload
+
+**Spec:** `flows/evals/decision-model-connections.spec.ts:93`
+
+**Tags:** —
+
+**User steps:**
+
+1. attest the isolated managed mock routing
+2. search one decision model with native OpenAI and OpenRouter connections
+3. add the native synthetic key through the product drawer and publish a Pass/Fail evaluator
+4. run the evaluator through native OpenAI against deterministic synthetic input
+5. choose OpenRouter, add its synthetic key through the drawer and run again
+6. save the new version as default and reload the persisted connection
+
+**Backend state verified:**
+
+- the model-list API exposes one group with the exact native OpenAI and OpenRouter route IDs shown by the UI
+- UI-created provider keys belong only to the isolated actor scope and update that connection’s catalog readiness
+- the template and its version store the explicit route, Pass/Fail criteria and exact organization/workspace scope
+- both UI playground calls run through the real backend/gateway and return exact synthetic probability, verdict, usage and connection metadata
+- the reloaded editor, detail API and default version retain the saved OpenRouter route and authored criteria
 
 ### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
 
@@ -2366,7 +2391,30 @@
 - trace detail and trace list report 88073 captured tokens, 193 Strands tokens, 193 Pydantic tokens and 193 parent-only tokens
 - all 72 timing span IDs remain in the detail API while the tree hides them by default and shows their exact names on request
 
-### OBS-E2E-060 — an analyst saves a scoped SQL result as a live dashboard query
+### OBS-E2E-060 — Error Feed stays error-free without projects and Retry restores existing issues
+
+**Goal:** A developer opens Error Feed in an empty workspace without a spurious error, reads existing issues in a populated workspace, and recovers from a failed read using Retry.
+
+**Spec:** `flows/observe/error-feed-empty-projects.spec.ts:44`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Observe in a test-owned empty workspace and click Error Feed
+2. read the no-projects status without an error notification on first visit, reload and revisit
+3. create a project and two uniquely titled issues through the existing test-image issue seeder in the original workspace
+4. open Error Feed in the populated workspace and read exactly the seeded issue titles
+5. inject a browser-only feed-list 500 and read the inline error and Retry, never a success empty state
+6. remove the injected fault and click Retry to recover the same issue set from fresh real feed and project reads
+
+**Backend state verified:**
+
+- The empty workspace has zero live Observe projects in PG; its real project catalog and feed list return successful exact empty results on first visit, reload and revisit.
+- The project retains its organization/workspace binding and the seeded issues retain their exact IDs, titles and project binding in PG tracer_trace_error_group; the real feed response and rendered table agree on the exact issue set. This does not qualify automatic detection or trace membership.
+- After the browser-only injected failure, Retry performs fresh real successful feed and catalog reads and restores exactly the seeded issues while removing the inline error.
+
+### OBS-E2E-061 — an analyst saves a scoped SQL result as a live dashboard query
 
 **Goal:** An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.
 
