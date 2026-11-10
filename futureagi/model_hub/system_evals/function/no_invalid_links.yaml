@@ -99,7 +99,7 @@ config:
         if len(setting) > 8192:
             raise refused()
         allowed = {hostname(item.strip()) for item in setting.split(",") if item.strip()}
-        if host not in allowed or host in {"metadata.google.internal", "metadata.goog", "instance-data.ec2.internal"}:
+        if host not in allowed or host in {"metadata", "metadata.google.internal", "metadata.goog", "instance-data", "instance-data.ec2.internal"}:
             raise refused()
 
         def remaining():
@@ -126,7 +126,9 @@ config:
         for family, kind, proto, canonname, address in records:
             ip = ipaddress.ip_address(address[0])
             # Transition/tunnel addresses do not establish a directly public peer.
-            if not ip.is_global or ip.is_multicast or (ip.version == 6 and (ip.ipv4_mapped or ip.sixtofour or ip.teredo)):
+            # Azure's WireServer is publicly numbered but is a metadata service;
+            # mirror the product's never-allowed metadata exception explicitly.
+            if not ip.is_global or ip.is_reserved or ip.is_multicast or str(ip) == "168.63.129.16" or (ip.version == 6 and (ip.is_site_local or ip.ipv4_mapped or ip.sixtofour or ip.teredo)):
                 raise refused()
         family, kind, proto, canonname, address = records[0]
         connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
