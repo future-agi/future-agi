@@ -4,11 +4,11 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   DialogActions,
   DialogContent,
   DialogTitle,
   MenuItem,
+  Skeleton,
   Stack,
   TextField,
   Typography,
@@ -25,9 +25,7 @@ import {
   useSuiteMembers,
 } from "src/api/simulate-environments/versions";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
-import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
-import RunBlockedLine from "./RunBlockedLine";
-import RunSeedLine from "./RunSeedLine";
+import { inlineRunError, planRefusal } from "./runErrors";
 import ReadyToRunSection from "./readiness/ReadyToRunSection";
 import {
   READY_TO_RUN_COPY,
@@ -71,7 +69,6 @@ export default function RunDialog({
   scenarioIds,
   trials = 1,
   initialPicks,
-  initialSeed = null,
   onClose,
   onSubmit,
   submitting = false,
@@ -94,9 +91,6 @@ export default function RunDialog({
   const [agentFellBack, setAgentFellBack] = useState(false);
   // A refusal stays shown until the user changes a pick.
   const [dismissedError, setDismissedError] = useState(null);
-  // Empty keeps the environment's seed; sent as typed so the server validates it.
-  const [seed, setSeed] = useState(() => initialSeed ?? "");
-  const seedValue = seed.trim() || null;
   // What Ready to run read for these picks: counts and whether Run is allowed.
   const [readiness, setReadiness] = useState(null);
 
@@ -125,32 +119,7 @@ export default function RunDialog({
     ).map((piece) => [piece, selected[piece]]),
   );
 
-  const suite = options.suite.find((one) => one.id === selected.suite);
-  const runAll = scenarioIds === undefined;
-  // Run-all of the default suite runs the server's current list; of another
-  // suite, that suite's scenarios, so it needs them. With versioning on the
-  // list may show unsaved changes, so the default's are named instead.
-  const needsMembers =
-    runAll &&
-    Boolean(picks.suite || (env?.versioning?.enabled && selected.suite));
-  const members = useSuiteMembers(env?.id, selected.suite, {
-    enabled: open && Boolean(selected.suite) && (!runAll || needsMembers),
-  });
-  const memberKeys = members.data?.map((member) => member.scenario_key);
-  const missing =
-    !runAll && memberKeys
-      ? scenarioIds.filter((key) => !memberKeys.includes(key))
-      : [];
-  // Selected scenarios the picked suite lacks are skipped.
-  let runIds = runAll
-    ? undefined
-    : scenarioIds.filter((key) => !missing.includes(key));
-  if (needsMembers) runIds = memberKeys;
-
-  const plan = useRunPlan(env?.id, picks, {
-    enabled: open && !versions.isLoading,
-    scenarioKeys: runAll ? null : runIds,
-  });
+  const plan = useRunPlan(env?.id, picks, { enabled: open && Boolean(data) });
   const warnings = plan.data?.warnings || [];
   const refusedPlan = planRefusal(plan.error);
   const planFailed =
@@ -195,24 +164,38 @@ export default function RunDialog({
     plan.isError,
   ]);
 
+  const suite = options.suite.find((one) => one.id === selected.suite);
+  const runAll = scenarioIds === undefined;
+  // Run-all of the default suite runs the server's current list; of another
+  // suite, that suite's scenarios, so it needs them. With versioning on the
+  // list may show unsaved changes, so the default's are named instead.
+  const needsMembers =
+    runAll &&
+    Boolean(picks.suite || (env?.versioning?.enabled && selected.suite));
+  const members = useSuiteMembers(env?.id, selected.suite, {
+    enabled: open && Boolean(selected.suite) && (!runAll || needsMembers),
+  });
+  const memberKeys = members.data?.map((member) => member.scenario_key);
+  const missing =
+    !runAll && memberKeys
+      ? scenarioIds.filter((key) => !memberKeys.includes(key))
+      : [];
+  // Selected scenarios the picked suite lacks are skipped.
+  let runIds = runAll
+    ? undefined
+    : scenarioIds.filter((key) => !missing.includes(key));
+  if (needsMembers) runIds = memberKeys;
   let blocked = null;
   if (needsMembers && memberKeys?.length === 0) {
     blocked = COPY.emptySuite(named(suite));
   } else if (!runAll && scenarioIds.length > 0 && runIds.length === 0) {
     blocked = COPY.noneInSuite(named(suite));
   }
-  // Tools that reach production are blocked in this controlled test.
-  const blockedTools = plan.data ? plan.data.blocked_tools : [];
-  if (!blocked && plan.data && !plan.data.runnable)
-    blocked = COPY.allBlocked(blockedTools.map((entry) => entry.tool));
 
   const submitError =
     error && error !== dismissedError ? inlineRunError(error) : null;
-  const seedError = submitError ? seedRefusal(submitError) : null;
   // A re-run's refused versions fall back to the defaults instead.
-  const shownError =
-    (seedError ? null : submitError) ||
-    (rerun === "checking" ? null : refusedPlan);
+  const shownError = submitError || (rerun === "checking" ? null : refusedPlan);
   const pickerError =
     shownError?.error === "version_not_pickable" &&
     VERSION_PIECES.includes(shownError.piece)
@@ -239,11 +222,9 @@ export default function RunDialog({
   const canSubmit =
     !submitting &&
     !versions.isLoading &&
-    // A failed plan leaves blocking to the run's own refusal.
-    (Boolean(plan.data) || planFailed) &&
+    !plan.isLoading &&
     !refusedPlan &&
     !blocked &&
-    !seedError &&
     !(!runAll && members.isLoading) &&
     (!needsMembers || memberKeys?.length > 0) &&
     (!readiness || readiness.canRun) &&
@@ -271,7 +252,7 @@ export default function RunDialog({
   // a new request.
   const submit = () => {
     if (!canSubmit) return;
-    onSubmit?.(picks, runIds, selected, seedValue);
+    onSubmit?.(picks, runIds, selected);
   };
 
   const pickerField = (piece) => (
@@ -329,17 +310,10 @@ export default function RunDialog({
     if (!selected.suite) return null;
     if (!needsMembers)
       return `${COPY.allCurrentScenarios(named(suite))}${repeats}`;
-    if (members.isLoading) return COPY.membersLoading;
+    if (members.isLoading) return null;
     if (!memberKeys) return null;
     return `${COPY.allScenarios(memberKeys.length, named(suite))}${repeats}`;
   };
-
-  const blockedToolLines = plan.data && (
-    <RunBlockedLine
-      blockedTools={blockedTools}
-      heldBack={plan.data.held_back}
-    />
-  );
 
   const body = () => {
     if (versions.isLoading) {
@@ -357,14 +331,11 @@ export default function RunDialog({
     }
     if (!data) {
       return (
-        <>
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {isVersioningDisabled(versions.error)
-              ? COPY.disabled
-              : COPY.loadError}
-          </Typography>
-          {blockedToolLines}
-        </>
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          {isVersioningDisabled(versions.error)
+            ? COPY.disabled
+            : COPY.loadError}
+        </Typography>
       );
     }
     const line = scenarioLine();
@@ -383,107 +354,99 @@ export default function RunDialog({
             onView={setReadiness}
           />
         )}
-        {rerun === "fellBack" && (
-          <Alert severity="info" sx={NOTE_SX} data-testid="rerun-fallback">
-            {agentFellBack ? COPY.rerunAgentFallback : COPY.rerunFallback}
-          </Alert>
-        )}
-        {(line || (heldBack && !allHeld)) && (
-          <Stack spacing={0.5}>
-            {line && (
-              <Typography
-                sx={{ typography: "s2", fontWeight: "fontWeightMedium" }}
-              >
-                {line}
-              </Typography>
-            )}
-            {heldBack && !allHeld && (
-              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {RUN_PLAN_COPY.heldBack(held, blockingLabel)}
-              </Typography>
-            )}
-          </Stack>
-        )}
-        {allHeld && (
-          <Alert severity="error" sx={NOTE_SX} data-testid="run-all-held">
-            {RUN_PLAN_COPY.allHeld(blockingLabel)}
-          </Alert>
-        )}
-        <RunSeedLine
-          seed={seed}
-          value={seedValue}
-          error={seedError}
-          onChange={(next) => {
-            setSeed(next);
-            setDismissedError(error);
-          }}
-        />
-        {drafts?.any && (
-          <Alert severity="info" sx={NOTE_SX} data-testid="run-drafts-note">
-            {DRAFTS_COPY.notInRun}
-          </Alert>
-        )}
-        {blockedToolLines}
-        {blocked && (
-          <Typography
-            sx={{ typography: "s2", color: "error.main" }}
-            data-testid="run-blocked"
-          >
-            {blocked}
-          </Typography>
-        )}
-        {members.isError && !members.data && (
-          <Typography sx={{ typography: "s2", color: "error.main" }}>
-            {COPY.membersError}
-          </Typography>
-        )}
-        {missing.length > 0 && !blocked && (
-          <Alert severity="warning" sx={NOTE_SX}>
-            {COPY.notInSuite(missing, named(suite))}
-          </Alert>
-        )}
-        {/* Kept rendered while empty so the live region is announced. */}
-        <Stack
-          spacing={2}
-          aria-live="polite"
-          data-testid="run-plan"
-          sx={{ "&:empty": { mt: 0 } }}
-        >
-          {plan.isLoading && (
-            <Stack direction="row" spacing={1} alignItems="center">
-              <CircularProgress size={14} />
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                {COPY.checking}
-              </Typography>
+        {/* The run line and its notes read as one group, tighter than the
+            sections above. */}
+        <Stack spacing={1} sx={{ "&:empty": { display: "none" } }}>
+          {rerun === "fellBack" && (
+            <Alert severity="info" sx={NOTE_SX} data-testid="rerun-fallback">
+              {agentFellBack ? COPY.rerunAgentFallback : COPY.rerunFallback}
+            </Alert>
+          )}
+          {needsMembers && members.isLoading && !blocked && (
+            <Box
+              role="progressbar"
+              aria-busy="true"
+              aria-label={COPY.membersLoading}
+            >
+              <Skeleton variant="rounded" width="45%" height={14} />
+            </Box>
+          )}
+          {(line || (heldBack && !allHeld)) && (
+            <Stack spacing={0.5}>
+              {line && (
+                <Typography
+                  sx={{ typography: "s2", fontWeight: "fontWeightMedium" }}
+                >
+                  {line}
+                </Typography>
+              )}
+              {heldBack && !allHeld && (
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {RUN_PLAN_COPY.heldBack(held, blockingLabel)}
+                </Typography>
+              )}
             </Stack>
           )}
-          {planFailed && (
-            <Alert
-              severity="warning"
-              data-testid="run-plan-failed"
-              action={
-                <Button
-                  size="small"
-                  color="inherit"
-                  onClick={() => plan.refetch()}
-                >
-                  {COPY.retryPlan}
-                </Button>
-              }
-            >
-              {COPY.planError}
+          {allHeld && (
+            <Alert severity="error" sx={NOTE_SX} data-testid="run-all-held">
+              {RUN_PLAN_COPY.allHeld(blockingLabel)}
             </Alert>
           )}
-          {warnings.map((warning) => (
-            <Alert
-              key={`${warning.code}:${warning.piece || ""}`}
-              sx={NOTE_SX}
-              severity="warning"
-              data-testid="run-warning"
-            >
-              {warning.message}
+          {drafts?.any && (
+            <Alert severity="info" sx={NOTE_SX} data-testid="run-drafts-note">
+              {DRAFTS_COPY.notInRun}
             </Alert>
-          ))}
+          )}
+          {blocked && (
+            <Typography
+              sx={{ typography: "s2", color: "error.main" }}
+              data-testid="run-blocked"
+            >
+              {blocked}
+            </Typography>
+          )}
+          {members.isError && !members.data && (
+            <Typography sx={{ typography: "s2", color: "error.main" }}>
+              {COPY.membersError}
+            </Typography>
+          )}
+          {missing.length > 0 && !blocked && (
+            <Alert severity="warning" sx={NOTE_SX}>
+              {COPY.notInSuite(missing, named(suite))}
+            </Alert>
+          )}
+          {/* Kept rendered while empty so the live region is announced. */}
+          <Stack
+            spacing={1}
+            aria-live="polite"
+            data-testid="run-plan"
+            sx={{ "&:empty": { mt: 0 } }}
+          >
+            {plan.isLoading && (
+              <Box
+                role="progressbar"
+                aria-busy="true"
+                aria-label={COPY.checking}
+              >
+                <Skeleton variant="rounded" height={32} />
+              </Box>
+            )}
+            {planFailed && (
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                {COPY.planError}
+              </Typography>
+            )}
+            {warnings.map((warning) => (
+              <Alert
+                key={`${warning.code}:${warning.piece || ""}`}
+                sx={NOTE_SX}
+                severity="warning"
+                data-testid="run-warning"
+              >
+                {warning.message}
+              </Alert>
+            ))}
+          </Stack>
         </Stack>
       </>
     );
@@ -491,7 +454,6 @@ export default function RunDialog({
 
   return (
     <ClosableDialog
-      data-scenario-run-dialog=""
       open={open}
       onClose={submitting ? undefined : onClose}
       fullWidth
@@ -554,9 +516,8 @@ RunDialog.propTypes = {
   trials: PropTypes.number,
   // {agent, environment, suite} → version id, pre-selected (a re-run's versions).
   initialPicks: PropTypes.objectOf(PropTypes.string),
-  initialSeed: PropTypes.string,
   onClose: PropTypes.func,
-  // (picks, scenarioIds, resolved version ids, seed or null)
+  // (picks, scenarioIds, resolved {agent, environment, suite} version ids).
   onSubmit: PropTypes.func,
   submitting: PropTypes.bool,
   error: PropTypes.object,
