@@ -358,6 +358,11 @@ export default function AutomationRulesTab({ queueId, queue }) {
             ref={gridRef}
             theme={agTheme}
             domLayout="autoHeight"
+            className={
+              isLoading || rulesList.length > 0
+                ? "no-min-height-grid"
+                : undefined
+            }
             rowData={isLoading ? SKELETON_ROWS : rulesList}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
