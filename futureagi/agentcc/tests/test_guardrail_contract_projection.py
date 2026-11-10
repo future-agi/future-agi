@@ -5,8 +5,10 @@ from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
+from rest_framework.test import APIClient
 
 from agentcc.contracts.gateway_admin import GuardrailConfig
+from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.services.config_push import _transform_guardrails
 
 
@@ -156,3 +158,74 @@ def test_dict_projection_keeps_credential_scope_and_input_immutable():
         "api_key": "synthetic-policy-value",
         "secret_key": "synthetic-platform-value",
     }
+
+
+@pytest.fixture
+def editor_guardrails():
+    return {
+        "enabled": True,
+        "rules": [{"name": "stale-rule"}],
+        "checks": {
+            "pii-detector": {
+                "enabled": True,
+                "action": "block",
+                "mode": "sync",
+                "stage": "pre",
+                "threshold": 0.6,
+                "config": {"entities": ["EMAIL_ADDRESS"]},
+            }
+        },
+    }
+
+
+@patch("agentcc.services.config_push.get_gateway_client")
+def test_editor_save_activates_and_pushes_contract(
+    gateway_client, auth_client, organization, editor_guardrails
+):
+    response = auth_client.post(
+        "/agentcc/org-configs/", {"guardrails": editor_guardrails}, format="json"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["result"]["gateway_synced"] is True
+    config = AgentccOrgConfig.no_workspace_objects.get(
+        organization=organization, is_active=True, deleted=False
+    )
+    assert config.guardrails["checks"]["pii-detector"]["stage"] == "pre"
+    gateway_client.return_value.set_org_config.assert_called_once()
+    org_id, payload = gateway_client.return_value.set_org_config.call_args.args
+    assert org_id == str(organization.id)
+    assert payload["guardrails"] == {
+        "checks": {
+            "pii-detection": {
+                "enabled": True,
+                "action": "block",
+                "confidence_threshold": 0.6,
+                "config": {"entities": ["EMAIL_ADDRESS"]},
+            }
+        },
+        "fail_open": False,
+        "pipeline_mode": "parallel",
+    }
+
+
+def test_bulk_sync_includes_editor_guardrails(organization, editor_guardrails):
+    AgentccOrgConfig.no_workspace_objects.create(
+        organization=organization,
+        version=1,
+        is_active=True,
+        guardrails=editor_guardrails,
+    )
+    client = APIClient()
+    with patch("agentcc.permissions.AGENTCC_ADMIN_TOKEN", "synthetic-admin"):
+        client.credentials(HTTP_AUTHORIZATION="Bearer synthetic-admin")
+        response = client.get("/agentcc/org-configs/bulk/")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["unbuilt_org_ids"] == []
+    config = GuardrailConfig.model_validate(
+        body["result"][str(organization.id)]["guardrails"]
+    )
+    assert set(config.checks) == {"pii-detection"}
+    assert config.checks["pii-detection"].confidence_threshold == 0.6
