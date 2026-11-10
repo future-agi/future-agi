@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   CircularProgress,
+  Collapse,
   Stack,
   Typography,
 } from "@mui/material";
@@ -100,43 +101,45 @@ function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
           </Button>
         )}
       </Stack>
-      {open && fix && (!checking || inFlight) && (
-        <Stack spacing={1} sx={{ pt: 1, pl: 2.5 }}>
-          {/* A re-check line opens on its full reason and what it means;
-              a fix line on what to change. */}
-          <Typography sx={{ typography: "s3", color: "text.primary" }}>
-            {recheckOnly ? line.reason : fix.action}
-          </Typography>
-          {recheckOnly && line.consequence && (
-            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {line.consequence}
+      {fix && (
+        <Collapse in={open && (!checking || inFlight)} unmountOnExit>
+          <Stack spacing={1} sx={{ pt: 1, pl: 2.5 }}>
+            {/* A re-check line opens on its full reason and what it means;
+                a fix line on what to change. */}
+            <Typography sx={{ typography: "s3", color: "text.primary" }}>
+              {recheckOnly ? line.reason : fix.action}
             </Typography>
-          )}
-          {!recheckOnly && fix.would && (
-            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {COPY.after(fix.would)}
-            </Typography>
-          )}
-          {fix.recheck && (
-            <Box>
-              <Button
-                size="small"
-                variant="contained"
-                disabled={busy}
-                startIcon={inFlight ? spinner : null}
-                onClick={
-                  fix.recheck.scope === "agent" ? onRetryAgent : onRecheck
-                }
-              >
-                {inFlight && COPY.checking}
-                {!inFlight &&
-                  (fix.recheck.scope === "agent"
-                    ? COPY.retryAgent
-                    : COPY.recheckPair)}
-              </Button>
-            </Box>
-          )}
-        </Stack>
+            {recheckOnly && line.consequence && (
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {line.consequence}
+              </Typography>
+            )}
+            {!recheckOnly && fix.would && (
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {COPY.after(fix.would)}
+              </Typography>
+            )}
+            {fix.recheck && (
+              <Box>
+                <Button
+                  size="small"
+                  variant="contained"
+                  disabled={busy}
+                  startIcon={inFlight ? spinner : null}
+                  onClick={
+                    fix.recheck.scope === "agent" ? onRetryAgent : onRecheck
+                  }
+                >
+                  {inFlight && COPY.checking}
+                  {!inFlight &&
+                    (fix.recheck.scope === "agent"
+                      ? COPY.retryAgent
+                      : COPY.recheckPair)}
+                </Button>
+              </Box>
+            )}
+          </Stack>
+        </Collapse>
       )}
     </Box>
   );
