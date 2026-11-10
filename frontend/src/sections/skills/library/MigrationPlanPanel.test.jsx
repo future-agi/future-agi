@@ -55,6 +55,23 @@ it('pins the exact body and operation key across a lost import response', async 
   await waitFor(() => expect(busy).toHaveBeenLastCalledWith(false));
 });
 
+it('allows the next reviewed item after an uncertain decision is confirmed by exact replay', async () => {
+  const accept = vi.fn().mockRejectedValueOnce(new Error('connection lost')).mockResolvedValueOnce({ receiptId: 'first' }).mockResolvedValueOnce({ receiptId: 'second' });
+  render(<MigrationPlanPanel scopeKey="scope" plan={{ ...plan, items: [item, { ...item, key: 'two', name: 'second-policy' }] }} onAccept={accept} />);
+  consent(); fireEvent.click(screen.getByRole('button', { name: 'Import reviewed item as draft' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Retry exact decision' }));
+  await screen.findByText(/Receipt first/);
+  choose('Review item', 'second-policy'); choose('Source update decision', 'Replace with reviewed source');
+  fireEvent.click(screen.getByRole('checkbox', { name: /reviewed source rights/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /Apply this exact decision/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Import reviewed item as draft' }));
+  await screen.findByText(/Receipt second/);
+  expect(accept).toHaveBeenCalledTimes(3);
+  expect(accept.mock.calls[1]).toEqual(accept.mock.calls[0]);
+  expect(accept.mock.calls[2][0].itemKey).toBe('two');
+  expect(accept.mock.calls[2][1].idempotencyKey).not.toBe(accept.mock.calls[0][1].idempotencyKey);
+});
+
 it('requires the HTTP contract rights acknowledgment for a keep decision too', async () => {
   const keep = vi.fn(async () => ({ receiptId: 'keep-receipt' }));
   render(<MigrationPlanPanel scopeKey="scope" plan={{ ...plan, requiresKeepRights: true }} onKeep={keep} />);

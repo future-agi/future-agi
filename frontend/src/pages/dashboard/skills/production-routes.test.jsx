@@ -88,6 +88,52 @@ it('opens the real context controller through production navigation and reads ex
   expect(screen.getByText(`v4 · ${versionId}`)).toBeVisible();
   expect(screen.getByRole('tab', { name: 'Agent contexts' })).not.toBeDisabled();
 });
+it('captures an authorized trace through the production context page and shares only the reviewed redaction', async () => {
+  const read = axios.get.getMockImplementation();
+  const suite = { revision: 2, digest, cases: [], updated_at: null, updated_by: null, visibility: 'workspace' };
+  axios.get.mockImplementation((url, config) => url.endsWith('/tests/') ? Promise.resolve(envelope(suite)) : read(url, config));
+  const traceRef = { project_id: id, trace_id: 'trace', span_id: 'span', start_time: '2026-11-10T00:00:00.123456Z' };
+  const segments = [{ id: 'request-1', kind: 'request', text: 'Customer private request' }];
+  axios.post.mockImplementation(async (url, body) => {
+    if (url.endsWith('/captures/source/')) { expect(body).toEqual({ trace_ref: traceRef }); return envelope({ trace_ref: traceRef, source_fingerprint: digest, segments }); }
+    if (url.endsWith('/captures/preview/')) { expect(body).toEqual({ trace_ref: traceRef, selected_segment_ids: ['request-1'] }); return envelope({ capture_id: versionId, expires_at: '2099-01-01T00:00:00Z', source_fingerprint: digest, recorded_context: null, segments, omitted: [], outbound_findings: [], replay_scope: 'text_only' }); }
+    if (url.endsWith(`/captures/${versionId}/accept/`)) return envelope({ ...suite, revision: 3 });
+    throw new Error(`Unexpected write ${url}`);
+  });
+  mount(`/dashboard/skills/contexts/${id}?version=4`);
+  await screen.findByText('# Exact policy');
+  fireEvent.click(screen.getByRole('button', { name: 'Create regression case from trace' }));
+  for (const [label, value] of Object.entries({ 'Source project ID': id, 'Source trace ID': 'trace', 'Source span ID': 'span', 'Span start time': traceRef.start_time })) fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value } });
+  fireEvent.click(screen.getByRole('button', { name: 'Load authorized source' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Request · request-1' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Preview selected text' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Redacted request' }), { target: { value: 'Redacted request' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Example title' }), { target: { value: 'Regression' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Expected answer must contain' }), { target: { value: 'Reviewed answer' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: /confirmed the expected behavior independently/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /Share this redacted request/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save reviewed example' }));
+  await screen.findByText(/Reviewed example saved/);
+  const saved = axios.post.mock.calls.find(([url]) => url.endsWith('/accept/'));
+  expect(saved[1]).toMatchObject({ suite_revision: 2, source_fingerprint: digest, acknowledge_workspace_sharing: true, case: { prompt: 'Redacted request', expected_trigger: null, reviewed: true, checks: [{ config: { text: 'Reviewed answer', case_sensitive: true } }] } });
+  expect(saved[2].headers['Idempotency-Key']).toMatch(/^[a-f0-9-]{36}$/);
+  expect(JSON.stringify(saved[1])).not.toContain('Customer private request');
+  expect(axios.post.mock.calls.some(([url]) => /test-runs|publish/.test(url))).toBe(false);
+});
+
+it('does not offer context capture when the authoritative write permission is absent', async () => {
+  const read = axios.get.getMockImplementation();
+  axios.get.mockImplementation(async (url, config) => {
+    const value = await read(url, config);
+    if (url === `/model-hub/skills/contexts/${id}/`) value.data.result.release_state = { ...releaseState, permissions: { ...permissions, can_publish: false } };
+    return value;
+  });
+  mount(`/dashboard/skills/contexts/${id}?version=4`);
+  await screen.findByText('# Exact policy');
+  expect(screen.getByRole('button', { name: 'Create regression case from trace' })).toBeDisabled();
+  expect(axios.post).not.toHaveBeenCalled();
+});
+
 it('retains the initially viewed release when background metadata advances latest', async () => {
   mount(`/dashboard/skills/contexts/${id}`);
   await screen.findByText('# Exact policy');
