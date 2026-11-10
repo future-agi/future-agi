@@ -5348,6 +5348,11 @@ class UpdateEvalConfigView(APIView):
         """
         Update an evaluation config and optionally trigger rerun
         """
+        from simulate.services.eval_config_edit import (
+            harness_column_refusal,
+            keeps_own_mapping,
+        )
+
         try:
             # Get the organization of the logged-in user
             user_organization = (
@@ -5372,6 +5377,14 @@ class UpdateEvalConfigView(APIView):
                 deleted=False,
             )
 
+            # Refused before anything is written, so a harness verdict is
+            # never overwritten by a "pending" placeholder and a re-grade.
+            harness_run = is_harness_run_test(run_test.id)
+            refusal = harness_column_refusal(eval_config, harness_run=harness_run)
+            if refusal is not None:
+                return self._gm.bad_request(refusal)
+            name = eval_config.name or "This evaluation"
+
             run = validated.get("run", False)
 
             try:
@@ -5380,6 +5393,7 @@ class UpdateEvalConfigView(APIView):
                     validated,
                     organization=user_organization,
                     workspace=getattr(request, "workspace", None),
+                    before_save=keeps_own_mapping(name) if harness_run else None,
                 )
             except EvalConfigEditRefused as refused:
                 return self._gm.bad_request(str(refused))
