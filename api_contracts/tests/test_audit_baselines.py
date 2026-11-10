@@ -101,6 +101,7 @@ class AuditBaselineTests(unittest.TestCase):
         interpreter = sys.executable if name.endswith(".py") else "node"
         return subprocess.run(
             [interpreter, str(self.root / "api_contracts/tests" / name)],
+            check=False,
             cwd=self.root,
             capture_output=True,
             text=True,
