@@ -12483,12 +12483,38 @@ class SingleRowEvaluationView(APIView):
             )
 
 
+def _run_dataset_evaluation_row(metric_id, row_id, runner_args):
+    """Keep initialization and all mutable runner state inside one row's future."""
+    close_old_connections()
+    try:
+        row_args = dict(runner_args)
+        row_args["source_configs"] = copy.deepcopy(
+            row_args.get("source_configs") or {}
+        )
+        # The task owns the metric lifecycle. A queued row must not reset a
+        # stopped metric to RUNNING when its worker eventually starts.
+        runner = EvaluationRunner(
+            user_eval_metric_id=metric_id, update_metric_status=False, **row_args
+        )
+        runner.run_evaluation_for_row(row_id)
+    finally:
+        close_old_connections()
+
+
 @temporal_activity(time_limit=3600, queue="tasks_s")
 def run_evaluation_task(evaluation_data):
+    from model_hub.utils.eval_cell_status import mark_rerun_cells_failed
+
+    metric_ids = evaluation_data["metric_ids"]
+    row_ids = evaluation_data["row_ids"]
+    target_column_id = (
+        evaluation_data.get("column")
+        if evaluation_data.get("column_source")
+        == SourceChoices.OPTIMISATION_EVALUATION.value
+        else None
+    )
     try:
         logger.info("-----INSIDE run_evaluation_task -----")
-        metric_ids = evaluation_data["metric_ids"]
-        row_ids = evaluation_data["row_ids"]
 
         # Update status for all metrics. select_related avoids an N+1 when
         # version stamping resolves each metric's pinned/default version.
@@ -12533,11 +12559,12 @@ def run_evaluation_task(evaluation_data):
                 },
             }
 
-        futures = []
-        blocked_metric_ids = set()
+        futures = {}
+        failed_metric_ids = set()
+        success_counts = defaultdict(int)
         with ThreadPoolExecutor(max_workers=5) as executor:
             for metric_id in metric_ids:
-                metric = metric_map.get(metric_id)
+                metric = metric_map.get(str(metric_id))
                 if metric:
                     try:
                         from ee.usage.services.metering import check_usage
@@ -12559,7 +12586,7 @@ def run_evaluation_task(evaluation_data):
                             UserEvalMetric.objects.filter(id=metric_id).update(
                                 status=StatusType.FAILED.value
                             )
-                            blocked_metric_ids.add(str(metric_id))
+                            failed_metric_ids.add(str(metric_id))
                             _mark_cells_usage_limit_error(metric, usage_check)
                             logger.warning(
                                 "dataset_eval_rerun_usage_limit_exceeded",
@@ -12579,10 +12606,8 @@ def run_evaluation_task(evaluation_data):
                         MixpanelEvents.EVAL_RUN_STARTED.value, properties
                     )
                 try:
-                    # Initialize the EvaluationRunner for each metric
-                    logger.info(
-                        " ----- INSIDE run_evaluation_task | Initializing the EvaluationRunner for each metric -----"
-                    )
+                    # Resolve run metadata once, but never share a mutable runner
+                    # between concurrent rows (including its initialization).
                     runner_args = dict(args)
                     if not runner_args.get("source"):
                         runner_args["source"] = "dataset_evaluation"
@@ -12616,47 +12641,56 @@ def run_evaluation_task(evaluation_data):
                         )
                     runner_args["source_configs"] = runner_source_configs
 
-                    evaluation_runner = EvaluationRunner(
-                        user_eval_metric_id=metric_id,
-                        **runner_args,
-                    )
-
-                    # Wrap function with OTel context propagation for thread safety
-                    wrapped_run_evaluation = wrap_for_thread(
-                        evaluation_runner.run_evaluation_for_row
-                    )
-
-                    # Process each row for this metric
                     for row_id in row_ids:
-                        futures.append(executor.submit(wrapped_run_evaluation, row_id))
+                        future = executor.submit(
+                            wrap_for_thread(_run_dataset_evaluation_row),
+                            metric_id,
+                            row_id,
+                            runner_args,
+                        )
+                        futures[future] = (metric_id, row_id)
 
                 except Exception as e:
                     logger.error(
                         f"Error initializing evaluation for metric {metric_id}: {str(e)}"
                     )
-                    UserEvalMetric.objects.filter(id=metric_id).update(
-                        status=StatusType.FAILED.value
+                    failed_metric_ids.add(str(metric_id))
+                    mark_rerun_cells_failed(
+                        metric_id, row_ids, column_id=target_column_id
                     )
 
-            # Wait for all futures to complete
-            success = 0
+            # Keep row/metric identity so a failure cannot strand a running cell
+            # or mark a sibling row's result as failed.
             for future in as_completed(futures):
+                metric_id, row_id = futures[future]
                 try:
                     future.result()
-                    success += 1
-                except Exception as e:
-                    logger.error(f"Error in evaluation: {str(e)}")
+                    success_counts[str(metric_id)] += 1
+                except Exception:
+                    logger.exception(
+                        "dataset_rerun_row_failed",
+                        metric_id=str(metric_id),
+                        row_id=str(row_id),
+                    )
+                    failed_metric_ids.add(str(metric_id))
+                    mark_rerun_cells_failed(
+                        metric_id, [row_id], column_id=target_column_id
+                    )
 
+        if failed_metric_ids:
+            UserEvalMetric.objects.filter(id__in=failed_metric_ids).update(
+                status=StatusType.FAILED.value
+            )
         for metric_id in metric_ids:
-            metric = metric_map.get(metric_id)
+            metric = metric_map.get(str(metric_id))
             if metric:
                 properties = get_mixpanel_properties(
                     eval=metric,
                     org=metric.organization,
                     source=evaluation_data.get("source"),
                     dataset=metric.dataset,
-                    count=success,
-                    failed=len(row_ids) - success,
+                    count=success_counts[str(metric_id)],
+                    failed=len(row_ids) - success_counts[str(metric_id)],
                 )
                 track_mixpanel_event(
                     MixpanelEvents.EVAL_RUN_COMPLETED.value, properties
@@ -12666,7 +12700,7 @@ def run_evaluation_task(evaluation_data):
         completed_metric_ids = [
             metric_id
             for metric_id in metric_ids
-            if str(metric_id) not in blocked_metric_ids
+            if str(metric_id) not in failed_metric_ids
         ]
         if completed_metric_ids:
             UserEvalMetric.objects.filter(id__in=completed_metric_ids).update(
@@ -12678,6 +12712,7 @@ def run_evaluation_task(evaluation_data):
             status=StatusType.FAILED.value
         )
         logger.error(f"Error in evaluation task: {str(e)}")
+        raise
 
 
 class DuplicateRowsView(APIView):

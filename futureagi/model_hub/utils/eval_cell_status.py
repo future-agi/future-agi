@@ -18,6 +18,44 @@ from model_hub.models.develop_dataset import Cell, Column
 logger = structlog.get_logger(__name__)
 
 
+def mark_rerun_cells_failed(metric_id, row_ids, *, column_id=None) -> int:
+    """Finish a failed selected-row future, including any stale paired reason.
+
+    Unlike stopping an entire eval, this must not touch unselected rows or other
+    metrics. Optimisation reruns target one explicit column. Errors propagate so
+    a failed database write can be retried by the activity rather than silently
+    leaving a RUNNING cell behind.
+    """
+    from model_hub.services.experiment_utils import is_user_eval_stopped
+
+    if is_user_eval_stopped(metric_id):
+        return 0
+
+    columns = Column.objects.filter(deleted=False)
+    if column_id is not None:
+        columns = columns.filter(id=column_id)
+    else:
+        columns = columns.filter(
+            source=SourceChoices.EVALUATION.value, source_id=str(metric_id)
+        )
+    column_ids = list(columns.values_list("id", flat=True))
+    reason_ids = Column.objects.filter(
+        source=SourceChoices.EVALUATION_REASON.value,
+        source_id__in=[f"{col_id}-sourceid-{metric_id}" for col_id in column_ids],
+        deleted=False,
+    ).values_list("id", flat=True)
+    reason = "Evaluation failed. Please rerun the evaluation."
+    return Cell.objects.filter(
+        row_id__in=row_ids,
+        column_id__in=column_ids + list(reason_ids),
+        deleted=False,
+    ).update(
+        status=CellStatus.ERROR.value,
+        value=reason,
+        value_infos=json.dumps({"reason": reason}),
+    )
+
+
 def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
     """Flip RUNNING cells of an eval (and its paired EVALUATION_REASON cells)
     to ERROR with a human-readable `reason`.
