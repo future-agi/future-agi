@@ -105,8 +105,9 @@ type bedrockTool struct {
 }
 
 type bedrockToolChoice struct {
-	Type string `json:"type"`
-	Name string `json:"name,omitempty"`
+	DisableParallelToolUse bool   `json:"disable_parallel_tool_use,omitempty"`
+	Type                   string `json:"type"`
+	Name                   string `json:"name,omitempty"`
 }
 
 type bedrockResponse struct {
@@ -252,6 +253,12 @@ func translateRequest(req *models.ChatCompletionRequest) (*bedrockRequest, strin
 		}
 	}
 
+	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(br.Tools) > 0 {
+		if br.ToolChoice == nil {
+			br.ToolChoice = &bedrockToolChoice{Type: "auto"}
+		}
+		br.ToolChoice.DisableParallelToolUse = true
+	}
 	return br, modelID
 }
 
