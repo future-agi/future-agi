@@ -552,6 +552,89 @@ describe("buildFlowData places Stop on dagre's rank axis", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #1379: React Flow places a node by its top-left corner, so each Dagre
+// center must be shifted by that node's own half-size, and siblings in the
+// trace detail (TB) need room for their labels.
+// ---------------------------------------------------------------------------
+
+describe("buildFlowData centers every node on its own Dagre box (#1379)", () => {
+  // The boxes layoutGraph gives Dagre: Start/Stop pills and regular nodes.
+  const SENTINEL_BOX = { width: 50, height: 32 };
+  const NODE_BOX = { width: 140, height: 44 };
+  const boxOf = (node) =>
+    node.data.type === "start" || node.data.type === "end"
+      ? SENTINEL_BOX
+      : NODE_BOX;
+  const center = (node, axis) =>
+    node.position[axis] + boxOf(node)[axis === "x" ? "width" : "height"] / 2;
+  const sentinel = (id, type) =>
+    canonicalNode(id, type, {
+      span_count: 0,
+      avg_latency_ms: 0,
+      total_tokens: 0,
+      total_cost: 0,
+    });
+
+  it.each([
+    ["TB", "x"],
+    ["LR", "y"],
+  ])(
+    "puts Start and Stop on the same axis as the flow (%s)",
+    (direction, cross) => {
+      const flow = buildFlowData(
+        {
+          nodes: [
+            sentinel("__start__", "start"),
+            canonicalNode("agent:root"),
+            sentinel("__end__", "end"),
+          ],
+          edges: [
+            canonicalEdge("__start__", "agent:root"),
+            canonicalEdge("agent:root", "__end__"),
+          ],
+        },
+        direction,
+      );
+      const byId = Object.fromEntries(
+        flow.nodes.map((node) => [node.id, node]),
+      );
+
+      flow.nodes.forEach((node) => {
+        expect(Number.isFinite(node.position.x)).toBe(true);
+        expect(Number.isFinite(node.position.y)).toBe(true);
+      });
+      const axis = center(byId["agent:root"], cross);
+      expect(center(byId.__start__, cross)).toBeCloseTo(axis);
+      expect(center(byId.__end__, cross)).toBeCloseTo(axis);
+    },
+  );
+
+  it("leaves room between sibling nodes in the trace detail layout (TB)", () => {
+    const siblings = ["tool:lookup", "chain:plan", "llm:draft"];
+    const flow = buildFlowData(
+      {
+        nodes: [
+          canonicalNode("agent:root"),
+          canonicalNode("tool:lookup", "tool"),
+          canonicalNode("chain:plan", "chain"),
+          canonicalNode("llm:draft", "llm"),
+        ],
+        edges: siblings.map((id) => canonicalEdge("agent:root", id)),
+      },
+      "TB",
+    );
+    const row = flow.nodes.filter((node) => siblings.includes(node.id));
+
+    expect(new Set(row.map((node) => node.position.y)).size).toBe(1);
+    const lefts = row.map((node) => node.position.x).sort((a, b) => a - b);
+    lefts.slice(1).forEach((left, index) => {
+      const gap = left - (lefts[index] + NODE_BOX.width);
+      expect(gap).toBeGreaterThanOrEqual(60);
+    });
+  });
+});
+
 describe("AgentGraph request states", () => {
   it("renders loading before validating absent pending data", () => {
     render(<AgentGraph data={undefined} isLoading isError={false} />);
