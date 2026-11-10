@@ -15,13 +15,11 @@ from datetime import timedelta
 from unittest import mock
 
 import pytest
-from django.test.utils import override_settings
+from django.db import connection
+from django.test.utils import CaptureQueriesContext, override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.utils.encoders import JSONEncoder
-
-from django.db import connection
-from django.test.utils import CaptureQueriesContext
-from django.utils import timezone
 
 from model_hub.models.annotation_queues import AnnotationExportJob, QueueItem
 from model_hub.models.choices import (
@@ -35,7 +33,6 @@ from model_hub.tasks.annotation_export import (
     export_annotation_queue_async,
     render_export,
 )
-from model_hub.utils.annotation_queue_helpers import CollectorSourceCache
 
 # The activity is invoked through ``_original_func`` the way the other activity
 # tests in this repo do it: the decorator wraps the call in
@@ -49,6 +46,7 @@ from model_hub.tests.test_annotation_export_batch_cap import (
     _build_prototype_run_queue,
     _unwrap,
 )
+from model_hub.utils.annotation_queue_helpers import CollectorSourceCache
 
 JOB_URL = "/model-hub/annotation-queues/{queue_id}/export-jobs/{job_id}/"
 

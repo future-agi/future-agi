@@ -127,6 +127,7 @@ def test_queue_deleted_during_render_does_not_upload(organization, workspace, us
 def test_retention_migration_preserves_existing_object_keys(organization, workspace, user):
     from importlib import import_module
     from types import SimpleNamespace
+
     from django.apps import apps
 
     seed = _build_dataset_queue(organization=organization, workspace=workspace, user=user, n_rows=1)
