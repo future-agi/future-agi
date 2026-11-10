@@ -23,14 +23,24 @@ config:
         import urllib.request
         text = kwargs.get("text", output or "")
         text = str(text)
-        pattern = r"(?!.*@)(?:https?://)?(?:www\.)?\S+\.\S+"
-        links = re.findall(pattern, text)
+        # Bare hosts need an alphabetic suffix; do not retry inside e-mails.
+        host = r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}"
+        pattern = (
+            r"(?<![\w@.-])(?:https?://[^\s<>\"']+|"
+            r"(?![^\s<>\"'(),;]*@)" + host +
+            r"(?![\w@-]|\.[\w-])(?::\d+)?(?:[/?#][^\s<>\"']*)?)"
+        )
+        links = re.findall(pattern, text, re.IGNORECASE)
         if not links:
             return {"score": 1.0, "reason": "No links found in output, so none are invalid"}
         invalid_links = []
         for link in links:
-            url = link
-            if not url.startswith(("http://", "https://")):
+            url = link.rstrip(".,;:!?")
+            # Remove prose/Markdown wrappers, but keep balanced URL parentheses.
+            for opening, closing in (("(", ")"), ("[", "]"), ("{", "}")):
+                while url.endswith(closing) and url.count(closing) > url.count(opening):
+                    url = url[:-1]
+            if not url.lower().startswith(("http://", "https://")):
                 url = "http://" + url
             try:
                 req = urllib.request.Request(url, method='HEAD')

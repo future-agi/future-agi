@@ -32,7 +32,8 @@ logger = structlog.get_logger(__name__)
 # 26: the 24 ndcg_at_k fix landed after 25, so it ships as 26.
 # 29: retrieval evals normalize scalar references and hypotheses as single items.
 # 30: BLEU and CodeBLEU score short answers over the available n-gram orders.
-SYSTEM_EVALS_VERSION = 30
+# 31: link evals ignore e-mails, decimals, and abbreviations before HTTP checks.
+SYSTEM_EVALS_VERSION = 31
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
