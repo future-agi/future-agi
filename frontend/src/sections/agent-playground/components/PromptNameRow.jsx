@@ -111,6 +111,9 @@ export default function PromptNameRow({ control }) {
       },
     );
     setValue("messages", formConfig.messages, { shouldDirty: true });
+    setValue("templateFormat", formConfig.templateFormat, {
+      shouldDirty: true,
+    });
     setValue("outputFormat", formConfig.outputFormat || "string", {
       shouldDirty: false,
     });

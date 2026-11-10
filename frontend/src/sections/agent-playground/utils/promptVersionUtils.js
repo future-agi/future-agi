@@ -25,6 +25,7 @@ export function mapVersionToFormConfig(version) {
 
   return {
     outputFormat: cfg.output_format || snapshot?.output_format || "string",
+    templateFormat: cfg.template_format || "mustache",
     modelConfig: {
       model: cfg.model || "",
       modelDetail: cfg.model_detail || {},

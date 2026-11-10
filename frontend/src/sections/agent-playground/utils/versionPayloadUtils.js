@@ -183,6 +183,11 @@ function buildPromptTemplateForApi(formConfig) {
       configuration?.tool_choice ||
       formConfig.modelConfig?.toolChoice ||
       "",
+    template_format:
+      configuration?.templateFormat ||
+      configuration?.template_format ||
+      formConfig.templateFormat ||
+      "mustache",
     save_prompt_version: false,
   };
 }
