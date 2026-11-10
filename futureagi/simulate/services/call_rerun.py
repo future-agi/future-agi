@@ -1,5 +1,8 @@
+from django.db.models import F, Value
+from django.db.models.functions import Coalesce
+
 from simulate.models import CallExecution
-from simulate.models.test_execution import CallExecutionSnapshot
+from simulate.models.test_execution import CallExecutionSnapshot, CallTranscript
 
 
 def clear_call_for_rerun(
@@ -52,17 +55,17 @@ def clear_call_for_rerun(
         transcripts=list(
             call_execution.transcripts.values(
                 "speaker_role",
-                "speaker_name",
-                "actor_id",
                 "content",
                 "start_time_ms",
                 "end_time_ms",
                 "confidence_score",
+                speaker_name=Coalesce("actor_turn__speaker_name", Value("")),
+                actor_id=F("actor_turn__actor_id"),
             )
         ),
     )
 
-    call_execution.transcripts.all().delete()
+    CallTranscript.delete_with_actor_turns(call_execution.transcripts.all())
 
     call_execution.service_provider_call_id = None
     call_execution.monitor_call_data = None

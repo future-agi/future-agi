@@ -1508,7 +1508,7 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
                 call_execution=call_execution
             ).exists()
         ):
-            CallTranscript.objects.bulk_create(
+            created = CallTranscript.objects.bulk_create(
                 [
                     CallTranscript(
                         call_execution=call_execution,
@@ -1530,6 +1530,7 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
                     for seg in segments
                 ]
             )
+            CallTranscript.create_actor_turns(created)
             call_execution.transcript_available = True
 
         _apply_conversation_metrics(call_execution)
