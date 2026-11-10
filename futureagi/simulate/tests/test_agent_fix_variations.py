@@ -234,6 +234,12 @@ class TestTheBuilderMessage:
         )
         # The builder's memory outlives its workspace: it must not answer from it.
         assert "even if you remember writing variations before" in command.content
+        # ALK refuses a scenario whose coverage and sub-goals both equal another's, so
+        # a variation keeps the failure's levels and moves to a cell of its own.
+        assert "coverage cell of its own" in command.content
+        assert "interface, interaction or counterparty" in command.content
+        assert "sub_goals, use_case, max_turns" in command.content
+        assert "sub_goals, use_case, coverage" not in command.content
         assert fix_run.step == FixStep.VARIATIONS
         builder.assert_called_once()
         # Asked once, however often the step is looked at.
