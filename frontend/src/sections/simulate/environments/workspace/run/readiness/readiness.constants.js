@@ -34,8 +34,7 @@ export const READY_TO_RUN_COPY = {
   },
   states: {
     unchecked: "Not checked yet for these versions. Re-check to check them.",
-    checking:
-      "Checking these versions together. Runs wait until it finishes, at most 45 minutes.",
+    checking: "Checking these versions together. Runs wait until it finishes.",
     failed: (reason) =>
       `The last check failed${reason ? `: ${reason}` : ""}. Runs of these versions are refused until a check passes.`,
     ours: (reason) =>
