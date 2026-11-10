@@ -25,6 +25,12 @@ test('retains early cache attribution, drops secrets and unrelated log text', ()
   assert.deepEqual(logs.map(line => safeLog(line, 'backend')).filter(Boolean), [record]);
 });
 
+test('E2E local ConsoleRenderer retains typed cache attribution without raw fields', () => {
+  const line = `${timestamp} 2026-11-10T08:30:34.719Z [\u001b[33mwarning  \u001b[0m] \u001b[1mapi_cache_unavailable\u001b[0m [accounts.authentication] cause_class=TimeoutError error_class=ConnectionInterrupted source_line=1036 source_function=decode_token token=secret-token message='redis://secret-password'`;
+  assert.deepEqual(safeLog(line, 'backend'), { timestamp, service: 'backend', event: 'api_cache_unavailable',
+    error_class: 'ConnectionInterrupted', cause_class: 'TimeoutError', source_function: 'decode_token', source_line: 1036 });
+});
+
 test('Redis evidence is an allowlist of numeric counters and lifecycle events', () => {
   assert.deepEqual(redisInfo('used_memory:123\r\nrejected_connections:2\r\nmaster_host:secret\r\nerrorstat_OOM:count=4\r\naof_delayed_fsync:5'),
     { used_memory: 123, rejected_connections: 2, errorstat_OOM: 4, aof_delayed_fsync: 5 });
@@ -56,7 +62,8 @@ test('missing services and runner pressure stay diagnostic, not suite failures',
   assert.ok(!JSON.stringify(result).includes('secret'));
 });
 
-test('collector starts before suite, cleans up streams and preserves exact exit code', async () => {
+for (const [status, signal, expected] of [[7, null, 7], [null, 'SIGKILL', 137]])
+  test(`collector starts before suite, cleans up and preserves exit ${expected}`, async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'redis-diagnostics-'));
   const sequence = [], streams = [];
   const spawn = (file, args, options) => {
@@ -66,7 +73,7 @@ test('collector starts before suite, cleans up streams and preserves exact exit 
     child.kill = signal => { sequence.push(signal); return true; };
     if (options.stdio === 'inherit') {
       sequence.push('suite');
-      queueMicrotask(() => child.emit('close', 7, null));
+      queueMicrotask(() => child.emit('close', status, signal));
     } else { sequence.push('follow'); streams.push(child); }
     return child;
   };
@@ -75,12 +82,12 @@ test('collector starts before suite, cleans up streams and preserves exact exit 
       spawn, command: async () => 'a'.repeat(64),
       snapshot: async () => { sequence.push('snapshot'); return { timestamp, rejected_connections: 2 }; },
     });
-    assert.equal(code, 7);
+    assert.equal(code, expected);
     assert.ok(sequence.indexOf('follow') < sequence.indexOf('suite'));
     assert.ok(sequence.indexOf('snapshot') < sequence.indexOf('suite'));
     assert.equal(sequence.filter(value => value === 'SIGKILL').length, streams.length);
     const result = JSON.parse(await readFile(path.join(dir, 'redis-diagnostics.json'), 'utf8'));
-    assert.equal(result.suiteExitCode, 7);
+    assert.equal(result.suiteExitCode, expected);
     assert.equal(result.records.length, 2);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

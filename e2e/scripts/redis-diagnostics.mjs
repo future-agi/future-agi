@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { constants } from 'node:os';
 
 const exec = promisify(execFile);
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -39,11 +40,21 @@ export function safeLog(line, service) {
     const index = events.findIndex(pattern => pattern.test(line));
     return index < 0 ? null : { timestamp, service, event: ['ready', 'save_started', 'save_complete', 'db_saved', 'overcommit_warning'][index] };
   }
-  // Only JSON structlog records, not a regex across arbitrary exception text.
+  // Prod uses JSONRenderer; the E2E overlay uses ENV_TYPE=local and therefore
+  // ConsoleRenderer. In either case retain only known events and typed fields.
   const start = line.indexOf('{');
-  if (start < 0) return null;
   let value;
-  try { value = JSON.parse(line.slice(start)); } catch { return null; }
+  try { value = JSON.parse(line.slice(start)); } catch { /* Try the local renderer below. */ }
+  if (!value) {
+    const plain = line.replace(/\x1b\[[0-9;]*m/g, '');
+    const event = plain.match(/\[(?:warning|info|error)\s*\]\s+([a-z_]+)(?:\s|$)/)?.[1];
+    if (!EVENTS.has(event)) return null;
+    value = { event };
+    for (const match of plain.matchAll(/\b([a-z_]+)=(?:'([^']*)'|([^\s]+))/g)) {
+      const text = match[2] ?? match[3];
+      value[match[1]] = numeric(text) ?? text;
+    }
+  }
   if (!EVENTS.has(value.event)) return null;
   const result = { timestamp, service, event: value.event };
   const enums = { operation: ['get', 'set', 'delete'], transport_category: ['timeout', 'connection', 'unknown'],
@@ -172,7 +183,7 @@ export async function runWithDiagnostics(argv, outputDir, deps = {}) {
     code = await new Promise(resolve => {
       const child = start(argv[0], argv.slice(1), { stdio: 'inherit' });
       child.once('error', () => resolve(127));
-      child.once('close', (status, signal) => resolve(status ?? (signal === 'SIGINT' ? 130 : 143)));
+      child.once('close', (status, signal) => resolve(status ?? (128 + (constants.signals[signal] ?? 15))));
     });
   } finally {
     clearInterval(timer);
