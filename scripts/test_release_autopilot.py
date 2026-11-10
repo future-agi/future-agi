@@ -321,7 +321,9 @@ class EnvironmentPolicyTests(unittest.TestCase):
         self.assertEqual(self.decide(ref="refs/tags/v1.2.4"), "Production")
         for count in (1, 100, None, "0", -1, False):
             self.assertEqual(self.decide(count=count), "Production")
-        self.assertEqual(self.decide(version="v1.2.3-beta.1", ref="refs/tags/v1.2.3-beta.1"), "production-auto")
+        # Prereleases always keep human review.
+        self.assertEqual(self.decide(version="v1.2.3-beta.1", ref="refs/tags/v1.2.3-beta.1"), "Production")
+        self.assertEqual(self.decide(version="v1.2.3-rc.2", ref="refs/tags/v1.2.3-rc.2"), "Production")
 
     def test_oss_and_ee_migration_paths_and_initializers(self):
         for path in ("futureagi/accounts/migrations/0002_new.py",
@@ -399,6 +401,18 @@ class GitEvidenceTests(unittest.TestCase):
         self.git("tag", "v1.2.0")
         with self.assertRaises(RuntimeError):
             self.release(event="workflow_dispatch", version="v1.2.0")
+
+    def test_prerelease_from_dev_is_allowed_with_human_review(self):
+        self.git("checkout", "-b", "dev")
+        self.write("dev.txt")
+        self.commit()
+        self.git("update-ref", "refs/remotes/origin/dev", "HEAD")
+        self.git("tag", "v1.2.0-rc.1")
+        text = self.release(version="v1.2.0-rc.1", sha=self.git("rev-parse", "HEAD").strip())
+        self.assertIn("environment=Production\n", text)
+        self.git("tag", "v1.2.0")
+        with self.assertRaises(RuntimeError):
+            self.release(version="v1.2.0", sha=self.git("rev-parse", "HEAD").strip())
 
     def test_event_sha_and_approval_sha_must_not_drift(self):
         prior = self.git("rev-parse", "v1.0.0").strip()

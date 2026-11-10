@@ -462,6 +462,14 @@ def git(*args):
     return result.stdout.strip()
 
 
+def reachable(sha, branch):
+    try:
+        git("merge-base", "--is-ancestor", sha, branch)
+        return True
+    except RuntimeError:
+        return False
+
+
 def version_tuple(tag):
     match = re.fullmatch(r"v" + STABLE, tag)
     return tuple(map(int, match.groups())) if match else None
@@ -495,6 +503,8 @@ def environment_decision(enabled, event, ref, version, count):
         return "Production", "RELEASE_AUTO_APPROVE is not on"
     if event != "push" or ref != f"refs/tags/{version}":
         return "Production", "only an exact tag push may skip review; dispatches require a person"
+    if version_tuple(version) is None:
+        return "Production", "prerelease tags keep human review"
     if type(count) is not int or count < 0:
         return "Production", "migration baseline or diff is unknown"
     if count:
@@ -510,11 +520,13 @@ def release_environment(version, expected_sha=None, approved_environment=None):
         raise RuntimeError("tag does not resolve to a commit")
     # Ancestry is mandatory even when automatic approval is off or this is a
     # dispatch. A valid tag spelling alone does not prove the code was reviewed.
-    try:
-        git("merge-base", "--is-ancestor", sha, "origin/main")
-    except RuntimeError:
-        summary("Release refused: tag commit reachability from origin/main could not be proved.")
-        raise
+    # Stable tags must be on main. Prerelease tags may be cut from dev; they
+    # always keep human review (environment_decision), but still must come
+    # from a reviewed branch.
+    branches = ["origin/main"] if version_tuple(version) else ["origin/main", "origin/dev"]
+    if not any(reachable(sha, branch) for branch in branches):
+        summary("Release refused: tag commit reachability from " + " or ".join(branches) + " could not be proved.")
+        raise RuntimeError("tag commit is not on a reviewed branch")
     if expected_sha is not None and sha != expected_sha:
         raise RuntimeError("tag moved while approval was waiting")
     if os.environ.get("GITHUB_EVENT_NAME") == "push":
@@ -530,7 +542,7 @@ def release_environment(version, expected_sha=None, approved_environment=None):
                                                os.environ.get("GITHUB_REF"), version, count)
     summary(f"Release approval: `{environment}` for `{version}` at `{sha}`. {reason}.\n\n"
             f"Migration baseline: `{last or 'unknown'}`; new files: {count if count is not None else 'unknown'}. "
-            "The tag commit is reachable from origin/main.")
+            "The tag commit is on a reviewed branch.")
     if approved_environment is not None:
         if approved_environment not in {"Production", "production-auto"}:
             raise ValueError("invalid approved environment")
