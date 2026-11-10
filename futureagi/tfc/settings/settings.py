@@ -1436,6 +1436,7 @@ AUTH0_ALGORITHM = "RS256"
 GITHUB_API_ENDPOINT = "https://api.github.com"
 GITHUB_OAUTH_URL = "https://github.com/login/oauth"
 GOOGLE_USERINFO_API = "https://www.googleapis.com/oauth2/v1/userinfo"
+GOOGLE_OAUTH_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 MICROSOFT_OAUTH_URL = "https://login.microsoftonline.com/common/oauth2/v2.0"
 MICROSOFT_GRAPH_API = "https://graph.microsoft.com/v1.0"
 
