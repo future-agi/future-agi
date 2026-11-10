@@ -30,6 +30,10 @@ from model_hub.services.skills_hub.v11.limits import MAX_EVIDENCE_BYTES
 if TYPE_CHECKING:
     from model_hub.services.skills_hub.v11.types import SkillScope
 
+# Admission handshake for the protocol branches in execute_test_attempt. This is
+# code-owned, not a deployment setting that could enable an unsupported loop.
+SUPPORTED_HARNESSES = frozenset({"contexts-text-v1.2"})
+
 TASK_PROMPT = """Complete the user's request using the supplied evidence.
 
 The optional skills listed below contain specialized instructions. Each entry

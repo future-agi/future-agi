@@ -2,9 +2,42 @@
 
 from django.urls import path
 
+from model_hub.views import skills_context_testing as testing
 from model_hub.views import skills_hub_v12 as views
+from model_hub.views.skills_context_dependents import SkillContextDependentsView
 
+# J3: whole-context test APIs stay separate from the leaf-only routes.
 urlpatterns = [
+    path("<uuid:skill_id>/context-dependents/", SkillContextDependentsView.as_view()),
+    path(
+        "contexts/<uuid:context_id>/test-runs/preview/",
+        testing.ContextTestPreviewView.as_view(),
+    ),
+    path("contexts/<uuid:context_id>/test-runs/", testing.ContextTestRunsView.as_view()),
+    path(
+        "contexts/<uuid:context_id>/test-runs/<uuid:run_id>/",
+        testing.ContextTestRunView.as_view(),
+    ),
+    path(
+        "contexts/<uuid:context_id>/test-runs/<uuid:run_id>/results/",
+        testing.ContextTestResultsView.as_view(),
+    ),
+    path(
+        "contexts/<uuid:context_id>/test-runs/<uuid:run_id>/attempts/<uuid:attempt_id>/",
+        testing.ContextTestAttemptView.as_view(),
+    ),
+    path(
+        "contexts/<uuid:context_id>/test-runs/<uuid:run_id>/share/",
+        testing.ContextTestShareView.as_view(),
+    ),
+    path(
+        "contexts/<uuid:context_id>/test-runs/<uuid:run_id>/cancel/",
+        testing.ContextTestCancelView.as_view(),
+    ),
+    path(
+        "contexts/<uuid:context_id>/test-runs/<uuid:run_id>/files/",
+        testing.ContextTestFileView.as_view(),
+    ),
     path(
         "contexts/<uuid:context_id>/consumers/",
         views.ContextConsumersView.as_view(),

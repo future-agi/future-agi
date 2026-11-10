@@ -214,10 +214,15 @@ def test_root_delivery_is_not_activation_or_answer_uplift(snapshot, case):
 
 
 @pytest.mark.django_db
-def test_native_worker_capability_cannot_be_enabled_by_testing_flag(
-    organization, workspace, user
+def test_context_worker_capability_cannot_be_enabled_by_testing_flag(
+    organization, workspace, user, monkeypatch, settings
 ):
     from model_hub.models import HubSkill, HubSkillJob
+    from model_hub.services.skills_hub.v11 import runner
+
+    settings.SKILLS_TESTING_ENABLED = True
+    # Simulate an older worker: a deployment flag cannot add its protocol branch.
+    monkeypatch.setattr(runner, "SUPPORTED_HARNESSES", frozenset())
 
     context = HubSkill.no_workspace_objects.create(
         organization=organization,

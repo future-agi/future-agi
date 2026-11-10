@@ -607,7 +607,18 @@ def prepare_context_test_plan(
             [{key: row[key] for key in CASE_FIELDS} for row in cases]
         )
     else:
-        cases = validate_context_cases(selection["cases"])
+        # Freeze server-owned attribution just as for leaf ad-hoc cases. The
+        # result/attempt contract must not invent it later or crash on read.
+        cases = [
+            {
+                **case,
+                "reviewed_by": {"id": str(principal.user_id), "name": ""},
+                "reviewed_at": None,
+                "origin": "manual",
+                "exposed_to_assist": False,
+            }
+            for case in validate_context_cases(selection["cases"])
+        ]
     if (
         not cases
         or any(
