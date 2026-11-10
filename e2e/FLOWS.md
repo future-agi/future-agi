@@ -1315,6 +1315,26 @@
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
 
+### GW-E2E-022 — an edited guardrail saves and activates from Org Config
+
+**Goal:** A user edits an existing guardrail in Gateway Settings, saves and activates it, and sees the saved value after reopening
+
+**Spec:** `flows/gateway/org-config-guardrails.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a legacy keyword guardrail with a unique blocked word through the Org Config API
+2. open Gateway Settings and edit Org Config on the Guardrails tab
+3. change the timeout from 1000 to 1500 milliseconds and Save & Activate
+4. reopen the editor and see the saved timeout
+
+**Backend state verified:**
+
+- the save creates the next active config version and the active-config API retains the unique keyword and edited timeout
+- the real Go gateway receives that same keyword rule and timeout with only contract fields
+
 ## observe
 
 ### OBS-E2E-001 — SDK trace appears in Observe with coherent backend state
