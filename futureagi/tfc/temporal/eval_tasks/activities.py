@@ -172,7 +172,8 @@ def _run_entry_sync(entry_id: str) -> dict:
         from tracer.services.eval_tasks.run_entry import run_entry
 
         with eval_ch_guardrails():
-            entry = EvalLogger.objects.filter(id=entry_id).first()
+            # Primary: the workflow claimed this entry moments ago.
+            entry = EvalLogger.objects.using("default").filter(id=entry_id).first()
             if entry is None:
                 return {"entry_id": str(entry_id), "task_id": "", "status": "deleted"}
             if _task_paused(entry.eval_task_id):
@@ -226,9 +227,12 @@ def _fail_entry_sync(entry_id: str) -> dict:
         from tracer.services.eval_tasks.config_hash import resolved_config_hash
         from tracer.services.eval_tasks.entries import mark_terminal
 
-        entry = EvalLogger.objects.filter(
-            id=entry_id, status=EvalEntryStatus.RUNNING
-        ).first()
+        # Primary: the claim this fences on was written moments ago.
+        entry = (
+            EvalLogger.objects.using("default")
+            .filter(id=entry_id, status=EvalEntryStatus.RUNNING)
+            .first()
+        )
         if entry is None:
             return {"entry_id": str(entry_id), "status": "noop"}
         config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)

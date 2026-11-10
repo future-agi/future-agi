@@ -1868,15 +1868,21 @@ def _execute_evaluation(
             eval_log = _persist_eval_logger(logger_kwargs)
         else:
             try:
-                eval_log = EvalLogger.objects.select_related(
-                    "observation_span",
-                    "observation_span__project",
-                    "observation_span__project__organization",
-                    "observation_span__project__workspace",
-                ).get(
-                    eval_task_id=eval_task_id,
-                    observation_span=observation_span,
-                    custom_eval_config=custom_eval_config,
+                # Primary: whether this result already has a row decides
+                # between updating it and creating one.
+                eval_log = (
+                    EvalLogger.objects.using("default")
+                    .select_related(
+                        "observation_span",
+                        "observation_span__project",
+                        "observation_span__project__organization",
+                        "observation_span__project__workspace",
+                    )
+                    .get(
+                        eval_task_id=eval_task_id,
+                        observation_span=observation_span,
+                        custom_eval_config=custom_eval_config,
+                    )
                 )
                 # Set each attribute from logger_kwargs
                 for key, value in logger_kwargs.items():
@@ -1886,12 +1892,17 @@ def _execute_evaluation(
 
             except EvalLogger.DoesNotExist:
                 eval_log = EvalLogger.objects.create(**logger_kwargs)
-                eval_log = EvalLogger.objects.select_related(
-                    "observation_span",
-                    "observation_span__project",
-                    "observation_span__project__organization",
-                    "observation_span__project__workspace",
-                ).get(pk=eval_log.pk)
+                # Primary: the row was written a moment ago.
+                eval_log = (
+                    EvalLogger.objects.using("default")
+                    .select_related(
+                        "observation_span",
+                        "observation_span__project",
+                        "observation_span__project__organization",
+                        "observation_span__project__workspace",
+                    )
+                    .get(pk=eval_log.pk)
+                )
 
         from model_hub.services.error_localizer_service import (
             error_localizer_enabled,

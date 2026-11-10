@@ -1735,10 +1735,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         requested_ids = {str(eval_id) for eval_id in (eval_ids or [])}
         if not requested_ids:
             return []
+        # Primary: the configs are usually created just before the task that
+        # uses them, and a lagging replica would report them missing.
         visible_ids = {
             str(eval_id)
             for eval_id in self._scope_custom_eval_config_queryset(
-                CustomEvalConfig.objects.all(), project_id=project_id
+                CustomEvalConfig.objects.using("default"), project_id=project_id
             )
             .filter(id__in=requested_ids)
             .values_list("id", flat=True)
@@ -1758,7 +1760,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
         if "evals" in fields:
             fields["evals"].queryset = self._scope_custom_eval_config_queryset(
-                CustomEvalConfig.objects.all()
+                CustomEvalConfig.objects.using("default")
             )
         return serializer
 

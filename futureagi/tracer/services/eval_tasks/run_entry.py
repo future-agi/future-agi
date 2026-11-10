@@ -50,7 +50,9 @@ def run_entry(entry: EvalLogger) -> str:
     state; infrastructure read failures propagate to the activity's bounded
     retry policy.
     """
-    fresh = EvalLogger.objects.filter(id=entry.id).first()
+    # Primary throughout: the entry was claimed moments ago and its claim
+    # stamp fences every write below.
+    fresh = EvalLogger.objects.using("default").filter(id=entry.id).first()
     if fresh is None:
         return "deleted"
 
@@ -134,7 +136,7 @@ def run_entry(entry: EvalLogger) -> str:
 
     # The evaluator wrote the result onto the entry; read its error flag to pick
     # the terminal status, then stamp status + hash.
-    fresh.refresh_from_db()
+    fresh.refresh_from_db(using="default")
     status = EvalEntryStatus.ERRORED if fresh.error else EvalEntryStatus.COMPLETED
     # Explicit rather than scoped: this call is outside ``running_entry_epoch``,
     # and the refresh above has already replaced ``fresh.updated_at`` with
