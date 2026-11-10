@@ -30,6 +30,7 @@ from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 from agentic_eval.core_evals.run_prompt.litellm_models import (
     LiteLLMModelManager,
     MissingProviderKeyError,
+    UnavailableModelError,
     missing_provider_key_message,
 )
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
@@ -1920,8 +1921,8 @@ class PreviewRunPromptColumnView(APIView):
                     pass
 
             # Use the execution scope, including custom-model credentials and
-            # the existing workspace-over-organization precedence. A missing key
-            # is a run-wide setup failure, never a generated response per row.
+            # workspace-over-organization precedence. Reject missing credentials
+            # before executing any rows; later failures must preserve completed work.
             organization_id = dataset.organization_id
             workspace_id = dataset.workspace_id
             model_manager = LiteLLMModelManager(
@@ -1937,6 +1938,7 @@ class PreviewRunPromptColumnView(APIView):
             )
 
             responses = []
+            value_infos = {"metadata": {"usage": {}, "cost": {}}}
             for row in rows:
                 try:
                     output_format = config.get("output_format", "string")
@@ -1984,9 +1986,21 @@ class PreviewRunPromptColumnView(APIView):
                     else:
                         responses.append(response)
 
-                except MissingProviderKeyError:
-                    # Credentials may have been removed after preflight.
-                    raise
+                except MissingProviderKeyError as exc:
+                    # Provider calls cannot be rolled back. Retain completed
+                    # outputs and mark every remaining row without retrying it.
+                    remaining_rows = len(rows) - len(responses)
+                    logger.warning(
+                        "prompt_preview_configuration_changed",
+                        error_type=type(exc).__name__,
+                        processed_rows=len(responses),
+                        remaining_rows=remaining_rows,
+                    )
+                    responses.extend(
+                        [f"Error: {missing_provider_key_message(exc.provider)}"]
+                        * remaining_rows
+                    )
+                    break
                 except Exception as e:
                     responses.append(str(e))
                     value_infos = {"metadata": {"usage": {}, "cost": {}}}
@@ -1998,11 +2012,11 @@ class PreviewRunPromptColumnView(APIView):
                 }
             )
 
-        except MissingProviderKeyError as exc:
+        except (MissingProviderKeyError, UnavailableModelError) as exc:
             logger.warning(
                 "prompt_preview_configuration_invalid", error_type=type(exc).__name__
             )
-            return self._gm.bad_request(missing_provider_key_message(exc.provider))
+            return self._gm.bad_request(str(exc))
         except Exception as e:
             error_message = get_specific_error_message(e)
             logger.exception(f"Error in preview run prompt column: {error_message}")

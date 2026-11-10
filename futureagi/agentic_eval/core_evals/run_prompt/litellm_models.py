@@ -11,6 +11,17 @@ from model_hub.models.custom_models import CustomAIModel
 logger = structlog.get_logger(__name__)
 
 
+class UnavailableModelError(ValueError):
+    """The selected model is absent from the runtime catalog and custom models."""
+
+    def __init__(self):
+        super().__init__(
+            "The selected model is not available in the current model catalog. "
+            "It may be deprecated or retired. Please select a supported model "
+            "from the latest available models list."
+        )
+
+
 class MissingProviderKeyError(ValueError):
     """No key saved under Settings -> AI Providers for a provider."""
 
@@ -259,10 +270,7 @@ class LiteLLMModelManager:
             ) from None
 
         except CustomAIModel.DoesNotExist:
-            raise ValueError(
-                f"Model '{model_name}' is not available in the current model catalog. "
-                "It may be deprecated or retired. Please select a supported model from the latest available models list."
-            ) from None
+            raise UnavailableModelError() from None
 
     def get_model_by_provider(self, provider):
         model_name = []

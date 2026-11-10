@@ -186,18 +186,17 @@ class TestLiteLLMImageModelManager:
         image_models = [m for m in manager.models if m.get("mode") == "image_generation"]
         assert len(image_models) > 0, "Image generation models should not be filtered out"
 
-    @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_get_provider_for_dalle(self, mock_custom_model):
-        """Test getting provider for DALL-E model."""
+    @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel.objects.get")
+    def test_retired_dalle_model_is_unavailable(self, get_custom_model):
+        """A retired image catalog entry needs a supported replacement."""
         from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+        from model_hub.models.custom_models import CustomAIModel
 
-        mock_custom_model.objects.filter.return_value.values.return_value = []
-
-        # Note: The DALL-E model names have size/quality prefixes
+        get_custom_model.side_effect = CustomAIModel.DoesNotExist
         manager = LiteLLMModelManager(model_name="standard/1024-x-1024/dall-e-3")
-        provider = manager.get_provider("standard/1024-x-1024/dall-e-3")
 
-        assert provider == "openai"
+        with pytest.raises(ValueError, match="Please select a supported model"):
+            manager.get_provider("standard/1024-x-1024/dall-e-3")
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_get_provider_for_gpt_image(self, mock_custom_model):
