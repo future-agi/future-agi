@@ -13,14 +13,49 @@ from agentcc.services.config_push import _transform_guardrails
 
 
 @pytest.mark.parametrize(
+    "fields",
+    [
+        {},
+        {"enabled": True},
+        {"action": "block"},
+        {"confidence_threshold": 0.5},
+        {"enabled": True, "action": "block"},
+        {"enabled": False, "action": "", "confidence_threshold": 0},
+        {"enabled": None, "action": None, "confidence_threshold": None},
+    ],
+)
+def test_dict_check_preserves_optional_fields(fields):
+    source = {"checks": {"keyword-blocklist": {"mode": "sync", **fields}}}
+    original = copy.deepcopy(source)
+
+    result = _transform_guardrails(source)
+
+    assert result["checks"]["keyword-blocklist"] == {"config": {}, **fields}
+    check = GuardrailConfig.model_validate(result).checks["keyword-blocklist"]
+    assert check.model_fields_set == {"config", *fields}
+    # _build_payload serializes with exclude_none=True. Neither an omitted nor
+    # an explicit null option may become an enforcement default on the wire.
+    assert check.model_dump(exclude_none=True) == {
+        "config": {},
+        **{name: value for name, value in fields.items() if value is not None},
+    }
+    assert source == original
+
+
+@pytest.mark.parametrize(
     ("fields", "expected"),
     [
-        ({}, 0.8),
         ({"threshold": 0}, 0),
         ({"confidenceThreshold": 0.4, "threshold": 0.9}, 0.4),
         (
             {"confidence_threshold": 0, "confidenceThreshold": 0.4, "threshold": 0.9},
             0,
+        ),
+        ({"threshold": None}, None),
+        ({"confidenceThreshold": None, "threshold": 0.9}, None),
+        (
+            {"confidence_threshold": None, "confidenceThreshold": 0.4},
+            None,
         ),
     ],
 )
@@ -29,10 +64,26 @@ def test_dict_check_threshold_aliases(fields, expected):
         {"checks": {"pii-detector": {"mode": "sync", **fields}}}
     )
 
+    assert result["checks"]["pii-detection"] == {
+        "config": {},
+        "confidence_threshold": expected,
+    }
     check = GuardrailConfig.model_validate(result).checks["pii-detection"]
     assert check.confidence_threshold == expected
-    assert check.enabled is True
-    assert check.action == "block"
+    assert check.enabled is None
+    assert check.action is None
+
+
+@pytest.mark.parametrize("collection", ["checks", "rules"])
+def test_legacy_list_checks_keep_their_defaults(collection):
+    result = _transform_guardrails({collection: [{"name": "keyword-blocklist"}]})
+
+    assert result["checks"]["keyword-blocklist"] == {
+        "config": {},
+        "enabled": True,
+        "action": "block",
+        "confidence_threshold": 0.8,
+    }
 
 
 @pytest.mark.parametrize(

@@ -326,17 +326,17 @@ def _transform_guardrails(guardrails_data, org_id=None):
             if provider and "provider" not in cfg:
                 cfg["provider"] = provider
             _normalize_eval_ids(cfg)
-            threshold = check_data.get("confidence_threshold")
-            if threshold is None:
-                threshold = check_data.get("confidenceThreshold")
-            if threshold is None:
-                threshold = check_data.get("threshold", 0.8)
-            checks[registry_name] = {
-                "enabled": check_data.get("enabled", True),
-                "action": check_data.get("action", "block"),
-                "confidence_threshold": threshold,
-                "config": cfg,
-            }
+            # Dict checks already use the gateway contract: missing options must
+            # retain Go zero values rather than acquiring legacy-list defaults.
+            projected = {"config": cfg}
+            for field in ("enabled", "action"):
+                if field in check_data:
+                    projected[field] = check_data[field]
+            for field in ("confidence_threshold", "confidenceThreshold", "threshold"):
+                if field in check_data:
+                    projected["confidence_threshold"] = check_data[field]
+                    break
+            checks[registry_name] = projected
         if org_id and isinstance(checks.get("futureagi-eval"), dict):
             _inject_fi_credentials(checks, org_id)
         result = {
