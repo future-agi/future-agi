@@ -2530,3 +2530,131 @@
 - update diff compares the retained upstream basis and current local content and exposes divergence
 - existing-draft rejection preserves exact files and revision, and explicit discard enables only the reviewed replacement
 - staging leaves immutable releases and labels unchanged and replay returns the same destination and draft revision without another save
+
+### SKILLS-E2E-010 — retain all supported members and recover one lost import response
+
+**Goal:** Trial the supported subset of a 15-member private library as drafts without publishing or losing an import receipt
+
+**Spec:** `flows/skills/j1-retained-subset.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. open retained migration and upload the 15-member private ZIP
+2. review all members and explicitly acknowledge the unsupported member exclusion
+3. stage each supported member deliberately; recover the first lost response with its original key
+4. inspect exact draft bytes, no published versions or production labels, and complete receipt accounting
+
+**Backend state verified:**
+
+- the independent plan accounts for all 15 roots and blocks the binary-containing member
+- 14 exact supported drafts exist, no version or production label was published, and the unsupported member was not staged
+- the lost-response retry has the same request/key and exactly one receipt per supported member
+
+### SKILLS-E2E-020 — preserve unrelated personal work before editing historical v4
+
+**Goal:** An incident responder starts a repair from recorded v4 while latest is unrelated v6, without losing another personal draft or changing publication
+
+**Spec:** `flows/skills/j2-historical-draft.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. inspect the exact historical context v4 while latest v6 and a different personal draft exist
+2. choose Edit viewed v4 and explicitly review preserving the other draft
+3. confirm a private recovery checkpoint and suspend the old draft
+4. separately start the exact selected historical draft, without copying latest bytes
+5. inspect saved origin and preservation independently; native application verification remains a separate job prerequisite
+
+**Backend state verified:**
+
+- one owner-private PostgreSQL checkpoint retains the old files, note, content origin and accepted links under the recovery digest
+- the public draft read contains exact historical v4 owned bytes and base version, not unrelated v6 bytes
+- the public context read keeps latest at v6 and does not move any release label
+
+### SKILLS-E2E-030 — retain accepted child versions while upstream advances during parent review
+
+**Goal:** An author explicitly accepts a shared policy update into two followers while a third context keeps its deliberate pin, then publishes immutable parents without silently promoting them
+
+**Spec:** `flows/skills/j3-accepted-dependency.spec.ts:13`
+
+**Tags:** —
+
+**User steps:**
+
+1. prepare three published contexts over fifteen synthetic skills, two followers and one deliberate v7 pin
+2. publish shared policy v8 and open each follower from its exact viewed release
+3. preview and explicitly accept the selected child update in the real context editor
+4. advance upstream to v9, edit the standing root, and verify the accepted v8 lock survives autosave
+5. review and publish each parent independently without moving production
+6. inspect both immutable parent descriptors and the unchanged pinned context
+
+**Backend state verified:**
+
+- the initial three immutable descriptors contain the exact fifteen-member set with shared policy v7
+- each browser dependency acceptance advances its durable draft revision and retains shared policy v8
+- root autosave advances revision while retaining accepted v8 after upstream reaches v9
+- published descriptors and dependency projections agree on all fifteen identities, both followers retain v8 and the deliberate pin retains v7
+- parent publication creates no label events or production assignment
+
+### SKILLS-E2E-040 — an assigned reviewer releases an exact packet and reopens its durable receipt
+
+**Goal:** An independent assigned reviewer discovers a published candidate, approves its exact packet, deliberately releases it and reopens the durable receipt after the pointer changes
+
+**Spec:** `flows/skills/j4-reviewer-receipt.spec.ts:14`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a baseline, immutable candidate and assigned packet through public APIs as prerequisites only
+2. discover the request through Skills Reviews without a test-provided deep link
+3. inspect the loaded candidate diff and acknowledge the exact packet
+4. approve as the independent reviewer and deliberately execute the authorized transition
+5. reload and read the durable pre-move currentness and post-move event receipt
+
+**Backend state verified:**
+
+- only the assigned reviewer sees the request and the production label remains on the baseline before release
+- the independent reviewer decision binds to the submitted packet fingerprint and revision
+- exactly one release event moves production to the candidate as the authorized reviewer
+- the durable receipt preserves the pre-move release revision separately from the post-move event
+
+### SKILLS-E2E-050 — inventory forty selected checkouts and retain the campaign qualification boundary
+
+**Goal:** Inspect existing local instructions without executing repository code or silently dropping unavailable repositories, and see the honest rollout availability boundary
+
+**Spec:** `flows/skills/j5-inventory-gate.spec.ts:24`
+
+**Tags:** —
+
+**User steps:**
+
+1. select forty synthetic checkouts including an unavailable target; retain real no-lock local and nested instructions
+2. run the installed public inventory CLI and inspect all selected target dispositions
+3. open Repository rollouts and inspect the current qualification boundary
+
+**Backend state verified:**
+
+- independent filesystem hashes and selected IDs equal the complete inventory; local policy remains byte-identical and no hook runs
+- the independent public capability remains disabled and the campaign list remains empty; no rollout is authorized
+
+### SKILLS-E2E-060 — distinguish reported delivery from incomplete and unknown recovery cohorts
+
+**Goal:** Inspect declared recovery consumers without mistaking one successful reporter for a completely recovered cohort
+
+**Spec:** `flows/skills/j6-recovery-coverage.spec.ts:18`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a published synthetic context and inspect its Consumers tab
+2. distinguish a fully observed pin, an incomplete binding, a later failure and an unobserved binding
+3. open the incomplete binding receipt drawer and inspect its historical delivery without a recovered claim
+
+**Backend state verified:**
+
+- the scoped persisted receipt identities and stages yield exactly one matching pin and three unknown bindings in the public consumer summary

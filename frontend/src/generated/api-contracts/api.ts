@@ -908,6 +908,7 @@ import type {
   ModelHubSkillsConsumptionResolveListParams,
   ModelHubSkillsConsumptionVersionsFilesListParams,
   ModelHubSkillsConsumptionVersionsManifestListParams,
+  ModelHubSkillsContextDependentsListParams,
   ModelHubSkillsContextsBindingsListParams,
   ModelHubSkillsContextsCampaignsListParams,
   ModelHubSkillsContextsCampaignsTargetsListParams,
@@ -917,6 +918,9 @@ import type {
   ModelHubSkillsContextsDraftFilesListParams,
   ModelHubSkillsContextsListParams,
   ModelHubSkillsContextsResolveListParams,
+  ModelHubSkillsContextsTestRunsFilesListParams,
+  ModelHubSkillsContextsTestRunsListParams,
+  ModelHubSkillsContextsTestRunsResultsListParams,
   ModelHubSkillsContextsVersionsFilesListParams,
   ModelHubSkillsContextsVersionsInspectionFilesListParams,
   ModelHubSkillsContextsVersionsInspectionListParams,
@@ -1331,6 +1335,7 @@ import type {
   SkillsConsumptionChunkResponseApi,
   SkillsConsumptionManifestResponseApi,
   SkillsContextAnnotationInputApi,
+  SkillsContextAttemptDetailResponseApi,
   SkillsContextAttemptInputApi,
   SkillsContextBindingInputApi,
   SkillsContextBindingUpdateApi,
@@ -1338,9 +1343,11 @@ import type {
   SkillsContextCampaignCreateApi,
   SkillsContextCampaignPlanApi,
   SkillsContextCampaignStatusApi,
+  SkillsContextCancelAckResponseApi,
   SkillsContextCaptureAcceptanceApi,
   SkillsContextCapturePreviewInputApi,
   SkillsContextCaptureSourceInputApi,
+  SkillsContextCaseResultPageResponseApi,
   SkillsContextCheckpointCreateApi,
   SkillsContextCheckpointRestoreInputApi,
   SkillsContextClaimInputApi,
@@ -1350,6 +1357,7 @@ import type {
   SkillsContextDecisionApi,
   SkillsContextDependencyApplyApi,
   SkillsContextDependencyPreviewApi,
+  SkillsContextDependentsPageResponseApi,
   SkillsContextDraftSaveApi,
   SkillsContextDraftStartApi,
   SkillsContextEmptyInputApi,
@@ -1357,6 +1365,8 @@ import type {
   SkillsContextHeadAcknowledgmentApi,
   SkillsContextIntakeDecisionApi,
   SkillsContextIntakeReconcileInputApi,
+  SkillsContextLangfuseExportApi,
+  SkillsContextMigrationReviewInputApi,
   SkillsContextPageResponseApi,
   SkillsContextPreviewApi,
   SkillsContextQuarantineInputApi,
@@ -1365,10 +1375,17 @@ import type {
   SkillsContextReleaseStateResponseApi,
   SkillsContextRevisionApi,
   SkillsContextRevisionInputApi,
+  SkillsContextRunConfigApi,
+  SkillsContextRunSummaryPageResponseApi,
+  SkillsContextRunSummaryResponseApi,
   SkillsContextSafetyOutResponseApi,
   SkillsContextSessionInputApi,
+  SkillsContextShareAckResponseApi,
+  SkillsContextSnapshotFileOutResponseApi,
   SkillsContextSpendPolicyInputApi,
   SkillsContextSubmitApi,
+  SkillsContextTestAckResponseApi,
+  SkillsContextTestPreviewResponseApi,
   SkillsCredentialIssuedResponseApi,
   SkillsCredentialPageResponseApi,
   SkillsDecisionReceiptResponseApi,
@@ -1400,6 +1417,7 @@ import type {
   SkillsHubV11ApplyAssistRequestApi,
   SkillsHubV11AssistInputApi,
   SkillsHubV11CreateAssistRequestApi,
+  SkillsHubV11CreateContextTestApi,
   SkillsHubV11CreateTestRunRequestApi,
   SkillsHubV11EmptyRequestApi,
   SkillsHubV11ErrorApi,
@@ -1421,6 +1439,8 @@ import type {
   SkillsLabelOutListResponseApi,
   SkillsLabelOutResponseApi,
   SkillsManifestResponseApi,
+  SkillsMigrationExportResponseApi,
+  SkillsMigrationReviewResponseApi,
   SkillsObservationsResponseApi,
   SkillsPacketResponseApi,
   SkillsPlanRecordedResponseApi,
@@ -59828,6 +59848,1044 @@ export const modelHubSkillsContextsReleaseReviewCreate = async (
   );
 };
 
+export type modelHubSkillsContextsTestRunsListResponse200 = {
+  data: SkillsContextRunSummaryPageResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsContextsTestRunsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsContextsTestRunsListResponseSuccess =
+  modelHubSkillsContextsTestRunsListResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsContextsTestRunsListResponseError = (
+  | modelHubSkillsContextsTestRunsListResponse400
+  | modelHubSkillsContextsTestRunsListResponse401
+  | modelHubSkillsContextsTestRunsListResponse403
+  | modelHubSkillsContextsTestRunsListResponse404
+  | modelHubSkillsContextsTestRunsListResponse409
+  | modelHubSkillsContextsTestRunsListResponse410
+  | modelHubSkillsContextsTestRunsListResponse413
+  | modelHubSkillsContextsTestRunsListResponse422
+  | modelHubSkillsContextsTestRunsListResponse428
+  | modelHubSkillsContextsTestRunsListResponse503
+  | modelHubSkillsContextsTestRunsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsContextsTestRunsListResponse =
+  | modelHubSkillsContextsTestRunsListResponseSuccess
+  | modelHubSkillsContextsTestRunsListResponseError;
+
+export const getModelHubSkillsContextsTestRunsListUrl = (
+  contextId: string,
+  params?: ModelHubSkillsContextsTestRunsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/skills/contexts/${contextId}/test-runs/?${stringifiedParams}`
+    : `/model-hub/skills/contexts/${contextId}/test-runs/`;
+};
+
+export const modelHubSkillsContextsTestRunsList = async (
+  contextId: string,
+  params?: ModelHubSkillsContextsTestRunsListParams,
+  options?: RequestInit,
+): Promise<modelHubSkillsContextsTestRunsListResponse> => {
+  return apiMutator<modelHubSkillsContextsTestRunsListResponse>(
+    getModelHubSkillsContextsTestRunsListUrl(contextId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse202 = {
+  data: SkillsContextTestAckResponseApi;
+  status: 202;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    202 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponseSuccess =
+  modelHubSkillsContextsTestRunsCreateResponse202 & {
+    headers: Headers;
+  };
+export type modelHubSkillsContextsTestRunsCreateResponseError = (
+  | modelHubSkillsContextsTestRunsCreateResponse400
+  | modelHubSkillsContextsTestRunsCreateResponse401
+  | modelHubSkillsContextsTestRunsCreateResponse403
+  | modelHubSkillsContextsTestRunsCreateResponse404
+  | modelHubSkillsContextsTestRunsCreateResponse409
+  | modelHubSkillsContextsTestRunsCreateResponse410
+  | modelHubSkillsContextsTestRunsCreateResponse413
+  | modelHubSkillsContextsTestRunsCreateResponse422
+  | modelHubSkillsContextsTestRunsCreateResponse428
+  | modelHubSkillsContextsTestRunsCreateResponse503
+  | modelHubSkillsContextsTestRunsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsContextsTestRunsCreateResponse =
+  | modelHubSkillsContextsTestRunsCreateResponseSuccess
+  | modelHubSkillsContextsTestRunsCreateResponseError;
+
+export const getModelHubSkillsContextsTestRunsCreateUrl = (
+  contextId: string,
+) => {
+  return `/model-hub/skills/contexts/${contextId}/test-runs/`;
+};
+
+export const modelHubSkillsContextsTestRunsCreate = async (
+  contextId: string,
+  skillsHubV11CreateContextTestApi: SkillsHubV11CreateContextTestApi,
+  options?: RequestInit,
+): Promise<modelHubSkillsContextsTestRunsCreateResponse> => {
+  return apiMutator<modelHubSkillsContextsTestRunsCreateResponse>(
+    getModelHubSkillsContextsTestRunsCreateUrl(contextId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(skillsHubV11CreateContextTestApi),
+    },
+  );
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse200 = {
+  data: SkillsContextTestPreviewResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponseSuccess =
+  modelHubSkillsContextsTestRunsPreviewCreateResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsContextsTestRunsPreviewCreateResponseError = (
+  | modelHubSkillsContextsTestRunsPreviewCreateResponse400
+  | modelHubSkillsContextsTestRunsPreviewCreateResponse401
+  | modelHubSkillsContextsTestRunsPreviewCreateResponse403
+  | modelHubSkillsContextsTestRunsPreviewCreateResponse404
+  | modelHubSkillsContextsTestRunsPreviewCreateResponse409
+  | modelHubSkillsContextsTestRunsPreviewCreateResponse410
+  | modelHubSkillsContextsTestRunsPreviewCreateResponse413
+  | modelHubSkillsContextsTestRunsPreviewCreateResponse422
+  | modelHubSkillsContextsTestRunsPreviewCreateResponse428
+  | modelHubSkillsContextsTestRunsPreviewCreateResponse503
+  | modelHubSkillsContextsTestRunsPreviewCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsContextsTestRunsPreviewCreateResponse =
+  | modelHubSkillsContextsTestRunsPreviewCreateResponseSuccess
+  | modelHubSkillsContextsTestRunsPreviewCreateResponseError;
+
+export const getModelHubSkillsContextsTestRunsPreviewCreateUrl = (
+  contextId: string,
+) => {
+  return `/model-hub/skills/contexts/${contextId}/test-runs/preview/`;
+};
+
+export const modelHubSkillsContextsTestRunsPreviewCreate = async (
+  contextId: string,
+  skillsContextRunConfigApi: SkillsContextRunConfigApi,
+  options?: RequestInit,
+): Promise<modelHubSkillsContextsTestRunsPreviewCreateResponse> => {
+  return apiMutator<modelHubSkillsContextsTestRunsPreviewCreateResponse>(
+    getModelHubSkillsContextsTestRunsPreviewCreateUrl(contextId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(skillsContextRunConfigApi),
+    },
+  );
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse200 = {
+  data: SkillsContextRunSummaryResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponseSuccess =
+  modelHubSkillsContextsTestRunsReadResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsContextsTestRunsReadResponseError = (
+  | modelHubSkillsContextsTestRunsReadResponse400
+  | modelHubSkillsContextsTestRunsReadResponse401
+  | modelHubSkillsContextsTestRunsReadResponse403
+  | modelHubSkillsContextsTestRunsReadResponse404
+  | modelHubSkillsContextsTestRunsReadResponse409
+  | modelHubSkillsContextsTestRunsReadResponse410
+  | modelHubSkillsContextsTestRunsReadResponse413
+  | modelHubSkillsContextsTestRunsReadResponse422
+  | modelHubSkillsContextsTestRunsReadResponse428
+  | modelHubSkillsContextsTestRunsReadResponse503
+  | modelHubSkillsContextsTestRunsReadResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsContextsTestRunsReadResponse =
+  | modelHubSkillsContextsTestRunsReadResponseSuccess
+  | modelHubSkillsContextsTestRunsReadResponseError;
+
+export const getModelHubSkillsContextsTestRunsReadUrl = (
+  contextId: string,
+  runId: string,
+) => {
+  return `/model-hub/skills/contexts/${contextId}/test-runs/${runId}/`;
+};
+
+export const modelHubSkillsContextsTestRunsRead = async (
+  contextId: string,
+  runId: string,
+  options?: RequestInit,
+): Promise<modelHubSkillsContextsTestRunsReadResponse> => {
+  return apiMutator<modelHubSkillsContextsTestRunsReadResponse>(
+    getModelHubSkillsContextsTestRunsReadUrl(contextId, runId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse200 = {
+  data: SkillsContextAttemptDetailResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponseSuccess =
+  modelHubSkillsContextsTestRunsAttemptsReadResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsContextsTestRunsAttemptsReadResponseError = (
+  | modelHubSkillsContextsTestRunsAttemptsReadResponse400
+  | modelHubSkillsContextsTestRunsAttemptsReadResponse401
+  | modelHubSkillsContextsTestRunsAttemptsReadResponse403
+  | modelHubSkillsContextsTestRunsAttemptsReadResponse404
+  | modelHubSkillsContextsTestRunsAttemptsReadResponse409
+  | modelHubSkillsContextsTestRunsAttemptsReadResponse410
+  | modelHubSkillsContextsTestRunsAttemptsReadResponse413
+  | modelHubSkillsContextsTestRunsAttemptsReadResponse422
+  | modelHubSkillsContextsTestRunsAttemptsReadResponse428
+  | modelHubSkillsContextsTestRunsAttemptsReadResponse503
+  | modelHubSkillsContextsTestRunsAttemptsReadResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsContextsTestRunsAttemptsReadResponse =
+  | modelHubSkillsContextsTestRunsAttemptsReadResponseSuccess
+  | modelHubSkillsContextsTestRunsAttemptsReadResponseError;
+
+export const getModelHubSkillsContextsTestRunsAttemptsReadUrl = (
+  contextId: string,
+  runId: string,
+  attemptId: string,
+) => {
+  return `/model-hub/skills/contexts/${contextId}/test-runs/${runId}/attempts/${attemptId}/`;
+};
+
+export const modelHubSkillsContextsTestRunsAttemptsRead = async (
+  contextId: string,
+  runId: string,
+  attemptId: string,
+  options?: RequestInit,
+): Promise<modelHubSkillsContextsTestRunsAttemptsReadResponse> => {
+  return apiMutator<modelHubSkillsContextsTestRunsAttemptsReadResponse>(
+    getModelHubSkillsContextsTestRunsAttemptsReadUrl(
+      contextId,
+      runId,
+      attemptId,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse202 = {
+  data: SkillsContextCancelAckResponseApi;
+  status: 202;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    202 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponseSuccess =
+  modelHubSkillsContextsTestRunsCancelCreateResponse202 & {
+    headers: Headers;
+  };
+export type modelHubSkillsContextsTestRunsCancelCreateResponseError = (
+  | modelHubSkillsContextsTestRunsCancelCreateResponse400
+  | modelHubSkillsContextsTestRunsCancelCreateResponse401
+  | modelHubSkillsContextsTestRunsCancelCreateResponse403
+  | modelHubSkillsContextsTestRunsCancelCreateResponse404
+  | modelHubSkillsContextsTestRunsCancelCreateResponse409
+  | modelHubSkillsContextsTestRunsCancelCreateResponse410
+  | modelHubSkillsContextsTestRunsCancelCreateResponse413
+  | modelHubSkillsContextsTestRunsCancelCreateResponse422
+  | modelHubSkillsContextsTestRunsCancelCreateResponse428
+  | modelHubSkillsContextsTestRunsCancelCreateResponse503
+  | modelHubSkillsContextsTestRunsCancelCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsContextsTestRunsCancelCreateResponse =
+  | modelHubSkillsContextsTestRunsCancelCreateResponseSuccess
+  | modelHubSkillsContextsTestRunsCancelCreateResponseError;
+
+export const getModelHubSkillsContextsTestRunsCancelCreateUrl = (
+  contextId: string,
+  runId: string,
+) => {
+  return `/model-hub/skills/contexts/${contextId}/test-runs/${runId}/cancel/`;
+};
+
+export const modelHubSkillsContextsTestRunsCancelCreate = async (
+  contextId: string,
+  runId: string,
+  skillsHubV11EmptyRequestApi: SkillsHubV11EmptyRequestApi,
+  options?: RequestInit,
+): Promise<modelHubSkillsContextsTestRunsCancelCreateResponse> => {
+  return apiMutator<modelHubSkillsContextsTestRunsCancelCreateResponse>(
+    getModelHubSkillsContextsTestRunsCancelCreateUrl(contextId, runId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(skillsHubV11EmptyRequestApi),
+    },
+  );
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse200 = {
+  data: SkillsContextSnapshotFileOutResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponseSuccess =
+  modelHubSkillsContextsTestRunsFilesListResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsContextsTestRunsFilesListResponseError = (
+  | modelHubSkillsContextsTestRunsFilesListResponse400
+  | modelHubSkillsContextsTestRunsFilesListResponse401
+  | modelHubSkillsContextsTestRunsFilesListResponse403
+  | modelHubSkillsContextsTestRunsFilesListResponse404
+  | modelHubSkillsContextsTestRunsFilesListResponse409
+  | modelHubSkillsContextsTestRunsFilesListResponse410
+  | modelHubSkillsContextsTestRunsFilesListResponse413
+  | modelHubSkillsContextsTestRunsFilesListResponse422
+  | modelHubSkillsContextsTestRunsFilesListResponse428
+  | modelHubSkillsContextsTestRunsFilesListResponse503
+  | modelHubSkillsContextsTestRunsFilesListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsContextsTestRunsFilesListResponse =
+  | modelHubSkillsContextsTestRunsFilesListResponseSuccess
+  | modelHubSkillsContextsTestRunsFilesListResponseError;
+
+export const getModelHubSkillsContextsTestRunsFilesListUrl = (
+  contextId: string,
+  runId: string,
+  params: ModelHubSkillsContextsTestRunsFilesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/skills/contexts/${contextId}/test-runs/${runId}/files/?${stringifiedParams}`
+    : `/model-hub/skills/contexts/${contextId}/test-runs/${runId}/files/`;
+};
+
+export const modelHubSkillsContextsTestRunsFilesList = async (
+  contextId: string,
+  runId: string,
+  params: ModelHubSkillsContextsTestRunsFilesListParams,
+  options?: RequestInit,
+): Promise<modelHubSkillsContextsTestRunsFilesListResponse> => {
+  return apiMutator<modelHubSkillsContextsTestRunsFilesListResponse>(
+    getModelHubSkillsContextsTestRunsFilesListUrl(contextId, runId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse200 = {
+  data: SkillsContextCaseResultPageResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponseSuccess =
+  modelHubSkillsContextsTestRunsResultsListResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsContextsTestRunsResultsListResponseError = (
+  | modelHubSkillsContextsTestRunsResultsListResponse400
+  | modelHubSkillsContextsTestRunsResultsListResponse401
+  | modelHubSkillsContextsTestRunsResultsListResponse403
+  | modelHubSkillsContextsTestRunsResultsListResponse404
+  | modelHubSkillsContextsTestRunsResultsListResponse409
+  | modelHubSkillsContextsTestRunsResultsListResponse410
+  | modelHubSkillsContextsTestRunsResultsListResponse413
+  | modelHubSkillsContextsTestRunsResultsListResponse422
+  | modelHubSkillsContextsTestRunsResultsListResponse428
+  | modelHubSkillsContextsTestRunsResultsListResponse503
+  | modelHubSkillsContextsTestRunsResultsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsContextsTestRunsResultsListResponse =
+  | modelHubSkillsContextsTestRunsResultsListResponseSuccess
+  | modelHubSkillsContextsTestRunsResultsListResponseError;
+
+export const getModelHubSkillsContextsTestRunsResultsListUrl = (
+  contextId: string,
+  runId: string,
+  params?: ModelHubSkillsContextsTestRunsResultsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/skills/contexts/${contextId}/test-runs/${runId}/results/?${stringifiedParams}`
+    : `/model-hub/skills/contexts/${contextId}/test-runs/${runId}/results/`;
+};
+
+export const modelHubSkillsContextsTestRunsResultsList = async (
+  contextId: string,
+  runId: string,
+  params?: ModelHubSkillsContextsTestRunsResultsListParams,
+  options?: RequestInit,
+): Promise<modelHubSkillsContextsTestRunsResultsListResponse> => {
+  return apiMutator<modelHubSkillsContextsTestRunsResultsListResponse>(
+    getModelHubSkillsContextsTestRunsResultsListUrl(contextId, runId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse200 = {
+  data: SkillsContextShareAckResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponseSuccess =
+  modelHubSkillsContextsTestRunsShareCreateResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsContextsTestRunsShareCreateResponseError = (
+  | modelHubSkillsContextsTestRunsShareCreateResponse400
+  | modelHubSkillsContextsTestRunsShareCreateResponse401
+  | modelHubSkillsContextsTestRunsShareCreateResponse403
+  | modelHubSkillsContextsTestRunsShareCreateResponse404
+  | modelHubSkillsContextsTestRunsShareCreateResponse409
+  | modelHubSkillsContextsTestRunsShareCreateResponse410
+  | modelHubSkillsContextsTestRunsShareCreateResponse413
+  | modelHubSkillsContextsTestRunsShareCreateResponse422
+  | modelHubSkillsContextsTestRunsShareCreateResponse428
+  | modelHubSkillsContextsTestRunsShareCreateResponse503
+  | modelHubSkillsContextsTestRunsShareCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsContextsTestRunsShareCreateResponse =
+  | modelHubSkillsContextsTestRunsShareCreateResponseSuccess
+  | modelHubSkillsContextsTestRunsShareCreateResponseError;
+
+export const getModelHubSkillsContextsTestRunsShareCreateUrl = (
+  contextId: string,
+  runId: string,
+) => {
+  return `/model-hub/skills/contexts/${contextId}/test-runs/${runId}/share/`;
+};
+
+export const modelHubSkillsContextsTestRunsShareCreate = async (
+  contextId: string,
+  runId: string,
+  skillsHubV11ShareRunRequestApi: SkillsHubV11ShareRunRequestApi,
+  options?: RequestInit,
+): Promise<modelHubSkillsContextsTestRunsShareCreateResponse> => {
+  return apiMutator<modelHubSkillsContextsTestRunsShareCreateResponse>(
+    getModelHubSkillsContextsTestRunsShareCreateUrl(contextId, runId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(skillsHubV11ShareRunRequestApi),
+    },
+  );
+};
+
 export type modelHubSkillsContextsVersionsListResponse200 = {
   data: SkillsVersionPageResponseApi;
   status: 200;
@@ -62091,6 +63149,112 @@ export const modelHubSkillsImportPreviewCreate = async (
   );
 };
 
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse200 = {
+  data: SkillsIntakePlanResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponseSuccess =
+  modelHubSkillsIntakeLangfusePreviewCreateResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsIntakeLangfusePreviewCreateResponseError = (
+  | modelHubSkillsIntakeLangfusePreviewCreateResponse400
+  | modelHubSkillsIntakeLangfusePreviewCreateResponse401
+  | modelHubSkillsIntakeLangfusePreviewCreateResponse403
+  | modelHubSkillsIntakeLangfusePreviewCreateResponse404
+  | modelHubSkillsIntakeLangfusePreviewCreateResponse409
+  | modelHubSkillsIntakeLangfusePreviewCreateResponse410
+  | modelHubSkillsIntakeLangfusePreviewCreateResponse413
+  | modelHubSkillsIntakeLangfusePreviewCreateResponse422
+  | modelHubSkillsIntakeLangfusePreviewCreateResponse428
+  | modelHubSkillsIntakeLangfusePreviewCreateResponse503
+  | modelHubSkillsIntakeLangfusePreviewCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsIntakeLangfusePreviewCreateResponse =
+  | modelHubSkillsIntakeLangfusePreviewCreateResponseSuccess
+  | modelHubSkillsIntakeLangfusePreviewCreateResponseError;
+
+export const getModelHubSkillsIntakeLangfusePreviewCreateUrl = () => {
+  return `/model-hub/skills/intake/langfuse/preview/`;
+};
+
+export const modelHubSkillsIntakeLangfusePreviewCreate = async (
+  skillsContextLangfuseExportApi: SkillsContextLangfuseExportApi,
+  options?: RequestInit,
+): Promise<modelHubSkillsIntakeLangfusePreviewCreateResponse> => {
+  return apiMutator<modelHubSkillsIntakeLangfusePreviewCreateResponse>(
+    getModelHubSkillsIntakeLangfusePreviewCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(skillsContextLangfuseExportApi),
+    },
+  );
+};
+
 export type modelHubSkillsIntakePreviewCreateResponse200 = {
   data: SkillsIntakePlanResponseApi;
   status: 200;
@@ -62645,6 +63809,113 @@ export const modelHubSkillsIntakeReconcileCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(skillsContextIntakeReconcileInputApi),
+    },
+  );
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse200 = {
+  data: SkillsMigrationReviewResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponseSuccess =
+  modelHubSkillsIntakeReviewCreateResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsIntakeReviewCreateResponseError = (
+  | modelHubSkillsIntakeReviewCreateResponse400
+  | modelHubSkillsIntakeReviewCreateResponse401
+  | modelHubSkillsIntakeReviewCreateResponse403
+  | modelHubSkillsIntakeReviewCreateResponse404
+  | modelHubSkillsIntakeReviewCreateResponse409
+  | modelHubSkillsIntakeReviewCreateResponse410
+  | modelHubSkillsIntakeReviewCreateResponse413
+  | modelHubSkillsIntakeReviewCreateResponse422
+  | modelHubSkillsIntakeReviewCreateResponse428
+  | modelHubSkillsIntakeReviewCreateResponse503
+  | modelHubSkillsIntakeReviewCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsIntakeReviewCreateResponse =
+  | modelHubSkillsIntakeReviewCreateResponseSuccess
+  | modelHubSkillsIntakeReviewCreateResponseError;
+
+export const getModelHubSkillsIntakeReviewCreateUrl = (planId: string) => {
+  return `/model-hub/skills/intake/${planId}/review/`;
+};
+
+export const modelHubSkillsIntakeReviewCreate = async (
+  planId: string,
+  skillsContextMigrationReviewInputApi: SkillsContextMigrationReviewInputApi,
+  options?: RequestInit,
+): Promise<modelHubSkillsIntakeReviewCreateResponse> => {
+  return apiMutator<modelHubSkillsIntakeReviewCreateResponse>(
+    getModelHubSkillsIntakeReviewCreateUrl(planId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(skillsContextMigrationReviewInputApi),
     },
   );
 };
@@ -64981,6 +66252,114 @@ export const modelHubSkillsDraftCheckpointsRestoreCreate = async (
   );
 };
 
+export type modelHubSkillsVersionsMigrationExportListResponse200 = {
+  data: SkillsMigrationExportResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponseSuccess =
+  modelHubSkillsVersionsMigrationExportListResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsVersionsMigrationExportListResponseError = (
+  | modelHubSkillsVersionsMigrationExportListResponse400
+  | modelHubSkillsVersionsMigrationExportListResponse401
+  | modelHubSkillsVersionsMigrationExportListResponse403
+  | modelHubSkillsVersionsMigrationExportListResponse404
+  | modelHubSkillsVersionsMigrationExportListResponse409
+  | modelHubSkillsVersionsMigrationExportListResponse410
+  | modelHubSkillsVersionsMigrationExportListResponse413
+  | modelHubSkillsVersionsMigrationExportListResponse422
+  | modelHubSkillsVersionsMigrationExportListResponse428
+  | modelHubSkillsVersionsMigrationExportListResponse503
+  | modelHubSkillsVersionsMigrationExportListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsVersionsMigrationExportListResponse =
+  | modelHubSkillsVersionsMigrationExportListResponseSuccess
+  | modelHubSkillsVersionsMigrationExportListResponseError;
+
+export const getModelHubSkillsVersionsMigrationExportListUrl = (
+  resourceId: string,
+  number: string,
+) => {
+  return `/model-hub/skills/${resourceId}/versions/${number}/migration-export/`;
+};
+
+export const modelHubSkillsVersionsMigrationExportList = async (
+  resourceId: string,
+  number: string,
+  options?: RequestInit,
+): Promise<modelHubSkillsVersionsMigrationExportListResponse> => {
+  return apiMutator<modelHubSkillsVersionsMigrationExportListResponse>(
+    getModelHubSkillsVersionsMigrationExportListUrl(resourceId, number),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type modelHubSkillsReadResponse200 = {
   data: SkillsSkillDetailResponseApi;
   status: 200;
@@ -66110,6 +67489,130 @@ export const modelHubSkillsCompareList = async (
 ): Promise<modelHubSkillsCompareListResponse> => {
   return apiMutator<modelHubSkillsCompareListResponse>(
     getModelHubSkillsCompareListUrl(skillId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubSkillsContextDependentsListResponse200 = {
+  data: SkillsContextDependentsPageResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsContextDependentsListResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsContextDependentsListResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsContextDependentsListResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsContextDependentsListResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsContextDependentsListResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsContextDependentsListResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsContextDependentsListResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsContextDependentsListResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsContextDependentsListResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsContextDependentsListResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsContextDependentsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsContextDependentsListResponseSuccess =
+  modelHubSkillsContextDependentsListResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsContextDependentsListResponseError = (
+  | modelHubSkillsContextDependentsListResponse400
+  | modelHubSkillsContextDependentsListResponse401
+  | modelHubSkillsContextDependentsListResponse403
+  | modelHubSkillsContextDependentsListResponse404
+  | modelHubSkillsContextDependentsListResponse409
+  | modelHubSkillsContextDependentsListResponse410
+  | modelHubSkillsContextDependentsListResponse413
+  | modelHubSkillsContextDependentsListResponse422
+  | modelHubSkillsContextDependentsListResponse428
+  | modelHubSkillsContextDependentsListResponse503
+  | modelHubSkillsContextDependentsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsContextDependentsListResponse =
+  | modelHubSkillsContextDependentsListResponseSuccess
+  | modelHubSkillsContextDependentsListResponseError;
+
+export const getModelHubSkillsContextDependentsListUrl = (
+  skillId: string,
+  params?: ModelHubSkillsContextDependentsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/skills/${skillId}/context-dependents/?${stringifiedParams}`
+    : `/model-hub/skills/${skillId}/context-dependents/`;
+};
+
+export const modelHubSkillsContextDependentsList = async (
+  skillId: string,
+  params?: ModelHubSkillsContextDependentsListParams,
+  options?: RequestInit,
+): Promise<modelHubSkillsContextDependentsListResponse> => {
+  return apiMutator<modelHubSkillsContextDependentsListResponse>(
+    getModelHubSkillsContextDependentsListUrl(skillId, params),
     {
       ...options,
       method: "GET",

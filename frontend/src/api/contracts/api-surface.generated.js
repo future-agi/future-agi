@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1243,
+  endpointCount: 1255,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -814,6 +814,23 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/contexts/{context_id}/draft/start/": ["post"],
       "/model-hub/skills/contexts/{context_id}/release-state/": ["get"],
       "/model-hub/skills/contexts/{context_id}/release/review/": ["post"],
+      "/model-hub/skills/contexts/{context_id}/test-runs/": ["get", "post"],
+      "/model-hub/skills/contexts/{context_id}/test-runs/preview/": ["post"],
+      "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/": ["get"],
+      "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/attempts/{attempt_id}/":
+        ["get"],
+      "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/cancel/": [
+        "post",
+      ],
+      "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/files/": [
+        "get",
+      ],
+      "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/results/": [
+        "get",
+      ],
+      "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/share/": [
+        "post",
+      ],
       "/model-hub/skills/contexts/{context_id}/versions/": ["get"],
       "/model-hub/skills/contexts/{context_id}/versions/{number}/": ["get"],
       "/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/": [
@@ -846,11 +863,13 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/github/previews/{preview_id}/": ["get"],
       "/model-hub/skills/import/": ["post"],
       "/model-hub/skills/import/preview/": ["post"],
+      "/model-hub/skills/intake/langfuse/preview/": ["post"],
       "/model-hub/skills/intake/preview/": ["post"],
       "/model-hub/skills/intake/{plan_id}/": ["get"],
       "/model-hub/skills/intake/{plan_id}/accept/": ["post"],
       "/model-hub/skills/intake/{plan_id}/receipts/": ["get"],
       "/model-hub/skills/intake/{plan_id}/reconcile/": ["post"],
+      "/model-hub/skills/intake/{plan_id}/review/": ["post"],
       "/model-hub/skills/publish/": ["post"],
       "/model-hub/skills/release-requests/": ["post"],
       "/model-hub/skills/release-requests/preview/": ["post"],
@@ -872,6 +891,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/{resource_id}/draft/checkpoints/": ["get", "post"],
       "/model-hub/skills/{resource_id}/draft/checkpoints/{checkpoint_id}/restore/":
         ["post"],
+      "/model-hub/skills/{resource_id}/versions/{number}/migration-export/": [
+        "get",
+      ],
       "/model-hub/skills/{skill_id}/": ["delete", "get", "patch"],
       "/model-hub/skills/{skill_id}/adoption/": ["get"],
       "/model-hub/skills/{skill_id}/assist/": ["post"],
@@ -880,6 +902,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/{skill_id}/assist/{proposal_id}/apply/": ["post"],
       "/model-hub/skills/{skill_id}/assist/{proposal_id}/cancel/": ["post"],
       "/model-hub/skills/{skill_id}/compare/": ["get"],
+      "/model-hub/skills/{skill_id}/context-dependents/": ["get"],
       "/model-hub/skills/{skill_id}/draft/": ["delete", "get", "put"],
       "/model-hub/skills/{skill_id}/draft/publish/": ["post"],
       "/model-hub/skills/{skill_id}/label-protection/": ["get", "put"],
@@ -2328,6 +2351,19 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/contexts/{context_id}/draft/start/": ["post"],
   "/model-hub/skills/contexts/{context_id}/release-state/": ["get"],
   "/model-hub/skills/contexts/{context_id}/release/review/": ["post"],
+  "/model-hub/skills/contexts/{context_id}/test-runs/": ["get", "post"],
+  "/model-hub/skills/contexts/{context_id}/test-runs/preview/": ["post"],
+  "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/": ["get"],
+  "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/attempts/{attempt_id}/":
+    ["get"],
+  "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/cancel/": [
+    "post",
+  ],
+  "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/files/": ["get"],
+  "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/results/": [
+    "get",
+  ],
+  "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/share/": ["post"],
   "/model-hub/skills/contexts/{context_id}/versions/": ["get"],
   "/model-hub/skills/contexts/{context_id}/versions/{number}/": ["get"],
   "/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/": [
@@ -2359,11 +2395,13 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/github/previews/{preview_id}/": ["get"],
   "/model-hub/skills/import/": ["post"],
   "/model-hub/skills/import/preview/": ["post"],
+  "/model-hub/skills/intake/langfuse/preview/": ["post"],
   "/model-hub/skills/intake/preview/": ["post"],
   "/model-hub/skills/intake/{plan_id}/": ["get"],
   "/model-hub/skills/intake/{plan_id}/accept/": ["post"],
   "/model-hub/skills/intake/{plan_id}/receipts/": ["get"],
   "/model-hub/skills/intake/{plan_id}/reconcile/": ["post"],
+  "/model-hub/skills/intake/{plan_id}/review/": ["post"],
   "/model-hub/skills/publish/": ["post"],
   "/model-hub/skills/release-requests/": ["post"],
   "/model-hub/skills/release-requests/preview/": ["post"],
@@ -2383,6 +2421,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/{resource_id}/draft/checkpoints/": ["get", "post"],
   "/model-hub/skills/{resource_id}/draft/checkpoints/{checkpoint_id}/restore/":
     ["post"],
+  "/model-hub/skills/{resource_id}/versions/{number}/migration-export/": [
+    "get",
+  ],
   "/model-hub/skills/{skill_id}/": ["delete", "get", "patch"],
   "/model-hub/skills/{skill_id}/adoption/": ["get"],
   "/model-hub/skills/{skill_id}/assist/": ["post"],
@@ -2391,6 +2432,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/{skill_id}/assist/{proposal_id}/apply/": ["post"],
   "/model-hub/skills/{skill_id}/assist/{proposal_id}/cancel/": ["post"],
   "/model-hub/skills/{skill_id}/compare/": ["get"],
+  "/model-hub/skills/{skill_id}/context-dependents/": ["get"],
   "/model-hub/skills/{skill_id}/draft/": ["delete", "get", "put"],
   "/model-hub/skills/{skill_id}/draft/publish/": ["post"],
   "/model-hub/skills/{skill_id}/label-protection/": ["get", "put"],
