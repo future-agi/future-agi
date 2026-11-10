@@ -8,7 +8,9 @@ vi.mock("src/utils/axios", () => ({
 }));
 
 const { default: axios } = await import("src/utils/axios");
-const { useReadiness, getReadinessCases } = await import("../readiness");
+const { useReadiness, useReadinessCases, getReadinessCases } = await import(
+  "../readiness"
+);
 
 let client;
 const wrapper = ({ children }) => (
@@ -111,5 +113,16 @@ describe("useReadiness", () => {
     await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
     await act(() => vi.advanceTimersByTimeAsync(30000));
     expect(axios.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks for the names again when the report they belong to changes", async () => {
+    axios.get.mockResolvedValue({ data: { items: [], next: null } });
+    const { rerender } = renderHook(
+      ({ report }) => useReadinessCases("env-1", { bucket: "stale", report }),
+      { wrapper, initialProps: { report: "t1" } },
+    );
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    rerender({ report: "t2" });
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
   });
 });

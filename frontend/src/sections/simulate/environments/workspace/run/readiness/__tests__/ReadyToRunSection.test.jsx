@@ -79,6 +79,53 @@ beforeEach(() => {
 });
 
 describe("ReadyToRunSection", () => {
+  it("closes an open fix when other versions are picked", async () => {
+    report = blockedReport("pair");
+    const { rerender } = render(
+      <ReadyToRunSection envId="env-1" picks={picks} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Fix" }));
+    rerender(<ReadyToRunSection envId="env-1" picks={{ agent: "agent-v3" }} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Fix" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      ),
+    );
+  });
+
+  it("clears what it told the popup when it goes away", () => {
+    report = blockedReport("pair");
+    const onView = vi.fn();
+    const { unmount } = render(
+      <ReadyToRunSection envId="env-1" picks={picks} onView={onView} />,
+    );
+    unmount();
+    expect(onView).toHaveBeenLastCalledWith(null);
+  });
+
+  it("lets keyboard users reach the counts and the fixes", async () => {
+    report = blockedReport("pair");
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    expect(screen.getByText("4 blocked")).toHaveAttribute("tabindex", "0");
+    const fix = screen.getByRole("button", { name: "Fix" });
+    expect(fix).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(fix);
+    expect(screen.getByRole("button", { name: "Hide" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("announces when a check starts", () => {
+    report = blockedReport("pair");
+    recheckPending = true;
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    expect(
+      screen.getByText(/Checking these versions together/),
+    ).toHaveAttribute("aria-live", "polite");
+  });
+
   it("lists the first names and counts the rest from the header", async () => {
     report = blockedReport("pair");
     cases.names = Array.from({ length: 12 }, (_, at) => `Scenario ${at + 1}`);

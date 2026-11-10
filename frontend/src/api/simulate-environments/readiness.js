@@ -111,10 +111,12 @@ export const getReadinessCases = async (envId, picks, bucket, keys = null) => {
 
 export function useReadinessCases(
   envId,
-  { picks = {}, bucket, keys = null, enabled = true } = {},
+  { picks = {}, bucket, keys = null, report = null, enabled = true } = {},
 ) {
   return useQuery({
-    queryKey: [...readinessKey(envId, picks, keys), "cases", bucket],
+    // `report` (when the report was worked out) ties the names to the counts
+    // beside them: a new report asks for them again.
+    queryKey: [...readinessKey(envId, picks, keys), "cases", bucket, report],
     queryFn: () => getReadinessCases(envId, picks, bucket, keys),
     enabled: Boolean(envId) && Boolean(bucket) && enabled,
     retry: retryServerFailures,
