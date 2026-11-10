@@ -180,6 +180,23 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
       await page.getByRole('row', { name: `Inspect ${titles[0]}`, exact: true }).click();
       await expect(page.getByText('{"eligible":false}', { exact: true }).first()).toBeVisible({ timeout: UI_READY });
       await expect(page.getByText('Expected, actual and evidence', { exact: true }).first()).toBeVisible({ timeout: UI_READY });
+      const machineResults = () => probe.pg('SELECT id, check_results, answer_verdict FROM model_hub_hubskilltestattempt WHERE run_id = $1 ORDER BY id', [first.id]);
+      const before = await machineResults();
+      await page.getByRole('button', { name: 'Review this check', exact: true }).first().click();
+      await select(page, 'Your assessment', 'Agree');
+      await page.getByRole('textbox', { name: 'Cited clause or answer excerpt', exact: true }).fill('{"eligible":false}');
+      await page.getByRole('textbox', { name: 'Review explanation', exact: true }).fill('The retained answer confirms the failing policy boundary.');
+      const annotationResponse = page.waitForResponse(res => res.url().endsWith(`/evidence/skills_text/${first.id}/annotations/`) && res.request().method() === 'POST');
+      await page.getByRole('button', { name: 'Append review', exact: true }).click();
+      const annotated = await annotationResponse;
+      expect(annotated.status(), await annotated.text()).toBe(201);
+      await expect(page.getByText(/Annotation recorded. Machine grade unchanged/)).toBeVisible();
+      const submitted = annotated.request().postDataJSON();
+      expect(submitted).toMatchObject({ annotation_revision: 0, verdict: 'agree', cited_text: '{"eligible":false}' });
+      expect(await probe.pg('SELECT actor_id::text, check_id::text, attempt_id::text, revision, verdict, cited_text FROM model_hub_hubskillevidenceannotation WHERE source_id = $1', [first.id]))
+        .toEqual([{ actor_id: member.userId, check_id: submitted.check_id, attempt_id: submitted.attempt_id, revision: '1', verdict: 'agree', cited_text: '{"eligible":false}' }]);
+      expect(await machineResults()).toEqual(before);
+      await testInfo.attach('human-review-preserves-machine-grade', { body: await page.screenshot(), contentType: 'image/png' });
       await page.getByRole('button', { name: 'Close attempt evidence', exact: true }).click();
       await testInfo.attach('initial-failure', { body: await page.screenshot(), contentType: 'image/png' });
     }, { timeout: UI_READY });

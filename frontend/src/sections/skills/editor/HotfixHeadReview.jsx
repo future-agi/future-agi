@@ -43,6 +43,9 @@ export function useAuthoringOperation(scopeKey) {
       const result = await ticket.operation(JSON.parse(ticket.body), { idempotencyKey: ticket.key });
       if (!mounted.current || current.current !== scope || request.current !== ticket) return null;
       const acknowledged = result === undefined ? { acknowledged: true } : result;
+      // A confirmed replay settles the retained ticket as well as the UI state.
+      // Otherwise every later item is silently rejected as a changed retry body.
+      ticket.uncertain = false;
       setState({ pending: false, error: null, result: acknowledged, uncertain: false });
       return acknowledged;
     } catch (error) {

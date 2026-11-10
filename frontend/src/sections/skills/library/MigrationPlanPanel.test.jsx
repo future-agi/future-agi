@@ -13,6 +13,18 @@ const consent = () => {
 };
 afterEach(cleanup);
 
+it('labels migration selects without a self-reference to their selected option', () => {
+  render(<MigrationPlanPanel scopeKey="scope" plan={plan} onAccept={vi.fn()} />);
+  consent();
+  for (const name of ['Review item', 'Source update decision', 'File semantics', 'Destination tags']) {
+    const select = screen.getByRole('combobox', { name, exact: true });
+    const labelIds = select.getAttribute('aria-labelledby').split(' ');
+    expect(labelIds).toHaveLength(1);
+    expect(document.getElementById(labelIds[0])).toHaveTextContent(name);
+    expect(labelIds).not.toContain(select.id);
+  }
+});
+
 it('requires an explicit supported-subset acknowledgment and never enables a blocked member', async () => {
   const accept = vi.fn(async () => ({ receiptId: 'receipt' }));
   render(<MigrationPlanPanel scopeKey="scope" plan={{ ...plan, rejected: [{ path: 'bad/a.bin', reason: 'file_not_text' }], items: [...plan.items, { key: 'bad', name: 'bad', blocked: true }] }} onAccept={accept} />);
@@ -41,6 +53,23 @@ it('pins the exact body and operation key across a lost import response', async 
   expect(accept).toHaveBeenCalledTimes(2);
   expect(accept.mock.calls[1]).toEqual(accept.mock.calls[0]);
   await waitFor(() => expect(busy).toHaveBeenLastCalledWith(false));
+});
+
+it('allows the next reviewed item after an uncertain decision is confirmed by exact replay', async () => {
+  const accept = vi.fn().mockRejectedValueOnce(new Error('connection lost')).mockResolvedValueOnce({ receiptId: 'first' }).mockResolvedValueOnce({ receiptId: 'second' });
+  render(<MigrationPlanPanel scopeKey="scope" plan={{ ...plan, items: [item, { ...item, key: 'two', name: 'second-policy' }] }} onAccept={accept} />);
+  consent(); fireEvent.click(screen.getByRole('button', { name: 'Import reviewed item as draft' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Retry exact decision' }));
+  await screen.findByText(/Receipt first/);
+  choose('Review item', 'second-policy'); choose('Source update decision', 'Replace with reviewed source');
+  fireEvent.click(screen.getByRole('checkbox', { name: /reviewed source rights/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /Apply this exact decision/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Import reviewed item as draft' }));
+  await screen.findByText(/Receipt second/);
+  expect(accept).toHaveBeenCalledTimes(3);
+  expect(accept.mock.calls[1]).toEqual(accept.mock.calls[0]);
+  expect(accept.mock.calls[2][0].itemKey).toBe('two');
+  expect(accept.mock.calls[2][1].idempotencyKey).not.toBe(accept.mock.calls[0][1].idempotencyKey);
 });
 
 it('requires the HTTP contract rights acknowledgment for a keep decision too', async () => {

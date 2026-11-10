@@ -8,6 +8,7 @@ import { paths } from 'src/routes/paths';
 import ContextDetailView from './ContextDetailView';
 import ContextConsumersView from './ContextConsumersView';
 import ContextUsePanel from './ContextUsePanel';
+import ContextCaptureController from './ContextCaptureController';
 
 // Intent: authors inspect one exact context before choosing a draft origin.
 // Hierarchy: immutable identity first, delivery observations separate from use.
@@ -54,6 +55,7 @@ function Detail() {
         consumers: <ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} />,
         use: <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={window.location.origin} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} />,
       }} />
+    <ContextCaptureController contextId={contextId} canCapture={!query.isError && query.data?.releaseState.permissions.canPublish === true} />
   </Stack>;
 }
 export default function ContextDetailController() {
