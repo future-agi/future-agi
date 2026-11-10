@@ -253,6 +253,10 @@ export const compatibilityOf = ({
   envState,
   agent = envState?.agent,
   scenarioIds = null,
+  /* The version picked in the run plan; another agent's version is its own
+     (ownAgent false), never looked up in this environment's history. */
+  agentVersion = null,
+  ownAgent = true,
 }) => {
   const v = agent?.values || {};
   const kind = sourceKindOf(agent);
@@ -284,7 +288,9 @@ export const compatibilityOf = ({
   const provider = v.provider
     ? v.provider.charAt(0).toUpperCase() + v.provider.slice(1)
     : "the platform";
-  const version = currentAgentVersion(envState);
+  const version = agentVersion
+    ? { label: agentVersion }
+    : currentAgentVersion(envState);
   /* The tested family it belongs to — context, never proof for this connection. */
   const family = familyOf(agent, kind);
   const requested = requestedOf(envState, scenarioIds);
@@ -309,9 +315,9 @@ export const compatibilityOf = ({
      credentials-only version keeps the check: it behaves as its base. */
   const testedAt = test?.at ? Date.parse(test.at) : null;
   /* Only a version that was actually saved — a stand-in "v1" is dated now. */
-  const saved = (envState?.agentVersions || []).find(
-    (x) => x.label === version?.label,
-  );
+  const saved = ownAgent
+    ? (envState?.agentVersions || []).find((x) => x.label === version?.label)
+    : null;
   const versionAt = Date.parse(saved?.createdAt || saved?.at || "") || null;
   /* What this pairing looked like when it was last checked here: a newer
      environment version or edited scenarios make that check stale too. */

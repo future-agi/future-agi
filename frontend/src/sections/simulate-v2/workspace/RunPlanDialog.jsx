@@ -8,6 +8,8 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  ToggleButton,
+  ToggleButtonGroup,
   InputAdornment,
   MenuItem,
   Stack,
@@ -208,10 +210,27 @@ export default function RunPlanDialog({
     );
   const otherAgent =
     agentChoices.find((a) => a.key === agentKey && !a.current) || null;
-  const pickedKey = agentKey || agentChoices.find((a) => a.current)?.key || null;
-  const compat = compatOf ? compatOf(pickedKey) : null;
   const suite = suites.find((x) => x.id === suiteId) || null;
   const shownCount = suite ? suite.ids.length : scenarioCount;
+  /* Ready to run is for exactly what would run: the picked agent, its picked
+     version and the picked suite (the pair, and its cases). */
+  const pickedKey = agentKey || agentChoices.find((a) => a.current)?.key || null;
+  const reportFor = (version) =>
+    compatOf
+      ? compatOf(pickedKey, { version, ids: suite ? suite.ids : null })
+      : null;
+  /* Several versions compared: one run each, so one Ready to run each —
+     the switch above it says which one is shown. */
+  const multi = !otherAgent && versions.length > 1;
+  const [viewVersion, setViewVersion] = useState(null);
+  const shownVersion =
+    multi && versions.includes(viewVersion) ? viewVersion : versions[0];
+  const compat = reportFor(
+    otherAgent ? otherAgent.version : shownVersion || null,
+  );
+  const versionReports = multi
+    ? versions.map((v) => ({ v, report: reportFor(v) }))
+    : [];
   /* A multi-agent app runs with its coordinator and workers together. */
   const participants = otherAgent ? [] : membersOf(envState?.agent);
   const participantsEvidence = participants.length
@@ -236,7 +255,10 @@ export default function RunPlanDialog({
   const pairFailed = ["failed", "timed_out"].includes(
     compat?.validation?.state,
   );
-  const allHeld = blockedN > 0 && !compat.scope.runnable;
+  const heldAll = (r) => !!r?.scope?.blocked?.length && !r.scope.runnable;
+  const allHeld = multi
+    ? versionReports.some((x) => heldAll(x.report))
+    : heldAll(compat);
   /* A stop that can't be confirmed is said before a paid run (TH-8890). */
   /* What the run takes: the cases not held back. The requested count stays
      the denominator. */
@@ -530,6 +552,38 @@ export default function RunPlanDialog({
           {/* ── Ready to run (plan T06): this agent version on this
               environment, before anything starts — six areas, each blocker
               with its scenarios and fix ── */}
+          {compat && multi && (
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Typography
+                sx={{
+                  typography: "s2",
+                  color: "text.secondary",
+                  width: 88,
+                  flexShrink: 0,
+                }}
+              >
+                Version
+              </Typography>
+              <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={shownVersion}
+                onChange={(_, v) => v && setViewVersion(v)}
+                aria-label="Ready to run for version"
+              >
+                {versionReports.map(({ v, report }) => {
+                  const held = report?.scope?.blocked?.length || 0;
+                  return (
+                    <ToggleButton key={v} value={v}>
+                      {held
+                        ? `${v} · ${report.scope.runnable} of ${report.scope.requested}`
+                        : `${v} · all ready`}
+                    </ToggleButton>
+                  );
+                })}
+              </ToggleButtonGroup>
+            </Stack>
+          )}
           {compat && (
             <ReadyToRun
               report={compat}
@@ -885,7 +939,7 @@ export default function RunPlanDialog({
 
           {/* ── what's in and out (TH-8880): selected · will run · held back,
               recorded as not run; what holds them back on hover. ── */}
-          {blockedN > 0 && !suite && !pairFailed && !allHeld && (
+          {blockedN > 0 && !pairFailed && !allHeld && (
             <Tooltip
               arrow
               placement="top-start"
@@ -1518,8 +1572,24 @@ export default function RunPlanDialog({
                   alertAt,
                   estimate,
                   limits,
+                  /* Comparing versions: each version's run holds back its
+                     own blocked cases. */
+                  versionSubsets: multi
+                    ? Object.fromEntries(
+                        versionReports
+                          .filter((x) => x.report?.scope?.blocked?.length)
+                          .map(({ v, report }) => [
+                            v,
+                            {
+                              ids: report.scope.eligibleIds,
+                              requested: report.scope.requested,
+                              blocked: report.scope.blocked.map((b) => b.id),
+                            },
+                          ]),
+                      )
+                    : null,
                   compatSubset:
-                    blockedN > 0
+                    !multi && blockedN > 0
                       ? {
                           ids: compat.scope.eligibleIds,
                           requested: compat.scope.requested,
@@ -1533,7 +1603,7 @@ export default function RunPlanDialog({
                 ? "Starting…"
                 : submit === "rejected"
                   ? "Try again"
-                  : blockedN > 0 && compat.scope.runnable && !pairFailed
+                  : !multi && blockedN > 0 && compat.scope.runnable && !pairFailed
                     ? `Run ${compat.scope.runnable} of ${compat.scope.requested}`
                     : "Start run"}
             </Button>

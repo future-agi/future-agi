@@ -247,10 +247,20 @@ export const planVersionGroup = (
   state,
   envId,
   versions,
-  { trials = 3, now = new Date() } = {},
+  { trials = 3, now = new Date(), scenarioIds = null, subsets = {} } = {},
 ) => {
   const stamp = now.getTime().toString(36);
   const envName = envNameOf(state, envId);
+  /* Each version runs the picked cases less the ones its own Ready to run
+     held back; the held-back ones are recorded on its run as not run. */
+  const scopeOf = (v) => {
+    const sub = subsets?.[v];
+    const ids = sub?.ids || (scenarioIds?.length ? scenarioIds : null);
+    return {
+      ...(ids && { scenarioIds: ids }),
+      ...(sub && { heldBack: { requested: sub.requested, blocked: sub.blocked } }),
+    };
+  };
   const members = versions.map((v, i) => ({
     envId,
     envName,
@@ -286,6 +296,7 @@ export const planVersionGroup = (
       partial: false,
       seed: m.runId,
       twinWrites: null,
+      ...scopeOf(m.agentVersion),
       group,
     },
   }));

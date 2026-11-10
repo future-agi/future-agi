@@ -206,6 +206,9 @@ function LiveRun() {
     : [];
   const only =
     params.get("only") ||
+    (pendingMember?.scenarioIds?.length
+      ? pendingMember.scenarioIds.join(",")
+      : null) ||
     (watchIds.length ? watchIds.join(",") : null) ||
     (watchTrial?.sourceRun?.scenarioIds?.length
       ? watchTrial.sourceRun.scenarioIds.join(",")
@@ -936,14 +939,26 @@ function LiveRun() {
       /* The compatibility report as it stood at start — kept with the run;
          a reviewed subset keeps its requested count. */
       compat: {
+        /* For the agent and version that actually ran — another
+           compatible agent, or the version a comparison picked. */
         ...compatStampOf(
-          compatibilityOf({ env, envState }),
+          compatibilityOf({
+            env,
+            envState,
+            ...(withAgent && { agent: withAgent, ownAgent: false }),
+            agentVersion: runAgent || null,
+          }),
           scenarios.map((sc) => sc.id),
         ),
         ...(params.get("requested") && {
           requested: Number(params.get("requested")),
           blocked: (params.get("blocked") || "").split(",").filter(Boolean),
         }),
+        ...(!params.get("requested") &&
+          pendingMember?.heldBack && {
+            requested: pendingMember.heldBack.requested,
+            blocked: pendingMember.heldBack.blocked,
+          }),
       },
       /* A platform agent whose config isn't pinned to a version (Vapi has none). */
       ...(envState?.agent?.values?.provider &&

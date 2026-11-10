@@ -1090,6 +1090,7 @@ export default function EnvironmentWorkspace() {
     compatSubset,
     withAgent,
     suiteIds,
+    versionSubsets,
     addEvals: picked,
   }) => {
     const req = runPlanReq;
@@ -1102,11 +1103,14 @@ export default function EnvironmentWorkspace() {
         trials: attempts,
         cap,
         alertAt,
+        /* The picked cases, and per version what its Ready to run holds back. */
+        scenarioIds: suiteIds || req.scenarioIds || null,
+        subsets: versionSubsets || {},
       });
     if (req.also?.length && !req.scenarioIds?.length && !suiteIds)
       return runGroup.start(req.also, { trials: attempts, cap, alertAt });
     return launchRun(
-      suiteIds || (compatSubset ? compatSubset.ids : req.scenarioIds),
+      compatSubset ? compatSubset.ids : suiteIds || req.scenarioIds,
       attempts,
       {
         agent: versions[0] && versions[0] !== current ? versions[0] : undefined,
@@ -1118,7 +1122,7 @@ export default function EnvironmentWorkspace() {
         candidate,
         limits,
         toolReplay: req.toolReplay,
-        compatSubset: suiteIds ? null : compatSubset,
+        compatSubset,
         withAgent,
       },
     );
@@ -3333,7 +3337,7 @@ export default function EnvironmentWorkspace() {
              environment's own, or another compatible one (the pair). */
           compatOf={
             runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot
-              ? (key) => {
+              ? (key, { version = null, ids = null } = {}) => {
                   const other =
                     key && key !== agentKey
                       ? connectedAgents.find((a) => a.key === key)
@@ -3348,7 +3352,9 @@ export default function EnvironmentWorkspace() {
                         ...(connectedAgent?.values || {}),
                       },
                     },
-                    scenarioIds: runPlanReq.scenarioIds,
+                    scenarioIds: ids || runPlanReq.scenarioIds,
+                    agentVersion: version,
+                    ownAgent: !other,
                   });
                 }
               : null

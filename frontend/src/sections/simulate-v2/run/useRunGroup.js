@@ -67,9 +67,11 @@ export default function useRunGroup(envId) {
 
   /* One environment, several agent versions — one run each, as a group. */
   const startVersions = useCallback(
-    (versions, { trials = 3, cap, alertAt } = {}) => {
+    (versions, { trials = 3, cap, alertAt, scenarioIds, subsets } = {}) => {
       const { records, leader } = planVersionGroup(state, envId, versions, {
         trials,
+        scenarioIds,
+        subsets,
       });
       /* The run plan's limit covers every version together (its estimate
          does), so each version's run holds its share — never the whole
