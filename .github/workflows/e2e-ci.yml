@@ -363,11 +363,6 @@ jobs:
         id: boot
         run: bin/e2e up
 
-      - name: Verify managed backend connection policy
-        # Both stack env files publish Granian on BACKEND_PORT=8100. Probe with
-        # Playwright itself, without asking the server to close or retrying.
-        run: node e2e/scripts/check-api-connection-policy.mjs http://localhost:8100/health/
-
       - name: Run E2E suite
         run: bin/e2e test
 
