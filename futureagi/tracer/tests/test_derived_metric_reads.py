@@ -93,6 +93,7 @@ def test_rows_preserve_every_server_computed_uncertainty_field(packed):
     client.execute.return_value = ([values], columns)
     assert reads._rows(reads.MetricReadStore(client), "query", {}) == [expected]
     assert client.execute.call_args.kwargs["settings"]["use_query_cache"] == 0
+    assert client.execute.call_args.kwargs["settings"]["compile_expressions"] == 0
 
 
 @pytest.mark.django_db

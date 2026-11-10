@@ -93,6 +93,10 @@ class MetricReadStore(ClickHousePublicationStore):
                 "max_result_rows": 4590,
                 "max_result_bytes": 16 * 1024 * 1024,
                 "use_query_cache": 0,
+                # Compacted cells do too little work to amortize JIT-compiling the
+                # wide CI expression. The fourth-read compilation alone can use
+                # the entire interactive budget; keep these reads interpreted.
+                "compile_expressions": 0,
                 # The scalar compiler uses legacy-compatible SQL. Avoid repeated
                 # analyzer expansion of its nested support/interval expressions.
                 "enable_analyzer": 0,
