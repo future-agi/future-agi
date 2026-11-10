@@ -178,6 +178,27 @@ export function validateBackgroundMockMounts(service: string, mounts: Container[
     'gateway credential suppression must be an exact read-only /dev/null bind');
   }
 }
+/** The public report is the only application bind allowed in Distributed E2E.
+ * Missing integration keeps the old mount-free contract. Never infer the expected
+ * source from inspect output; bin/e2e exports the independently chosen host slot.
+ */
+export function validateApplicationMounts(service: string, mounts: Container['Mounts'],
+  expectedDirectory = process.env.E2E_HOST_UPDATE_STATUS_DIR): void {
+  requireSafe(['backend', 'worker'].includes(service), 'unsupported application mount service');
+  if (mounts.length === 0) return;
+  requireSafe(service === 'backend' && mounts.length === 1 && expectedDirectory,
+    `${service} has application mounts`);
+  const mount = mounts[0];
+  requireSafe(mount.Type === 'bind' && mount.RW === false && mount.Destination === '/run/futureagi-host-update',
+    'unexpected backend status mount');
+  let matches = false;
+  try {
+    matches = statSync(expectedDirectory!).isDirectory() &&
+      realpathSync(mount.Source) === realpathSync(expectedDirectory!);
+  } catch { /* Missing/unreadable paths fail closed without exposing host paths. */ }
+  requireSafe(matches, 'backend status mount source mismatch');
+}
+
 export interface MockReceipt {
   context: string; project: string; networkId: string; gatewaySha: string; mockSha: string;
   services: { service: string; id: string; image: string; startedAt: string }[];
@@ -326,6 +347,7 @@ function distributedMockStack(evalBackground: boolean): MockStack {
         const env = environments[service] = containerEnvironment(selected[service]);
         validateMockEnvironment(service, env, evalBackground, selected[service].Mounts);
       }
+      for (const service of ['backend', 'worker']) validateApplicationMounts(service, selected[service].Mounts);
       if (!evalBackground) return undefined;
       // No tag resolution against a registry: local image inspect only. Main must
       // supply the same version pins used to recreate the managed application.
@@ -354,7 +376,6 @@ function distributedMockStack(evalBackground: boolean): MockStack {
       const addresses = Object.fromEntries(['temporal', 'mock-llm', 'agentcc-gateway'].map(service =>
         [service, selected[service].NetworkSettings.Networks[network].IPAddress]));
       const processes = ['backend', 'worker'].map(service => {
-        requireSafe(selected[service].Mounts.length === 0, `${service} has application mounts`);
         // Read-only process/source/constructor/GET-health and Describe RPCs only;
         // no Django setup, completion/embed call, registration or task submission.
         return JSON.parse(run('docker', ['--context', context, 'exec', '-i', '-e', 'PYTHONDONTWRITEBYTECODE=1',

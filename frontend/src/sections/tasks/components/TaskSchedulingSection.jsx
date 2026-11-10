@@ -50,9 +50,7 @@ const RunModeCard = ({ mode, isActive, onClick }) => {
         borderColor: isActive ? "primary.main" : "divider",
         bgcolor: isActive
           ? alpha(theme.palette.primary.main, 0.08)
-          : theme.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+          : "background.neutral",
         cursor: "pointer",
         transition: "all 0.15s",
         display: "flex",
@@ -94,7 +92,7 @@ const RunModeCard = ({ mode, isActive, onClick }) => {
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ fontSize: "11px", lineHeight: 1.4 }}
+        sx={{ fontSize: "12px", lineHeight: 1.4 }}
       >
         {mode.description}
       </Typography>
@@ -199,7 +197,7 @@ const RowLimitField = ({ control }) => {
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ fontSize: "11px", display: "block", mb: 1 }}
+        sx={{ fontSize: "12px", display: "block", mb: 1 }}
       >
         Stop after processing this many matching rows
       </Typography>
@@ -250,16 +248,16 @@ const RowLimitField = ({ control }) => {
             <IconButton
               size="small"
               onClick={() => onChange((Number(value) || 0) + 100)}
-              sx={{ p: 0, width: 16, height: 12 }}
+              sx={{ p: 0, width: 16, }}
             >
-              <Iconify icon="heroicons:chevron-up-20-solid" width={14} />
+              <Iconify icon="solar:alt-arrow-up-linear" width={14} />
             </IconButton>
             <IconButton
               size="small"
               onClick={() => onChange(Math.max(1, (Number(value) || 0) - 100))}
-              sx={{ p: 0, width: 16, height: 12 }}
+              sx={{ p: 0, width: 16, }}
             >
-              <Iconify icon="heroicons:chevron-down-20-solid" width={14} />
+              <Iconify icon="solar:alt-arrow-down-linear" width={14} />
             </IconButton>
           </Box>
         </Box>
@@ -269,7 +267,7 @@ const RowLimitField = ({ control }) => {
         <Typography
           variant="caption"
           color="error.main"
-          sx={{ fontSize: "11px", display: "block", mt: 0.5 }}
+          sx={{ fontSize: "12px", display: "block", mt: 0.5 }}
         >
           {error.message}
         </Typography>
@@ -335,7 +333,7 @@ const SamplingRateField = ({ control }) => {
         </Box>
         <Typography
           variant="caption"
-          sx={{ fontSize: "12px", fontWeight: 700, color: "primary.main" }}
+          sx={{ fontSize: "12px", fontWeight: 600, color: "primary.main" }}
         >
           {numValue}%
         </Typography>
@@ -343,7 +341,7 @@ const SamplingRateField = ({ control }) => {
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ fontSize: "11px", display: "block", mb: 1 }}
+        sx={{ fontSize: "12px", display: "block", mb: 1 }}
       >
         What percentage of matching rows to actually evaluate — lower values run
         faster and use less budget
@@ -379,7 +377,7 @@ const SamplingRateField = ({ control }) => {
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ fontSize: "11px", display: "block", mt: 0.25 }}
+        sx={{ fontSize: "12px", display: "block", mt: 0.25 }}
       >
         {samplingHelperText(numValue)}
       </Typography>
@@ -388,7 +386,7 @@ const SamplingRateField = ({ control }) => {
         <Typography
           variant="caption"
           color="error.main"
-          sx={{ fontSize: "11px", display: "block", mt: 0.5 }}
+          sx={{ fontSize: "12px", display: "block", mt: 0.5 }}
         >
           {error.message}
         </Typography>
@@ -474,7 +472,7 @@ const TaskSchedulingSection = ({ control, isEdit = false }) => {
                 {startDateField.value && endDateField.value && (
                   <Box
                     component="span"
-                    sx={{ fontSize: "10px", fontWeight: 500, ml: 0.5 }}
+                    sx={{ fontSize: "12px", fontWeight: 500, ml: 0.5 }}
                   >
                     {`(${formatTimeWindow(
                       startDateField.value,
@@ -488,7 +486,7 @@ const TaskSchedulingSection = ({ control, isEdit = false }) => {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", mb: 1 }}
+              sx={{ fontSize: "12px", display: "block", mb: 1 }}
             >
               Which time range of existing traces to run on
             </Typography>

@@ -10,9 +10,9 @@ export function Meta({ label, value }) {
     <Stack
       direction="row"
       spacing={0.5}
-      sx={{ px: 1, py: 0.5, borderRadius: 0.75, border: "1px solid", borderColor: "divider" }}
+      sx={{ px: 1, py: 0.5, borderRadius: "4px", bgcolor: "action.selected" }}
     >
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{label} :</Typography>
+      <Typography sx={{ typography: "s3", color: "text.secondary" }}>{label} :</Typography>
       <Typography sx={{ typography: "s3", color: "text.primary", fontWeight: 500 }}>
         {value}
       </Typography>
@@ -28,16 +28,14 @@ export function Cell({ label, value }) {
         noWrap
         sx={{
           typography: "s3",
-          fontWeight: 700,
+          fontWeight: 500,
           color: "text.subtitle",
-          letterSpacing: 0.3,
-          textTransform: "uppercase",
         }}
       >
         {label}
       </Typography>
       <Typography
-        sx={{ typography: "m2", fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace", lineHeight: 1.3 }}
+        sx={{ typography: "m3", fontWeight: 500, fontVariantNumeric: "tabular-nums" }}
       >
         {value}
       </Typography>

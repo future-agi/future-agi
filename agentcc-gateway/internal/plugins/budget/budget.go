@@ -101,6 +101,11 @@ func New(tracker *budgetpkg.Tracker, pricing *PricingLookup, enabled bool, tenan
 func (p *Plugin) Name() string  { return "budget" }
 func (p *Plugin) Priority() int { return 40 } // After auth (20) + RBAC (30), before guardrails.
 
+// PostPriority records spend after the cost plugin (500) has priced the
+// request, so a budget counts the price the Request Log shows. Before it,
+// spend came from the budget's own price table, which has no current model.
+func (p *Plugin) PostPriority() int { return 505 }
+
 // orgBudgetCounter tracks spend within a period for a single budget level.
 type orgBudgetCounter struct {
 	mu          sync.Mutex
@@ -164,6 +169,10 @@ func (h *orgHierarchyCounters) getOrCreateCounter(level, key string) *orgBudgetC
 
 // ProcessRequest checks all applicable budgets before the provider call.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if rc.Flags.NoSpend {
+		return pipeline.ResultContinue()
+	}
+
 	// Global budget check.
 	if p.enabled && p.tracker != nil {
 		team, user, keyName, model := extractIdentity(rc)

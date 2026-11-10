@@ -9,6 +9,11 @@ import {
 import AgentOverviewTab from "../AgentOverviewTab";
 
 const runsState = { current: {} };
+const authState = { user: {} };
+
+vi.mock("src/auth/hooks", () => ({
+  useAuthContext: () => authState,
+}));
 
 vi.mock("src/api/agents/agentDetail", async () => {
   const actual = await vi.importActual("src/api/agents/agentDetail");
@@ -49,6 +54,7 @@ const loaded = (raw) => ({
 
 beforeEach(() => {
   runsState.current = loaded([ENVIRONMENT_RUN, SIMULATE_RUN]);
+  authState.user = {};
 });
 
 describe("AgentOverviewTab", () => {
@@ -135,6 +141,26 @@ describe("AgentOverviewTab", () => {
     fireEvent.click(screen.getByText("Run 1"));
     expect(currentLocation.pathname).toBe(
       "/dashboard/simulate/test/c8cc6400-c677-4efd-9ad0-d177c912dad4/c766900d-00e6-41c7-b922-c4e8eed1e7ec",
+    );
+  });
+
+  // The Simulate run page is one the router does not register for an org
+  // restricted to Environments (TH-8602), so its row must not lead to the 404.
+  it("does not open a Simulate run for an org restricted to Environments", () => {
+    authState.user = { restrict_simulate_to_environments: true };
+    renderTab();
+    fireEvent.click(screen.getByText("Run 1"));
+    expect(currentLocation.pathname).toBe(
+      "/dashboard/agents/connected/a1/overview",
+    );
+  });
+
+  it("still opens an environment run for an org restricted to Environments", () => {
+    authState.user = { restrict_simulate_to_environments: true };
+    renderTab();
+    fireEvent.click(screen.getByText("Run 2"));
+    expect(currentLocation.pathname).toBe(
+      "/dashboard/simulate/environments/e5391b8a-156e-46dd-b5a4-4761971f2ccd/runs/b741b14e-91c0-403d-81e5-5dd7e40d09c7/68dedb99-42b6-46e7-8e94-b511041fa2cb",
     );
   });
 

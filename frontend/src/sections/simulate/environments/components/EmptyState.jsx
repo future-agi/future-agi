@@ -14,24 +14,24 @@ export default function EmptyState({ icon, title, body, action }) {
     >
       <Box
         sx={{
-          width: 52,
-          height: 52,
-          borderRadius: 1.5,
+          width: 40,
+          height: 40,
+          borderRadius: "8px",
           display: "grid",
           placeItems: "center",
           bgcolor: "background.neutral",
           color: "text.subtitle",
         }}
       >
-        <Iconify icon={icon || "solar:box-minimalistic-linear"} width={26} />
+        <Iconify icon={icon || "solar:box-minimalistic-linear"} width={20} />
       </Box>
       <Box>
-        <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
+        <Typography sx={{ typography: "s1_2", fontWeight: 600 }}>
           {title}
         </Typography>
         {body && (
           <Typography
-            sx={{ typography: "s2", color: "text.subtitle", maxWidth: 420, mt: 0.5 }}
+            sx={{ typography: "s1", color: "text.subtitle", maxWidth: 420, mt: 0.5 }}
           >
             {body}
           </Typography>

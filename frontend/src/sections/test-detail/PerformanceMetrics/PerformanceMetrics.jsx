@@ -142,7 +142,7 @@ export default function PerformanceMetrics() {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         padding: 1.5,
         bgcolor: "var(--bg-neutral)",
       }}
@@ -176,7 +176,7 @@ export default function PerformanceMetrics() {
               width: "24px",
               color: "text.primary",
               rotate: collapse ? "0deg" : "180deg",
-              transition: "rotate 0.3s ease-in-out",
+              transition: "rotate 0.2s ease-in-out",
             }}
             src="/assets/icons/custom/lucide--chevron-down.svg"
           />
@@ -190,7 +190,7 @@ export default function PerformanceMetrics() {
               sm: "hidden",
             },
             maxHeight: expanded ? "100%" : "400px",
-            transition: "max-height 0.4s ease-in-out",
+            transition: "max-height 0.2s ease-in-out",
           })}
         >
           {isPending && !kpis ? (
@@ -228,16 +228,13 @@ export default function PerformanceMetrics() {
               display: "flex",
               color: "text.primary",
               typography: "s2",
-              fontWeight: "fontWeightMedium",
-              borderRadius: 1,
               mt: 1,
               borderColor: "text.disabled",
             }}
             startIcon={
               <SvgColor
+                width={16}
                 sx={{
-                  height: "16px",
-                  width: "16px",
                   rotate: "180deg",
                 }}
                 src={

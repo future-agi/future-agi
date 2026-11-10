@@ -93,7 +93,7 @@ const CloudProviderModals = ({ provider, onClose, onSubmit }) => {
       onClose={onClose}
       PaperProps={{
         sx: {
-          minWidth: "600px",
+          minWidth: "720px",
           borderRadius: "8px",
           padding: "16px",
           display: "flex",
@@ -120,7 +120,7 @@ const CloudProviderModals = ({ provider, onClose, onSubmit }) => {
           color: "text.primary",
         }}
       >
-        <Iconify icon="akar-icons:cross" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <DialogContent sx={{ padding: 0 }}>
         <Box py={1} display={"flex"} flexDirection={"column"} gap={1}>
@@ -136,17 +136,11 @@ const CloudProviderModals = ({ provider, onClose, onSubmit }) => {
               <Chip
                 label={"JSON"}
                 sx={{
-                  height: "30px",
                   marginBottom: 1,
                   width: "max-content",
                   backgroundColor: "action.hover",
-                  borderRadius: "0px",
                   borderBottomLeftRadius: "4px",
                   color: "primary.main",
-                  fontSize: "12px",
-                  paddingX: "8px",
-                  lineHeight: "18px",
-                  fontWeight: 600,
                   "& .MuiChip-label": {
                     padding: 0,
                   },
@@ -185,7 +179,6 @@ const CloudProviderModals = ({ provider, onClose, onSubmit }) => {
                 disabled={!isDirty}
                 sx={{
                   minWidth: "200px",
-                  minHeight: "38px",
                 }}
               >
                 Save

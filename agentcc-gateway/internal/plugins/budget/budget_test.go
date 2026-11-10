@@ -648,3 +648,21 @@ func TestProcessResponse_UnpricedModel_HintNamesBothPricingKeys(t *testing.T) {
 		}
 	}
 }
+
+// A call that cannot spend, such as a delete, is not refused: a key out of
+// budget can still clean up what it pays to keep.
+func TestPlugin_NoSpendCallIsNotRefused(t *testing.T) {
+	tracker := testTracker()
+	p := New(tracker, testPricing(), true, nil)
+	tracker.RecordSpend("", "alice", "", "gpt-4o", nil, 500.00)
+
+	rc := makeRC("gpt-4o", "openai", map[string]string{"auth_key_owner": "alice"})
+	if result := p.ProcessRequest(context.Background(), rc); result.Error == nil {
+		t.Fatal("control: a call that can spend should be refused")
+	}
+	rc = makeRC("gpt-4o", "openai", map[string]string{"auth_key_owner": "alice"})
+	rc.Flags.NoSpend = true
+	if result := p.ProcessRequest(context.Background(), rc); result.Error != nil {
+		t.Fatalf("a call that cannot spend was refused: %v", result.Error.Message)
+	}
+}
