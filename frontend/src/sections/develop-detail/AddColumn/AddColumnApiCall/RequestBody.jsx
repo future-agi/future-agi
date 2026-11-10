@@ -17,6 +17,7 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { useController } from "react-hook-form";
+import { statusColors } from "src/utils/runStatus";
 
 const startRegex = /.*{{[^}\s]*(?!}})$/;
 const variablePattern = /({{[^}]*}}|{{[^}]*$)/g;
@@ -70,6 +71,8 @@ const RequestBody = ({
   // Highlighted text: green for valid variables, red for invalid/incomplete
   const highlightedContent = useMemo(() => {
     if (!value) return multiline ? "\n" : "\u00a0";
+    const successFg = statusColors(theme, "success").fg;
+    const dangerFg = statusColors(theme, "danger").fg;
     const parts = value.split(variablePattern);
     return parts.map((part, i) => {
       if (!part) return null;
@@ -78,7 +81,7 @@ const RequestBody = ({
       if (completeMatch) {
         const isValid = columnNameSet.has(completeMatch[1].trim());
         return (
-          <span key={i} style={{ color: isValid ? "#4caf50" : "#f44336" }}>
+          <span key={i} style={{ color: isValid ? successFg : dangerFg }}>
             {part}
           </span>
         );
@@ -86,14 +89,14 @@ const RequestBody = ({
       // Incomplete {{... (still typing)
       if (/^{{[^}]*$/.test(part)) {
         return (
-          <span key={i} style={{ color: "#f44336" }}>
+          <span key={i} style={{ color: dangerFg }}>
             {part}
           </span>
         );
       }
       return <span key={i}>{part}</span>;
     });
-  }, [value, columnNameSet, multiline]);
+  }, [value, columnNameSet, multiline, theme]);
 
   // Search text for autocomplete filtering
   const searchText = useMemo(() => {
@@ -308,7 +311,7 @@ const RequestBody = ({
 
   const sharedTextStyle = {
     fontFamily: "inherit",
-    fontSize: "14px",
+    fontSize: "13px",
     lineHeight: "1.5",
     letterSpacing: "normal",
     boxSizing: "border-box",
@@ -421,9 +424,6 @@ const RequestBody = ({
               py: 0.5,
               maxHeight: 220,
               overflow: "auto",
-              borderRadius: "8px",
-              border: "1px solid",
-              borderColor: "divider",
             }}
             role="listbox"
           >
@@ -435,11 +435,9 @@ const RequestBody = ({
                 sx={{
                   py: 0.75,
                   px: 1.5,
-                  fontSize: "13px",
                   fontFamily: "monospace",
                   borderRadius: "4px",
                   mx: 0.5,
-                  color: variable.isJsonPath ? "primary.main" : "text.primary",
                   backgroundColor:
                     index === selectedIndex ? "action.selected" : "inherit",
                   "&:hover": { backgroundColor: "action.hover" },

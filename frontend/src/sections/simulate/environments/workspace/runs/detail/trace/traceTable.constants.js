@@ -1,8 +1,8 @@
 import { STATUS_META } from "../../runs.constants";
 
 // Trace-table vocabulary and grouping logic, ported from the designer's
-// TraceTable. Kept hex-free (colours resolve from BUILD_TONES / theme tokens in
-// the components); this module is pure data + pure functions so the pickers,
+// TraceTable. Kept colour-free (colours are theme tokens named by status role,
+// resolved in the components); this module is pure data + pure functions so the pickers,
 // the table body and the tests read one source of truth.
 
 /*
@@ -115,9 +115,6 @@ export const TRACE_COLUMNS = [
 // Columns a chat run has no data for: interruptions only happen on a voice call.
 export const VOICE_ONLY_COLUMNS = new Set(["aiInterruptions", "stopLatency"]);
 
-// An eval result's status while its grade is still on the way.
-export const PENDING_EVAL_STATUS = "pending";
-
 // Every group closed: the table's starting state, and Collapse all. Expand all
 // sets `all`; `expanded` holds the labels opened.
 export const CLOSED_GROUP_VIEW = { all: false, expanded: new Set() };
@@ -159,13 +156,13 @@ export const GROUPINGS = [
 ];
 
 export const STATUS_CHIPS = [
-  { id: "all", label: "All", tone: null },
-  { id: "queued", label: "Queued", tone: null },
-  { id: "in_progress", label: "In progress", tone: "blue" },
-  { id: "failed", label: "Failed", tone: "red" },
-  { id: "error", label: "Error", tone: "amber" },
-  { id: "inconclusive", label: "Inconclusive", tone: null },
-  { id: "passed", label: "Passed", tone: "green" },
+  { id: "all", label: "All", role: null },
+  { id: "queued", label: "Queued", role: null },
+  { id: "in_progress", label: "In progress", role: "info" },
+  { id: "failed", label: "Failed", role: "danger" },
+  { id: "error", label: "Error", role: "warning" },
+  { id: "inconclusive", label: "Inconclusive", role: null },
+  { id: "passed", label: "Passed", role: "success" },
 ];
 
 export const neutralCheckboxSx = {
@@ -177,17 +174,9 @@ export const neutralCheckboxSx = {
 export const TOOLBAR_COMPACT = "@container (max-width: 1240px)";
 
 export const toolbarButtonSx = {
-  typography: "s2",
-  fontWeight: "fontWeightBold",
-  textTransform: "none",
-  height: 28,
   minWidth: 0,
-  px: 1,
   flexShrink: 0,
   whiteSpace: "nowrap",
-  color: "text.primary",
-  borderColor: "divider",
-  "&:hover": { borderColor: "text.disabled", bgcolor: "transparent" },
 };
 
 export const compactHiddenSx = { [TOOLBAR_COMPACT]: { display: "none" } };
@@ -210,10 +199,8 @@ export const pinnedLeftSx = {
 
 export const bandCellSx = {
   typography: "s3",
-  fontWeight: "fontWeightBold",
+  fontWeight: 500,
   color: "text.subtitle",
-  textTransform: "uppercase",
-  letterSpacing: 0.4,
   whiteSpace: "nowrap",
   bgcolor: "background.paper",
   height: GROUP_BAND_PX,
@@ -268,11 +255,15 @@ export const OUTCOME_LABELS = Object.fromEntries(
   ]),
 );
 
-// Call outcomes share their labels with the filters.
+// Call outcomes share their labels with the filters. `role` is the status role
+// (render it with StatusBadge); `color` is the same role as a text token.
 export function runOutcome(status) {
   const meta = STATUS_META[status] || STATUS_META.unmeasured;
+  const chip = STATUS_CHIPS.find((c) => c.id === status);
+  const role = chip?.role ?? meta.role;
   return {
     label: OUTCOME_LABELS[status] || OUTCOME_LABELS.inconclusive,
-    color: meta.color,
+    role,
+    color: `status.${role}.fg`,
   };
 }

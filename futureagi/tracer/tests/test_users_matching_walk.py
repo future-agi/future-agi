@@ -46,10 +46,14 @@ WINDOW_START = datetime(2026, 9, 1, tzinfo=UTC)
 WINDOW_END = datetime(2026, 9, 2, tzinfo=UTC)
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 SERVICE = "tracer.services.users_list_manager.V2AnalyticsQueryService"
-# ``_USERS_ORIGIN_SHAPES["no_text_witness"]`` in
-# scripts/qa/replay_observe_queries_readonly.py: the unfiltered cursor page.
+# Reviewed unfiltered cursor shape: complete tuple-winner replay, followed by
+# the lexically bound trace-metric tuple before whole-user totals. The former
+# pin expanded the summary proof into each metric's SELECT alias. The current
+# pin adds a source-winner GenAI operation bit and descendant summary proof,
+# excluding explicitly nonadditive retry siblings from its collision veto.
+# Tenant, window, latest-live replay and cursor ordering are unchanged.
 UNFILTERED_PAGE_DIGEST = (
-    "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5"
+    "006a8d93bc8d5d2799441f45d4e36f22e3aae0ce9067ddc68771af012a95eba5"
 )
 
 

@@ -94,8 +94,8 @@ const CompareConversation = ({
             key={index}
             component="span"
             sx={{
-              backgroundColor: "red.o10",
-              color: "red.500",
+              backgroundColor: "status.danger.bg",
+              color: "status.danger.fg",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
               fontWeight: "fontWeightMedium",
@@ -135,8 +135,8 @@ const CompareConversation = ({
             key={index}
             component="span"
             sx={{
-              backgroundColor: "green.o10",
-              color: "green.500",
+              backgroundColor: "status.success.bg",
+              color: "status.success.fg",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
               fontWeight: "fontWeightMedium",
@@ -235,13 +235,13 @@ const CompareConversation = ({
                 sx={{
                   height: "16px",
                   width: "16px",
-                  bgcolor: "red.500",
+                  bgcolor: "status.danger.solid",
                 }}
               />
               <Typography
                 typography={"s3"}
                 fontWeight={"fontWeightMedium"}
-                color={"red.500"}
+                color={"status.danger.fg"}
               >
                 Removals ({removalsCount})
               </Typography>
@@ -252,13 +252,13 @@ const CompareConversation = ({
                 sx={{
                   height: "16px",
                   width: "16px",
-                  bgcolor: "green.500",
+                  bgcolor: "status.success.solid",
                 }}
               />
               <Typography
                 typography={"s3"}
                 fontWeight={"fontWeightMedium"}
-                color={"green.500"}
+                color={"status.success.fg"}
               >
                 Additions ({additionsCount})
               </Typography>
@@ -346,16 +346,16 @@ const CompareConversation = ({
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                   <Box
                     sx={{
-                      bgcolor: "pink.o10",
+                      bgcolor: "status.discovery.bg",
                       height: 24,
                       width: 24,
-                      borderRadius: 0.5,
+                      borderRadius: "4px",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                       typography: "s3",
                       fontWeight: "fontWeightMedium",
-                      color: "pink.500",
+                      color: "status.discovery.fg",
                     }}
                   >
                     A
@@ -384,16 +384,16 @@ const CompareConversation = ({
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                   <Box
                     sx={{
-                      bgcolor: "blue.o10",
+                      bgcolor: "status.info.bg",
                       height: 24,
                       width: 24,
-                      borderRadius: 0.5,
+                      borderRadius: "4px",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                       typography: "s3",
                       fontWeight: "fontWeightMedium",
-                      color: "blue.500",
+                      color: "status.info.fg",
                     }}
                   >
                     B

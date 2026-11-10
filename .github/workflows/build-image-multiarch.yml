@@ -359,6 +359,34 @@ jobs:
           for digest in *; do
             sources+=("${IMAGE}@sha256:${digest}")
           done
+          case "$VERSION" in
+            *-beta.*|*-rc.*)
+              # Recheck here, not only in prepare: an isolated publish rerun
+              # can reuse successful prerequisites after this tag was published.
+              # Buildx dry-run emits the exact candidate bytes plus one newline;
+              # remove only that added newline when hashing (not JSON whitespace).
+              candidate=$(docker buildx imagetools create --dry-run "${sources[@]}" |
+                python3 -c 'import hashlib, sys; raw = sys.stdin.buffer.read(); assert raw.endswith(b"\n"), "missing dry-run manifest"; print("sha256:" + hashlib.sha256(raw[:-1]).hexdigest())')
+              ref="${IMAGE}:${VERSION}${SUFFIX}"
+              if inspection=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' 2>&1); then
+                existing=$(printf '%s' "$inspection" | jq -er '.digest')
+                [[ "$existing" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::Invalid digest for $ref; refusing to publish."; exit 1; }
+                if [ "$existing" != "$candidate" ]; then
+                  echo "::error::Immutable prerelease $ref already exists with digest $existing; candidate digest $candidate differs. Publish a new beta/rc version; never replace this tag."
+                  exit 1
+                fi
+                echo "$ref already has digest $candidate; no tag is rewritten."
+                exit 0
+              else
+                # Only an exact registry missing-tag result permits creation.
+                # Auth, rate limits, transport failures and unknown errors fail closed.
+                case "$inspection" in
+                  "ERROR: $ref: not found"|"$ref: not found") ;;
+                  *) echo "::error::Cannot establish that $ref is absent; refusing to publish."; exit 1 ;;
+                esac
+              fi
+              ;;
+          esac
           docker buildx imagetools create "${tags[@]}" "${sources[@]}"
       - name: Verify every architecture is present
         env:

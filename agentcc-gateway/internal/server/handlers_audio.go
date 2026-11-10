@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
@@ -129,7 +130,7 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 		audioData = data
 		contentType = ct
 		rc.ResolvedModel = rc.Model
-		rc.SetMetadata("input_characters", strconv.Itoa(len(rc.SpeechRequest.Input)))
+		rc.SetMetadata("input_characters", strconv.Itoa(utf8.RuneCountInString(rc.SpeechRequest.Input)))
 		rc.SetMetadata("response_content_type", ct)
 		rc.SetMetadata("response_size_bytes", strconv.Itoa(len(data)))
 		return nil
@@ -628,7 +629,7 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 	defer audioStream.Close()
 
 	rc.ResolvedModel = rc.SpeechRequest.Model
-	rc.SetMetadata("input_characters", strconv.Itoa(len(rc.SpeechRequest.Input)))
+	rc.SetMetadata("input_characters", strconv.Itoa(utf8.RuneCountInString(rc.SpeechRequest.Input)))
 	rc.SetMetadata("response_content_type", contentType)
 	h.setAgentccHeaders(w, rc)
 	sse.WriteHeaders()
@@ -666,21 +667,36 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 		}
 		if readErr != nil {
 			if ctx.Err() != nil {
+				// The client left, or the request reached its deadline; only
+				// the second has anyone to tell.
+				if apiErr := streamEndError(ctx, readErr); apiErr != nil {
+					rc.AddError(apiErr)
+					sse.WriteError(apiErr)
+				}
 				finalize(true)
 				return
 			}
 			// Headers are already sent, so a cut-off clip is reported in-band
 			// instead of being closed out as complete.
 			slog.Warn("error reading audio stream", "request_id", rc.RequestID, "error", readErr)
-			rc.AddError(readErr)
-			sse.WriteError(models.ErrUpstreamProvider(0, "reading speech stream: "+readErr.Error()))
+			apiErr := models.ErrUpstreamProvider(0, "reading speech stream: "+readErr.Error())
+			rc.AddError(apiErr)
+			sse.WriteError(apiErr)
 			finalize(false)
 			return
 		}
 	}
 
-	done, _ := json.Marshal(models.AudioStreamChunk{Index: index, Done: true})
+	doneChunk := models.AudioStreamChunk{Index: index, Done: true}
+	if wantsStreamMetadata(rc) {
+		// Finalise first: the done chunk carries the cost.
+		finalize(false)
+		doneChunk.AgentccMetadata = streamMetadata(rc)
+	}
+	done, _ := json.Marshal(doneChunk)
 	sse.WriteRaw(done)
 	sse.WriteDone()
-	finalize(false)
+	if doneChunk.AgentccMetadata == nil {
+		finalize(false)
+	}
 }

@@ -45,7 +45,7 @@ const ConfirmRunEvaluations = ({
             Are you sure you want to run the following evaluations?
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Typography variant="body1" color="text.secondary">

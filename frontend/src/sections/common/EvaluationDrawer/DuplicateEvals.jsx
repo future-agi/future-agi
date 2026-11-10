@@ -69,7 +69,8 @@ const DuplicateEvals = ({ open, onClose, evalId, onSubmit }) => {
       onClick={(e) => e.stopPropagation()}
       open={open}
       onClose={handleClose}
-      maxWidth="sm"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
       fullWidth
     >
       <Box sx={{ padding: 2 }}>
@@ -90,7 +91,7 @@ const DuplicateEvals = ({ open, onClose, evalId, onSubmit }) => {
             </Typography>
             <IconButton onClick={handleClose}>
               {/* @ts-ignore */}
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <HelperText text="Duplicate and create a new evaluation with same configurations" />
