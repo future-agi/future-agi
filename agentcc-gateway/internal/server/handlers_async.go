@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/async"
@@ -26,6 +27,12 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		return false
 	}
 
+	principal, ok := h.asyncPrincipal(r)
+	if !ok {
+		models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
+		return true
+	}
+
 	// Parse TTL from header.
 	ttl := async.DefaultResultTTL
 	if v := r.Header.Get("x-agentcc-async-job-result-ttl"); v != "" {
@@ -45,6 +52,7 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		ID:           async.GenerateJobID(),
 		Status:       async.StatusQueued,
 		OrgID:        orgID,
+		Principal:    principal,
 		EndpointType: rc.EndpointType,
 		Request:      rc.Request,
 		Metadata:     copyMetadata(rc.Metadata),
@@ -53,16 +61,18 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		ExpiresAt:    now.Add(ttl + 24*time.Hour), // extra buffer before GC
 	}
 
-	h.asyncWorker.Submit(job)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	// Capture the admission response before a worker can mutate the live job.
+	response := map[string]interface{}{
 		"job_id":     job.ID,
 		"status":     job.Status,
 		"created_at": job.CreatedAt,
 		"expires_at": job.ExpiresAt,
-	})
+	}
+	h.asyncWorker.Submit(job)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(response)
 
 	return true
 }
@@ -85,23 +95,12 @@ func (h *Handlers) GetAsyncJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract org ID from auth for scoping.
-	orgID := ""
-	rc := models.AcquireRequestContext()
-	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
-		rc.Metadata["authorization"] = authHeader
+	principal, ok := h.asyncPrincipal(r)
+	if !ok {
+		models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
+		return
 	}
-	if v, ok := rc.Metadata["org_id"]; ok {
-		orgID = v
-	}
-	rc.Release()
-
-	var job *async.Job
-	if orgID != "" {
-		job = h.asyncStore.GetForOrg(jobID, orgID)
-	} else {
-		job = h.asyncStore.Get(jobID)
-	}
+	job := h.asyncStore.GetForPrincipal(jobID, principal)
 
 	if job == nil {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Async job not found"))
@@ -131,9 +130,14 @@ func (h *Handlers) DeleteAsyncJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel via the store so the live CancelFn is invoked (Get returns a
-	// snapshot with CancelFn stripped). Cancel also removes the job.
-	if !h.asyncStore.Cancel(jobID) {
+	principal, ok := h.asyncPrincipal(r)
+	if !ok {
+		models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
+		return
+	}
+
+	// Authorize and cancel atomically; never authorize a snapshot then delete by ID.
+	if !h.asyncStore.CancelForPrincipal(jobID, principal) {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Async job not found"))
 		return
 	}
@@ -145,6 +149,26 @@ func (h *Handlers) DeleteAsyncJob(w http.ResponseWriter, r *http.Request) {
 		"status":  "cancelled",
 		"deleted": true,
 	})
+}
+
+// asyncPrincipal uses the same credential precedence as KeyAuth. Org-scoped
+// keys share their organization's jobs; keys without an org own only their jobs.
+func (h *Handlers) asyncPrincipal(r *http.Request) (string, bool) {
+	if h.keyStore == nil {
+		return "", true // auth explicitly disabled
+	}
+	rawKey := r.Header.Get("x-api-key")
+	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
+		rawKey = strings.TrimPrefix(header, "Bearer ")
+	}
+	key := h.keyStore.Authenticate(rawKey)
+	if key == nil {
+		return "", false
+	}
+	if orgID := key.Metadata["org_id"]; orgID != "" {
+		return "org:" + orgID, true
+	}
+	return "key:" + key.ID, true
 }
 
 func copyMetadata(m map[string]string) map[string]string {
