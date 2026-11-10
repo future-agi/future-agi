@@ -73,6 +73,66 @@ function resolveTransitiveDefinitions(allDefinitions, refs) {
   return allRefs;
 }
 
+// Swagger 2 needs vendor extensions for nullability and discriminated unions.
+// Orval understands the equivalent OpenAPI 3 keywords, but drops x-nullable.
+// Normalize the host-status wire contract before generation rather than patching
+// generated TS/Zod. Keep existing endpoint generation/legacy rewrites unchanged.
+function normalizeHostStatusSchema(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(normalizeHostStatusSchema);
+  let result = Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => [
+      key,
+      normalizeHostStatusSchema(value),
+    ]),
+  );
+  // The legacy alternative exposes additive properties for Swagger tooling,
+  // but maxProperties == required.length forbids every optional property.
+  // Orval drops maxProperties, so express that same closed branch structurally
+  // before generation. Otherwise a partial restore group matches the legacy
+  // branch and is silently accepted (or stripped) by the generated parser.
+  if (
+    result.type === "object" &&
+    result.additionalProperties === false &&
+    Array.isArray(result.required) &&
+    result.maxProperties === result.required.length
+  ) {
+    result.properties = Object.fromEntries(
+      Object.entries(result.properties || {}).filter(([key]) =>
+        result.required.includes(key),
+      ),
+    );
+  }
+  const nullable = result["x-nullable"] === true;
+  delete result["x-nullable"];
+  if (result["x-oneOf"]) {
+    result = { description: result.description, oneOf: result["x-oneOf"] };
+  } else if (result["x-anyOf"]) {
+    result = { description: result.description, anyOf: result["x-anyOf"] };
+  }
+  return nullable ? { anyOf: [result, { type: "null" }] } : result;
+}
+
+// The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
+// upgrade. Never insert native unions/null types into the Swagger 2 input, or
+// disable validation to make a nonconforming input pass.
+function normalizeHostStatusSpec(spec) {
+  return {
+    ...spec,
+    components: {
+      ...spec.components,
+      schemas: Object.fromEntries(
+        Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
+          name,
+          name.startsWith("HostUpdateStatusResponse")
+            ? normalizeHostStatusSchema(schema)
+            : schema,
+        ]),
+      ),
+    },
+  };
+}
+
 function buildManagementApiSwagger(swagger) {
   const paths = {};
   const refs = new Set();
@@ -195,7 +255,10 @@ async function runGeneration(schemaPath) {
   };
 
   await generate({
-    input: schemaPath,
+    input: {
+      target: schemaPath,
+      override: { transformer: normalizeHostStatusSpec },
+    },
     output: {
       target: apiOutputPath,
       mode: "split",
@@ -206,7 +269,10 @@ async function runGeneration(schemaPath) {
   });
 
   await generate({
-    input: schemaPath,
+    input: {
+      target: schemaPath,
+      override: { transformer: normalizeHostStatusSpec },
+    },
     output: {
       target: zodOutputPath,
       mode: "single",
@@ -215,6 +281,14 @@ async function runGeneration(schemaPath) {
       override: {
         header: baseOverride.header,
         components: baseOverride.components,
+        // This endpoint is a closed public report, including both exact legacy
+        // and complete restore alternatives. Do not change the permissive
+        // generation semantics of unrelated, established API operations.
+        operations: {
+          "api_host-update-status_list": {
+            zod: { strict: { response: true } },
+          },
+        },
         zod: {
           generate: {
             body: true,
@@ -228,6 +302,13 @@ async function runGeneration(schemaPath) {
     },
   });
 
+  // Orval can log a validation error without rejecting generate(). Treat
+  // missing output as failure and let the caller restore the previous snapshot.
+  for (const name of ["api.ts", "api.schemas.ts", "api.zod.ts"]) {
+    if (!fs.existsSync(path.join(outputDir, name))) {
+      throw new Error(`OpenAPI generation did not produce ${name}`);
+    }
+  }
   normalizeGeneratedQueryParamSerialization();
 
   // Post-processing for orval-narrow types.
@@ -322,6 +403,9 @@ async function runGeneration(schemaPath) {
       "ai_interruptions",
     ],
   };
+  // The Error Feed Traces tab sends null when nothing was measured, so the UI
+  // shows "no data" instead of a fake zero.
+  const tracesAggregatesNullableFields = ["avg_score", "avg_turns"];
   const voiceCallDetailNullableFields = [
     "provider_call_id",
     "phone_number",
@@ -446,6 +530,12 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "EvalRollupSpanApiValue",
       "EvalRollupEvalApiChoicesMap",
       "EvalRollupEvalApiAggregate",
+      "ModelListEntryApiBestFor",
+      "ModelListEntryApiUseCase",
+      "ModelListEntryApiCutoff",
+      "ModelListEntryApiRateLimits",
+      "ModelListEntryApiLatency",
+      "ModelListEntryApiPricing",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -477,6 +567,21 @@ export type ${jsonAlias} = JsonValueApi;`,
         `export type ${rowType} = { [key: string]: JsonValueApi };`,
         `${rowType} → recursive JSON row`,
       );
+    }
+
+    for (const [type, fields] of [
+      ["ModelListEntryApi", ["unavailable_reason", "logo_url"]],
+      ["ModelListResponseApi", ["next", "previous"]],
+    ]) {
+      for (const field of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${type} {`,
+          `${field}?: string;`,
+          `${field}?: string | null;`,
+          `${type}.${field} nullable`,
+        );
+      }
     }
 
     // Eval rollups use nullable JSON/scalar fields in the wire response. Keep
@@ -531,6 +636,16 @@ export type ${jsonAlias} = JsonValueApi;`,
       "passed: boolean | null;",
       "SubGoalResultApi.passed nullable",
     );
+
+    for (const field of tracesAggregatesNullableFields) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface TracesAggregatesApi {",
+        `${field}: number;`,
+        `${field}: number | null;`,
+        `TracesAggregatesApi.${field} nullable`,
+      );
+    }
 
     const columnConfigNullableFields = [
       ["group_by?: string;", "group_by?: string | null;"],
@@ -607,6 +722,231 @@ export type ${jsonAlias} = JsonValueApi;`,
           `export interface ${typeName} {`,
           `${field}?: ${valueType};`,
           `${field}?: ${valueType} | null;`,
+          `${typeName}.${field} nullable`,
+        );
+      }
+    }
+
+    // Orval drops Swagger 2.0 x-nullable: environment versions carry null labels
+    // (unnumbered drafts), creators, origins, hashes, parents and pre-versioning
+    // diffs. A draft item is a version item plus its editor (its parent and
+    // default labels match the "label" anchor too).
+    for (const [typeName, extra] of [
+      ["HarnessVersionApi", []],
+      ["HarnessDraftItemApi", [["last_edited_by", "HarnessVersionPersonApi"]]],
+    ]) {
+      for (const [field, valueType] of [
+        ["label", "string"],
+        ["created_by", "HarnessVersionPersonApi"],
+        ["origin", "string"],
+        ["hash", "string"],
+        ["parent_id", "string"],
+        ["derived_from_agent_version_id", "string"],
+        ["scenario_count", "number"],
+        ["source", `${typeName}Source`],
+        ["prompt", "string"],
+        ["preflight_status", "string"],
+        ["preflight_report", `${typeName}PreflightReport`],
+        ["preflighted_at", "string"],
+        ["check_started_at", "string"],
+        ["credential_names", "string[]"],
+        ["required_variable_names", "string[]"],
+        ["activation_outcome", "string"],
+        ["requested_here", "boolean"],
+        ["pickable", "boolean"],
+        ["discardable", "boolean"],
+        ...extra,
+      ]) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          `${field}: ${valueType};`,
+          `${field}: ${valueType} | null;`,
+          `${typeName}.${field} nullable`,
+        );
+      }
+    }
+    // A piece without unsaved changes has no draft; a Save names the parent it saw.
+    for (const piece of ["environment", "suite"]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface HarnessDraftsApi {",
+        `${piece}: HarnessDraftItemApi;`,
+        `${piece}: HarnessDraftItemApi | null;`,
+        `HarnessDraftsApi.${piece} nullable`,
+      );
+    }
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface HarnessDraftSaveItemApi {",
+      "expected_parent_id: string;",
+      "expected_parent_id: string | null;",
+      "HarnessDraftSaveItemApi.expected_parent_id nullable",
+    );
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface HarnessVersionDiffApi {",
+      "diff: HarnessVersionDiffApiDiff;",
+      "diff: HarnessVersionDiffApiDiff | null;",
+      "HarnessVersionDiffApi.diff nullable",
+    );
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface HarnessVersionDiffApi {",
+      "snapshot_diff?: HarnessVersionDiffApiSnapshotDiff;",
+      "snapshot_diff?: HarnessVersionDiffApiSnapshotDiff | null;",
+      "HarnessVersionDiffApi.snapshot_diff nullable",
+    );
+    // A move sends the default it saw, which is null for a piece without one.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface HarnessDefaultMoveApi {",
+      "expected_default_id: string;",
+      "expected_default_id: string | null;",
+      "HarnessDefaultMoveApi.expected_default_id nullable",
+    );
+    // A run's pinned versions are null for a piece it has none of; a bundle-wide
+    // warning names no piece; and the cache does not apply to an unassembled run.
+    for (const piece of ["agent", "environment", "suite"]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface HarnessRunPinnedVersionsApi {",
+        `${piece}: RunVersionLabelApi;`,
+        `${piece}: RunVersionLabelApi | null;`,
+        `HarnessRunPinnedVersionsApi.${piece} nullable`,
+      );
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface HarnessRunCreateApi {",
+        `${piece}_version_id?: string;`,
+        `${piece}_version_id?: string | null;`,
+        `HarnessRunCreateApi.${piece}_version_id nullable`,
+      );
+    }
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface HarnessRunWarningApi {",
+      "piece: HarnessRunWarningApiPiece;",
+      "piece: HarnessRunWarningApiPiece | null;",
+      "HarnessRunWarningApi.piece nullable",
+    );
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface HarnessRunPlanApi {",
+      "bundle_cached: boolean;",
+      "bundle_cached: boolean | null;",
+      "HarnessRunPlanApi.bundle_cached nullable",
+    );
+    // A compare side with no decided trials has no rate; a pair missing from one
+    // run has no verdict, interval or side; only a removed key has a reason.
+    for (const [typeName, fields] of [
+      [
+        "HarnessCompareSideApi",
+        ["  pass_rate: number;", "  eval_pass_rate: number;"],
+      ],
+      [
+        "HarnessComparePairApi",
+        [
+          "verdict: HarnessComparePairApiVerdict;",
+          "difference: number;",
+          "interval: HarnessCompareIntervalApi;",
+          "current: HarnessCompareSideApi;",
+          "against: HarnessCompareSideApi;",
+          "reason: string;",
+          "removed_in: RunVersionLabelApi;",
+        ],
+      ],
+      [
+        "HarnessCompareSummaryApi",
+        ["current_pass_rate: number;", "against_pass_rate: number;"],
+      ],
+      ["HarnessCompareVersionsApi", ["against: HarnessRunPinnedVersionsApi;"]],
+      ["HarnessCompareApi", ["against_execution_id: string;"]],
+    ]) {
+      for (const field of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          field,
+          field.replace(/;$/, " | null;"),
+          `${typeName}.${field.split(":")[0].trim()} nullable`,
+        );
+      }
+    }
+    // A run's version labels are null for an unnumbered version, and its pins null
+    // when it has none.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface RunVersionLabelApi {",
+      "readonly label?: string;",
+      "readonly label?: string | null;",
+      "RunVersionLabelApi.label nullable",
+    );
+    // Orval drops Swagger 2.0 x-nullable: a nudge's versions, outcome and answer are
+    // null until they apply, and a file's counts and reasons when unknown.
+    for (const [typeName, fields] of [
+      ["HarnessNudgeReplacementApi", [["trigger_label", "string"]]],
+      [
+        "HarnessNudgeFileApi",
+        [
+          ["previous_path", "string"],
+          ["additions", "number"],
+          ["deletions", "number"],
+          ["patch_omitted", "string"],
+        ],
+      ],
+      [
+        "HarnessNudgeFactsApi",
+        [
+          ["files_total?", "number"],
+          ["files_unavailable?", "string"],
+          ["environment_diff?", "HarnessNudgeFactsApiEnvironmentDiff"],
+          ["from_environment_version_id?", "string"],
+        ],
+      ],
+      [
+        "HarnessNudgeApi",
+        [
+          ["trigger_agent_version", "RunVersionLabelApi"],
+          ["base_agent_version", "RunVersionLabelApi"],
+          ["base_environment_version", "RunVersionLabelApi"],
+          ["base_suite_version", "RunVersionLabelApi"],
+          ["result_environment_version", "RunVersionLabelApi"],
+          ["result_suite_version", "RunVersionLabelApi"],
+          ["summary", "HarnessNudgeApiSummary"],
+          ["error", "HarnessNudgeErrorApi"],
+          ["closed_at", "string"],
+          ["replaced_by", "HarnessNudgeReplacementApi"],
+          ["card_message_id", "string"],
+          ["answered_by", "HarnessVersionPersonApi"],
+          ["answered_at", "string"],
+        ],
+      ],
+    ]) {
+      for (const [field, valueType] of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          `${field}: ${valueType};`,
+          `${field}: ${valueType} | null;`,
+          `${typeName}.${field} nullable`,
+        );
+      }
+    }
+    for (const typeName of [
+      "TestExecutionItemResponseApi",
+      "RunExecutionApi",
+    ]) {
+      for (const field of [
+        "environment_version",
+        "suite_version",
+        "pinned_agent_version",
+      ]) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          `${field}?: RunVersionLabelApi;`,
+          `${field}?: RunVersionLabelApi | null;`,
           `${typeName}.${field} nullable`,
         );
       }
@@ -782,6 +1122,305 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
+    // The same nullable version fields, in every list of the versions responses.
+    const VERSIONS_RESPONSES = [
+      "SimulateApiHarnessEnvironmentsVersionsResponse",
+      "SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse",
+      "SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse",
+      "SimulateApiHarnessEnvironmentsDraftsResponse",
+      "SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse",
+    ];
+    for (const [anchor, label] of [
+      ['"label": zod.string().min(1)', "label"],
+      ['"origin": zod.string().min(1)', "origin"],
+      ['"hash": zod.string().min(1)', "hash"],
+      ['"parent_id": zod.string().uuid()', "parent_id"],
+      [
+        '"derived_from_agent_version_id": zod.string().uuid()',
+        "derived_from_agent_version_id",
+      ],
+      ['"scenario_count": zod.number()', "scenario_count"],
+      ['"preflight_status": zod.string().min(1)', "preflight_status"],
+      [
+        `"created_by": zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string()
+})`,
+        "created_by",
+      ],
+    ]) {
+      for (const response of VERSIONS_RESPONSES) {
+        zod = assertReplaceInNamedBlock(
+          zod,
+          `export const ${response} =`,
+          anchor,
+          `${anchor}.nullable()`,
+          `${response}.${label} nullable`,
+        );
+      }
+    }
+    // Only agent versions are checked, hold credentials or can be picked.
+    for (const response of VERSIONS_RESPONSES) {
+      for (const [pattern, label] of [
+        [
+          /("preflight_report": zod\.object\(\{\s*\}\)\.passthrough\(\)(?:\.describe\([^)]*\))?)/g,
+          "preflight_report",
+        ],
+        [
+          /("preflighted_at": zod\.string\(\)\.datetime\(\{[^}]*\}\))/g,
+          "preflighted_at",
+        ],
+        [
+          /("check_started_at": zod\.string\(\)\.datetime\(\{[^}]*\}\)(?:\.describe\([^)]*\))?)/g,
+          "check_started_at",
+        ],
+        [
+          /("credential_names": zod\.array\(zod\.string\(\)\.min\(1\)\)(?:\.describe\([^)]*\))?)/g,
+          "credential_names",
+        ],
+        [
+          /("required_variable_names": zod\.array\(zod\.string\(\)\.min\(1\)\)(?:\.describe\([^)]*\))?)/g,
+          "required_variable_names",
+        ],
+        [
+          /("activation_outcome": zod\.string\(\)\.min\(1\)(?:\.describe\([^)]*\))?)/g,
+          "activation_outcome",
+        ],
+        [
+          /("requested_here": zod\.boolean\(\)(?:\.describe\([^)]*\))?)/g,
+          "requested_here",
+        ],
+        [/("pickable": zod\.boolean\(\)(?:\.describe\([^)]*\))?)/g, "pickable"],
+        [
+          /("source": zod\.object\(\{\s*\}\)\.passthrough\(\)(?:\.describe\([^)]*\))?)/g,
+          "source",
+        ],
+        [/("prompt": zod\.string\(\)(?:\.describe\([^)]*\))?)/g, "prompt"],
+        [
+          /("discardable": zod\.boolean\(\)(?:\.describe\([^)]*\))?)/g,
+          "discardable",
+        ],
+      ]) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          `export const ${response} =`,
+          pattern,
+          "$1.nullable()",
+          `${response}.${label} nullable`,
+        );
+      }
+    }
+    // A draft item adds its editor and labels; a piece without a draft is null, and a
+    // Save names the parent it saw, null for none.
+    const draftsResponse =
+      "export const SimulateApiHarnessEnvironmentsDraftsResponse =";
+    for (const [anchor, label] of [
+      ['"parent_label": zod.string().min(1)', "parent_label"],
+      ['"default_label": zod.string().min(1)', "default_label"],
+      [
+        `"last_edited_by": zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string()
+})`,
+        "last_edited_by",
+      ],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        draftsResponse,
+        anchor,
+        `${anchor}.nullable()`,
+        `SimulateApiHarnessEnvironmentsDraftsResponse.${label} nullable`,
+      );
+    }
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      draftsResponse,
+      /("(?:environment|suite)": zod\.object\(\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}\))/g,
+      "$1.nullable()",
+      "SimulateApiHarnessEnvironmentsDraftsResponse.pieces nullable",
+    );
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody =",
+      '"expected_parent_id": zod.string().uuid()',
+      '"expected_parent_id": zod.string().uuid().nullable()',
+      "SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody.expected_parent_id nullable",
+    );
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultBody =",
+      '"expected_default_id": zod.string().uuid()',
+      '"expected_default_id": zod.string().uuid().nullable()',
+      "SimulateApiHarnessEnvironmentsVersionsMoveDefaultBody.expected_default_id nullable",
+    );
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const SimulateApiHarnessEnvironmentsVersionsVersionDiffResponse =",
+      `"diff": zod.object({
+
+}).passthrough()`,
+      `"diff": zod.object({
+
+}).passthrough().nullable()`,
+      "SimulateApiHarnessEnvironmentsVersionsVersionDiffResponse.diff nullable",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const SimulateApiHarnessEnvironmentsVersionsVersionDiffResponse =",
+      /("snapshot_diff": zod\.object\(\{\s*\}\)\.passthrough\(\))\.optional\(\)/g,
+      "$1.nullish()",
+      "SimulateApiHarnessEnvironmentsVersionsVersionDiffResponse.snapshot_diff nullable",
+    );
+    // The same nullable run-plan fields, and picks a run may send as null.
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const SimulateApiHarnessEnvironmentsRunPlanResponse =",
+      /("(?:agent|environment|suite)": zod\.object\(\{[^{}]*\}\))/g,
+      "$1.nullable()",
+      "SimulateApiHarnessEnvironmentsRunPlanResponse.versions nullable",
+    );
+    for (const [anchor, label] of [
+      ['"label": zod.string().min(1).optional()', "label"],
+      [`"piece": zod.enum(['agent', 'environment', 'suite'])`, "piece"],
+      ['"bundle_cached": zod.boolean()', "bundle_cached"],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        "export const SimulateApiHarnessEnvironmentsRunPlanResponse =",
+        anchor,
+        anchor.endsWith(".optional()")
+          ? anchor.replace(/\.optional\(\)$/, ".nullish()")
+          : `${anchor}.nullable()`,
+        `SimulateApiHarnessEnvironmentsRunPlanResponse.${label} nullable`,
+      );
+    }
+    // The same nullable compare fields. Only a pair's sides have no nested object,
+    // and only the against run's versions may be null as a whole.
+    const compareResponse =
+      "export const SimulateApiHarnessEnvironmentsCompareResponse =";
+    for (const [pattern, label] of [
+      [
+        /("(?:interval|current|removed_in)": zod\.object\(\{[^{}]*\}\))/g,
+        "pair",
+      ],
+      [/("against": zod\.object\(\{(?:[^{}]|\{[^{}]*\})*\}\))/g, "against"],
+      [
+        /("(?:agent|environment|suite)": zod\.object\(\{[^{}]*\}\))/g,
+        "versions",
+      ],
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        compareResponse,
+        pattern,
+        "$1.nullable()",
+        `SimulateApiHarnessEnvironmentsCompareResponse.${label} nullable`,
+      );
+    }
+    for (const [anchor, label] of [
+      ['"against_execution_id": zod.string().uuid()', "against_execution_id"],
+      [
+        `"verdict": zod.enum(['improved', 'regressed', 'no_meaningful_change', 'inconclusive'])`,
+        "verdict",
+      ],
+      ['"difference": zod.number()', "difference"],
+      ['"pass_rate": zod.number()', "pass_rate"],
+      ['"eval_pass_rate": zod.number()', "eval_pass_rate"],
+      ['"reason": zod.string().min(1)', "reason"],
+      ['"current_pass_rate": zod.number()', "current_pass_rate"],
+      ['"against_pass_rate": zod.number()', "against_pass_rate"],
+      ['"label": zod.string().min(1).optional()', "label"],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        compareResponse,
+        anchor,
+        anchor.endsWith(".optional()")
+          ? anchor.replace(/\.optional\(\)$/, ".nullish()")
+          : `${anchor}.nullable()`,
+        `SimulateApiHarnessEnvironmentsCompareResponse.${label} nullable`,
+      );
+    }
+    for (const response of [
+      "SimulateRunTestsExecutionsListResponse",
+      "SimulateV3TestExecutionCallsResponse",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${response} = zod.object({`,
+        /("(?:environment_version|suite_version|pinned_agent_version)": zod\.object\(\{[^{}]*"label": zod\.string\(\)\.min\(1\))\.optional\(\)([^{}]*\}\))\.optional\(\)/g,
+        "$1.nullish()$2.nullish()",
+        `${response} run versions nullable`,
+      );
+    }
+    // The same nullable nudge fields.
+    for (const response of [
+      "SimulateApiHarnessEnvironmentsNudgesResponseItem",
+      "SimulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse",
+      "SimulateApiHarnessEnvironmentsNudgesStopNudgeResponse",
+    ]) {
+      for (const [pattern, label] of [
+        [
+          /("(?:label|trigger_label|previous_path|patch_omitted|files_unavailable)": zod\.string\(\)\.min\(1\))/g,
+          "texts",
+        ],
+        [/("(?:additions|deletions|files_total)": zod\.number\(\))/g, "counts"],
+        [
+          /("(?:environment_diff|summary)": zod\.object\(\{\s*\}\)\.passthrough\(\))/g,
+          "documents",
+        ],
+        [
+          /("(?:from_environment_version_id|card_message_id)": zod\.string\(\)\.uuid\(\))/g,
+          "ids",
+        ],
+        [
+          // One level of nesting: an error's problems are objects too.
+          /("(?:trigger_agent_version|base_agent_version|base_environment_version|base_suite_version|result_environment_version|result_suite_version|replaced_by|error|answered_by)": zod\.object\(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\))/g,
+          "objects",
+        ],
+        [
+          /("(?:closed_at|answered_at)": zod\.string\(\)\.datetime\(\{[^}]*\}\))/g,
+          "times",
+        ],
+      ]) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          `export const ${response} =`,
+          pattern,
+          "$1.nullable()",
+          `${response}.${label} nullable`,
+        );
+      }
+    }
+    for (const body of [
+      "SimulateApiHarnessEnvironmentsRunBody",
+      "SimulateApiHarnessJobsRunsBody",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${body} = zod.object({`,
+        /("(?:agent|environment|suite)_version_id": zod\.string\(\)\.uuid\(\))\.optional\(\)/g,
+        "$1.nullish()",
+        `${body} version picks nullable`,
+      );
+    }
+    // The shared read of an issue's Traces tab sends the same two fields.
+    for (const response of [
+      "TracerFeedIssuesTracesListResponse",
+      "TracerSharedReadResponse",
+    ]) {
+      for (const field of tracesAggregatesNullableFields) {
+        zod = assertReplaceInNamedBlock(
+          zod,
+          `export const ${response} =`,
+          `"${field}": zod.number()`,
+          `"${field}": zod.number().nullable()`,
+          `${response}.${field} nullable`,
+        );
+      }
+    }
+
     zod = assertReplace(
       zod,
       `import * as zod from 'zod';`,
@@ -865,6 +1504,30 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       '"error": zod.boolean().optional()\n}).optional(),',
       '"error": zod.boolean().optional()\n}).nullish(),',
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
+    );
+
+    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    for (const [field, schema] of [
+      ["next", "zod.string()"],
+      ["previous", "zod.string()"],
+      ["logo_url", "zod.string()"],
+      ["unavailable_reason", "zod.string().min(1)"],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        modelListResponse,
+        `"${field}": ${schema}.optional()`,
+        `"${field}": ${schema}.nullish()`,
+        `ModelHubApiModelsListListResponse.${field} nullable`,
+      );
+    }
+
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      modelListResponse,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "ModelHubApiModelsListListResponse provider metadata → JSON value",
     );
 
     const listResponseExports = [
@@ -1442,7 +2105,7 @@ const before = snapshotGeneratedFiles();
 try {
   await runGeneration(tempSchemaPath);
 } catch (error) {
-  if (process.argv.includes("--check")) restoreSnapshot(before);
+  restoreSnapshot(before);
   throw error;
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });

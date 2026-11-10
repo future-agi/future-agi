@@ -33,7 +33,7 @@ from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
 from simulate.services.agent_definition import resolve_api_key_for_version
-from simulate.services.harness_evals import platform_graded_evals
+from simulate.services.harness_evals import effective_simulation_mapping
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
     RunSimulateEvaluationsOutput,
@@ -42,6 +42,7 @@ from simulate.temporal.types.activities import (
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
+from simulate.utils.test_execution_utils import eval_source
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
 from tfc.utils.storage_client import server_reachable_url
@@ -74,8 +75,8 @@ async def run_simulate_evaluations(
     input: RunSimulateEvaluationsInput,
 ) -> RunSimulateEvaluationsOutput:
     """
-    Standalone evaluation activity — runs the SimulateEvalConfig evaluations
-    the platform grades on a call execution without using TestExecutor.
+    Standalone evaluation activity — runs all configured SimulateEvalConfig
+    evaluations for a call execution without using TestExecutor.
 
     Replaces the previous TestExecutor wrapper. Tool evaluation is now handled
     by the separate run_tool_call_evaluation activity.
@@ -196,6 +197,15 @@ async def run_simulate_evaluations(
 # These functions replicate the evaluation logic from TestExecutor without
 # depending on the TestExecutor class. They are called by the activities above.
 # ============================================================================
+
+
+def hosted_assistant_recording(call_execution):
+    metadata = call_execution.call_metadata or {}
+    artifacts = metadata.get("hosted_harness_artifacts") or {}
+    recording = artifacts.get("recording_assistant")
+    if not isinstance(recording, dict):
+        return ""
+    return server_reachable_url(recording.get("url") or "")
 
 
 def _build_transcript_data(call_execution):
@@ -346,6 +356,11 @@ def _build_transcript_data(call_execution):
                         and not transcript_data["voice_recording"]
                     ):
                         transcript_data["voice_recording"] = recording["combined"]
+
+        if not transcript_data["assistant_recording"]:
+            transcript_data["assistant_recording"] = hosted_assistant_recording(
+                call_execution
+            )
 
     except Exception as e:
         logger.error(f"Error building transcript data: {str(e)}")
@@ -554,7 +569,7 @@ def assert_recording_slot_available(
     raise ValueError(
         f"'{mapping_key}' is mapped to '{source_value}', but this call has no such "
         f"recording — combined-only providers produce no stereo or per-channel "
-        f"audio. {hint} Map it to call.voice_recording."
+        f"audio. {hint} Choose a recording that meets this eval's input requirements."
     )
 
 
@@ -774,7 +789,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         eval_template = eval_config.eval_template
 
         # Prepare mapping with transcript and recording data
-        mapping = eval_config.mapping.copy() if eval_config.mapping else {}
+        mapping = effective_simulation_mapping(eval_template, eval_config.mapping or {})
 
         # Get scenario column order
         scenario_ids = call_execution.test_execution.scenario_ids
@@ -1023,7 +1038,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             kb_id=eval_config.kb_id,
             error_localizer=eval_config.error_localizer,
             workspace=call_execution.test_execution.run_test.workspace,
-            source="simulate",
+            source=eval_source(call_execution.test_execution_id),
             call_context=_call_context,
         )
 
@@ -1205,9 +1220,7 @@ def _run_evaluations_standalone(
     """
     Standalone evaluation orchestrator — replaces TestExecutor._run_simulate_evaluations().
 
-    Runs the SimulateEvalConfig evaluations the platform grades on a call
-    execution: the ones asked for by id, or else every one of the run test,
-    less the columns the harness filled on a call the harness scored.
+    Runs all configured SimulateEvalConfig evaluations for a call execution.
     Does NOT run tool evaluation (handled by separate activity).
     Does NOT update test_execution status (workflow/rerun handles that).
     With ``skip_existing`` on, a config that already holds a sealed verdict
@@ -1215,10 +1228,6 @@ def _run_evaluations_standalone(
     ``TestExecutor._run_simulate_evaluations``'s guard.
     """
     from simulate.models import SimulateEvalConfig, TestExecution
-
-    # A failure before the graded set is read still checks completion, over
-    # what the caller asked for.
-    expected_ids = eval_config_ids
 
     try:
         close_old_connections()
@@ -1234,21 +1243,18 @@ def _run_evaluations_standalone(
         call_execution.save(update_fields=["call_metadata"])
         logger.info(f"Starting evaluations for call {call_execution.id}")
 
-        # Not asked for by id: only the evals the platform grades on this
-        # call, so a column the harness filled is left as the harness wrote
-        # it.
-        if not eval_config_ids:
-            expected_ids = platform_graded_evals(run_test.id).for_call(
-                call_execution.call_metadata
-            )
-        eval_configs = SimulateEvalConfig.objects.filter(
-            id__in=expected_ids, deleted=False
-        ).select_related("eval_template")
+        # Get eval configs
+        if eval_config_ids:
+            eval_configs = SimulateEvalConfig.objects.filter(
+                id__in=eval_config_ids, deleted=False
+            ).select_related("eval_template")
+        else:
+            eval_configs = SimulateEvalConfig.objects.filter(
+                run_test=run_test, deleted=False
+            ).select_related("eval_template")
 
         if not eval_configs.exists():
-            logger.info(
-                f"No evaluations for the platform to grade on call {call_execution.id}"
-            )
+            logger.info(f"No evaluation configs found for run test {run_test.id}")
             if not call_execution.call_metadata:
                 call_execution.call_metadata = {}
             call_execution.call_metadata["eval_completed"] = True
@@ -1332,7 +1338,7 @@ def _run_evaluations_standalone(
         # Check completion — sets call_metadata.eval_completed = True
         _check_eval_completion(
             call_execution,
-            eval_config_ids=expected_ids,
+            eval_config_ids=eval_config_ids,
             run_test=run_test,
         )
 
@@ -1341,7 +1347,7 @@ def _run_evaluations_standalone(
         try:
             _check_eval_completion(
                 call_execution,
-                eval_config_ids=expected_ids,
+                eval_config_ids=eval_config_ids,
             )
         except Exception:
             pass
@@ -1803,7 +1809,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     organization=organization,
                     api_call_type=api_call_type,
                     config=source_config,
-                    source="simulate_tool_evaluation",
+                    source=eval_source(test_execution.id, "simulate_tool_evaluation"),
                     source_id=str(test_execution.id),
                     workspace=workspace,
                 )

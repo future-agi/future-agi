@@ -20,7 +20,7 @@ import { SCENARIOS_COPY } from "./scenarios.constants";
 export default function PagedScenarioViews({
   pageData, selection, env, view, hiddenGroupIds, onHideGroup, onEdit, onRemove,
   page, onPageChange, query, filters, groupBy, showInspector, locked, rowHeight,
-  readout,
+  readout, onOpen,
 }) {
   const [inspect, setInspect] = useState(false);
   const { rows, total, pageCount, limit, pageGroups, pageIds, loading } = pageData;
@@ -72,8 +72,8 @@ export default function PagedScenarioViews({
 
       <Box ref={scrollRef} sx={scrollSx}>
         {isEmpty ? (
-          <Box sx={{ px: 2.5, py: 6, textAlign: "center" }}>
-            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          <Box sx={{ px: 3, py: 6, textAlign: "center" }}>
+            <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
               {allHidden ? SCENARIOS_COPY.allHidden : SCENARIOS_COPY.noMatch}
             </Typography>
           </Box>
@@ -84,6 +84,7 @@ export default function PagedScenarioViews({
             env={env}
             onEdit={onEdit}
             onRemove={onRemove}
+            onOpen={onOpen}
             onHideGroup={onHideGroup}
             selection={selection}
             pageIds={pageIds}
@@ -138,14 +139,13 @@ export default function PagedScenarioViews({
       {showInspector && (
       <Box sx={{ px: 2, pb: 1.5, flexShrink: 0 }}>
         <Button
-          size="small" variant="text" onClick={() => setInspect((v) => !v)}
+          size="small" variant="text" color="inherit" onClick={() => setInspect((v) => !v)}
           startIcon={<Iconify icon={inspect ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"} width={14} />}
-          sx={{ typography: "s3", color: "text.subtitle", px: 0.5 }}
         >
           Backend calls (POC)
         </Button>
         <Collapse in={inspect}>
-          <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: "background.neutral", border: "1px dashed", borderColor: "divider" }}>
+          <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: "background.neutral", border: "1px solid", borderColor: "divider" }}>
             <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.5 }}>
               GET /scenarios - one request per page
             </Typography>
@@ -183,6 +183,7 @@ PagedScenarioViews.propTypes = {
   showInspector: PropTypes.bool,
   locked: PropTypes.bool,
   rowHeight: PropTypes.string,
+  onOpen: PropTypes.func,
   // Set while a search, filter or hidden group narrows the list.
   readout: PropTypes.shape({
     shown: PropTypes.number,
@@ -204,11 +205,7 @@ function FilterReadout({ shown, total, hiddenCount = 0, onlyGroupsHidden, onClea
       <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
         {`${shown} of ${total}${hiddenSuffix}`}
       </Typography>
-      <Button
-        size="small"
-        onClick={onClear}
-        sx={{ typography: "s3", fontWeight: "fontWeightMedium", color: "text.secondary", minWidth: 0 }}
-      >
+      <Button size="small" variant="text" color="inherit" onClick={onClear}>
         {onlyGroupsHidden ? SCENARIOS_COPY.showAll : SCENARIOS_COPY.clearLabel}
       </Button>
     </Stack>

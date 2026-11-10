@@ -1,10 +1,8 @@
-import { Button, Divider, Stack, Typography, useTheme } from "@mui/material";
 import React from "react";
-import SvgColor from "src/components/svg-color";
+import SelectionBar from "src/components/selection-bar";
 import { useAlertStore } from "../../store/useAlertStore";
 
 export default function RowActions() {
-  const theme = useTheme();
   // hasUnMutedAlerts is for selected rows
   // currentPageHasMutedAlerts is for whole page selection "select all"
   const {
@@ -18,108 +16,29 @@ export default function RowActions() {
     handleCancelSelection,
   } = useAlertStore();
 
-  const message = selectedAll
-    ? `${totalRows - excludingIds?.length} Selected`
-    : `${selectedRows.length} Selected`;
-  return (
-    <Stack
-      direction={"row"}
-      gap={2}
-      alignItems={"center"}
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 0.5,
-        padding: theme.spacing(0, 2),
-        height: "38px",
-      }}
-    >
-      <Typography
-        variant="s1"
-        fontWeight={"fontWeightMedium"}
-        color={"primary.main"}
-      >
-        {message}
-      </Typography>
-      <Divider
-        orientation="vertical"
-        sx={{
-          borderColor: "divider",
-          height: "80%",
-        }}
-      />
-      {/* {selectedRows?.length === 1 && (
-        <Button
-          variant="text"
-          size="small"
-          sx={{
-            mr: 1,
-            typography: "s1",
-            color: "text.primary",
-            fontWeight: "fontWeightRegular",
-          }}
-          startIcon={<SvgColor src="/assets/icons/ic_edit.svg" />}
-          onClick={() => {
+  const count = selectedAll
+    ? totalRows - excludingIds?.length
+    : selectedRows.length;
+  const isMute = selectedAll
+    ? !currentPageHasMutedAlerts()
+    : hasUnMutedAlerts();
 
-          }}
-        >
-          Edit
-        </Button>
-      )} */}
-      <Button
-        variant="text"
-        size="small"
-        sx={{
-          mr: 1,
-          typography: "s1",
-          color: "text.primary",
-          fontWeight: "fontWeightRegular",
-        }}
-        startIcon={<SvgColor src="/assets/icons/ic_delete.svg" />}
-        onClick={() => handleOpenActionModal("delete")}
-      >
-        Delete
-      </Button>
-      <Button
-        variant="text"
-        size="small"
-        sx={{
-          mr: 1,
-          typography: "s1",
-          color: "text.primary",
-          fontWeight: "fontWeightRegular",
-        }}
-        startIcon={<SvgColor src="/assets/icons/ic_mute.svg" />}
-        onClick={() =>
-          handleOpenActionModal(
-            selectedAll
-              ? currentPageHasMutedAlerts()
-                ? "unmute"
-                : "mute"
-              : hasUnMutedAlerts()
-                ? "mute"
-                : "unmute",
-          )
-        }
-      >
-        {selectedAll
-          ? currentPageHasMutedAlerts()
-            ? "Unmute"
-            : "Mute"
-          : hasUnMutedAlerts()
-            ? "Mute"
-            : "Unmute"}
-      </Button>
-      <Divider
-        orientation="vertical"
-        sx={{
-          borderColor: "divider",
-          height: "80%",
-        }}
-      />
-      <Button onClick={handleCancelSelection} size="small" variant="text">
-        Cancel
-      </Button>
-    </Stack>
+  return (
+    <SelectionBar
+      count={count}
+      onCancel={handleCancelSelection}
+      actions={[
+        {
+          label: "Delete",
+          icon: "solar:trash-bin-trash-linear",
+          onClick: () => handleOpenActionModal("delete"),
+        },
+        {
+          label: isMute ? "Mute" : "Unmute",
+          icon: isMute ? "solar:bell-off-linear" : "solar:bell-linear",
+          onClick: () => handleOpenActionModal(isMute ? "mute" : "unmute"),
+        },
+      ]}
+    />
   );
 }

@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import {
   Box,
   Checkbox,
@@ -11,10 +10,9 @@ import {
 
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
-import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
+import { SCORING_STATUS } from "../../runs.constants";
 import {
   HEAD_ROW_PX,
-  PENDING_EVAL_STATUS,
   isBad,
   neutralCheckboxSx,
   pinnedLeftSx,
@@ -30,13 +28,8 @@ const DESC_KEYS = [
   "idealOutcome",
   "conversationBranch",
 ];
-const rowHover = (t) => {
-  const tint = alpha(
-    t.palette.text.primary,
-    t.palette.mode === "dark" ? 0.04 : 0.025,
-  );
-  return `linear-gradient(${tint}, ${tint})`;
-};
+const rowHover = (t) =>
+  `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`;
 
 // The collapsible group header: chevron + label on the first descriptive
 // column, a per-column aggregate summary on the rest, and a heat-tinted mean
@@ -130,15 +123,15 @@ export default function TraceGroupHeaderRow({
                 <Iconify
                   icon="solar:danger-triangle-bold"
                   width={13}
-                  sx={{ color: BUILD_TONES.red, flexShrink: 0 }}
+                  sx={{ color: "status.danger.solid", flexShrink: 0 }}
                 />
               )}
               <Typography
                 sx={{
                   typography: "s2",
-                  fontWeight: "fontWeightBold",
+                  fontWeight: "fontWeightSemiBold",
                   fontVariantNumeric: "tabular-nums",
-                  color: bad ? BUILD_TONES.red : "text.primary",
+                  color: bad ? "status.danger.fg" : "text.primary",
                 }}
               >
                 {typeof value === "number"
@@ -178,7 +171,7 @@ export default function TraceGroupHeaderRow({
         noWrap
         sx={{
           typography: "s2",
-          fontWeight: "fontWeightBold",
+          fontWeight: "fontWeightSemiBold",
           color: "text.primary",
         }}
       >
@@ -248,7 +241,7 @@ export default function TraceGroupHeaderRow({
             // A finished call can still be waiting on this eval's grade.
             const grading = group.rows.some((t) =>
               t.evalResults?.some(
-                (r) => r.id === e.id && r.status === PENDING_EVAL_STATUS,
+                (r) => r.id === e.id && r.status === SCORING_STATUS.PENDING,
               ),
             );
             return (

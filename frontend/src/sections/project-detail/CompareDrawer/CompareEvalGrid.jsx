@@ -48,8 +48,8 @@ const CompareEvalGrid = ({ rowData }) => {
           height: "6px",
         },
         "& ::-webkit-scrollbar-thumb": {
-          backgroundColor: "rgba(0, 0, 0, 0.3)",
-          borderRadius: "3px",
+          backgroundColor: "border.strong",
+          borderRadius: "4px",
         },
         "& ::-webkit-scrollbar-track": {
           background: "transparent",

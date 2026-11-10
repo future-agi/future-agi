@@ -1,11 +1,9 @@
 package server
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -127,93 +125,8 @@ func (h *Handlers) proxyAssistantsNonStream(w http.ResponseWriter, ctx context.C
 		models.WriteErrorFromError(w, err)
 		return nil
 	}
-
-	h.setAgentccHeaders(w, rc)
-
-	// Forward upstream headers.
-	if respHeaders != nil {
-		for _, key := range []string{"openai-organization", "openai-processing-ms", "openai-version", "x-request-id"} {
-			if v := respHeaders.Get(key); v != "" {
-				w.Header().Set(key, v)
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if statusCode == 0 {
-		statusCode = http.StatusOK
-	}
-	w.WriteHeader(statusCode)
-	w.Write(respBody)
+	h.writeAssistantsResponse(w, rc, respBody, statusCode, respHeaders)
 	return respBody
-}
-
-// ---------------------------------------------------------------------------
-// Helper: proxy streaming Assistants request (SSE relay)
-// ---------------------------------------------------------------------------
-
-func (h *Handlers) proxyAssistantsStream(w http.ResponseWriter, ctx context.Context, rc *models.RequestContext, ap providers.AssistantsProvider, upstreamPath string, body []byte) {
-	stream, _, respHeaders, err := ap.StreamAssistantsRequest(ctx, "POST", upstreamPath, body, nil)
-	if err != nil {
-		models.WriteErrorFromError(w, err)
-		return
-	}
-	defer stream.Close()
-
-	h.setAgentccHeaders(w, rc)
-
-	// Forward upstream headers.
-	if respHeaders != nil {
-		for _, key := range []string{"openai-organization", "openai-processing-ms", "openai-version", "x-request-id"} {
-			if v := respHeaders.Get(key); v != "" {
-				w.Header().Set(key, v)
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		slog.Warn("streaming not supported by server", "request_id", rc.RequestID)
-		return
-	}
-	flusher.Flush()
-
-	// Line-by-line relay with selective event inspection.
-	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Write the line and newline to the client.
-		if _, writeErr := fmt.Fprintf(w, "%s\n", line); writeErr != nil {
-			slog.Warn("error writing assistants stream", "request_id", rc.RequestID, "error", writeErr)
-			return
-		}
-
-		// Flush on empty lines (SSE event separator).
-		if line == "" {
-			flusher.Flush()
-		}
-
-		// Check for context cancellation.
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		if err != io.EOF {
-			slog.Warn("error reading assistants stream", "request_id", rc.RequestID, "error", err)
-		}
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -668,6 +581,9 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	modelName := models.ExtractModelFromBody(body)
+	// The name as requested, before the provider prefix is stripped: key
+	// model lists are checked against it.
+	rc.Model = modelName
 	isStream := models.ExtractStreamFromBody(body)
 	rc.IsStream = isStream
 
@@ -687,20 +603,7 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	upstreamPath := "/v1/threads/" + threadID + "/runs"
-
-	if isStream {
-		h.proxyAssistantsStream(w, ctx, rc, ap, upstreamPath, body)
-	} else {
-		respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", upstreamPath, body, nil)
-		// Extract usage for cost tracking.
-		if respBody != nil {
-			if usage := models.ExtractRunUsage(respBody); usage != nil {
-				rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-				rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-			}
-		}
-	}
+	h.proxyRunCall(w, ctx, rc, ap, "/v1/threads/"+threadID+"/runs", body, true)
 }
 
 // ListRuns handles GET /v1/threads/{thread_id}/runs.
@@ -760,12 +663,10 @@ func (h *Handlers) GetRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/runs/"+runID, nil, nil)
-	// Extract usage from completed run for cost tracking on polling.
-	if respBody != nil {
-		if usage := models.ExtractRunUsage(respBody); usage != nil {
-			rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-			rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-		}
+	// A poll stays outside the pipeline, unless it is the first to see the
+	// run finish: then it charges the run, as the call that started it.
+	if respBody != nil && h.observeRun(ctx, rc, respBody, false) {
+		h.engine.RunPostPlugins(ctx, rc)
 	}
 }
 
@@ -923,6 +824,9 @@ func (h *Handlers) CreateThreadAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	modelName := models.ExtractModelFromBody(body)
+	// The name as requested, before the provider prefix is stripped: key
+	// model lists are checked against it.
+	rc.Model = modelName
 	isStream := models.ExtractStreamFromBody(body)
 	rc.IsStream = isStream
 
@@ -942,17 +846,7 @@ func (h *Handlers) CreateThreadAndRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if isStream {
-		h.proxyAssistantsStream(w, ctx, rc, ap, "/v1/threads/runs", body)
-	} else {
-		respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/threads/runs", body, nil)
-		if respBody != nil {
-			if usage := models.ExtractRunUsage(respBody); usage != nil {
-				rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-				rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-			}
-		}
-	}
+	h.proxyRunCall(w, ctx, rc, ap, "/v1/threads/runs", body, true)
 }
 
 // SubmitToolOutputs handles POST /v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs.
@@ -987,19 +881,8 @@ func (h *Handlers) SubmitToolOutputs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upstreamPath := "/v1/threads/" + threadID + "/runs/" + runID + "/submit_tool_outputs"
-
-	if isStream {
-		h.proxyAssistantsStream(w, ctx, rc, ap, upstreamPath, body)
-	} else {
-		respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", upstreamPath, body, nil)
-		if respBody != nil {
-			if usage := models.ExtractRunUsage(respBody); usage != nil {
-				rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-				rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-			}
-		}
-	}
+	// Continues a run started earlier, which holds the pending charge.
+	h.proxyRunCall(w, ctx, rc, ap, "/v1/threads/"+threadID+"/runs/"+runID+"/submit_tool_outputs", body, false)
 }
 
 // ---------------------------------------------------------------------------
