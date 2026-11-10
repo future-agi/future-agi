@@ -759,11 +759,8 @@ const AddProviderDialog = ({
     }
   };
 
-  // A model the provider never offered was typed in by hand, overriding an
-  // empty listing: the azure and custom presets are probed with a plain
-  // `{base_url}/models` a working endpoint need not serve, so an empty list
-  // there is no proof the key is bad. Derived, so removing the chip re-arms
-  // the gate.
+  // A hand-entered model overrides an empty listing: a working custom endpoint
+  // need not serve a model catalogue. Removing the chip re-arms the gate.
   const manualModels = models.some((m) => !offeredModels.current.has(m));
 
   const validate = (timeoutSeconds) => {
@@ -1363,11 +1360,9 @@ const AddProviderDialog = ({
                 {fetchError}
               </Alert>
             )}
-            {!isAwsAuth && !isVertexAuth && (
-              // Where the options come from — and, when any are tagged, which
-              // endpoint they are served on. AWS and Vertex are left out:
-              // neither is listed live. System One is never listed either, so
-              // it says where its list comes from instead.
+            {!isAwsAuth && !isVertexAuth && !requiresDeploymentIds && (
+              // Manual-entry providers have no live list. System One uses its
+              // preset list instead; other providers offer live discovery.
               <Typography
                 variant="caption"
                 color="text.secondary"

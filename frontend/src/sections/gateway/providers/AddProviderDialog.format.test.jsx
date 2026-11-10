@@ -57,6 +57,8 @@ describe("provider format transitions", () => {
       target: { value: "synthetic-provider-key" },
     });
     if (format === "azure") {
+      expect(screen.queryByText(/This list is fetched live/)).not.toBeInTheDocument();
+      expect(screen.getByText(/Enter the deployment names from your Azure resource/)).toBeInTheDocument();
       await userEvent.type(screen.getByPlaceholderText("Type or paste Azure deployment names"), "production-chat{enter}");
       expect(fetchMutate).not.toHaveBeenCalled();
     } else {
