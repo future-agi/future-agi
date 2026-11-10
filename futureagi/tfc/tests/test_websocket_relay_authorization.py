@@ -1,0 +1,287 @@
+"""Exercise relay authorization over real HTTP and WebSocket connections.
+
+Only synthetic account setup uses the ORM. Login, membership removal, relay
+requests, authentication and subscriber delivery all use the real application.
+"""
+
+import json
+import socket
+import threading
+import time
+from contextlib import contextmanager
+from uuid import uuid4
+
+import pytest
+import requests
+import uvicorn
+from channels.routing import ProtocolTypeRouter, URLRouter
+from django.core.asgi import get_asgi_application
+from django.core.cache import cache
+from websockets.sync.client import connect
+
+from accounts.models.organization import Organization
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.user import OrgApiKey, User
+from accounts.models.workspace import Workspace, WorkspaceMembership
+from sockets.routing import websocket_urlpatterns
+from tfc.constants.levels import Level
+from tfc.middleware.jwt_auth import JWTAuthMiddleware
+from tfc.middleware.workspace_context import (
+    clear_workspace_context,
+    set_workspace_context,
+)
+from tfc.settings.settings import MIDDLEWARE
+
+pytestmark = [pytest.mark.integration, pytest.mark.django_db(transaction=True)]
+PASSWORD = "Synthetic-relay-test-password"
+
+
+@pytest.fixture
+def relay_server(transactional_db, settings):
+    # Use the production middleware/routing with the isolated test database.
+    # A unique Redis prefix keeps subscriber groups separate from other tests.
+    settings.MIDDLEWARE = MIDDLEWARE
+    settings.CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": ["redis://127.0.0.1:16379/4"],
+                "prefix": f"relay-test-{uuid4().hex}",
+            },
+        }
+    }
+    application = ProtocolTypeRouter(
+        {
+            "http": get_asgi_application(),
+            "websocket": JWTAuthMiddleware(URLRouter(websocket_urlpatterns)),
+        }
+    )
+    # Each test is an independent login journey, not one shared IP rate budget.
+    cache.delete_many(["ip_requests_127.0.0.1", "blocked_ip_127.0.0.1"])
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(128)
+        port = listener.getsockname()[1]
+        server = uvicorn.Server(
+            uvicorn.Config(
+                application,
+                host="127.0.0.1",
+                port=port,
+                lifespan="off",
+                access_log=False,
+                log_level="error",
+            )
+        )
+        thread = threading.Thread(
+            target=server.run, kwargs={"sockets": [listener]}, daemon=True
+        )
+        thread.start()
+        try:
+            deadline = time.monotonic() + 30
+            while (
+                not server.started and thread.is_alive() and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            assert server.started, "Relay test server did not start"
+            with requests.Session() as session:
+                session.trust_env = False
+                yield session, f"http://localhost:{port}", f"ws://localhost:{port}"
+        finally:
+            server.should_exit = True
+            thread.join(timeout=20)
+            assert not thread.is_alive(), "Relay test server did not shut down"
+
+
+def create_organization():
+    suffix = uuid4().hex
+    org = Organization.objects.create(name=f"Synthetic relay {suffix}")
+    set_workspace_context(organization=org)
+    try:
+        owner = User.objects.create_user(
+            email=f"owner-{suffix}@example.invalid",
+            password=PASSWORD,
+            name="Synthetic Owner",
+            organization=org,
+            organization_role="Owner",
+        )
+        member = User.objects.create_user(
+            email=f"member-{suffix}@example.invalid",
+            password=PASSWORD,
+            name="Synthetic Member",
+            organization=org,
+            organization_role="Member",
+        )
+        workspace = Workspace.no_workspace_objects.create(
+            name="Synthetic Workspace",
+            organization=org,
+            created_by=owner,
+            is_active=True,
+            is_default=True,
+        )
+        for user, role, level in (
+            (owner, "Owner", Level.OWNER),
+            (member, "Member", Level.MEMBER),
+        ):
+            membership = OrganizationMembership.no_workspace_objects.create(
+                user=user,
+                organization=org,
+                role=role,
+                level=level,
+                is_active=True,
+            )
+            WorkspaceMembership.no_workspace_objects.create(
+                user=user,
+                workspace=workspace,
+                organization_membership=membership,
+                role="Workspace Admin" if user == owner else "Workspace Member",
+                level=(
+                    Level.WORKSPACE_ADMIN if user == owner else Level.WORKSPACE_MEMBER
+                ),
+                is_active=True,
+            )
+        key = OrgApiKey.no_workspace_objects.create(
+            name="Synthetic relay control",
+            organization=org,
+            workspace=workspace,
+            type="system",
+            enabled=True,
+        )
+        return org, owner, member, key
+    finally:
+        clear_workspace_context()
+
+
+def login(server, user):
+    session, http, _ = server
+    response = session.post(
+        http + "/accounts/token/",
+        json={"email": user.email, "password": PASSWORD},
+        timeout=30,
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result.get("access")
+    return result
+
+
+@contextmanager
+def subscriber(server, org, owner, target):
+    token = login(server, owner)["access"]
+    with connect(
+        f"{server[2]}/ws/connect/?token={token}&organization_id={org.pk}",
+        proxy=None,
+        open_timeout=30,
+    ) as ws:
+        ws.send(json.dumps({"type": "ping"}))
+        assert json.loads(ws.recv(timeout=10)) == {"type": "pong"}
+        if target:
+            ws.send(json.dumps({"type": "subscribe", "uuid": target}))
+            confirmed = json.loads(ws.recv(timeout=10))
+            assert confirmed["type"] == "subscription_confirmed"
+            assert confirmed["current_subscription"] == f"uuid_org_{org.pk}_{target}"
+        yield ws
+
+
+def receive_optional(ws):
+    try:
+        return json.loads(ws.recv(timeout=1))
+    except TimeoutError:
+        return None
+
+
+def relay(server, headers, target):
+    message = {"alert_title": "Synthetic notification", "marker": uuid4().hex}
+    body = {"message": message}
+    if target:
+        body.update(send_to_uuid=True, uuid=target)
+        message["uuid"] = target
+    response = server[0].post(
+        server[1] + "/call-websocket/",
+        json=body,
+        headers=headers,
+        timeout=30,
+    )
+    return response, message
+
+
+def key_headers(key):
+    return {"X-Api-Key": key.api_key, "X-Secret-Key": key.secret_key}
+
+
+@pytest.mark.parametrize("targeted", [False, True], ids=["broadcast", "targeted"])
+def test_system_key_delivers_only_to_its_organization(relay_server, targeted):
+    org, owner, _, key = create_organization()
+    other_org, other_owner, _, _ = create_organization()
+    target = str(uuid4()) if targeted else None
+    with (
+        subscriber(relay_server, org, owner, target) as own,
+        subscriber(relay_server, other_org, other_owner, target) as other,
+    ):
+        response, message = relay(relay_server, key_headers(key), target)
+        assert response.status_code == 200, response.text
+        assert json.loads(own.recv(timeout=10)) == message
+        assert receive_optional(other) is None
+        denied, _ = relay(relay_server, {}, target)
+        assert denied.status_code in (401, 403)
+        assert receive_optional(own) is None
+        assert receive_optional(other) is None
+
+
+@pytest.mark.parametrize("targeted", [False, True], ids=["broadcast", "targeted"])
+@pytest.mark.parametrize(
+    "former_org_header", [False, True], ids=["implicit", "former-org-header"]
+)
+def test_removed_member_fresh_login_cannot_relay(
+    relay_server, targeted, former_org_header
+):
+    org, owner, member, key = create_organization()
+    target = str(uuid4()) if targeted else None
+    old_login = login(relay_server, member)
+    assert not old_login.get("requires_org_setup", False)
+    with subscriber(relay_server, org, owner, target) as ws:
+        before, message = relay(
+            relay_server,
+            {"Authorization": "Bearer " + old_login["access"]},
+            target,
+        )
+        assert before.status_code == 200, before.text
+        assert json.loads(ws.recv(timeout=10)) == message
+
+        owner_token = login(relay_server, owner)["access"]
+        removed = relay_server[0].delete(
+            relay_server[1] + "/accounts/organization/members/remove/",
+            headers={"Authorization": "Bearer " + owner_token},
+            json={"user_id": str(member.pk)},
+            timeout=30,
+        )
+        assert removed.status_code == 200, removed.text
+        member.refresh_from_db()
+        assert member.is_active
+        assert member.organization_id == org.pk
+        assert not OrganizationMembership.no_workspace_objects.filter(
+            user=member,
+            is_active=True,
+        ).exists()
+        assert not WorkspaceMembership.no_workspace_objects.filter(
+            user=member,
+            is_active=True,
+        ).exists()
+
+        fresh_login = login(relay_server, member)
+        assert fresh_login["requires_org_setup"] is True
+        assert fresh_login["access"] != old_login["access"]
+        headers = {"Authorization": "Bearer " + fresh_login["access"]}
+        if former_org_header:
+            headers["X-Organization-Id"] = str(org.pk)
+        response, _ = relay(relay_server, headers, target)
+        delivered = receive_optional(ws)
+
+        # A denied relay must not look successful just because the socket died.
+        control, control_message = relay(relay_server, key_headers(key), target)
+        assert control.status_code == 200, control.text
+        assert json.loads(ws.recv(timeout=10)) == control_message
+        assert (response.status_code, delivered) == (403, None)
+        assert response.json()["code"] == "permission_denied"
+        assert (
+            response.json()["message"] == "An authenticated organization is required."
+        )

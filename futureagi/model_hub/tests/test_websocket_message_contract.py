@@ -246,6 +246,37 @@ def test_relay_requires_authentication():
 
 
 @pytest.mark.parametrize("targeted", [False, True])
+@pytest.mark.parametrize("organization_attribute", ["missing", "none"])
+def test_relay_requires_authenticated_organization(targeted, organization_attribute):
+    request = APIRequestFactory().post(
+        "/call-websocket/",
+        {
+            "message": {"alert_title": "Synthetic notification"},
+            "send_to_uuid": targeted,
+            "uuid": TARGET,
+            "organization_id": ORG,
+        },
+        format="json",
+    )
+    if organization_attribute == "none":
+        request.organization = None
+    # A legacy user FK and an untrusted body cannot restore tenant authority.
+    force_authenticate(
+        request,
+        user=SimpleNamespace(
+            is_authenticated=True, organization=SimpleNamespace(id=ORG)
+        ),
+    )
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        layer.return_value.group_send = AsyncMock()
+        response = CallWebsocketView.as_view()(request)
+    assert response.status_code == 403
+    assert response.data["code"] == "permission_denied"
+    assert response.data["message"] == "An authenticated organization is required."
+    layer.assert_not_called()
+
+
+@pytest.mark.parametrize("targeted", [False, True])
 def test_enqueue_failure_is_not_reported_as_success(targeted):
     with (
         patch("tfc.views.socket.get_channel_layer") as layer,

@@ -29,12 +29,18 @@ class CallWebsocketView(APIView):
         },
     )
     def post(self, request, *args, **kwargs):
+        # Authentication is authoritative; a removed member can retain a legacy
+        # user.organization FK without access to that organization.
+        organization = getattr(request, "organization", None)
+        if organization is None:
+            return self._gm.forbidden_response(
+                "An authenticated organization is required."
+            )
+
         try:
             data = request.validated_data
             message = data["message"]
-            org_id = (
-                getattr(request, "organization", None) or request.user.organization
-            ).id
+            org_id = organization.id
             # Never publish the authenticated relay to the legacy unscoped group.
             group = (
                 f"uuid_org_{org_id}_{data['uuid']}"
