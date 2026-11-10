@@ -2,6 +2,7 @@ package routing
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -365,12 +366,12 @@ func inSlice(resolved interface{}, expected interface{}) bool {
 }
 
 // compareNumeric converts both values to float64 and returns -1, 0, or 1.
-// The second return value is false when either value is not numeric, in which
-// case every comparison operator ($gt/$lt/$gte/$lte) must evaluate to false.
+// The second return value is false for non-numeric or NaN operands;
+// every numeric comparison must then evaluate to false.
 func compareNumeric(a, b interface{}) (int, bool) {
 	af, aOk := toFloat64(a)
 	bf, bOk := toFloat64(b)
-	if !aOk || !bOk {
+	if !aOk || !bOk || math.IsNaN(af) || math.IsNaN(bf) {
 		return 0, false
 	}
 	if af < bf {
