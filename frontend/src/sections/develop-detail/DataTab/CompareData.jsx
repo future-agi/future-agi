@@ -311,7 +311,7 @@ const CompareData = ({
             },
           );
 
-          compareId.current = data?.result?.metadata?.compareId;
+          compareId.current = data?.result?.metadata?.compare_id;
 
           // Check if data is empty or doesn't have required structure
           if (!data?.result?.table || data.result.table.length === 0) {
@@ -325,9 +325,9 @@ const CompareData = ({
 
           resetDLabels();
           setHasData(true);
-          setCommonColumn(data?.result?.metadata?.commonColumnNames);
-          setDatasetInfo(data?.result?.metadata?.datasetInfo);
-          const columns = data?.result?.columnConfig;
+          setCommonColumn(data?.result?.metadata?.common_column_names);
+          setDatasetInfo(data?.result?.metadata?.dataset_info);
+          const columns = data?.result?.column_config;
 
           setColumnConfig(columns);
 
@@ -456,11 +456,11 @@ const CompareData = ({
             col.children
               ? col.children.filter(
                   (child) =>
-                    child?.col?.averageScore !== null &&
-                    child?.col?.averageScore !== undefined,
+                    child?.col?.average_score !== null &&
+                    child?.col?.average_score !== undefined,
                 )
-              : col?.col?.averageScore !== null &&
-                  col?.col?.averageScore !== undefined
+              : col?.col?.average_score !== null &&
+                  col?.col?.average_score !== undefined
                 ? [col]
                 : [],
           );
@@ -468,7 +468,7 @@ const CompareData = ({
           const pinnedRow = {};
           filteredColumns.forEach((col) => {
             if (col.field) {
-              const avgValue = `${col.col.averageScore.toFixed(2)}%`;
+              const avgValue = `${col.col.average_score.toFixed(2)}%`;
               pinnedRow[col.field] = `Average: ${avgValue}`;
             }
           });
@@ -476,7 +476,7 @@ const CompareData = ({
           setPinnedBottomRowData([pinnedRow]);
 
           const averages = Object.entries(
-            data?.result?.metadata?.averageScore || {},
+            data?.result?.metadata?.average_score || {},
           ).map(([id, value]) => ({
             id,
             value,
