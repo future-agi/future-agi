@@ -375,6 +375,18 @@ describe("WorldActorsPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("names the actor who answers instead by its name, not its id", () => {
+    actorsData = cast([
+      { ...MANAGER, activation: { fallback: "lead_one" } },
+      { id: "lead_one", name: "Sam Rivera", role: "Sales Lead" },
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(
+      screen.getByText(/If they do not answer: Sam Rivera answers instead/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/lead_one answers instead/)).toBeNull();
+  });
+
   it("shows who can reach whom open once there is more than one actor, with limits folded", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.queryByText("Who can reach whom")).toBeNull();

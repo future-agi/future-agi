@@ -66609,10 +66609,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.",
           type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
+          additionalProperties: true,
         },
         expected_revision: {
           title: "Expected revision",
