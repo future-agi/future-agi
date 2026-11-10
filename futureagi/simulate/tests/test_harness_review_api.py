@@ -216,6 +216,45 @@ def test_a_decision_on_a_draft_that_moved_or_on_an_unknown_change_is_refused(
     assert body["counts"]["undecided"] == 0 and body["can_save"]
 
 
+def test_accepting_every_remaining_change_decides_a_removed_one_too(
+    user, workspace, storage, auth_client
+):
+    import json
+
+    from simulate.services.harness_versioning.versions import record_authoring
+    from simulate.tests.test_harness_actors import CRM_CONTRACT, NAMES
+    from simulate.tests.test_harness_versioning_record import _authoring
+
+    environment = _versioned(user, workspace, "review-remove-remaining", storage)
+    record_authoring(
+        environment,
+        _authoring(
+            names=NAMES[:1],
+            contract=CRM_CONTRACT,
+            **{"actors.json": json.dumps({"actors": [MANAGER]})},
+        ),
+        origin="manual",
+        user=user,
+    )
+    environment.refresh_from_db()
+    removed = auth_client.delete(f"{BASE}/{environment.id}/actors/manager/")
+    assert removed.status_code == 200, removed.content
+    review = _review(auth_client, environment)
+    assert [(one["id"], one["action"]) for one in review["changes"]] == [
+        ("actor:manager", "removed")
+    ]
+
+    decided = _decide(
+        auth_client,
+        environment,
+        [{"remaining": True, "decision": "accepted"}],
+        {"environment": review["drafts"]["environment"]["revision"]},
+    )
+    body = decided.json().get("result", decided.json())
+    assert [one["decision"] for one in body["changes"]] == ["accepted"]
+    assert body["counts"]["undecided"] == 0 and body["can_save"]
+
+
 def test_with_no_draft_the_review_is_empty_and_deciding_is_refused(
     user, workspace, storage, auth_client
 ):

@@ -192,7 +192,8 @@ def record_decisions(
                 recorded = _decisions(draft)
                 if (
                     item.get("remaining")
-                    and (recorded.get(change["id"]) or {}).get("draft_digest")
+                    and change["id"] in recorded
+                    and recorded[change["id"]].get("draft_digest")
                     == change["draft_digest"]
                 ):
                     continue
