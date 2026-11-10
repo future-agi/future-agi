@@ -39,10 +39,13 @@ An admin must also verify these existing settings before enabling either policy:
 - Keep main's required check and approval protections. The script does not
   bypass protection or enable GitHub auto-merge. Squash merging must be allowed
   for the release-please PR; dev-to-main's separate merge-commit rule is unchanged.
-- Protect `main` and release tags from force updates/deletion. The guard verifies
-  the tag's commit against the push event and rechecks it after approval, but
-  unchanged downstream builders still refer to the tag. Tag immutability is an
-  essential prerequisite, not a guarantee this policy can impose.
+- Restrict release-tag creation to the release App and trusted release managers;
+  protect `main` and release tags from force updates/deletion. A tag containing
+  a different workflow could omit any in-file guard, so tag creation authority
+  must be controlled outside this workflow. The guard verifies the tag's commit
+  against the push event and rechecks it after approval, but unchanged downstream
+  builders still refer to the tag. Tag authority and immutability are essential
+  prerequisites, not guarantees this policy can impose.
 - Land the policy on the default branch and on `main` before enabling it. GitHub
   schedules/workflow-run events use default-branch code. The image guard executes
   only policy code checked out from `main`, never policy code supplied by a tag.
