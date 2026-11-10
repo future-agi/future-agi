@@ -161,6 +161,7 @@ func (g *WebhookGuardrail) doRequest(ctx context.Context, body []byte) (*guardra
 
 func errorResult(msg string) *guardrails.CheckResult {
 	return &guardrails.CheckResult{
+		Err: fmt.Errorf("%s", msg),
 		Pass:    false,
 		Score:   1.0,
 		Message: msg,

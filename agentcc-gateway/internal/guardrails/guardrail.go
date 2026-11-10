@@ -2,6 +2,8 @@ package guardrails
 
 import (
 	"context"
+	"fmt"
+	"math"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
@@ -37,6 +39,10 @@ type CheckInput struct {
 
 // CheckResult is the output of a guardrail check.
 type CheckResult struct {
+	// Err marks an execution failure, not a scored content decision. Engines
+	// apply fail_open before threshold evaluation; implementations must set it
+	// for transport, parsing, or evaluation errors.
+	Err     error                  `json:"-"`
 	Pass    bool                   // true = safe, false = triggered
 	Score   float64                // 0.0 = safe, 1.0 = max violation
 	Action  Action                 // what action to take if triggered
@@ -71,13 +77,31 @@ type PipelineResult struct {
 }
 
 // shouldTrigger applies the configured threshold to score-based guardrails.
-// Guardrails that return Pass=false without a score still trigger as hard failures.
+// Execution failures bypass scores. Pass=false without a score is a hard rejection.
 func shouldTrigger(result *CheckResult, threshold float64) bool {
 	if result == nil {
 		return false
+	}
+	if result.Err != nil {
+		return true
 	}
 	if result.Score > threshold {
 		return true
 	}
 	return !result.Pass && result.Score <= 0
+}
+
+// checkResultError validates the execution envelope without reinterpreting a
+// legitimate rejecting result as an outage (which fail_open could bypass).
+func checkResultError(cr *CheckResult) error {
+	if cr == nil {
+		return fmt.Errorf("guardrail returned no result")
+	}
+	if cr.Err != nil {
+		return cr.Err
+	}
+	if math.IsNaN(cr.Score) || math.IsInf(cr.Score, 0) || cr.Score < 0 || cr.Score > 1 {
+		return fmt.Errorf("guardrail returned invalid score: %v", cr.Score)
+	}
+	return nil
 }
