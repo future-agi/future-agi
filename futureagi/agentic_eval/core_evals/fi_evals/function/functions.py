@@ -2841,6 +2841,43 @@ def _align_counts(ref: list[str], hyp: list[str]) -> tuple[int, int, int, int]:
     return hits, substitutions, deletions, insertions
 
 
+def _transcription_tokens(value, normalize=False, tokenize=None, character=False):
+    """Opt-in ASR normalization; an omitted tokenizer preserves legacy spacing."""
+    import re
+
+    if tokenize not in (None, "auto", "word", "char"):
+        raise ValueError("tokenize must be auto, word, char, or None")
+    text = str(value)
+    if normalize:
+        # Width folding, not NFKC: do not change other scripts or accents.
+        text = "".join(
+            chr(ord(char) - 0xFEE0) if "！" <= char <= "～"
+            else " " if char == "　" else char
+            for char in text
+        ).casefold()
+        text = re.sub(
+            r"[!-/:-@\[-`{-~‐-‧、-〃〈-】"
+            r"〔-〟〰〽・｟-･]", "", text
+        )
+        text = " ".join(text.split())
+    else:
+        text = text.strip().lower()
+    if tokenize is None:
+        return list(text) if character else text.split()
+    if tokenize == "word":
+        return text.split()
+    if tokenize == "char":
+        return list("".join(text.split()))
+    # Han (including extensions), kana and Hangul are individual units;
+    # Latin and other non-CJK scripts remain whitespace-delimited words.
+    cjk = (
+        r"㐀-䶿一-鿿豈-﫿\U00020000-\U000323af"
+        r"぀-ヿㇰ-ㇿｦ-ﾟ\U0001b000-\U0001b16f"
+        r"ᄀ-ᇿ㄰-㆏ꥠ-꥿가-퟿"
+    )
+    return re.findall(f"[{cjk}]|[^{cjk}\\s]+", text)
+
+
 def calculate_word_error_rate(reference, hypothesis, **kwargs):
     """
     Compute Word Error Rate (WER) for ASR/STT evaluation.
@@ -2854,8 +2891,8 @@ def calculate_word_error_rate(reference, hypothesis, **kwargs):
     Returns:
         dict: {"result": float (0-1), "reason": str}
     """
-    ref_words = str(reference).strip().lower().split()
-    hyp_words = str(hypothesis).strip().lower().split()
+    ref_words = _transcription_tokens(reference, kwargs.get("normalize", False), kwargs.get("tokenize"))
+    hyp_words = _transcription_tokens(hypothesis, kwargs.get("normalize", False), kwargs.get("tokenize"))
 
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WER: 0.0% (both empty)"}
@@ -2881,15 +2918,15 @@ def calculate_character_error_rate(reference, hypothesis, **kwargs):
     Returns:
         dict: {"result": float (0-1), "reason": str}
     """
-    ref_chars = list(str(reference).strip().lower())
-    hyp_chars = list(str(hypothesis).strip().lower())
+    ref_chars = _transcription_tokens(reference, kwargs.get("normalize", False), kwargs.get("tokenize"), character=True)
+    hyp_chars = _transcription_tokens(hypothesis, kwargs.get("normalize", False), kwargs.get("tokenize"), character=True)
 
     if not ref_chars and not hyp_chars:
         return {"result": 1.0, "reason": "CER: 0.0% (both empty)"}
     if not ref_chars:
         return {"result": 0.0, "reason": f"CER: 100%+ ({len(hyp_chars)} insertions, empty reference)"}
 
-    distance = Levenshtein.distance("".join(ref_chars), "".join(hyp_chars))
+    distance = Levenshtein.distance(ref_chars, hyp_chars)
     cer = distance / len(ref_chars)
     score = max(0.0, 1.0 - cer)
     return {"result": score, "reason": f"CER: {cer*100:.1f}% ({distance} edits / {len(ref_chars)} ref chars), score={score:.4f}"}
@@ -3844,8 +3881,8 @@ def calculate_squad_score(output, expected, **kwargs):
 
 def calculate_match_error_rate(reference, hypothesis, **kwargs):
     """Compute Match Error Rate (MER) for speech. MER = edits / (hits + edits)."""
-    ref_words = str(reference).strip().lower().split()
-    hyp_words = str(hypothesis).strip().lower().split()
+    ref_words = _transcription_tokens(reference, kwargs.get("normalize", False), kwargs.get("tokenize"))
+    hyp_words = _transcription_tokens(hypothesis, kwargs.get("normalize", False), kwargs.get("tokenize"))
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "MER: 0.0% (both empty)"}
     if not ref_words:
@@ -3859,8 +3896,8 @@ def calculate_match_error_rate(reference, hypothesis, **kwargs):
 
 def calculate_word_info_lost(reference, hypothesis, **kwargs):
     """Compute Word Information Lost (WIL). WIL = 1 - (hits/ref_len * hits/hyp_len)."""
-    ref_words = str(reference if reference is not None else "").strip().lower().split()
-    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
+    ref_words = _transcription_tokens(reference if reference is not None else "", kwargs.get("normalize", False), kwargs.get("tokenize"))
+    hyp_words = _transcription_tokens(hypothesis if hypothesis is not None else "", kwargs.get("normalize", False), kwargs.get("tokenize"))
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIL: 0.0 (both empty)"}
     if not ref_words or not hyp_words:
@@ -3873,8 +3910,8 @@ def calculate_word_info_lost(reference, hypothesis, **kwargs):
 
 def calculate_word_info_preserved(reference, hypothesis, **kwargs):
     """Compute Word Information Preserved (WIP). WIP = hits/ref_len * hits/hyp_len."""
-    ref_words = str(reference if reference is not None else "").strip().lower().split()
-    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
+    ref_words = _transcription_tokens(reference if reference is not None else "", kwargs.get("normalize", False), kwargs.get("tokenize"))
+    hyp_words = _transcription_tokens(hypothesis if hypothesis is not None else "", kwargs.get("normalize", False), kwargs.get("tokenize"))
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIP: 1.0 (both empty)"}
     if not ref_words or not hyp_words:

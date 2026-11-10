@@ -33,7 +33,8 @@ logger = structlog.get_logger(__name__)
 # 29: retrieval evals normalize scalar references and hypotheses as single items.
 # 30: BLEU and CodeBLEU score short answers over the available n-gram orders.
 # 31: link evals ignore e-mails, decimals, and abbreviations before HTTP checks.
-SYSTEM_EVALS_VERSION = 31
+# 32: opt-in normalization and CJK-aware tokenization for transcription metrics.
+SYSTEM_EVALS_VERSION = 32
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
