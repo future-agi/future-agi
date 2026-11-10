@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useId, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Button, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
@@ -12,6 +12,7 @@ import MigrationPlanPanel from './MigrationPlanPanel';
 // Hierarchy: bounded source/identity input, exact review, explicit publication handoff.
 export default function RetainedMigrationPanel({ onBusyChange, onClose }) {
   const navigate = useNavigate();
+  const formatId = useId();
   const { identity } = useSkillV11Scope();
   const preview = useMigrationPreview();
   const decision = useMigrationDecision();
@@ -50,7 +51,7 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose }) {
   const setOperationBusy = useCallback((value) => { setLocked(value); onBusyChange(value); }, [onBusyChange]);
   return <Stack spacing={1.5} sx={{ minWidth: 0, overflowY: 'auto' }}>
     <Typography variant="s1">Run the local compatibility inventory first. This review does not issue runtime credentials, change the source, move production labels or certify native delivery.</Typography>
-    <TextField select size="small" label="Retained source format" value={kind} disabled={busy} onChange={(event) => { setKind(event.target.value); selectFiles([]); }}>
+    <TextField id={formatId} SelectProps={{ SelectDisplayProps: { 'aria-labelledby': `${formatId}-label` } }} select size="small" label="Retained source format" value={kind} disabled={busy} onChange={(event) => { setKind(event.target.value); selectFiles([]); }}>
       <MenuItem value="langfuse">Versioned Langfuse exchange JSON</MenuItem><MenuItem value="folder">Private folder or ZIP</MenuItem>
     </TextField>
     <Alert severity="info">Langfuse intake supports the explicit langfuse-skills-v1 exchange schema, not arbitrary native exports or remote URLs. Local-folder identities must come from the local inventory; without them a later import cannot be matched by immutable source identity.</Alert>

@@ -22,6 +22,7 @@ import Iconify from "src/components/iconify";
 import Section from "src/components/section";
 import StatusBadge from "src/components/status-badge";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import HumanCheckReviewController from "../review/HumanCheckReviewController";
 
 // Official Solar geometry, registered locally so evidence can always be closed offline.
 addIcon("solar:close-linear", {
@@ -162,6 +163,7 @@ function AttemptContent({
     previousProgress.current = refreshToken;
   }, [refreshToken, attemptId, refetch]);
   const [file, setFile] = useState(null);
+  const [reviewCheckId, setReviewCheckId] = useState(null);
   if (query.isLoading)
     return (
       <ContentSkeleton
@@ -265,6 +267,10 @@ function AttemptContent({
                   {check.reason}
                 </Typography>
               )}
+              <Button size="small" onClick={() => setReviewCheckId(reviewCheckId === check.checkId ? null : check.checkId)}>
+                {reviewCheckId === check.checkId ? "Close human review" : "Review this check"}
+              </Button>
+              {reviewCheckId === check.checkId && <HumanCheckReviewController skillId={skillId} runId={runId} attemptId={attemptId} check={check} />}
             </Box>
           ))}
         </Stack>

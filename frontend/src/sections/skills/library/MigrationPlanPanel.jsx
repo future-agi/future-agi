@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import PropTypes from "prop-types";
 import { Alert, Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import CompatibilityInventory from "./CompatibilityInventory";
@@ -9,6 +9,10 @@ import { AuthoringError, FileChanges, useAuthoringOperation, useExpired } from "
 // Palette/depth/surfaces: neutral flat review, warning for replacement, no success inference.
 // Typography/spacing: m3/s1/s3, 4px base with 12px groups.
 function Plan({ scopeKey, plan, onAccept, onKeep, onPreserveDraft, onAccepted, onBusyChange }) {
+  const formId = useId();
+  // Name selects by their label alone, not their current option. Chromium's
+  // accessible-name computation includes MUI's self-reference otherwise.
+  const selectProps = (name) => ({ id: `${formId}-${name}`, SelectProps: { SelectDisplayProps: { "aria-labelledby": `${formId}-${name}-label` } } });
   const [selected, setSelected] = useState("");
   const [decision, setDecision] = useState("keep");
   const [mode, setMode] = useState("snapshot");
@@ -51,7 +55,7 @@ function Plan({ scopeKey, plan, onAccept, onKeep, onPreserveDraft, onAccepted, o
     {operation.uncertain && <Alert severity="warning">The response was lost. Keep this review open and retry the exact decision; do not start a new import.</Alert>}
     {hasExclusions && <FormControlLabel control={<Checkbox checked={subsetAcknowledged} disabled={locked} onChange={(event) => setSubsetAcknowledged(event.target.checked)} />} label="I explicitly exclude the blocked members listed below. This is a supported-subset trial, not a complete migration." />}
     <CompatibilityInventory items={plan.items} selectedKeys={selected ? [selected] : []} readOnly rejected={plan.rejected} skipped={plan.skipped} closure={plan.closure} />
-    <TextField select size="small" label="Review item" value={selected} disabled={locked} onChange={(event) => { setSelected(event.target.value); setRights(false); setReviewed(false); setDecision("keep"); setTagsMode("preserve"); setTags(""); }}>
+    <TextField {...selectProps("item")} select size="small" label="Review item" value={selected} disabled={locked} onChange={(event) => { setSelected(event.target.value); setRights(false); setReviewed(false); setDecision("keep"); setTagsMode("preserve"); setTags(""); }}>
       <MenuItem value="">Choose an item</MenuItem>
       {plan.items.map((entry) => <MenuItem key={entry.key} value={entry.key}>{entry.name || entry.root}</MenuItem>)}
     </TextField>
@@ -65,14 +69,14 @@ function Plan({ scopeKey, plan, onAccept, onKeep, onPreserveDraft, onAccepted, o
       </>}
       {item.diverged && <Alert severity="warning">Source and Hub both changed. Replacement is not a semantic merge; review both differences.</Alert>}
       {item.hasDraft && <Alert severity="warning" action={<Button onClick={() => onPreserveDraft?.(item)} disabled={!onPreserveDraft || locked}>Preserve draft</Button>}>Your existing draft blocks replacement. Preserve and explicitly suspend it, then preview again.</Alert>}
-      <TextField select size="small" label="Source update decision" value={decision} disabled={locked} onChange={(event) => { setDecision(event.target.value); setReviewed(false); }}>
+      <TextField {...selectProps("decision")} select size="small" label="Source update decision" value={decision} disabled={locked} onChange={(event) => { setDecision(event.target.value); setReviewed(false); }}>
         <MenuItem value="keep">Keep Hub content</MenuItem><MenuItem value="replace">Replace with reviewed source</MenuItem><MenuItem value="manual">Reconcile manually in the editor</MenuItem>
       </TextField>
       {decision === "manual" && <Alert severity="info">Export or preserve both alternatives and edit the destination draft. This panel will not merge or overwrite them.</Alert>}
-      <TextField select size="small" label="File semantics" value={mode} disabled={locked || decision !== "replace"} onChange={(event) => { setMode(event.target.value); setReviewed(false); }}>
+      <TextField {...selectProps("semantics")} select size="small" label="File semantics" value={mode} disabled={locked || decision !== "replace"} onChange={(event) => { setMode(event.target.value); setReviewed(false); }}>
         <MenuItem value="snapshot">Complete snapshot — omitted files are removed</MenuItem><MenuItem value="patch" disabled={plan.snapshotOnly}>Patch — omitted files are preserved</MenuItem>
       </TextField>
-      <TextField select size="small" label="Destination tags" value={tagsMode} disabled={locked || decision !== "replace"} onChange={(event) => { setTagsMode(event.target.value); setReviewed(false); }}>
+      <TextField {...selectProps("tags")} select size="small" label="Destination tags" value={tagsMode} disabled={locked || decision !== "replace"} onChange={(event) => { setTagsMode(event.target.value); setReviewed(false); }}>
         <MenuItem value="preserve">Preserve existing tags</MenuItem><MenuItem value="replace">Replace tags explicitly</MenuItem><MenuItem value="clear">Clear every tag</MenuItem>
       </TextField>
       {tagsMode === "replace" && <TextField size="small" label="Tags, separated by commas" value={tags} disabled={locked} onChange={(event) => { setTags(event.target.value); setReviewed(false); }} error={!tagsValid} helperText="At most 20 unique lowercase tags; empty replaces with no tags." />}

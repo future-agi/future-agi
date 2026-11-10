@@ -13,6 +13,18 @@ const consent = () => {
 };
 afterEach(cleanup);
 
+it('labels migration selects without a self-reference to their selected option', () => {
+  render(<MigrationPlanPanel scopeKey="scope" plan={plan} onAccept={vi.fn()} />);
+  consent();
+  for (const name of ['Review item', 'Source update decision', 'File semantics', 'Destination tags']) {
+    const select = screen.getByRole('combobox', { name, exact: true });
+    const labelIds = select.getAttribute('aria-labelledby').split(' ');
+    expect(labelIds).toHaveLength(1);
+    expect(document.getElementById(labelIds[0])).toHaveTextContent(name);
+    expect(labelIds).not.toContain(select.id);
+  }
+});
+
 it('requires an explicit supported-subset acknowledgment and never enables a blocked member', async () => {
   const accept = vi.fn(async () => ({ receiptId: 'receipt' }));
   render(<MigrationPlanPanel scopeKey="scope" plan={{ ...plan, rejected: [{ path: 'bad/a.bin', reason: 'file_not_text' }], items: [...plan.items, { key: 'bad', name: 'bad', blocked: true }] }} onAccept={accept} />);
