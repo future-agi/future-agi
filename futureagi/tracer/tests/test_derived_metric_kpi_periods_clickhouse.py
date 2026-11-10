@@ -114,16 +114,17 @@ def test_stored_cohorts_keep_the_oracle_and_backfill_invariant_ci(
                 rollup="cohort",
             )
     current, _ = assert_periods(publication_store, metric, definition, manifest)
-    # Independently centered domain estimator: the persisted cohort/stratum
-    # cells retain their full design size, including the outside-domain zeros.
-    # Pooling the two cohorts before correction incorrectly changes SE and df.
+    # Independent centering uses the ACTUAL sampling stratum shared by east/west,
+    # not metric dimensions as synthetic independent strata. This is an overall
+    # read of all 24 sampled units (n_h=.5*48=24), with no outside-domain zeros.
+    # Grouped reads instead retain their requested domain and its zero padding.
     expected = reference(
         "sum" if text == "sum(y)" else "ratio",
         design,
         y=([int(value > 0) for value in values] if "> 0" in text else values) * 2,
         p=[probability] * 24,
         x=list(range(1, 13)) * 2 if text == "ratio(y, x)" else None,
-        stratum=["east/h1"] * 12 + ["west/h1"] * 12,
+        stratum=["h1"] * 24,
         population=[48] * 24,
         rate=text == "mean(y > 0)",
     )

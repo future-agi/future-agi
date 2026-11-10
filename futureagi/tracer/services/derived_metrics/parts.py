@@ -1,7 +1,7 @@
 """Mergeable, uncorrected sufficient statistics for the numeric metric compiler.
 
 Parts are additive across disjoint unit batches and time buckets. Merge them by
-(group, scope, stratum) BEFORE applying closed-sample corrections or support
+(requested group, scope, stratum) BEFORE closed-sample corrections or support
 checks. Overlapping reruns must first select the one committed row per unit (or
 one replacement per bucket); these functions never sum revision history.
 """
@@ -154,14 +154,21 @@ def stratum_parts_select(
     )"""
 
 
-def _merge_parts_sql(parts_sql: str, *, per_period: bool = False) -> str:
-    """Merge raw extrema with presence gates, then enforce the WINDOW scope guard.
+def _merge_parts_sql(
+    parts_sql: str, *, grouped: bool = False, per_period: bool = False
+) -> str:
+    """Merge requested domains, guard WINDOW scopes, then derive closed factors.
 
     Missing and locally invalid rows carry scope evidence too. Reject scoped
     rows before pooling their points/moments, just as snapshot_select does, even
     if two closed scopes share a stratum label or occur in different batches.
-    Closed-design factors are derived here from the merged, guarded cells, never
-    per bucket. Keeping their projection here avoids another wide subquery.
+    Scope remains a merge key, so merging domains cannot hide a scope conflict.
+
+    The caller must collapse replacements by persisted cohort first. Thereafter
+    overall reads merge cohorts within each scope/stratum BEFORE squaring totals
+    or testing support: dimensions are not independent sampling strata. Grouped
+    reads retain their requested domain and its outside-domain zero padding.
+    Keeping the guarded factors here avoids another wide subquery.
     """
     bounds = {
         "p_min": ("minIf", "valid_count > 0"),
@@ -214,6 +221,8 @@ def _merge_parts_sql(parts_sql: str, *, per_period: bool = False) -> str:
         masked.append(f"{expr} AS {name}_h")
     period_key = "period_key, " if per_period else ""
     scope_partition = "PARTITION BY period_key" if per_period else ""
+    group_output = "group_key" if grouped else "'' AS group_key"
+    group_key = ", group_key" if grouped else ""
     # Window functions run after GROUP BY. Evaluate the guard on the same merged
     # extrema here, rather than adding another SELECT over every statistic.
     return f"""SELECT {period_key}group_key, scope_key, stratum_key, {", ".join(masked)},
@@ -228,10 +237,10 @@ def _merge_parts_sql(parts_sql: str, *, per_period: bool = False) -> str:
         if(valid_count_h = 0 OR inconsistent_h OR ifNull(p_min_h >= 1, 1) OR stratum_n_h < 2,
             0, (1 - assumeNotNull(p_min_h)) * stratum_n_h / (stratum_n_h - 1)) AS fpc_h
     FROM (
-        SELECT {period_key}group_key, scope_key, stratum_key, {", ".join(fields)},
+        SELECT {period_key}{group_output}, scope_key, stratum_key, {", ".join(fields)},
             minIf(scope_min_merged, nonempty_scope_count_merged > 0) OVER ({scope_partition}) !=
             maxIf(scope_max_merged, nonempty_scope_count_merged > 0) OVER ({scope_partition}) AS mixed_scope
-        FROM ({parts_sql}) GROUP BY {period_key}scope_key, stratum_key, group_key
+        FROM ({parts_sql}) GROUP BY {period_key}scope_key, stratum_key{group_key}
     )"""
 
 
@@ -252,10 +261,11 @@ def combine_parts_select(
     read of the source nor a window over every unit.
 
     ``per_period`` batches independent overall windows labelled by ``period_key``.
-    Scope rejection and every merge are partitioned by that key, while persisted
-    cohort keys survive until AFTER the closed-stratum corrections. The result's
-    group_key labels the period, not the stored cohort. An absent period has no
-    result row. Ordinary overall/cohort/trend reads keep the window-wide guard.
+    Scope rejection and every merge are partitioned by that key. As in an ordinary
+    overall read, persisted cohorts are merged within each scope/stratum before
+    closed corrections; only requested grouped reads keep distinct domains. The
+    result's group_key labels the period, not the stored cohort. An absent period
+    has no result row. Ordinary overall/cohort/trend reads keep the window-wide guard.
 
     ``packed_uncertainty`` returns the computed CI tuple as one ``ci`` column.
     Readers can unpack its fields without asking ClickHouse to plan nine tuple
@@ -329,6 +339,9 @@ def combine_parts_select(
         interval_array = f"""arrayMap((computed_value, status) -> ({interval_array})[1],
             [{value_column}], [{status_column}])"""
     interval = f"arrayJoin({interval_array}) AS ci"
+    merged_parts = _merge_parts_sql(
+        parts_sql, grouped=rollup != "overall", per_period=per_period
+    )
     aggregates = f"""
                 SELECT {group_output} AS group_key, sum(unit_count_h) AS unit_count, sum(valid_count_h) AS valid_count,
                     sum(missing_count_h) AS missing_count, sum(invalid_count_h) AS invalid_probability_count,
@@ -354,7 +367,7 @@ def combine_parts_select(
                         AS support_bad,
                     if(design_low = 'unweighted', {iid_tail},
                         countIf(known_sampled_h > 0 AND ({cell_tail})) > 0) AS support_missing_tail
-                FROM ({_merge_parts_sql(parts_sql, per_period=per_period)})
+                FROM ({merged_parts})
                 WHERE {group_filter} {group_clause}
     """
     if packed_uncertainty:

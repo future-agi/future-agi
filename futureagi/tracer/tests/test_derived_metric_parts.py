@@ -127,16 +127,21 @@ def test_aggregate_is_exactly_the_parts_pipeline_without_services():
     assert "is_deleted = 0 AND status != 'open'" in adapter
 
 
-def test_period_partition_is_separate_from_the_stored_cohort_and_default_scope():
+def test_period_partition_and_requested_domains_keep_the_default_scope_guard():
     formula = compile_formula("sum(y)", ["y"])
     ordinary = combine_parts_select("SELECT * FROM parts", formula)
     batched = combine_parts_select("SELECT * FROM parts", formula, per_period=True)
+    grouped = combine_parts_select("SELECT * FROM parts", formula, rollup="cohort")
     assert "period_key" not in ordinary
     assert "OVER ()" in ordinary
-    assert "GROUP BY scope_key, stratum_key, group_key" in ordinary
+    assert "GROUP BY scope_key, stratum_key\n" in ordinary
+    assert "SELECT '' AS group_key, scope_key, stratum_key" in ordinary
     assert "OVER (PARTITION BY period_key)" in batched
-    assert "GROUP BY period_key, scope_key, stratum_key, group_key" in batched
+    assert "GROUP BY period_key, scope_key, stratum_key\n" in batched
     assert "SELECT period_key AS group_key" in batched
+    assert "OVER ()" in grouped
+    assert "GROUP BY scope_key, stratum_key, group_key" in grouped
+    assert "SELECT group_key, scope_key, stratum_key" in grouped
     for rollup in ["cohort", "day", "session", "user"]:
         with pytest.raises(ValueError, match="overall rollup"):
             combine_parts_select(
