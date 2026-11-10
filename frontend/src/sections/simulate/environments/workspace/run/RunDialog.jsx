@@ -238,9 +238,9 @@ export default function RunDialog({
     );
   }
   if (submitting) runLabel = COPY.starting;
-  // Ready to run reads the scenarios this run sends; run-all of the default
-  // suite asks for the whole suite.
-  const readinessKeys = (needsMembers ? memberKeys : runIds) || null;
+  // Ready to run reads the scenarios this run sends. Run-all asks for the
+  // picked scenario version as a whole, so it never waits on its members.
+  const readinessKeys = runAll ? null : runIds;
 
   const pick = (piece, id) => {
     setOverrides((current) => ({ ...current, [piece]: id }));

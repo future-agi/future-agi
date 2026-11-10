@@ -36,6 +36,12 @@ const report = ({
 });
 
 describe("readinessView", () => {
+  it("reads a pair that can't be checked as unavailable, Run left on", () => {
+    const view = readinessView(report({ validation: "unavailable" }));
+    expect(view.state).toBe("unavailable");
+    expect(view.canRun).toBe(true);
+  });
+
   it("reads a pairing with no evidence as not checked yet", () => {
     const view = readinessView(
       report({ evidence: "none", answer: "unchecked" }),

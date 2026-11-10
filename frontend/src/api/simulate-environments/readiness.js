@@ -31,6 +31,11 @@ const retryServerFailures = (failureCount, error) => {
   return (status === undefined || status >= 500) && failureCount < 2;
 };
 
+// A pair check is running, or the agent's own start check (after a retry).
+const stillChecking = (report) =>
+  report?.validation?.state === "validating" ||
+  (report?.rows || []).some((row) => row.reason_code === "preflight_pending");
+
 export const readinessKey = (envId, picks = {}, keys = null, trials = 1) => [
   "harness-readiness",
   envId,
@@ -70,9 +75,7 @@ export function useReadiness(
     enabled: Boolean(envId) && enabled,
     retry: retryServerFailures,
     refetchInterval: (query) =>
-      query.state.data?.validation?.state === "validating"
-        ? CHECK_POLL_MS
-        : false,
+      stillChecking(query.state.data) ? CHECK_POLL_MS : false,
     meta: { errorHandled: true },
   });
 }
@@ -90,27 +93,20 @@ export const useRecheck = (envId) => {
   });
 };
 
-// The scenarios in one bucket (eligible, blocked, stale, untested) with their
-// names as the server gives them, page by page (50 a page). `keys` narrows it
-// to the scenarios a run would send; none means the whole suite.
+// The first page (50) of the scenarios in one bucket (eligible, blocked,
+// stale, untested) with their names as the server gives them. `keys` narrows
+// it to the scenarios a run would send; none means the whole suite.
 export const getReadinessCases = async (envId, picks, bucket, keys = null) => {
-  const items = [];
-  let cursor = null;
-  do {
-    const params = { ...versionPickFields(picks), bucket };
-    if (keys) params.keys = keys;
-    if (cursor) params.cursor = cursor;
-    const page = (
-      await axios.get(casesPath(envId), {
-        params,
-        // Repeated `keys=a&keys=b`, as the route reads them.
-        paramsSerializer: { indexes: null },
-      })
-    ).data;
-    items.push(...(page.items || []));
-    cursor = page.next || null;
-  } while (cursor);
-  return items;
+  const params = { ...versionPickFields(picks), bucket };
+  if (keys) params.keys = keys;
+  const page = (
+    await axios.get(casesPath(envId), {
+      params,
+      // Repeated `keys=a&keys=b`, as the route reads them.
+      paramsSerializer: { indexes: null },
+    })
+  ).data;
+  return page.items || [];
 };
 
 export function useReadinessCases(

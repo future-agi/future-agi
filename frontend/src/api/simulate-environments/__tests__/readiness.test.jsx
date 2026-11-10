@@ -76,29 +76,40 @@ describe("useReadiness", () => {
     expect(axios.get).toHaveBeenCalledTimes(2);
   });
 
-  it("lists a bucket's scenarios by name, page by page, for the picked versions", async () => {
-    axios.get
-      .mockResolvedValueOnce({
-        data: { items: [{ key: "a", name: "Refund over limit" }], next: "50" },
-      })
-      .mockResolvedValueOnce({
-        data: { items: [{ key: "b", name: "Angry caller" }], next: null },
-      });
+  it("asks for one page of a bucket's scenarios by name", async () => {
+    axios.get.mockResolvedValue({
+      data: { items: [{ key: "a", name: "Refund over limit" }], next: "50" },
+    });
 
     const items = await getReadinessCases("env-1", { agent: "a2" }, "stale", [
       "a",
       "b",
     ]);
 
-    expect(items.map((item) => item.name)).toEqual([
-      "Refund over limit",
-      "Angry caller",
-    ]);
+    expect(items.map((item) => item.name)).toEqual(["Refund over limit"]);
+    expect(axios.get).toHaveBeenCalledTimes(1);
     expect(axios.get.mock.calls[0][1].params).toEqual({
       agent_version_id: "a2",
       bucket: "stale",
       keys: ["a", "b"],
     });
-    expect(axios.get.mock.calls[1][1].params.cursor).toBe("50");
+  });
+
+  it("keeps asking while the agent's start check is still running", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const pending = {
+      ...report("not_run"),
+      rows: [{ id: "start", reason_code: "preflight_pending" }],
+    };
+    axios.get
+      .mockResolvedValueOnce({ data: pending })
+      .mockResolvedValue({ data: report("not_run") });
+
+    renderHook(() => useReadiness("env-1", {}), { wrapper });
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    await act(() => vi.advanceTimersByTimeAsync(15000));
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+    await act(() => vi.advanceTimersByTimeAsync(30000));
+    expect(axios.get).toHaveBeenCalledTimes(2);
   });
 });

@@ -92,6 +92,24 @@ beforeEach(() => {
 });
 
 describe("RunDialog with Ready to run", () => {
+  it("asks for the whole suite when running every scenario", () => {
+    state.view = view();
+    render(
+      <RunDialog
+        open
+        env={{
+          id: "env-1",
+          name: "Refunds desk",
+          versioning: { enabled: true },
+        }}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+    expect(sectionCalls.length).toBeGreaterThan(0);
+    expect(sectionCalls.every((call) => call.keys === null)).toBe(true);
+  });
+
   it("keeps the plan's shape with a placeholder while the versions load", () => {
     state.versionsLoading = true;
     renderDialog();

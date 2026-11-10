@@ -1,27 +1,38 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "src/utils/test-utils";
+import { act, render, screen, waitFor } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // The report the server answered, and what the buttons asked for.
 let report;
 let loading = false;
 let recheckPending = false;
+let recheckResult = {};
+let cases = { names: ["Refund over limit"], isError: false };
 const recheck = vi.fn();
 const retryAgent = vi.fn();
+const refetch = vi.fn();
 
 vi.mock("src/api/simulate-environments/readiness", () => ({
   useReadiness: () =>
     loading
       ? { data: undefined, isLoading: true, isError: false }
-      : { data: report, isLoading: false, isError: false },
-  useRecheck: () => ({ mutate: recheck, isPending: recheckPending }),
-  useReadinessCases: (envId, { bucket, enabled }) => ({
-    data:
-      enabled && bucket === "blocked"
-        ? [{ key: "k1", name: "Refund over limit" }]
-        : undefined,
-    isLoading: false,
+      : { data: report, isLoading: false, isError: false, refetch },
+  useRecheck: () => ({
+    mutate: recheck,
+    isPending: recheckPending,
+    ...recheckResult,
   }),
+  useReadinessCases: (envId, { bucket, enabled }) => {
+    const asked = enabled && bucket === "blocked";
+    return {
+      data:
+        asked && !cases.isError
+          ? cases.names.map((name, at) => ({ key: `k${at}`, name }))
+          : undefined,
+      isError: asked && cases.isError,
+      isLoading: false,
+    };
+  },
 }));
 vi.mock("src/api/simulate-environments/versions", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -60,11 +71,78 @@ const picks = { agent: "agent-v2" };
 beforeEach(() => {
   loading = false;
   recheckPending = false;
+  recheckResult = {};
+  cases = { names: ["Refund over limit"], isError: false };
   recheck.mockReset();
+  refetch.mockReset();
   retryAgent.mockReset();
 });
 
 describe("ReadyToRunSection", () => {
+  it("lists the first names and counts the rest from the header", async () => {
+    report = blockedReport("pair");
+    cases.names = Array.from({ length: 12 }, (_, at) => `Scenario ${at + 1}`);
+    report.selection.blocked = 14;
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    await userEvent.hover(screen.getByText("14 blocked"));
+    expect(await screen.findByText("and 4 more")).toBeVisible();
+  });
+
+  it("says when the names can't load", async () => {
+    report = blockedReport("pair");
+    cases.isError = true;
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    await userEvent.hover(screen.getByText("4 blocked"));
+    expect(
+      await screen.findByText("Couldn't load these scenarios."),
+    ).toBeVisible();
+  });
+
+  it("explains a refused re-check with the server's words", () => {
+    report = blockedReport("pair");
+    recheckResult = {
+      isError: true,
+      error: { message: "Usage limit reached" },
+    };
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    expect(screen.getByText(/Usage limit reached/)).toBeVisible();
+  });
+
+  it("says when these versions can't be checked", () => {
+    report = blockedReport("pair");
+    recheckResult = { data: { validation: { state: "unavailable" } } };
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    expect(screen.getByText(/can't be checked/)).toBeVisible();
+  });
+
+  it("holds Run until the report is read again after retrying the agent's start", async () => {
+    report = blockedReport("agent");
+    let refreshed;
+    refetch.mockReturnValue(
+      new Promise((resolve) => {
+        refreshed = resolve;
+      }),
+    );
+    const onView = vi.fn();
+    render(<ReadyToRunSection envId="env-1" picks={picks} onView={onView} />);
+    await userEvent.click(screen.getByRole("button", { name: "Fix" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Retry the agent's start" }),
+    );
+    const [, options] = retryAgent.mock.calls[0];
+    await act(async () => {
+      options.onSettled();
+    });
+    expect(refetch).toHaveBeenCalled();
+    expect(onView).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canRun: false }),
+    );
+    await act(async () => refreshed());
+    expect(onView).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canRun: true }),
+    );
+  });
+
   it("names the scenarios behind a count on hover", async () => {
     report = blockedReport("pair");
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
