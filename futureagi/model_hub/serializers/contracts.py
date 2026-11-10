@@ -949,6 +949,7 @@ class LegacyKnowledgeBaseFileRowSerializer(serializers.Serializer):
 
 class LegacyKnowledgeBaseFilesResultSerializer(serializers.Serializer):
     table_data = LegacyKnowledgeBaseFileRowSerializer(many=True)
+    matching_file_ids = serializers.ListField(child=serializers.UUIDField())
     last_updated = serializers.DateTimeField()
     status = serializers.CharField()
     status_count = serializers.IntegerField()

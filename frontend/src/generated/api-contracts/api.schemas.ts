@@ -13148,6 +13148,7 @@ export interface LegacyKnowledgeBaseFileRowApi {
 
 export interface LegacyKnowledgeBaseFilesResultApi {
   table_data: LegacyKnowledgeBaseFileRowApi[];
+  matching_file_ids: string[];
   last_updated: string;
   /** @minLength 1 */
   status: string;

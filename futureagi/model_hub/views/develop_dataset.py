@@ -16532,6 +16532,8 @@ class ExistingKnowledgeBaseView(APIView):
 
             response = {
                 "table_data": table_rows,
+                # Capture the full filtered selection, not only the current page.
+                "matching_file_ids": [entry["id"] for entry in data],
                 "last_updated": kb.first().updated_at,
                 "status": kb_status,
                 "status_count": count,
