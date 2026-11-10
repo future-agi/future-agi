@@ -39,8 +39,10 @@ export default function ErrorFeedView() {
   );
 
   const handleRetry = useCallback(() => {
-    if (feed.isError) feed.refetch();
-    if (catalog.isError) catalog.refetch();
+    // Revalidate the composed page, including malformed 200 responses that
+    // render as errors even though React Query marks the request successful.
+    feed.refetch();
+    catalog.refetch();
   }, [feed, catalog]);
 
   const handleSelect = (clusterId, checked) => {

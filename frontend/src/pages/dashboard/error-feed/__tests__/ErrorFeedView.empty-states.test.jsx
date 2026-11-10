@@ -154,6 +154,36 @@ describe("ErrorFeedView empty and failure states", () => {
     await waitFor(() => expect(axiosGet).toHaveBeenCalledTimes(2));
   });
 
+  it.each([
+    ["missing list fields", { data: { status: true, result: {} } }],
+    ["missing result", { data: { status: true } }],
+    [
+      "invalid total",
+      { data: { status: true, result: { data: [], total: "0" } } },
+    ],
+  ])(
+    "retries a malformed 200 with %s and displays recovered rows",
+    async (_label, response) => {
+      fetchAllObserveProjects.mockResolvedValue([]);
+      axiosGet.mockResolvedValueOnce(response).mockResolvedValue(rowPage);
+
+      renderPage();
+
+      expect(await screen.findByText(FEED_FAILED_TITLE)).toBeInTheDocument();
+      expect(screen.queryByText(NO_PROJECTS_TITLE)).not.toBeInTheDocument();
+      expect(screen.queryByText(NO_ERRORS_TITLE)).not.toBeInTheDocument();
+      expect(axiosGet).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+      await waitFor(() => expect(axiosGet).toHaveBeenCalledTimes(2));
+      expect(await screen.findByText("Tool call failed")).toBeInTheDocument();
+      expect(screen.queryByText(FEED_FAILED_TITLE)).not.toBeInTheDocument();
+      expect(screen.queryByText(NO_PROJECTS_TITLE)).not.toBeInTheDocument();
+      expect(screen.queryByText(NO_ERRORS_TITLE)).not.toBeInTheDocument();
+    },
+  );
+
   it("does not call an empty feed 'no projects' while the catalog read failed", async () => {
     fetchAllObserveProjects.mockRejectedValue(new Error("catalog down"));
     axiosGet.mockResolvedValue(emptyPage);
@@ -162,6 +192,29 @@ describe("ErrorFeedView empty and failure states", () => {
 
     expect(await screen.findByText(FEED_FAILED_TITLE)).toBeInTheDocument();
     expect(screen.queryByText(NO_PROJECTS_TITLE)).not.toBeInTheDocument();
+    expect(screen.queryByText(NO_ERRORS_TITLE)).not.toBeInTheDocument();
+  });
+
+  it("recovers both reads when the catalog fails and the feed returns a malformed 200", async () => {
+    fetchAllObserveProjects
+      .mockRejectedValueOnce(new Error("catalog down"))
+      .mockResolvedValue([]);
+    axiosGet
+      .mockResolvedValueOnce({ data: { status: true, result: {} } })
+      .mockResolvedValue(emptyPage);
+
+    renderPage();
+
+    expect(await screen.findByText(FEED_FAILED_TITLE)).toBeInTheDocument();
+    expect(screen.queryByText(NO_PROJECTS_TITLE)).not.toBeInTheDocument();
+    expect(screen.queryByText(NO_ERRORS_TITLE)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    expect(await screen.findByText(NO_PROJECTS_TITLE)).toBeInTheDocument();
+    expect(axiosGet).toHaveBeenCalledTimes(2);
+    expect(fetchAllObserveProjects).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(FEED_FAILED_TITLE)).not.toBeInTheDocument();
     expect(screen.queryByText(NO_ERRORS_TITLE)).not.toBeInTheDocument();
   });
 
