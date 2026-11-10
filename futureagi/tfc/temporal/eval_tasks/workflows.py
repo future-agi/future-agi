@@ -56,8 +56,19 @@ from tfc.temporal.eval_tasks.types import (
     WorkflowLabelsInput,
 )
 
-# Control activities are quick PG reads/writes; run_entry runs the eval engine.
+# Control activities are quick PG reads/writes. One exhausted control activity
+# fails the whole workflow, so their retries (~7 min of backoff) outlast a
+# connection-pooler restart or a database failover. Changing retry options is
+# replay-safe: Temporal matches activity commands by type and id.
 CONTROL_RETRY_POLICY = RetryPolicy(
+    initial_interval=timedelta(seconds=2),
+    maximum_interval=timedelta(seconds=60),
+    maximum_attempts=12,
+    backoff_coefficient=2.0,
+)
+# Reconcile is a ClickHouse read; retrying it longer adds read pressure, and a
+# continuous task already defers exhausted read-budget failures to its next poll.
+RECONCILE_RETRY_POLICY = RetryPolicy(
     initial_interval=timedelta(seconds=2),
     maximum_interval=timedelta(seconds=30),
     maximum_attempts=5,
@@ -215,7 +226,7 @@ async def _reconcile(task_id: str) -> None:
         # ordinary 30-minute control activity ceiling.
         start_to_close_timeout=_RECONCILE_TIMEOUT,
         heartbeat_timeout=_HEARTBEAT,
-        retry_policy=CONTROL_RETRY_POLICY,
+        retry_policy=RECONCILE_RETRY_POLICY,
     )
 
 
@@ -235,7 +246,7 @@ def _is_retryable_reconcile_budget_error(exc: Exception) -> bool:
 async def _reconcile_continuous(task_id: str) -> bool:
     """Reconcile once, deferring only exhausted transient CH read failures.
 
-    The activity already used the bounded five-attempt control policy.  A
+    The activity already used the bounded five-attempt reconcile policy.  A
     continuous task has a durable cursor and another poll boundary, so killing
     it after momentary ClickHouse pressure loses future work. Returning False
     parks before any claim/drain, then retries from the unchanged cursor. Every
