@@ -25407,6 +25407,11 @@ export type ActorDecisionApiArguments = { [key: string]: string };
 export interface ActorDecisionApi {
   /** @minLength 1 */
   actor: string;
+  /**
+   * The actor's name, so a pre-run writer who changed nothing in the trial is named, not shown by id.
+   * @minLength 1
+   */
+  name?: string;
   play: ActorDecisionApiPlay;
   /** @minLength 1 */
   action?: string;
