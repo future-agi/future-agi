@@ -13,7 +13,7 @@ function stringAvatar(name) {
         <Typography
           typography="s3"
           fontWeight={"fontWeightMedium"}
-          color="pink.500"
+          color="status.discovery.fg"
         >
           {nameStr.join("")}
         </Typography>

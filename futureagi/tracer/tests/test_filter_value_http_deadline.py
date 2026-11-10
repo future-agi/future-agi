@@ -156,7 +156,7 @@ def test_resumed_custom_value_cursor_captures_wall_after_state_restore(monkeypat
     )
     monkeypatch.setattr(
         dashboard_view,
-        "decode_catalog_snapshot_list_cursor",
+        "decode_native_list_cursor",
         decode_cursor,
     )
     monkeypatch.setattr(

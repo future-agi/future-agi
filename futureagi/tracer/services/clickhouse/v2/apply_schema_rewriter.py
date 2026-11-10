@@ -10,7 +10,10 @@ split-brain across replicas. Sibling test file:
 """
 from __future__ import annotations
 
+import functools
+import hashlib
 import re
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Statement splitter — extracted so the rewriter is self-contained.
@@ -192,3 +195,275 @@ def rewrite_for_replicated(stmt: str, *, table_name: str, cluster: str,
             )
         # For non-CREATE (i.e., ALTER) statements, missing engine is normal.
     return new_stmt
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Dictionary source credentials
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# A dictionary declared with `SOURCE(CLICKHOUSE(TABLE '...'))` and no USER reads
+# its local source as user `default` with an EMPTY password. When the server's
+# users have passwords, every dictGet then fails with AUTHENTICATION_FAILED;
+# spans.trace_name evaluates dictGetOrDefault('trace_dict', ...) on insert, so
+# every span insert fails. The packaged DDL stays credential-free (its text is
+# hashed for drift detection and compared against live metadata); every path
+# that executes it injects the credentials it connects with, at apply time.
+#
+# ClickHouse shows a source password as '[HIDDEN]', so a rotated password
+# would be invisible in the live DDL. The injection therefore also sets the
+# dictionary's COMMENT to a fingerprint of the credentials, which the live
+# DDL keeps, and a mismatch marks the dictionary for re-creation.
+#
+# The functions below read our packaged grammar: quoted strings, comments and
+# balanced parentheses are respected, nothing else is interpreted.
+_CREDENTIAL_KEYS = frozenset({"user", "password"})
+_FINGERPRINT_PREFIX = "fi-source-credentials:"
+_SOURCE_TOKEN = re.compile(
+    r"'(?:\\.|''|[^'\\])*'|`(?:``|[^`])*`|\"(?:\\.|\"\"|[^\"\\])*\"|"
+    r"--[^\n]*|/\*[\s\S]*?\*/|"
+    r"[-+]?[0-9]+(?:\.[0-9]+)?|[A-Za-z_][A-Za-z_0-9]*|\S"
+)
+
+
+def _code_tokens(sql: str) -> list[re.Match]:
+    return [m for m in _SOURCE_TOKEN.finditer(sql) if not m[0].startswith(("--", "/*"))]
+
+
+def _clickhouse_sources(sql: str) -> list[tuple[int, int, list[re.Match]]]:
+    """(start, end, argument tokens) of every ``SOURCE(CLICKHOUSE(...))``.
+
+    ``sql[start:end]`` is the text between ``CLICKHOUSE(`` and its matching
+    ``)``. Unterminated clauses are left alone (the server rejects them).
+    """
+    tokens = _code_tokens(sql)
+    found = []
+    i = 0
+    while i + 3 < len(tokens):
+        if (
+            tokens[i][0].upper() == "SOURCE"
+            and tokens[i + 1][0] == "("
+            and tokens[i + 2][0].upper() == "CLICKHOUSE"
+            and tokens[i + 3][0] == "("
+        ):
+            depth, j = 1, i + 4
+            while j < len(tokens):
+                if tokens[j][0] == "(":
+                    depth += 1
+                elif tokens[j][0] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            if depth:
+                break
+            found.append((tokens[i + 3].end(), tokens[j].start(), tokens[i + 4 : j]))
+            i = j + 1
+        else:
+            i += 1
+    return found
+
+
+def _source_pairs(arguments: list[re.Match]) -> list[tuple[str, int, int, str]]:
+    """(lowercased key, start, end, first value token) of each ``KEY value`` pair.
+
+    A value is one literal/identifier, optionally followed by a balanced
+    ``(...)`` (function form), or a bare balanced ``(...)`` pair list.
+    """
+    pairs, i = [], 0
+    while i < len(arguments):
+        key = arguments[i]
+        j = i + 1
+        if j < len(arguments) and arguments[j][0] != "(":
+            j += 1
+        if j < len(arguments) and arguments[j][0] == "(":
+            depth = 0
+            while j < len(arguments):
+                depth += (arguments[j][0] == "(") - (arguments[j][0] == ")")
+                j += 1
+                if depth == 0:
+                    break
+        end = arguments[j - 1].end() if j > i + 1 else key.end()
+        value = arguments[i + 1][0] if j > i + 1 else ""
+        pairs.append((key[0].lower(), key.start(), end, value))
+        i = j
+    return pairs
+
+
+def _literal(token: str) -> str:
+    """The value of a string literal token; identifiers/numbers as written."""
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
+        return re.sub(r"\\(.)|(['\"])\2", lambda m: m[1] or m[2], token[1:-1])
+    return token
+
+
+def _sql_string(value: str) -> str:
+    """A ClickHouse string literal: backslashes first, then single quotes."""
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+@functools.lru_cache(maxsize=4)
+def credentials_fingerprint(user: str, password: str) -> str:
+    """Identifies ``user``/``password`` without revealing the password.
+
+    Salted and slow (PBKDF2): the COMMENT that carries it is readable by any
+    user who can list the database's tables.
+    """
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode(),
+        f"fi-dictionary-source:{user or 'default'}".encode(),
+        100_000,
+    )
+    return _FINGERPRINT_PREFIX + digest.hex()[:16]
+
+
+def _statement_start(tokens: list[re.Match], position: int) -> int:
+    """Start of the statement running through ``position``: after its ``;``."""
+    start = 0
+    for token in tokens:
+        if token.start() >= position:
+            break
+        if token[0] == ";":
+            start = token.end()
+    return start
+
+
+def _statement_end(tokens: list[re.Match], position: int) -> int:
+    """End of the last code token of the statement running through ``position``."""
+    end = position
+    for token in tokens:
+        if token.start() < position:
+            continue
+        if token[0] == ";":
+            break
+        end = token.end()
+    return end
+
+
+def _top_level_comments(tokens: list[re.Match]) -> list[int]:
+    """Indexes of each ``COMMENT`` keyword followed by a string, outside
+    parentheses (a column's COMMENT is inside them)."""
+    found, depth = [], 0
+    for i, token in enumerate(tokens):
+        if token[0] == "(":
+            depth += 1
+        elif token[0] == ")":
+            depth -= 1
+        elif (
+            depth == 0
+            and token[0].upper() == "COMMENT"
+            and i + 1 < len(tokens)
+            and tokens[i + 1][0].startswith("'")
+        ):
+            found.append(i)
+    return found
+
+
+def _fingerprint_comments(sql: str) -> list[tuple[int, int, str]]:
+    """(start, end, value) of each top-level ``COMMENT '<fingerprint>'``.
+
+    ``start`` includes the whitespace before ``COMMENT``.
+    """
+    tokens = _code_tokens(sql)
+    found = []
+    for i in _top_level_comments(tokens):
+        value = _literal(tokens[i + 1][0])
+        if value.startswith(_FINGERPRINT_PREFIX):
+            start = len(sql[: tokens[i].start()].rstrip())
+            found.append((start, tokens[i + 1].end(), value))
+    return found
+
+
+def with_dictionary_credentials(sql: str, user: str, password: str) -> str:
+    """Add ``USER '<user>' PASSWORD '<password>'`` to every CLICKHOUSE source,
+    and end its statement with ``COMMENT '<credentials_fingerprint>'``.
+
+    Only ``SOURCE(CLICKHOUSE(...))`` clauses without a USER are changed. With an
+    empty password the statement is returned unchanged, so passwordless installs
+    execute exactly the packaged text. Idempotent. Never log the result.
+
+    Raises ValueError when a statement to change already has a COMMENT: the
+    fingerprint must be its only one.
+    """
+    if not password or "SOURCE" not in sql.upper():
+        return sql
+    credentials = (
+        f"USER {_sql_string(user or 'default')} PASSWORD {_sql_string(password)}"
+    )
+    comment = f" COMMENT {_sql_string(credentials_fingerprint(user, password))}"
+    tokens = _code_tokens(sql)
+    comments = [tokens[i].start() for i in _top_level_comments(tokens)]
+    inserts = set()
+    for start, end, arguments in _clickhouse_sources(sql):
+        if any(pair[0] == "user" for pair in _source_pairs(arguments)):
+            continue
+        statement_end = _statement_end(tokens, end)
+        if any(
+            _statement_start(tokens, start) <= position < statement_end
+            for position in comments
+        ):
+            raise ValueError(
+                "a dictionary with a SOURCE(CLICKHOUSE(...)) already has a COMMENT; "
+                "the credentials fingerprint must be its only one"
+            )
+        stripped = sql[start:end].rstrip()
+        separator = " " if stripped and not stripped.endswith("(") else ""
+        inserts.add((start + len(stripped), separator + credentials))
+        inserts.add((statement_end, comment))
+    result, last = [], 0
+    for position, text in sorted(inserts):
+        result.append(sql[last:position])
+        result.append(text)
+        last = position
+    result.append(sql[last:])
+    return "".join(result)
+
+
+def without_dictionary_credentials(sql: str) -> str:
+    """Drop USER/PASSWORD pairs from every CLICKHOUSE source, and the
+    credentials fingerprint COMMENT, for comparisons.
+
+    ClickHouse shows a dictionary's source password as ``'[HIDDEN]'`` in
+    ``system.tables``/``SHOW CREATE`` (or omits it); credentials are deployment
+    configuration, never part of the packaged dictionary contract.
+    """
+    if "SOURCE" not in sql.upper():
+        return sql
+    cuts = [(start, end, "") for start, end, _ in _fingerprint_comments(sql)]
+    for start, end, arguments in _clickhouse_sources(sql):
+        pairs = _source_pairs(arguments)
+        if not any(pair[0] in _CREDENTIAL_KEYS for pair in pairs):
+            continue
+        kept = " ".join(
+            sql[s:e] for key, s, e, _ in pairs if key not in _CREDENTIAL_KEYS
+        )
+        cuts.append((start, end, kept))
+    result, last = [], 0
+    for start, end, kept in sorted(cuts):
+        result.append(sql[last:start])
+        result.append(kept)
+        last = end
+    result.append(sql[last:])
+    return "".join(result)
+
+
+def dictionary_credentials_outdated(sql: str, user: str, password: str) -> bool:
+    """True when ``sql`` (e.g. a live ``create_table_query``) was not created
+    with ``user`` and ``password``: a ``SOURCE(CLICKHOUSE(...))`` names no USER
+    or another user, or its credentials fingerprint COMMENT differs.
+
+    The password itself is unreadable (``'[HIDDEN]'``); the fingerprint is
+    what reveals a rotated one.
+    """
+    wanted = user or "default"
+    sources = _clickhouse_sources(sql)
+    for _, _, arguments in sources:
+        users = [
+            _literal(value)
+            for key, _, _, value in _source_pairs(arguments)
+            if key == "user"
+        ]
+        if users != [wanted]:
+            return True
+    fingerprints = [value for _, _, value in _fingerprint_comments(sql)]
+    return fingerprints != [credentials_fingerprint(user, password)] * len(sources)

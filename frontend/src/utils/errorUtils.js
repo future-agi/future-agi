@@ -1,3 +1,4 @@
+import { DatasetLimitCheckFailedErrorApiCode } from "src/generated/api-contracts/api.schemas";
 import { RESPONSE_CODES } from "./constants";
 
 const DEFAULT_RATE_LIMIT_MESSAGE = "Rate limit reached.";
@@ -11,13 +12,19 @@ const pickMessage = (...messages) =>
   ) || "";
 
 const SAFE_VALIDATION_STATUS_CODES = new Set([400, 404, 409, 422]);
+// Typed API error codes whose message the backend writes for users
+// (futureagi/tfc/utils/error_codes.py), shown whatever their status.
+const USER_FACING_ERROR_CODES = new Set(
+  Object.values(DatasetLimitCheckFailedErrorApiCode),
+);
 const INTERNAL_ERROR_MARKERS =
   /DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|SELECT\s|maximum:\s*\d+|elapsed\s+\d+/i;
 
 /**
  * Return concise validation feedback, but never expose infrastructure/query
- * details from a failed mutation. Server-side failures and suspiciously large
- * or multiline payloads intentionally collapse to the caller's safe fallback.
+ * details from a failed mutation. Server-side failures without a user-facing
+ * code, and suspiciously large or multiline payloads, intentionally collapse
+ * to the caller's safe fallback.
  */
 export function getSafeActionErrorMessage(error, fallback) {
   const responseData = error?.response?.data || {};
@@ -27,6 +34,7 @@ export function getSafeActionErrorMessage(error, fallback) {
       error?.status ||
       error?.statusCode,
   );
+  const code = responseData?.code || error?.code;
   const message = pickMessage(
     responseData?.message,
     responseData?.detail,
@@ -36,7 +44,10 @@ export function getSafeActionErrorMessage(error, fallback) {
   ).trim();
 
   if (
-    !SAFE_VALIDATION_STATUS_CODES.has(statusCode) ||
+    !(
+      SAFE_VALIDATION_STATUS_CODES.has(statusCode) ||
+      USER_FACING_ERROR_CODES.has(code)
+    ) ||
     !message ||
     message.length > 240 ||
     /[\r\n]/.test(message) ||

@@ -770,25 +770,40 @@ export function useCursorAttributeInventory({
     pageSize,
   });
 
+  // Keep the same identities as the legacy reader: callers derive state from
+  // `attributes` in effects, so a fresh array per render re-renders forever.
+  const rawAttributes = useMemo(
+    () =>
+      mergeCursorAttributeRows(
+        catalog.metrics.map(propertyMetricToRawAttribute),
+      ),
+    [catalog.metrics],
+  );
+  const attributes = useMemo(
+    () =>
+      expandCursorAttributeInventory({
+        rawAttributes,
+        rowType: normalizedRowType,
+        preservedKeys,
+        search: normalizedSearch,
+      }),
+    [rawAttributes, normalizedRowType, preservedKeys, normalizedSearch],
+  );
+  const normalizedLocalSearch = normalizedSearch.toLocaleLowerCase();
+  const filteredAttributes = useMemo(
+    () =>
+      normalizedLocalSearch
+        ? attributes.filter((attribute) =>
+            attributeInventoryKey(attribute)
+              ?.toLocaleLowerCase()
+              .includes(normalizedLocalSearch),
+          )
+        : attributes,
+    [attributes, normalizedLocalSearch],
+  );
+
   if (useLegacyFallback) return legacy;
 
-  const rawAttributes = mergeCursorAttributeRows(
-    catalog.metrics.map(propertyMetricToRawAttribute),
-  );
-  const attributes = expandCursorAttributeInventory({
-    rawAttributes,
-    rowType: normalizedRowType,
-    preservedKeys,
-    search: normalizedSearch,
-  });
-  const normalizedLocalSearch = normalizedSearch.toLocaleLowerCase();
-  const filteredAttributes = normalizedLocalSearch
-    ? attributes.filter((attribute) =>
-        attributeInventoryKey(attribute)
-          ?.toLocaleLowerCase()
-          .includes(normalizedLocalSearch),
-      )
-    : attributes;
   const catalogNotReady = isPropertyCatalogNotReadyError(catalog.error);
   const initialError = Boolean(catalog.isError && !catalogNotReady);
   const nextPageError = Boolean(

@@ -17,11 +17,19 @@ export default function ConfirmDialog({
   action,
   open,
   onClose,
+  closeDisabled = false,
   ...other
 }) {
   const theme = useTheme();
   return (
-    <Dialog fullWidth maxWidth="xs" open={open} onClose={onClose} {...other}>
+    <Dialog
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
+      open={open}
+      onClose={onClose}
+      {...other}
+    >
       <Box sx={{ padding: 2 }}>
         <DialogTitle sx={{ padding: 0, margin: 0 }}>
           <Box
@@ -31,11 +39,7 @@ export default function ConfirmDialog({
               justifyContent: "space-between",
             }}
           >
-            <Typography
-              color="text.primary"
-              fontWeight={"fontWeightBold"}
-              typography="m2"
-            >
+            <Typography color="text.primary" fontWeight={600} typography="m2">
               {title}
             </Typography>
             <IconButton
@@ -43,8 +47,9 @@ export default function ConfirmDialog({
                 color: "text.primary",
               }}
               onClick={onClose}
+              disabled={closeDisabled}
             >
-              <Iconify icon="mdi:close" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
         </DialogTitle>
@@ -67,7 +72,7 @@ export default function ConfirmDialog({
             variant="outlined"
             color="inherit"
             onClick={onClose}
-            sx={{ paddingX: "24px" }}
+            disabled={closeDisabled}
           >
             Cancel
           </Button>
@@ -80,6 +85,7 @@ export default function ConfirmDialog({
 
 ConfirmDialog.propTypes = {
   action: PropTypes.node,
+  closeDisabled: PropTypes.bool,
   content: PropTypes.node,
   onClose: PropTypes.func,
   open: PropTypes.bool,

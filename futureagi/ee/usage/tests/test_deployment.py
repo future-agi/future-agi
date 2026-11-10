@@ -40,6 +40,11 @@ class TestDeploymentMode:
         _detect_mode.cache_clear()
         assert _detect_mode() == "cloud"
 
+    @override_settings(CLOUD_DEPLOYMENT=" us ", EE_LICENSE_KEY="")
+    @patch("ee.usage.deployment._validate_cloud_secret", return_value=True)
+    def test_cloud_region_is_read_as_is_cloud_env_reads_it(self, _mock):
+        assert _detect_mode() == "cloud"
+
     @override_settings(
         CLOUD_DEPLOYMENT="US", CLOUD_DEPLOYMENT_SECRET="", EE_LICENSE_KEY=""
     )

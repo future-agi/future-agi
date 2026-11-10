@@ -92,7 +92,8 @@ const MoveItem = ({ id, open, onClose, name, folderId }) => {
         </Typography>
         <Typography
           color="text.primary"
-          typography={"m3"}
+          fontSize={13}
+          lineHeight="20px"
           fontWeight={"fontWeightMedium"}
         >
           {currentFolder?.label}

@@ -1,0 +1,459 @@
+[
+  {
+    "name": "restore_not_certified",
+    "response": {
+      "status": true,
+      "result": {
+        "api_schema_version": 1,
+        "availability": "available",
+        "reason_code": null,
+        "age_seconds": 0,
+        "freshness": "fresh",
+        "discovery_freshness": "fresh",
+        "versions_freshness": "fresh",
+        "progress_freshness": "unknown",
+        "snapshot": {
+          "schema_version": 1,
+          "sequence": 0,
+          "generated_at": "2026-10-24T12:00:00Z",
+          "installation": {
+            "slot_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "topology": "standalone",
+            "production": false
+          },
+          "versions": {
+            "observed_at": "2026-10-24T12:00:00Z",
+            "runtime_state": "consistent",
+            "selected_release": "v1.51.0",
+            "running_release": "v1.51.0",
+            "components": [
+              {
+                "component": "standalone",
+                "selected_version": "v1.51.0",
+                "observed_versions": [
+                  "v1.51.0"
+                ],
+                "observation": "known"
+              }
+            ]
+          },
+          "policy": {
+            "channel": "stable",
+            "version_policy": "minor",
+            "check_interval_seconds": 21600
+          },
+          "automation": {
+            "mode": "apply",
+            "enabled": true,
+            "state": "blocked",
+            "paused_until": null,
+            "pause_indefinite": false,
+            "maintenance_window": null,
+            "last_tick_at": "2026-10-24T12:00:00Z",
+            "next_check_at": null,
+            "next_action_at": null
+          },
+          "discovery": {
+            "state": "blocked",
+            "last_attempt_at": "2026-10-24T12:00:00Z",
+            "checked_at": "2026-10-24T12:00:00Z",
+            "candidate_version": "v1.53.0",
+            "verification": "verified",
+            "reason_codes": [
+              "restore_not_certified"
+            ]
+          },
+          "download": {
+            "state": "not_downloaded",
+            "target_version": null,
+            "completed_at": null,
+            "verified_components": [],
+            "reason_codes": []
+          },
+          "operation": {
+            "state": "blocked",
+            "kind": "check",
+            "stage": null,
+            "started_at": "2026-10-24T12:00:00Z",
+            "finished_at": "2026-10-24T12:00:00Z",
+            "reported_at": "2026-10-24T12:00:00Z",
+            "reason_codes": [
+              "restore_not_certified"
+            ]
+          },
+          "last_run": {
+            "kind": "apply",
+            "automatic": true,
+            "outcome": "failed_during_rollout",
+            "from_version": "v1.51.0",
+            "target_version": "v1.52.0",
+            "finished_at": "2026-10-24T12:00:00Z",
+            "fallback_outcome": "none",
+            "forward_result": "failed",
+            "restore_result": "verified",
+            "effective_version": "v1.51.0",
+            "failed_target_version": "v1.52.0"
+          },
+          "safety": {
+            "backup_required": true,
+            "backup_state": "not_evaluated",
+            "readiness": "unknown",
+            "automatic_rollback": "ineligible",
+            "operator_action": "inspect_host",
+            "fallback_strategy": "restore_backup",
+            "restore_state": "not_needed",
+            "snapshot_at": null,
+            "loss_window_start": null,
+            "loss_window_end": null,
+            "loss_window_qualification": "not_applicable",
+            "guidance_id": "inspect_host",
+            "estimates": null,
+            "failed_target_version": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "transition_not_rehearsed",
+    "response": {
+      "status": true,
+      "result": {
+        "api_schema_version": 1,
+        "availability": "available",
+        "reason_code": null,
+        "age_seconds": 0,
+        "freshness": "fresh",
+        "discovery_freshness": "fresh",
+        "versions_freshness": "fresh",
+        "progress_freshness": "unknown",
+        "snapshot": {
+          "schema_version": 1,
+          "sequence": 0,
+          "generated_at": "2026-10-24T12:00:00Z",
+          "installation": {
+            "slot_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "topology": "standalone",
+            "production": false
+          },
+          "versions": {
+            "observed_at": "2026-10-24T12:00:00Z",
+            "runtime_state": "consistent",
+            "selected_release": "v1.51.0",
+            "running_release": "v1.51.0",
+            "components": [
+              {
+                "component": "standalone",
+                "selected_version": "v1.51.0",
+                "observed_versions": [
+                  "v1.51.0"
+                ],
+                "observation": "known"
+              }
+            ]
+          },
+          "policy": {
+            "channel": "stable",
+            "version_policy": "minor",
+            "check_interval_seconds": 21600
+          },
+          "automation": {
+            "mode": "apply",
+            "enabled": true,
+            "state": "blocked",
+            "paused_until": null,
+            "pause_indefinite": false,
+            "maintenance_window": null,
+            "last_tick_at": "2026-10-24T12:00:00Z",
+            "next_check_at": null,
+            "next_action_at": null
+          },
+          "discovery": {
+            "state": "blocked",
+            "last_attempt_at": "2026-10-24T12:00:00Z",
+            "checked_at": "2026-10-24T12:00:00Z",
+            "candidate_version": "v1.53.0",
+            "verification": "verified",
+            "reason_codes": [
+              "transition_not_rehearsed"
+            ]
+          },
+          "download": {
+            "state": "not_downloaded",
+            "target_version": null,
+            "completed_at": null,
+            "verified_components": [],
+            "reason_codes": []
+          },
+          "operation": {
+            "state": "blocked",
+            "kind": "check",
+            "stage": null,
+            "started_at": "2026-10-24T12:00:00Z",
+            "finished_at": "2026-10-24T12:00:00Z",
+            "reported_at": "2026-10-24T12:00:00Z",
+            "reason_codes": [
+              "transition_not_rehearsed"
+            ]
+          },
+          "last_run": {
+            "kind": "apply",
+            "automatic": true,
+            "outcome": "failed_during_rollout",
+            "from_version": "v1.51.0",
+            "target_version": "v1.52.0",
+            "finished_at": "2026-10-24T12:00:00Z",
+            "fallback_outcome": "none",
+            "forward_result": "failed",
+            "restore_result": "verified",
+            "effective_version": "v1.51.0",
+            "failed_target_version": "v1.52.0"
+          },
+          "safety": {
+            "backup_required": true,
+            "backup_state": "not_evaluated",
+            "readiness": "unknown",
+            "automatic_rollback": "ineligible",
+            "operator_action": "inspect_host",
+            "fallback_strategy": "restore_backup",
+            "restore_state": "not_needed",
+            "snapshot_at": null,
+            "loss_window_start": null,
+            "loss_window_end": null,
+            "loss_window_qualification": "not_applicable",
+            "guidance_id": "inspect_host",
+            "estimates": null,
+            "failed_target_version": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "migration_exceeds_window",
+    "response": {
+      "status": true,
+      "result": {
+        "api_schema_version": 1,
+        "availability": "available",
+        "reason_code": null,
+        "age_seconds": 0,
+        "freshness": "fresh",
+        "discovery_freshness": "fresh",
+        "versions_freshness": "fresh",
+        "progress_freshness": "unknown",
+        "snapshot": {
+          "schema_version": 1,
+          "sequence": 0,
+          "generated_at": "2026-10-24T12:00:00Z",
+          "installation": {
+            "slot_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "topology": "standalone",
+            "production": false
+          },
+          "versions": {
+            "observed_at": "2026-10-24T12:00:00Z",
+            "runtime_state": "consistent",
+            "selected_release": "v1.51.0",
+            "running_release": "v1.51.0",
+            "components": [
+              {
+                "component": "standalone",
+                "selected_version": "v1.51.0",
+                "observed_versions": [
+                  "v1.51.0"
+                ],
+                "observation": "known"
+              }
+            ]
+          },
+          "policy": {
+            "channel": "stable",
+            "version_policy": "minor",
+            "check_interval_seconds": 21600
+          },
+          "automation": {
+            "mode": "apply",
+            "enabled": true,
+            "state": "blocked",
+            "paused_until": null,
+            "pause_indefinite": false,
+            "maintenance_window": null,
+            "last_tick_at": "2026-10-24T12:00:00Z",
+            "next_check_at": null,
+            "next_action_at": null
+          },
+          "discovery": {
+            "state": "blocked",
+            "last_attempt_at": "2026-10-24T12:00:00Z",
+            "checked_at": "2026-10-24T12:00:00Z",
+            "candidate_version": "v1.53.0",
+            "verification": "verified",
+            "reason_codes": [
+              "migration_exceeds_window"
+            ]
+          },
+          "download": {
+            "state": "not_downloaded",
+            "target_version": null,
+            "completed_at": null,
+            "verified_components": [],
+            "reason_codes": []
+          },
+          "operation": {
+            "state": "blocked",
+            "kind": "check",
+            "stage": null,
+            "started_at": "2026-10-24T12:00:00Z",
+            "finished_at": "2026-10-24T12:00:00Z",
+            "reported_at": "2026-10-24T12:00:00Z",
+            "reason_codes": [
+              "migration_exceeds_window"
+            ]
+          },
+          "last_run": {
+            "kind": "apply",
+            "automatic": true,
+            "outcome": "failed_during_rollout",
+            "from_version": "v1.51.0",
+            "target_version": "v1.52.0",
+            "finished_at": "2026-10-24T12:00:00Z",
+            "fallback_outcome": "none",
+            "forward_result": "failed",
+            "restore_result": "verified",
+            "effective_version": "v1.51.0",
+            "failed_target_version": "v1.52.0"
+          },
+          "safety": {
+            "backup_required": true,
+            "backup_state": "not_evaluated",
+            "readiness": "unknown",
+            "automatic_rollback": "ineligible",
+            "operator_action": "inspect_host",
+            "fallback_strategy": "restore_backup",
+            "restore_state": "not_needed",
+            "snapshot_at": null,
+            "loss_window_start": null,
+            "loss_window_end": null,
+            "loss_window_qualification": "not_applicable",
+            "guidance_id": "inspect_host",
+            "estimates": null,
+            "failed_target_version": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "verifying",
+    "response": {
+      "status": true,
+      "result": {
+        "api_schema_version": 1,
+        "availability": "available",
+        "reason_code": null,
+        "age_seconds": 0,
+        "freshness": "fresh",
+        "discovery_freshness": "fresh",
+        "versions_freshness": "fresh",
+        "progress_freshness": "fresh",
+        "snapshot": {
+          "schema_version": 1,
+          "sequence": 0,
+          "generated_at": "2026-10-24T12:00:00Z",
+          "installation": {
+            "slot_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "topology": "standalone",
+            "production": false
+          },
+          "versions": {
+            "observed_at": "2026-10-24T12:00:00Z",
+            "runtime_state": "consistent",
+            "selected_release": "v1.51.0",
+            "running_release": "v1.51.0",
+            "components": [
+              {
+                "component": "standalone",
+                "selected_version": "v1.51.0",
+                "observed_versions": [
+                  "v1.51.0"
+                ],
+                "observation": "known"
+              }
+            ]
+          },
+          "policy": {
+            "channel": "stable",
+            "version_policy": "minor",
+            "check_interval_seconds": 21600
+          },
+          "automation": {
+            "mode": "apply",
+            "enabled": true,
+            "state": "enabled",
+            "paused_until": null,
+            "pause_indefinite": false,
+            "maintenance_window": null,
+            "last_tick_at": "2026-10-24T12:00:00Z",
+            "next_check_at": null,
+            "next_action_at": null
+          },
+          "discovery": {
+            "state": "available",
+            "last_attempt_at": "2026-10-24T12:00:00Z",
+            "checked_at": "2026-10-24T12:00:00Z",
+            "candidate_version": "v1.53.0",
+            "verification": "verified",
+            "reason_codes": []
+          },
+          "download": {
+            "state": "not_downloaded",
+            "target_version": null,
+            "completed_at": null,
+            "verified_components": [],
+            "reason_codes": []
+          },
+          "operation": {
+            "state": "verifying",
+            "kind": "apply",
+            "stage": "stability",
+            "started_at": "2026-10-24T12:00:00Z",
+            "finished_at": null,
+            "reported_at": "2026-10-24T12:00:00Z",
+            "reason_codes": [],
+            "phase": "target_verifying"
+          },
+          "last_run": {
+            "kind": "apply",
+            "automatic": true,
+            "outcome": "failed_during_rollout",
+            "from_version": "v1.51.0",
+            "target_version": "v1.52.0",
+            "finished_at": "2026-10-24T12:00:00Z",
+            "fallback_outcome": "none",
+            "forward_result": "failed",
+            "restore_result": "verified",
+            "effective_version": "v1.51.0",
+            "failed_target_version": "v1.52.0"
+          },
+          "safety": {
+            "backup_required": true,
+            "backup_state": "sealed",
+            "readiness": "unknown",
+            "automatic_rollback": "ineligible",
+            "operator_action": "none",
+            "fallback_strategy": "restore_backup",
+            "restore_state": "not_needed",
+            "snapshot_at": null,
+            "loss_window_start": null,
+            "loss_window_end": null,
+            "loss_window_qualification": "not_applicable",
+            "guidance_id": "none",
+            "estimates": null,
+            "failed_target_version": null
+          }
+        }
+      }
+    }
+  }
+]

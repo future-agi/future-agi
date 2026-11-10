@@ -7,11 +7,11 @@ const EvalColumnChip = ({ text }) => {
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
       <Iconify
-        icon="material-symbols:check-circle-outline"
+        icon="solar:check-circle-linear"
         sx={{ color: "text.secondary" }}
-        width={18}
+        width={20}
       />
-      <Typography color="text.secondary" fontWeight={700} fontSize="13px">
+      <Typography color="text.secondary" fontWeight={600} fontSize="13px">
         {text}
       </Typography>
     </Box>

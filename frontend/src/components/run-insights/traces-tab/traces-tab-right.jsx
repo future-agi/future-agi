@@ -1,7 +1,8 @@
-import { Badge, Box, Button } from "@mui/material";
+import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import SvgColor from "src/components/svg-color";
+import { FilterTrigger } from "src/components/filter";
 import { OutlinedButton } from "src/sections/project-detail/ProjectDetailComponents";
 
 const TracesTabRightSection = React.forwardRef(
@@ -17,36 +18,11 @@ const TracesTabRightSection = React.forwardRef(
           alignItems: "center",
         }}
       >
-        <Button
-          sx={{
-            fontWeight: "fontWeightRegular",
-            color: "text.primary",
-            typography: "s1",
-          }}
+        <FilterTrigger
+          count={typeof isFilterApplied === "number" ? isFilterApplied : 0}
+          open={Boolean(filterOpen)}
           onClick={() => setOpenFilter((v) => !v)}
-          startIcon={
-            isFilterApplied ? (
-              <Badge
-                variant="dot"
-                color="error"
-                overlap="circular"
-                anchorOrigin={{ vertical: "top", horizontal: "right" }}
-                sx={{
-                  "& .MuiBadge-badge": {
-                    top: 1,
-                    right: 1,
-                  },
-                }}
-              >
-                <SvgColor src={`/assets/icons/action_buttons/ic_filter.svg`} />
-              </Badge>
-            ) : (
-              <SvgColor src={`/assets/icons/action_buttons/ic_filter.svg`} />
-            )
-          }
-        >
-          {filterOpen ? "Hide Filter" : "Show Filter"}
-        </Button>
+        />
         <OutlinedButton
           startIcon={
             <SvgColor src="/assets/icons/action_buttons/ic_column.svg" />
@@ -74,7 +50,7 @@ TracesTabRightSection.propTypes = {
   setOpenColumnConfigure: PropTypes.func,
   setOpenFilter: PropTypes.func,
   filterOpen: PropTypes.bool,
-  isFilterApplied: PropTypes.bool,
+  isFilterApplied: PropTypes.oneOfType([PropTypes.bool, PropTypes.number]),
 };
 
 export default TracesTabRightSection;

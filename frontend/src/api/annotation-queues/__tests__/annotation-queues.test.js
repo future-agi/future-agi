@@ -1372,6 +1372,45 @@ describe("Annotation Queues API", () => {
               },
             ]),
           },
+          timeout: 15000,
+        },
+      );
+    });
+  });
+
+  describe("useQueueItemsForSource project pin", () => {
+    it("lists only the drawer project's queue items", async () => {
+      axios.get.mockResolvedValueOnce({ data: { result: [] } });
+
+      const { result } = renderHook(
+        () =>
+          useQueueItemsForSource(
+            [
+              { sourceType: "trace", sourceId: "trace-1" },
+              { sourceType: "observation_span", sourceId: "span-1" },
+            ],
+            { projectId: "project-1" },
+          ),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/for-source/",
+        {
+          params: {
+            sources: JSON.stringify([
+              { source_type: "trace", source_id: "trace-1" },
+              { source_type: "observation_span", source_id: "span-1" },
+            ]),
+            project_id: "project-1",
+          },
+          timeout: 15000,
         },
       );
     });

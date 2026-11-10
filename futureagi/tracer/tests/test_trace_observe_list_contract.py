@@ -203,8 +203,10 @@ class TestTraceObserveListResponseContract:
         assert session_metadata["query_provenance"]["enum"] == [
             "spans_per_session_candidate"
         ]
+        # Exactness is the shared list-page contract; only the name of the
+        # inexact candidate-order source is session-list specific.
+        assert {"query_exact", "ordering_exact"} <= trace_metadata.keys()
         assert "query_provenance" not in trace_metadata
-        assert "ordering_exact" not in trace_metadata
 
         session_table = definitions["TraceSessionListResult"]["properties"]["table"]
         assert session_table["items"]["$ref"].rsplit("/", 1)[-1] == (

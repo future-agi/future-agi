@@ -94,6 +94,8 @@ var headerDenylist = map[string]struct{}{
 	"x-api-key":            {},
 	"x-goog-api-key":       {},
 	"x-amz-security-token": {},
+	// An internal caller's own provider key, for one decision call.
+	"x-agentcc-provider-key": {},
 }
 
 // Allowlist only: a blocklist complete enough for the alternative is one you

@@ -16,10 +16,11 @@ import os
 from datetime import datetime
 
 import structlog
+from redis.exceptions import RedisError
+
 from ee.usage.schemas.events import CheckResult, UpgradeCTA
 from ee.usage.services.config import BillingConfig
 from ee.usage.services.emitter import get_redis
-from redis.exceptions import RedisError
 
 logger = structlog.get_logger(__name__)
 
@@ -43,23 +44,30 @@ def _get_current_period() -> str:
     return datetime.utcnow().strftime("%Y-%m")
 
 
-def _get_cached_plan(org_id: str) -> str:
+def _get_cached_plan(org_id: str, *, use_cache: bool = True) -> str:
     """Get org's plan from Redis cache, or fetch from DB and cache (5 min TTL)."""
     cache_key = f"plan:{org_id}"
-    try:
-        r = get_redis()
-        cached = r.get(cache_key)
-        if cached:
-            return cached if isinstance(cached, str) else cached.decode()
-    except RedisError:
-        logger.warning("plan_cache_read_failed", org_id=org_id)
-        r = None
+    r = None
+    if use_cache:
+        try:
+            r = get_redis()
+            cached = r.get(cache_key)
+            if cached:
+                return cached if isinstance(cached, str) else cached.decode()
+        except RedisError:
+            logger.warning("plan_cache_read_failed", org_id=org_id)
+            r = None
 
     # Fetch from DB (one query, only on cache miss)
     from ee.usage.models.usage import OrganizationSubscription
 
+    rows = (
+        OrganizationSubscription.objects
+        if use_cache
+        else OrganizationSubscription.objects.using("default")
+    )
     plan = (
-        OrganizationSubscription.objects.filter(organization_id=org_id, deleted=False)
+        rows.filter(organization_id=org_id, deleted=False)
         .values_list("plan", flat=True)
         .first()
     )

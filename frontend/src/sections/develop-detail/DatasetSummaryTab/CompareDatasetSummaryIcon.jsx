@@ -13,7 +13,7 @@ const CompareDatasetSummaryIcon = ({ index, style = {} }) => {
       sx={{
         color: tagForeground,
         backgroundColor: tagBackground,
-        borderRadius: "5px",
+        borderRadius: "6px",
         height: "24px",
         width: "24px",
         fontSize: "12px",

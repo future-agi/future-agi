@@ -17,6 +17,7 @@ from slack_sdk.webhook import WebhookClient
 logger = structlog.get_logger(__name__)
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
+from tfc.utils.error_codes import get_error_message
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -42,12 +43,34 @@ _EVAL_OUTPUT_TYPE_MAP = {
 }
 
 
+def uses_choice_threshold(eval_template) -> bool:
+    """True when the eval's alert metric is the share of one chosen label.
+
+    A scoring eval may also carry labels, but its metric is the mean score, so
+    a stored choice is neither validated, displayed, nor copied for it.
+    """
+    if eval_template is None:
+        return False
+    output_type = (eval_template.config or {}).get("output")
+    return output_type in (
+        EvalOutputType.PASS_FAIL.value,
+        EvalOutputType.CHOICES.value,
+    ) and bool(eval_template.choices)
+
+
 class MonitorConfigError(Exception):
     """Monitor misconfiguration (e.g. deleted eval config); not retryable."""
 
 
 def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryBuilder":
     """Construct the routed MONITOR_METRICS builder from a monitor instance."""
+    # Monitors are project-scoped (the REST serializer and UI require one); a
+    # NULL project would otherwise bind as ``project_id = 'None'`` and fail in
+    # ClickHouse (Code 376) on every run. Checked first so a project-less eval
+    # monitor reports this cause, not a missing eval config.
+    if monitor.project_id is None:
+        raise MonitorConfigError(get_error_message("MONITOR_PROJECT_REQUIRED"))
+
     eval_config_id = None
     eval_output_type = None
     if (
