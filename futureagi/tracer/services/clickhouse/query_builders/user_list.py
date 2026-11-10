@@ -20,13 +20,13 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
     usage_aggregate_sql,
     usage_coverage_sql,
 )
-from tracer.services.users_walk_witness import canonical_picked_text_values
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     literal_survivor_map_subquery,
     resolved_id_expr,
     survivor_map_subquery,
 )
+from tracer.services.users_walk_witness import canonical_picked_text_values
 
 # Native span dimensions the Users table has no per-user aggregate for.
 # ``SYSTEM_METRIC_MAP`` resolves each of these to a physical ``spans`` column,
@@ -74,8 +74,8 @@ class MatchingActivityWitness:
     and value blooms) or ``native`` (a native span-dimension leaf, the users
     graph's own per-span flag). ``sql``/``params`` are the predicate every
     slice, instant, existence and estimate statement puts in ``WHERE``. A raw
-    witness names its attribute ``key`` and ``kind`` (``text``, ``number`` or
-    ``boolean``); a native one the filter index of its leaf (``leaf_index``)
+    witness names its attribute ``key`` and ``kind`` (``text``, ``canonical_text``,
+    ``number`` or ``boolean``); a native one the filter index of its leaf (``leaf_index``)
     and its column (``key``, display only). ``index_pruned`` says whether a skip index
     is known to serve the predicate, so an empty slice costs only its fixed
     overhead; it is False for a native witness (only ``idx_status`` serves one
@@ -803,18 +803,6 @@ class UserListQueryBuilder(BaseQueryBuilder):
             config = dict(item.get("filter_config") or item.get("filterConfig") or {})
             # This is an existing Users raw-attribute leaf, not a trace native alias.
             config["col_type"] = "SPAN_ATTRIBUTE"
-            if canonical_picked_text_values(item):
-                # Raw equality is not exhaustive for canonical JSON/boolean
-                # strings. Discover by presence in bounded time slices, then
-                # certify values and their newest matching time in Python.
-                yield (
-                    item,
-                    "canonical_text",
-                    "mapContains(attrs_string, %(canonical_text_key)s)",
-                    {"canonical_text_key": str(item.get("column_id") or item.get("columnId"))},
-                    False,
-                )
-                continue
             try:
                 plans = compile_trace_filter_plans([{**item, "filter_config": config}])
             except (TypeError, ValueError):
@@ -822,6 +810,26 @@ class UserListQueryBuilder(BaseQueryBuilder):
             if len(plans) != 1:
                 continue
             plan = plans[0]
+            if (
+                plan.scope == "any"
+                and not plan.exclude_group_matches
+                and canonical_picked_text_values(item)
+            ):
+                # Raw equality is not exhaustive for canonical JSON/boolean
+                # strings. Discover by presence in bounded time slices, then
+                # certify values and their newest matching time in Python.
+                yield (
+                    item,
+                    "canonical_text",
+                    "mapContains(attrs_string, %(canonical_text_key)s)",
+                    {
+                        "canonical_text_key": str(
+                            item.get("column_id") or item.get("columnId")
+                        )
+                    },
+                    False,
+                )
+                continue
             operation = config.get("filter_op") or config.get("filterOp")
             witness = plan.raw_graph_value_witness_predicate or ""
             seedable = bool(witness)

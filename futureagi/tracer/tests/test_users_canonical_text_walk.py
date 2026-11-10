@@ -6,7 +6,9 @@ from unittest.mock import patch
 
 import pytest
 
-from tracer.services.clickhouse.v2.query_builders.user_list import UserListQueryBuilderV2
+from tracer.services.clickhouse.v2.query_builders.user_list import (
+    UserListQueryBuilderV2,
+)
 from tracer.services.users_list_manager import UsersListManager
 from tracer.tests.test_users_attribute_physical_replay import (
     PROJECT,
@@ -56,7 +58,7 @@ def test_canonical_picker_uses_bounded_presence_not_raw_equality(value):
     witness = manager._walk_witness
     assert witness.kind == "canonical_text"
     assert not witness.index_pruned
-    builder._walk_witness = witness
+    builder.walk_witness = witness
     sql, params = builder.build_matching_activity_slice_query(
         slice_start=START, slice_end=START + timedelta(minutes=1), limit=8
     )
@@ -92,9 +94,19 @@ def test_canonical_picker_replays_equivalents_and_latest_matching_time(
         span("removed", attrs_string={"tag": selected}, start_time=newer),
         span("removed", attrs_string={}, start_time=newer, _version=2),
         span("deleted", attrs_string={"tag": selected}, start_time=newer),
-        span("deleted", attrs_string={"tag": selected}, start_time=newer, _version=2, is_deleted=1),
+        span(
+            "deleted",
+            attrs_string={"tag": selected},
+            start_time=newer,
+            _version=2,
+            is_deleted=1,
+        ),
         # String storage must not match a same-looking value stored as JSON.
-        span("wrong-storage", end_user_id=UNMAPPED, attributes_extra={"tag": {"a": 1, "b": 2}}),
+        span(
+            "wrong-storage",
+            end_user_id=UNMAPPED,
+            attributes_extra={"tag": {"a": 1, "b": 2}},
+        ),
     ]
 
     def native_query(sql, params, **_kwargs):
@@ -119,8 +131,12 @@ def test_canonical_picker_replays_equivalents_and_latest_matching_time(
             candidate_end_user_id_map=REMAP,
         )
     manager._apply_span_attributes(users, attributes)
-    assert [row["end_user_id"] for row in users if manager._row_matches_filters(row)] == [USER]
-    assert manager._matching_activity_by_user[USER]["tag"] == match_time.replace(tzinfo=UTC)
+    assert [
+        row["end_user_id"] for row in users if manager._row_matches_filters(row)
+    ] == [USER]
+    assert manager._matching_activity_by_user[USER]["tag"] == match_time.replace(
+        tzinfo=UTC
+    )
     assert manager._matching_activity_by_user[UNMAPPED] == {}
 
 

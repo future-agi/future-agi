@@ -1,4 +1,4 @@
-"""The one predicate a typed (number/boolean) Users walk is decided on.
+"""The predicate and certification mode a typed Users walk is decided on.
 
 A span-attribute-filtered Users page walks witnessed spans newest-first and
 certifies each user on the page enrichment (``users_matching_walk``). For a
@@ -19,8 +19,10 @@ narrowing and the order key can never disagree:
 
 Only shapes whose Python and SQL comparisons are provably the same qualify:
 ``equals``/``in`` on real booleans; ``equals``/``in`` and the four orderings
-on finite numbers, without a storage-type picker. Everything else keeps the
-seeded page.
+on finite numbers, without a storage-type picker. Canonical picked strings
+instead discover by string-key presence and certify their values and newest
+matching timestamp with the existing Python comparator. Everything else keeps
+the seeded page.
 """
 
 from __future__ import annotations
@@ -63,17 +65,22 @@ def canonical_picked_text_values(item: dict[str, Any]) -> tuple[str, ...]:
     values = raw if isinstance(raw, list) else [raw]
     types = config.get("attribute_value_types", config.get("attributeValueTypes"))
     if (
-        (config.get("filter_type") or config.get("filterType")) not in {"text", "string"}
+        (config.get("filter_type") or config.get("filterType"))
+        not in {"text", "string"}
         or (config.get("filter_op") or config.get("filterOp")) not in {"equals", "in"}
         or not values
         or not isinstance(types, list)
         or len(types) != len(values)
         or any(kind != "string" for kind in types)
-        or any(not isinstance(value, str) or not value or not value.isascii() for value in values)
+        or any(
+            not isinstance(value, str) or not value or not value.isascii()
+            for value in values
+        )
     ):
         return ()
     if not any(
-        value.strip().startswith(("{", "[")) or value.strip().lower() in {"true", "false"}
+        value.strip().startswith(("{", "["))
+        or value.strip().lower() in {"true", "false"}
         for value in values
     ):
         return ()

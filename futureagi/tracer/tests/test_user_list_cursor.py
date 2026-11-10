@@ -720,7 +720,9 @@ def test_positive_text_attribute_filter_walks_matching_activity_not_the_seed(
         analytics_cls.return_value.execute_ch_query.side_effect = empty_server
         result = manager.list_cursor_payload(page_size=25)
 
-    assert manager.attribute_exact_text_filters == ({"call_id": expected} if expected else {})
+    assert manager.attribute_exact_text_filters == (
+        {"call_id": expected} if expected else {}
+    )
     assert captured_limits == []
     assert result.payload["table"] == []
     assert result.payload["query_provenance"] == "matching_activity_walk"

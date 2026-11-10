@@ -408,7 +408,7 @@ def _users_attr_enrichment_query(
         # span. Python applies the very same canonical comparison as membership.
         matching_activity_projection = """,
         maxMapIf(
-            map(latest_attribute_value_json, latest_start_time),
+            map(assumeNotNull(latest_attribute_value_json), latest_start_time),
             latest_attribute_value_type = 'string'
         ) AS canonical_string_activity"""
     sql = f"""
@@ -929,7 +929,9 @@ class UsersListManager:
                 if walked is not None and walked.canonical_values and key == walked.key:
                     matches = [
                         moment
-                        for raw, moment in attr_row.get("canonical_string_activity", {}).items()
+                        for raw, moment in attr_row.get(
+                            "canonical_string_activity", {}
+                        ).items()
                         if self._candidate_value_matches(
                             json.loads(raw),
                             "in",
