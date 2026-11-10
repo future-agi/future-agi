@@ -141,6 +141,43 @@ def test_detached_force_update_invalidates(key, django_capture_on_commit_callbac
     assert key.expires_at == expiry
 
 
+@pytest.mark.parametrize("instance_shape", ["detached", "unsaved-credentials"])
+@pytest.mark.parametrize("credential_field", [None, "api_key", "secret_key"])
+def test_partial_expiry_invalidates_persisted_credentials(
+    key, instance_shape, credential_field, django_capture_on_commit_callbacks
+):
+    persisted_pair = [key.api_key, key.secret_key]
+    expiry = timezone.now() - timedelta(seconds=1)
+    if instance_shape == "detached":
+        instance = OrgApiKey(pk=key.pk, expires_at=expiry)
+    else:
+        instance = key
+        instance.expires_at = expiry
+        instance.api_key = "unsaved-api-key"
+        instance.secret_key = "unsaved-secret-key"
+    fields = ["expires_at"]
+    if credential_field is not None:
+        fields.append(credential_field)
+        setattr(instance, credential_field, "persisted-credential-edit")
+        persisted_pair[0 if credential_field == "api_key" else 1] = (
+            "persisted-credential-edit"
+        )
+    digest = hashlib.sha256(":".join(persisted_pair).encode()).hexdigest()
+    with patch("redis.Redis.from_url") as factory:
+        with django_capture_on_commit_callbacks(execute=True):
+            instance.save(force_update=True, update_fields=iter(fields))
+            factory.assert_not_called()
+            # Later in-memory edits must not change the callback's identity.
+            instance.api_key = "later-api-key"
+            instance.secret_key = "later-secret-key"
+        factory.return_value.__enter__.return_value.publish.assert_called_once_with(
+            "fi:auth:revoke", digest
+        )
+    key.refresh_from_db()
+    assert key.expires_at == expiry
+    assert [key.api_key, key.secret_key] == persisted_pair
+
+
 def test_create_invalidates_a_preexisting_negative_cache(
     user,
     workspace,

@@ -428,11 +428,22 @@ class OrgApiKey(BaseModel):
             # may already have cached a negative lookup for that credential.
             from accounts.key_cache import publish_key_revocation
 
+            # A partial save may leave generated or edited credentials only in
+            # memory. Evict the pair actually stored with the persisted expiry.
+            if update_fields is not None:
+                api_key, secret_key = (
+                    type(self).no_workspace_objects.using(self._state.db)
+                    .filter(pk=self.pk)
+                    .values_list("api_key", "secret_key")
+                    .get()
+                )
+            else:
+                api_key, secret_key = self.api_key, self.secret_key
             # Admin saves run in an outer transaction. Publishing before commit
             # lets a collector refill its cache from the old row. Snapshot the
             # credentials now; a later edit of this Python object is irrelevant.
             transaction.on_commit(
-                partial(publish_key_revocation, self.api_key, self.secret_key),
+                partial(publish_key_revocation, api_key, secret_key),
                 using=self._state.db,
             )
 
