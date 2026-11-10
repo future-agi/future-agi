@@ -1,4 +1,3 @@
-from datetime import timedelta
 from typing import Any
 
 import structlog
@@ -15,6 +14,7 @@ from model_hub.serializers.contracts import (
 )
 from model_hub.serializers.kb import (
     KnowledgeBaseCreateSerializer,
+    KnowledgeBaseDownloadQuerySerializer,
     KnowledgeBaseSerializer,
 )
 from rest_framework import filters, viewsets
@@ -220,45 +220,22 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
                 f"Failed to retrieve supported embedding models: {get_error_message('FAILED_TO_GET_EMBEDDINGS_MODEL')}"
             )
 
-    @swagger_auto_schema(
-        operation_description="Generate a signed URL to download a KB file.",
+    @validated_request(
+        query_serializer=KnowledgeBaseDownloadQuerySerializer,
+        reject_unknown_fields=True,
+        operation_description=(
+            "Download an active file from the knowledge-base file collection. "
+            "Requires current organization and workspace read access. Returns "
+            "an attachment, never a public storage URL. Unauthorized scope is "
+            "403; a missing or deleted file is 404."
+        ),
         operation_summary="Download a KB file.",
-        manual_parameters=[
-            openapi.Parameter(
-                "file_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True
-            ),
-            openapi.Parameter(
-                "file_name", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True
-            ),
-        ],
-        responses={200: openapi.Response(description="Signed download URL")},
+        responses={200: "File attachment", **MODEL_HUB_ERROR_RESPONSES},
     )
     @action(detail=True, methods=["get"], url_path="download-file")
-    def download_file(self, request: Request, pk: str = None) -> Response:
-        """Generate a short-lived signed URL for downloading a KB file."""
-        try:
-            kb = self.get_object()
-            file_id = request.query_params.get("file_id")
-            file_name = request.query_params.get("file_name")
+    def download_file(self, request: Request, pk: str = None):
+        from model_hub.utils.kb_download import download_knowledge_base_file
 
-            if not file_id or not file_name:
-                return self._gm.bad_request_response(
-                    "file_id and file_name are required."
-                )
-
-            from model_hub.utils.kb_indexer import KBIndexer
-
-            indexer = KBIndexer()
-            object_key = f"knowledge-base/{kb.id}/{file_id}"
-
-            signed_url = indexer.minio_client.presigned_get_object(
-                indexer.bucket_name,
-                object_key,
-                expires=timedelta(minutes=15),
-            )
-            return self._gm.success_response({"download_url": signed_url})
-        except Exception as e:
-            logger.exception(f"Error generating download URL: {str(e)}")
-            return self._gm.internal_server_error_response(
-                "Failed to generate download URL."
-            )
+        return download_knowledge_base_file(
+            request, pk, request.validated_query_data["file_id"]
+        )
