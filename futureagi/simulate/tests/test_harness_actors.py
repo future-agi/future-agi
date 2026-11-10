@@ -1597,6 +1597,67 @@ def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_reco
         ), refused.content
 
 
+def test_the_harness_s_own_tables_are_never_offered_or_given_as_records_an_actor_reads(
+    user, workspace, storage, auth_client
+):
+    from simulate.models import HostedHarnessStageOutput
+    from simulate.services import harness_actors
+
+    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules["record_changes"] = {
+        "from": "generic-harness/source-model.json",
+        "tables": "tables",
+        "name": "name",
+        "verbs": ["put", "change"],
+        "never_prefix": "_alk_",
+        "never": ["harness_seed_sentinel"],
+    }
+    environment = record_tests._environment(user, workspace, "actors-harness-tables")
+    record_authoring(
+        environment,
+        _authoring(contract=CRM_CONTRACT, **{"actor_rules.json": json.dumps(rules)}),
+        origin="authoring",
+    )
+    environment.refresh_from_db()
+    HostedHarnessStageOutput.no_workspace_objects.create(
+        job=environment,
+        title="Stores",
+        summary="",
+        kind="stores",
+        data=[
+            {
+                "capability": "world_db",
+                "engine": "postgres",
+                "tables": [
+                    {"name": "deals"},
+                    {"name": "_alk_tool_trace"},
+                    {"name": "_ALK_actors"},
+                    {"name": "harness_seed_sentinel"},
+                ],
+            }
+        ],
+    )
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+    assert listed["knowledge_sources"]["records"] == [
+        {"store": "world_db", "collection": "deals"}
+    ]
+    refused = _add(
+        auth_client,
+        environment,
+        {
+            **MANAGER,
+            "knowledge": [
+                {
+                    "kind": "records",
+                    "store": "world_db",
+                    "collection": "_alk_tool_trace",
+                }
+            ],
+        },
+    )
+    assert refused.status_code == 400, refused.content
+
+
 def test_giving_an_actor_an_action_only_one_other_actor_holds_shows_the_conflict_before_saving(
     user, workspace, storage, auth_client
 ):
