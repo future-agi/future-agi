@@ -225,9 +225,9 @@ class TestAPIKeyAuthentication:
             user=auth_user,
             expires_at=timezone.now() - timedelta(days=1),
         )
-        encoded = base64.b64encode(
-            f"{key.api_key}:{key.secret_key}".encode()
-        ).decode("ascii")
+        encoded = base64.b64encode(f"{key.api_key}:{key.secret_key}".encode()).decode(
+            "ascii"
+        )
         request = _make_request()
         request.META = {"HTTP_AUTHORIZATION": f"Basic {encoded}"}
 
@@ -320,9 +320,9 @@ class TestAPIKeyAuthentication:
             user=auth_user,
             expires_at=timezone.now() + timedelta(days=1),
         )
-        encoded = base64.b64encode(
-            f"{key.api_key}:{key.secret_key}".encode()
-        ).decode("ascii")
+        encoded = base64.b64encode(f"{key.api_key}:{key.secret_key}".encode()).decode(
+            "ascii"
+        )
         request = _make_request()
         request.META = {"HTTP_AUTHORIZATION": f"Basic {encoded}"}
 
@@ -360,9 +360,9 @@ class TestAPIKeyAuthentication:
             user=auth_user,
             enabled=False,
         )
-        encoded = base64.b64encode(
-            f"{key.api_key}:{key.secret_key}".encode()
-        ).decode("ascii")
+        encoded = base64.b64encode(f"{key.api_key}:{key.secret_key}".encode()).decode(
+            "ascii"
+        )
         request = _make_request()
         request.META = {"HTTP_AUTHORIZATION": f"Basic {encoded}"}
 

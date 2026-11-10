@@ -82,7 +82,9 @@ test('GW-E2E-002: custom provider keeps an explicitly empty API path prefix', {
   });
 
   await page.goto('/dashboard/gateway/providers/config');
-  const providerCard = page.locator('.MuiCard-root').filter({ hasText: providerName });
+  // Each provider is a flat panel holding its name and its Edit/Remove buttons.
+  const providerCard = page.locator('div').filter({ hasText: providerName })
+    .filter({ has: page.getByTitle('Edit provider') }).last();
   await expect(providerCard).toBeVisible({ timeout: UI_READY });
   await providerCard.getByTitle('Edit provider').click();
 

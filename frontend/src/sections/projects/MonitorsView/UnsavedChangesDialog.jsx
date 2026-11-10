@@ -30,7 +30,8 @@ const UnsavedChangesDialog = ({
       onClose={onClose}
       aria-labelledby="unsaved-dialog"
       fullWidth
-      maxWidth="xs"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
     >
       <DialogTitle
         id="unsaved-dialog"
@@ -60,14 +61,14 @@ const UnsavedChangesDialog = ({
             <Typography
               variant="m3"
               color={"text.primary"}
-              fontWeight={"fontWeightBold"}
+              fontWeight={"fontWeightSemiBold"}
             >
               {title}
             </Typography>
           </Box>
           <IconButton onClick={onClose}>
             <Iconify
-              icon="mdi:close"
+              icon="solar:close-linear"
               width={24}
               height={24}
               color="text.primary"

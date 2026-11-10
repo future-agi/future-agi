@@ -107,7 +107,7 @@ class TestProjectWorkspaceScope:
     ):
         analytics = Mock()
         analytics.supports_per_query_read_settings = True
-        analytics.execute_ch_query.return_value = SimpleNamespace(data=[])
+        analytics.execute_ch_query.return_value = SimpleNamespace(data=[], columns=[])
         analytics_service.return_value = analytics
 
         builder = Mock()
@@ -148,7 +148,7 @@ class TestProjectWorkspaceScope:
     ):
         analytics = Mock()
         analytics.supports_per_query_read_settings = True
-        analytics.execute_ch_query.return_value = SimpleNamespace(data=[])
+        analytics.execute_ch_query.return_value = SimpleNamespace(data=[], columns=[])
         analytics_service.return_value = analytics
 
         builder = Mock()

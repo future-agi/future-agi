@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Box, Stack, Typography, Button, TextField, Chip } from "@mui/material";
+import { Box, Stack, Typography, Button, TextField } from "@mui/material";
 import { harnessEnvironmentQuery } from "src/api/simulate-environments/environment";
 import { useRenameEnvironment } from "src/api/simulate-environments/environments";
 import SectionCard from "../../components/SectionCard";
@@ -64,18 +64,11 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
 
   return (
     <Box sx={{ p: 2 }}>
-      <Box sx={{ mb: 3 }}>
-        <Typography sx={{ typography: "m2", fontWeight: 600 }}>Settings</Typography>
-        <Typography sx={{ typography: "s1", color: "text.secondary", maxWidth: 760 }}>
-          How this environment was built. Everything here is fixed at build time.
-          Only the name can be changed.
-        </Typography>
-      </Box>
 
       {!backed ? (
         <SectionCard title="Settings">
-          <Box sx={{ p: 2.5 }}>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          <Box sx={{ p: 1.5 }}>
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
               Settings appear once this environment has been built.
             </Typography>
           </Box>
@@ -88,9 +81,9 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
             title="Environment info"
             subtitle="The name is the only field you can change on a built environment"
           >
-            <Stack spacing={2.25} sx={{ p: 2.5 }}>
+            <Stack spacing={2} sx={{ p: 1.5 }}>
               <Box>
-                <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.625 }}>
+                <Typography sx={{ typography: "s1", fontWeight: 500, mb: 0.625 }}>
                   Environment name
                 </Typography>
                 {canRename ? (
@@ -108,17 +101,15 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
                         error={Boolean(nameError)}
                         helperText={nameError || `1–${MAX_ENV_NAME} characters.`}
                         inputProps={{ maxLength: MAX_ENV_NAME + 1 }}
-                        sx={{ flex: 1, maxWidth: 460, "& .MuiInputBase-root": { typography: "s2" } }}
+                        sx={{ flex: 1, maxWidth: 460 }}
                       />
                       <Button
                         variant="outlined"
                         size="small"
                         onClick={saveName}
                         disabled={!nameChanged || rename.isPending}
-                        sx={{
-                          color: "text.primary", borderColor: "divider",
-                          typography: "s2", fontWeight: 600, mt: { sm: 0.25 },
-                        }}
+                        color="inherit"
+                        sx={{ mt: { sm: 0.25 } }}
                       >
                         {rename.isPending ? "Renaming…" : "Rename"}
                       </Button>
@@ -128,7 +119,7 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
                     </Typography>
                   </>
                 ) : (
-                  <Typography sx={{ typography: "s2" }}>{currentName || "-"}</Typography>
+                  <Typography sx={{ typography: "s1" }}>{currentName || "-"}</Typography>
                 )}
               </Box>
               <Box sx={{ maxWidth: 460 }}>
@@ -161,33 +152,21 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
                     direction="row"
                     alignItems="center"
                     spacing={1.5}
-                    sx={{ px: 2.5, py: 1.375 }}
+                    sx={{ px: 1.5, minHeight: 36 }}
                   >
                     <Typography
                       sx={{
                         flex: 1,
                         minWidth: 0,
-                        typography: "s2",
-                        fontWeight: 600,
+                        typography: "s1",
+                        fontWeight: 500,
                         fontFamily: MONO,
                         overflowWrap: "anywhere",
                       }}
                     >
                       {f.environment_name}
                     </Typography>
-                    <Chip
-                      size="small"
-                      label="File"
-                      sx={{
-                        height: 19,
-                        borderRadius: 0.5,
-                        color: "text.secondary",
-                        border: "1px solid",
-                        borderColor: "divider",
-                        bgcolor: "transparent",
-                        "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 600 },
-                      }}
-                    />
+                    <KindTag label="File" />
                   </Stack>
                 ))}
               </Stack>
@@ -213,6 +192,29 @@ SettingsPanel.propTypes = {
 };
 
 const MASK = "••••••••••••";
+
+// A neutral tag: 11/500 secondary text on action.selected, radius 4.
+function KindTag({ label }) {
+  return (
+    <Box
+      component="span"
+      sx={{
+        px: 0.75,
+        height: 18,
+        display: "inline-flex",
+        alignItems: "center",
+        borderRadius: "4px",
+        typography: "s3",
+        fontWeight: 500,
+        color: "text.secondary",
+        bgcolor: "action.selected",
+      }}
+    >
+      {label}
+    </Box>
+  );
+}
+KindTag.propTypes = { label: PropTypes.string };
 
 /**
  * Flatten the two variable groups into the single key · value · kind list Vel's
@@ -244,15 +246,15 @@ function EnvVarsBody({ loading, groups }) {
   const rows = envVarRows(groups);
   if (loading) {
     return (
-      <Box sx={{ p: 2.5 }}>
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>Loading…</Typography>
+      <Box sx={{ p: 1.5 }}>
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>Loading…</Typography>
       </Box>
     );
   }
   if (!rows.length) {
     return (
-      <Box sx={{ p: 2.5 }}>
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+      <Box sx={{ p: 1.5 }}>
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           No variables were recorded for this environment.
         </Typography>
       </Box>
@@ -266,12 +268,12 @@ function EnvVarsBody({ loading, groups }) {
           direction="row"
           alignItems="center"
           spacing={1.5}
-          sx={{ px: 2.5, py: 1.375 }}
+          sx={{ px: 1.5, minHeight: 36 }}
         >
           <Typography
             sx={{
-              typography: "s2",
-              fontWeight: 600,
+              typography: "s1",
+              fontWeight: 500,
               fontFamily: MONO,
               width: 220,
               flexShrink: 0,
@@ -286,23 +288,11 @@ function EnvVarsBody({ loading, groups }) {
           </Typography>
           <Typography
             noWrap
-            sx={{ flex: 1, minWidth: 0, typography: "s2", fontFamily: MONO, color: "text.subtitle" }}
+            sx={{ flex: 1, minWidth: 0, typography: "s1", fontFamily: MONO, color: "text.subtitle" }}
           >
             {v.masked ? MASK : v.value}
           </Typography>
-          <Chip
-            size="small"
-            label={v.kind}
-            sx={{
-              height: 19,
-              borderRadius: 0.5,
-              color: "text.secondary",
-              border: "1px solid",
-              borderColor: "divider",
-              bgcolor: "transparent",
-              "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 600 },
-            }}
-          />
+          <KindTag label={v.kind} />
         </Stack>
       ))}
     </Stack>
@@ -323,8 +313,8 @@ EnvVarsBody.propTypes = {
   restoring the matching block below plus the props/state/imports it needs
   (`envState`, `patch`; the version/restore state + handlers; `useState`,
   `alpha`, `Slider`, `Switch`, `IconButton`, `Tooltip`, `MenuItem`, `Iconify`,
-  `ConfirmDialog`, `MockBadge`, and the `envConfig` / `versions` fixtures). Full
-  original wiring is in git history for this file.
+  `ConfirmDialog`, `MockBadge`, and the since-deleted `envConfig` / `versions`
+  fixtures). Full original wiring is in git history.
 
   --- Run defaults (fixture: DEFAULT_RUNTIME / ISOLATION_OPTIONS, REGION_OPTIONS)
   <SectionCard title="Run defaults"

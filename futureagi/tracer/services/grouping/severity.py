@@ -423,6 +423,9 @@ def publish_severity(
         cluster = TraceErrorGroup.no_workspace_objects.select_for_update().get(
             pk=job.issue.cluster_id
         )
+        from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
+
+        alert_before = issue_snapshot(cluster)
         cluster.severity_assessment_status = job.state
         cluster.severity_reason = result["reason"]
         fields = ["severity_assessment_status", "severity_reason", "updated_at"]
@@ -442,4 +445,9 @@ def publish_severity(
             cluster.severity_source = "llm"
             fields += ["priority", "combined_impact", "severity_source"]
         cluster.save(update_fields=fields)
+        record_issue_event(
+            cluster=cluster,
+            before=alert_before,
+            source_key=f"severity:{job.id}:{job.issue_revision}",
+        )
         return {"status": job.state}

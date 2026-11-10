@@ -173,6 +173,7 @@ def test_org_config_bulk_response_is_typed_by_org_id():
                     "model_map": {},
                 }
             },
+            "unbuilt_org_ids": ["5b0c2b1e-8f0a-4d7e-9c3a-2f1d6e4b7a90"],
         }
     )
 

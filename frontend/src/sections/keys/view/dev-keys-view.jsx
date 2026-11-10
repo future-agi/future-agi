@@ -2,6 +2,7 @@ import { Box, Avatar, Typography } from "@mui/material";
 import React, { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
+import PageHeader from "src/components/page-header";
 import ApiKeyBar from "./ApiKeyBar";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -12,6 +13,7 @@ import ActionMenu from "./ActionMenu";
 import SecretKeyRenderer from "./SecretKeyRenderer";
 import KeyExpiryStatus, { KeyStatusChip } from "./KeyExpiryStatus";
 import stringAvatar from "src/utils/stringAvatar";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 export default function DevKeysView() {
   const queryClient = useQueryClient();
@@ -81,7 +83,7 @@ export default function DevKeysView() {
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontSize: 13, minWidth: 0, flex: "0 1 auto" }}
+              sx={{ fontSize: 12, minWidth: 0, flex: "0 1 auto" }}
             >
               {getValue()}
             </Typography>
@@ -121,11 +123,9 @@ export default function DevKeysView() {
                 sx={{
                   width: 24,
                   height: 24,
-                  color: "pink.500",
-                  bgcolor: "background.neutral",
                 }}
               />
-              <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
                 {val}
               </Typography>
             </Box>
@@ -143,7 +143,7 @@ export default function DevKeysView() {
           const date = new Date(val);
           if (isNaN(date.getTime())) return "";
           return (
-            <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+            <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
               {format(date, "MM-dd-yyyy")}
             </Typography>
           );
@@ -183,22 +183,11 @@ export default function DevKeysView() {
         minHeight: 0,
       }}
     >
-      <Box sx={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-        <Typography
-          color="text.primary"
-          typography="m2"
-          fontWeight="fontWeightSemiBold"
-        >
-          Keys
-        </Typography>
-        <Typography
-          typography="s1"
-          color="text.primary"
-          fontWeight="fontWeightRegular"
-        >
-          Your secret API keys are listed below. These keys are encrypted
-        </Typography>
-      </Box>
+      <PageHeader
+        title="Keys"
+        description="Create and manage API keys to send traces and call Future AGI from your code."
+        sx={{ mb: 0 }}
+      />
       <ApiKeyBar
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
@@ -214,7 +203,7 @@ export default function DevKeysView() {
             sorting={sorting}
             onSortingChange={setSorting}
             getRowId={(row) => row.id}
-            rowHeight={40}
+            rowHeight={ROW_HEIGHT.default}
             emptyMessage="No keys found"
           />
           <DataTablePagination

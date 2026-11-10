@@ -22,7 +22,7 @@ const AddToDataset = ({ title, content, actionButton, open, onClose }) => {
     <Dialog open={open} onClose={onClose} fullWidth>
       <DialogTitle>{title}</DialogTitle>
       <StyledIconButton onClick={onClose}>
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </StyledIconButton>
       <DialogContent>{content}</DialogContent>
       <DialogActions>

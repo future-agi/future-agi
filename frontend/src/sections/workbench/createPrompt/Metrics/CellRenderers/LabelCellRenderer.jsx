@@ -10,11 +10,11 @@ const getLabelStyles = (label) => ({
   alignItems: "center",
   "& .label-text": {
     backgroundColor: getBgColor(label),
-    borderRadius: "2px",
+    borderRadius: "4px",
     color: getTextColor(label),
     px: 0.75,
     py: 0.375,
-    textTransform: "uppercase",
+    textTransform: "none",
     lineHeight: 1.5,
   },
 });

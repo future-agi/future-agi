@@ -8,7 +8,7 @@ from django.db.models import Q, Sum
 from django.utils import timezone
 
 from accounts.models import Organization
-from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
+from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSIONS
 from tracer.models.trace_grouping import (
     GroupingAttemptState,
     GroupingWorkState,
@@ -50,7 +50,7 @@ def requeue_budget_work(
         scope = TraceGroupingScope.no_workspace_objects.select_for_update().get(
             project_id=project_id
         )
-        if scope.policy_version != SAMPLED_GROUPING_POLICY_VERSION:
+        if scope.policy_version not in SAMPLED_GROUPING_POLICY_VERSIONS:
             raise GroupingConflict("Budget recovery requires sampled grouping policy")
         if apply and expected_registry_revision != scope.registry_revision:
             raise GroupingConflict("Registry revision changed; preview again")
