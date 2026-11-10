@@ -76,9 +76,7 @@ def test_leaf_routes_do_not_accept_context_resources(admin, context):
 
 def test_missing_context_run_does_not_leak_other_resources(admin, context):
     skill, _ = context
-    response = admin.get(
-        f"/model-hub/skills/contexts/{skill.pk}/test-runs/{uuid4()}/"
-    )
+    response = admin.get(f"/model-hub/skills/contexts/{skill.pk}/test-runs/{uuid4()}/")
     assert response.status_code == 404, response.data
 
 
@@ -89,7 +87,9 @@ def test_http_admission_executes_context_protocol_and_retains_reference(
     from model_hub.models import HubSkillTestRun
     from model_hub.services.skills_hub.v11 import jobs, runner
     from model_hub.services.skills_hub.v11.types import (
-        CompletionResult, SkillPrincipal, SkillScope,
+        CompletionResult,
+        SkillPrincipal,
+        SkillScope,
     )
     from model_hub.services.skills_hub.v12 import testing
 
@@ -107,8 +107,10 @@ def test_http_admission_executes_context_protocol_and_retains_reference(
         "expected_fingerprint": fingerprint,
         "acknowledge_provider_processing": True,
         "inventory_review": {
-            "fingerprint": fingerprint, "reviewed_all_files": True,
-            "no_known_answer_keys": True, "classifications": [],
+            "fingerprint": fingerprint,
+            "reviewed_all_files": True,
+            "no_known_answer_keys": True,
+            "classifications": [],
             "false_positive_secret_findings": [],
         },
     }
@@ -120,20 +122,29 @@ def test_http_admission_executes_context_protocol_and_retains_reference(
     assert replay.data["result"]["id"] == accepted.data["result"]["id"]
     assert HubSkillJob.objects.filter(skill=skill).count() == 1
     run = HubSkillTestRun.objects.get(pk=accepted.data["result"]["id"])
-    transport = AsyncMock(return_value=CompletionResult(
-        assistant_message={"role": "assistant", "content": "safe"},
-        finish_reason="stop", provider_request_id="synthetic-context-http",
-        returned_model="gpt-4o-mini",
-        usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
-        latency_ms=1, estimated_cost_usd=Decimal("0.00001"), pricing_source="synthetic",
-    ))
+    transport = AsyncMock(
+        return_value=CompletionResult(
+            assistant_message={"role": "assistant", "content": "safe"},
+            finish_reason="stop",
+            provider_request_id="synthetic-context-http",
+            returned_model="gpt-4o-mini",
+            usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+            latency_ms=1,
+            estimated_cost_usd=Decimal("0.00001"),
+            pricing_source="synthetic",
+        )
+    )
     monkeypatch.setattr(
         "model_hub.services.skills_hub.v11.model_calls.complete_skill_turn", transport
     )
-    principal = SkillPrincipal(SkillScope(organization.id, workspace.id), user.id, None, "human")
+    principal = SkillPrincipal(
+        SkillScope(organization.id, workspace.id), user.id, None, "human"
+    )
     jobs.start_job(scope=principal.scope, job_id=run.pk)
     for attempt in run.hub_skill_attempts.all():
-        asyncio.run(runner.execute_test_attempt(scope=principal.scope, attempt_id=attempt.pk))
+        asyncio.run(
+            runner.execute_test_attempt(scope=principal.scope, attempt_id=attempt.pk)
+        )
         detail = admin.get(root + f"{run.pk}/attempts/{attempt.pk}/")
         assert detail.status_code == 200, detail.data
         body = detail.data["result"]
@@ -156,13 +167,20 @@ def test_http_admission_executes_context_protocol_and_retains_reference(
     assert summary.data["result"]["production"] is None
     result = admin.get(root + f"{run.pk}/results/")
     assert result.status_code == 200, result.data
-    assert {row["variant"] for row in result.data["result"]["results"][0]["variants"]} == {"candidate", "reference"}
+    assert {
+        row["variant"] for row in result.data["result"]["results"][0]["variants"]
+    } == {"candidate", "reference"}
     assert transport.await_count == 2
     listing = admin.get(root)
     assert listing.status_code == 200, listing.data
     assert [row["id"] for row in listing.data["result"]["results"]] == [str(run.pk)]
-    retained = admin.get(root + f"{run.pk}/files/", {
-        "snapshot_skill_id": str(skill.pk), "variant": "reference", "path": "AGENTS.md",
-    })
+    retained = admin.get(
+        root + f"{run.pk}/files/",
+        {
+            "snapshot_skill_id": str(skill.pk),
+            "variant": "reference",
+            "path": "AGENTS.md",
+        },
+    )
     assert retained.status_code == 200, retained.data
     assert retained.data["result"]["text"] == "Synthetic policy version 4."

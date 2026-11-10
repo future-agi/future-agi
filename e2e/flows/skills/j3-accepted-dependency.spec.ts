@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { test, expect } from '../../lib/scope-actors';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { E2E } from '../../lib/env';
+import { authInitScript } from '../../lib/auth';
 import type { ScopeActor } from '../../lib/scope-actors';
 
 const API = '/model-hub/skills/';
@@ -58,7 +59,13 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       review_fingerprint: saved.review_fingerprint, base_version: saved.base_version,
       note: 'Synthetic initial condition', acknowledge_warnings: true });
   };
-  const context = await scopeActors.openContext(browser, author);
+  const context = await browser.newContext({ baseURL: E2E.appUrl,
+    viewport: { width: 1440, height: 900 },
+    ...(process.env.E2E_RECORD_VIDEO === '1' ? { recordVideo: { dir: testInfo.outputPath('video'), size: { width: 1440, height: 900 } } } : {}),
+  });
+  await context.addInitScript(authInitScript, { access: author.tokens.access, refresh: author.tokens.refresh,
+    organizationId: author.organizationId, workspaceId: author.workspaceId });
+  await context.addInitScript(orgId => sessionStorage.setItem('workspaceOrgId', orgId), author.organizationId);
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   const page = await context.newPage();
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -160,5 +167,6 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
     await testInfo.attach('j3-observations', { body: JSON.stringify(events), contentType: 'application/json' });
     if (evidence) { await mkdir(evidence, { recursive: true }); await writeFile(`${evidence}/observations.json`, JSON.stringify(events, null, 2)); }
     await context.close();
+    if (evidence && page.video()) await page.video()!.saveAs(`${evidence}/journey.webm`);
   }
 });

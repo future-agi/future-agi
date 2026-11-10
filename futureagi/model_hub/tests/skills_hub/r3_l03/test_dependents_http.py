@@ -9,16 +9,28 @@ pytestmark = pytest.mark.django_db
 
 
 def test_http_dependents_reports_complete_followers_and_pins(
-    admin, hub_skill, publish_skill, make_skill_files,
-    context_factory, accept_links, publish_context,
+    admin,
+    hub_skill,
+    publish_skill,
+    make_skill_files,
+    context_factory,
+    accept_links,
+    publish_context,
 ):
     publish_skill(hub_skill, labels=["production"])
     contexts = [context_factory(f"policy-parent-{index}") for index in range(3)]
     for index, context in enumerate(contexts):
-        accept_links(context, [{
-            "skill_id": str(hub_skill.pk),
-            "selector": {"version": 1} if index == 2 else {"label": "production"},
-        }])
+        accept_links(
+            context,
+            [
+                {
+                    "skill_id": str(hub_skill.pk),
+                    "selector": {"version": 1}
+                    if index == 2
+                    else {"label": "production"},
+                }
+            ],
+        )
         publish_context(context)
     publish_skill(
         hub_skill, labels=["production"], files=make_skill_files(body="New policy")
@@ -41,14 +53,19 @@ def test_http_dependents_reports_complete_followers_and_pins(
     second = admin.get(path, {"view": "history", "page_size": 2, "page": 2})
     assert first.status_code == second.status_code == 200
     assert first.data["result"]["total_pages"] == 2
-    assert {row["context_id"] for row in first.data["result"]["results"] + second.data["result"]["results"]} == set(rows)
+    assert {
+        row["context_id"]
+        for row in first.data["result"]["results"] + second.data["result"]["results"]
+    } == set(rows)
     contexts[0].deleted = True
     contexts[0].save(update_fields=["deleted"])
     assert admin.get(path).data["result"]["count"] == 2
     assert admin.get(path, {"view": "history"}).data["result"]["count"] == 3
 
 
-@pytest.mark.parametrize("query", [{"view": "all"}, {"page": 0}, {"page_size": 101}, {"unexpected": True}])
+@pytest.mark.parametrize(
+    "query", [{"view": "all"}, {"page": 0}, {"page_size": 101}, {"unexpected": True}]
+)
 def test_http_dependents_rejects_invalid_queries(admin, hub_skill, query):
     response = admin.get(f"/model-hub/skills/{hub_skill.pk}/context-dependents/", query)
     assert response.status_code == 400, response.data
