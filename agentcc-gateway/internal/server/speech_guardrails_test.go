@@ -57,7 +57,7 @@ func newSpeechFixture(t *testing.T, vendor, stage, source, action string, replie
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		for {
 			_, data, err := conn.ReadMessage()
 			if err != nil {
@@ -68,11 +68,15 @@ func newSpeechFixture(t *testing.T, vendor, stage, source, action string, replie
 			f.mu.Unlock()
 			if replies != nil {
 				for _, reply := range replies {
-					conn.WriteMessage(websocket.TextMessage, []byte(reply))
+					if err := conn.WriteMessage(websocket.TextMessage, []byte(reply)); err != nil {
+						return
+					}
 				}
 				return
 			}
-			conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"ack"}`))
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"ack"}`)); err != nil {
+				return
+			}
 		}
 	}))
 	t.Cleanup(upstream.Close)
@@ -157,13 +161,15 @@ func TestSpeechGuardrailsSynthesisPre(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					defer client.Close()
+					defer func() { _ = client.Close() }()
 					for _, m := range messages {
 						if err := client.WriteMessage(websocket.TextMessage, []byte(m)); err != nil {
 							t.Fatal(err)
 						}
 					}
-					client.SetReadDeadline(time.Now().Add(3 * time.Second))
+					if err := client.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+						t.Fatal(err)
+					}
 					_, data, err := client.ReadMessage()
 					if allowed {
 						if err != nil || string(data) != `{"type":"ack"}` {
@@ -209,9 +215,13 @@ func TestSpeechGuardrailsTranscriptionPost(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer client.Close()
-				client.WriteMessage(websocket.BinaryMessage, []byte{0, 0})
-				client.SetReadDeadline(time.Now().Add(3 * time.Second))
+				defer func() { _ = client.Close() }()
+				if err := client.WriteMessage(websocket.BinaryMessage, []byte{0, 0}); err != nil {
+					t.Fatal(err)
+				}
+				if err := client.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+					t.Fatal(err)
+				}
 				_, data, err := client.ReadMessage()
 				if allowed {
 					if err != nil || string(data) != final {
@@ -240,7 +250,7 @@ func TestSpeechGuardrailsRefuseUninspectableBeforeDial(t *testing.T) {
 			f := newSpeechFixture(t, tc.vendor, tc.stage, "managed", "block", nil)
 			conn, resp, err := f.dial(t, tc.path, nil)
 			if conn != nil {
-				conn.Close()
+				_ = conn.Close()
 			}
 			if err == nil || resp == nil || resp.StatusCode != 403 {
 				t.Errorf("uninspectable session must refuse 403, response=%v err=%v", resp, err)
@@ -269,7 +279,7 @@ func TestSpeechGuardrailsOverrideAndTenantIsolation(t *testing.T) {
 			f := newSpeechFixture(t, "cartesia", "post", tc.source, tc.action, nil)
 			conn, resp, err := f.dial(t, "/cartesia/tts/websocket", tc.header)
 			if conn != nil {
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 			}
 			if resp == nil || resp.StatusCode != tc.status {
 				t.Fatalf("status=%v err=%v want=%d", resp, err, tc.status)
@@ -289,7 +299,7 @@ func TestSpeechGuardrailsUnavailablePluginRefuses(t *testing.T) {
 	f := newSpeechFixture(t, "cartesia", "pre", "unavailable", "block", nil)
 	conn, resp, err := f.dial(t, "/cartesia/tts/websocket", nil)
 	if conn != nil {
-		conn.Close()
+		_ = conn.Close()
 	}
 	if err == nil || resp == nil || resp.StatusCode != 403 {
 		t.Fatalf("unavailable policy must refuse: response=%v err=%v", resp, err)

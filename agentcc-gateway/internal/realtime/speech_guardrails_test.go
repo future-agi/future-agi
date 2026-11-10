@@ -26,7 +26,9 @@ func (g speechCheck) Check(_ context.Context, in *guardrails.CheckInput) *guardr
 	if in.Response != nil {
 		content = in.Response.Choices[0].Message.Content
 	}
-	json.Unmarshal(content, &text)
+	if err := json.Unmarshal(content, &text); err != nil {
+		return &guardrails.CheckResult{Pass: false, Err: err}
+	}
 	*g.seen = append(*g.seen, text)
 	return &guardrails.CheckResult{Pass: !strings.Contains(text, "prohibited")}
 }
@@ -146,7 +148,9 @@ func TestSpeechGuardrailBoundsAndUnsupportedFrames(t *testing.T) {
 }
 func TestSpeechGuardrailClearDiscardsHeldText(t *testing.T) {
 	g, seen := speechInspector(t, "deepgram", "pre")
-	g.Client(1, []byte(`{"type":"Speak","text":"prohibited"}`))
+	if frames, err := g.Client(1, []byte(`{"type":"Speak","text":"prohibited"}`)); err != nil || len(frames) != 0 {
+		t.Fatal("pending text was not held", frames, err)
+	}
 	frames, err := g.Client(1, []byte(`{"type":"Clear"}`))
 	if err != nil || len(frames) != 1 || len(*seen) != 0 || g.bytes != 0 || g.frames != 0 || len(g.pending) != 0 {
 		t.Fatal("Clear did not discard pending text", frames, err, *seen)

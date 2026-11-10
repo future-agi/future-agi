@@ -28,7 +28,9 @@ func speechRule(check guardrails.Guardrail, threshold float64) func(*config.Guar
 
 func requireSpeechClose(t *testing.T, client *websocket.Conn, reason string) {
 	t.Helper()
-	client.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := client.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	_, data, err := client.ReadMessage()
 	var closed *websocket.CloseError
 	if len(data) != 0 || !errors.As(err, &closed) || closed.Code != 1008 || closed.Text != reason {
@@ -50,12 +52,12 @@ func TestSpeechGuardrailsAmbiguousClientJSON(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer client.Close()
+			defer func() { _ = client.Close() }()
 			if err := client.WriteMessage(1, []byte(tc.message)); err != nil {
 				t.Fatal(err)
 			}
 			if tc.vendor == "deepgram" {
-				client.WriteMessage(1, []byte(`{"type":"Flush"}`))
+				_ = client.WriteMessage(1, []byte(`{"type":"Flush"}`))
 			}
 			requireSpeechClose(t, client, "realtime_guardrail_unsupported")
 			f.mu.Lock()
@@ -85,8 +87,10 @@ func TestSpeechGuardrailsAmbiguousProviderJSON(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer client.Close()
-			client.WriteMessage(2, []byte{0, 0})
+			defer func() { _ = client.Close() }()
+			if err := client.WriteMessage(2, []byte{0, 0}); err != nil {
+				t.Fatal(err)
+			}
 			requireSpeechClose(t, client, "realtime_guardrail_unsupported")
 		})
 	}
@@ -113,14 +117,18 @@ func TestSpeechGuardrailsFinalWordBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer client.Close()
-			client.WriteMessage(2, []byte{0, 0})
+			defer func() { _ = client.Close() }()
+			if err := client.WriteMessage(2, []byte{0, 0}); err != nil {
+				t.Fatal(err)
+			}
 			if tc.blocked {
 				requireSpeechClose(t, client, "realtime_guardrail_blocked")
 				return
 			}
 			for _, want := range messages {
-				client.SetReadDeadline(time.Now().Add(3 * time.Second))
+				if err := client.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+					t.Fatal(err)
+				}
 				_, got, err := client.ReadMessage()
 				if err != nil || string(got) != want {
 					t.Fatalf("approved final=%q err=%v want=%s", got, err, want)
@@ -146,7 +154,12 @@ func TestSpeechGuardrailsWebhookAvailability(t *testing.T) {
 		{"genuine_threshold", 200, `{"pass":false,"score":1}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dependency := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status); io.WriteString(w, tc.body) }))
+			dependency := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				if _, err := io.WriteString(w, tc.body); err != nil {
+					t.Error(err)
+				}
+			}))
 			defer dependency.Close()
 			check := webhook.New("speech-test", map[string]interface{}{"url": dependency.URL})
 			f := newSpeechFixture(t, "cartesia", "pre", "static", "block", nil, speechRule(check, 1))
@@ -154,8 +167,10 @@ func TestSpeechGuardrailsWebhookAvailability(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer client.Close()
-			client.WriteMessage(1, []byte(`{"model_id":"sonic-3","transcript":"hello"}`))
+			defer func() { _ = client.Close() }()
+			if err := client.WriteMessage(1, []byte(`{"model_id":"sonic-3","transcript":"hello"}`)); err != nil {
+				t.Fatal(err)
+			}
 			if tc.blocked {
 				requireSpeechClose(t, client, "realtime_guardrail_blocked")
 				f.mu.Lock()
@@ -164,7 +179,9 @@ func TestSpeechGuardrailsWebhookAvailability(t *testing.T) {
 					t.Fatalf("unchecked text delivered: %v", f.received)
 				}
 			} else {
-				client.SetReadDeadline(time.Now().Add(3 * time.Second))
+				if err := client.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+					t.Fatal(err)
+				}
 				_, data, err := client.ReadMessage()
 				if err != nil || string(data) != `{"type":"ack"}` {
 					t.Fatalf("valid verdict refused: %s %v", data, err)
@@ -190,12 +207,12 @@ func TestSpeechGuardrailsUnavailableConfigurationBeforeDial(t *testing.T) {
 			f := newSpeechFixture(t, "cartesia", "pre", "static", "block", nil, speechRule(tc.check, 1))
 			client, resp, err := f.dial(t, "/cartesia/tts/websocket", nil)
 			if client != nil {
-				client.Close()
+				_ = client.Close()
 			}
 			if resp == nil {
 				t.Fatalf("no refusal response: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			body, _ := io.ReadAll(resp.Body)
 			if err == nil || resp.StatusCode != 403 || !strings.Contains(string(body), "realtime_guardrail_unsupported") {
 				t.Fatalf("unavailable admitted: status=%d body=%s err=%v", resp.StatusCode, body, err)
