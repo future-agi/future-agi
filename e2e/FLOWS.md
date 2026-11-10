@@ -1294,7 +1294,7 @@
 ### OBS-E2E-012 — an unreachable recording shows an error, not an endless loader
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever  
-**Spec:** `flows/observe/voice-recording-error.spec.ts:51`  
+**Spec:** `flows/observe/voice-recording-error.spec.ts:76`  
 **Tags:** —
 
 **User steps:**
@@ -1312,7 +1312,7 @@
 ### OBS-E2E-013 — a voice call with no recording says so
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation  
-**Spec:** `flows/observe/voice-recording-error.spec.ts:116`  
+**Spec:** `flows/observe/voice-recording-error.spec.ts:144`  
 **Tags:** —
 
 **User steps:**
