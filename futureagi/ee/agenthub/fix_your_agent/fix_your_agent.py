@@ -2,7 +2,7 @@ import random
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from tfc.utils.evaluation_denials import EvaluationDenied
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_evaluation_denied
 
 # Type for the per-trial callback: (trial_data, trial_number, stepper_state, is_baseline) -> None
 OnTrialCallback = Callable[[dict, int, Dict[str, Any], bool], None]
@@ -418,6 +418,7 @@ class SimulationEvaluator(Evaluator):
         # Convert to EvaluationResult objects
         results = []
         for tr in temporal_results:
+            raise_if_evaluation_denied(tr)
             results.append(
                 EvaluationResult(
                     score=tr.get("score", 0.0),

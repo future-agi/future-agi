@@ -180,9 +180,14 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
     # historical per-key strict behaviour.
     from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-    partial_input_warning, inputs = validate_eval_inputs(
-        eval_template, dict(inputs) if inputs else {}, mapped_keys=(inputs or {}).keys()
-    )
+    try:
+        partial_input_warning, inputs = validate_eval_inputs(
+            eval_template, dict(inputs) if inputs else {}, mapped_keys=(inputs or {}).keys()
+        )
+    except ValueError as exc:
+        # Validation runs before metering/engine execution; expose the same
+        # typed 400 as other invalid standalone inputs, not a retryable 500.
+        raise StandaloneEvaluationError(str(exc)) from exc
 
     gt_inputs = dict(inputs) if inputs else {}
     from model_hub.services.ground_truth_service import GroundTruthService

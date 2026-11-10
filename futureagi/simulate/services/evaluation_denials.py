@@ -13,7 +13,8 @@ def record_evaluation_denial(call_execution, eval_config, denial):
         call_execution.eval_outputs = {}
     call_execution.eval_outputs[str(eval_config.id)] = {
         "status": StatusType.FAILED.value,
-        "error": denial.code,
+        # Legacy readers recognize this sentinel. The code lives in denial.
+        "error": "error",
         "denial": denial.as_dict(),
         "reason": str(denial),
         "name": eval_config.name,

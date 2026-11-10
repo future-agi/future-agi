@@ -291,7 +291,11 @@ class StandaloneEvalView_v2(APIView):
                     "name": evaluation.eval_template.name,
                     "input_data": evaluation.input_data,
                     "reason": evaluation.reason,
-                    "runtime": evaluation.runtime,
+                    # Older failed/denied rows have no runtime. The shipped
+                    # Python SDK accepts zero, but cannot parse explicit null.
+                    "runtime": (
+                        evaluation.runtime if evaluation.runtime is not None else 0
+                    ),
                     "model": evaluation.model_name,
                     "output_type": evaluation.output_type,
                     "value": evaluation.value,

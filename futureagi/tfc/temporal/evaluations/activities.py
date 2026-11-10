@@ -94,6 +94,7 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
         evaluation.value = None
         evaluation.reason = str(denial)
         evaluation.metadata = {"denial": denial.as_dict()}
+        evaluation.runtime = 0  # No evaluator executed; SDK runtime is non-nullable.
         return {
             "evaluation_id": evaluation_id,
             "status": "failed",

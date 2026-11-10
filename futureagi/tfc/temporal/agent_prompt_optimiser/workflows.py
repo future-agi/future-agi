@@ -19,6 +19,7 @@ from temporalio.common import RetryPolicy
 
 # Import types safely (no Django)
 with workflow.unsafe.imports_passed_through():
+    from tfc.temporal.common.evaluation_denials import evaluation_denial_message
     from tfc.temporal.agent_prompt_optimiser.types import (
         EvaluateTrialWorkflowInput,
         EvaluateTrialWorkflowOutput,
@@ -83,7 +84,7 @@ class AgentPromptOptimiserWorkflow:
             )
 
         except Exception as e:
-            error_msg = str(e)
+            error_msg = evaluation_denial_message(e) or str(e)
 
             # Try to finalize with error status
             try:

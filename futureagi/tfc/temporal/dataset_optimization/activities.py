@@ -30,7 +30,9 @@ from model_hub.utils.dataset_optimization import (
     update_dataset_optimization_step,
 )
 from simulate.utils.llm import get_api_key_for_model
+from tfc.temporal.common.evaluation_denials import terminal_evaluation_denial
 from tfc.temporal.common.heartbeat import Heartbeater
+from tfc.utils.evaluation_denials import EvaluationDenied
 
 logger = structlog.get_logger(__name__)
 
@@ -627,7 +629,12 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                 "best_prompt": best_prompt or result.best_prompt,
             }
 
-        return await sync_to_async(_sync, thread_sensitive=False)()
+        try:
+            return await sync_to_async(_sync, thread_sensitive=False)()
+        except EvaluationDenied as denial:
+            # Completed trials are checkpointed, but a partial baseline/trial
+            # is not. Retrying would repeat provider calls and successful judges.
+            raise terminal_evaluation_denial(denial) from denial
 
 
 def _prepare_dataset_execution_data(column, dataset, user_eval_metrics, initial_prompt):
