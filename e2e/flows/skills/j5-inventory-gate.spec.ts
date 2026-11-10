@@ -87,7 +87,8 @@ test('SKILLS-E2E-050: inventory forty selected checkouts and retain the campaign
       await expect(access(join(project, 'HOOK_EXECUTED'))).rejects.toThrow();
       await expect(access(join(project, '.futureagi-context.lock.json'))).rejects.toThrow();
     }
-    await testInfo.attach('independent-filesystem-witness', { body: JSON.stringify(expected), contentType: 'application/json' });
+    await writeFile(testInfo.outputPath('filesystem-witness.json'), JSON.stringify(expected, null, 2));
+    await testInfo.attach('independent-filesystem-witness', { path: testInfo.outputPath('filesystem-witness.json'), contentType: 'application/json' });
     await testInfo.attach('public-cli-inventory', { path: artifact, contentType: 'application/json' });
 
     // One-sided fallibility: only observed data changes; expected truth remains
@@ -116,8 +117,9 @@ test('SKILLS-E2E-050: inventory forty selected checkouts and retain the campaign
     expect(() => assertGate({ result: { campaigns_enabled: true } }, campaigns)).toThrow();
     expect(() => assertGate(capabilities, { result: { count: 1, results: [{}] } })).toThrow();
     assertGate(capabilities, campaigns);
+    await writeFile(testInfo.outputPath('capability-and-list.json'), JSON.stringify({ capabilities, campaigns, completeJob: false }, null, 2));
     await testInfo.attach('independent-capability-and-list', {
-      body: JSON.stringify({ capabilities, campaigns, completeJob: false }), contentType: 'application/json',
+      path: testInfo.outputPath('capability-and-list.json'), contentType: 'application/json',
     });
     await page.screenshot({ path: testInfo.outputPath('J5-rollouts-light.png'), animations: 'disabled' });
     await page.evaluate(() => {
@@ -133,10 +135,11 @@ test('SKILLS-E2E-050: inventory forty selected checkouts and retain the campaign
     report.prerequisite_flow = { id: 'SKILLS-E2E-050', inventory_targets: 40, available: 39, unavailable: 1, complete_job: false };
     await writeFile(testInfo.outputPath('ours.json'), JSON.stringify(report, null, 2));
     await testInfo.attach('harness-complete-job-verdict', { path: testInfo.outputPath('ours.json'), contentType: 'application/json' });
-    await testInfo.attach('fallibility-proof', { body: JSON.stringify({
+    await writeFile(testInfo.outputPath('fallibility.json'), JSON.stringify({
       omittedTarget: 'rejected', changedLocalHash: 'rejected', falseEnabled: 'rejected', hiddenCampaign: 'rejected', restored: 'pass',
       limitation: 'prerequisite flow only; not 40-target rollout, real GitHub conformance or a complete-job action measurement',
-    }), contentType: 'application/json' });
+    }, null, 2));
+    await testInfo.attach('fallibility-proof', { path: testInfo.outputPath('fallibility.json'), contentType: 'application/json' });
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
