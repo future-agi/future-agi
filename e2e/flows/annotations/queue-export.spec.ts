@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test, expect } from '../../lib/fixtures';
+import { E2E } from '../../lib/env';
+import { provisionActor } from '../../lib/provisioning';
+import { request as pwRequest } from '@playwright/test';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { POLL } from '../../lib/state-probe';
 
@@ -22,12 +25,14 @@ test('ANNOT-E2E-006: large queues download all annotations and source content', 
     steps: ['seed a 1001-item queue and a one-item queue through public APIs',
       'download CSV and JSON from the large queue Analytics tab',
       'download JSON from the queue header Export menu',
-      'download CSV and JSON from the small queue without a background job'],
+      'download CSV and JSON from the small queue without a background job',
+      'open the finished private export link as anonymous and another organization'],
     backendChecks: ['large exports return 202 and their scoped jobs complete with all 1001 items',
+      'a different browser context cannot fetch either the download endpoint or its private storage object',
       'downloaded CSV and JSON contain the exact seeded item identities, source values and annotation',
       'small queue exports return 200 inline and contain only the selected item'],
   }),
-}, async ({ page, actor, probe }, testInfo) => {
+}, async ({ page, browser, actor, probe }, testInfo) => {
   // 120s seeding + 5 UI_READY downloads + 3 ASYNC_JOB waits = 600s.
   test.setTimeout(600_000);
   page.setDefaultTimeout(UI_READY);
@@ -110,6 +115,40 @@ test('ANNOT-E2E-006: large queues download all annotations and source content', 
         const jobs = await probe.pg<{ queue_id: string; organization_id: string; item_count: number; status: string }>(
           'SELECT queue_id, organization_id, item_count, status FROM model_hub_annotationexportjob WHERE id = $1', [scheduled.job_id]);
         expect(jobs).toEqual([{ queue_id: large, organization_id: actor.organizationId, item_count: 1001, status: 'succeeded' }]);
+        if (scenario.format === 'json' && !scenario.header) {
+          const status = (await actor.api.get<{ result: { file_url: string } }>(jobPath)).result;
+          expect(status.file_url).toContain('/download/?token=');
+          const stored = await probe.pg<{ storage_key: string }>(
+            'SELECT storage_key FROM model_hub_annotationexportjob WHERE id = $1', [scheduled.job_id]);
+          expect(stored[0].storage_key).toBeTruthy();
+          const anonymous = await browser.newContext();
+          const secondRequest = await pwRequest.newContext({ baseURL: E2E.apiUrl });
+          try {
+            const anonymousPage = await anonymous.newPage();
+            const denied = await anonymousPage.goto(`${E2E.apiUrl}${status.file_url}`);
+            expect([401, 403]).toContain(denied?.status());
+            const storageDenied = await anonymousPage.goto(
+              `http://localhost:29005/fi-content-dev-annotation-exports/${stored[0].storage_key}`);
+            expect(storageDenied?.status()).toBe(403);
+            const second = await provisionActor(secondRequest, 'private-export-other-org');
+            expect(second.organizationId).not.toBe(actor.organizationId);
+            const secondContext = await browser.newContext({ extraHTTPHeaders: {
+              Authorization: `Bearer ${second.tokens.access}`,
+              'X-Organization-Id': second.organizationId,
+              'X-Workspace-Id': second.workspaceId,
+            } });
+            try {
+              const secondPage = await secondContext.newPage();
+              const forbidden = await secondPage.goto(`${E2E.apiUrl}${status.file_url}`);
+              expect(forbidden?.status()).toBe(404);
+            } finally {
+              await secondContext.close();
+            }
+          } finally {
+            await anonymous.close();
+            await secondRequest.dispose();
+          }
+        }
       }
       const download = await downloadPromise;
       expect(await download.failure()).toBeNull();

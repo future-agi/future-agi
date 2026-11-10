@@ -224,13 +224,16 @@ def test_export_job_endpoint_reports_progress_then_link(
 
     job.status = AnnotationExportJobStatus.SUCCEEDED.value
     job.file_url = "http://storage/queue.csv"
+    job.storage_key = f"annotation-exports/{job.queue_id}/{job.id}.csv"
+    job.finished_at = timezone.now()
     job.file_name = "queue_x_annotations.csv"
     job.item_count = 2
     job.save()
 
     ready = _unwrap(auth_client.get(url).data)
     assert ready["status"] == AnnotationExportJobStatus.SUCCEEDED.value
-    assert ready["file_url"] == "http://storage/queue.csv"
+    assert ready["file_url"].startswith(f"/model-hub/annotation-queues/{job.queue_id}/")
+    assert "storage" not in ready["file_url"]
     assert ready["item_count"] == 2
 
 

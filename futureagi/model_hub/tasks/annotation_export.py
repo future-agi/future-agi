@@ -141,12 +141,12 @@ def _render_export_snapshot(job):
 
 def _store_export_file(job, fileobj, size):
     """Put the rendered export in object storage and return (url, filename)."""
-    from tfc.settings.settings import UPLOAD_BUCKET_NAME
-    from tfc.utils.storage_client import (
-        ensure_bucket,
-        get_object_url,
-        get_storage_client,
+    from model_hub.services.annotation_export_storage import (
+        download_path,
+        ensure_export_bucket,
+        verify_private_object,
     )
+    from tfc.utils.storage_client import get_storage_client
 
     extension = "csv" if _is_csv(job) else "json"
     content_type = "text/csv" if _is_csv(job) else "application/json"
@@ -156,9 +156,9 @@ def _store_export_file(job, fileobj, size):
     filename = f"queue_{job.queue_id}_annotations.{extension}"
 
     client = get_storage_client()
-    ensure_bucket(client, UPLOAD_BUCKET_NAME)
+    bucket = ensure_export_bucket(client)
     client.put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
+        bucket_name=bucket,
         object_name=object_key,
         data=fileobj,
         length=size,
@@ -166,11 +166,13 @@ def _store_export_file(job, fileobj, size):
         metadata={"Content-Disposition": f'attachment; filename="{filename}"'},
         part_size=10 * 1024 * 1024,
     )
+    try:
+        verify_private_object(bucket, object_key)
+    except Exception:
+        client.remove_object(bucket, object_key)
+        raise
 
-    return (
-        get_object_url(UPLOAD_BUCKET_NAME, object_key),
-        filename,
-    )
+    return download_path(job), filename
 
 
 def _delete_export_object(job):
@@ -180,7 +182,7 @@ def _delete_export_object(job):
     finished job's file is addressable without a list call. Remove it even if
     saving file_url failed after upload; deleting a missing object is idempotent.
     """
-    from tfc.settings.settings import UPLOAD_BUCKET_NAME
+    from model_hub.services.annotation_export_storage import export_bucket_name
     from tfc.utils.storage_client import get_storage_client
 
     if not job.storage_key and job.queue_id is None:
@@ -191,7 +193,7 @@ def _delete_export_object(job):
     )
 
     client = get_storage_client()
-    client.remove_object(UPLOAD_BUCKET_NAME, object_key)
+    client.remove_object(export_bucket_name(), object_key)
 
 
 def _temporal_will_retry():

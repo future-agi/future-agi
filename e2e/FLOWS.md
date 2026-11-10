@@ -190,7 +190,7 @@
 
 **Goal:** Download every annotation and its source content from a queue larger than 1000 items
 
-**Spec:** `flows/annotations/queue-export.spec.ts:17`
+**Spec:** `flows/annotations/queue-export.spec.ts:20`
 
 **Tags:** —
 
@@ -200,10 +200,12 @@
 2. download CSV and JSON from the large queue Analytics tab
 3. download JSON from the queue header Export menu
 4. download CSV and JSON from the small queue without a background job
+5. open the finished private export link as anonymous and another organization
 
 **Backend state verified:**
 
 - large exports return 202 and their scoped jobs complete with all 1001 items
+- a different browser context cannot fetch either the download endpoint or its private storage object
 - downloaded CSV and JSON contain the exact seeded item identities, source values and annotation
 - small queue exports return 200 inline and contain only the selected item
 

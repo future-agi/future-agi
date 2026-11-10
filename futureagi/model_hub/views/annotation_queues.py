@@ -26,6 +26,7 @@ from django.db.models import (
 from django.db.models.functions import Coalesce, Lower, TruncDate
 from django.db.utils import OperationalError
 from django.utils import timezone
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -3735,15 +3736,33 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     )
     def export_job(self, request, pk=None, job_id=None):
         """Status of a background export, carrying the link once it is ready."""
+        from model_hub.services.annotation_export_storage import can_download_export
+
         queue = self.get_object()
+        if not can_download_export(request, queue):
+            return self._gm.not_found("Export job not found.")
         try:
-            job = AnnotationExportJob.objects.get(pk=job_id, queue=queue)
+            job = AnnotationExportJob.objects.get(
+                pk=job_id,
+                queue=queue,
+                organization_id=queue.organization_id,
+                workspace_id=queue.workspace_id,
+                deleted=False,
+            )
         except (AnnotationExportJob.DoesNotExist, ValidationError, ValueError):
             return self._gm.not_found("Export job not found.")
 
         from model_hub.selectors.annotation_exports import resolve_export_job_state
+        from model_hub.services.annotation_export_storage import (
+            download_url,
+            export_is_available,
+        )
 
         job_status, job_error = resolve_export_job_state(job)
+        file_url = download_url(job) if export_is_available(job) else None
+        if job_status == AnnotationExportJobStatus.SUCCEEDED.value and file_url is None:
+            job_status = AnnotationExportJobStatus.FAILED.value
+            job_error = "This export has expired. Please export the queue again."
         return self._gm.success_response(
             {
                 "job_id": str(job.id),
@@ -3751,7 +3770,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "status": job_status,
                 "export_format": job.export_format,
                 "item_count": job.item_count,
-                "file_url": job.file_url,
+                "file_url": file_url,
                 "file_name": job.file_name,
                 "error": job_error,
                 "created_at": job.created_at,
@@ -3759,6 +3778,77 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "finished_at": job.finished_at,
             }
         )
+
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter(
+                "token", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                "Export file", openapi.Schema(type=openapi.TYPE_FILE)
+            ),
+            **ERROR_RESPONSES,
+        },
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"export-jobs/(?P<job_id>[^/.]+)/download",
+    )
+    def export_download(self, request, pk=None, job_id=None):
+        """Stream a private export only while this user can still read its queue."""
+        from django.http import FileResponse
+        from minio.error import S3Error
+
+        from model_hub.services.annotation_export_storage import (
+            ExportFile,
+            can_download_export,
+            export_bucket_name,
+            export_is_available,
+            valid_download_token,
+        )
+        from tfc.utils.storage_client import get_storage_client
+
+        queue = self.get_object()
+        if not can_download_export(request, queue):
+            return self._gm.not_found("Export job not found.")
+        try:
+            job = AnnotationExportJob.objects.get(
+                pk=job_id,
+                queue=queue,
+                organization_id=queue.organization_id,
+                workspace_id=queue.workspace_id,
+                deleted=False,
+            )
+        except (AnnotationExportJob.DoesNotExist, ValidationError, ValueError):
+            return self._gm.not_found("Export job not found.")
+        if not export_is_available(job) or not valid_download_token(
+            job, request.query_params.get("token", "")
+        ):
+            return self._gm.not_found("Export download is unavailable or expired.")
+        try:
+            stored_file = get_storage_client().get_object(
+                export_bucket_name(), job.storage_key
+            )
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchBucket"}:
+                return self._gm.not_found("Export file not found.")
+            raise
+        extension = "csv" if job.export_format == "csv" else "json"
+        export_file = ExportFile(stored_file)
+        response = FileResponse(
+            export_file,
+            as_attachment=True,
+            filename=f"queue_{queue.pk}_annotations.{extension}",
+            content_type="text/csv" if extension == "csv" else "application/json",
+        )
+        if hasattr(request._request, "scope"):
+            response.streaming_content = export_file.chunks()
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
 
     @swagger_auto_schema(
         responses={200: QueueAnalyticsResponseSerializer, **ERROR_RESPONSES}

@@ -18,7 +18,7 @@ import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import {
   annotationQueueEndpoints,
-  triggerBrowserDownload,
+  downloadStoredExport,
   useQueueAnalytics,
   waitForExportJob,
 } from "src/api/annotation-queues/annotation-queues";
@@ -253,11 +253,7 @@ export default function QueueAnalyticsTab({ queueId }) {
         );
         const jobId = scheduled?.result?.job_id || scheduled?.job_id;
         const job = await waitForExportJob(axiosInstance, queueId, jobId);
-        triggerBrowserDownload(
-          job.file_url,
-          job.file_name || `queue-export.${format}`,
-          { newTab: true },
-        );
+        await downloadStoredExport(axiosInstance, job, `queue-export.${format}`);
         enqueueSnackbar("Export ready", { variant: "success" });
         return;
       }
