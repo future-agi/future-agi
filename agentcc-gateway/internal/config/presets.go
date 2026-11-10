@@ -17,15 +17,17 @@ type ProviderPreset struct {
 // omitted entry would read as "" and silently strip the version segment from a
 // provider that needs one.
 var KnownProviders = map[string]ProviderPreset{
-	"groq":        {BaseURL: "https://api.groq.com/openai", APIFormat: "openai", PathPrefix: "/v1"},
-	"mistral":     {BaseURL: "https://api.mistral.ai", APIFormat: "openai", PathPrefix: "/v1"},
-	"together":    {BaseURL: "https://api.together.xyz", APIFormat: "openai", PathPrefix: "/v1"},
-	"fireworks":   {BaseURL: "https://api.fireworks.ai/inference", APIFormat: "openai", PathPrefix: "/v1"},
-	"deepinfra":   {BaseURL: "https://api.deepinfra.com", APIFormat: "openai", PathPrefix: "/v1"},
-	"perplexity":  {BaseURL: "https://api.perplexity.ai", APIFormat: "openai", PathPrefix: "/v1"},
-	"cerebras":    {BaseURL: "https://api.cerebras.ai", APIFormat: "openai", PathPrefix: "/v1"},
-	"xai":         {BaseURL: "https://api.x.ai", APIFormat: "openai", PathPrefix: "/v1"},
-	"huggingface": {BaseURL: "https://api-inference.huggingface.co", APIFormat: "openai", PathPrefix: "/v1"},
+	"groq":       {BaseURL: "https://api.groq.com/openai", APIFormat: "openai", PathPrefix: "/v1"},
+	"mistral":    {BaseURL: "https://api.mistral.ai", APIFormat: "openai", PathPrefix: "/v1"},
+	"together":   {BaseURL: "https://api.together.xyz", APIFormat: "openai", PathPrefix: "/v1"},
+	"fireworks":  {BaseURL: "https://api.fireworks.ai/inference", APIFormat: "openai", PathPrefix: "/v1"},
+	"deepinfra":  {BaseURL: "https://api.deepinfra.com", APIFormat: "openai", PathPrefix: "/v1"},
+	"perplexity": {BaseURL: "https://api.perplexity.ai", APIFormat: "openai", PathPrefix: "/v1"},
+	"cerebras":   {BaseURL: "https://api.cerebras.ai", APIFormat: "openai", PathPrefix: "/v1"},
+	"xai":        {BaseURL: "https://api.x.ai", APIFormat: "openai", PathPrefix: "/v1"},
+	// Hugging Face retired the api-inference.huggingface.co serverless API;
+	// chat now goes through the OpenAI-compatible router instead.
+	"huggingface": {BaseURL: "https://router.huggingface.co", APIFormat: "openai", PathPrefix: "/v1"},
 	"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai", PathPrefix: "/v1"},
 	"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai", PathPrefix: "/v1"},
 	"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai", PathPrefix: "/v1"},

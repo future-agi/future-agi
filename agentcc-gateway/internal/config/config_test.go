@@ -270,7 +270,7 @@ func TestValidateAppliesPresetBeforeCheckingAndPersistsIt(t *testing.T) {
 	}
 
 	got := cfg.Providers["hf"]
-	if got.BaseURL != "https://api-inference.huggingface.co" {
+	if got.BaseURL != "https://router.huggingface.co" {
 		t.Errorf("BaseURL = %q, want the preset's value to be persisted onto cfg.Providers", got.BaseURL)
 	}
 	if got.APIFormat != "openai" {
