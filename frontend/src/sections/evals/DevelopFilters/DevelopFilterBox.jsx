@@ -1,91 +1,15 @@
-import { Box, Collapse } from "@mui/material";
 import PropTypes from "prop-types";
-import React from "react";
-import DevelopFilterRow from "./DevelopFilterRow";
-import { DefaultFilter } from "./common";
+import { Box } from "@mui/material";
+import React, { useCallback, useMemo, useState } from "react";
+import { FilterPanel } from "src/components/filter";
 import { getRandomId } from "src/utils/utils";
+import { DefaultFilter } from "./common";
+import { columnsToFields, fromPanelValue, toPanelValue } from "./panelAdapter";
 
-const DevelopFilterBoxChild = ({
-  filters,
-  setFilters,
-  allColumns,
-  onClose,
-}) => {
-  const addFilter = () => {
-    setFilters([...filters, { ...DefaultFilter, id: getRandomId() }]);
-  };
-
-  const removeFilter = (id) => {
-    if (filters.length === 1) {
-      onClose();
-    }
-
-    setFilters((internalFilters) => {
-      if (internalFilters.length === 1) {
-        return [DefaultFilter];
-      }
-      return internalFilters.filter((filter) => filter.id !== id);
-    });
-  };
-
-  const updateFilter = (id, newFilter) => {
-    setFilters((internalFilters) =>
-      internalFilters.map((filter) => {
-        if (filter.id === id) {
-          return typeof newFilter === "function"
-            ? newFilter(filter)
-            : newFilter;
-        } else {
-          return filter;
-        }
-      }),
-    );
-  };
-
-  return (
-    <Box
-      sx={{
-        paddingBottom: "12px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 0.5,
-      }}
-    >
-      <Box
-        sx={{
-          border: "2px solid",
-          borderRadius: "8px",
-          borderColor: "divider",
-          padding: 2,
-          gap: 1,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        {filters.map((filter, index) => (
-          <DevelopFilterRow
-            key={filter.id}
-            index={index}
-            removeFilter={removeFilter}
-            addFilter={addFilter}
-            filter={filter}
-            allColumns={allColumns}
-            updateFilter={updateFilter}
-          />
-        ))}
-      </Box>
-    </Box>
-  );
-};
-
-DevelopFilterBoxChild.propTypes = {
-  onHideFilter: PropTypes.func,
-  filters: PropTypes.array,
-  setFilters: PropTypes.func,
-  allColumns: PropTypes.array,
-  onClose: PropTypes.func,
-};
-
+/**
+ * Evals logs filter. Same props as before; the editing surface is the shared
+ * Filter panel, opened below the toolbar.
+ */
 const DevelopFilterBox = ({
   setDevelopFilterOpen,
   developFilterOpen,
@@ -93,16 +17,32 @@ const DevelopFilterBox = ({
   setFilters,
   allColumns,
 }) => {
+  const [anchorEl, setAnchorEl] = useState(null);
+  const fields = useMemo(() => columnsToFields(allColumns), [allColumns]);
+  const value = useMemo(() => toPanelValue(filters, fields), [filters, fields]);
+
+  const handleChange = useCallback(
+    (rows) => {
+      const next = fromPanelValue(rows);
+      setFilters(() =>
+        next.length ? next : [{ ...DefaultFilter, id: getRandomId() }],
+      );
+    },
+    [setFilters],
+  );
+
   return (
-    <Collapse in={developFilterOpen} orientation="vertical">
-      <DevelopFilterBoxChild
-        onHideFilter={() => setDevelopFilterOpen(false)}
-        filters={filters}
-        setFilters={setFilters}
-        allColumns={allColumns}
+    <>
+      <Box ref={setAnchorEl} sx={{ height: 0 }} />
+      <FilterPanel
+        anchorEl={anchorEl}
+        open={Boolean(developFilterOpen && anchorEl)}
         onClose={() => setDevelopFilterOpen(false)}
+        fields={fields}
+        value={value}
+        onChange={handleChange}
       />
-    </Collapse>
+    </>
   );
 };
 

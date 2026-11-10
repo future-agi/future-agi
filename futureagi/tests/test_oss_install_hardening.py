@@ -320,6 +320,23 @@ env_value() {
   grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2-
 }
 
+# VAR's .env value as Compose reads it (checked against docker-compose v2.40.3
+# `config`): the last `[export ]VAR=value` line, blanks around `=` and the
+# value dropped, quotes removed, and an unquoted value's ` #` comment cut.
+dotenv_value() {
+  local line value
+  line=$(grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" .env 2>/dev/null | tail -1)
+  [ -n "$line" ] || return 0
+  value=${line#*=}
+  value=${value#"${value%%[![:space:]]*}"}
+  case "$value" in
+    \"*) value=${value#\"}; value=${value%%\"*} ;;
+    \'*) value=${value#\'}; value=${value%%\'*} ;;
+    *) value=${value%%[[:space:]]#*}; value=${value%"${value##*[![:space:]]}"} ;;
+  esac
+  printf '%s' "$value"
+}
+
 last_arg=""
 for arg in "$@"; do last_arg="$arg"; done
 
@@ -334,13 +351,16 @@ if [ "$1" = "compose" ]; then
       # The resolved config for the stack COMPOSE_FILE selects, as `docker
       # compose config` prints it: services at two spaces, their keys at four.
       version=$(env_value FUTURE_AGI_VERSION)
+      # As in Compose: FI_COLLECTOR_VERSION from the shell, even empty, wins
+      # over .env.
+      collector=${FI_COLLECTOR_VERSION-$(dotenv_value FI_COLLECTOR_VERSION)}
       printf 'name: futureagi\nservices:\n'
       if printf '%s' "$compose_file" | grep -q 'docker-compose.distributed.yml'; then
         frontend=$(env_value FRONTEND_VERSION)
         gateway=$(env_value AGENTCC_GATEWAY_VERSION)
         set -- "agentcc-gateway futureagi/agentcc-gateway:${gateway:-latest}" \
           "backend futureagi/future-agi:${version:-latest}" \
-          "fi-collector futureagi/fi-collector:local" \
+          "fi-collector futureagi/fi-collector:${collector:-local}" \
           "frontend futureagi/frontend:${frontend:-latest}" \
           "postgres postgres:16"
       else
@@ -349,10 +369,36 @@ if [ "$1" = "compose" ]; then
           "postgres postgres:16"
       fi
       for pair in "$@"; do
-        printf '  %s:\n    environment:\n      image: nested\n    image: %s\n' \
-          "${pair%% *}" "${pair#* }"
+        printf '  %s:\n' "${pair%% *}"
+        # The distributed stack builds fi-collector from this checkout.
+        if [ "${pair%% *}" = fi-collector ]; then
+          printf '    build:\n      context: %s/fi-collector\n' "$PWD"
+        fi
+        printf '    environment:\n      build: nested\n      image: nested\n    image: %s\n' \
+          "${pair#* }"
       done
+      # A docker-compose.override.yml in COMPOSE_FILE adds the services it
+      # lists, written as `config` prints them, with the collector tag
+      # interpolated.
+      case ":$compose_file:" in
+        *:docker-compose.override.yml:*)
+          placeholder='${FI_COLLECTOR_VERSION:-local}'
+          in_services=0
+          while IFS= read -r line; do
+            case "$line" in
+              services:*) in_services=1; continue ;;
+              [!\ ]*) in_services=0 ;;
+            esac
+            [ "$in_services" = 1 ] && printf '%s\n' "${line//"$placeholder"/${collector:-local}}"
+          done < docker-compose.override.yml ;;
+      esac
       printf 'volumes:\n  postgres-data:\n    name: futureagi_postgres-data\n'
+      exit 0 ;;
+    build)
+      # Services built by name, and when, next to `up`.
+      printf '%s\n' "$@" > "$state/compose_build.argv"
+      printf 'build\n' >> "$state/compose_calls.log"
+      [ "$FAGI_STUB_COMPOSE_BUILD" = "fail" ] && exit 1
       exit 0 ;;
     pull)
       case " $* " in
@@ -367,6 +413,8 @@ if [ "$1" = "compose" ]; then
       exit 0 ;;
     up)
       # What the stack starts with, and from which compose files.
+      printf '%s\n' "$@" > "$state/up.argv"
+      printf 'up\n' >> "$state/compose_calls.log"
       cp .env "$state/env_at_up"
       printf '%s\n' "$compose_file" > "$state/compose_file_at_up"
       exit 0 ;;
@@ -689,6 +737,7 @@ def test_installer_rejects_a_control_character_in_the_typed_email_before_create_
         b"Abhijai\n"
         b"correct-horse-battery\n"
         b"correct-horse-battery\n"
+        b"n\n"  # the one-time automatic-update opt-in that follows readiness
     )
 
     code, stdout, stderr = _run_installer(script, environment, typed=typed, timeout=120)
@@ -708,6 +757,24 @@ def test_installer_rejects_a_control_character_in_the_typed_email_before_create_
 ADMIN_PASSWORD = "correct-horse-battery"
 
 
+def test_the_automatic_update_opt_in_follows_the_account_and_defaults_to_off(
+    tmp_path: Path,
+) -> None:
+    """Pressing Enter at the one-time opt-in must leave automatic updates off."""
+    script, environment, _ = _installer_sandbox(tmp_path)
+    answers = ["abhijai@futureagi.com", "Abhijai", ADMIN_PASSWORD, ADMIN_PASSWORD, ""]
+
+    code, stdout, stderr = _run_installer(
+        script, environment, typed="\n".join(answers + [""]).encode(), timeout=120
+    )
+
+    assert code == 0, stderr
+    assert "Opt in once to supported automatic updates? [y/N]" in stderr
+    assert stdout.index("Email    : ") < stdout.index("Optional automatic updates:")
+    # Setup never ran: it would have created the private automation state.
+    assert not (script.parents[1] / ".futureagi-updates").exists()
+
+
 @pytest.mark.parametrize("typed", [False, True], ids=["FAGI_ADMIN_PASSWORD", "typed"])
 def test_the_admin_password_reaches_create_user_on_stdin_only(
     tmp_path: Path, typed: bool
@@ -716,7 +783,8 @@ def test_the_admin_password_reaches_create_user_on_stdin_only(
     can read every process's command line."""
     if typed:
         script, environment, state = _installer_sandbox(tmp_path)
-        answers = ["abhijai@futureagi.com", "Abhijai", ADMIN_PASSWORD, ADMIN_PASSWORD]
+        # The last answer declines the one-time automatic-update opt-in.
+        answers = ["abhijai@futureagi.com", "Abhijai", ADMIN_PASSWORD, ADMIN_PASSWORD, "n"]
         code, _, stderr = _run_installer(
             script, environment, typed="\n".join(answers + [""]).encode(), timeout=120
         )
@@ -2141,7 +2209,8 @@ def test_the_telemetry_notice_comes_before_the_admin_email_is_asked(
     """The first account's email is part of the registration."""
     script, environment, _ = _installer_sandbox(tmp_path)
 
-    code, stdout, stderr = _run_installer(script, environment, typed=b"\n", timeout=120)
+    # A blank email skips the account; "n" declines the automatic-update opt-in.
+    code, stdout, stderr = _run_installer(script, environment, typed=b"\nn\n", timeout=120)
 
     assert code == 0, stderr
     notice = stdout.index("this install registers with api.futureagi.com")
@@ -2632,3 +2701,606 @@ def test_startup_guard_admits_create_user_and_still_blocks_unlisted_commands() -
     from model_hub.apps import explicit_management_mutation_authorized
 
     assert explicit_management_mutation_authorized(["manage.py", "shell"]) is False
+
+
+class TestInstallersKeepAPinnedCollector:
+    """bin/update pins the distributed stack's fi-collector to a published,
+    verified release (FI_COLLECTOR_VERSION in .env). A later install pulls that
+    image like every other published one and starts the stack with --no-build,
+    so a build from this checkout never replaces it under the release's tag.
+    Unset, empty or `local`, Compose builds it from the checkout as before."""
+
+    PINNED_PULL = [
+        "pull",
+        "agentcc-gateway",
+        "backend",
+        "fi-collector",
+        "frontend",
+        "postgres",
+    ]
+    BUILT_PULL = [
+        "pull",
+        "--ignore-buildable",
+        "agentcc-gateway",
+        "backend",
+        "frontend",
+        "postgres",
+    ]
+    UP_BUILD = ["up", "-d", "--build", "--wait", "--wait-timeout", "1200"]
+    UP_NO_BUILD = ["up", "-d", "--no-build", "--wait", "--wait-timeout", "1200"]
+
+    def test_a_rerun_after_bin_update_pulls_the_pinned_collector_and_builds_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1")
+        repo = script.parents[1]
+        code, _, stderr = _run_installer(
+            script, environment, "--distributed", "--skip-user-creation"
+        )
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.BUILT_PULL
+        assert _lines(state / "up.argv") == self.UP_BUILD
+        # What `bin/update apply` leaves in .env on a distributed install.
+        with (repo / ".env").open("a", encoding="utf-8") as env:
+            env.write("FI_COLLECTOR_VERSION=v1.52.0\n")
+
+        code, stdout, stderr = _run_installer(
+            script, environment, "--skip-user-creation"
+        )
+
+        assert code == 0, stderr
+        assert "Mode: Distributed" in stdout
+        assert _lines(state / "pull.argv") == self.PINNED_PULL
+        assert _lines(state / "up.argv") == self.UP_NO_BUILD
+        assert not (state / "build.log").exists()
+        assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "v1.52.0"
+
+    def test_a_pinned_collector_on_a_fresh_distributed_install_is_pulled(
+        self, tmp_path: Path
+    ) -> None:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1")
+        (script.parents[1] / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE + "FI_COLLECTOR_VERSION=v1.52.0\n", encoding="utf-8"
+        )
+
+        code, _, stderr = _run_installer(
+            script, environment, "--distributed", "--skip-user-creation"
+        )
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.PINNED_PULL
+        assert _lines(state / "up.argv") == self.UP_NO_BUILD
+
+    def test_a_tag_exported_in_the_shell_counts_as_compose_reads_it(
+        self, tmp_path: Path
+    ) -> None:
+        script, environment, state = _installer_sandbox(
+            tmp_path, CI="1", FI_COLLECTOR_VERSION="v1.52.0"
+        )
+
+        code, _, stderr = _run_installer(
+            script, environment, "--distributed", "--skip-user-creation"
+        )
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.PINNED_PULL
+        assert _lines(state / "up.argv") == self.UP_NO_BUILD
+
+    @pytest.mark.parametrize(
+        "setting",
+        ["", "FI_COLLECTOR_VERSION=\n", "FI_COLLECTOR_VERSION=local\n"],
+        ids=["unset", "empty", "local"],
+    )
+    def test_an_unpinned_collector_is_still_built_from_the_checkout(
+        self, tmp_path: Path, setting: str
+    ) -> None:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1")
+        (script.parents[1] / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE + setting, encoding="utf-8"
+        )
+
+        code, _, stderr = _run_installer(
+            script, environment, "--distributed", "--skip-user-creation"
+        )
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.BUILT_PULL
+        assert _lines(state / "up.argv") == self.UP_BUILD
+
+    def test_from_source_still_builds_the_collector_over_a_pinned_tag(
+        self, tmp_path: Path
+    ) -> None:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1")
+        repo = script.parents[1]
+        (repo / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE + "FI_COLLECTOR_VERSION=v1.52.0\n", encoding="utf-8"
+        )
+
+        code, _, stderr = _run_installer(
+            script,
+            environment,
+            "--distributed",
+            "--from-source",
+            "--skip-user-creation",
+        )
+
+        assert code == 0, stderr
+        assert "build -t futureagi/fi-collector:local fi-collector" in _lines(
+            state / "build.log"
+        )
+        assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "local"
+        assert _lines(state / "pull.argv") == ["pull", "--ignore-buildable", "postgres"]
+        assert _lines(state / "up.argv") == self.UP_BUILD
+
+    def test_a_standalone_install_starts_as_before(self, tmp_path: Path) -> None:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1")
+        (script.parents[1] / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE + "FI_COLLECTOR_VERSION=v1.52.0\n", encoding="utf-8"
+        )
+
+        code, _, stderr = _run_installer(script, environment, "--skip-user-creation")
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == ["pull", "app", "clickhouse", "postgres"]
+        assert _lines(state / "up.argv") == ["up", "-d"]
+
+    def test_both_installers_start_a_pinned_collector_without_building(self) -> None:
+        # The PowerShell installer runs only under pwsh (below); this keeps the
+        # two installers' choice in step where pwsh is unavailable.
+        shell = _read(INSTALL_SH)
+        powershell = _read(INSTALL_PS1)
+        # Round 6: both decide from fi-collector's resolved image (asserted in
+        # TestInstallersReadThePinFromTheResolvedCollectorImage).
+        assert (
+            "collector_image=$(awk -F'\\t' '$1 == \"fi-collector\" {print $2; exit}'"
+            ' <<<"$SERVICE_IMAGES")' in shell
+        )
+        assert '$DC up -d "$build_flag" --wait --wait-timeout 1200' in shell
+        assert "$collectorImage = @($serviceImages | Where-Object" in powershell
+        assert (
+            "Invoke-Compose up -d $buildFlag --wait --wait-timeout 1200" in powershell
+        )
+        for installer in (shell, powershell):
+            assert "--no-build" in installer
+            assert "up -d --build" not in installer
+
+    @staticmethod
+    def _power_shell_pull_and_up(
+        tmp_path: Path,
+        setting: str,
+        from_source: bool,
+        override: str = "",
+        **shell_env: str,
+    ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+        """install.ps1's build-from-source, pull and bring-up sections under
+        pwsh, against the installer tests' stub docker. OVERRIDE, when given,
+        is written to docker-compose.override.yml."""
+        stubs = tmp_path / "stubs"
+        stubs.mkdir()
+        stub = stubs / "docker"
+        stub.write_text(STUB_DOCKER, encoding="utf-8")
+        stub.chmod(0o755)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        if override:
+            (repo / "docker-compose.override.yml").write_text(
+                override, encoding="utf-8"
+            )
+        (repo / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE
+            + "COMPOSE_FILE=docker-compose.distributed.yml\n"
+            + setting,
+            encoding="utf-8",
+        )
+        state = tmp_path / "state"
+        state.mkdir()
+        installer = _read(INSTALL_PS1)
+        script = "\n".join(
+            [
+                "$ErrorActionPreference = 'Stop'; Set-StrictMode -Version 3.0",
+                f". '{INSTALL_LIB / 'env.ps1'}'",
+                "$DcCmd = 'docker'; $DcArgs = @('compose'); $DcText = 'docker compose'",
+                "function Invoke-Compose { & $DcCmd @DcArgs @args }",
+                "function Invoke-Probe { param($Command) & $Command }",
+                "function Append-Log { param($Lines) }",
+                "function Build-LocalImages { param($Distributed) }",
+                "function Step { param($m) }",
+                "function Say { param($m) Write-Output $m }",
+                "function Ok { param($m) Write-Output $m }",
+                "function Warn { param($m) Write-Output $m }",
+                "function Die { param($m) Write-Output $m; exit 1 }",
+                "function Fail-Preflight { param($m) Die $m }",
+                "$Distributed = $true; $IsDistributed = $true; $AppService = 'backend'",
+                f"$FromSource = ${str(from_source).lower()}",
+                "$VmArch = ''; $projectServices = @(); $projectName = 'futureagi'",
+                _power_shell_section(installer, "build from source (-FromSource)"),
+                _power_shell_section(installer, "pull"),
+                _power_shell_section(installer, "bring up"),
+            ]
+        )
+        result = subprocess.run(
+            ["pwsh", "-NoProfile", "-Command", script],
+            cwd=repo,
+            env={
+                "PATH": f"{stubs}:{os.environ['PATH']}",
+                "HOME": str(tmp_path),
+                "FAGI_STUB_STATE": str(state),
+                "FAGI_STUB_PULL": "ok",
+                "FAGI_STUB_MISSING_IMAGES": "",
+                **shell_env,
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        return result, repo, state
+
+    @pytest.mark.parametrize(
+        ("setting", "from_source", "shell_env", "pull", "up"),
+        [
+            pytest.param(
+                "FI_COLLECTOR_VERSION=v1.52.0\n",
+                False,
+                {},
+                PINNED_PULL,
+                UP_NO_BUILD,
+                id="pinned",
+            ),
+            pytest.param(
+                "",
+                False,
+                {"FI_COLLECTOR_VERSION": "v1.52.0"},
+                PINNED_PULL,
+                UP_NO_BUILD,
+                id="pinned-in-the-shell",
+            ),
+            pytest.param("", False, {}, BUILT_PULL, UP_BUILD, id="unset"),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=\n", False, {}, BUILT_PULL, UP_BUILD, id="empty"
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=local\n",
+                False,
+                {},
+                BUILT_PULL,
+                UP_BUILD,
+                id="local",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=v1.52.0\n",
+                True,
+                {},
+                ["pull", "--ignore-buildable", "postgres"],
+                UP_BUILD,
+                id="from-source",
+            ),
+        ],
+    )
+    def test_power_shell_installer_keeps_a_pinned_collector(
+        self,
+        tmp_path: Path,
+        setting: str,
+        from_source: bool,
+        shell_env: dict[str, str],
+        pull: list[str],
+        up: list[str],
+    ) -> None:
+        if shutil.which("pwsh") is None:
+            pytest.skip("pwsh is unavailable")
+
+        result, repo, state = self._power_shell_pull_and_up(
+            tmp_path, setting, from_source, **shell_env
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Containers started" in result.stdout
+        assert _lines(state / "pull.argv") == pull
+        assert _lines(state / "up.argv") == up
+        if from_source:
+            assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "local"
+
+
+class TestInstallersReadThePinFromTheResolvedCollectorImage:
+    """Round 6 (U28, U29, U30, U34, U35, U36). Whether fi-collector is pinned
+    comes from the image Compose resolves for the fi-collector service, never
+    from the .env text: Compose reads `export ` and spaced lines, drops quotes
+    and comments, and lets the shell, even an empty value, win over .env.
+    Pinned (futureagi/fi-collector:<tag>, tag not `local`): pulled with the
+    other published images, every other service with `build:` built by name,
+    then `up --no-build`. Otherwise exactly as before. --from-source always
+    builds, whatever the shell exports."""
+
+    PINNED_PULL = TestInstallersKeepAPinnedCollector.PINNED_PULL
+    BUILT_PULL = TestInstallersKeepAPinnedCollector.BUILT_PULL
+    UP_BUILD = TestInstallersKeepAPinnedCollector.UP_BUILD
+    UP_NO_BUILD = TestInstallersKeepAPinnedCollector.UP_NO_BUILD
+    FROM_SOURCE_PULL = ["pull", "--ignore-buildable", "fi-collector", "postgres"]
+
+    # Written as `docker compose config` prints services: a buildable worker
+    # with a published-looking tag, a build-only service, and a service sharing
+    # the collector's image (as fi-property-catalog-consumer does).
+    OVERRIDE = (
+        "services:\n"
+        "  worker-extra:\n"
+        "    build:\n"
+        "      context: /checkout/worker\n"
+        "    image: example/worker:dev\n"
+        "  sidecar:\n"
+        "    build:\n"
+        "      context: /checkout/sidecar\n"
+        "  fi-property-catalog-consumer:\n"
+        "    image: futureagi/fi-collector:${FI_COLLECTOR_VERSION:-local}\n"
+        "    build:\n"
+        "      context: /checkout/fi-collector\n"
+    )
+    OVERRIDE_PINNED_PULL = [*PINNED_PULL, "fi-property-catalog-consumer"]
+    OVERRIDE_BUILD = ["build", "worker-extra", "sidecar"]
+
+    PINNED_LINES = [
+        pytest.param("export FI_COLLECTOR_VERSION=v1.52.0\n", id="export"),
+        pytest.param("  FI_COLLECTOR_VERSION=v1.52.0\n", id="indented"),
+        pytest.param("FI_COLLECTOR_VERSION = v1.52.0\n", id="spaced"),
+    ]
+    LOCAL_SETTINGS = [
+        pytest.param('FI_COLLECTOR_VERSION="local"\n', {}, id="double-quoted"),
+        pytest.param("FI_COLLECTOR_VERSION='local'\n", {}, id="single-quoted"),
+        pytest.param(
+            "FI_COLLECTOR_VERSION=local # built from source\n", {}, id="comment"
+        ),
+        pytest.param(
+            "FI_COLLECTOR_VERSION=v1.53.0\n",
+            {"FI_COLLECTOR_VERSION": ""},
+            id="emptied-in-the-shell",
+        ),
+        pytest.param(
+            "FI_COLLECTOR_VERSION=v1.53.0\n",
+            {"FI_COLLECTOR_VERSION": "local"},
+            id="local-in-the-shell",
+        ),
+    ]
+
+    @staticmethod
+    def _install(
+        tmp_path: Path, setting: str, *args: str, override: str = "", **env: str
+    ) -> tuple[int, str, str, Path, Path]:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1", **env)
+        repo = script.parents[1]
+        (repo / ".env").write_text(SANDBOX_ENV_EXAMPLE + setting, encoding="utf-8")
+        if override:
+            (repo / "docker-compose.override.yml").write_text(
+                override, encoding="utf-8"
+            )
+        code, stdout, stderr = _run_installer(
+            script, environment, "--distributed", "--skip-user-creation", *args
+        )
+        return code, stdout, stderr, repo, state
+
+    @pytest.mark.parametrize("setting", PINNED_LINES)
+    def test_a_pin_compose_reads_from_any_env_line_is_pulled_and_never_built(
+        self, tmp_path: Path, setting: str
+    ) -> None:
+        code, _, stderr, _, state = self._install(tmp_path, setting)
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.PINNED_PULL
+        assert _lines(state / "up.argv") == self.UP_NO_BUILD
+        assert not (state / "compose_build.argv").exists()
+        assert not (state / "build.log").exists()
+
+    @pytest.mark.parametrize(("setting", "shell"), LOCAL_SETTINGS)
+    def test_a_collector_compose_resolves_to_local_is_built_as_before(
+        self, tmp_path: Path, setting: str, shell: dict[str, str]
+    ) -> None:
+        code, _, stderr, _, state = self._install(tmp_path, setting, **shell)
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.BUILT_PULL
+        assert _lines(state / "up.argv") == self.UP_BUILD
+        assert not (state / "compose_build.argv").exists()
+
+    def test_from_source_builds_whatever_the_shell_exports(
+        self, tmp_path: Path
+    ) -> None:
+        code, _, stderr, repo, state = self._install(
+            tmp_path,
+            "FI_COLLECTOR_VERSION=v1.52.0\n",
+            "--from-source",
+            FI_COLLECTOR_VERSION="v1.52.0",
+        )
+
+        assert code == 0, stderr
+        assert "build -t futureagi/fi-collector:local fi-collector" in _lines(
+            state / "build.log"
+        )
+        assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "local"
+        # As before: Compose skips the buildable collector's pull, and
+        # `up --build` builds it from this checkout under the exported tag.
+        assert _lines(state / "pull.argv") == self.FROM_SOURCE_PULL
+        assert _lines(state / "up.argv") == self.UP_BUILD
+        assert not (state / "compose_build.argv").exists()
+
+    def test_other_buildable_services_are_built_by_name_and_the_pin_never_is(
+        self, tmp_path: Path
+    ) -> None:
+        code, _, stderr, repo, state = self._install(
+            tmp_path, "FI_COLLECTOR_VERSION=v1.52.0\n", override=self.OVERRIDE
+        )
+
+        assert code == 0, stderr
+        assert _lines(state / "compose_file_at_up") == [
+            "docker-compose.distributed.yml:docker-compose.override.yml"
+        ]
+        # The worker is built rather than pulled; both images sharing the pin
+        # are pulled and never built.
+        assert _lines(state / "pull.argv") == self.OVERRIDE_PINNED_PULL
+        assert _lines(state / "compose_build.argv") == self.OVERRIDE_BUILD
+        assert _lines(state / "compose_calls.log") == ["build", "up"]
+        assert _lines(state / "up.argv") == self.UP_NO_BUILD
+        assert not (state / "build.log").exists()
+        assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "v1.52.0"
+
+    def test_an_unpinned_stack_with_an_override_starts_as_before(
+        self, tmp_path: Path
+    ) -> None:
+        code, _, stderr, _, state = self._install(tmp_path, "", override=self.OVERRIDE)
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == [*self.BUILT_PULL, "worker-extra"]
+        assert _lines(state / "compose_calls.log") == ["up"]
+        assert _lines(state / "up.argv") == self.UP_BUILD
+
+    def test_a_failed_build_of_another_service_stops_before_the_stack_starts(
+        self, tmp_path: Path
+    ) -> None:
+        code, _, stderr, _, state = self._install(
+            tmp_path,
+            "FI_COLLECTOR_VERSION=v1.52.0\n",
+            override=self.OVERRIDE,
+            FAGI_STUB_COMPOSE_BUILD="fail",
+        )
+
+        assert code == 1
+        assert (
+            "docker compose build worker-extra sidecar failed; the output above"
+            " names the error. Fix it, then re-run ./bin/install." in stderr
+        )
+        assert not (state / "up.argv").exists()
+
+    def test_both_installers_read_the_resolved_image_not_the_env_file(self) -> None:
+        shell = _read(INSTALL_SH)
+        powershell = _read(INSTALL_PS1)
+        assert "compose_env_value FI_COLLECTOR_VERSION" not in shell
+        assert "Get-ComposeEnvValue 'FI_COLLECTOR_VERSION'" not in powershell
+        assert "(( DISTRIBUTED == 1 && FROM_SOURCE == 0 ))" in shell
+        assert "$IsDistributed -and -not $FromSource -and $collectorImage" in (
+            powershell
+        )
+        assert '$DC build "${build_services[@]}"' in shell
+        assert "Invoke-Compose build @buildServices" in powershell
+
+    @pytest.mark.parametrize(
+        ("setting", "from_source", "override", "shell_env", "pull", "build", "up"),
+        [
+            pytest.param(
+                "export FI_COLLECTOR_VERSION=v1.52.0\n",
+                False,
+                "",
+                {},
+                PINNED_PULL,
+                [],
+                UP_NO_BUILD,
+                id="export",
+            ),
+            pytest.param(
+                "  FI_COLLECTOR_VERSION=v1.52.0\n",
+                False,
+                "",
+                {},
+                PINNED_PULL,
+                [],
+                UP_NO_BUILD,
+                id="indented",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION = v1.52.0\n",
+                False,
+                "",
+                {},
+                PINNED_PULL,
+                [],
+                UP_NO_BUILD,
+                id="spaced",
+            ),
+            pytest.param(
+                'FI_COLLECTOR_VERSION="local"\n',
+                False,
+                "",
+                {},
+                BUILT_PULL,
+                [],
+                UP_BUILD,
+                id="double-quoted",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION='local'\n",
+                False,
+                "",
+                {},
+                BUILT_PULL,
+                [],
+                UP_BUILD,
+                id="single-quoted",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=local # built from source\n",
+                False,
+                "",
+                {},
+                BUILT_PULL,
+                [],
+                UP_BUILD,
+                id="comment",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=v1.53.0\n",
+                False,
+                "",
+                {"FI_COLLECTOR_VERSION": "local"},
+                BUILT_PULL,
+                [],
+                UP_BUILD,
+                id="local-in-the-shell",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=v1.52.0\n",
+                True,
+                "",
+                {"FI_COLLECTOR_VERSION": "v1.52.0"},
+                FROM_SOURCE_PULL,
+                [],
+                UP_BUILD,
+                id="from-source-over-a-shell-pin",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=v1.52.0\n"
+                "COMPOSE_FILE=docker-compose.distributed.yml:docker-compose.override.yml\n",
+                False,
+                OVERRIDE,
+                {},
+                OVERRIDE_PINNED_PULL,
+                OVERRIDE_BUILD,
+                UP_NO_BUILD,
+                id="override",
+            ),
+        ],
+    )
+    def test_power_shell_installer_reads_the_resolved_collector_image(
+        self,
+        tmp_path: Path,
+        setting: str,
+        from_source: bool,
+        override: str,
+        shell_env: dict[str, str],
+        pull: list[str],
+        build: list[str],
+        up: list[str],
+    ) -> None:
+        if shutil.which("pwsh") is None:
+            pytest.skip("pwsh is unavailable")
+
+        result, repo, state = (
+            TestInstallersKeepAPinnedCollector._power_shell_pull_and_up(
+                tmp_path, setting, from_source, override, **shell_env
+            )
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Containers started" in result.stdout
+        assert _lines(state / "pull.argv") == pull
+        assert _lines(state / "compose_build.argv") == build
+        assert _lines(state / "up.argv") == up
+        if build:
+            assert _lines(state / "compose_calls.log") == ["build", "up"]
+        if from_source:
+            assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "local"

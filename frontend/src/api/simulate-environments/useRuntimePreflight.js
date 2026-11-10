@@ -20,6 +20,8 @@ import { draftToPreflightPayload } from "src/api/simulate-environments/preflight
 export function useRuntimePreflight() {
   return useMutation({
     meta: { errorHandled: true },
+    // Its variables hold credential values: drop them once nothing observes it.
+    gcTime: 0,
     mutationFn: async ({ draft, credentialValues } = {}) => {
       const { payload, skipped } = draftToPreflightPayload(draft);
       if (skipped) throw new Error(skipped);

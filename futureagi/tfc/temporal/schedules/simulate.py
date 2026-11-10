@@ -59,10 +59,32 @@ SIMULATE_SCHEDULES: list[ScheduleConfig] = [
         description="Restart hosted environment chat runtimes that died with messages waiting",
     ),
     ScheduleConfig(
+        schedule_id="sweep-lost-agent-fixes",
+        activity_name="sweep_lost_agent_fixes",
+        interval_seconds=300,
+        queue="default",
+        description="End Fix my agent runs whose workflow is gone or that outlived their deadline",
+    ),
+    ScheduleConfig(
         schedule_id="seal-unsealed-hosted-harness-usage",
         activity_name="seal_unsealed_hosted_harness_usage",
         interval_seconds=600,
         queue="default",
         description="Re-enqueue usage sealing for hosted sandbox cleanups whose seal never ran",
+    ),
+    ScheduleConfig(
+        schedule_id="harness-github-poll",
+        activity_name="poll_harness_github_heads",
+        interval_seconds=600,
+        jitter_seconds=60,
+        queue="default",
+        description="Read the head commit of GitHub repositories that hosted environments watch and record new agent versions",
+    ),
+    ScheduleConfig(
+        schedule_id="tick-harness-nudges",
+        activity_name="tick_harness_nudges",
+        interval_seconds=30,
+        queue="default",
+        description="Move open environment rebuilds along and retry agent activations that waited for a busy environment",
     ),
 ]

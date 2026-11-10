@@ -22,10 +22,14 @@ from django.db.models import TextField
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast
 
-from simulate.models import CallExecution, TestExecution
+from simulate.models import CallExecution, HarnessSuiteMember, TestExecution
 from simulate.models.hosted_harness import HostedHarnessJob
 from simulate.models.scenarios import Scenarios
-from simulate.services.harness_scenarios import AuthoredPick, authored_candidates
+from simulate.services.harness_scenarios import (
+    AuthoredPick,
+    authored_candidates,
+    member_key,
+)
 from simulate.services.run_results_v3 import _row_dimensions
 from simulate.services.run_results_v3_expressions import (
     NUMERIC_JSON_PATTERN,
@@ -659,6 +663,38 @@ ORDER BY {ordering}
 """
 _CALL_FILTER = " AND id = ANY(%s::uuid[])"
 _CALLS_TABLE = CallExecution._meta.db_table
+
+
+def _member_values(content: Any) -> dict[str, Any]:
+    """A pinned suite member's values, in the picked scenario's shape.
+
+    The member is authoritative, as in the SQL read model: a value it lacks reads
+    empty rather than falling back to the authored scenario's.
+    """
+    if not isinstance(content, dict):
+        content = {}
+    persona = content.get("persona") if isinstance(content.get("persona"), dict) else {}
+    coverage = (
+        content.get("coverage") if isinstance(content.get("coverage"), dict) else {}
+    )
+    sub_goals = content.get("sub_goals")
+    return {
+        "use_case": _text_or_none(content.get("use_case")),
+        "sub_goals_text": None if sub_goals is None else json.dumps(sub_goals),
+        "accent": _text_or_none(persona.get("accent")),
+        "age_group": _text_or_none(persona.get("age_group")),
+        "overlay": _text_or_none(coverage.get("overlay")),
+        "task": _text_or_none(coverage.get("task")),
+    }
+
+
+def _text_or_none(value: Any) -> str | None:
+    # The SQL read uses ->>, which renders non-strings as JSON text.
+    if value is None:
+        return None
+    return value if isinstance(value, str) else json.dumps(value)
+
+
 _SCENARIO_FIELDS = (
     "job_id",
     "scenario_key",
@@ -718,12 +754,17 @@ def scan_call_values(
         [str(column["id"]) for column in columns],
     )
     jobs = list(
-        HostedHarnessJob.all_objects.filter(test_execution_id=execution.id).values_list(
-            "id", "environment_id"
-        )
+        HostedHarnessJob.all_objects.filter(test_execution_id=execution.id)
+        .order_by("-created_at", "-id")
+        .values_list("id", "environment_id", "suite_version_id", "deleted")
     )
-    own_jobs = {job_id for job_id, _ in jobs}
-    scenario_jobs = own_jobs | {env_id for _, env_id in jobs if env_id}
+    own_jobs = {job_id for job_id, *_ in jobs}
+    scenario_jobs = own_jobs | {env_id for _, env_id, *_ in jobs if env_id}
+    # A run pinned to a suite version shows that version's content; a deleted run job
+    # pins nothing, as in the SQL read model.
+    pinned_suite_id = next(
+        (suite for _, _, suite, deleted in jobs if suite and not deleted), None
+    )
     params: list[Any] = [str(execution.id)]
     if call_ids is not None:
         params.append([str(uuid.UUID(str(call_id))) for call_id in call_ids])
@@ -837,27 +878,50 @@ def scan_call_values(
         else []
     )
     authored = AuthoredPick(scenarios, own_jobs, scenario_jobs)
+    picks = [(entry, authored.pick(entry[1], entry[2])) for entry in unresolved]
+    members = (
+        dict(
+            HarnessSuiteMember.no_workspace_objects.using(
+                router.db_for_read(CallExecution)
+            )
+            .filter(
+                suite_version_id=pinned_suite_id,
+                scenario_key__in={
+                    member_key(entry[2], scenario) for entry, scenario in picks
+                }
+                - {None},
+            )
+            .values_list("scenario_key", "content")
+        )
+        if pinned_suite_id and picks
+        else {}
+    )
 
     # Rows still without a goal, with their dataset row and scenario fallbacks.
     pending_goals = []
-    for row, call_id, scenario_key, metadata_goals, row_id, fallbacks in unresolved:
-        scenario = authored.pick(call_id, scenario_key)
-        if scenario is not None:
+    for (row, _, scenario_key, metadata_goals, row_id, fallbacks), scenario in picks:
+        key = member_key(scenario_key, scenario)
+        values = (
+            _member_values(members[key])
+            if key in members
+            else None if scenario is None else scenario._asdict()
+        )
+        if values is not None:
             row["result_sub_goal"] = (
                 []
-                if scenario.sub_goals_text is None
-                else json.loads(scenario.sub_goals_text)
+                if values["sub_goals_text"] is None
+                else json.loads(values["sub_goals_text"])
             )
-            row["result_accent"] = _level(scenario.accent)
-            row["result_age"] = _level(scenario.age_group)
-            row["result_attack"] = _level(scenario.overlay)
-            row["result_task"] = _level(scenario.task)
+            row["result_accent"] = _level(values["accent"])
+            row["result_age"] = _level(values["age_group"])
+            row["result_attack"] = _level(values["overlay"])
+            row["result_task"] = _level(values["task"])
         # Twin: ``result_goal``'s Coalesce in run_results_v3_queries; change both.
         row["result_goal"] = next(
             (
                 value
                 for value in (
-                    None if scenario is None else _not_empty(scenario.use_case),
+                    None if values is None else _not_empty(values["use_case"]),
                     *metadata_goals,
                 )
                 if value is not None

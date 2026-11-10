@@ -10,6 +10,7 @@ import {
 } from "src/utils/utils";
 import _ from "lodash";
 import CircularProgressWithLabel from "src/components/circular-progress-with-label/CircularProgressWithLabel";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getScorePercentage = (s) => {
   if (s <= 0) s = 0;
@@ -70,20 +71,23 @@ const PerformanceDetailDrawer = ({
     );
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "80vh",
-          width: "550px",
+          width: "480px",
           position: "fixed",
           zIndex: 9999,
           top: "10%",
           right: 30,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -92,7 +96,7 @@ const PerformanceDetailDrawer = ({
         onClick={() => onClose()}
         sx={{ position: "absolute", top: "12px", right: "12px" }}
       >
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <Box
         sx={{
@@ -193,7 +197,7 @@ const DetailItem = ({ title, content }) => {
       </Box>
       <Box sx={{ gap: 1, display: "flex", flexDirection: "column" }}>
         <Box>
-          <Typography fontSize={14} fontWeight={700} color="text.disabled">
+          <Typography fontSize={13} fontWeight={600} color="text.disabled">
             {title}
           </Typography>
         </Box>

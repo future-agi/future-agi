@@ -8,12 +8,15 @@ import { getLoadingStateWithRespectiveStatus } from "src/sections/test-detail/co
 import PathAnalysisView from "./PathAnalysisView";
 import TranscriptView from "./TranscriptView";
 import VoiceAudioBridge from "./VoiceAudioBridge";
+import { LEFT_PANEL_TAB_SHAPE } from "./constants";
 
 const TABS = {
   TRANSCRIPT: "transcript",
   CHECKLIST: "checklist",
   GRAPH: "graph",
 };
+
+const NO_EXTRA_TABS = [];
 
 const PATH_VIEW_MODE = {
   [TABS.CHECKLIST]: "checklist",
@@ -39,6 +42,7 @@ const VoiceLeftPanel = ({
   scenarioId,
   embedded = false,
   hidePathTabs = false,
+  extraTabs = NO_EXTRA_TABS,
 }) => {
   const isSimulate = data?.module === "simulate";
   const [currentTab, setCurrentTab] = useState(TABS.TRANSCRIPT);
@@ -67,26 +71,33 @@ const VoiceLeftPanel = ({
       {
         label: "Transcript",
         value: TABS.TRANSCRIPT,
-        icon: "mdi:file-document-outline",
+        icon: "solar:document-text-linear",
       },
     ];
     if (showPathTabs) {
       t.push({
         label: "Checklist",
         value: TABS.CHECKLIST,
-        icon: "mdi:format-list-checks",
+        icon: "solar:list-check-linear",
       });
       t.push({
         label: "Graph",
         value: TABS.GRAPH,
-        icon: "mdi:graph-outline",
+        icon: "solar:graph-linear",
       });
     }
+    extraTabs.forEach(({ label, value, icon }) =>
+      t.push({ label, value, icon }),
+    );
     return t;
-  }, [showPathTabs]);
+  }, [showPathTabs, extraTabs]);
 
-  const isTranscriptTab = currentTab === TABS.TRANSCRIPT;
-  const isPathTab = currentTab === TABS.CHECKLIST || currentTab === TABS.GRAPH;
+  const selectedTab = tabs.some((tab) => tab.value === currentTab)
+    ? currentTab
+    : TABS.TRANSCRIPT;
+  const isTranscriptTab = selectedTab === TABS.TRANSCRIPT;
+  const activeExtraTab = extraTabs.find((tab) => tab.value === selectedTab);
+  const isPathTab = selectedTab === TABS.CHECKLIST || selectedTab === TABS.GRAPH;
 
   return (
     <Stack
@@ -103,7 +114,7 @@ const VoiceLeftPanel = ({
       {!embedded && (
         <Box sx={{ px: 1.25, flexShrink: 0 }}>
           <CompactTabs
-            value={currentTab}
+            value={selectedTab}
             onChange={(_, value) => setCurrentTab(value)}
             tabs={tabs}
           />
@@ -161,11 +172,11 @@ const VoiceLeftPanel = ({
                   >
                     <Typography
                       sx={{
-                        fontSize: 10,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: "text.secondary",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
+                        textTransform: "none",
+                        letterSpacing: 0,
                         mb: 0.5,
                       }}
                     >
@@ -191,10 +202,11 @@ const VoiceLeftPanel = ({
                 openedExecutionId={callExecutionId}
                 testExecutionId={data?.test_execution_id}
                 enabled={isPathTab}
-                viewMode={PATH_VIEW_MODE[currentTab]}
+                viewMode={PATH_VIEW_MODE[selectedTab]}
                 onRequestTranscript={() => setCurrentTab(TABS.TRANSCRIPT)}
               />
             </ShowComponent>
+            {activeExtraTab?.content}
           </>
         </ShowComponent>
       </Box>
@@ -207,6 +219,7 @@ VoiceLeftPanel.propTypes = {
   scenarioId: PropTypes.string,
   embedded: PropTypes.bool,
   hidePathTabs: PropTypes.bool,
+  extraTabs: PropTypes.arrayOf(LEFT_PANEL_TAB_SHAPE),
 };
 
 export default VoiceLeftPanel;

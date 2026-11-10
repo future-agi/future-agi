@@ -43,7 +43,7 @@ const PaginationBox = ({
             color: page === 1 ? "text.disabled" : "inherit",
           }}
         >
-          <Iconify icon="material-symbols:first-page" />
+          <Iconify icon="solar:chevron-first-linear" />
         </IconButton>
 
         {/* Previous page */}
@@ -55,7 +55,7 @@ const PaginationBox = ({
             color: page === 1 ? "text.disabled" : "inherit",
           }}
         >
-          <Iconify icon="mingcute:left-line" />
+          <Iconify icon="solar:alt-arrow-left-linear" />
         </IconButton>
 
         {/* Page counter */}
@@ -82,7 +82,7 @@ const PaginationBox = ({
             color: page >= totalPages ? "text.disabled" : "inherit",
           }}
         >
-          <Iconify icon="mingcute:right-line" />
+          <Iconify icon="solar:alt-arrow-right-linear" />
         </IconButton>
 
         {/* Last page */}
@@ -94,7 +94,7 @@ const PaginationBox = ({
             color: page >= totalPages ? "text.disabled" : "inherit",
           }}
         >
-          <Iconify icon="material-symbols:last-page" />
+          <Iconify icon="solar:chevron-last-linear" />
         </IconButton>
       </Box>
     </Box>

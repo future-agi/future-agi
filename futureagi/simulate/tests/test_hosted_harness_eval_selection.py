@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,6 +39,7 @@ BASE = "/simulate/api/harness/attempts"
 # Asserted against a freshly seeded database.
 VOICE_OFFER = [
     "advice_authority_boundary",
+    "audio_signal_metrics",
     "audio_quality",
     "claim_intake_accuracy",
     "conversation_coherence",
@@ -74,7 +76,8 @@ VOICE_OFFER.sort()
 # unclear_audio_handling takes call audio only and is tagged Audio alone, so a
 # chat run is never offered it.
 CHAT_OFFER = sorted(
-    set(VOICE_OFFER) - {"audio_quality", "unclear_audio_handling"}
+    set(VOICE_OFFER)
+    - {"audio_quality", "audio_signal_metrics", "unclear_audio_handling"}
     | {"bias_detection", "toxicity"}
 )
 # Legacy templates the catalog does not list.
@@ -206,7 +209,7 @@ def test_offer_matches_the_catalog(seeded_evals, organization, workspace):
     chat = [entry["name"] for entry in offered_evals(organization, workspace, "text")]
     assert voice == VOICE_OFFER, sorted(set(voice) ^ set(VOICE_OFFER))
     assert chat == CHAT_OFFER, sorted(set(chat) ^ set(CHAT_OFFER))
-    assert len(voice) == 31
+    assert len(voice) == 32
     assert len(chat) == 31
 
 
@@ -341,16 +344,16 @@ def test_pick_winner_breaks_a_tie_between_two_of_a_tenants_own_templates_by_crea
     database's default ordering, so this cannot pass by accident of a
     queryset's own order.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     from types import SimpleNamespace
 
     from simulate.services import harness_evals
 
     older = SimpleNamespace(
-        id="older", owner="user", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc)
+        id="older", owner="user", created_at=datetime(2026, 1, 1, tzinfo=UTC)
     )
     newer = SimpleNamespace(
-        id="newer", owner="user", created_at=datetime(2026, 1, 2, tzinfo=timezone.utc)
+        id="newer", owner="user", created_at=datetime(2026, 1, 2, tzinfo=UTC)
     )
 
     assert harness_evals._pick_winner([older, newer]).id == "newer"
@@ -452,6 +455,7 @@ def test_every_table_source_has_a_label():
         assert missing == [], missing
     assert set(_LABEL_BY_SOURCE.values()) == {
         "Call recording",
+        "Agent recording",
         "Transcript",
         "Agent instructions",
         "Scenario situation",
@@ -1377,6 +1381,26 @@ def test_a_changed_agent_prompt_reaches_a_new_version(organization, workspace):
     agent.refresh_from_db()
     assert agent.description == "Second."
     assert agent.latest_version.configuration_snapshot["description"] == "Second."
+
+
+@pytest.mark.django_db
+def test_a_fact_change_numbers_past_a_soft_deleted_top_version(organization, workspace):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="deleted-top-key", workspace=workspace
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    assert _provision(APIClient(), capability, agent_prompt="First.").status_code == 200
+    job.refresh_from_db()
+    agent = job.run_test.agent_definition
+    _record_target_agent_facts(job, agent, {"agent_prompt": "Second."})
+    top = agent.latest_version
+    top.delete()
+
+    _record_target_agent_facts(job, agent, {"agent_prompt": "Third."})
+
+    agent.refresh_from_db()
+    assert agent.latest_version.version_number == top.version_number + 1
+    assert agent.latest_version.configuration_snapshot["description"] == "Third."
 
 
 @pytest.mark.django_db

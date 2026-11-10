@@ -53,7 +53,7 @@ const DoubleClickEditCell = ({ dataset }) => {
         pb={0}
       >
         <Box>
-          <Typography color="text.primary" fontSize="16px" fontWeight="700">
+          <Typography color="text.primary" fontSize="16px" fontWeight="600">
             Edit {capitalized}
           </Typography>
         </Box>
@@ -65,7 +65,7 @@ const DoubleClickEditCell = ({ dataset }) => {
             p: 0,
           }}
         >
-          <Iconify width="24px" icon="mingcute:close-line" />
+          <Iconify width="24px" icon="solar:close-linear" />
         </IconButton>
       </Box>
     ) : (
@@ -93,7 +93,7 @@ const DoubleClickEditCell = ({ dataset }) => {
             onClick={onClose}
             sx={{ color: "text.primary" }}
           >
-            <Iconify width="24px" icon="mingcute:close-line" />
+            <Iconify width="24px" icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -105,9 +105,13 @@ const DoubleClickEditCell = ({ dataset }) => {
       <Dialog
         open={open && dataType !== "persona"}
         onClose={onClose}
-        maxWidth="md"
+        maxWidth={false}
         PaperProps={{
-          sx: { borderRadius: "0px !important", minWidth: "250px" },
+          sx: {
+            maxWidth: 960,
+            borderRadius: "0px !important",
+            minWidth: "250px",
+          },
         }}
       >
         {open && dataType !== null && <TitleComponent />}

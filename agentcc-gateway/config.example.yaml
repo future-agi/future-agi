@@ -12,10 +12,9 @@ server:
   max_request_body_size: 10485760 # 10MB
   default_request_timeout: 60s
   # The one ceiling on a request, over any x-agentcc-timeout header or
-  # per-model timeout. Unset, it becomes write_timeout, where the response
-  # write fails anyway; at that value the write deadline cuts the connection
-  # a moment before the timeout answers. Read at startup, like the rest of
-  # this block.
+  # per-model timeout. It may be longer than write_timeout, which then applies
+  # only to a response this ceiling does not govern. Unset, it becomes
+  # write_timeout. Read at startup, like the rest of this block.
   max_request_timeout: 300s
 
 providers:

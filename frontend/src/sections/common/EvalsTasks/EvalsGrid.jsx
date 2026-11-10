@@ -68,7 +68,7 @@ const EvalsGrid = forwardRef(
         suppressHeaderContextMenu: true,
         cellStyle: {
           padding: "0px 20px",
-          fontSize: "14px",
+          fontSize: "13px",
           height: "100%",
         },
       }),

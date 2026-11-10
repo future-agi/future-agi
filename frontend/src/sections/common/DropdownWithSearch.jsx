@@ -174,7 +174,8 @@ const DropdownWithSearch = ({
                   <CircularProgress size={16} />
                 ) : (
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ color: "text.disabled" }}
                   />
                 )}
