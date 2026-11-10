@@ -1407,6 +1407,30 @@ def test_a_call_actor_follows_the_sealed_persona_role_and_channel_rules(
     )
 
 
+def test_the_editor_offers_only_the_channels_that_reach_the_environment_s_agent(
+    user, workspace, storage, auth_client
+):
+    offered = {}
+    for modality in ("chat", "voice"):
+        environment = record_tests._environment(
+            user, workspace, f"actors-channels-{modality}"
+        )
+        record_authoring(
+            environment,
+            _authoring(contract={**CRM_CONTRACT, "modality": modality}),
+            origin="authoring",
+        )
+        listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+        offered[modality] = sorted(listed["channels"])
+    unknown = _built(user, workspace, "actors-channels-unknown")
+
+    assert offered == {
+        "chat": ["chat_message"],
+        "voice": ["audio_handoff", "audio_mix", "ivr"],
+    }
+    assert len(auth_client.get(f"{BASE}/{unknown.id}/actors/").json()["channels"]) == 4
+
+
 def test_a_call_keeps_its_trial_s_state_changes_and_actor_decisions_and_serves_them(
     organization, workspace
 ):

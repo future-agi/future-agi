@@ -308,6 +308,17 @@ def _stores(environment: HostedHarnessJob) -> Any:
     return _stage_output(environment, "stores")
 
 
+def _reachable_channels(rules: ActorRules, modality: str | None) -> dict[str, str]:
+    """The channels an actor can join through to reach this environment's agent; all of them before authoring
+    reports the agent's modality."""
+    reaches = rules.get("channel_modalities") or {}
+    return {
+        channel: about
+        for channel, about in (rules.get("channels") or {}).items()
+        if not modality or channel not in reaches or modality in reaches[channel]
+    }
+
+
 def _cast_view(
     environment_files: dict[str, bytes],
     suite_files: dict[str, bytes],
@@ -328,7 +339,7 @@ def _cast_view(
         "revision": draft.revision if draft is not None else 0,
         "record_schemas": rules["records"],
         "actions": world_actions(environment_files, rules),
-        "channels": rules.get("channels") or {},
+        "channels": _reachable_channels(rules, _modality(environment_files)),
         "loudness": rules.get("loudness") or {},
         "reserved_ids": list(rules.get("reserved_ids") or []),
         "knowledge_sources": knowledge_sources(environment_files, rules, stores),
