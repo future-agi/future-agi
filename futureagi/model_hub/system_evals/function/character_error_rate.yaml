@@ -19,13 +19,60 @@ config:
   output: score
   eval_type_id: CustomCodeEval
   config: {}
+  function_params_schema:
+    normalize:
+      type: boolean
+      default: false
+    tokenize:
+      type: string
+      default: null
+      nullable: true
+      enum: [auto, word, char]
   config_params_desc:
     reference: Ground truth text
     hypothesis: OCR/ASR output text
+    normalize: Casefold, fold full-width ASCII, remove ASCII/CJK punctuation and collapse whitespace (default false).
+    tokenize: 'auto: CJK characters plus other whitespace words; word: whitespace words; char: non-whitespace characters. Leave unset to preserve legacy tokenization (including spaces for CER).'
   code: |
     def evaluate(input, output, expected, context, **kwargs):
-        reference = str(kwargs.get("reference", expected or "")).strip().lower()
-        hypothesis = str(kwargs.get("hypothesis", output or "")).strip().lower()
+        def transcription_tokens(value, normalize=False, tokenize=None, character=False):
+            """Opt-in ASR normalization; an omitted tokenizer preserves legacy spacing."""
+            import re
+
+            if tokenize not in (None, "auto", "word", "char"):
+                raise ValueError("tokenize must be auto, word, char, or None")
+            text = str(value)
+            if normalize:
+                # Width folding, not NFKC: do not change other scripts or accents.
+                text = "".join(
+                    chr(ord(char) - 0xFEE0) if "！" <= char <= "～"
+                    else " " if char == "　" else char
+                    for char in text
+                ).casefold()
+                text = re.sub(
+                    r"[!-/:-@\[-`{-~‐-‧、-〃〈-】"
+                    r"〔-〟〰〽・｟-･]", "", text
+                )
+                text = " ".join(text.split())
+            else:
+                text = text.strip().lower()
+            if tokenize is None:
+                return list(text) if character else text.split()
+            if tokenize == "word":
+                return text.split()
+            if tokenize == "char":
+                return list("".join(text.split()))
+            # Han (including extensions), kana and Hangul are individual units;
+            # Latin and other non-CJK scripts remain whitespace-delimited words.
+            cjk = (
+                r"㐀-䶿一-鿿豈-﫿\U00020000-\U000323af"
+                r"぀-ヿㇰ-ㇿｦ-ﾟ\U0001b000-\U0001b16f"
+                r"ᄀ-ᇿ㄰-㆏ꥠ-꥿가-퟿"
+            )
+            return re.findall(f"[{cjk}]|[^{cjk}\\s]+", text)
+
+        reference = transcription_tokens(kwargs.get("reference", expected or ""), kwargs.get("normalize", False), kwargs.get("tokenize"), character=True)
+        hypothesis = transcription_tokens(kwargs.get("hypothesis", output or ""), kwargs.get("normalize", False), kwargs.get("tokenize"), character=True)
         if not reference and not hypothesis:
             return {"score": 1.0, "reason": "CER: 0.0% (both empty)"}
         if not reference:

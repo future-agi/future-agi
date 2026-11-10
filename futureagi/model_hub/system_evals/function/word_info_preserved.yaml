@@ -13,9 +13,58 @@ config:
   output: score
   eval_type_id: CustomCodeEval
   config: {}
-  config_params_desc: {reference: Ground truth, hypothesis: ASR output}
+  function_params_schema:
+    normalize:
+      type: boolean
+      default: false
+    tokenize:
+      type: string
+      default: null
+      nullable: true
+      enum: [auto, word, char]
+  config_params_desc:
+    reference: Ground truth
+    hypothesis: ASR output
+    normalize: Casefold, fold full-width ASCII, remove ASCII/CJK punctuation and collapse whitespace (default false).
+    tokenize: 'auto: CJK characters plus other whitespace words; word: whitespace words; char: non-whitespace characters. Leave unset to preserve legacy tokenization (including spaces for CER).'
   code: |
     def evaluate(input, output, expected, context, **kwargs):
+        def transcription_tokens(value, normalize=False, tokenize=None, character=False):
+            """Opt-in ASR normalization; an omitted tokenizer preserves legacy spacing."""
+            import re
+
+            if tokenize not in (None, "auto", "word", "char"):
+                raise ValueError("tokenize must be auto, word, char, or None")
+            text = str(value)
+            if normalize:
+                # Width folding, not NFKC: do not change other scripts or accents.
+                text = "".join(
+                    chr(ord(char) - 0xFEE0) if "！" <= char <= "～"
+                    else " " if char == "　" else char
+                    for char in text
+                ).casefold()
+                text = re.sub(
+                    r"[!-/:-@\[-`{-~‐-‧、-〃〈-】"
+                    r"〔-〟〰〽・｟-･]", "", text
+                )
+                text = " ".join(text.split())
+            else:
+                text = text.strip().lower()
+            if tokenize is None:
+                return list(text) if character else text.split()
+            if tokenize == "word":
+                return text.split()
+            if tokenize == "char":
+                return list("".join(text.split()))
+            # Han (including extensions), kana and Hangul are individual units;
+            # Latin and other non-CJK scripts remain whitespace-delimited words.
+            cjk = (
+                r"㐀-䶿一-鿿豈-﫿\U00020000-\U000323af"
+                r"぀-ヿㇰ-ㇿｦ-ﾟ\U0001b000-\U0001b16f"
+                r"ᄀ-ᇿ㄰-㆏ꥠ-꥿가-퟿"
+            )
+            return re.findall(f"[{cjk}]|[^{cjk}\\s]+", text)
+
         import Levenshtein
 
         def align_counts(ref, hyp):
@@ -42,8 +91,8 @@ config:
 
         reference_value = kwargs.get("reference", expected)
         hypothesis_value = kwargs.get("hypothesis", output)
-        ref = str(reference_value if reference_value is not None else "").strip().lower().split()
-        hyp = str(hypothesis_value if hypothesis_value is not None else "").strip().lower().split()
+        ref = transcription_tokens(reference_value if reference_value is not None else "", kwargs.get("normalize", False), kwargs.get("tokenize"))
+        hyp = transcription_tokens(hypothesis_value if hypothesis_value is not None else "", kwargs.get("normalize", False), kwargs.get("tokenize"))
         if not ref and not hyp: return {"score": 1.0, "reason": "WIP: 1.0 (both empty)"}
         if not ref or not hyp: return {"score": 0.0, "reason": "WIP: 0.0 (one empty)"}
         n = len(ref)
