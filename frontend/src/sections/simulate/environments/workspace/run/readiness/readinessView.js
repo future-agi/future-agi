@@ -80,6 +80,9 @@ export function readinessView(report) {
     ready: lines
       .filter((line) => line.status === "supported")
       .map((line) => line.area),
-    grading: { notGradable: notGradable.length },
+    grading: {
+      gradable: selection.grading?.gradable ?? 0,
+      notGradable: notGradable.length,
+    },
   };
 }

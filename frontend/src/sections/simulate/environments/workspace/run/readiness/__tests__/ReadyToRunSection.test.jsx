@@ -58,6 +58,26 @@ beforeEach(() => {
 });
 
 describe("ReadyToRunSection", () => {
+  it("calls nothing ready before anything is checked", () => {
+    report = {
+      pairing: { evidence: "none" },
+      validation: { state: "not_run", error: null },
+      answer: { kind: "unchecked" },
+      areas: [],
+      rows: [],
+      selection: {
+        requested: 3,
+        eligible: 0,
+        blocked: 0,
+        untested: 3,
+        grading: { gradable: 0, not_gradable: [] },
+      },
+    };
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    expect(screen.getByText(/Not checked yet/)).toBeVisible();
+    expect(screen.queryByText(/ready:/)).toBeNull();
+  });
+
   it("opens a re-check-only line on Fix with its reason and Re-check inside", async () => {
     report = blockedReport("pair");
     report.rows[0].fix = {

@@ -215,7 +215,10 @@ export default function ReadyToRunSection({
   };
   const blockers = view.open.filter((line) => line.status === "blocked").length;
   const readyLabels = view.ready.map((area) => COPY.areas[area] || area);
-  if (!view.grading.notGradable) readyLabels.push(COPY.areas.grading);
+  // Grading is ready only once some scenario is known to be gradable.
+  if (view.grading.gradable > 0 && !view.grading.notGradable) {
+    readyLabels.push(COPY.areas.grading);
+  }
   const noteState = checking ? "checking" : view.state;
   const note = stateText(noteState, view.stateReason);
 
@@ -267,69 +270,72 @@ export default function ReadyToRunSection({
           </Typography>
         </Stack>
       )}
-      {view.open.map((line) => (
-        <FixLine
-          key={line.area}
-          line={line}
-          onRecheck={() => runRecheck(line.area)}
-          onRetryAgent={() => runRetryAgent(line.area)}
-          inFlight={checking && pressed === line.area}
-          checking={checking}
-          busy={busy}
-        />
-      ))}
-      {view.limits.map((line) => (
-        <Stack
-          key={line.area}
-          direction="row"
-          spacing={1}
-          alignItems="center"
-          sx={dimSx}
-        >
-          <StatusBadge
-            status={line.status}
-            label={COPY.areas[line.area] || line.area}
-            variant="dot"
+      {/* The lines scroll inside the section once opened fixes make it tall. */}
+      <Box sx={{ maxHeight: 320, overflowY: "auto" }}>
+        {view.open.map((line) => (
+          <FixLine
+            key={line.area}
+            line={line}
+            onRecheck={() => runRecheck(line.area)}
+            onRetryAgent={() => runRetryAgent(line.area)}
+            inFlight={checking && pressed === line.area}
+            checking={checking}
+            busy={busy}
           />
-          <Typography
-            noWrap
-            sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+        ))}
+        {view.limits.map((line) => (
+          <Stack
+            key={line.area}
+            direction="row"
+            spacing={1}
+            alignItems="center"
+            sx={dimSx}
           >
-            {line.reason}
-          </Typography>
-        </Stack>
-      ))}
-      {view.grading.notGradable > 0 && (
-        <Stack direction="row" spacing={1} alignItems="center" sx={dimSx}>
-          <StatusBadge
-            status="partial"
-            label={COPY.areas.grading}
-            variant="dot"
-          />
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {COPY.notGradable(view.grading.notGradable)}
-          </Typography>
-        </Stack>
-      )}
-      {readyLabels.length > 0 && (
-        <Stack direction="row" spacing={0.75} alignItems="center" sx={dimSx}>
-          <StatusBadge
-            status="supported"
-            label=""
-            variant="dot"
-            sx={{ gap: 0 }}
-          />
-          <Typography
-            noWrap
-            sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
-          >
-            {COPY.moreReady(
-              readyLabels,
-              view.open.length === 0 && view.limits.length === 0,
-            )}
-          </Typography>
-        </Stack>
-      )}
+            <StatusBadge
+              status={line.status}
+              label={COPY.areas[line.area] || line.area}
+              variant="dot"
+            />
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+            >
+              {line.reason}
+            </Typography>
+          </Stack>
+        ))}
+        {view.grading.notGradable > 0 && (
+          <Stack direction="row" spacing={1} alignItems="center" sx={dimSx}>
+            <StatusBadge
+              status="partial"
+              label={COPY.areas.grading}
+              variant="dot"
+            />
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              {COPY.notGradable(view.grading.notGradable)}
+            </Typography>
+          </Stack>
+        )}
+        {readyLabels.length > 0 && (
+          <Stack direction="row" spacing={0.75} alignItems="center" sx={dimSx}>
+            <StatusBadge
+              status="supported"
+              label=""
+              variant="dot"
+              sx={{ gap: 0 }}
+            />
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+            >
+              {COPY.moreReady(
+                readyLabels,
+                view.open.length === 0 && view.limits.length === 0,
+              )}
+            </Typography>
+          </Stack>
+        )}
+      </Box>
     </Box>
   );
 }
