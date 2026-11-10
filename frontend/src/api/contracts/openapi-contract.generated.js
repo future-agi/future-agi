@@ -64211,7 +64211,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         language_model_id: {
           title: "Language model id",
           type: "string",
-          default: "gpt-4",
+          default: "gpt-4o",
           minLength: 1,
         },
         concurrency: {
@@ -82834,7 +82834,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         model: {
           title: "Model",
           type: "string",
-          default: "gpt-4",
+          default: "gpt-4o",
           maxLength: 100,
           minLength: 1,
         },

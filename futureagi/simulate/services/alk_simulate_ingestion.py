@@ -1293,7 +1293,7 @@ def _simulator_llm_model() -> str:
     """The model the simulated caller runs on, so the stored value matches the one that spoke."""
     import os
 
-    return str(os.environ.get("SIMULATOR_LLM_MODEL") or "gpt-4").strip()
+    return str(os.environ.get("SIMULATOR_LLM_MODEL") or "gpt-4.1").strip()
 
 
 def _resolve_simulator_agent(scenario, run_test, selected_version) -> SimulatorAgent:

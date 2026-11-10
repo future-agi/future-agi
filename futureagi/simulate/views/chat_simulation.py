@@ -303,7 +303,7 @@ class TestExecutionChatBatchView(APIView):
                                 prompt=fallback_prompt,
                                 voice_provider="vapi",
                                 voice_name="marissa",
-                                model="gpt-4",
+                                model="gpt-4o",
                                 llm_temperature=0.7,
                                 initial_message="Hi!",
                                 max_call_duration_in_minutes=30,

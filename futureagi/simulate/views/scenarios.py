@@ -558,7 +558,7 @@ class CreateScenarioView(APIView):
                 prompt=agent_prompt,
                 voice_provider=validated_data.get("voice_provider", "elevenlabs"),
                 voice_name=validated_data.get("voice_name", "marissa"),
-                model=validated_data.get("model", "gpt-4"),
+                model=validated_data.get("model", "gpt-4o"),
                 llm_temperature=validated_data.get("llm_temperature", 0.7),
                 initial_message=validated_data.get("initial_message", ""),
                 max_call_duration_in_minutes=validated_data.get(
