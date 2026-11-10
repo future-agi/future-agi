@@ -472,6 +472,9 @@ def _ensure_workflows_registered() -> None:
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
         from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
+        from simulate.temporal.workflows.certification_case_workflow import (
+            CertificationCaseWorkflow,
+        )
         from simulate.temporal.workflows.certification_workflow import (
             ProductionCertificationWorkflow,
         )
@@ -487,6 +490,7 @@ def _ensure_workflows_registered() -> None:
             workflows=[
                 SimulationRunnerWorkflow,
                 HostedHarnessGatewayWorkflow,
+                CertificationCaseWorkflow,
                 ProductionCertificationWorkflow,
                 AgentFixWorkflow,
             ],

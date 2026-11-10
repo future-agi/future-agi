@@ -87,6 +87,11 @@ class CertificationCampaign(BaseModel):
                 fields=["organization", "idempotency_key"],
                 name="uniq_cert_campaign_org_idempotency",
             ),
+            models.UniqueConstraint(
+                fields=["organization"],
+                condition=models.Q(state__in=("pending", "running", "canceling")),
+                name="uniq_active_cert_campaign_org",
+            ),
         ]
         indexes = [
             models.Index(fields=["organization", "state"]),

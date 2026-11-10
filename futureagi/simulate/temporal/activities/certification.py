@@ -56,12 +56,28 @@ async def certification_load_cases(
                 CertificationCase.State.RECONCILING,
             ),
         ).order_by("sequence")
+        max_duration_seconds = int(
+            (campaign.normalized_suite.get("defaults") or {}).get(
+                "max_duration_seconds", 7200
+            )
+        )
+
+        def case_input(case) -> CertificationCaseInput:
+            return CertificationCaseInput(
+                case_id=str(case.id),
+                max_duration_seconds=max_duration_seconds,
+            )
+
         return CertificationCasesOutput(
-            pending_case_ids=[
-                str(c.id) for c in cases if c.state == CertificationCase.State.PENDING
+            pending_cases=[
+                case_input(case)
+                for case in cases
+                if case.state == CertificationCase.State.PENDING
             ],
-            active_case_ids=[
-                str(c.id) for c in cases if c.state != CertificationCase.State.PENDING
+            active_cases=[
+                case_input(case)
+                for case in cases
+                if case.state != CertificationCase.State.PENDING
             ],
             max_active_cases=campaign.max_active_cases,
             cancel_requested=campaign.cancel_requested_at is not None,

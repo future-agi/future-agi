@@ -10,12 +10,13 @@ class CertificationWorkflowInput:
 class CertificationCaseInput:
     case_id: str
     expected_terminal: str = "completed"
+    max_duration_seconds: int = 7200
 
 
 @dataclass(frozen=True)
 class CertificationCasesOutput:
-    pending_case_ids: list[str] = field(default_factory=list)
-    active_case_ids: list[str] = field(default_factory=list)
+    pending_cases: list[CertificationCaseInput] = field(default_factory=list)
+    active_cases: list[CertificationCaseInput] = field(default_factory=list)
     max_active_cases: int = 2
     cancel_requested: bool = False
 

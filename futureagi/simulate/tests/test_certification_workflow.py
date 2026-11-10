@@ -31,6 +31,9 @@ from simulate.temporal.types.certification import (
     CertificationSubmitOutput,
     CertificationWorkflowInput,
 )
+from simulate.temporal.workflows.certification_case_workflow import (
+    CertificationCaseWorkflow,
+)
 from simulate.temporal.workflows.certification_workflow import (
     ProductionCertificationWorkflow,
 )
@@ -39,10 +42,13 @@ from simulate.temporal.workflows.certification_workflow import (
 class RecordingActivities:
     """In-memory stand-ins for the DB-backed certification activities."""
 
-    def __init__(self, case_ids, fail_case_ids=(), done_after=1):
+    def __init__(
+        self, case_ids, fail_case_ids=(), done_after=1, max_duration_seconds=7200
+    ):
         self.case_ids = list(case_ids)
         self.fail_case_ids = set(fail_case_ids)
         self.done_after = done_after
+        self.max_duration_seconds = max_duration_seconds
         self.submitted = []
         self.canceled = []
         self.poll_calls = {}
@@ -55,7 +61,13 @@ class RecordingActivities:
     @activity.defn(name="certification_load_cases")
     async def load(self, _input: CertificationCampaignInput):
         return CertificationCasesOutput(
-            pending_case_ids=list(self.case_ids),
+            pending_cases=[
+                CertificationCaseInput(
+                    case_id=case_id,
+                    max_duration_seconds=self.max_duration_seconds,
+                )
+                for case_id in self.case_ids
+            ],
             max_active_cases=2,
         )
 
@@ -136,7 +148,7 @@ async def test_caps_concurrency_at_two_and_completes_every_case(
         async with Worker(
             env.client,
             task_queue=QUEUE_RUNNER,
-            workflows=[ProductionCertificationWorkflow],
+            workflows=[CertificationCaseWorkflow, ProductionCertificationWorkflow],
             activities=acts.all(),
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
@@ -166,7 +178,7 @@ async def test_case_failure_does_not_stop_the_campaign(
         async with Worker(
             env.client,
             task_queue=QUEUE_RUNNER,
-            workflows=[ProductionCertificationWorkflow],
+            workflows=[CertificationCaseWorkflow, ProductionCertificationWorkflow],
             activities=acts.all(),
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
@@ -198,7 +210,7 @@ async def test_cancel_signal_drains_running_and_skips_pending(
         async with Worker(
             env.client,
             task_queue=QUEUE_RUNNER,
-            workflows=[ProductionCertificationWorkflow],
+            workflows=[CertificationCaseWorkflow, ProductionCertificationWorkflow],
             activities=acts.all(),
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
@@ -254,7 +266,7 @@ async def test_reconcile_failure_marks_case_failed_but_campaign_continues(
         async with Worker(
             env.client,
             task_queue=QUEUE_RUNNER,
-            workflows=[ProductionCertificationWorkflow],
+            workflows=[CertificationCaseWorkflow, ProductionCertificationWorkflow],
             activities=activity_list,
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
@@ -270,3 +282,34 @@ async def test_reconcile_failure_marks_case_failed_but_campaign_continues(
     # Result recording still ran for the failed case with its failure class.
     assert ("case-a", "failed") in acts.recorded
     assert ("case-b", "completed") in acts.recorded
+
+
+@pytest.mark.asyncio
+async def test_case_deadline_cancels_stuck_job_and_fails_case(
+    temporal_test_server_options,
+):
+    acts = RecordingActivities(
+        ["case-stuck"],
+        done_after=999_999,
+        max_duration_seconds=60,
+    )
+    async with await WorkflowEnvironment.start_time_skipping(
+        **temporal_test_server_options
+    ) as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE_RUNNER,
+            workflows=[CertificationCaseWorkflow, ProductionCertificationWorkflow],
+            activities=acts.all(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            result = await env.client.execute_workflow(
+                ProductionCertificationWorkflow.run,
+                CertificationWorkflowInput(campaign_id="camp-deadline"),
+                id=f"cert-{uuid.uuid4()}",
+                task_queue=QUEUE_RUNNER,
+            )
+
+    assert acts.canceled == ["case-stuck"]
+    assert ("case-stuck", "failed") in acts.recorded
+    assert result.cases_failed == 1

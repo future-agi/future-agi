@@ -12,6 +12,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from simulate.models import (
@@ -176,6 +177,26 @@ def _job(organization, workspace, state=HostedHarnessJob.State.COMPLETED):
         deadline_at=timezone.now() + timedelta(hours=1),
         current_attempt_number=1,
     )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_only_one_campaign_per_organization_can_be_active(organization, workspace):
+    campaign, _case = _campaign(organization, workspace)
+    values = {
+        "organization": organization,
+        "workspace": workspace,
+        "deployment_id": "dep-2",
+        "suite_key": "test_agents_v1",
+        "suite_digest": "sha256:" + "1" * 64,
+        "idempotency_key": f"certification:dep-2:{uuid.uuid4()}",
+    }
+
+    with pytest.raises(IntegrityError), transaction.atomic():
+        CertificationCampaign.no_workspace_objects.create(**values)
+
+    campaign.state = CertificationCampaign.State.COMPLETED
+    campaign.save(update_fields=["state", "updated_at"])
+    assert CertificationCampaign.no_workspace_objects.create(**values).id
 
 
 def _complete_evidence(job, organization, workspace):
@@ -543,7 +564,10 @@ def test_failed_terminal_receipts_are_stable_behavior_failures(
         attempt_number=1,
         digest="sha256:" + "2" * 64,
         status="failed",
-        body={"evaluations": [{"name": "tone", "status": "failed"}]},
+        body={
+            "evaluations": [],
+            "sub_goals": [{"name": "tone", "held": False, "reason": "tone changed"}],
+        },
     )
     failures = detect_stable_behavior_failures(case)
     assert len(failures) == 1
@@ -564,7 +588,8 @@ def test_unreviewed_grade_failure_is_alert_only(organization, workspace):
     receipt.status = "failed"
     receipt.body = {
         **receipt.body,
-        "evaluations": [{"name": "tone", "status": "failed"}],
+        "evaluations": [],
+        "sub_goals": [{"name": "tone", "held": False, "reason": "tone changed"}],
     }
     receipt.save(update_fields=["status", "body"])
 
