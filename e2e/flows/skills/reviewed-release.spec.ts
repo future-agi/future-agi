@@ -194,8 +194,9 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
       const submitted = annotated.request().postDataJSON();
       expect(submitted).toMatchObject({ annotation_revision: 0, verdict: 'agree', cited_text: '{"eligible":false}' });
       expect(await probe.pg('SELECT actor_id::text, check_id::text, attempt_id::text, revision, verdict, cited_text FROM model_hub_hubskillevidenceannotation WHERE source_id = $1', [first.id]))
-        .toEqual([{ actor_id: member.userId, check_id: submitted.check_id, attempt_id: submitted.attempt_id, revision: 1, verdict: 'agree', cited_text: '{"eligible":false}' }]);
+        .toEqual([{ actor_id: member.userId, check_id: submitted.check_id, attempt_id: submitted.attempt_id, revision: '1', verdict: 'agree', cited_text: '{"eligible":false}' }]);
       expect(await machineResults()).toEqual(before);
+      await testInfo.attach('human-review-preserves-machine-grade', { body: await page.screenshot(), contentType: 'image/png' });
       await page.getByRole('button', { name: 'Close attempt evidence', exact: true }).click();
       await testInfo.attach('initial-failure', { body: await page.screenshot(), contentType: 'image/png' });
     }, { timeout: UI_READY });
