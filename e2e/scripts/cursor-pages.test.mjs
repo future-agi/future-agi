@@ -32,11 +32,31 @@ function walk(sizes) {
   return pages;
 }
 
-for (const sizes of [[10, 3], [5, 5, 3], [5, 0, 5, 3], [7, 6], [13]]) {
+for (const sizes of [[10, 3], [5, 5, 3], [5, 0, 5, 3], [7, 6]]) {
   test(`logical pages are invariant under ${sizes.join('+')} transport chunks`, () => {
     assert.deepEqual(walk(sizes), [rows.slice(0, 10), rows.slice(10)]);
   });
 }
+
+test('a chunk larger than page_size is rejected, so an ignored page_size fails', () => {
+  assert.throws(() => accumulator().append(chunk(rows, 13)), /exceeds the requested page_size 10/);
+  const list = accumulator();
+  list.append(chunk(rows.slice(0, 2), 2, 'a'));
+  assert.throws(() => list.append(chunk(rows.slice(2, 13), 13)), /11 rows exceeds/);
+});
+
+test('a nonterminal lower bound must track the rows seen so far', () => {
+  for (const total of [0, 9, 12, 999]) {
+    assert.throws(() => accumulator().append(chunk(rows.slice(0, 10), total, 'a')),
+      new RegExp(`lower bound ${total} must be 10 seen rows or 11`));
+  }
+  // Exactly the seen rows, or one more when an unseen match is proven.
+  for (const total of [10, 11]) accumulator().append(chunk(rows.slice(0, 10), total, 'a'));
+  const empty = accumulator();
+  empty.append(chunk(rows.slice(0, 4), 4, 'a'));
+  empty.append(chunk([], 4, 'b'));
+  assert.throws(() => empty.append(chunk([], 3, 'c')), /lower bound 3 must be 4 seen rows or 5/);
+});
 
 test('overflow survives a nonterminal page boundary', () => {
   const list = accumulator();
@@ -92,8 +112,8 @@ test('rejects missing continuations and inaccurate terminal totals', () => {
   const missing = chunk(rows.slice(0, 5), 5, 'a');
   delete missing.metadata.next_cursor;
   assert.throws(() => accumulator().append(missing), /requires a continuation cursor/);
-  assert.throws(() => accumulator().append(chunk(rows, 12)), /exact accumulated total/);
-  const lowerBound = chunk(rows, 13);
+  assert.throws(() => accumulator().append(chunk(rows.slice(0, 3), 2)), /exact accumulated total/);
+  const lowerBound = chunk(rows.slice(0, 3), 3);
   lowerBound.metadata.total_rows_is_lower_bound = true;
   assert.throws(() => accumulator().append(lowerBound), /exact accumulated total/);
 });

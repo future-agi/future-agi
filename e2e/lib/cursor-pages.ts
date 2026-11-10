@@ -65,6 +65,10 @@ export class CursorPageAccumulator<Row> {
     if (this.mode && this.mode !== mode) throw new Error('List changed pagination contract mid-walk');
     if (!Number.isInteger(metadata.total_rows) || metadata.total_rows < 0)
       throw new Error('List total must be a nonnegative integer');
+    // Chunks may be short, never oversized: the server slices at most
+    // page_size rows per response, so a larger chunk means page_size was ignored.
+    if (table.length > this.pageSize)
+      throw new Error(`Chunk of ${table.length} rows exceeds the requested page_size ${this.pageSize}`);
     const incoming = table.map(this.identify);
     const unique = new Set(incoming);
     if (incoming.some(id => !id || this.seenIds.has(id)) || unique.size !== incoming.length)
@@ -80,6 +84,10 @@ export class CursorPageAccumulator<Row> {
         if (this.seenCursors.has(cursor)) throw new Error('Stalled or cycling continuation cursor');
         if (metadata.total_rows_is_lower_bound !== true)
           throw new Error('Nonterminal cursor total must be a lower bound');
+        // cursor_page_metadata: the rows seen so far, plus one only when an
+        // unseen match beyond this chunk is already proven.
+        if (metadata.total_rows !== count && metadata.total_rows !== count + 1)
+          throw new Error(`Nonterminal lower bound ${metadata.total_rows} must be ${count} seen rows or ${count + 1}`);
         this.seenCursors.add(cursor);
       } else if (metadata.next_cursor != null) {
         throw new Error('Terminal response must not carry a continuation cursor');
