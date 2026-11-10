@@ -64,22 +64,24 @@ function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
             variant="dot"
           />
         </Box>
+        {/* One line here; the full reason and what it means on hover. */}
         <CustomTooltip
-          show={Boolean(line.consequence)}
-          title={line.consequence}
+          show={Boolean(line.reason)}
+          title={
+            <Box sx={{ whiteSpace: "pre-line" }}>
+              {[line.reason, line.consequence].filter(Boolean).join("\n\n")}
+            </Box>
+          }
           size="small"
           arrow
         >
           <Typography
+            noWrap
             sx={{
               typography: "s3",
               color: "text.secondary",
               flex: 1,
               minWidth: 0,
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
             }}
           >
             {line.reason}
