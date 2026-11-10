@@ -268,7 +268,7 @@ export function inspectManagedMock({ evalBackground = false }: { evalBackground?
 }
 
 function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceipt {
-  for (const endpoint of [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl]) {
+  for (const endpoint of [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl, E2E.googleMockUrl]) {
     requireSafe(new URL(endpoint).hostname === 'localhost', 'requires localhost endpoints');
   }
   const context = process.env.DOCKER_CONTEXT || (process.env.CI ? 'default' : '');
