@@ -1,11 +1,10 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
-
-import Iconify from "src/components/iconify";
+import { Box, Typography } from "@mui/material";
 
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import SideDrawer from "../../components/SideDrawer";
 
+import CheckLine from "./CheckLine";
 import FixStatusChip from "./FixStatusChip";
 import {
   checksLine,
@@ -13,7 +12,6 @@ import {
   headline,
   pct,
   pts,
-  tierIcon,
   winnerOf,
 } from "./fixRunView";
 
@@ -37,46 +35,6 @@ const rate = (r) => `${pct(r[0])}% → ${pct(r[1])}%`;
 const gain = (r) => {
   const d = pts(r);
   return d ? `${d > 0 ? "↑" : "↓"} ${Math.abs(d)} pts` : "";
-};
-
-// One check's status, name and detail. A check that could not measure reads
-// skipped, which the drawer says as "not verified".
-function CheckLine({ check, sx }) {
-  return (
-    <Stack direction="row" spacing={1} alignItems="center" sx={sx}>
-      <Iconify
-        icon={tierIcon(check.status)}
-        width={14}
-        sx={{
-          color: check.status === "failed" ? BUILD_TONES.red : "text.secondary",
-          flexShrink: 0,
-        }}
-      />
-      <Typography sx={{ typography: "s3", fontWeight: 600, width: 90 }}>
-        {check.name}
-      </Typography>
-      {check.status === "skipped" && (
-        <Typography
-          noWrap
-          sx={{
-            typography: "s3",
-            fontWeight: 600,
-            color: "text.secondary",
-            flexShrink: 0,
-          }}
-        >
-          not verified
-        </Typography>
-      )}
-      <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-        {check.detail}
-      </Typography>
-    </Stack>
-  );
-}
-CheckLine.propTypes = {
-  check: PropTypes.object.isRequired,
-  sx: PropTypes.object,
 };
 
 // "How it was decided", laid out as the design's decision drawer: the evidence
@@ -230,13 +188,14 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
               </Box>
               {v.tiers.map((t, i) => (
                 <Box key={t.name} sx={rowSx(i + 1)}>
-                  <CheckLine check={t} />
+                  <CheckLine check={t} nameWidth={90} />
                   {/* A tier that holds several checks, such as each ceiling,
                       shows what each one verified. */}
                   {(t.parts || []).map((part) => (
                     <CheckLine
                       key={part.name}
                       check={part}
+                      nameWidth={90}
                       sx={{ pl: 3, mt: 0.5 }}
                     />
                   ))}

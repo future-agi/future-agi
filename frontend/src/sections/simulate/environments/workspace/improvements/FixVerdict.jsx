@@ -10,10 +10,10 @@ import {
   checksLine,
   headline,
   pct,
-  tierIcon,
   verdictCards,
   winnerOf,
 } from "./fixRunView";
+import CheckLine from "./CheckLine";
 import { heldBackTally } from "./scenarioOutcomes";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
@@ -125,32 +125,20 @@ function Checks({ tiers }) {
           }}
         >
           {tiers.map((t) => (
-            <Stack
-              key={t.name}
-              direction="row"
-              alignItems="center"
-              spacing={0.75}
-              sx={{ minWidth: 0 }}
-            >
-              <Iconify
-                icon={tierIcon(t.status)}
-                width={14}
-                sx={{
-                  color:
-                    t.status === "failed" ? BUILD_TONES.red : "text.secondary",
-                  flexShrink: 0,
-                }}
-              />
-              <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
-                {t.name}
-              </Typography>
-              <Typography
-                noWrap
-                sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
-              >
-                {t.detail}
-              </Typography>
-            </Stack>
+            <Box key={t.name} sx={{ minWidth: 0 }}>
+              <CheckLine check={t} variant="s2" noWrap />
+              {/* A tier that holds several checks, such as each ceiling,
+                  shows what each one verified. */}
+              {(t.parts || []).map((part) => (
+                <CheckLine
+                  key={part.name}
+                  check={part}
+                  variant="s2"
+                  noWrap
+                  sx={{ pl: 2.75 }}
+                />
+              ))}
+            </Box>
           ))}
         </Box>
       )}

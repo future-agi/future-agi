@@ -146,6 +146,48 @@ describe("FixVerdict", () => {
     expect(screen.getAllByText("not verified")).toHaveLength(1);
   });
 
+  const withCeilingParts = () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.verdict.tiers = [
+      ...winner.verdict.tiers.filter((t) => t.name !== "ceilings"),
+      {
+        name: "ceilings",
+        status: "skipped",
+        detail: "reply latency within; agent cost not verified",
+        parts: [
+          {
+            name: "reply latency",
+            status: "passed",
+            detail: "median 1.1 s, baseline 1 s: within",
+          },
+          {
+            name: "agent cost",
+            status: "skipped",
+            detail: "the agent's model calls are not traced",
+          },
+        ],
+      },
+    ];
+    return fix;
+  };
+
+  it("shows each ceiling's own status in the verdict's full list of checks", async () => {
+    renderUi(<FixVerdict fix={withCeilingParts()} />);
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Show all" }));
+
+    const latency = screen.getByText("reply latency").parentElement;
+    const cost = screen.getByText("agent cost").parentElement;
+    expect(within(latency).queryByText("not verified")).toBeNull();
+    expect(
+      within(latency).getByText("median 1.1 s, baseline 1 s: within"),
+    ).toBeInTheDocument();
+    expect(within(cost).getByText("not verified")).toBeInTheDocument();
+  });
+
   it("shows each ceiling's own status in the decision drawer", () => {
     const fix = fixOf("fix-ready-archive");
     const winner = fix.candidates.find((c) => c.outcome === "winner");
