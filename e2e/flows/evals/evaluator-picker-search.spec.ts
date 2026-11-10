@@ -46,6 +46,12 @@ test('EVAL-E2E-013: a Jev choice stays under the pointer while ordinary model se
 }, async ({ page, actor }, testInfo) => {
   test.setTimeout(540_000); // 2 viewports × 4 UI_READY stages + 60s API/cleanup headroom.
   page.setDefaultTimeout(UI_READY);
+  // Exercise the same geometry in light mode and, at the shorter height, dark.
+  await page.addInitScript(() => {
+    const settings = JSON.parse(localStorage.getItem('settings') || '{}');
+    localStorage.setItem('settings', JSON.stringify({ ...settings,
+      themeMode: window.innerHeight < 600 ? 'dark' : 'light' }));
+  });
   const keyWrites: string[] = [];
   page.on('request', request => {
     if (new URL(request.url()).pathname.startsWith(API_KEYS) && request.method() !== 'GET') {
@@ -135,6 +141,7 @@ test('EVAL-E2E-013: a Jev choice stays under the pointer while ordinary model se
         // MUI rounds its top position to CSS pixels; tolerate a subpixel edge.
         expect(footprint.y).toBeGreaterThanOrEqual(15.5);
         expect(footprint.y + footprint.height).toBeLessThanOrEqual(height - 15.5);
+        await testInfo.attach(`picker-${height}`, { contentType: 'image/png', body: await page.screenshot() });
         const beforeLoading = samples.filter(sample => !sample.loading).at(-1);
         expect(beforeLoading, 'must observe the filtered row before the ordinary search starts').toBeDefined();
         const duringLoading = (await latest.boundingBox())!;
@@ -166,7 +173,10 @@ test('EVAL-E2E-013: a Jev choice stays under the pointer while ordinary model se
         await ui(drawer).toHaveCount(1);
         await ui(drawer).toBeVisible();
         await ui(drawer.locator('form').nth(0).getByText('TypeSafe', { exact: true })).toBeVisible();
-        await ui(page.getByRole('button', { name: 'Evaluation model: Select model', exact: true })).toBeVisible();
+        // The modal drawer aria-hides the editor, but its model pill must still
+        // carry the unselected value underneath it.
+        await ui(page.getByRole('button', { name: 'Evaluation model: Select model', exact: true,
+          includeHidden: true })).toBeVisible();
         await ui(page.getByText('Jev latest', { exact: true })).toHaveCount(0);
         await testInfo.attach(`drawer-${height}`, { contentType: 'image/png', body: await page.screenshot() });
       }, { timeout: UI_READY });

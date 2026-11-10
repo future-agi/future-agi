@@ -1102,7 +1102,7 @@
 
 **Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:280`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:305`
 
 **Tags:** —
 
@@ -1126,7 +1126,7 @@
 
 **Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:351`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:376`
 
 **Tags:** —
 
@@ -1151,7 +1151,7 @@
 
 **Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:406`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:431`
 
 **Tags:** —
 
@@ -1176,7 +1176,7 @@
 
 **Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:485`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:510`
 
 **Tags:** —
 
@@ -1201,7 +1201,7 @@
 
 **Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:182`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:207`
 
 **Tags:** —
 

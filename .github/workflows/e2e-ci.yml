@@ -363,9 +363,8 @@ jobs:
         id: boot
         run: bin/e2e up
 
-      # Temporary red-proof invocation; restore the full suite with the fix.
       - name: Run E2E suite
-        run: bin/e2e test flows/evals/jev-evaluator-models.spec.ts flows/evals/evaluator-picker-search.spec.ts
+        run: bin/e2e test
 
       - name: Prove host update assertion fallibility
         id: host-update-fallibility
