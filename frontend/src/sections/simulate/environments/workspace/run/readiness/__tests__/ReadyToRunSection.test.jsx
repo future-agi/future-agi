@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, waitFor } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // The report the server answered, and what the buttons asked for.
@@ -58,6 +58,35 @@ beforeEach(() => {
 });
 
 describe("ReadyToRunSection", () => {
+  it("keeps one fix open at a time", async () => {
+    report = blockedReport("pair");
+    report.areas.push({ id: "reset", status: "blocked", rows: ["reset"] });
+    report.rows.push({
+      ...report.rows[0],
+      id: "reset",
+      reason: "The world did not reset",
+      fix: {
+        ...report.rows[0].fix,
+        action: "Make the world return to its seeded state",
+      },
+    });
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+
+    const [first, second] = screen.getAllByRole("button", { name: "Fix" });
+    await userEvent.click(first);
+    await userEvent.click(second);
+    expect(
+      screen.getByText("Make the world return to its seeded state"),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Point issue_refund at the test world", {
+          exact: false,
+        }),
+      ).toBeNull(),
+    );
+  });
+
   it("calls nothing ready before anything is checked", () => {
     report = {
       pairing: { evidence: "none" },
