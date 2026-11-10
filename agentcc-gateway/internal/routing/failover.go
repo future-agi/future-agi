@@ -91,6 +91,19 @@ func (f *Failover) ShouldFailover(err error) bool {
 
 // Execute runs the failover loop, trying providers until one succeeds or all fail.
 func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallFunc) (*FailoverResult, error) {
+	return f.execute(ctx, model, call, f.callProvider)
+}
+
+// ExecuteWithAdmission delegates admission to the caller, which can resolve tenant
+// credentials first and keep a streaming probe alive beyond its first chunk.
+func (f *Failover) ExecuteWithAdmission(ctx context.Context, model string, call FailoverCallFunc) (*FailoverResult, error) {
+	return f.execute(ctx, model, call, func(_ string, call func() error) (bool, error) {
+		err := call()
+		return !IsCircuitOpen(err), err
+	})
+}
+
+func (f *Failover) execute(ctx context.Context, model string, call FailoverCallFunc, admit func(string, func() error) (bool, error)) (*FailoverResult, error) {
 	excluded := make(map[string]bool)
 	var lastErr error
 	var originalProvider string
@@ -108,14 +121,14 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 			if lastErr != nil {
 				return nil, lastErr // Return the actual provider error, not "no targets"
 			}
-			return nil, err
+			return nil, models.ErrServiceUnavailable(err.Error())
 		}
 
 		if originalProvider == "" {
 			originalProvider = result.Target.ProviderID
 		}
 
-		admitted, callErr := f.callProvider(result.Target.ProviderID, func() error {
+		admitted, callErr := admit(result.Target.ProviderID, func() error {
 			// Create per-attempt timeout so later attempts get their full time.
 			attemptCtx := ctx
 			if f.cfg.PerAttemptTimeout > 0 {

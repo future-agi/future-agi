@@ -210,6 +210,11 @@ func (r *Registry) Resolve(model string) (Provider, error) {
 
 // ResolveWithRouting finds the provider for a model, using load balancing if available.
 func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
+	return r.ResolveExcluding(model, nil)
+}
+
+// ResolveExcluding retains the model's routing semantics while skipping refused providers.
+func (r *Registry) ResolveExcluding(model string, excluded map[string]bool) (*ResolveResult, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -223,9 +228,9 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 
 		_, explicitModelRequested := r.modelMap[model]
 		if explicitModelRequested {
-			routingResult, err = r.router.SelectExactModel(model)
+			routingResult, err = r.router.SelectExactModelExcluding(model, excluded)
 		} else {
-			routingResult, err = r.router.Select(model)
+			routingResult, err = r.router.SelectExcluding(model, excluded)
 		}
 		if err == nil {
 			if p, ok := r.providers[routingResult.Target.ProviderID]; ok {
@@ -245,7 +250,7 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 
 	// Direct lookup.
 	if providerID, ok := r.modelMap[model]; ok {
-		if p, ok := r.providers[providerID]; ok {
+		if p, ok := r.providers[providerID]; ok && !excluded[providerID] {
 			return &ResolveResult{Provider: p}, nil
 		}
 		return nil, models.ErrInternal(fmt.Sprintf("provider %q configured for model %q but not found", providerID, model))
@@ -254,15 +259,17 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 	// Try prefix match: "openai/gpt-4o" → provider "openai", model "gpt-4o".
 	if idx := strings.Index(model, "/"); idx > 0 {
 		providerID := model[:idx]
-		if p, ok := r.providers[providerID]; ok {
+		if p, ok := r.providers[providerID]; ok && !excluded[providerID] {
 			return &ResolveResult{Provider: p}, nil
 		}
 	}
 
 	// If only one provider is configured, use it as default.
 	if len(r.providers) == 1 {
-		for _, p := range r.providers {
-			return &ResolveResult{Provider: p}, nil
+		for id, p := range r.providers {
+			if !excluded[id] {
+				return &ResolveResult{Provider: p}, nil
+			}
 		}
 	}
 

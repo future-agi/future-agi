@@ -243,6 +243,7 @@ func (cb *CircuitBreaker) isFailure(err error) bool {
 type CircuitBreakerRegistry struct {
 	mu       sync.RWMutex
 	breakers map[string]*CircuitBreaker
+	scoped   map[breakerScope]scopedBreaker
 	cfg      config.CircuitBreakerConfig
 	onChange func(string, bool)
 }
@@ -273,6 +274,34 @@ func (r *CircuitBreakerRegistry) Get(providerID string) *CircuitBreaker {
 	}
 	cb := NewCircuitBreaker(providerID, r.cfg, r.onChange)
 	r.breakers[providerID] = cb
+	return cb
+}
+
+type breakerScope struct {
+	tenantID   string
+	providerID string
+}
+
+type scopedBreaker struct {
+	instance any
+	breaker  *CircuitBreaker
+}
+
+// GetScoped isolates tenant credentials from operator health and other tenants.
+// A replacement provider starts a new recovery cycle; in-flight calls keep their old breaker.
+// instance must be a comparable provider identity (the provider adapters are pointers).
+func (r *CircuitBreakerRegistry) GetScoped(tenantID, providerID string, instance any) *CircuitBreaker {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := breakerScope{tenantID, providerID}
+	if entry, ok := r.scoped[key]; ok && entry.instance == instance {
+		return entry.breaker
+	}
+	if r.scoped == nil {
+		r.scoped = make(map[breakerScope]scopedBreaker)
+	}
+	cb := NewCircuitBreaker(providerID, r.cfg, nil)
+	r.scoped[key] = scopedBreaker{instance: instance, breaker: cb}
 	return cb
 }
 

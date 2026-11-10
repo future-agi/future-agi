@@ -1,6 +1,31 @@
 package routing
 
-import "github.com/futureagi/agentcc-gateway/internal/models"
+import (
+	"errors"
+
+	"github.com/futureagi/agentcc-gateway/internal/models"
+)
+
+// CircuitBreakers returns the persistent registry, including for per-request failover overrides.
+func (f *Failover) CircuitBreakers() *CircuitBreakerRegistry {
+	if f == nil {
+		return nil
+	}
+	return f.cbReg
+}
+
+// CircuitOpenError distinguishes a local admission refusal from an upstream failure.
+func CircuitOpenError() error {
+	return &models.APIError{
+		Status: 503, Type: models.ErrTypeServer, Code: "circuit_open",
+		Message: "Provider circuit is open or at its probe limit",
+	}
+}
+
+func IsCircuitOpen(err error) bool {
+	var apiErr *models.APIError
+	return errors.As(err, &apiErr) && apiErr.Code == "circuit_open"
+}
 
 // CallProvider applies this failover's circuit breaker to an already-resolved provider.
 // Model fallbacks use it without adding routing, retries or timeouts of their own.
@@ -18,10 +43,7 @@ func (f *Failover) callProvider(providerID string, call func() error) (admitted 
 	cb := f.cbReg.Get(providerID)
 	generation, allowed := cb.Allow()
 	if !allowed {
-		return false, &models.APIError{
-			Status: 503, Type: models.ErrTypeServer, Code: "circuit_open",
-			Message: "Provider circuit is open or at its probe limit",
-		}
+		return false, CircuitOpenError()
 	}
 
 	// Keep one admission generation across the entire call, including any retries.

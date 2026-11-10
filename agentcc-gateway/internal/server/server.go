@@ -136,8 +136,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Create circuit breaker registry.
 	var cbReg *routing.CircuitBreakerRegistry
-	if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
-		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
+	if cfg.Routing.CircuitBreaker.Enabled {
+		var onChange func(string, bool)
+		if router := registry.Router(); router != nil {
+			onChange = router.SetHealthy
+		}
+		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, onChange)
 		slog.Info("circuit breaker enabled",
 			"failure_threshold", cfg.Routing.CircuitBreaker.FailureThreshold,
 			"cooldown", cfg.Routing.CircuitBreaker.Cooldown,
@@ -145,7 +149,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	}
 
 	var failover *routing.Failover
-	if registry.Router() != nil && cfg.Routing.Failover.Enabled {
+	if cfg.Routing.Failover.Enabled {
 		failover = routing.NewFailover(cfg.Routing.Failover, registry.Router(), retryer, cbReg)
 		slog.Info("failover enabled",
 			"max_attempts", cfg.Routing.Failover.MaxAttempts,
@@ -226,6 +230,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	}
 
 	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, cfg.Server.MaxRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
+	handlers.circuitBreakers.Store(cbReg)
 	// A streamed completion exists nowhere else — it has to be assembled while
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))

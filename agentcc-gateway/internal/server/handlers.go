@@ -104,6 +104,7 @@ type Handlers struct {
 	scheduledMaxAhead      time.Duration
 
 	// Atomic pointers for hot-reloadable routing components.
+	circuitBreakers   atomic.Pointer[routing.CircuitBreakerRegistry]
 	failover          atomic.Pointer[routing.Failover]
 	modelFallbacks    atomic.Pointer[routing.ModelFallbacks]
 	conditionalRouter atomic.Pointer[routing.ConditionalRouter]
@@ -223,6 +224,7 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 		keyStore:           keyStore,
 	}
 	h.failover.Store(failover)
+	h.circuitBreakers.Store(failover.CircuitBreakers())
 	h.modelFallbacks.Store(modelFallbacks)
 	h.conditionalRouter.Store(conditionalRouter)
 	if len(modelTimeouts) > 0 {
@@ -271,11 +273,16 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 	}
 
 	var cbReg *routing.CircuitBreakerRegistry
-	if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
-		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
+	if cfg.Routing.CircuitBreaker.Enabled {
+		var onChange func(string, bool)
+		if router := registry.Router(); router != nil {
+			onChange = router.SetHealthy
+		}
+		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, onChange)
 	}
+	h.circuitBreakers.Store(cbReg)
 
-	if registry.Router() != nil && cfg.Routing.Failover.Enabled {
+	if cfg.Routing.Failover.Enabled {
 		fo := routing.NewFailover(cfg.Routing.Failover, registry.Router(), retryer, cbReg)
 		h.failover.Store(fo)
 	} else {
@@ -471,17 +478,21 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 		if orgCfg.Routing.Retry != nil && orgCfg.Routing.Retry.Enabled {
 			retryer = routing.NewRetryer(h.buildOrgRetryConfig(orgCfg.Routing.Retry))
 		}
-		return routing.NewFailover(foCfg, h.registry.Router(), retryer, nil)
+		return routing.NewFailover(foCfg, h.registry.Router(), retryer, h.circuitBreakers.Load())
 	}
 	return h.failover.Load()
 }
 
 func (h *Handlers) resolveFallbackProvider(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string) (providers.Provider, string, string, bool) {
-	if orgProvider, orgProviderID := h.resolveOrgProvider(orgID, orgCfg, fallbackModel); orgProvider != nil {
+	return h.resolveFallbackProviderExcluding(orgID, orgCfg, rc, fallbackModel, nil)
+}
+
+func (h *Handlers) resolveFallbackProviderExcluding(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string, excluded map[string]bool) (providers.Provider, string, string, bool) {
+	if orgProvider, orgProviderID := h.resolveOrgProvider(orgID, orgCfg, fallbackModel); orgProvider != nil && !excluded[orgProviderID] {
 		return orgProvider, orgProviderID, fallbackModel, true
 	}
 
-	fbResult, fbErr := h.registry.ResolveWithRouting(fallbackModel)
+	fbResult, fbErr := h.registry.ResolveExcluding(fallbackModel, excluded)
 	if fbErr != nil {
 		return nil, "", fallbackModel, false
 	}
@@ -1412,57 +1423,23 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return
 	}
 
-	// Resolve model fallback chain (org-level first, then global).
-	var modelChain []string
-	if len(rc.OrgModelFallbacks) > 0 {
-		modelChain = rc.OrgModelFallbacks[rc.Model]
-	} else if mf := h.modelFallbacks.Load(); mf != nil {
-		modelChain = mf.GetChain(rc.Model)
-	}
-
-	originalModel := rc.Request.Model
-	orgID := rc.Metadata["org_id"]
 	servingProvider := provider
-
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		resp, err := provider.ChatCompletion(ctx, rc.Request)
-		if err == nil {
-			rc.Response = resp
-			rc.ResolvedModel = resp.Model
-			return nil
-		}
-
-		if len(modelChain) == 0 || effectiveFailover == nil || !effectiveFailover.ShouldFailover(err) {
-			return err
-		}
-
-		for _, fbModel := range modelChain {
-			fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
-			if !ok {
-				continue
-			}
-
-			rc.Provider = fbProviderID
-			rc.Request.Model = resolvedModel
-
-			var fbResp *models.ChatCompletionResponse
-			fbCallErr := effectiveFailover.CallProvider(fbProviderID, func() error {
-				var callErr error
-				fbResp, callErr = fbProvider.ChatCompletion(ctx, rc.Request)
-				return callErr
+		call := func(p providers.Provider) error {
+			return h.callProvider(ctx, rc, p, func() error {
+				resp, err := p.ChatCompletion(ctx, rc.Request)
+				if err == nil {
+					servingProvider = p
+					rc.Response = resp
+					rc.ResolvedModel = resp.Model
+				}
+				return err
 			})
-			if fbCallErr == nil {
-				servingProvider = fbProvider
-				rc.Response = fbResp
-				rc.ResolvedModel = fbResp.Model
-				rc.Flags.FallbackUsed = true
-				rc.Metadata["original_model"] = originalModel
-				rc.Metadata["fallback_model"] = resolvedModel
-				return nil
-			}
 		}
-
-		return err
+		if err := call(provider); err != nil {
+			return h.callModelFallbacks(rc, orgCfg, err, call)
+		}
+		return nil
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
@@ -1489,7 +1466,18 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		foResult, err := fo.Execute(ctx, rc.Model, func(ctx context.Context, providerID string, modelOverride string) error {
+		call := func(p providers.Provider) error {
+			return h.callProvider(ctx, rc, p, func() error {
+				resp, err := p.ChatCompletion(ctx, rc.Request)
+				if err == nil {
+					servingProvider = p
+					rc.Response = resp
+					rc.ResolvedModel = resp.Model
+				}
+				return err
+			})
+		}
+		foResult, err := fo.ExecuteWithAdmission(ctx, rc.Model, func(ctx context.Context, providerID string, modelOverride string) error {
 			p, ok := h.registry.GetProvider(providerID)
 			if !ok {
 				return fmt.Errorf("provider %q not found", providerID)
@@ -1509,58 +1497,20 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Request.Model = originalModel
 			}
 
-			resp, err := p.ChatCompletion(ctx, rc.Request)
-			if err != nil {
+			return h.callProvider(ctx, rc, p, func() error {
+				resp, err := p.ChatCompletion(ctx, rc.Request)
+				if err == nil {
+					servingProvider = p
+					rc.Response = resp
+					rc.ResolvedModel = resp.Model
+				}
 				return err
-			}
-			servingProvider = p
-			rc.Response = resp
-			rc.ResolvedModel = resp.Model
-			return nil
+			})
 		})
 
 		if err != nil {
-			// Provider failover exhausted — try model fallback chain.
-			// A chain is configured under the name the caller asked for, so it
-			// is looked up by rc.Model. originalModel is the model to send
-			// upstream, which a target's model_override has already rewritten
-			// — indexing the chain with that found nothing and failed the
-			// request instead of falling back.
-			var modelChain []string
-			if len(rc.OrgModelFallbacks) > 0 {
-				modelChain = rc.OrgModelFallbacks[rc.Model]
-			} else if mf := h.modelFallbacks.Load(); mf != nil {
-				modelChain = mf.GetChain(rc.Model)
-			}
-
-			for _, fbModel := range modelChain {
-				// Resolve fallback model: check org providers first, then global registry.
-				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
-				if !ok {
-					continue
-				}
-
-				rc.Provider = fbProviderID
-				rc.Request.Model = resolvedModel
-
-				var fbResp *models.ChatCompletionResponse
-				fbCallErr := fo.CallProvider(fbProviderID, func() error {
-					var callErr error
-					fbResp, callErr = fbProvider.ChatCompletion(ctx, rc.Request)
-					return callErr
-				})
-				if fbCallErr == nil {
-					servingProvider = fbProvider
-					rc.Response = fbResp
-					rc.ResolvedModel = fbResp.Model
-					rc.Flags.FallbackUsed = true
-					rc.Metadata["original_model"] = originalModel
-					rc.Metadata["fallback_model"] = resolvedModel
-					return nil
-				}
-			}
-
-			return err
+			rc.Request.Model = originalModel
+			return h.callModelFallbacks(rc, orgCfg, err, call)
 		}
 
 		// Record failover metadata.
@@ -1603,10 +1553,18 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	var firstChunk *models.StreamChunk
 	var servingProvider providers.Provider
 	var upstreamStreamCancel context.CancelFunc
+	var completeProbe func(error)
+	finishProbe := func(err error) {
+		if completeProbe != nil {
+			completeProbe(err)
+			completeProbe = nil
+		}
+	}
 	defer func() {
 		if upstreamStreamCancel != nil {
 			upstreamStreamCancel()
 		}
+		finishProbe(context.Canceled) // local policy/write errors are not provider failures
 	}()
 	effectiveFailover := h.effectiveFailover(orgCfg)
 
@@ -1614,22 +1572,31 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// lives on the request context: failover cancels callCtx as soon as the
 	// attempt returns, which would otherwise end the stream after one chunk.
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
+		complete, err := h.admitProvider(ctx, rc, callProvider)
+		if err != nil {
+			return err
+		}
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()
-			return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			err := models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			complete(err)
+			return err
 		}
 
 		chunk, err := waitForFirstStreamChunk(callCtx, candidateChunks, candidateErrCh)
 		if err != nil {
 			cancelAndDrainStream(attemptCancel, candidateChunks)
+			complete(err)
 			return err
 		}
 
 		if upstreamStreamCancel != nil {
 			cancelAndDrainStream(upstreamStreamCancel, chunks)
+			finishProbe(context.Canceled)
 		}
+		completeProbe = complete
 		upstreamStreamCancel = attemptCancel
 		servingProvider = callProvider
 		chunks = candidateChunks
@@ -1643,47 +1610,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		orgID := rc.Metadata["org_id"]
 
 		tryModelFallbacks := func(firstErr error) error {
-			if effectiveFailover == nil || !effectiveFailover.ShouldFailover(firstErr) {
-				return firstErr
-			}
-
-			// A chain is configured under the name the caller asked for, so it
-			// is looked up by rc.Model. originalModel is the model to send
-			// upstream, which a target's model_override has already rewritten
-			// — indexing the chain with that found nothing and failed the
-			// request instead of falling back.
-			var modelChain []string
-			if len(rc.OrgModelFallbacks) > 0 {
-				modelChain = rc.OrgModelFallbacks[rc.Model]
-			} else if mf := h.modelFallbacks.Load(); mf != nil {
-				modelChain = mf.GetChain(rc.Model)
-			}
-
-			for _, fbModel := range modelChain {
-				fallbackModel := fbModel
-				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fallbackModel)
-				if !ok {
-					continue
-				}
-
-				rc.Provider = fbProviderID
-				rc.Request.Model = resolvedModel
-				if err := effectiveFailover.CallProvider(fbProviderID, func() error {
-					return openStream(ctx, fbProvider)
-				}); err == nil {
-					rc.Flags.FallbackUsed = true
-					rc.Metadata["original_model"] = originalModel
-					rc.Metadata["fallback_model"] = resolvedModel
-					return nil
-				}
-			}
-
 			rc.Request.Model = originalModel
-			return firstErr
+			return h.callModelFallbacks(rc, orgCfg, firstErr, func(p providers.Provider) error {
+				return openStream(ctx, p)
+			})
 		}
 
 		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
-			result, err := effectiveFailover.Execute(ctx, rc.Model, func(callCtx context.Context, providerID string, modelOverride string) error {
+			result, err := effectiveFailover.ExecuteWithAdmission(ctx, rc.Model, func(callCtx context.Context, providerID string, modelOverride string) error {
 				p, ok := h.registry.GetProvider(providerID)
 				if !ok {
 					return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", providerID))
@@ -1851,12 +1785,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if !ok {
 				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
 					if apiErr != nil {
+						finishProbe(apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
+				finishProbe(nil)
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1918,7 +1854,12 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			}
 
 		case err, ok := <-errCh:
-			if ok && err != nil {
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if err != nil {
+				finishProbe(err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
 					apiErr = models.ErrInternal(err.Error())
@@ -1930,6 +1871,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			}
 
 		case <-ctx.Done():
+			finishProbe(ctx.Err())
 			// The client left, or the request reached its deadline; only the
 			// second has anyone to tell. streamCancel() in defer stops the
 			// guardrail goroutines. Drain remaining chunks to unblock the
