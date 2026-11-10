@@ -568,7 +568,6 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
         lambda: {
             "ALK_HARNESS": "vertex-gemini",
             "ALK_HARNESS_MODEL": "gemini-3.7-flash",
-            "HARNESS_ACTORS": "1",
         },
     )
     monkeypatch.setattr(
@@ -592,7 +591,7 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
     assert lease.control_only is True
     assert gateway.client.created == 1
     assert "fi.alk.harness.hosted_chat_entrypoint" in commands[0]
-    assert exports[0]["HARNESS_ACTORS"] == "1"
+    assert exports[0]["ALK_HARNESS_MODEL"] == "gemini-3.7-flash"
     assert "tar -xzf /work/source.tar.gz -C /work" in preparation_commands[0]
     assert (
         "tar -xzf /work/conversation.tar.gz -C /work/authoring"
@@ -1488,9 +1487,9 @@ def test_chat_on_run_whose_saved_files_are_gone_fails_at_once(
 
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="gone")
     job.state = HostedHarnessJob.State.COMPLETED
-    job.payload["metadata"]["authoring_object_key"] = (
-        "harness-authoring/org/gone.tar.gz"
-    )
+    job.payload["metadata"][
+        "authoring_object_key"
+    ] = "harness-authoring/org/gone.tar.gz"
     job.save()
     conversation, message, _ = enqueue_message(
         job, content="whats up?", client_request_id="gone"
@@ -1569,9 +1568,9 @@ def test_send_message_rejected_after_conversation_retired(organization):
 
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="retired-409")
     job.state = HostedHarnessJob.State.COMPLETED
-    job.payload["metadata"]["authoring_object_key"] = (
-        "harness-authoring/org/gone.tar.gz"
-    )
+    job.payload["metadata"][
+        "authoring_object_key"
+    ] = "harness-authoring/org/gone.tar.gz"
     job.save()
     conversation, _, _ = enqueue_message(
         job, content="hi", client_request_id="retired-409"

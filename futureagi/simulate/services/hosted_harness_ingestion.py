@@ -1362,6 +1362,15 @@ TRIAL_STATE_KEY = "harness_trial_state"
 # What started a call that no person began: the scenario's own task.
 STARTED_BY_KEY = "harness_started_by"
 STARTED_BY_TASK = "task"
+# The most entries one list from the sandbox may add to a call's metadata; the rest is dropped, not stored.
+MAX_RECORDED_ENTRIES = 500
+
+
+def _entries(raw: object) -> list[dict[str, Any]]:
+    """A sandbox list's dict entries, at most MAX_RECORDED_ENTRIES of them, in their order."""
+    if not isinstance(raw, list):
+        return []
+    return [one for one in raw if isinstance(one, dict)][:MAX_RECORDED_ENTRIES]
 
 
 def _call_actor_record(raw: object) -> CallCallActors | None:
@@ -1371,7 +1380,7 @@ def _call_actor_record(raw: object) -> CallCallActors | None:
     record: CallCallActors = {}
     for key in ("resolved", "summary", "events"):
         if isinstance(raw.get(key), list):
-            record[key] = [one for one in raw[key] if isinstance(one, dict)]
+            record[key] = _entries(raw[key])
     return record or None
 
 
@@ -1419,13 +1428,13 @@ def _ingest_hosted_transcript(
             # World actors' actions are theirs, never the agent's tool calls; placed on the clock once it is known.
             world = payload.get("world_actors") if isinstance(payload, dict) else None
             actions = world.get("actions") if isinstance(world, dict) else None
-            actions = [one for one in actions or [] if isinstance(one, dict)]
+            actions = _entries(actions)
             if actions:
                 metadata[WORLD_ACTIONS_KEY] = actions
             else:
                 metadata.pop(WORLD_ACTIONS_KEY, None)
             trial = {
-                key: [one for one in world.get(key) or [] if isinstance(one, dict)]
+                key: _entries(world.get(key))
                 for key in ("state_changes", "decisions", "approvals", "usage")
                 if isinstance(world, dict) and isinstance(world.get(key), list)
             }
@@ -1439,8 +1448,8 @@ def _ingest_hosted_transcript(
                     key: one.get(key)
                     for key in ("code", "message", "action", "on_call", "mode")
                 }
-                for one in notices or []
-                if isinstance(one, dict) and isinstance(one.get("message"), str)
+                for one in _entries(notices)
+                if isinstance(one.get("message"), str)
             ]
             if notices:
                 trial["notices"] = notices

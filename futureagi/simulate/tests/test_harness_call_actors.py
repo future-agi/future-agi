@@ -291,6 +291,12 @@ def test_a_call_actor_s_turns_are_shown_in_the_transcript_view():
     assert "actor" in get_displayable_transcript_roles()
 
 
+def test_a_scenario_s_own_task_turn_is_shown_in_the_transcript_view():
+    from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+
+    assert "task" in get_displayable_transcript_roles()
+
+
 _ACTOR_CALL = {
     "messages": [
         {"role": "assistant", "content": "Where to?"},
@@ -777,3 +783,16 @@ def test_a_member_stored_before_the_new_fields_reads_unchanged_against_the_same_
         [old],
         [{**now, "faults": [{"action": "crm.apply", "mode": "timeout_after_commit"}]}],
     )["changed"] == {"a": ["faults"]}
+
+
+def test_a_sandbox_list_adds_at_most_the_cap_to_a_call():
+    from simulate.services.hosted_harness_ingestion import (
+        MAX_RECORDED_ENTRIES,
+        _call_actor_record,
+    )
+
+    many = [{"actor": "a", "n": n} for n in range(MAX_RECORDED_ENTRIES + 50)]
+    record = _call_actor_record({"events": [*many, "not a dict"]})
+
+    assert len(record["events"]) == MAX_RECORDED_ENTRIES
+    assert record["events"][0]["n"] == 0
