@@ -19,9 +19,10 @@ import { flowAnnotation } from '../../lib/flow-meta';
 //                               then. No key is stored, so EVAL-E2E-007 (same worker
 //                               org) still sees none, and nothing calls TypeSafe.
 
-// evaluations/decision_models.py native Jev routes; DecisionModelSection.jsx row labels.
-const JEV_LABELS = ['Jev 1.13', 'Jev 1.14', 'Jev latest'];
-const JEV_IDS = ['jev-1.13.0', 'jev-1.14.0', 'jev-latest'];
+// evaluations/decision_models.py native Jev routes, in the catalog's curated order
+// (selectors/decision_models.py keeps it after readiness); DecisionModelSection.jsx row labels.
+const JEV_LABELS = ['Jev 1.14', 'Jev 1.13', 'Jev latest'];
+const JEV_IDS = ['jev-1.14.0', 'jev-1.13.0', 'jev-latest'];
 // evaluations/decision_models.py groups native/OpenRouter routes; useDecisionModels uses this endpoint.
 const DECISION_CATALOG = '/model-hub/api/models_list/';
 const JEV_MODEL = 'jev-latest';
@@ -194,7 +195,7 @@ test('EVAL-E2E-011: Jev models are listed and saved on a Community stack without
       'create-v2 with jev-latest answers 200 and stores one row with model jev-latest',
     ],
     browserChecks: [
-      'searching Jev lists exactly Jev 1.13, Jev 1.14 and Jev latest with native TypeSafe selected; the Decision models group follows FutureAGI Models',
+      'searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models',
       'all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")',
     ],
   }),

@@ -1102,7 +1102,7 @@
 
 **Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:279`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:280`
 
 **Tags:** —
 
@@ -1126,7 +1126,7 @@
 
 **Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:350`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:351`
 
 **Tags:** —
 
@@ -1151,7 +1151,7 @@
 
 **Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:405`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:406`
 
 **Tags:** —
 
@@ -1176,7 +1176,7 @@
 
 **Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:484`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:485`
 
 **Tags:** —
 
@@ -1201,7 +1201,7 @@
 
 **Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:181`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:182`
 
 **Tags:** —
 
@@ -1222,7 +1222,7 @@
 
 **Browser observations:**
 
-- searching Jev lists exactly Jev 1.13, Jev 1.14 and Jev latest with native TypeSafe selected; the Decision models group follows FutureAGI Models
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models
 - all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
 
 ### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload
