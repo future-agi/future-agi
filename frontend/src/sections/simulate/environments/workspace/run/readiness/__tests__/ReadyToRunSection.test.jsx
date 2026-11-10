@@ -58,6 +58,22 @@ beforeEach(() => {
 });
 
 describe("ReadyToRunSection", () => {
+  it("offers Re-check, not Fix, on a line that only needs checking again", async () => {
+    report = blockedReport("pair");
+    report.rows[0].fix = {
+      type: "recheck",
+      action: "Check this agent with this environment and suite",
+      would: "The row reads what this agent does",
+      recheck: { scope: "pair", method: "POST", path: "/x/" },
+    };
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+
+    expect(screen.queryByRole("button", { name: "Fix" })).toBeNull();
+    const [, lineRecheck] = screen.getAllByRole("button", { name: "Re-check" });
+    await userEvent.click(lineRecheck);
+    expect(recheck).toHaveBeenCalledWith(picks);
+  });
+
   it("shows the check in progress as soon as a re-check is sent", () => {
     report = blockedReport("pair");
     recheckPending = true;

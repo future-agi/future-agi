@@ -37,6 +37,7 @@ const areaLine = (area, rowsById) => {
     area: area.id,
     status: worst.status,
     reason: worst.reason,
+    consequence: worst.consequence,
     affected: worst.affected?.count ?? 0,
     fix: worst.fix ?? null,
   };

@@ -8,6 +8,7 @@ import {
   Typography,
 } from "@mui/material";
 import StatusBadge from "src/components/status-badge/StatusBadge";
+import CustomTooltip from "src/components/tooltip";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import {
@@ -49,6 +50,9 @@ const spinner = <CircularProgress size={12} color="inherit" />;
 function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
   const [open, setOpen] = useState(false);
   const { fix } = line;
+  // Checking the pair again is this line's whole fix: offer that, not a Fix
+  // that would only say "check again".
+  const recheckOnly = fix?.type === "recheck" && fix.recheck?.scope === "pair";
   return (
     // While a check runs these are the last results: dimmed, no Fix.
     <Box sx={{ ...lineSx, opacity: checking && !inFlight ? 0.5 : 1 }}>
@@ -60,19 +64,41 @@ function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
             variant="dot"
           />
         </Box>
-        <Typography
-          noWrap
-          sx={{
-            typography: "s3",
-            color: "text.secondary",
-            flex: 1,
-            minWidth: 0,
-          }}
+        <CustomTooltip
+          show={Boolean(line.consequence)}
+          title={line.consequence}
+          size="small"
+          arrow
         >
-          {line.reason}
-          {line.affected ? ` · ${COPY.affected(line.affected)}` : ""}
-        </Typography>
-        {fix && !checking && (
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.secondary",
+              flex: 1,
+              minWidth: 0,
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {line.reason}
+            {line.affected ? ` · ${COPY.affected(line.affected)}` : ""}
+          </Typography>
+        </CustomTooltip>
+        {recheckOnly && (!checking || inFlight) && (
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={busy}
+            startIcon={inFlight ? spinner : null}
+            onClick={onRecheck}
+            sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
+          >
+            {inFlight ? COPY.checking : COPY.recheck}
+          </Button>
+        )}
+        {fix && !recheckOnly && !checking && (
           <Button
             size="small"
             variant="outlined"
@@ -83,7 +109,7 @@ function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
           </Button>
         )}
       </Stack>
-      {open && fix && (!checking || inFlight) && (
+      {open && fix && !recheckOnly && (!checking || inFlight) && (
         <Stack spacing={1} sx={{ pt: 1, pl: 2.5 }}>
           <Typography sx={{ typography: "s3", color: "text.primary" }}>
             {fix.action}
