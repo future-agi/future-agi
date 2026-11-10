@@ -147,7 +147,8 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 				cfg.Routing.ProviderLock = config.ProviderLockConfig{Enabled: true}
 			}
 			if path == "failover-override" {
-				cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{"adaptive-sample": {{Provider: "fast"}}}
+				cfg.Providers["backup"] = cfg.Providers["fast"]
+				cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{"adaptive-sample": {{Provider: "fast"}, {Provider: "backup"}}}
 				cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 1}
 				cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour}
 			}
@@ -157,18 +158,24 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 				orgModels = []string{"adaptive-sample"}
 			}
 			store := tenant.NewStore()
-			store.Set("synthetic-org", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+			orgProviders := map[string]*tenant.ProviderConfig{
 				"fast": {Enabled: true, APIKey: "synthetic-provider-key", Models: orgModels},
-			}})
-			// Operator-supplied synthetic base URLs avoid bypassing tenant URL validation.
-			orgCache := providers.NewOrgProviderCache(map[string]config.ProviderConfig{
+			}
+			orgBases := map[string]config.ProviderConfig{
 				"fast": {BaseURL: org.URL, APIFormat: "openai", Models: orgModels},
-			}, false)
+			}
+			if path == "failover-override" {
+				orgProviders["backup"] = orgProviders["fast"]
+				orgBases["backup"] = orgBases["fast"]
+			}
+			store.Set("synthetic-org", &tenant.OrgConfig{Providers: orgProviders})
+			// Operator-supplied synthetic base URLs avoid bypassing tenant URL validation.
+			orgCache := providers.NewOrgProviderCache(orgBases, false)
 			t.Cleanup(orgCache.EvictAll)
 			srv.handlers.tenantStore = store
 			srv.handlers.orgProviderCache = orgCache
 			srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
-			if status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-global-probe", false); status != http.StatusOK {
+			if status, _ := adaptiveHTTP(t, gateway, "fast/adaptive-sample", "synthetic-global-probe", false); status != http.StatusOK {
 				t.Fatal("global priming failed")
 			}
 			before := srv.handlers.healthMonitor.GetHealth("fast")
@@ -192,7 +199,7 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 			if after.RequestCount != before.RequestCount || after.ErrorCount != 0 || after.LatencyEWMAMs != before.LatencyEWMAMs || !after.Healthy || after.CircuitState == "open" {
 				t.Fatalf("org instance polluted global health: samples=%d errors=%d latency=%d before_latency=%d circuit=%s", after.RequestCount, after.ErrorCount, after.LatencyEWMAMs, before.LatencyEWMAMs, after.CircuitState)
 			}
-			if status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-global-probe", false); status != http.StatusOK {
+			if status, _ := adaptiveHTTP(t, gateway, "fast/adaptive-sample", "synthetic-global-probe", false); status != http.StatusOK {
 				t.Fatal("org failure blocked unrelated global traffic")
 			}
 		})
