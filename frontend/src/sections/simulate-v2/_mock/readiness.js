@@ -89,7 +89,10 @@ export const readinessOf = (report, scenarios = [], evalCount = 0) => {
     }
     const rows = a.members.map((m) => byId[m]).filter(Boolean);
     const status = rows.length ? areaStatusOf(rows) : "ready";
-    const worst = [...rows].sort(
+    /* The cause, not a row that only waits on it: a row gated behind
+       another ("Waits on start and health") never names the area or its fix. */
+    const causes = rows.filter((r) => !r.blockedBy);
+    const worst = [...(causes.length ? causes : rows)].sort(
       (x, y) =>
         (COMPAT_STATUS[y.status]?.rank || 0) -
         (COMPAT_STATUS[x.status]?.rank || 0),
@@ -113,7 +116,18 @@ export const readinessOf = (report, scenarios = [], evalCount = 0) => {
             ? "Not checked for this agent yet — run the check."
             : worst?.detail || "",
       affected,
-      fixRow: status === "blocked" || status === "partial" ? worst : null,
+      /* Not checked only because it waits on another area's check: that
+         check covers it, so it gets no action of its own. */
+      waits:
+        status === "unchecked" &&
+        rows
+          .filter((r) => ["untested", "stale"].includes(r.status))
+          .every((r) => r.blockedBy),
+      /* Not checked carries its cause too: a platform agent's check is a
+         test call, offered right on the row. */
+      fixRow: ["blocked", "partial", "unchecked"].includes(status)
+        ? worst
+        : null,
     };
   });
 };

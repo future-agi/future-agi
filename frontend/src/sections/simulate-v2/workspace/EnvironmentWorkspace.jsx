@@ -51,6 +51,7 @@ import {
   agentIdOf,
   needsFoundCheck,
   needsToolSafety,
+  sourceKindOf,
 } from "../_mock/agentRegistry";
 import AgentFoundReview from "../agents/AgentFoundReview";
 import ToolSafetyDialog from "../agents/ToolSafetyDialog";
@@ -70,6 +71,7 @@ import {
   checksConnection,
   checksFor,
   connectionSpecOf,
+  inlineRepairPatch,
   runConnectionCheck,
 } from "../_mock/connectionCheck";
 import NextStepBanner from "./NextStepBanner";
@@ -163,6 +165,7 @@ import PrivateUpdateBanner from "./PrivateUpdateBanner";
 import { privateUpdateOf } from "../_mock/envCopy";
 import DesignReview from "../environments/DesignReview";
 import { checksStateOf, runChecksPatch } from "../_mock/release";
+import { useRebuildForAgent } from "./useRebuildForAgent";
 import SaveFirstRelease from "../environments/SaveFirstRelease";
 import {
   applyScratchAnswer,
@@ -621,6 +624,8 @@ export default function EnvironmentWorkspace() {
   const [safetyOpen, setSafetyOpen] = useState(false);
   /* The connection check run from the run plan, in place (TH-8877). */
   const [capsChecking, setCapsChecking] = useState(false);
+  /* The run plan's in-place rebuild for this environment's own agent. */
+  const rebuildForAgent = useRebuildForAgent(worldEnv, envState, patch);
   const { agents: connectedAgents, setAgentValues } = useConnectedAgents();
   const { enqueueSnackbar } = useSnackbar();
   const { viewAs: viewingOlder } = useEnvViewAs(env, envState);
@@ -1229,7 +1234,31 @@ export default function EnvironmentWorkspace() {
   /* key: the agent being checked — the run plan can pick another
      compatible agent, and the check belongs to that pair. */
   const runCapsCheck = (agentNow = connectedAgent, key = agentKey) => {
-    if (capsChecking || !agentNow || !checksConnection(agentNow)) return;
+    if (capsChecking || !agentNow || !pairCheckable(agentNow)) return;
+    /* A platform agent (Vapi, Retell…): the pair's check reaches it through
+       the platform and places no call (Karthik's run readiness), saved for
+       this environment. */
+    if (!checksConnection(agentNow)) {
+      setCapsChecking(true);
+      setTimeout(() => {
+        setAgentValues(key, {
+          platformChecks: {
+            ...(agentNow.values?.platformChecks || {}),
+            [env.id]: { at: new Date().toISOString() },
+          },
+          checkUnavailable: null,
+          checkedOn: {
+            ...(agentNow.values?.checkedOn || {}),
+            [env.id]: pairingStampOf(worldEnv, envState),
+          },
+        });
+        setCapsChecking(false);
+        enqueueSnackbar("Checked — Ready to run is updated for this agent.", {
+          variant: "success",
+        });
+      }, 1800);
+      return;
+    }
     const found = foundValuesOf(agentNow);
     const spec = connectionSpecOf(agentNow, found);
     setCapsChecking(true);
@@ -1283,6 +1312,54 @@ export default function EnvironmentWorkspace() {
       450 * (checksFor(spec).length + 1),
     );
   };
+  /* Fixes made in place in the run plan (Ready to run), for the agent picked
+     there: one connection field or the tools' routing (saved on that agent,
+     then its check runs again), the environment's release checks, or a
+     rebuild for this environment's own agent. */
+  const runReleaseChecks = () => {
+    const v = checksStateOf(env, envState).version;
+    storePatch({ releaseChecksRunning: v });
+    setTimeout(() => {
+      storePatch({
+        ...runChecksPatch(env, latestEnvState.current),
+        releaseChecksRunning: null,
+      });
+      enqueueSnackbar("Release checks finished — Ready to run is updated.", {
+        variant: "info",
+      });
+    }, 1600);
+  };
+  const fixKitOf = (key) => {
+    const own = !key || key === agentKey;
+    const a = own ? connectedAgent : connectedAgents.find((x) => x.key === key);
+    if (!a) return null;
+    const k = own ? agentKey : key;
+    const spec = connectionSpecOf(a, foundValuesOf(a));
+    return {
+      agent: a,
+      spec,
+      applyRepair: (fixId, value) => {
+        const p = inlineRepairPatch(a.values, spec, fixId, value);
+        setAgentValues(k, p);
+        runCapsCheck({ ...a, values: { ...(a.values || {}), ...p } }, k);
+      },
+      runReleaseChecks: gates.canEdit ? runReleaseChecks : null,
+      releaseRunning:
+        envState.releaseChecksRunning === checksStateOf(env, envState).version,
+      rebuild:
+        own && gates.canEdit
+          ? () =>
+              rebuildForAgent(
+                runPlanReq?.agent || currentAgentVersion(envState)?.label,
+              )
+          : null,
+    };
+  };
+  /* The pair's check runs for an agent we start or call, and for a platform
+     agent (through its platform, no call placed). */
+  function pairCheckable(a) {
+    return checksConnection(a) || sourceKindOf(a) === "platform";
+  }
   /* Run setup: this environment's agent first, then any other connected
      agent of the same type — each with whether it's ready to run here. */
   const runAgentChoices = (() => {
@@ -3359,12 +3436,13 @@ export default function EnvironmentWorkspace() {
                 }
               : null
           }
+          fixKitOf={fixKitOf}
           canCheckCompat={(key) => {
             const a =
               key && key !== agentKey
                 ? connectedAgents.find((x) => x.key === key)
                 : connectedAgent;
-            return !!a && checksConnection(a);
+            return !!a && pairCheckable(a);
           }}
           /* Fix on a capability opens its repair on the agent; otherwise its
              Capabilities tab for this world. */

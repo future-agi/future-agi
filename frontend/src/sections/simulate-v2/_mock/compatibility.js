@@ -278,6 +278,9 @@ export const compatibilityOf = ({
   const fixed = Object.fromEntries((v.fixedChecks || []).map((f) => [f.id, f]));
   /* A platform agent's evidence is its test call. */
   const platformTest = v.platformTest || null;
+  /* The pair's check for a platform agent, run from Run setup (Karthik's run
+     readiness: Re-check). A voice check places no call. */
+  const platformCheck = (env?.id && v.platformChecks?.[env.id]) || null;
   /* The environment's release checks prove world reset and hidden checks. */
   const release = checksStateOf(env, envState);
   const releaseAt = release.stale ? null : envState?.releaseChecks?.at || null;
@@ -324,7 +327,10 @@ export const compatibilityOf = ({
   const checkedHere = env?.id ? v.checkedOn?.[env.id] || null : null;
   const pairNow = checkedHere ? pairingStampOf(env, envState) : null;
   const staleWhy =
-    testedAt && versionAt && versionAt > testedAt && !isCredentialsVersion(saved)
+    testedAt &&
+    versionAt &&
+    versionAt > testedAt &&
+    !isCredentialsVersion(saved)
       ? `Agent ${version.label} arrived after the last test`
       : checkedHere && pairNow.envVersion !== checkedHere.envVersion
         ? `Environment ${pairNow.envVersion} was saved after the last check (it ran on ${checkedHere.envVersion})`
@@ -349,19 +355,36 @@ export const compatibilityOf = ({
   */
   const fromCheck = (id, checkId, affected, fallback) => {
     if (!checked) {
-      /* Built here: it runs here. A platform agent: only a test call proves it. */
+      /* Built here: it runs here. A platform agent: the pair's check (or a
+         test call already made on its page) proves it. */
       if (kind !== "platform") return add(id, "supported", fallback);
-      return platformTest
-        ? add(id, "supported", fallback, {
-            checkedAt: platformTest.at,
+      /* A voice check places no call: replies are read from runs, never
+         block and never lower the answer (Karthik: message Unavailable for
+         voice). */
+      if (
+        platformCheck &&
+        !platformTest &&
+        voice &&
+        ["message", "continuity"].includes(id)
+      )
+        return add(
+          id,
+          "unavailable",
+          "A voice check places no call, so replies aren't checked before the run — they're read from the run itself.",
+        );
+      if (platformTest || platformCheck)
+        return add(id, "supported", fallback, {
+          checkedAt: (platformTest || platformCheck).at,
+          ...(platformTest && {
             evidence: `Test call (${platformTest.mode || "text"}): ${fallback}`,
-          })
-        : add(
-            id,
-            "untested",
-            `No test call has reached it yet — make one before trusting a run.`,
-            { affected, repair: "testcall" },
-          );
+          }),
+        });
+      return add(
+        id,
+        "untested",
+        "Not checked for this agent on this environment yet — run the check.",
+        { affected, repair: "test" },
+      );
     }
     const r = results[checkId];
     if (!r) {
@@ -655,9 +678,8 @@ export const compatibilityOf = ({
       else
         add(
           "audio",
-          "untested",
-          "No phone or web test call has measured audio yet — latency and barge-in stay untested, not zero.",
-          { affected: all, repair: "testcall" },
+          "unavailable",
+          "Latency and barge-in are measured from this agent's calls in a run — none here yet, so they read unavailable, not zero.",
         );
     } else if (/livekit|pipecat/i.test(v.framework || ""))
       add(
@@ -724,8 +746,8 @@ export const compatibilityOf = ({
       else
         add(
           "transfer",
-          "untested",
-          "A text or web test doesn't prove a phone transfer — it stays untested until a phone test reaches one.",
+          "unavailable",
+          "A transfer is seen when a run's call reaches one — none here yet. It never holds a case back.",
         );
     }
     add(
@@ -748,7 +770,7 @@ export const compatibilityOf = ({
     add(
       "cancel",
       "partial",
-      `Stopping ends our side of the call; ${provider} may keep it open for up to 30 s and bill for it. A stopped run reads Cancel requested until ${provider} confirms the call ended.`,
+      `Stopping ends our side; nothing ends the ${provider} call yet, so it runs until it ends on its own. A stopped run reads Cancel requested until ${provider} confirms the call ended.`,
     );
   else if (hostedElsewhere)
     add(
@@ -910,6 +932,11 @@ export const compatibilityOf = ({
       r.fixLabel = `Point ${prod[0]} at the test world`;
     else if (!r.fixLabel && r.fromLastCheck)
       r.fixLabel = before[r.checkId]?.repair?.label || null;
+    /* A change made elsewhere is named for what it changes. */
+    if (!r.fixLabel && r.repair === "agent" && missingNames.length)
+      r.fixLabel = `Add ${missingNames.slice(0, 2).join(", ")}${missingNames.length > 2 ? ` and ${missingNames.length - 2} more` : ""} to the agent`;
+    if (!r.fixLabel && r.status === "deprecated")
+      r.fixLabel = "Move the agent to the current model";
   });
   /* Each row that isn't Supported carries its fix (TH-8881 §3.3). */
   rows.forEach((r) => {
@@ -1006,16 +1033,18 @@ export const compatibilityOf = ({
 
 /** The scenarios a full run takes, as one short fingerprint. */
 const suiteOf = (envState) =>
-  (hashSeed(
-    JSON.stringify(
-      requestedOf(envState).map((s) => [
-        s.id,
-        s.title || s.name || "",
-        s.goal || s.description || s.prompt || "",
-        (s.subgoals || s.subGoals || []).length,
-      ]),
-    ),
-  ) >>> 0).toString(16);
+  (
+    hashSeed(
+      JSON.stringify(
+        requestedOf(envState).map((s) => [
+          s.id,
+          s.title || s.name || "",
+          s.goal || s.description || s.prompt || "",
+          (s.subgoals || s.subGoals || []).length,
+        ]),
+      ),
+    ) >>> 0
+  ).toString(16);
 
 /** Saved with a check run from an environment: the pairing it covered. */
 export const pairingStampOf = (env, envState) => ({

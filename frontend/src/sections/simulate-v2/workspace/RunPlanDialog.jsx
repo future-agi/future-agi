@@ -160,6 +160,8 @@ export default function RunPlanDialog({
      compatibility belongs to the pair, so it follows the Agent pick. */
   compatOf = null,
   canCheckCompat = null,
+  /* (agentKey) => what a fix made in place needs, for that agent. */
+  fixKitOf = null,
   onCheckCompat,
   checkingCompat = false,
   onRepairCompat,
@@ -590,6 +592,7 @@ export default function RunPlanDialog({
               scenarios={envState?.scenarios || []}
               evalCount={(evals || []).length}
               onFix={(row) => onRepairCompat?.(row, pickedKey)}
+              fixKit={fixKitOf ? fixKitOf(pickedKey) : null}
               onCheck={
                 onCheckCompat && canCheckCompat?.(pickedKey)
                   ? () => onCheckCompat(pickedKey)
@@ -1658,6 +1661,7 @@ RunPlanDialog.propTypes = {
   /* The compatibility report for this scope — blocked cases ask for a reviewed subset. */
   compatOf: PropTypes.func,
   canCheckCompat: PropTypes.func,
+  fixKitOf: PropTypes.func,
   onCheckCompat: PropTypes.func,
   checkingCompat: PropTypes.bool,
   onRepairCompat: PropTypes.func,
