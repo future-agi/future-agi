@@ -806,15 +806,6 @@ class EditAgentDefinitionView(APIView):
                 )
                 if version:
                     sync_provider_credentials(version, creds_input)
-                    if "assistant_id" in validated:
-                        # Polling reads the assistant from this version, not the
-                        # mutable definition. Commit its snapshot and credentials
-                        # together without changing other historical versions.
-                        raw = version.configuration_snapshot
-                        snapshot = dict(raw) if isinstance(raw, dict) else {}
-                        snapshot["assistant_id"] = validated["assistant_id"]
-                        version.configuration_snapshot = snapshot
-                        version.save(update_fields=["configuration_snapshot"])
                 if "observability_enabled" in validated:
                     set_agent_observability(
                         agent_definition=agent,

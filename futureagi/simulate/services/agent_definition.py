@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db import transaction
 
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
@@ -49,7 +50,7 @@ def _apply_secrets(creds, *, api_key: str, api_secret: str, provider_changed: bo
 def _apply_non_secrets(
     creds,
     *,
-    assistant_id: str,
+    assistant_id: str | None,
     server_url: str,
     agent_name: str,
     config_json: dict | None,
@@ -57,7 +58,7 @@ def _apply_non_secrets(
     provider_changed: bool,
 ):
     if provider_changed:
-        creds.assistant_id = assistant_id
+        creds.assistant_id = assistant_id or ""
         creds.server_url = server_url
         creds.agent_name = agent_name
         creds.config_json = config_json if config_json is not None else {}
@@ -67,7 +68,7 @@ def _apply_non_secrets(
             else settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
         )
     else:
-        if assistant_id:
+        if assistant_id is not None:
             creds.assistant_id = assistant_id
         if server_url:
             creds.server_url = server_url
@@ -94,8 +95,17 @@ def _adopt_legacy_credentials(version):
     return False
 
 
+@transaction.atomic
 def sync_provider_credentials(version, data: ProviderCredentialsInput):
-    """Create or update version-scoped ProviderCredentials."""
+    """Save a version's credentials and assistant snapshot as one configuration.
+
+    All writers (CRUD serializers, edit/create views and harness versioning) use
+    this boundary. Only the supplied version changes; key-only edits must not
+    replace its assistant with the mutable definition's current assistant.
+    """
+    locked_version = AgentVersion.objects.select_for_update(of=("self",)).get(
+        pk=version.pk
+    )
     if not _has_credential_fields(data):
         # When no credential fields are provided, attempt to adopt legacy
         # credentials from the old agent_definition FK if they exist.
@@ -118,7 +128,9 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         provider_type = ProviderCredentials.ProviderType.RETELL
         api_key = (data.api_key or "").strip()
         api_secret = ""
-        assistant_id = (data.assistant_id or "").strip()
+        assistant_id = (
+            data.assistant_id.strip() if data.assistant_id is not None else None
+        )
         server_url = ""
         agent_name = ""
         config_json = None
@@ -127,17 +139,20 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         provider_type = ProviderCredentials.ProviderType.VAPI
         api_key = (data.api_key or "").strip()
         api_secret = ""
-        assistant_id = (data.assistant_id or "").strip()
+        assistant_id = (
+            data.assistant_id.strip() if data.assistant_id is not None else None
+        )
         server_url = ""
         agent_name = ""
         config_json = None
         max_concurrency = data.livekit_max_concurrency
 
+    credentials = ProviderCredentials.objects.select_for_update(of=("self",))
     try:
-        creds = ProviderCredentials.objects.get(agent_version=version)
+        creds = credentials.get(agent_version=version)
     except ProviderCredentials.DoesNotExist:
         if _adopt_legacy_credentials(version):
-            creds = ProviderCredentials.objects.get(agent_version=version)
+            creds = credentials.get(agent_version=version)
         else:
             creds = ProviderCredentials(
                 agent_version=version,
@@ -159,6 +174,16 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         provider_changed=provider_changed,
     )
     creds.save()
+
+    if data.assistant_id is not None or provider_changed:
+        # Merge into the locked, current snapshot, not a caller's stale copy.
+        # Never re-snapshot the whole definition over a historical version.
+        raw = locked_version.configuration_snapshot
+        snapshot = dict(raw) if isinstance(raw, dict) else {}
+        snapshot["assistant_id"] = creds.assistant_id
+        locked_version.configuration_snapshot = snapshot
+        locked_version.save(update_fields=["configuration_snapshot"])
+        version.configuration_snapshot = snapshot
 
 
 def resolve_api_key_for_version(version):

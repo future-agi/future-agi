@@ -67,6 +67,7 @@ def seed_version(provider, assistant, number=1, status="active", agent=None):
             organization=provider.organization,
             workspace=provider.workspace,
             inbound=True,
+            authentication_method="api_key",
             observability_provider=provider,
             assistant_id=assistant,
             api_key="synthetic-key-A",
@@ -87,6 +88,21 @@ def seed_version(provider, assistant, number=1, status="active", agent=None):
         api_key="synthetic-key-A",
     )
     return agent, version, credentials
+
+
+@pytest.fixture(params=["edit", "operations"])
+def update_route(request):
+    return request.param
+
+
+def update_agent(client, agent, payload, route):
+    if route == "edit":
+        return client.put(
+            f"/simulate/agent-definitions/{agent.id}/edit/", payload, format="json"
+        )
+    return client.patch(
+        f"/simulate/api/agent-definition-operations/{agent.id}/", payload, format="json"
+    )
 
 
 def poll(provider):
@@ -145,6 +161,7 @@ def test_authenticated_edit_polls_new_assistant_and_key(
     monkeypatch,
     initial_assistant,
     wait_for_cooldown,
+    update_route,
 ):
     provider, client = vapi_setup
     agent, version, credentials = seed_version(provider, initial_assistant)
@@ -161,17 +178,17 @@ def test_authenticated_edit_polls_new_assistant_and_key(
         assert op._parse(health["next_retry_at"]) > now
         assert requests_seen == []
 
-    path = f"/simulate/agent-definitions/{agent.id}/edit/"
     assert (
-        APIClient()
-        .put(path, {"assistant_id": "assistant-B"}, format="json")
-        .status_code
+        update_agent(
+            APIClient(), agent, {"assistant_id": "assistant-B"}, update_route
+        ).status_code
         == 401
     )
-    response = client.put(
-        path,
+    response = update_agent(
+        client,
+        agent,
         {"assistant_id": "assistant-B", "api_key": "synthetic-key-B"},
-        format="json",
+        update_route,
     )
     assert response.status_code == 200, response.data
     clear_workspace_context()
@@ -200,7 +217,9 @@ def test_authenticated_edit_polls_new_assistant_and_key(
 
 @pytest.mark.parametrize("active", [True, False], ids=["active", "latest-fallback"])
 @pytest.mark.parametrize("key", [None, "********", "synthetic-key-B"])
-def test_edit_changes_only_the_selected_version(vapi_setup, monkeypatch, active, key):
+def test_edit_changes_only_the_selected_version(
+    vapi_setup, monkeypatch, active, key, update_route
+):
     provider, client = vapi_setup
     agent, older, old_credentials = seed_version(
         provider, "assistant-A", status="active" if active else "archived"
@@ -218,9 +237,7 @@ def test_edit_changes_only_the_selected_version(vapi_setup, monkeypatch, active,
     payload = {"assistant_id": "assistant-B"}
     if key is not None:
         payload["api_key"] = key
-    response = client.put(
-        f"/simulate/agent-definitions/{agent.id}/edit/", payload, format="json"
-    )
+    response = update_agent(client, agent, payload, update_route)
     assert response.status_code == 200, response.data
     clear_workspace_context()
     selected.refresh_from_db()
@@ -240,22 +257,22 @@ def test_edit_changes_only_the_selected_version(vapi_setup, monkeypatch, active,
 @pytest.mark.parametrize(
     "payload", [{"description": "Edited"}, {"api_key": "synthetic-key-B"}]
 )
-def test_edit_without_assistant_preserves_selected_snapshot(vapi_setup, payload):
+def test_edit_without_assistant_preserves_selected_snapshot(
+    vapi_setup, payload, update_route
+):
     provider, client = vapi_setup
     agent, version, _ = seed_version(provider, "assistant-A")
     agent.assistant_id = "assistant-C"
     agent.save(update_fields=["assistant_id"])
     original = version.configuration_snapshot.copy()
-    response = client.put(
-        f"/simulate/agent-definitions/{agent.id}/edit/", payload, format="json"
-    )
+    response = update_agent(client, agent, payload, update_route)
     assert response.status_code == 200, response.data
     version.refresh_from_db()
     assert version.configuration_snapshot == original
 
 
 def test_failed_snapshot_write_rolls_back_credentials_and_definition(
-    vapi_setup, monkeypatch
+    vapi_setup, update_route
 ):
     from django.db import connection
 
@@ -269,11 +286,13 @@ def test_failed_snapshot_write_rolls_back_credentials_and_definition(
             raise RuntimeError("Synthetic snapshot write failure")
         return execute(sql, params, many, context)
 
+    client.raise_request_exception = False
     with connection.execute_wrapper(fail_snapshot_write):
-        response = client.put(
-            f"/simulate/agent-definitions/{agent.id}/edit/",
+        response = update_agent(
+            client,
+            agent,
             {"assistant_id": "assistant-B", "api_key": "synthetic-key-B"},
-            format="json",
+            update_route,
         )
     assert response.status_code == 500
     clear_workspace_context()
@@ -302,3 +321,60 @@ def test_historical_activation_still_isolates_assistant_and_key(
     assert imported == [("call-for-assistant-A", "assistant-A")]
     agent.refresh_from_db()
     assert agent.assistant_id == "assistant-B"
+
+
+def test_edit_repairs_empty_snapshot(vapi_setup, monkeypatch, update_route):
+    provider, client = vapi_setup
+    agent, version, credentials = seed_version(provider, "")
+    # Bypass save()'s automatic initial snapshot to reproduce legacy empty rows.
+    AgentVersion.objects.filter(pk=version.pk).update(configuration_snapshot={})
+    requests_seen, imported = fake_upstream(monkeypatch, timezone.now())
+    assert poll(provider) is None
+    response = update_agent(
+        client,
+        agent,
+        {"assistant_id": "assistant-B", "api_key": "synthetic-key-B"},
+        update_route,
+    )
+    assert response.status_code == 200, response.data
+    clear_workspace_context()
+    version.refresh_from_db()
+    credentials.refresh_from_db()
+    assert version.configuration_snapshot == {"assistant_id": "assistant-B"}
+    assert credentials.assistant_id == "assistant-B"
+    assert poll(provider) == op.StoreOutcome(1, 0, 0)
+    assert requests_seen == [("Bearer synthetic-key-B", "assistant-B")]
+    assert imported == [("call-for-assistant-B", "assistant-B")]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("key", ["********", "synthetic-key-B"])
+def test_update_serializer_synchronizes_selected_version(vapi_setup, key):
+    from simulate.serializers.agent_definition import AgentDefinitionUpdateSerializer
+
+    provider, _ = vapi_setup
+    agent, selected, credentials = seed_version(provider, "assistant-A")
+    _, historical, historical_credentials = seed_version(
+        provider, "assistant-C", number=2, status="draft", agent=agent
+    )
+    historical_snapshot = historical.configuration_snapshot.copy()
+    historical_key = historical_credentials.api_key
+    serializer = AgentDefinitionUpdateSerializer(
+        agent, data={"assistant_id": "assistant-B", "api_key": key}, partial=True
+    )
+    assert serializer.is_valid(), serializer.errors
+    # This serializer must supply its own transaction, not rely on an API view.
+    serializer.save()
+    agent.refresh_from_db()
+    selected.refresh_from_db()
+    credentials.refresh_from_db()
+    historical.refresh_from_db()
+    historical_credentials.refresh_from_db()
+    assert selected.configuration_snapshot["assistant_id"] == "assistant-B"
+    assert credentials.assistant_id == "assistant-B"
+    expected_key = "synthetic-key-A" if key == "********" else key
+    assert credentials.get_api_key() == expected_key
+    assert agent.api_key == expected_key
+    assert historical.configuration_snapshot == historical_snapshot
+    assert historical_credentials.api_key == historical_key
+    assert historical_credentials.assistant_id == "assistant-C"

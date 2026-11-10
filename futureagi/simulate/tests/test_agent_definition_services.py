@@ -280,6 +280,70 @@ class TestSyncProviderCredentials:
         assert legacy.get_api_key() == "sk-legacy-key"
 
 
+@pytest.mark.parametrize("assistant", ["assistant-B", "  assistant-B  ", ""])
+def test_sync_updates_snapshot_from_saved_identity(agent_version, assistant):
+    # The caller can hold a stale version; unrelated snapshot changes must survive.
+    snapshot = {"assistant_id": "assistant-A", "description": "latest description"}
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=snapshot
+    )
+    ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type="vapi",
+        assistant_id="assistant-A",
+        api_key="synthetic-key-A",
+    )
+    sync_provider_credentials(
+        agent_version,
+        ProviderCredentialsInput(
+            provider="vapi", assistant_id=assistant, api_key="synthetic-key-B"
+        ),
+    )
+    agent_version.refresh_from_db()
+    credentials = ProviderCredentials.objects.get(agent_version=agent_version)
+    assert credentials.assistant_id == assistant.strip()
+    assert agent_version.configuration_snapshot == {
+        **snapshot,
+        "assistant_id": credentials.assistant_id,
+    }
+    assert credentials.get_api_key() == "synthetic-key-B"
+    assert "api_key" not in agent_version.configuration_snapshot
+
+
+def test_sync_snapshot_failure_rolls_back_credentials(agent_version):
+    from django.db import connection
+
+    credentials = ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type="vapi",
+        assistant_id="assistant-A",
+        api_key="synthetic-key-A",
+    )
+    original_key = credentials.api_key
+    original_snapshot = agent_version.configuration_snapshot.copy()
+
+    def fail_snapshot_write(execute, sql, params, many, context):
+        if sql.startswith('UPDATE "simulate_agent_version"'):
+            raise RuntimeError("Synthetic snapshot write failure")
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(fail_snapshot_write):
+        with pytest.raises(RuntimeError, match="Synthetic snapshot write failure"):
+            sync_provider_credentials(
+                agent_version,
+                ProviderCredentialsInput(
+                    provider="vapi",
+                    assistant_id="assistant-B",
+                    api_key="synthetic-key-B",
+                ),
+            )
+    credentials.refresh_from_db()
+    agent_version.refresh_from_db()
+    assert credentials.api_key == original_key
+    assert credentials.assistant_id == "assistant-A"
+    assert agent_version.configuration_snapshot == original_snapshot
+
+
 # ============================================================================
 # Tests for resolve_api_key_for_version()
 # ============================================================================

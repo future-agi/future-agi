@@ -585,6 +585,7 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
                 organization=organization
             )
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         # Serialize concurrent writes on this agent (see
         # AgentDefinitionSerializer.update for the same pattern).
@@ -612,7 +613,9 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
         )
         instance.inbound = validated_data.get("inbound", instance.inbound)
         instance.agent_type = validated_data.get("agent_type", instance.agent_type)
-        instance.api_key = validated_data.get("api_key", instance.api_key)
+        api_key = validated_data.get("api_key")
+        if api_key is not None and not is_masked(api_key):
+            instance.api_key = api_key
         instance.model = validated_data.get("model", instance.model)
         instance.model_details = validated_data.get(
             "model_details", instance.model_details
