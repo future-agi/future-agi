@@ -1311,6 +1311,13 @@ func (c *Config) Validate() error {
 	}
 
 	for name, p := range c.Providers {
+		// Fill in preset defaults (e.g. a provider configured with only
+		// `type: huggingface`) before checking required fields, so a provider
+		// that relies on its preset isn't rejected for fields the preset
+		// would have filled in anyway.
+		ApplyProviderPreset(&p)
+		c.Providers[name] = p
+
 		if p.BaseURL == "" {
 			return fmt.Errorf("provider %q: base_url is required", name)
 		}

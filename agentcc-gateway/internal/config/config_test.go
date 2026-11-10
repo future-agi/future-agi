@@ -229,6 +229,24 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			// A provider that relies entirely on its preset (e.g.
+			// `type: huggingface` with no explicit base_url) must not be
+			// rejected: before this fix, Validate() checked BaseURL/APIFormat
+			// before presets had a chance to fill them in.
+			name: "provider configured only with a known preset type",
+			modify: func(c *Config) {
+				c.Providers["test"] = ProviderConfig{Type: "huggingface"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "provider with unknown type and no base_url still fails",
+			modify: func(c *Config) {
+				c.Providers["test"] = ProviderConfig{Type: "nonexistent-provider-xyz"}
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -240,6 +258,23 @@ func TestValidate(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestValidateAppliesPresetBeforeCheckingAndPersistsIt(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Providers["hf"] = ProviderConfig{Type: "huggingface"}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want no error for a provider relying on its preset", err)
+	}
+
+	got := cfg.Providers["hf"]
+	if got.BaseURL != "https://api-inference.huggingface.co" {
+		t.Errorf("BaseURL = %q, want the preset's value to be persisted onto cfg.Providers", got.BaseURL)
+	}
+	if got.APIFormat != "openai" {
+		t.Errorf("APIFormat = %q, want the preset's value to be persisted onto cfg.Providers", got.APIFormat)
 	}
 }
 
