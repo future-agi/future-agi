@@ -2798,7 +2798,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             eval_task.status = EvalTaskStatus.PAUSED
-            eval_task.save()
+            eval_task.save(update_fields=["status", "updated_at"])
 
             # Nudge the running workflow to stop launching new evals immediately.
             # Best-effort: the paused status above is the durable signal the

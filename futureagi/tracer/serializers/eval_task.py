@@ -19,6 +19,7 @@ from tracer.serializers.filters import (
     eval_task_filters_field,
     filter_list_query_param_field,
 )
+from tracer.services.eval_tasks.configuration import update_task_configuration
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -374,6 +375,9 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "failed_spans",
             "progress",
         ]
+
+    def update(self, instance, validated_data):
+        return update_task_configuration(instance, validated_data)
 
     def get_progress(self, obj):
         if obj.run_type != RunType.HISTORICAL:
