@@ -2197,7 +2197,7 @@
 
 **Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details
 
-**Spec:** `flows/observe/openrouter-usage.spec.ts:43`
+**Spec:** `flows/observe/openrouter-usage.spec.ts:45`
 
 **Tags:** —
 
