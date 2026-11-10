@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import unicodedata
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -504,13 +505,21 @@ def create_campaign(
 
 
 def _safe_destination(path: str) -> None:
-    _text(path, 255)
+    # These are materialized output paths, not source-manifest paths. The
+    # immutable generation prefix adds three components to a valid source path.
+    # Match the installer's output bounds, portable names and collision rules.
+    _text(path, 1024)
     parts = path.split("/")
+    reserved = {"con", "prn", "aux", "nul"} | {
+        f"{prefix}{index}" for prefix in ("com", "lpt") for index in range(1, 10)
+    }
     if (
-        len(parts) > 8
+        len(parts) > 16
         or any(part in {"", ".", ".."} or part.endswith((" ", ".")) for part in parts)
+        or any(part.split(".")[0].casefold() in reserved for part in parts)
         or "\\" in path
-        or any(ord(char) < 32 for char in path)
+        or ":" in path
+        or any(ord(char) < 32 or ord(char) == 127 for char in path)
     ):
         _fail("destination_forbidden", "The plan contains an unsafe path.", 422)
     # Only profile-owned outputs. Supporting material lives in the immutable
@@ -565,7 +574,7 @@ def validate_target_plan(plan: dict) -> dict:
     for change in plan["changes"]:
         _fields(change, _CHANGE_FIELDS)
         _safe_destination(change["path"])
-        folded = change["path"].casefold()
+        folded = unicodedata.normalize("NFC", change["path"]).casefold()
         if folded in paths or any(
             folded.startswith(old + "/") or old.startswith(folded + "/")
             for old in paths
