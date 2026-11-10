@@ -11,6 +11,7 @@ import { useContextDraftInventory, useContextDraftFile, usePreviewContextRelease
 import ContentSkeleton from 'src/components/content-skeleton';
 import ErrorState from 'src/components/error-state';
 import ContextLibraryView from './ContextLibraryView';
+import ContextDraftSwitch from './ContextDraftSwitch';
 import SkillEditorSession from '../editor/SkillEditorSession';
 import { useAuthoringOperation, AuthoringError } from '../editor/HotfixHeadReview';
 
@@ -44,6 +45,7 @@ function Editor({ scopeKey, contextId }) {
   const discard = useDiscardContextDraft(contextId);
   const checkpoint = useCheckpointDraft('agent_context', contextId);
   const [initial, setInitial] = useState(null);
+  const [switchDraft, setSwitchDraft] = useState(null);
   const operation = useAuthoringOperation(scopeKey);
   const [params] = useSearchParams();
   const from = params.get('from');
@@ -51,9 +53,17 @@ function Editor({ scopeKey, contextId }) {
   // Initialization alone owns latching. Background query refetches cannot replace
   // a live editor; scope/resource changes remount this controller in its parent.
   const differentOrigin = from !== null && draft.data && draft.data.baseVersion !== origin;
+  if (switchDraft) return <ContextDraftSwitch scopeKey={scopeKey} draft={switchDraft.draft} targetVersion={switchDraft.origin}
+    onSuspend={(input, options) => checkpoint.mutateAsync({ ...input, ...options })}
+    onStart={(input, options) => start.mutateAsync({ ...input, ...options })}
+    onStarted={(result) => { setInitial(result); setSwitchDraft(null); }} />;
   if (!initial && draft.data && !differentOrigin && !draft.isFetching && !draft.isError) setInitial(draft.data);
   if (!detail.data || (!initial && (draft.isPending || draft.isFetching))) return detail.isError ? <ErrorState title="Context unavailable" onRetry={detail.refetch} /> : <ContentSkeleton label="Loading your context draft" />;
-  if (!initial && differentOrigin) return <Stack spacing={1.5}><Alert severity="warning">Your existing draft has a different content origin. It was not replaced. Resume and preserve it before starting another version.</Alert><Button variant="contained" onClick={() => setInitial(draft.data)}>Resume existing draft</Button></Stack>;
+  if (!initial && differentOrigin) return <Stack spacing={1.5}>
+    <Alert severity="warning">Your existing draft has a different content origin. It was not replaced. Preserve it before starting the viewed version, or resume your existing work.</Alert>
+    <Button variant="contained" disabled={!Number.isSafeInteger(origin) || !checkpointsReady('agent_context')} onClick={() => setSwitchDraft({ draft: draft.data, origin })}>Review draft preservation</Button>
+    <Button variant="outlined" onClick={() => setInitial(draft.data)}>Resume existing draft</Button>
+  </Stack>;
   // Intent: inspect owned instructions and accepted dependency bytes together.
   // Hierarchy: editor stays mounted; inventory failures sit above it, never
   // masquerading as an empty tree. Palette/depth/surfaces: existing neutral
