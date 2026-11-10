@@ -1250,6 +1250,33 @@
 - both UI playground calls run through the real backend/gateway and return exact synthetic probability, verdict, usage and connection metadata
 - the reloaded editor, detail API and default version retain the saved OpenRouter route and authored criteria
 
+### EVAL-E2E-013 — a Jev choice stays under the pointer while ordinary model search loads
+
+**Goal:** Choose Jev latest with one gesture during model search and reach the TypeSafe keys drawer without selecting a model or saving a key
+
+**Spec:** `flows/evals/evaluator-picker-search.spec.ts:30`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a real evaluator draft at normal and constrained viewport heights
+2. wait for the initial decision and ordinary-model catalogs, then search Jev
+3. observe the Jev row before and during ordinary-model loading
+4. press the row, release the unmodified search response, and release the pointer at the same position
+5. read the TypeSafe drawer and the still-unselected evaluation model
+
+**Backend state verified:**
+
+- the real provider-status API reports no TypeSafe key before and after each gesture
+- the browser sends no API-key write during either gesture
+
+**Browser observations:**
+
+- Jev latest does not move at loading onset or response completion
+- one native pointer gesture closes the picker and opens one TypeSafe drawer without selecting a model
+- the picker stays within the viewport at both heights
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
