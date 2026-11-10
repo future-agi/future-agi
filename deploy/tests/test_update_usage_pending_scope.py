@@ -1,4 +1,4 @@
-"""Complete 19/24-pending-migration A9 intersection regression, without Django.
+"""Complete 21/26-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -19,6 +19,7 @@ from deploy.tests.test_update_usage_reference import ROOT, REVISIONS, source
 LATEST = (
     ('accounts','0029_demotracepublication_demoseedrequest'),
     ('accounts','0030_queue_existing_demo_trace_publications'),
+    ('accounts','0031_orgapikey_coding_agent'),
     ('usage','0030_add_jev_evaluator_call_type'),
     ('tracer','0116_insight_reports'),
     ('tracer','0117_instant_eval_scale'),
@@ -36,6 +37,7 @@ LATEST = (
     ('tracer','0129_project_analysis_source_generation_db_default'),
     ('tracer','0130_observationspan_internal_type'),
     ('simulate','0102_agent_fix_engine_notes'),
+    ('simulate','0103_harness_job_verify_of'),
 )
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
@@ -46,6 +48,14 @@ FLOOR_ONLY = (
 
 
 def keywords(node): return {k.arg:k.value for k in node.keywords}
+
+
+class CharField(SimpleNamespace):
+    """AST-only built-in-field double; constructor equality is not SQL proof."""
+    non_db_attrs = ('choices',)
+
+    def deconstruct(self):
+        return None, 'django.db.models.CharField', self.arguments, dict(self.options)
 
 
 def field(node):
@@ -61,10 +71,14 @@ def field(node):
             target='accounts.user'
         else: target=ast.literal_eval(target)
         remote=SimpleNamespace(model=target,through=ast.literal_eval(options['through']) if 'through' in options else None)
-    return SimpleNamespace(remote_field=remote,many_to_many=kind=='ManyToManyField',
+    cls=CharField if kind=='CharField' else SimpleNamespace
+    return cls(remote_field=remote,many_to_many=kind=='ManyToManyField',
         primary_key=ast.literal_eval(options['primary_key']) if 'primary_key' in options else False,
         unique=ast.literal_eval(options['unique']) if 'unique' in options else kind=='OneToOneField',
-        db_table=ast.literal_eval(options['db_table']) if 'db_table' in options else None)
+        db_index=ast.literal_eval(options['db_index']) if 'db_index' in options else False,
+        db_table=ast.literal_eval(options['db_table']) if 'db_table' in options else None,
+        arguments=[ast.dump(arg) for arg in node.args],
+        options={key:ast.dump(value) for key,value in options.items()})
 
 
 def model(node):
@@ -117,7 +131,8 @@ def scope_environment(state):
         if '.' in remote:
             app,remote=remote.split('.',1)
         return app,remote.lower()
-    env=dict(ast=ast,re=re,migrations=operation_types(),schemas={'postgres':'public','clickhouse':'default'},
+    env=dict(ast=ast,re=re,migrations=operation_types(),models=SimpleNamespace(CharField=CharField),
+        schemas={'postgres':'public','clickhouse':'default'},
         resolve_relation=resolve,strip_quotes=lambda s:s.replace('"',''),truncate_name=lambda s,length:s[:length])
     # Use the actual resolver's functions/constants, with imports and final
     # loader invocation left to the native test. Opaque declarations are AST data.
@@ -189,7 +204,7 @@ def pending_plan(identities,env):
 class CompleteUsagePendingIntersectionTests(unittest.TestCase):
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
         registry=p.load_high_volume_registry()
-        for revision,identities,count in ((REVISIONS[1],LATEST,19),(REVISIONS[0],LATEST+FLOOR_ONLY,24)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,21),(REVISIONS[0],LATEST+FLOOR_ONLY,26)):
             with self.subTest(revision=revision):
                 # Additions, not edited applied migrations. This deliberately
                 # breaks if the shipping plan changes without refreshing coverage.
@@ -209,7 +224,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 identities_in_order=[dict(app_label=m.app_label,name=m.name) for m in plan]
                 selected=p.select_reference_registry(registry,scopes,plan=identities_in_order)
                 expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog'}
-                if count==24: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
+                if count==26: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                 self.assertEqual({row['table'] for row in selected},expected)
                 self.assertTrue(all(row['database']=='postgres' for row in selected))
                 self.assertFalse(any(row.get('app_label')=='prism' or row.get('model') in ('UsageEventLog','UsageSummary') for row in selected))
@@ -222,7 +237,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                     if row['name']=='0030_queue_existing_demo_trace_publications': expected_row={'tracer_trace','tracer_observation_span'}
                     elif row['app_label']=='usage': expected_row={'usage_apicalllog'}
                     elif row['name']=='0118_instant_eval_answers': expected_row={'tracer_eval_task'}
-                    elif row['name']=='0130_observationspan_internal_type': expected_row={'tracer_observation_span'}
+                    elif row['name']=='0130_observationspan_internal_type': expected_row=set()  # Choices-only state change.
                     elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                     else: expected_row=set()
                     self.assertEqual(names,expected_row,(row['app_label'],row['name']))
@@ -237,4 +252,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # source and target keep them; do not "fix" production by changing this.
         state.models[('usage','apicalltype')].fields['name'].unique=False
         op.field.unique=False
+        # Retain a real column alteration: without one this becomes choices-only,
+        # which now correctly has no physical-table scope at all.
+        op.field.options['max_length']=ast.dump(ast.Constant(51))
         self.assertEqual(env['touched'](op,migration,state),{('postgres','public.usage_apicalltype')})
