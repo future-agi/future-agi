@@ -57,6 +57,8 @@ services:
   # Dedicated executor selection/fallback policy reuses the executor harness.
   # Its only networks are internal: no default route to real destinations.
   code-executor:
+    # Mandatory for this suite: include it in ordinary ps/down, not just explicit up.
+    profiles: !reset []
     networks: !override
       link-public:
         aliases: [code-executor-nsjail]

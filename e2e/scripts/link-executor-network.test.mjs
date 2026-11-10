@@ -50,6 +50,7 @@ test('standalone supplies the same listeners and source-selected internal execut
   const config = JSON.parse(result.stdout);
   const executor = config.services['code-executor'];
   assert.equal(executor.image, 'futureagi/code-executor:source-witness');
+  assert.deepEqual(executor.profiles ?? [], [], 'ordinary down must remove the required executor');
   assert.deepEqual(Object.keys(executor.networks).sort(), ['link-private', 'link-public']);
   for (const name of Object.keys(executor.networks)) assert.equal(config.networks[name].internal, true);
   assert.ok(executor.networks['link-public'].aliases.includes('code-executor-nsjail'));
