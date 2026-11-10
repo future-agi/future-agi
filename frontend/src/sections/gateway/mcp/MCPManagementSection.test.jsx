@@ -240,4 +240,80 @@ describe("MCP guardrails drafts across tabs", () => {
       screen.queryByText("You have unsaved changes."),
     ).not.toBeInTheDocument();
   });
+
+  it("shows same-length list changes from a refetch made while the tab was hidden", async () => {
+    const user = userEvent.setup();
+    mocks.config = {
+      mcp: {
+        enabled: true,
+        guardrails: {
+          enabled: true,
+          blocked_tools: ["old_tool"],
+          allowed_servers: ["old-server"],
+        },
+      },
+    };
+    const view = renderMCP();
+    expect(screen.getByText("old_tool")).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Playground" }));
+    mocks.config = {
+      mcp: {
+        enabled: true,
+        guardrails: {
+          enabled: true,
+          blocked_tools: ["new_tool"],
+          allowed_servers: ["new-server"],
+        },
+      },
+    };
+    view.rerender(<MCPRoutes />);
+    await user.click(screen.getByRole("tab", { name: "Guardrails" }));
+    expect(screen.getByText("new_tool")).toBeVisible();
+    expect(screen.getByText("new-server")).toBeVisible();
+    expect(screen.queryByText("old_tool")).not.toBeInTheDocument();
+    expect(screen.queryByText("old-server")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save Guardrails" }));
+    expect(mocks.mutate).toHaveBeenCalledExactlyOnceWith(
+      {
+        gatewayId: "test-gateway",
+        config: {
+          enabled: true,
+          blocked_tools: ["new_tool"],
+          allowed_servers: ["new-server"],
+          validate_inputs: false,
+          validate_outputs: false,
+          tool_rate_limits: {},
+        },
+      },
+      expect.any(Object),
+    );
+  });
+
+  it("keeps the draft when a refetch returns the same guardrail values", async () => {
+    const user = userEvent.setup();
+    mocks.config = {
+      mcp: {
+        enabled: true,
+        guardrails: { enabled: true, blocked_tools: ["kept_tool"] },
+      },
+    };
+    const view = renderMCP();
+    await user.click(
+      screen.getByRole("checkbox", { name: "Validate tool outputs" }),
+    );
+    await user.click(screen.getByRole("tab", { name: "Playground" }));
+    mocks.config = {
+      mcp: {
+        enabled: true,
+        guardrails: { enabled: true, blocked_tools: ["kept_tool"] },
+      },
+    };
+    view.rerender(<MCPRoutes />);
+    await user.click(screen.getByRole("tab", { name: "Guardrails" }));
+    expect(
+      screen.getByRole("checkbox", { name: "Validate tool outputs" }),
+    ).toBeChecked();
+    expect(screen.getByText("You have unsaved changes.")).toBeVisible();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
 });
