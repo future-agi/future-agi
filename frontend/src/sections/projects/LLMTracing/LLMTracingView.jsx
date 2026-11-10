@@ -4106,14 +4106,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   sx={{
                     margin: theme.spacing(0),
                   }}
-                  label="Primary Graph"
+                  label="Primary Data"
                   value="primary"
                 />
                 <Tab
                   sx={{
                     margin: theme.spacing(0),
                   }}
-                  label="Comparison Graph"
+                  label="Comparison Data"
                   value="compare"
                 />
               </Tabs>
