@@ -7,6 +7,7 @@ from accounts.models import workspace
 from accounts.models.workspace import Workspace
 from agentic_eval.core.utils.functions import detect_input_type
 from django.db import close_old_connections
+from django.db.models import Q
 
 from model_hub.services.localization_errors import LocalizationFailure
 
@@ -888,14 +889,25 @@ def trigger_error_localization_for_span(
     observation_span: "ObservationSpan",
 ) -> None:
     """Use the evaluator's project-scoped span, which may exist only in CH."""
+    from tracer.models.eval_task import EvalTask
+
     try:
         project = observation_span.project
+        config = eval_logger.custom_eval_config
+        config_project = config.project
+        # Task targets need not belong to the config's author project. Legacy
+        # entries without a task still use the config project as their owner.
+        target_project_id = config.project_id
+        if eval_logger.eval_task_id:
+            target_project_id = EvalTask.objects.only("project_id").get(
+                id=eval_logger.eval_task_id
+            ).project_id
         if (
             str(eval_logger.observation_span_id) != str(observation_span.id)
             or str(eval_logger.trace_id) != str(observation_span.trace_id)
-            or str(eval_logger.custom_eval_config.project_id) != str(project.id)
-            or str(eval_logger.custom_eval_config.eval_template_id)
-            != str(eval_template.id)
+            or str(target_project_id) != str(project.id)
+            or config_project.organization_id != project.organization_id
+            or str(config.eval_template_id) != str(eval_template.id)
         ):
             logger.warning(
                 "error_localizer_span_context_mismatch",
@@ -916,7 +928,17 @@ def trigger_error_localization_for_span(
                 is_default=True,
                 is_active=True,
             )
-        if workspace.organization_id != project.organization_id:
+        # A null author workspace denotes this tenant's default workspace,
+        # not permission to borrow a config into an arbitrary workspace.
+        config_workspace_matches = config_project.workspace_id == workspace.id or (
+            config_project.workspace_id is None
+            and workspace.is_default
+            and workspace.is_active
+        )
+        if (
+            workspace.organization_id != project.organization_id
+            or not config_workspace_matches
+        ):
             logger.warning(
                 "error_localizer_workspace_mismatch",
                 eval_logger_id=str(eval_logger.id),
@@ -937,12 +959,18 @@ def trigger_error_localization_for_span(
         pass_threshold = resolve_pass_threshold(eval_template, eval_config)
 
         if task_exists:
+            workspace_scope = Q(workspace=workspace)
+            if workspace.is_default and workspace.is_active:
+                # The workspace migration did not backfill historical tasks.
+                # Adopt only this organization's legacy rows into its default.
+                workspace_scope |= Q(workspace__isnull=True)
             task = ErrorLocalizerTask.objects.get(
+                workspace_scope,
                 source_id=eval_logger.id,
                 source=ErrorLocalizerSource.OBSERVE,
                 organization=project.organization,
-                workspace=workspace,
             )
+            task.workspace = workspace
             metadata = task.metadata or {}
             metadata.update({"log_id": str(log_id), "pass_threshold": pass_threshold})
             task.eval_result = value

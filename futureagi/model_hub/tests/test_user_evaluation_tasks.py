@@ -1625,6 +1625,9 @@ class TestTriggerMetadataSnapshot:
         span.trace_id = eval_logger.trace_id
         span.project.id = eval_logger.custom_eval_config.project_id
         span.project.workspace.organization_id = span.project.organization_id
+        span.project.workspace_id = span.project.workspace.id
+        eval_logger.custom_eval_config.project = span.project
+        eval_logger.eval_task_id = None
         eval_logger.custom_eval_config.eval_template_id = eval_template.id
         eval_config = {"run_config": {"pass_threshold": 0.9}}
 
