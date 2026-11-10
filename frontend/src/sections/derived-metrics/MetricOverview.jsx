@@ -13,6 +13,9 @@ import MetricTrendChart from "./MetricTrendChart";
 
 import { formatMetricDifference, sameMetricRead } from "./metricPageValues";
 
+// The KPI read has not settled yet; its card may still state the window.
+const KPI_PENDING = ["idle", "loading"];
+
 function previousPeriod(data) {
   const current = pointValueState(data.current);
   const previous = pointValueState(data.previous);
@@ -271,9 +274,15 @@ export default function MetricOverview({ metric, scope, window, windowLabel }) {
             trend.
           </Alert>
         )}
+        {/* The window and rounding line is stated once: in the KPI footer,
+            or under the trend only once the KPI read has settled into a
+            failure. While the KPI loads the line waits, so it never jumps
+            between the two. A different trend window is a mismatch, which
+            the alert above already covers. */}
         <MetricTrendChart
           data={mismatch ? undefined : trend.data}
           name={metric?.name}
+          showWindow={!data && !KPI_PENDING.includes(kpi.readState)}
         />
       </Box>
     </Stack>

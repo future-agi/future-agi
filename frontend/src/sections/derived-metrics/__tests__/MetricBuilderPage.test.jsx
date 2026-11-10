@@ -42,7 +42,11 @@ vi.mock("src/hooks/useDashboards", () => ({
 vi.mock("../EvaluatorBinding", () => ({ default: () => null }));
 vi.mock("../usePreview", () => ({ default: () => ({ state: "idle" }) }));
 vi.mock("../api", () => ({
-  useMetricDetail: () => ({ data: state.metric, readState: "ready" }),
+  useMetricDetail: () => ({
+    data: state.metric,
+    readState: state.detailReadState,
+    refetch: () => {},
+  }),
   useMetricCapabilities: () => ({
     data: state.capabilities,
     readState: "ready",
@@ -94,6 +98,7 @@ const choose = (label, name) => {
 beforeEach(() => {
   localStorage.clear();
   state.metric = null;
+  state.detailReadState = "ready";
   state.role = "Owner";
   state.capabilities = capabilities;
   state.catalog = catalog;
@@ -107,6 +112,23 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("metric builder page", () => {
+  it("keeps the title bar and its way back while the metric loads or fails", async () => {
+    state.detailReadState = "loading";
+    renderPage("/dashboard/metrics/metric-a/edit");
+    expect(screen.getByRole("heading", { name: "Edit metric" })).toBeTruthy();
+    expect(
+      screen.getByRole("progressbar", { name: "Loading metric" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Back to metrics" }),
+    ).toBeTruthy();
+    cleanup();
+    state.detailReadState = "unavailable";
+    renderPage("/dashboard/metrics/metric-a/edit");
+    expect(screen.getByText("Metric definition unavailable.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back to metrics" }));
+    await screen.findByText("Metric detail destination");
+  });
   it("saves a typed sentence through validation and the F02 create hook", async () => {
     renderPage();
     await waitFor(() =>

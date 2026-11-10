@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   Alert,
   Box,
@@ -27,6 +27,8 @@ import {
   setRecipeInputs,
   sourceCapability,
 } from "./builderSpec";
+import { conditionParts, inputLabel } from "./metricPresentation";
+import { ConditionText } from "./MetricSentence";
 
 export default function SentenceBuilder({
   form,
@@ -37,7 +39,9 @@ export default function SentenceBuilder({
   onChange,
   onSearch,
   rebuilding = false,
+  sourceLabels = {},
 }) {
+  const idBase = useId();
   const [customLabels, setCustomLabels] = useState(
     Object.entries(form.value_labels || {}).some(
       ([key, value]) => value !== DEFAULT_LABELS[key],
@@ -50,6 +54,9 @@ export default function SentenceBuilder({
   const level =
     form.level ||
     (form.selection_unit === "session" ? "conversation" : form.selection_unit);
+  // The same names the preview sentence uses, so both read identically.
+  const labelFor = (alias) =>
+    inputLabel(alias, { inputs: form.inputs, sourceLabels });
   const updateInput = (index, patch) =>
     onChange(
       setRecipeInputs(
@@ -264,12 +271,14 @@ export default function SentenceBuilder({
                 ? { alias: input.alias, ...input.condition }
                 : conditions.find((item) => item.alias === input.alias);
             const removable = form.inputs.length > 1;
+            const sentenceId = `${idBase}-condition-${index}`;
             return (
               <Stack
                 key={input.alias}
                 gap={1.5}
                 role="group"
                 aria-label={boolean ? `Condition ${index + 1}` : "Source"}
+                aria-describedby={boolean ? sentenceId : undefined}
                 sx={{
                   p: 1.5,
                   border: 1,
@@ -280,12 +289,29 @@ export default function SentenceBuilder({
                 {boolean && (
                   <Stack
                     direction="row"
-                    alignItems="center"
+                    alignItems="flex-start"
                     justifyContent="space-between"
-                    sx={{ minHeight: 24, mb: -0.5 }}
+                    gap={1}
+                    sx={{ minHeight: 24, mb: -0.25 }}
                   >
-                    <Typography variant="caption" color="text.secondary">
-                      {index === 0 ? "Where" : "And"}
+                    {/* The condition as one sentence, in the preview's words;
+                        the fields below edit each part of it. */}
+                    <Typography
+                      id={sentenceId}
+                      variant="body2"
+                      sx={{ pt: 0.25, minWidth: 0, overflowWrap: "anywhere" }}
+                    >
+                      <Box component="span" sx={{ color: "text.secondary" }}>
+                        {index === 0 ? "Where" : "And"}
+                      </Box>{" "}
+                      <Box
+                        component="span"
+                        sx={{ color: "text.primary", fontWeight: 500 }}
+                      >
+                        <ConditionText
+                          parts={conditionParts(form, input, labelFor)}
+                        />
+                      </Box>
                     </Typography>
                     {removable && (
                       <Tooltip title="Remove condition">
@@ -580,4 +606,5 @@ SentenceBuilder.propTypes = {
   onChange: PropTypes.func.isRequired,
   onSearch: PropTypes.func,
   rebuilding: PropTypes.bool,
+  sourceLabels: PropTypes.objectOf(PropTypes.string),
 };

@@ -3,6 +3,7 @@ import { cleanup, render, screen } from "src/utils/test-utils";
 import MetricOverview from "../MetricOverview";
 import { formatMetricDifference } from "../metricPageValues";
 import MetricStatusLine from "../MetricStatusLine";
+import { formatMetricWindow } from "../metricTime";
 import { metric, kpi, trend, scope, window } from "./metricPageFixtures";
 const mock = vi.hoisted(() => ({ kpi: {}, trend: {} }));
 vi.mock("../api", () => ({
@@ -57,6 +58,31 @@ it("does not turn an arbitrary ratio into a percentage", () => {
   expect(
     screen.getByText("Interval unavailable: mixed sampling designs"),
   ).toBeVisible();
+});
+
+it("states the window and rounding once, under the trend only when the KPI read failed", () => {
+  const line = `${formatMetricWindow(kpi.effective_window)} · ${kpi.effective_window.rounding}`;
+  mount();
+  expect(screen.getAllByText(line)).toHaveLength(1);
+  cleanup();
+  mock.kpi = {
+    readState: "unavailable",
+    error: { statusCode: 503, retryable: true },
+  };
+  mount();
+  expect(screen.queryByTestId("metric-hero")).not.toBeInTheDocument();
+  expect(screen.getAllByText(line)).toHaveLength(1);
+});
+
+it("keeps the window line out of the trend while the KPI read is still loading", () => {
+  const line = `${formatMetricWindow(kpi.effective_window)} · ${kpi.effective_window.rounding}`;
+  // The trend arrived first: the line waits for the KPI card instead of
+  // appearing under the trend and then jumping up.
+  mock.kpi = { readState: "loading" };
+  mount();
+  expect(screen.queryByTestId("metric-hero")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "View data table" })).toBeVisible();
+  expect(screen.queryByText(line)).not.toBeInTheDocument();
 });
 
 it("keeps a missing previous window unavailable without inventing a difference", () => {

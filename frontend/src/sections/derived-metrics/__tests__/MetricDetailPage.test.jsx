@@ -20,6 +20,7 @@ const mock = vi.hoisted(() => ({
   org: {},
   workspace: {},
   enabled: true,
+  projectsFail: false,
 }));
 vi.mock("src/utils/axios", () => ({
   default: { get: mock.get, post: mock.post },
@@ -51,6 +52,17 @@ vi.mock("src/sections/projects/TracesDrawer/TracesDrawer", () => ({
         <button onClick={onClose}>Close source</button>
       </div>
     ) : null,
+}));
+// The header names the project from the same Observe project read as the list.
+vi.mock("src/api/project/observe-project-list", () => ({
+  readObserveProjectPage: async () => {
+    if (mock.projectsFail) throw new Error("projects unavailable");
+    return {
+      rows: [{ id: "project-a", name: "Customer care" }],
+      totalRows: 1,
+      totalPages: 1,
+    };
+  },
 }));
 vi.mock("src/sections/tasks/components/TaskRunTraceDrawer", () => ({
   default: ({ open, traceId, projectId }) =>
@@ -105,6 +117,7 @@ beforeEach(() => {
     isReady: true,
   };
   mock.enabled = true;
+  mock.projectsFail = false;
   responses = structuredClone({
     detail: metric,
     kpi,
@@ -174,6 +187,20 @@ it("loads only active-version KPI and trend with explicit tenant and closed wind
   ).toBeGreaterThan(0);
 });
 
+it("names the metric's project in the header, or says it is unavailable", async () => {
+  mount();
+  await screen.findByRole("heading", { name: "Resolution rate" });
+  expect(await screen.findByText("Customer care")).toBeVisible();
+  expect(screen.getByText("Project:", { exact: false })).toBeInTheDocument();
+  cleanup();
+  client.clear();
+  mock.projectsFail = true;
+  mount();
+  await screen.findByRole("heading", { name: "Resolution rate" });
+  expect(await screen.findByText("Project name unavailable")).toBeVisible();
+  expect(screen.queryByText("Customer care")).not.toBeInTheDocument();
+});
+
 it("keeps loading separate from empty data", async () => {
   const pending = deferred();
   mock.get.mockReturnValue(pending.promise);
@@ -221,6 +248,97 @@ it("allows keyboard tabs and date presets without querying hidden tabs", async (
     86400000,
   );
   expect(calls("history")).toHaveLength(0);
+});
+
+it("re-anchors a preset to a fresh window ending now from the active range and Refresh, and keeps a custom window", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-11-08T12:00:00Z"));
+    mount();
+    await screen.findByTestId("metric-hero");
+    const lastKpi = () => calls("kpi").at(-1)[1].params;
+    expect(lastKpi().window_end).toBe("2026-11-08T12:00:00.000Z");
+
+    // Clicking the range that is already selected reads it again, ending now.
+    vi.setSystemTime(new Date("2026-11-08T13:00:00Z"));
+    fireEvent.click(screen.getByRole("button", { name: "7 days" }));
+    await waitFor(() =>
+      expect(lastKpi().window_end).toBe("2026-11-08T13:00:00.000Z"),
+    );
+    expect(
+      Date.parse(lastKpi().window_end) - Date.parse(lastKpi().window_start),
+    ).toBe(7 * 86400000);
+    expect(screen.getByRole("button", { name: "7 days" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    // Refresh does the same, like the list page's Refresh.
+    vi.setSystemTime(new Date("2026-11-08T14:00:00Z"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh values" }));
+    await waitFor(() =>
+      expect(lastKpi().window_end).toBe("2026-11-08T14:00:00.000Z"),
+    );
+    await screen.findByTestId("metric-hero");
+
+    // A custom window is explicit: Refresh reads the same window again.
+    fireEvent.click(screen.getByRole("button", { name: "Custom" }));
+    const dialog = screen.getByRole("dialog", { name: "Custom window" });
+    fireEvent.change(within(dialog).getByLabelText("Window start"), {
+      target: { value: "2026-11-01T00:00" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Window end"), {
+      target: { value: "2026-11-02T00:00" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Apply window" }),
+    );
+    const customEnd = new Date("2026-11-02T00:00").toISOString();
+    await waitFor(() => expect(lastKpi().window_end).toBe(customEnd));
+    await screen.findByTestId("metric-hero");
+    const readsBefore = calls("kpi").length;
+    vi.setSystemTime(new Date("2026-11-08T15:00:00Z"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh values" }));
+    await waitFor(() =>
+      expect(calls("kpi").length).toBeGreaterThan(readsBefore),
+    );
+    expect(lastKpi().window_end).toBe(customEnd);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("reads only the fresh window on a preset Refresh, never the window it leaves", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-11-08T12:00:00Z"));
+    mount();
+    await screen.findByTestId("metric-hero");
+    const oldEnd = "2026-11-08T12:00:00.000Z";
+    const readsOf = (kind, end) =>
+      calls(kind).filter(([, config]) => config.params.window_end === end)
+        .length;
+    const oldReads = {
+      kpi: readsOf("kpi", oldEnd),
+      trend: readsOf("trend", oldEnd),
+    };
+    expect(oldReads.kpi).toBeGreaterThan(0);
+    const details = calls("detail").length;
+    vi.setSystemTime(new Date("2026-11-08T14:00:00Z"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh values" }));
+    await waitFor(() =>
+      expect(calls("kpi").at(-1)[1].params.window_end).toBe(
+        "2026-11-08T14:00:00.000Z",
+      ),
+    );
+    await screen.findByTestId("metric-hero");
+    // No read of the window being left, and the metric itself is read again.
+    expect(readsOf("kpi", oldEnd)).toBe(oldReads.kpi);
+    expect(readsOf("trend", oldEnd)).toBe(oldReads.trend);
+    expect(calls("detail").length).toBeGreaterThan(details);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("validates custom windows before starting reads", async () => {
@@ -442,6 +560,79 @@ it("pages drivers with the returned cursor and resets it on a new range", async 
   await waitFor(() =>
     expect(calls("drivers").at(-1)[1].params.after).toBeUndefined(),
   );
+});
+
+it("scopes an empty drivers page to the drivers, and names an empty later page", async () => {
+  responses.drivers.results = [];
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "Drivers" }));
+  expect(await screen.findByText("No drivers in this window")).toBeVisible();
+  // Only the returned drivers are known, never every unit in the window.
+  expect(
+    screen.getByText(
+      "No unit pulling the value down has a settled value in this window. Try a longer window.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(/No unit has a settled value/),
+  ).not.toBeInTheDocument();
+  cleanup();
+  client.clear();
+
+  responses.drivers.results = [driver];
+  responses.drivers.next_cursor = "signed-driver-page";
+  mock.get.mockImplementation(async (url, config) => {
+    const kind = url.split("/").at(-1);
+    if (kind === "drivers" && config.params.after)
+      return {
+        data: { ...responses.drivers, results: [], next_cursor: null },
+      };
+    return { data: responses[kind] };
+  });
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "Drivers" }));
+  await screen.findByRole("table", { name: "Metric drivers" });
+  fireEvent.click(screen.getByRole("button", { name: "Next drivers" }));
+  expect(await screen.findByText("No more drivers")).toBeVisible();
+  expect(
+    screen.getByText("No more drivers on this page. Use Previous to go back."),
+  ).toBeVisible();
+  expect(
+    screen.queryByText("No drivers in this window"),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("Page 2")).toBeVisible();
+  cleanup();
+  client.clear();
+
+  // Every returned unit is still open, and more pages follow: the copy says
+  // so for this page only, never that the window has no drivers.
+  responses.drivers.results = [
+    {
+      ...driver,
+      unit_id: "open-unit",
+      status: "in_progress",
+      no_value_reason: "not_evaluated",
+    },
+  ];
+  responses.drivers.next_cursor = "signed-driver-page";
+  mock.get.mockImplementation(async (url) => ({
+    data: responses[url.split("/").at(-1)],
+  }));
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "Drivers" }));
+  expect(await screen.findByText("No drivers on this page")).toBeVisible();
+  expect(
+    screen.getByText(
+      "No unit on this page has a settled value. Use Next to see more.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByText("No drivers in this window"),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Next drivers" })).toBeEnabled();
 });
 
 it("does not apply field labels from a concurrently activated definition", async () => {

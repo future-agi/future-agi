@@ -1,4 +1,9 @@
-import { KIND_LABELS, LEVEL_LABELS, OPERATOR_LABELS } from "./builderSpec";
+import {
+  invalidComparisonAliases,
+  KIND_LABELS,
+  LEVEL_LABELS,
+  OPERATOR_LABELS,
+} from "./builderSpec";
 
 // Presentation-only helpers. They never change a recipe or a returned value;
 // they only decide how an existing input or definition is named on screen.
@@ -75,12 +80,19 @@ export function unitInputs(unit) {
   }).filter(([alias]) => !RESERVED_ALIASES.has(alias));
 }
 
+/** Shown where a comparison value has not been chosen yet; never a default. */
+export const MISSING_VALUE = "…";
+
+// An empty string is a real text value (the server compares with it), so it
+// reads as "empty text", neither as missing nor as a bare "".
 const literal = (value) =>
   value == null
-    ? "…"
-    : typeof value === "string"
-      ? `"${value}"`
-      : String(value);
+    ? MISSING_VALUE
+    : value === ""
+      ? "empty text"
+      : typeof value === "string"
+        ? `"${value}"`
+        : String(value);
 
 const levelOf = (recipe) =>
   recipe.level ||
@@ -88,39 +100,96 @@ const levelOf = (recipe) =>
     ? "conversation"
     : recipe.selection_unit);
 
-/** One plain sentence for a builder recipe, e.g.
- * "Share of conversations where resolved (latest) is 1". */
-export function recipeSentence(recipe, labelFor = (alias) => alias) {
+const describeInput = (input, labelFor) =>
+  `${labelFor(input.alias)} (${input.condition_stage === "observation" ? `${input.reducer} observation` : input.reducer})`;
+
+/** The comparison an input is held to, wherever the recipe keeps it. */
+function inputCondition(recipe, input) {
+  return input.condition_stage === "observation"
+    ? input.condition
+    : (recipe.field_spec?.conditions || []).find(
+        (item) => item.alias === input.alias,
+      );
+}
+
+/** One condition split into its parts, so a screen can mark a missing value
+ * for assistive technology: {subject, operator, value, missing}. operator is
+ * null when the input has no condition. */
+export function conditionParts(recipe, input, labelFor = (alias) => alias) {
+  const subject = describeInput(input, labelFor);
+  const condition = inputCondition(recipe, input);
+  if (!condition)
+    return { subject, operator: null, value: null, missing: false };
+  const operator = OPERATOR_LABELS[condition.operator] || condition.operator;
+  if (condition.right_alias)
+    return {
+      subject,
+      operator,
+      value: labelFor(condition.right_alias),
+      missing: false,
+    };
+  return {
+    subject,
+    operator,
+    value: literal(condition.value),
+    missing: condition.value == null,
+  };
+}
+
+const clauseText = ({ subject, operator, value }) =>
+  operator ? `${subject} ${operator} ${value}` : subject;
+
+/** One condition in the same words as recipeSentence, e.g.
+ * "resolved (latest) is 1"; a missing value reads "…", never a default. */
+export function conditionClause(recipe, input, labelFor = (alias) => alias) {
+  return clauseText(conditionParts(recipe, input, labelFor));
+}
+
+/** The recipe sentence as a lead and its condition parts, joined
+ * "<lead> where <clause> and <clause>". */
+export function recipeSentenceParts(recipe, labelFor = (alias) => alias) {
   const kind = recipe.kind || "custom";
   const units = LEVEL_LABELS[levelOf(recipe)] || "units";
   const inputs = recipe.inputs || [];
-  const conditions = recipe.field_spec?.conditions || [];
-  const describe = (input) =>
-    `${labelFor(input.alias)} (${input.condition_stage === "observation" ? `${input.reducer} observation` : input.reducer})`;
-  if (kind === "share" || kind === "count") {
-    const lead = kind === "share" ? `Share of ${units}` : `Number of ${units}`;
-    const clauses = inputs.map((input) => {
-      const condition =
-        input.condition_stage === "observation"
-          ? input.condition
-          : conditions.find((item) => item.alias === input.alias);
-      if (!condition) return describe(input);
-      const operator =
-        OPERATOR_LABELS[condition.operator] || condition.operator;
-      const right = condition.right_alias
-        ? labelFor(condition.right_alias)
-        : literal(condition.value);
-      return `${describe(input)} ${operator} ${right}`;
-    });
-    return clauses.length ? `${lead} where ${clauses.join(" and ")}` : lead;
-  }
+  if (kind === "share" || kind === "count")
+    return {
+      lead: kind === "share" ? `Share of ${units}` : `Number of ${units}`,
+      clauses: inputs.map((input) => conditionParts(recipe, input, labelFor)),
+    };
   if (kind === "average" || kind === "total") {
     const lead = kind === "average" ? "Average" : "Total";
-    return inputs.length
-      ? `${lead} of ${describe(inputs[0])} across ${units}`
-      : `${lead} across ${units}`;
+    return {
+      lead: inputs.length
+        ? `${lead} of ${describeInput(inputs[0], labelFor)} across ${units}`
+        : `${lead} across ${units}`,
+      clauses: [],
+    };
   }
-  return `${KIND_LABELS[kind] || kind} across ${units}`;
+  return { lead: `${KIND_LABELS[kind] || kind} across ${units}`, clauses: [] };
+}
+
+/** One plain sentence for a builder recipe, e.g.
+ * "Share of conversations where resolved (latest) is 1". */
+export function recipeSentence(recipe, labelFor = (alias) => alias) {
+  const { lead, clauses } = recipeSentenceParts(recipe, labelFor);
+  return clauses.length
+    ? `${lead} where ${clauses.map(clauseText).join(" and ")}`
+    : lead;
+}
+
+/** Why the live preview is waiting, naming only the piece still missing, so
+ * it never asks for a project or source the person already chose. A value is
+ * named by the same rule the save checks use (invalidComparisonAliases), so
+ * the footer and the preview always point at the same field. */
+export function previewNeeds(form, labelFor = (alias) => alias) {
+  if (!form?.project_id) return "Choose a project to see a preview.";
+  const inputs = form.inputs || [];
+  if (!inputs.length) return "Choose a source to see a preview.";
+  if ((form.kind || "custom") === "custom" && !form.formula?.trim())
+    return "Enter a formula to see a preview.";
+  const [alias] = invalidComparisonAliases(form);
+  if (alias) return `Choose a value for ${labelFor(alias)} to see a preview.`;
+  return "Finish the calculation to see a preview.";
 }
 
 /** "Share of conversations" / "Average across conversations"; null when unknown. */

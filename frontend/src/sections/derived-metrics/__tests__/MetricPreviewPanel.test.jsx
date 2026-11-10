@@ -258,4 +258,66 @@ describe("honest previews", () => {
     expect(screen.getByText("No value")).toBeTruthy();
     expect(screen.queryByText("0 ms")).toBeNull();
   });
+  it("names only the missing piece while idle, never a project already chosen", () => {
+    const { rerender } = render(
+      <MetricPreviewPanel
+        form={{ kind: "share", project_id: "", inputs: [] }}
+        preview={{ state: "idle" }}
+      />,
+    );
+    expect(screen.getByText("Choose a project to see a preview.")).toBeTruthy();
+    rerender(
+      <MetricPreviewPanel
+        form={{ kind: "share", project_id: "project-a", inputs: [] }}
+        preview={{ state: "idle" }}
+      />,
+    );
+    expect(screen.getByText("Choose a source to see a preview.")).toBeTruthy();
+    expect(screen.queryByText(/project/i)).toBeNull();
+    rerender(
+      <MetricPreviewPanel
+        form={{ kind: "share", project_id: "project-a", inputs: [] }}
+        preview={{ state: "idle" }}
+        idleMessage="Rebuild this metric to see a preview."
+      />,
+    );
+    expect(
+      screen.getByText("Rebuild this metric to see a preview."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Choose a source to see a preview.")).toBeNull();
+  });
+  it("names the field still missing a value, and marks it in the sentence for screen readers", () => {
+    render(
+      <MetricPreviewPanel
+        form={{
+          kind: "share",
+          level: "conversation",
+          project_id: "project-a",
+          inputs: [
+            {
+              alias: "value_1",
+              source: "span",
+              field: "attribute_text",
+              attribute_key: "locale",
+              value_type: "text",
+              reducer: "latest",
+            },
+          ],
+          field_spec: {
+            conditions: [{ alias: "value_1", operator: "eq", value: null }],
+          },
+        }}
+        preview={{ state: "idle" }}
+      />,
+    );
+    expect(
+      screen.getByText("Choose a value for locale to see a preview."),
+    ).toBeTruthy();
+    const sentence = screen.getByText(/^Share of conversations where/);
+    expect(sentence).toHaveTextContent(
+      "Share of conversations where locale (latest) is …no value yet",
+    );
+    expect(screen.getByText("…")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByText(/to compare with/)).toBeNull();
+  });
 });

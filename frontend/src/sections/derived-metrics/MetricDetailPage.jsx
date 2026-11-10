@@ -6,6 +6,7 @@ import {
   Box,
   Breadcrumbs,
   Button,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -22,6 +23,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { visuallyHidden } from "@mui/utils";
 import Iconify from "src/components/iconify";
 import PageHeader from "src/components/page-header";
 import StatusBadge from "src/components/status-badge";
@@ -40,6 +42,10 @@ import MetricDrivers from "./MetricDrivers";
 import MetricHistory from "./MetricHistory";
 import MetricDefinition from "./MetricDefinition";
 import { definitionSummary } from "./metricPresentation";
+import {
+  metricProjectLabel,
+  useMetricProjectNames,
+} from "./useMetricProjectNames";
 
 const tabs = ["Overview", "Drivers", "History", "Definition"];
 const WINDOWS = [
@@ -47,6 +53,8 @@ const WINDOWS = [
   [7, "7 days", "Last 7 days"],
   [30, "30 days", "Last 30 days"],
 ];
+// Reads whose query key carries the window (as in api.js).
+const WINDOW_READS = new Set(["kpi", "trend", "drivers", "unitValues"]);
 
 export default function MetricDetailPage() {
   const { metricId } = useParams();
@@ -60,11 +68,15 @@ export default function MetricDetailPage() {
     currentWorkspaceRole,
     isReady: workspaceReady,
   } = useWorkspace();
+  // Like the list page, the header stays in place while the workspace loads.
   if (!organizationReady || !workspaceReady)
     return (
-      <Typography role="status" sx={{ p: 4 }}>
-        Loading workspace…
-      </Typography>
+      <Box sx={{ p: 2 }}>
+        <PageHeader title="Metric" />
+        <Typography role="status" variant="body2" color="text.secondary">
+          Loading workspace…
+        </Typography>
+      </Box>
     );
   if (!currentOrganizationId || !currentWorkspaceId)
     return (
@@ -91,10 +103,15 @@ export default function MetricDetailPage() {
 function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
   const router = useRouter();
   const client = useQueryClient();
-  const reload = () => {
+  // windowReads: false skips the reads keyed by the window. A preset Refresh
+  // moves to a new window, so those reads start fresh under their new keys;
+  // invalidating the old keys would only refetch a window being left.
+  const reload = ({ windowReads = true } = {}) => {
     void client.invalidateQueries({
       queryKey: metricKeys.workspace(scope),
-      predicate: ({ queryKey }) => queryKey[5] === metricId,
+      predicate: ({ queryKey }) =>
+        queryKey[5] === metricId &&
+        (windowReads || !WINDOW_READS.has(queryKey[4])),
     });
   };
   const detail = useMetricDetail({ scope, metricId });
@@ -123,7 +140,12 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
   const summary = definitionSummary(
     metric?.definition || metric?.draft_definition,
   );
-  const badge = !metric ? null : metric.definition ? (
+  // The same project read the Metrics list uses; no extra endpoint.
+  const projectNames = useMetricProjectNames(
+    scope,
+    metric?.project_id ? [metric.project_id] : [],
+  );
+  const statusBadge = !metric ? null : metric.definition ? (
     <StatusBadge
       status="active"
       label={`Active · v${metric.definition.version}`}
@@ -140,10 +162,52 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
       variant="dot"
     />
   );
+  const projectLabel =
+    metric?.project_id && metricProjectLabel(projectNames, metric.project_id);
+  // Project first, then status, as the Tasks header shows them.
+  const badge = metric ? (
+    <>
+      {projectLabel && (
+        <Chip
+          size="small"
+          variant="outlined"
+          title={projectLabel}
+          icon={<Iconify icon="solar:folder-linear" width={14} />}
+          label={
+            <>
+              <Box component="span" sx={visuallyHidden}>
+                Project:{" "}
+              </Box>
+              {projectLabel}
+            </>
+          }
+          sx={{
+            maxWidth: 280,
+            borderColor: "divider",
+            "& .MuiChip-icon": { ml: 0.5 },
+          }}
+        />
+      )}
+      {statusBadge}
+    </>
+  ) : null;
   const windowLabel =
     range === "custom"
       ? "Custom window"
       : WINDOWS.find(([days]) => days === range)?.[2];
+  // Like the list page's Refresh: a preset re-anchors to a fresh window ending
+  // now. A custom window is explicit, so it is read again unchanged.
+  const reanchor = () => {
+    if (range !== "custom") setWindow(metricWindow(range));
+  };
+  const refreshValues = () => {
+    setReadRevision((value) => value + 1);
+    if (range === "custom") reload();
+    else {
+      reanchor();
+      reload({ windowReads: false });
+    }
+  };
   return (
     <Stack sx={{ p: 2, minHeight: "100%", bgcolor: "background.paper" }}>
       <Breadcrumbs
@@ -355,9 +419,13 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
                 value={range}
                 aria-label="Window"
                 onChange={(_, value) => {
-                  if (value == null || value === "custom") return;
-                  setRange(value);
-                  setWindow(metricWindow(value));
+                  // An exclusive group reports a click on the active preset as
+                  // null; it still means "this range, ending now".
+                  if (value == null) reanchor();
+                  else if (value !== "custom") {
+                    setRange(value);
+                    setWindow(metricWindow(value));
+                  }
                 }}
               >
                 {WINDOWS.map(([days, label]) => (
@@ -375,19 +443,23 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
                   Custom
                 </ToggleButton>
               </ToggleButtonGroup>
-              <Tooltip title="Read values again for the selected window">
+              <Tooltip
+                title={
+                  range === "custom"
+                    ? "Read values again for the custom window"
+                    : "Read values again for a fresh window ending now"
+                }
+              >
+                {/* Labelled like the list page's Refresh, which it matches. */}
                 <Button
                   variant="outlined"
                   color="inherit"
                   size="small"
                   aria-label="Refresh values"
-                  onClick={() => {
-                    setReadRevision((value) => value + 1);
-                    reload();
-                  }}
-                  sx={{ minWidth: 0, px: 0.75 }}
+                  startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
+                  onClick={refreshValues}
                 >
-                  <Iconify icon="solar:refresh-linear" width={16} />
+                  Refresh
                 </Button>
               </Tooltip>
             </Stack>

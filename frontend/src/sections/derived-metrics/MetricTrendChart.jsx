@@ -22,7 +22,9 @@ import MetricValueCell from "./MetricValueCell";
 
 import { metricTrendPoints } from "./metricPageValues";
 
-export default function MetricTrendChart({ data, name }) {
+// showWindow: the overview already states the effective window once in its KPI
+// footer, so it hides the line here unless the KPI card is missing.
+export default function MetricTrendChart({ data, name, showWindow = true }) {
   const theme = useTheme();
   const [table, setTable] = useState(false);
   // Keep the chosen view while reads are masked, without rendering stale data.
@@ -168,10 +170,12 @@ export default function MetricTrendChart({ data, name }) {
           {table ? "Show chart" : "View data table"}
         </Button>
       </Stack>
-      <Typography variant="caption" color="text.secondary">
-        {formatMetricWindow(data.effective_window)} ·{" "}
-        {data.effective_window.rounding}
-      </Typography>
+      {showWindow && (
+        <Typography variant="caption" color="text.secondary">
+          {formatMetricWindow(data.effective_window)} ·{" "}
+          {data.effective_window.rounding}
+        </Typography>
+      )}
       {!hasValues && (
         <Typography role="status" color="text.secondary" sx={{ py: 4 }}>
           No values in this window
@@ -239,4 +243,5 @@ export default function MetricTrendChart({ data, name }) {
 MetricTrendChart.propTypes = {
   data: PropTypes.object,
   name: PropTypes.string,
+  showWindow: PropTypes.bool,
 };

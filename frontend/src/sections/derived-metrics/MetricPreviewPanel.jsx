@@ -18,7 +18,8 @@ import { ROW_HEIGHT } from "src/theme/sizes";
 import MetricOutcomeBadge from "./MetricOutcomeBadge";
 import { DEFAULT_LABELS, isBooleanMetric } from "./builderSpec";
 import { formatMetricValue } from "./formatMetricValue";
-import { inputLabel, recipeSentence, unitInputs } from "./metricPresentation";
+import { inputLabel, previewNeeds, unitInputs } from "./metricPresentation";
+import RecipeSentence from "./MetricSentence";
 
 const scalar = (value) =>
   value == null
@@ -37,7 +38,12 @@ const ellipsis = {
   textOverflow: "ellipsis",
 };
 
-export default function MetricPreviewPanel({ preview, form, sourceLabels }) {
+export default function MetricPreviewPanel({
+  preview,
+  form,
+  sourceLabels,
+  idleMessage,
+}) {
   const { state, data, retry } = preview;
   const boolean = isBooleanMetric(form);
   const labels = { ...DEFAULT_LABELS, ...form.value_labels };
@@ -78,7 +84,7 @@ export default function MetricPreviewPanel({ preview, form, sourceLabels }) {
     Number.isFinite(point.denominator);
   const loading = ["loading", "busy_retrying"].includes(state);
   const failed = !["idle", "loading", "busy_retrying", "ready"].includes(state);
-  const sentence = form.inputs?.length ? recipeSentence(form, labelFor) : null;
+  const hasSentence = Boolean(form.inputs?.length);
   const samples = data?.sample_units?.slice(0, 20) || [];
   return (
     <Stack
@@ -106,24 +112,31 @@ export default function MetricPreviewPanel({ preview, form, sourceLabels }) {
           minHeight: 132,
         }}
       >
-        {sentence && (
+        {hasSentence && (
           <Typography
             variant="body2"
             color="text.secondary"
             sx={{ mb: 1, overflowWrap: "anywhere" }}
           >
-            {sentence}
+            <RecipeSentence recipe={form} labelFor={labelFor} />
           </Typography>
         )}
         {state === "idle" && (
+          // The icon sits on the message's line, so it reads as one notice
+          // under the sentence rather than a loose mark between the two.
           <Stack
-            spacing={1}
-            alignItems="flex-start"
+            direction="row"
+            alignItems="center"
+            gap={1}
             sx={{ color: "text.secondary" }}
           >
-            <Iconify icon="solar:graph-up-linear" width={20} />
+            <Iconify
+              icon="solar:graph-up-linear"
+              width={16}
+              sx={{ flexShrink: 0 }}
+            />
             <Typography variant="body2" color="text.secondary">
-              Choose a project, source and valid calculation to preview.
+              {idleMessage || previewNeeds(form, labelFor)}
             </Typography>
           </Stack>
         )}
@@ -305,4 +318,7 @@ MetricPreviewPanel.propTypes = {
   preview: PropTypes.object.isRequired,
   form: PropTypes.object.isRequired,
   sourceLabels: PropTypes.objectOf(PropTypes.string),
+  // Overrides the idle copy when the page knows more than the form, e.g. a
+  // legacy metric that must be rebuilt first.
+  idleMessage: PropTypes.string,
 };

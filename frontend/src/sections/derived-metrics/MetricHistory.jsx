@@ -197,7 +197,8 @@ export default function MetricHistory({ metric, scope }) {
             <EmptyState
               variant="no-results"
               icon="solar:history-linear"
-              title="No history yet."
+              title="No history yet"
+              description="Versions and recalculations of this metric appear here."
             />
           </Box>
         ))}

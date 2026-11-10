@@ -151,9 +151,9 @@ export default function MetricDrivers({ metric, scope, window }) {
       <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
         <EmptyState
           variant="no-results"
-          icon="solar:sort-vertical-linear"
-          title="Not calculated yet. Drivers need an active definition."
-          description="Once the first calculation completes, the units pulling the value down are ranked here."
+          icon="solar:clock-circle-linear"
+          title="Not calculated yet"
+          description="Drivers need an active definition. Once its first calculation completes, the units pulling the value down are ranked here."
         />
       </Box>
     );
@@ -300,11 +300,28 @@ export default function MetricDrivers({ metric, scope, window }) {
             </TableContainer>
           ) : (
             <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
+              {/* Only the returned drivers are known here, never every unit
+                  in the window, so the copy claims nothing broader. */}
               <EmptyState
                 variant="no-results"
                 icon="solar:sort-vertical-linear"
-                title="No drivers with a settled value in this window."
-                description="Try a longer window."
+                {...(query.data.next_cursor
+                  ? {
+                      title: "No drivers on this page",
+                      description:
+                        "No unit on this page has a settled value. Use Next to see more.",
+                    }
+                  : page > 0
+                    ? {
+                        title: "No more drivers",
+                        description:
+                          "No more drivers on this page. Use Previous to go back.",
+                      }
+                    : {
+                        title: "No drivers in this window",
+                        description:
+                          "No unit pulling the value down has a settled value in this window. Try a longer window.",
+                      })}
               />
             </Box>
           )}

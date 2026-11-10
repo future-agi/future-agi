@@ -54,6 +54,7 @@ import {
 import MetricProjectSelect from "./MetricProjectSelect";
 import SentenceBuilder from "./SentenceBuilder";
 import MetricPreviewPanel from "./MetricPreviewPanel";
+import { inputLabel } from "./metricPresentation";
 import useMetricNavigationGuard from "./use_metric_navigation_guard";
 import usePreview from "./usePreview";
 
@@ -90,7 +91,47 @@ export default function MetricBuilderPage() {
   );
 }
 
+/** The editor's title bar. The loading and error states render the same bar,
+ * back button included, so nothing shifts when the form mounts and there is
+ * always an in-page way back. */
+function BuilderTitleBar({ title, onBack, children }) {
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      gap={1}
+      sx={{
+        px: 2,
+        minHeight: 52,
+        flexShrink: 0,
+        borderBottom: 1,
+        borderColor: "divider",
+      }}
+    >
+      <Tooltip title="Back to metrics">
+        <IconButton size="small" aria-label="Back to metrics" onClick={onBack}>
+          <Iconify icon="solar:arrow-left-linear" width={18} />
+        </IconButton>
+      </Tooltip>
+      <Typography
+        component="h1"
+        variant="m1"
+        sx={{ fontWeight: 600, color: "text.primary" }}
+      >
+        {title}
+      </Typography>
+      {children}
+    </Stack>
+  );
+}
+BuilderTitleBar.propTypes = {
+  title: PropTypes.string.isRequired,
+  onBack: PropTypes.func.isRequired,
+  children: PropTypes.node,
+};
+
 function BuilderLoader({ scope, metricId, projectId, canWrite }) {
+  const navigate = useNavigate();
   const query = useMetricDetail({ scope, metricId });
   // Pin the edit baseline. Background refetch must not unmount a dirty editor
   // or replace its recipe; expected_version protects the subsequent write.
@@ -98,26 +139,35 @@ function BuilderLoader({ scope, metricId, projectId, canWrite }) {
   useEffect(() => {
     if (!metric && query.data) setMetric(query.data);
   }, [metric, query.data]);
+  // Before the form mounts: the same title bar, whose back button goes where
+  // the loaded editor's does (the metric's page).
+  const pending = (body) => (
+    <Stack sx={{ height: "100%", bgcolor: "background.paper" }}>
+      <BuilderTitleBar
+        title="Edit metric"
+        onBack={() => navigate(`${ROOT}/${metricId}`)}
+      />
+      <Box sx={{ p: 3 }}>{body}</Box>
+    </Stack>
+  );
   if (metricId && !metric)
-    return (
-      <Box sx={{ p: 3 }}>
-        {["loading", "idle", "ready"].includes(query.readState) ? (
-          <CircularProgress size={20} aria-label="Loading metric" />
-        ) : (
-          <Alert
-            severity="warning"
-            action={<Button onClick={() => query.refetch()}>Retry</Button>}
-          >
-            Metric definition unavailable.
-          </Alert>
-        )}
-      </Box>
+    return pending(
+      ["loading", "idle", "ready"].includes(query.readState) ? (
+        <CircularProgress size={20} aria-label="Loading metric" />
+      ) : (
+        <Alert
+          severity="warning"
+          action={<Button onClick={() => query.refetch()}>Retry</Button>}
+        >
+          Metric definition unavailable.
+        </Alert>
+      ),
     );
   if (metricId && !(metric?.draft_definition || metric?.definition))
-    return (
+    return pending(
       <Alert severity="warning">
         The saved definition is unavailable. No replacement has been created.
-      </Alert>
+      </Alert>,
     );
   return (
     <BuilderForm
@@ -262,7 +312,16 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
     capabilities.data,
     projectName,
   );
-  const problems = builderProblems(form, capabilities.data);
+  const sourceLabels = Object.fromEntries(
+    (form.inputs || []).flatMap((input) => {
+      const option = options.find((item) => sourceMatches(input, item));
+      return option ? [[input.alias, option.label]] : [];
+    }),
+  );
+  // Messages name a source the way the person picked it, never by its alias.
+  const labelFor = (alias) =>
+    inputLabel(alias, { inputs: form.inputs, sourceLabels });
+  const problems = builderProblems(form, capabilities.data, { labelFor });
   const previewProblems = builderProblems(form, capabilities.data, {
     metadata: false,
   });
@@ -329,12 +388,6 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
       if (mounted.current) setSaving(false);
     }
   };
-  const sourceLabels = Object.fromEntries(
-    (form.inputs || []).flatMap((input) => {
-      const option = options.find((item) => sourceMatches(input, item));
-      return option ? [[input.alias, option.label]] : [];
-    }),
-  );
   const hint = saveError
     ? null
     : problems[0] ||
@@ -343,34 +396,10 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
         : null);
   return (
     <Stack sx={{ height: "100%", minHeight: 0, bgcolor: "background.paper" }}>
-      <Stack
-        direction="row"
-        alignItems="center"
-        gap={1}
-        sx={{
-          px: 2,
-          minHeight: 52,
-          flexShrink: 0,
-          borderBottom: 1,
-          borderColor: "divider",
-        }}
+      <BuilderTitleBar
+        title={metric ? "Edit metric" : "New metric"}
+        onBack={cancel}
       >
-        <Tooltip title="Back to metrics">
-          <IconButton
-            size="small"
-            aria-label="Back to metrics"
-            onClick={cancel}
-          >
-            <Iconify icon="solar:arrow-left-linear" width={18} />
-          </IconButton>
-        </Tooltip>
-        <Typography
-          component="h1"
-          variant="m1"
-          sx={{ fontWeight: 600, color: "text.primary" }}
-        >
-          {metric ? "Edit metric" : "New metric"}
-        </Typography>
         {metric && (
           <Typography variant="body2" color="text.secondary" noWrap>
             {metric.name}
@@ -384,7 +413,7 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
             sx={{ ml: 0.5 }}
           />
         )}
-      </Stack>
+      </BuilderTitleBar>
       <Box
         sx={{
           display: "grid",
@@ -530,6 +559,7 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
               onChange={setForm}
               onSearch={searchSources}
               rebuilding={rebuilding}
+              sourceLabels={sourceLabels}
             />
             {form.project_id &&
               [catalog, evaluators].some(
@@ -581,6 +611,15 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
             preview={preview}
             form={form}
             sourceLabels={sourceLabels}
+            idleMessage={
+              legacy && !rebuilding
+                ? "Rebuild this metric to see a preview."
+                : capabilities.data
+                  ? undefined
+                  : capabilities.readState === "loading"
+                    ? "The preview starts once sources load."
+                    : "Preview is unavailable until sources load."
+            }
           />
         </Box>
       </Box>

@@ -1,3 +1,4 @@
+import PropTypes from "prop-types";
 import { useState } from "react";
 import {
   act,
@@ -5,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("src/hooks/useDashboards", () => ({
@@ -23,7 +25,7 @@ const options = supportedSourceOptions(
   "Support",
 );
 afterEach(cleanup);
-function Harness() {
+function Harness({ sourceLabels }) {
   const [form, setForm] = useState({ ...newBuilder(id), name: "Resolution" });
   return (
     <>
@@ -32,11 +34,13 @@ function Harness() {
         capabilities={capabilities}
         options={options}
         onChange={setForm}
+        sourceLabels={sourceLabels}
       />
       <output data-testid="wire">{JSON.stringify(form)}</output>
     </>
   );
 }
+Harness.propTypes = { sourceLabels: PropTypes.objectOf(PropTypes.string) };
 const wire = () => JSON.parse(screen.getByTestId("wire").textContent);
 const choose = (label, text) => {
   fireEvent.mouseDown(screen.getByRole("combobox", { name: label }));
@@ -160,5 +164,50 @@ describe("sentence controls", () => {
     choose("Evaluation output for value_1", "text");
     expect(wire().inputs[0].value_type).toBe("text");
     expect(wire().field_spec.conditions[0].value).toBeNull();
+  });
+  it("reads each condition as one sentence beside the fields that edit it", () => {
+    render(<Harness />);
+    choose("Choose a source", "Resolved");
+    const first = screen.getByRole("group", { name: "Condition 1" });
+    expect(first).toHaveAccessibleDescription(
+      "Where resolved (latest) is true",
+    );
+    // Still a form: every part of the sentence keeps its own labelled field.
+    for (const name of [
+      "Source 1",
+      "When a conversation has several values, use",
+      "Comparison",
+      "Value for resolved",
+    ])
+      expect(within(first).getByRole("combobox", { name })).toBeTruthy();
+    choose("Value for resolved", "False");
+    expect(first).toHaveAccessibleDescription(
+      "Where resolved (latest) is false",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add condition" }));
+    choose("Choose a source", "Locale");
+    const second = screen.getByRole("group", { name: "Condition 2" });
+    // A value not chosen yet stays visibly missing ("…" on screen), never a
+    // default, and a screen reader hears words instead of an ellipsis.
+    expect(second).toHaveAccessibleDescription(
+      "And locale (latest) is no value yet",
+    );
+    expect(within(second).getByText("…")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    choose("Value for locale", "fr");
+    expect(second).toHaveAccessibleDescription('And locale (latest) is "fr"');
+    expect(wire().field_spec.conditions).toEqual([
+      { alias: "value_1", operator: "eq", value: false },
+      { alias: "value_2", operator: "eq", value: "fr" },
+    ]);
+  });
+  it("names sources in the condition sentence the way the preview does", () => {
+    render(<Harness sourceLabels={{ value_1: "Resolved" }} />);
+    choose("Choose a source", "Resolved");
+    expect(
+      screen.getByRole("group", { name: "Condition 1" }),
+    ).toHaveAccessibleDescription("Where Resolved (latest) is true");
   });
 });

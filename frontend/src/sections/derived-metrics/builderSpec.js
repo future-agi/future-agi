@@ -257,7 +257,53 @@ export function selectSource(form, index, option, capabilities) {
     });
   return setRecipeInputs(form, inputs, conditions);
 }
-export function builderProblems(form, capabilities, { metadata = true } = {}) {
+/** Whether a literal comparison value is usable for its compared type. The
+ * one rule the save checks and the preview's idle copy share. An empty string
+ * is a real text value. */
+export function comparisonValueValid(value, type) {
+  if (type === "number")
+    return (
+      typeof value === "number" &&
+      Number.isFinite(value) &&
+      Math.abs(value) <= 1e15
+    );
+  if (type === "boolean") return typeof value === "boolean";
+  return typeof value === "string" && value.length <= 2048;
+}
+
+/** The type a condition on this input compares: the raw observation type, or
+ * the reduced type after aggregation. */
+const comparedType = (input) =>
+  input.condition_stage === "observation"
+    ? input.value_type || "number"
+    : reducedType(input);
+
+/** Aliases, in form order, whose literal comparison value is not usable yet. */
+export function invalidComparisonAliases(form) {
+  const conditions = form.field_spec?.conditions || [];
+  return (form.inputs || []).flatMap((input) => {
+    const comparisons =
+      input.condition_stage === "observation"
+        ? [input.condition]
+        : conditions.filter((condition) => condition.alias === input.alias);
+    return comparisons.some(
+      (condition) =>
+        condition &&
+        !("right_alias" in condition) &&
+        !comparisonValueValid(condition.value, comparedType(input)),
+    )
+      ? [input.alias]
+      : [];
+  });
+}
+
+// labelFor names an input in messages; it defaults to the alias so callers
+// without source labels read exactly as before.
+export function builderProblems(
+  form,
+  capabilities,
+  { metadata = true, labelFor = (alias) => alias } = {},
+) {
   const problems = [];
   if (metadata && !form.name?.trim())
     problems.push("Name your metric before saving.");
@@ -293,14 +339,14 @@ export function builderProblems(form, capabilities, { metadata = true } = {}) {
         observation ? capability.observation_reducers : capability.reducers
       ).includes(input.reducer)
     )
-      problems.push(`Unsupported reducer for ${input.alias}.`);
+      problems.push(`Unsupported reducer for ${labelFor(input.alias)}.`);
     if (
       input.source === "span"
         ? !input.field ||
           (input.field.startsWith("attribute_") && !input.attribute_key)
         : input.source !== "eval" || !input.config_id
     )
-      problems.push(`Choose a source for ${input.alias}.`);
+      problems.push(`Choose a source for ${labelFor(input.alias)}.`);
     if (
       observation &&
       (!input.condition ||
@@ -312,11 +358,11 @@ export function builderProblems(form, capabilities, { metadata = true } = {}) {
       ? [input.condition]
       : conditions.filter((condition) => condition.alias === input.alias);
     for (const condition of comparisons.filter(Boolean)) {
-      const comparisonType = observation ? type : reducedType(input);
+      const comparisonType = comparedType(input);
       const allowed =
         sourceCapability(capabilities, comparisonType)?.operators || [];
       if (!allowed.includes(condition.operator))
-        problems.push(`Unsupported comparison for ${input.alias}.`);
+        problems.push(`Unsupported comparison for ${labelFor(input.alias)}.`);
       if ("right_alias" in condition) {
         const right = form.inputs.find(
           (item) => item.alias === condition.right_alias,
@@ -324,18 +370,9 @@ export function builderProblems(form, capabilities, { metadata = true } = {}) {
         if (!right || reducedType(right) !== comparisonType)
           problems.push("Compared sources must have the same reduced type.");
       } else {
-        const value = condition.value;
-        const valid =
-          comparisonType === "number"
-            ? typeof value === "number" &&
-              Number.isFinite(value) &&
-              Math.abs(value) <= 1e15
-            : comparisonType === "boolean"
-              ? typeof value === "boolean"
-              : typeof value === "string" && value.length <= 2048;
-        if (!valid)
+        if (!comparisonValueValid(condition.value, comparisonType))
           problems.push(
-            `Choose a ${comparisonType} comparison value for ${input.alias}.`,
+            `Choose a ${comparisonType} comparison value for ${labelFor(input.alias)}.`,
           );
       }
     }

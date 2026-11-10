@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Box,
@@ -18,10 +17,13 @@ import EmptyState from "src/components/empty-state";
 import StatusBadge from "src/components/status-badge";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ROW_HEIGHT } from "src/theme/sizes";
-import { readObserveProjectPage } from "src/api/project/observe-project-list";
 import { useMetricKpi } from "./api";
 import MetricValueCell from "./MetricValueCell";
 import { isMetricFirstUse } from "./metricPresentation";
+import {
+  metricProjectLabel,
+  useMetricProjectNames,
+} from "./useMetricProjectNames";
 import {
   formatMetricTime,
   formatMetricWindow,
@@ -226,33 +228,7 @@ export default function MetricList({
   const projectIds = [
     ...new Set(rows.map((metric) => metric.project_id)),
   ].sort();
-  const projectNames = useQuery({
-    queryKey: ["metric-list-projects", scope, projectIds],
-    enabled: projectIds.length > 0,
-    staleTime: 30000,
-    retry: false,
-    placeholderData: undefined,
-    meta: { errorHandled: true },
-    queryFn: async ({ signal }) => {
-      const names = {};
-      const remaining = new Set(projectIds);
-      for (let pageNumber = 0; remaining.size > 0; pageNumber += 1) {
-        const page = await readObserveProjectPage({
-          signal,
-          params: { page_number: pageNumber, page_size: 50, name: "" },
-        });
-        signal.throwIfAborted();
-        for (const project of page.rows) {
-          if (remaining.has(project.id) && project.name) {
-            names[project.id] = project.name;
-            remaining.delete(project.id);
-          }
-        }
-        if (pageNumber + 1 >= page.totalPages) break;
-      }
-      return names;
-    },
-  });
+  const projectNames = useMetricProjectNames(scope, projectIds);
   const columns = [
     {
       accessorKey: "name",
@@ -340,11 +316,7 @@ export default function MetricList({
       meta: { flex: 1 },
       enableSorting: false,
       cell: ({ getValue }) => {
-        const name =
-          (!projectNames.isError && projectNames.data?.[getValue()]) ||
-          (projectNames.isPending
-            ? "Loading project…"
-            : "Project name unavailable");
+        const name = metricProjectLabel(projectNames, getValue());
         return (
           <Tooltip title={name}>
             <Typography
