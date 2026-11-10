@@ -544,6 +544,9 @@ def detect_input_type(input_item: Any) -> dict:
                                 return 'image'
                             elif kind.mime.startswith('application/pdf'):
                                 return 'pdf'
+                            elif kind.mime.startswith('video/'):
+                                # Video is not an eval modality; retain the URL as text.
+                                return 'text'
                             else:
                                 return 'file'
                         elif header_type:
@@ -553,6 +556,8 @@ def detect_input_type(input_item: Any) -> dict:
                                 return 'image'
                             elif header_type.startswith('application/pdf'):
                                 return 'pdf'
+                            elif header_type.startswith('video/'):
+                                return 'text'
                             else:
                                 return 'file'
                         logger.info(' ----- KIND IS NONE ----- ')
