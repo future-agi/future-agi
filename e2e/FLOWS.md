@@ -1594,39 +1594,41 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:51`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call whose recording URLs 404
-2. open Voice Observe
-3. open the call detail drawer
-4. see "Recording unavailable", with no retry offered
+1. create a scoped voice project through the public API and ingest a call whose recording URLs 404
+2. open Voice Observe and the exact seeded call detail drawer
+3. see "Recording unavailable", with no loader, retry or exposed recording URL
 
 **Backend state verified:**
 
-- the seeded conversation span is queryable in CH
-- voice_call_detail returns the recording URLs unchanged
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call and retain its four recording URLs
 
 ### OBS-E2E-013 — a voice call with no recording says so
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:116`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call with no recording attributes
-2. open the call detail drawer
-3. see "No recording found"
+1. create a scoped voice project through the public API and ingest a call with no recording attributes
+2. open the exact seeded call detail drawer
+3. see "No recording found" without a loader or recording error
 
 **Backend state verified:**
 
-- voice_call_detail reports recording_available false
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call, with recording_available false and no recording URLs
 
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
