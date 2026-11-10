@@ -28,12 +28,14 @@ from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
 
 class FakeActivities:
     """Each launch returns the next of ``launches``; each watch the next of ``watches``;
-    each look at the first step the next of ``variations``, then DONE."""
+    each look at the first step the next of ``variations``, then DONE. The step may take
+    the builder's 60 minutes while it writes and ``check_minutes`` once it checks."""
 
-    def __init__(self, launches, watches=(), variations=()):
+    def __init__(self, launches, watches=(), variations=(), check_minutes=90):
         self.launches = list(launches)
         self.watches = list(watches)
         self.variations = list(variations)
+        self.check_minutes = check_minutes
         self.variation_looks = 0
         self.launch_calls = 0
         self.watched: list[str] = []
@@ -45,7 +47,11 @@ class FakeActivities:
         self.variation_looks += 1
         step = self.variations.pop(0) if self.variations else VariationsStep.DONE
         await asyncio.sleep(0.01)
-        return AgentFixVariations(step=step)
+        minutes = {
+            VariationsStep.WRITING: 60,
+            VariationsStep.CHECKING: self.check_minutes,
+        }.get(step, 0)
+        return AgentFixVariations(step=step, minutes=minutes)
 
     @activity.defn(name="launch_agent_fix_sandbox")
     async def launch(self, _input: AgentFixInput) -> AgentFixLaunch:
@@ -355,6 +361,32 @@ async def test_a_builder_past_its_cap_ends_the_fix_on_the_step_s_own_clock(
         ("failed", "fix_variations_timeout")
     ]
     assert 60 <= activities.variation_looks <= 62
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("check_minutes", "timed_out"), [(20, True), (200, False)])
+async def test_the_check_ends_on_the_time_its_run_allows_not_a_fixed_cap(
+    temporal_test_server_options, check_minutes, timed_out
+):
+    # 120 looks a minute apart: past a 20-minute run's time, within a 200-minute one's.
+    activities = FakeActivities(
+        launches=[_started()],
+        watches=[Observation.ENDED],
+        variations=[VariationsStep.CHECKING] * 120,
+        check_minutes=check_minutes,
+    )
+
+    result = await _run(activities, temporal_test_server_options)
+
+    closed = [(one.state, one.code) for one in activities.closed]
+    if timed_out:
+        assert closed == [("failed", "fix_variations_timeout")]
+        assert activities.launch_calls == 0
+        assert 20 <= activities.variation_looks <= 22
+    else:
+        assert closed == []
+        assert activities.launch_calls == 1
+        assert result.observation == Observation.ENDED
 
 
 @workflow.defn(name="AgentFixWorkflow")

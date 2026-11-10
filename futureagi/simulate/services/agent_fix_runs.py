@@ -538,14 +538,19 @@ def record_override(candidate: AgentFixCandidate, *, reason: str, user: Any) -> 
     )
 
 
-def base_moved(base: str, current: str) -> HostedHarnessError:
+def base_moved(base: str, current: str | None) -> HostedHarnessError:
     """The refusal to ship a fix whose agent changed since its base: what it proved is no
-    longer what it would change. ``base`` and ``current`` name the agent then and now."""
+    longer what it would change. ``base`` and ``current`` name the agent then and now;
+    ``current`` is None when the environment has no default version any more."""
+    now = (
+        f"the agent is now {current}"
+        if current is not None
+        else "the environment has no default version any more"
+    )
     return HostedHarnessError(
         "fix_base_moved",
-        f"The agent changed since this fix started: the fix was made on {base} and the"
-        f" agent is now {current}. Run the environment on the current version and fix"
-        " it again.",
+        f"The agent changed since this fix started: the fix was made on {base} and"
+        f" {now}. Run the environment on the current version and fix it again.",
         status_code=409,
     )
 
@@ -557,6 +562,11 @@ def make_candidate_default(
     over a default that moved since the fix's base, whatever the reason given."""
     require_shippable(candidate, override_reason=override_reason)
     fix_run = candidate.fix_run
+    base = f"v{fix_run.base_agent_version.version_number}"
+    # The default is SET_NULL: with it deleted no agent kind matches the environment,
+    # so say the base moved before agent_kind refuses the agent as not editable.
+    if fix_run.environment.agent_version_id is None:
+        raise base_moved(base, None)
     outcome = agent_kind(fix_run.environment).make_default(candidate, user=user)
     if outcome == "environment_busy":
         raise HostedHarnessError(
@@ -569,9 +579,14 @@ def make_candidate_default(
         current = HostedHarnessJob.no_workspace_objects.select_related(
             "agent_version"
         ).get(id=fix_run.environment_id)
+        # Read again under the activation's lock: the default may be gone by now.
         raise base_moved(
-            f"v{fix_run.base_agent_version.version_number}",
-            f"v{current.agent_version.version_number}",
+            base,
+            (
+                f"v{current.agent_version.version_number}"
+                if current.agent_version is not None
+                else None
+            ),
         )
     if outcome not in ("activated", "already_default"):
         raise HostedHarnessError(

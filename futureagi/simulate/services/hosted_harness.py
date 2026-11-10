@@ -60,6 +60,16 @@ _TOKEN_TAIL_SECONDS = 120 + 300
 logger = structlog.get_logger(__name__)
 
 
+# A run gets at least this long a scenario, whatever its environment's own limit.
+RUN_SECONDS_PER_SCENARIO = 360
+
+
+def run_max_duration_seconds(runtime_seconds: int, scenarios: int) -> int:
+    """A run's time limit: its environment's, or RUN_SECONDS_PER_SCENARIO a scenario when
+    that is longer."""
+    return max(runtime_seconds, scenarios * RUN_SECONDS_PER_SCENARIO)
+
+
 def _active_attempt_budget_seconds(job: HostedHarnessJob) -> int:
     """Budget an active capability for authoring plus scenario execution."""
 
@@ -497,8 +507,8 @@ def create_selected_harness_run(
                     child_payload[name] = json.loads(json.dumps(value))
         child_payload["scenario_count"] = len(manifest)
         runtime = child_payload["runtime"]
-        runtime["max_duration_seconds"] = max(
-            runtime["max_duration_seconds"], len(manifest) * 360
+        runtime["max_duration_seconds"] = run_max_duration_seconds(
+            runtime["max_duration_seconds"], len(manifest)
         )
         if seed is not None:
             child_payload["seed"] = seed

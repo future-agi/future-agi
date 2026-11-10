@@ -62,6 +62,8 @@ class AgentFixWatch:
 @dataclass(frozen=True)
 class AgentFixVariations:
     step: VariationsStep
+    # While the step writes or checks: how long it may have taken by now, in minutes.
+    minutes: int = 0
 
 
 @dataclass(frozen=True)

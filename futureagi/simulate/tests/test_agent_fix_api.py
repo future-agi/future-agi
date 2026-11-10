@@ -8,6 +8,7 @@ from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import quote
 from uuid import uuid4, uuid5
 
 import httpx
@@ -32,6 +33,7 @@ from simulate.selectors.agent_fix import (
     engine_brief,
 )
 from simulate.services import agent_fix_engine as engine
+from simulate.services import agent_fix_github
 from simulate.services.agent_fix_agents import VersionedSourceAgent
 from simulate.services.agent_fix_runs import close_fix_run, retry_fix_run
 from simulate.services.harness_environment import (
@@ -2597,3 +2599,17 @@ class TestEngineMemory:
 
         assert brief["lost_models"] == []
         assert retried.engine_notes is None
+
+
+@pytest.mark.parametrize("branch", ["feat/a#b", "fix/50%-off", "release?v2"])
+def test_a_branch_head_is_read_with_the_branch_name_quoted(branch):
+    with patch.object(agent_fix_github, "_api") as api:
+        api.return_value.json.return_value = {"object": {"sha": "a" * 40}}
+        head = agent_fix_github._ref_head(
+            "acme/agent", f"refs/heads/{branch}", branch, "token"
+        )
+
+    assert head == "a" * 40
+    (method, path, token), _ = api.call_args
+    assert path == f"/repos/acme/agent/git/ref/heads/{quote(branch, safe='/')}"
+    assert "#" not in path and "?" not in path
