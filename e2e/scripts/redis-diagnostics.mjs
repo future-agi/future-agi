@@ -3,10 +3,11 @@
 // exception messages, raw log lines or Redis connection configuration.
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
-import { constants } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const exec = promisify(execFile);
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -150,17 +151,61 @@ export async function collectSnapshot(run = command, read = readFile, services =
   return snapshot;
 }
 
-export async function runWithDiagnostics(argv, outputDir, deps = {}) {
+async function readJson(file) {
+  try { return JSON.parse(await readFile(file, 'utf8')); } catch { return null; }
+}
+
+async function saveJson(file, value) {
+  // Stop can read checkpoints while the collector is sampling. Never expose a
+  // partially written JSON document, and keep the final artifact compact/bounded.
+  await writeFile(`${file}.tmp`, JSON.stringify(value));
+  await rename(`${file}.tmp`, file);
+}
+
+function isAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return false;
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
+}
+
+export async function startDiagnostics(outputDir, deps = {}) {
+  await mkdir(outputDir, { recursive: true });
+  const statePath = path.join(outputDir, 'state.json');
+  const state = { token: randomUUID(), since: new Date().toISOString(), pid: null };
+  // Each run owns a fresh directory. Refuse to overwrite a previous collector,
+  // including stale state: stop remains safe and can recover its last checkpoint.
+  await writeFile(statePath, JSON.stringify(state), { flag: 'wx' });
+  const child = (deps.spawn ?? spawn)(process.execPath,
+    [fileURLToPath(import.meta.url), 'collect', '--output-dir', outputDir, '--token', state.token],
+    { detached: true, stdio: 'ignore', env: process.env });
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  state.pid = child.pid;
+  // Unref before filesystem work so even an optional state-write failure cannot
+  // hold the start step open. No suite process is ever launched by this script.
+  child.unref();
+  await saveJson(statePath, state);
+  return state;
+}
+
+export async function collectDiagnostics(outputDir, token, deps = {}) {
+  const state = await readJson(path.join(outputDir, 'state.json'));
+  if (!state || state.token !== token) return;
   const run = deps.command ?? command;
   const start = deps.spawn ?? spawn;
   const services = deps.services ?? stackServices();
   const sample = deps.snapshot ?? (() => collectSnapshot(run, readFile, services));
-  try { await mkdir(outputDir, { recursive: true }); }
-  catch { console.error('Optional Redis diagnostic directory unavailable'); }
   const evidence = boundedRecords();
   const streams = [];
   const ids = new Map();
-  const since = new Date().toISOString();
+  const since = state.since;
+  const checkpoint = completed => saveJson(path.join(outputDir, 'collector.json'),
+    { token, since, completed, ...evidence.result() });
+  let stopping = false;
+  const stop = () => { stopping = true; };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
   function follow(file, args, parse) {
     const child = start(file, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     streams.push(child);
@@ -176,44 +221,83 @@ export async function runWithDiagnostics(argv, outputDir, deps = {}) {
       });
     }
   }
-  for (const service of services.containers) {
-    try {
-      const id = (await run('bin/e2e', ['compose', 'ps', '-q', service])).trim();
-      if (!/^[a-f0-9]{12,64}$/.test(id)) continue;
-      ids.set(id, service);
-      follow('docker', ['logs', '--follow', '--timestamps', '--since', since, id], line => safeLog(line, service));
-    } catch { evidence.add({ service, event: 'collector_unavailable' }); }
-  }
-  follow('docker', ['events', '--since', since, '--filter', 'type=container', '--format', '{{json .}}'], line => dockerEvent(line, ids));
-  let inFlight;
   const capture = async () => {
     try { evidence.add(await sample()); } catch { evidence.add({ event: 'snapshot_unavailable' }); }
+    await checkpoint(false);
   };
-  await capture(); // Collect before starting the suite, not only after failure.
-  const timer = setInterval(() => {
-    if (!inFlight) inFlight = capture().finally(() => { inFlight = undefined; });
-  }, 15_000);
-  let code = 1;
   try {
-    code = await new Promise(resolve => {
-      const child = start(argv[0], argv.slice(1), { stdio: 'inherit' });
-      child.once('error', () => resolve(127));
-      child.once('close', (status, signal) => resolve(status ?? (128 + (constants.signals[signal] ?? 15))));
-    });
+    for (const service of services.containers) {
+      try {
+        const id = (await run('bin/e2e', ['compose', 'ps', '-q', service])).trim();
+        if (!/^[a-f0-9]{12,64}$/.test(id)) continue;
+        ids.set(id, service);
+        follow('docker', ['logs', '--follow', '--timestamps', '--since', since, id], line => safeLog(line, service));
+      } catch { evidence.add({ service, event: 'collector_unavailable' }); }
+    }
+    follow('docker', ['events', '--since', since, '--filter', 'type=container', '--format', '{{json .}}'], line => dockerEvent(line, ids));
+    await capture(); // Initial checkpoint survives a collector crash later on.
+    let nextSample = Date.now() + (deps.intervalMs ?? 15_000);
+    const deadline = Date.now() + (deps.maxDurationMs ?? 110 * 60_000);
+    while (!stopping && Date.now() < deadline) {
+      const request = await readJson(path.join(outputDir, 'stop.json'));
+      if (request?.token === token) break;
+      if (Date.now() >= nextSample) {
+        await capture(); // Serial sampling: no overlap or unbounded in-flight work.
+        nextSample = Date.now() + (deps.intervalMs ?? 15_000);
+      }
+      await delay(deps.pollMs ?? 250);
+    }
   } finally {
-    clearInterval(timer);
-    // Kill followers promptly even if the final sample fails. No detached children.
+    // Only kill child objects this process spawned, never a PID read from disk.
+    // A recycled/stale PID in state must not signal an unrelated process.
     for (const child of streams) child.kill('SIGKILL');
-    await inFlight;
-    await capture();
-    try { await writeFile(path.join(outputDir, 'redis-diagnostics.json'), JSON.stringify({ since, suiteExitCode: code, ...evidence.result() }, null, 2)); }
-    catch { console.error('Could not save optional Redis diagnostics'); }
+    try { await capture(); await checkpoint(true); }
+    finally { process.off('SIGTERM', stop); process.off('SIGINT', stop); }
   }
-  return code; // Diagnostic failures never turn a failing suite green.
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const args = process.argv.slice(2), split = args.indexOf('--');
-  if (args[0] !== '--output-dir' || split !== 2 || !args[3]) throw new Error('Expected --output-dir DIR -- COMMAND [ARGS]');
-  process.exitCode = await runWithDiagnostics(args.slice(3), path.resolve(args[1]));
+export async function stopDiagnostics(outputDir, suiteOutcome, deps = {}) {
+  if (!['success', 'failure', 'cancelled', 'skipped', 'unknown'].includes(suiteOutcome))
+    throw new Error('Invalid suite outcome');
+  await mkdir(outputDir, { recursive: true });
+  const resultPath = path.join(outputDir, 'redis-diagnostics.json');
+  const existing = await readJson(resultPath);
+  if (existing) return existing; // Repeated stop is idempotent, preserving evidence.
+  const state = await readJson(path.join(outputDir, 'state.json'));
+  let snapshot, status = 'collector_missing';
+  if (state?.token) {
+    // Token-addressed cooperative shutdown avoids trusting a possibly recycled
+    // PID. A live unrelated process can at worst consume the bounded wait below.
+    await saveJson(path.join(outputDir, 'stop.json'), { token: state.token });
+    const deadline = Date.now() + (deps.stopTimeoutMs ?? 60_000);
+    while (true) {
+      const saved = await readJson(path.join(outputDir, 'collector.json'));
+      snapshot = saved?.token === state.token ? saved : null;
+      if (snapshot?.completed) { status = 'stopped'; break; }
+      if (!(deps.isAlive ?? isAlive)(state.pid)) { status = 'collector_stale'; break; }
+      if (Date.now() >= deadline) { status = 'collector_stop_timeout'; break; }
+      await delay(deps.pollMs ?? 250);
+    }
+  }
+  const evidence = boundedRecords();
+  for (const record of snapshot?.records ?? []) evidence.add(record);
+  if (status !== 'stopped') evidence.add({ event: status });
+  const result = { since: state?.since ?? null, suiteOutcome, collectorStatus: status,
+    ...evidence.result(), dropped: evidence.result().dropped + (snapshot?.dropped ?? 0) };
+  await saveJson(resultPath, result);
+  return result;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // Diagnostics are optional. Workflow continue-on-error is a second boundary;
+  // neither launch, stop nor artifact failures may replace the suite's outcome.
+  try {
+    const [mode, flag, dir, extra, value, ...rest] = process.argv.slice(2);
+    if (flag !== '--output-dir' || !dir || rest.length) throw new Error('Invalid diagnostic arguments');
+    const outputDir = path.resolve(dir);
+    if (mode === 'start' && extra === undefined) await startDiagnostics(outputDir);
+    else if (mode === 'stop' && extra === '--suite-outcome') await stopDiagnostics(outputDir, value);
+    else if (mode === 'collect' && extra === '--token') await collectDiagnostics(outputDir, value);
+    else throw new Error('Invalid diagnostic mode');
+  } catch { console.error('Optional Redis diagnostics unavailable'); }
 }
