@@ -40,7 +40,7 @@ test('DATA-E2E-002: dataset discovery follows cell edits and column deletion', {
   const newValue = `catalog-north-${suffix}`;
 
   await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Add Dataset', exact: true }).first().click();
+  await page.getByRole('button', { name: /^add dataset$/i }).first().click();
   await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click();
   const uploadDialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
   await uploadFixture(uploadDialog.locator('input[type="file"]'), 'catalog-regions.csv');

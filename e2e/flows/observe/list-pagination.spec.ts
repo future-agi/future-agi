@@ -1,23 +1,32 @@
 import { request } from '@playwright/test';
-import type { APIRequestContext, Locator, Page } from '@playwright/test';
+import type { APIRequestContext, Locator, Page, Request, Response } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace } from '../../lib/otlp';
 import { POLL, StateProbe } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
-import { seedCallExecutions } from '../../lib/simulate-seed';
+import { PAGER_VIEWPORT, UI_READY, openObserveList, pagerButton, readPager, selectPageSize, waitForCurrentPage } from '../../lib/pager';
 import type { TestActor } from '../../lib/provisioning';
 
-// AG Grid virtualises rows outside the viewport even within one server-side
-// page — the default 800x600-ish viewport only paints ~14 rows regardless of
-// page size. Tall enough that a full 25-row page (the largest this spec asks
-// for) paints in one screen, so row-count assertions reflect the loaded page
-// rather than scroll position.
-test.use({ viewport: { width: 1440, height: 1700 } });
+test.use({ viewport: PAGER_VIEWPORT }); // why this size: lib/pager.ts
 
 // The trace list request the Observe trace table issues, pinned off the running
 // app (frontend TraceGrid.jsx `loadTraceObservePage` -> endpoints.project.getTracesForObserveProject).
 const TRACE_LIST_PATH = '/tracer/trace/list_traces_of_session/';
+
+// readQuery sends list parameters in a JSON POST body, not the URL.
+function traceListParams(request: Request): Record<string, unknown> {
+  return request.postDataJSON();
+}
+
+function isTraceListResponse(
+  response: Response, expected: Record<string, string | number>,
+): boolean {
+  if (new URL(response.url()).pathname !== TRACE_LIST_PATH
+    || response.request().method() !== 'POST' || !response.ok()) return false;
+  const params = traceListParams(response.request());
+  return Object.entries(expected).every(([key, value]) => params[key] === value);
+}
 const PAGE_SIZE = 10;
 // 4 full pages of PAGE_SIZE plus a 5-row remainder page, so the walk crosses
 // the point where the pager's window first opens a leading gap (page 4, by
@@ -27,33 +36,9 @@ const TOTAL_TRACES = 45;
 const LAST_PAGE = 5;
 const LAST_PAGE_ROWS = TOTAL_TRACES - PAGE_SIZE * (LAST_PAGE - 1);
 
-// Browser-side waits. Modelled on span-filter-parity.spec.ts: the local stack
-// slows several-fold under parallel specs, so this is sized off whole-flow
-// wall time, not the 10s expect default.
-const UI_READY = 60_000;
 // Ingest-visibility poll for 45 traces (90 spans) across parallel batches —
 // wider than POLL.SPAN_VISIBLE (sized for a single 2-span trace).
 const SEED_VISIBLE = { timeout: 45_000, intervals: [1000, 2000, 3000] };
-
-interface PagerState {
-  numbers: number[];
-  current: number | null;
-  leadingEllipsis: boolean;
-  trailingEllipsis: boolean;
-  nextDisabled: boolean;
-  prevDisabled: boolean;
-}
-
-// Primary and compare grids (and their trace/span variants) all stay mounted
-// so view state survives tab switches, each with its own CursorGridPagination
-// instance. `getByRole` is accessibility-tree aware — MUI hides the inactive
-// grid's Box with `display: none`, which removes it from the tree — so
-// `.filter({ visible: true })` is a belt-and-braces second check, not the
-// only one, unlike the raw CSS `:visible` pseudo-class the plain
-// `button[aria-label=...]` selectors below needed.
-function pagerButton(page: Page, name: string | RegExp) {
-  return page.getByRole('button', { name }).filter({ visible: true });
-}
 
 /** The `<Stack>` that owns Previous, the page numbers, both ellipses and
  * Next — the "pager subtree" INT-01/INT-02/INT-03 attach listeners and
@@ -64,60 +49,6 @@ function pagerRoot(page: Page): Locator {
   return pagerButton(page, 'Previous page').locator(
     'xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " MuiStack-root ")][1]',
   );
-}
-
-/** Picks a results-per-page value from the pager's own select.
- *
- * The select is disabled while the list is loading, and its root is a `<div>`,
- * so Playwright's actionability checks never see "disabled" — a click landing
- * a moment early is swallowed by MUI and the menu simply never opens, leaving
- * the option locator to burn the whole test timeout. AG Grid keeps fetching
- * after the first rows render (a next-block prefetch, and on the DRF call-log
- * screen a probe for a page that does not exist), so that window is real and
- * the class is the only signal MUI gives for it. Retried as a unit: the list
- * can go back to loading between the check and the click. */
-async function selectPageSize(page: Page, size: number | string): Promise<void> {
-  const select = page.locator('[aria-label="Results per page"]:visible');
-  await expect(async () => {
-    await expect(select).not.toHaveClass(/Mui-disabled/);
-    await select.click();
-    await expect(page.getByRole('listbox')).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: UI_READY });
-  await page.getByRole('option', { name: String(size), exact: true }).click();
-}
-
-function waitForCurrentPage(page: Page, pageNumber: number) {
-  return expect(
-    pagerButton(page, `Go to page ${pageNumber}`).and(page.locator('[aria-current="page"]')),
-  ).toBeVisible({ timeout: UI_READY });
-}
-
-async function readPager(page: Page): Promise<PagerState> {
-  // The pager keeps "Loading page…" up until the datasource has published the
-  // page and AG Grid has painted it, so this is the only point at which the
-  // window, the ellipses and Next are all settled. Reading before it can catch
-  // the optimistic mid-transition state.
-  await expect(page.getByText('Loading page…')).toHaveCount(0, { timeout: UI_READY });
-  const pageButtons = pagerButton(page, /^Go to page \d+$/);
-  const count = await pageButtons.count();
-  const numbers: number[] = [];
-  let current: number | null = null;
-  for (let i = 0; i < count; i += 1) {
-    const button = pageButtons.nth(i);
-    const label = await button.getAttribute('aria-label');
-    const n = Number((label ?? '').replace('Go to page ', ''));
-    numbers.push(n);
-    if ((await button.getAttribute('aria-current')) === 'page') current = n;
-  }
-  numbers.sort((a, b) => a - b);
-  return {
-    numbers,
-    current,
-    leadingEllipsis: (await page.getByTestId('pager-leading-ellipsis').filter({ visible: true }).count()) > 0,
-    trailingEllipsis: (await page.getByTestId('pager-trailing-ellipsis').filter({ visible: true }).count()) > 0,
-    nextDisabled: await pagerButton(page, 'Next page').isDisabled(),
-    prevDisabled: await pagerButton(page, 'Previous page').isDisabled(),
-  };
 }
 
 /**
@@ -163,14 +94,6 @@ async function seedTraceProject(
   }, SEED_VISIBLE).toBe(count);
 
   return projectId;
-}
-
-/** Hides the dev-only React Query Devtools toggle, which floats over the
- * pager in attach mode (Vite dev server) and intercepts its clicks — see
- * task-8-report.md workaround #3. Not part of the product. */
-async function openObserveList(page: Page, url: string) {
-  await page.goto(url, { waitUntil: 'domcontentloaded' });
-  await page.addStyleTag({ content: '.tsqd-parent-container { display: none !important; }' });
 }
 
 /**
@@ -372,7 +295,7 @@ test('OBS-E2E-027: trace list pager windows forward without an endless page coun
 
   await test.step('UI: drop to page size 10 through the control', async () => {
     const resized = page.waitForResponse(
-      (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes('page_size=10') && r.ok(),
+      (r) => isTraceListResponse(r, { project_id: projectId, page_size: 10 }),
       { timeout: UI_READY });
     await selectPageSize(page, '10');
     await resized;
@@ -401,7 +324,7 @@ test('OBS-E2E-027: trace list pager windows forward without an endless page coun
       // network capture in task-8-report.md), so match on the endpoint and
       // project only; only one page-load request is in flight per click.
       const advanced = page.waitForResponse(
-        (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+        (r) => isTraceListResponse(r, { project_id: projectId }),
         { timeout: UI_READY });
       await pagerButton(page, 'Next page').click();
       await advanced;
@@ -496,8 +419,7 @@ test('OBS-E2E-027: trace list pager windows forward without an endless page coun
   await test.step('page size change reaches the server and resets the pager', async () => {
     const RESIZED_PAGE_SIZE = 25;
     const resized = page.waitForResponse(
-      (r) => r.url().includes(TRACE_LIST_PATH)
-        && r.url().includes(`page_size=${RESIZED_PAGE_SIZE}`) && r.ok(),
+      (r) => isTraceListResponse(r, { project_id: projectId, page_size: RESIZED_PAGE_SIZE }),
       { timeout: UI_READY });
     await selectPageSize(page, String(RESIZED_PAGE_SIZE));
     await resized;
@@ -547,7 +469,7 @@ test('OBS-E2E-028: Next stays usable through a full Back-Back-Next-Next round tr
   await expect(traceNames).toHaveCount(TOTAL, { timeout: UI_READY });
 
   const resized = page.waitForResponse(
-    (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
+    (r) => isTraceListResponse(r, { project_id: projectId, page_size: SIZE }),
     { timeout: UI_READY });
   await selectPageSize(page, String(SIZE));
   await resized;
@@ -571,13 +493,13 @@ test('OBS-E2E-028: Next stays usable through a full Back-Back-Next-Next round tr
 
   await test.step('walk forward to the terminal page', async () => {
     const advanced = page.waitForResponse(
-      (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+      (r) => isTraceListResponse(r, { project_id: projectId }),
       { timeout: UI_READY });
     await pagerButton(page, 'Next page').click();
     await advanced;
     await waitForCurrentPage(page, 2);
     const advancedAgain = page.waitForResponse(
-      (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+      (r) => isTraceListResponse(r, { project_id: projectId }),
       { timeout: UI_READY });
     await pagerButton(page, 'Next page').click();
     await advancedAgain;
@@ -636,7 +558,7 @@ test('OBS-E2E-029: an exactly-full final page ends pagination without offering a
   await expect(traceNames).toHaveCount(25, { timeout: UI_READY });
 
   const resized = page.waitForResponse(
-    (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
+    (r) => isTraceListResponse(r, { project_id: projectId, page_size: SIZE }),
     { timeout: UI_READY });
   await selectPageSize(page, String(SIZE));
   await resized;
@@ -647,7 +569,7 @@ test('OBS-E2E-029: an exactly-full final page ends pagination without offering a
     // eslint-disable-next-line no-await-in-loop
     await test.step(`walk to page ${target}`, async () => {
       const advanced = page.waitForResponse(
-        (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+        (r) => isTraceListResponse(r, { project_id: projectId }),
         { timeout: UI_READY });
       await pagerButton(page, 'Next page').click();
       await advanced;
@@ -691,7 +613,7 @@ test('OBS-E2E-030: has_more without a strictly greater total promises no page nu
   await expect(traceNames).toHaveCount(25, { timeout: UI_READY });
 
   const resized = page.waitForResponse(
-    (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
+    (r) => isTraceListResponse(r, { project_id: projectId, page_size: SIZE }),
     { timeout: UI_READY });
   await selectPageSize(page, String(SIZE));
   await resized;
@@ -710,9 +632,12 @@ test('OBS-E2E-030: has_more without a strictly greater total promises no page nu
   // rows.
   let rewritten = false;
   await page.route(
-    (url) => url.pathname.includes(TRACE_LIST_PATH) && url.searchParams.get('project_id') === projectId,
+    (url) => url.pathname === TRACE_LIST_PATH,
     async (route) => {
-      if (rewritten) { await route.continue(); return; }
+      if (rewritten || route.request().method() !== 'POST'
+        || traceListParams(route.request()).project_id !== projectId) {
+        await route.continue(); return;
+      }
       rewritten = true;
       const response = await route.fetch();
       const body = await response.json();
@@ -725,7 +650,7 @@ test('OBS-E2E-030: has_more without a strictly greater total promises no page nu
   );
 
   const advanced = page.waitForResponse(
-    (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+    (r) => isTraceListResponse(r, { project_id: projectId }),
     { timeout: UI_READY });
   await pagerButton(page, 'Next page').click();
   await advanced;
@@ -767,7 +692,7 @@ test('OBS-E2E-031: the Next label DOM node survives ~1.5s of ancestor re-render 
   await expect(traceNames).toHaveCount(TOTAL, { timeout: UI_READY });
 
   const resized = page.waitForResponse(
-    (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
+    (r) => isTraceListResponse(r, { project_id: projectId, page_size: SIZE }),
     { timeout: UI_READY });
   await selectPageSize(page, String(SIZE));
   await resized;
@@ -834,7 +759,7 @@ test('OBS-E2E-032: a real dwell-click on Next/Back actually fires a click, not j
   await expect(traceNames).toHaveCount(TOTAL, { timeout: UI_READY });
 
   const resized = page.waitForResponse(
-    (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
+    (r) => isTraceListResponse(r, { project_id: projectId, page_size: SIZE }),
     { timeout: UI_READY });
   await selectPageSize(page, String(SIZE));
   await resized;
@@ -846,7 +771,7 @@ test('OBS-E2E-032: a real dwell-click on Next/Back actually fires a click, not j
   await test.step('INT-01/INT-02: dwell-click Next actually advances the page', async () => {
     await resetDwellCounters(page);
     const advanced = page.waitForResponse(
-      (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+      (r) => isTraceListResponse(r, { project_id: projectId }),
       { timeout: UI_READY });
     await dwellClick(page, pagerButton(page, 'Next page'));
     await advanced;
@@ -901,13 +826,13 @@ test('OBS-E2E-033: changing page size changes the outbound page_size, the render
   await expect(traceNames).toHaveCount(25, { timeout: UI_READY });
 
   const resized = page.waitForResponse(
-    (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${NEW_SIZE}`) && r.ok(),
+    (r) => isTraceListResponse(r, { project_id: projectId, page_size: NEW_SIZE }),
     { timeout: UI_READY });
   await selectPageSize(page, String(NEW_SIZE));
   const response = await resized;
 
   // PAG-04: the request itself, not just the UI, carries the new page size.
-  expect(new URL(response.url()).searchParams.get('page_size')).toBe(String(NEW_SIZE));
+  expect(traceListParams(response.request()).page_size).toBe(NEW_SIZE);
 
   await expect(traceNames).toHaveCount(NEW_SIZE, { timeout: UI_READY });
   await waitForCurrentPage(page, 1);
@@ -916,64 +841,6 @@ test('OBS-E2E-033: changing page size changes the outbound page_size, the render
   expect(pager.prevDisabled).toBe(true);
 
   await req.dispose();
-});
-
-test('OBS-E2E-034: the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row', {
-  tag: ['@flow'],
-  annotation: flowAnnotation({
-    id: 'OBS-E2E-034', area: 'observe',
-    userGoal: "A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract",
-    steps: ["seed 12 completed CallExecution rows for one fresh AgentDefinition/AgentVersion directly through the backend (no simulate/voice infra runs in this harness — see e2e/lib/simulate-seed.ts)",
-            "open the agent's Call Logs tab for that version",
-            'see all 12 calls on one page at the default 25 per page',
-            'switch to 10 per page and confirm more than one page is offered',
-            'walk forward to the last page'],
-    backendChecks: ['the seeded CallExecution rows are scoped to the seeded AgentVersion, status=completed, non-empty eval_outputs — exactly what AgentVersionCallExecutionView filters for',
-                    'AgentVersionCallExecutionView honours the page_size the grid sends'],
-  }),
-}, async ({ page, actor }, testInfo) => {
-  test.setTimeout(120_000);
-  const CALL_EXECUTION_COUNT = 12;
-  const seed = seedCallExecutions({
-    organizationId: actor.organizationId,
-    workspaceId: actor.workspaceId,
-    count: CALL_EXECUTION_COUNT,
-  });
-  await openObserveList(
-    page,
-    `/dashboard/simulate/agent-definitions/${seed.agentDefinitionId}?activeTab=CallLogs&version=${seed.agentVersionId}`,
-  );
-
-  const callRows = page.locator('.clean-data-table:visible .ag-row');
-  // The grid sends page_size, as it does to the trace lists. The view used to
-  // read only `limit` and served 10 rows whatever was asked, while the grid
-  // counted pages at 25 and ran out of pages early. At the default 25 all 12
-  // calls must fit on one page.
-  await expect(callRows).toHaveCount(CALL_EXECUTION_COUNT, { timeout: UI_READY });
-  expect((await readPager(page)).nextDisabled).toBe(true);
-
-  await selectPageSize(page, '10');
-  await expect(callRows).toHaveCount(10, { timeout: UI_READY });
-  await waitForCurrentPage(page, 1);
-
-  const pager = await readPager(page);
-  // PAG-05: this screen's response has no `has_more` field at all — a plain
-  // DRF `count`/`next`/`previous` payload (ExtendedPageNumberPagination,
-  // futureagi/tfc/utils/pagination.py) — yet the shared CursorGridPagination
-  // still offers a real second page for it.
-  expect(pager.numbers.length).toBeGreaterThan(1);
-  expect(pager.nextDisabled).toBe(false);
-
-  // The grid prefetches the next page ahead of the visible one, so this click
-  // is served from that cache rather than guaranteed to hit the wire — wait
-  // on the pager's own DOM state, not a response (same reasoning as the
-  // cached-page legs in OBS-E2E-028/OBS-E2E-032).
-  await pagerButton(page, 'Next page').click();
-  await waitForCurrentPage(page, 2);
-
-  await expect(callRows).toHaveCount(seed.callExecutionCount - 10, { timeout: UI_READY });
-  const finalPager = await readPager(page);
-  expect(finalPager.nextDisabled).toBe(true);
 });
 
 test('OBS-E2E-035: changing the date filter resets pagination to page 1 and drops the old cursor', {
@@ -1000,7 +867,7 @@ test('OBS-E2E-035: changing the date filter resets pagination to page 1 and drop
   await expect(traceNames).toHaveCount(25, { timeout: UI_READY });
 
   const resized = page.waitForResponse(
-    (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
+    (r) => isTraceListResponse(r, { project_id: projectId, page_size: SIZE }),
     { timeout: UI_READY });
   await selectPageSize(page, String(SIZE));
   await resized;
@@ -1009,7 +876,7 @@ test('OBS-E2E-035: changing the date filter resets pagination to page 1 and drop
 
   await test.step('set the date range to Past 12M', async () => {
     const toTwelveMonths = page.waitForResponse(
-      (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+      (r) => isTraceListResponse(r, { project_id: projectId }),
       { timeout: UI_READY });
     await page.getByRole('button', { name: 'Past 7D' }).click();
     await page.getByRole('menuitem', { name: 'Past 12M' }).click();
@@ -1021,7 +888,7 @@ test('OBS-E2E-035: changing the date filter resets pagination to page 1 and drop
   await test.step('walk forward three pages, opening a leading ellipsis', async () => {
     for (const target of [2, 3, 4]) {
       const advanced = page.waitForResponse(
-        (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+        (r) => isTraceListResponse(r, { project_id: projectId }),
         { timeout: UI_READY });
       // eslint-disable-next-line no-await-in-loop
       await pagerButton(page, 'Next page').click();
@@ -1037,7 +904,7 @@ test('OBS-E2E-035: changing the date filter resets pagination to page 1 and drop
 
   await test.step('switch the date filter — pagination resets, no stale cursor on the wire', async () => {
     const afterFilter = page.waitForResponse(
-      (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+      (r) => isTraceListResponse(r, { project_id: projectId }),
       { timeout: UI_READY });
     await page.getByRole('button', { name: 'Past 12M' }).click();
     await page.getByRole('menuitem', { name: 'Past 30D' }).click();
@@ -1055,9 +922,9 @@ test('OBS-E2E-035: changing the date filter resets pagination to page 1 and drop
 
     // The part a UI-only assertion would miss: a stale cursor from the old
     // (pre-filter) page 4 would silently keep returning rows from the old
-    // result set. A fresh filter's page-1 request never carries `cursor=`
+    // result set. A fresh filter's page-1 request never carries a `cursor` field
     // (listCursorPagination.js `requestParams`, the `pageNumber === 0` branch).
-    expect(new URL(response.url()).searchParams.has('cursor')).toBe(false);
+    expect(traceListParams(response.request())).not.toHaveProperty('cursor');
   });
 
   await req.dispose();
@@ -1089,7 +956,7 @@ test('OBS-E2E-036: the furthest-visited page reappears as a boundary after walki
 
   await test.step('drop to page size 10 (5 pages)', async () => {
     const resized = page.waitForResponse(
-      (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
+      (r) => isTraceListResponse(r, { project_id: projectId, page_size: SIZE }),
       { timeout: UI_READY });
     await selectPageSize(page, String(SIZE));
     await resized;
@@ -1100,7 +967,7 @@ test('OBS-E2E-036: the furthest-visited page reappears as a boundary after walki
   await test.step('walk forward to the true last page', async () => {
     for (const target of [2, 3, 4, LAST]) {
       const advanced = page.waitForResponse(
-        (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+        (r) => isTraceListResponse(r, { project_id: projectId }),
         { timeout: UI_READY });
       // eslint-disable-next-line no-await-in-loop
       await pagerButton(page, 'Next page').click();

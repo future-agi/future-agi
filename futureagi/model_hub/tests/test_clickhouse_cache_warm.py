@@ -1,4 +1,6 @@
+import re
 import sys
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -65,11 +67,14 @@ def test_python_c_without_deployment_env_skips_every_startup_mutation_path(monke
         "ch25_apply_schema",
         "createcachetable",
         "future_schema_command",
+        "harness_versions_backfill",
         "makemigrations",
         "migrate",
         "provision_grouping_features",
         "enable_sampled_grouping",
         "requeue_budget_grouping",
+        "requeue_failed_grouping",
+        "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
     ],
@@ -88,10 +93,13 @@ def test_mutation_guard_rejects_unsafe_management_commands(command):
         "ch25_remove_pg",
         "createcachetable",
         "drop_legacy_observation_span",
+        "harness_versions_backfill",
         "migrate",
         "provision_grouping_features",
         "enable_sampled_grouping",
         "requeue_budget_grouping",
+        "requeue_failed_grouping",
+        "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
     ],
@@ -489,3 +497,94 @@ def test_hosted_application_processes_still_cannot_register_schedules(
     argv = ["manage.py", "register_temporal_schedules"]
 
     assert explicit_management_mutation_authorized(argv) is False
+
+
+_JOB = "0b7c1a5e-7d0a-4f4e-9d3c-2f1a8b6e4c11"
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--check"],
+        ["--check", "--json"],
+        ["--json", "--check", "--job", _JOB],
+        ["--check", "--job", _JOB, "--job", _JOB],
+        ["--check", "--output", "/tmp/backfill-check.json"],
+    ],
+)
+@pytest.mark.parametrize(
+    "environment",
+    [
+        {"NO_STARTUP_DB_MUTATIONS": "true"},
+        {"NO_STARTUP_DB_MUTATIONS": "true", "ENV_TYPE": "production"},
+        {"NO_STARTUP_DB_MUTATIONS": "true", "CLOUD_DEPLOYMENT": "US"},
+    ],
+)
+def test_harness_backfill_check_is_read_only_anywhere(
+    monkeypatch, options, environment
+):
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    argv = ["manage.py", "harness_versions_backfill", *options]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert guarded_management_command(argv) is None
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        [],
+        ["--json"],
+        ["--job", _JOB],
+        ["--check", "--job"],
+        ["--check", "--job", "not-a-uuid"],
+        ["--check", f"--job={_JOB}"],
+        ["--check", "--output"],
+        ["--check", "--output", "--json"],
+        ["--check", "--future-option"],
+        ["--check", "--verbosity", "2"],
+        ["--chec"],
+        ["--check=true"],
+        ["--", "--check"],
+    ],
+)
+def test_harness_backfill_without_the_closed_check_form_needs_operator_mode(
+    monkeypatch, options
+):
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    argv = ["manage.py", "harness_versions_backfill", *options]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert guarded_management_command(argv) == "harness_versions_backfill"
+    with pytest.raises(RuntimeError, match="^harness_versions_backfill is disabled"):
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize("env_type", ["local", "production"])
+def test_the_documented_harness_backfill_run_is_allowed(monkeypatch, env_type):
+    install = Path(__file__).resolve().parents[3] / "INSTALLATION.md"
+    [line] = [
+        one
+        for one in install.read_text(encoding="utf-8").splitlines()
+        if one.startswith("docker compose exec")
+        and one.endswith("manage.py harness_versions_backfill")
+    ]
+    monkeypatch.setenv("ENV_TYPE", env_type)
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    for key, value in re.findall(r"-e (\w+)=(\S+)", line):
+        monkeypatch.setenv(key, value)
+
+    assert explicit_management_mutation_authorized(
+        ["manage.py", "harness_versions_backfill"]
+    )
+
+
+def test_harness_backfill_run_is_allowed_for_the_operator(monkeypatch):
+    monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+
+    assert operator_startup_mutation_authorized(
+        ["manage.py", "harness_versions_backfill"]
+    )

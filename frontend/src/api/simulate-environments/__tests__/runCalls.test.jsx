@@ -119,6 +119,18 @@ const payload = () => ({
 describe("mapCallRow", () => {
   const evalCols = columnOrder();
 
+  // A re-run takes scenario keys, so the row carries its key on its own, not
+  // only folded into the display name.
+  it("keeps the call's scenario key, or null when it has none", () => {
+    expect(
+      mapCallRow({ id: "c1", source_scenario_key: "refund-double-charge" }, [])
+        .sourceScenarioKey,
+    ).toBe("refund-double-charge");
+    expect(
+      mapCallRow({ id: "c2", scenario: "Legacy call" }, []).sourceScenarioKey,
+    ).toBeNull();
+  });
+
   it.each([0, null, undefined])(
     "preserves missing and zero interruption metrics: %s",
     (value) => {
@@ -137,10 +149,19 @@ describe("mapCallRow", () => {
   it("renders a live choices verdict by its label and inner score", () => {
     const row = {
       id: "c9",
-      evaluations: [{ id: "e-choice", name: "clarification", type: "choices", score: null,
-        value: { score: 1.0, choice: "always" } }],
+      evaluations: [
+        {
+          id: "e-choice",
+          name: "clarification",
+          type: "choices",
+          score: null,
+          value: { score: 1.0, choice: "always" },
+        },
+      ],
     };
-    const [cell] = mapCallRow(row, [{ id: "e-choice", name: "clarification" }]).evalResults;
+    const [cell] = mapCallRow(row, [
+      { id: "e-choice", name: "clarification" },
+    ]).evalResults;
     expect(cell.label).toBe("always");
     expect(cell.score).toBe(1);
   });
@@ -149,32 +170,91 @@ describe("mapCallRow", () => {
     const row = {
       id: "c9",
       evaluations: [
-        { id: "e-failed", status: "Failed", score: null, value: null, reason: "Timed out" },
-        { id: "e-skip", status: "skipped", score: null, value: null, reason: "No transcript data available" },
+        {
+          id: "e-failed",
+          status: "Failed",
+          score: null,
+          value: null,
+          reason: "Timed out",
+        },
+        {
+          id: "e-skip",
+          status: "skipped",
+          score: null,
+          value: null,
+          reason: "No transcript data available",
+        },
+        {
+          id: "e-timeout",
+          status: "timed_out",
+          score: null,
+          value: null,
+          reason: "Scoring timed out: no progress for 10 minutes.",
+        },
         { id: "e-ok", score: 1, value: "Passed" },
       ],
     };
-    const [failed, skipped, ok] = mapCallRow(row, [
-      { id: "e-failed" }, { id: "e-skip" }, { id: "e-ok" },
+    const [failed, skipped, timedOut, ok] = mapCallRow(row, [
+      { id: "e-failed" },
+      { id: "e-skip" },
+      { id: "e-timeout" },
+      { id: "e-ok" },
     ]).evalResults;
     expect(failed.status).toBe("failed");
     expect(failed.reason).toBe("Timed out");
     expect(skipped.status).toBe("skipped");
-    expect(ok.status).toBe("completed");
+    expect(timedOut.status).toBe("timed_out");
+    expect(timedOut.reason).toBe(
+      "Scoring timed out: no progress for 10 minutes.",
+    );
+    // An entry with no status reads as scored, in the API's own word.
+    expect(ok.status).toBe("succeeded");
   });
 
   it("keeps the server's verdict on a choice and the score of a label-less object", () => {
     const row = {
       id: "c9",
       evaluations: [
-        { id: "e-choice", type: "choices", score: null, passed: true, value: { score: 1.0, choice: "always" } },
+        {
+          id: "e-choice",
+          type: "choices",
+          score: null,
+          passed: true,
+          value: { score: 1.0, choice: "always" },
+        },
         { id: "e-score", type: "score", score: null, value: { score: 0.4 } },
       ],
     };
-    const [choice, scored] = mapCallRow(row, [{ id: "e-choice" }, { id: "e-score" }]).evalResults;
+    const [choice, scored] = mapCallRow(row, [
+      { id: "e-choice" },
+      { id: "e-score" },
+    ]).evalResults;
     expect(choice.passed).toBe(true);
     expect(choice.label).toBe("always");
     expect(scored.score).toBe(0.4);
+  });
+
+  it("carries the call's scoring and CSAT status, with its CSAT reason", () => {
+    const t = mapCallRow(
+      {
+        scoring_status: "timed_out",
+        csat_status: "timed_out",
+        csat_reason: "CSAT timed out: scoring did not start within 30 minutes.",
+      },
+      [],
+    );
+    expect(t.scoringStatus).toBe("timed_out");
+    expect(t.csatStatus).toBe("timed_out");
+    expect(t.csatReason).toBe(
+      "CSAT timed out: scoring did not start within 30 minutes.",
+    );
+  });
+
+  it("leaves the scoring fields null when the row has none", () => {
+    const t = mapCallRow({ csat_reason: null }, []);
+    expect(t.scoringStatus).toBeNull();
+    expect(t.csatStatus).toBeNull();
+    expect(t.csatReason).toBeNull();
   });
 
   it("maps a passing completed call: real metrics, CSAT on the 0–10 scale, ms duration", () => {
@@ -260,7 +340,12 @@ describe("mapCallRow", () => {
       id: "c4",
       status: "completed",
       eval_metrics: {
-        "cfg-gone": { name: "no_misselling", value: "Failed", type: "Pass/Fail", removed: true },
+        "cfg-gone": {
+          name: "no_misselling",
+          value: "Failed",
+          type: "Pass/Fail",
+          removed: true,
+        },
       },
     };
     const t = mapCallRow(row, [{ id: "cfg-gone", type: "evaluation" }]);
@@ -394,11 +479,33 @@ describe("useRunCalls", () => {
       count: 0,
       groups: [],
       facets: {},
+      statusCounts: {},
       summary: null,
       totalPages: 1,
       isLoading: true,
     });
     unmount();
+  });
+
+  it("carries the server's status counts for the status chips", async () => {
+    axios.get.mockResolvedValue({
+      data: { ...payload(), status_counts: { passed: 2, failed: 1 } },
+    });
+    const { result } = renderHook(() => useRunCalls("ex-counts"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.statusCounts).toEqual({ passed: 2, failed: 1 });
+  });
+
+  it("has no status counts when the response carries none", async () => {
+    const { result } = renderHook(() => useRunCalls("ex-no-counts"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.statusCounts).toEqual({});
   });
 
   it("carries the run's agent type from the execution", async () => {
@@ -468,6 +575,51 @@ describe("useRunCalls", () => {
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
   });
+
+  it("keeps polling a finished run while some calls are still being scored", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const scoring = (pending) => ({
+      ...payload(),
+      execution: { status: "failed" },
+      summary: {
+        total: 2,
+        scoring: {
+          not_applicable: 0,
+          pending,
+          succeeded: 2 - pending,
+          failed: 0,
+          timed_out: 0,
+        },
+      },
+    });
+    axios.get.mockResolvedValue({ data: scoring(1) });
+
+    const { unmount } = renderHook(() => useRunCalls("ex2"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() =>
+      expect(
+        queryClient
+          .getQueryCache()
+          .findAll({ queryKey: ["simulation-run-results-v3", "ex2"] })[0]?.state
+          .data?.summary?.scoring?.pending,
+      ).toBe(1),
+    );
+    const query = queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ["simulation-run-results-v3", "ex2"] })[0];
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(query.queryKey, scoring(0));
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
+  });
 });
 
 describe("runCallsQueryOptions", () => {
@@ -495,21 +647,26 @@ describe("runCallsQueryOptions", () => {
       "goal",
     ]);
     await options.queryFn();
-    expect(axios.get).toHaveBeenCalledWith(endpoints.runResultsV3.calls("ex1"), {
-      params: {
-        page: 2,
-        page_size: 50,
-        search: "",
-        filters: JSON.stringify({ goal: ["Refunds"] }),
-        group_by: "goal",
+    expect(axios.get).toHaveBeenCalledWith(
+      endpoints.runResultsV3.calls("ex1"),
+      {
+        params: {
+          page: 2,
+          page_size: 50,
+          search: "",
+          filters: JSON.stringify({ goal: ["Refunds"] }),
+          group_by: "goal",
+        },
       },
-    });
+    );
   });
 
   it("leaves group_by off the request when no grouping is chosen", async () => {
     const options = runCallsQueryOptions("ex1", { groupBy: "" });
     await options.queryFn();
-    expect(axios.get.mock.calls.at(-1)[1].params).not.toHaveProperty("group_by");
+    expect(axios.get.mock.calls.at(-1)[1].params).not.toHaveProperty(
+      "group_by",
+    );
   });
 
   it("lets a reader switch the table hook off", () => {
@@ -519,7 +676,6 @@ describe("runCallsQueryOptions", () => {
     expect(axios.get).not.toHaveBeenCalled();
   });
 });
-
 
 describe("sub-goal verdicts", () => {
   it("preserves passed, failed and undecided sub-goals from the API", () => {

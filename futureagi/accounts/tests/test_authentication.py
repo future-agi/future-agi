@@ -5,10 +5,13 @@ Tests for login, token refresh, and authentication flows.
 """
 
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.core.cache import cache
 from django.utils import timezone
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from rest_framework import status
 
 from accounts.authentication import generate_encrypted_message
@@ -260,3 +263,27 @@ class TestAuthenticatedEndpoints:
         response = api_client.get("/accounts/user-info/")
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["email"] == user.email
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            RedisTimeoutError("Timeout reading from socket"),
+            ConnectionInterrupted(connection=None),
+        ],
+        ids=["redis", "django_redis"],
+    )
+    def test_token_store_timeout_is_503_not_401(self, api_client, user, error):
+        """A cache that times out says nothing about the token: retry, not log in again."""
+        access_token = api_client.post(
+            "/accounts/token/",
+            {"email": user.email, "password": "testpassword123"},
+            format="json",
+        ).json()["access"]
+        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+
+        with patch("accounts.authentication.cache") as token_store:
+            token_store.get.side_effect = error
+            response = api_client.get("/accounts/user-info/")
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["code"] == "service_unavailable"
