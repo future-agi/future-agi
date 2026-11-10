@@ -334,14 +334,16 @@ function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceip
 
 function distributedMockStack(evalBackground: boolean): MockStack {
   return {
-    services: ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse',
+    services: ['agentcc-gateway', 'mock-llm', 'mock-slack', 'mock-google', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse',
       ...(evalBackground ? ['temporal'] : [])],
     endpoints: [
+      ['mock-google', '28443/tcp', E2E.googleMockUrl],
       ['frontend', '80/tcp', E2E.appUrl], ['backend', '80/tcp', E2E.apiUrl],
       ['agentcc-gateway', '8080/tcp', E2E.gatewayUrl], ['postgres', '5432/tcp', E2E.pgUrl],
       ['clickhouse', '8123/tcp', E2E.chUrl], ['mock-slack', '8080/tcp', E2E.slackMockUrl],
     ],
     sources: [
+      ['mock-google', '/srv/server.py', `${root}e2e/stack/mock-google/server.py`, ['/srv/server.py']],
       ['agentcc-gateway', '/app/config.yaml', gatewayFile, ['--config', '/app/config.yaml']],
       ['mock-llm', '/srv/server.mjs', mockFile, ['node', '/srv/server.mjs']],
       ['mock-slack', '/srv/server.mjs', `${root}e2e/stack/mock-slack/server.mjs`, ['node', '/srv/server.mjs']],
@@ -359,7 +361,9 @@ function distributedMockStack(evalBackground: boolean): MockStack {
         const env = environments[service] = containerEnvironment(selected[service]);
         validateMockEnvironment(service, env, evalBackground, selected[service].Mounts);
       }
-      for (const service of ['backend', 'worker']) validateApplicationMounts(service, selected[service].Mounts);
+      validateGoogleFixtureMounts(selected.backend, selected['mock-google']);
+      for (const service of ['backend', 'worker']) validateApplicationMounts(service,
+        selected[service].Mounts.filter(m => service !== 'backend' || m.Destination !== '/run/google-fixture-tls'));
       if (!evalBackground) return undefined;
       // No tag resolution against a registry: local image inspect only. Main must
       // supply the same version pins used to recreate the managed application.
@@ -428,4 +432,17 @@ export async function registerMockModel(actor: TestActor, probe: StateProbe,
   };
   await assertReady();
   return { id, model: MOCK_MODEL, assertReady };
+}
+
+/** Trust only the certificate volume shared with the owned mock, never a host CA directory. */
+export function validateGoogleFixtureMounts(app: Container, mock: Container): void {
+  const reader = app.Mounts.filter(m => m.Destination === '/run/google-fixture-tls');
+  const writer = mock.Mounts.filter(m => m.Destination === '/tls');
+  requireSafe(reader.length === 1 && writer.length === 1 && reader[0].Type === 'volume' &&
+    writer[0].Type === 'volume' && !reader[0].RW && writer[0].RW && reader[0].Source === writer[0].Source,
+    'Google fixture certificate volume mismatch');
+  requireSafe(same(mock.Config.Entrypoint, ['python']) && mock.Mounts.length === 2,
+    'unexpected Google fixture process or mounts');
+  requireSafe(containerEnvironment(app).REQUESTS_CA_BUNDLE === '/run/google-fixture-tls/ca.pem',
+    'Google fixture certificate trust mismatch');
 }
