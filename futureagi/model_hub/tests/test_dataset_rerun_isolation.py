@@ -3,7 +3,7 @@
 import inspect
 import json
 import sys
-from threading import Event
+from threading import Barrier, Event
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -14,7 +14,11 @@ from accounts.models.workspace import Workspace
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.develop_optimisation import OptimizationDataset
-from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.evals_metric import (
+    EvalTemplate,
+    EvalTemplateVersion,
+    UserEvalMetric,
+)
 from model_hub.views.develop_dataset import run_evaluation_task
 from model_hub.views.eval_runner import EvaluationRunner
 
@@ -161,6 +165,104 @@ def test_selected_rows_do_not_share_runner_initialization(rerun):
     assert len(runners) == 2
     assert runners[0] is not runners[1]
     assert runners[0].source_configs is not runners[1].source_configs
+
+
+@pytest.mark.parametrize("binding", ["default", "pinned", "latest"])
+def test_queued_rows_execute_the_version_stamped_before_fanout(rerun, binding):
+    """Change the active version while all five production workers are busy.
+
+    The sixth row cannot construct its runner until after the switch. Its
+    execution config and usage metadata must both retain the original version.
+    Keep the real executor, constructor, config overlay, and cell persistence.
+    """
+    template = rerun.metric.template
+    original_version = EvalTemplateVersion.objects.create(
+        eval_template=template,
+        version_number=1,
+        is_default=binding == "default",
+        config_snapshot={"rule_prompt": "original instructions"},
+    )
+    if binding == "pinned":
+        rerun.metric.pinned_version = original_version
+        rerun.metric.save(update_fields=["pinned_version"])
+    rows = rerun.rows + [
+        Row.objects.create(dataset=rerun.dataset, order=index) for index in range(3, 6)
+    ]
+    for row in rows[3:]:
+        for column in (rerun.column, rerun.reason_column):
+            Cell.objects.create(
+                dataset=rerun.dataset,
+                row=row,
+                column=column,
+                status=CellStatus.PASS.value,
+                value="previous result",
+            )
+
+    def activate_new_version():
+        EvalTemplateVersion.objects.filter(eval_template=template).update(
+            is_default=False
+        )
+        new_version = EvalTemplateVersion.objects.create(
+            eval_template=template,
+            version_number=2,
+            is_default=True,
+            config_snapshot={"rule_prompt": "new instructions"},
+        )
+        EvalTemplate.objects.filter(id=template.id).update(
+            config=new_version.config_snapshot
+        )
+        if binding == "pinned":
+            UserEvalMetric.objects.filter(id=rerun.metric.id).update(
+                pinned_version=new_version
+            )
+
+    first_wave = Barrier(5, action=activate_new_version, timeout=20)
+    executions = {}
+
+    def evaluate(self, row, mappings):
+        if row.order < 5:
+            first_wave.wait()
+        executions[row.order] = (
+            self.version_number,
+            str(self._resolved_version.id),
+            self._get_effective_eval_config()["rule_prompt"],
+            self.source_configs["version_number"],
+            self.source_configs["version_id"],
+        )
+        return result_for_row(self, row, mappings)
+
+    with (
+        patch.object(EvaluationRunner, "_process_eval_result", evaluate),
+        patch.object(
+            EvalTemplateVersion.objects,
+            "resolve_for_metric",
+            wraps=EvalTemplateVersion.objects.resolve_for_metric,
+        ) as resolve,
+    ):
+        run_evaluation_task._original_func(
+            {
+                "metric_ids": [str(rerun.metric.id)],
+                "row_ids": [str(row.id) for row in rows],
+            }
+        )
+
+    assert EvalTemplateVersion.objects.get_default(template).version_number == 2
+    expected = (
+        1,
+        str(original_version.id),
+        "original instructions",
+        1,
+        str(original_version.id),
+    )
+    assert executions == dict.fromkeys(range(6), expected)
+    assert resolve.call_count == 1
+    assert list(
+        Cell.objects.filter(column=rerun.column)
+        .order_by("row__order")
+        .values_list("status", "value")
+    ) == [(CellStatus.PASS.value, f"row-{index}") for index in range(6)]
+    rerun.metric.refresh_from_db()
+    assert rerun.metric.status == StatusType.COMPLETED.value
 
 
 def test_row_initializers_leave_metric_lifecycle_to_the_batch(rerun):

@@ -12604,8 +12604,8 @@ def run_evaluation_task(evaluation_data):
                         MixpanelEvents.EVAL_RUN_STARTED.value, properties
                     )
                 try:
-                    # Resolve run metadata once, but never share a mutable runner
-                    # between concurrent rows (including its initialization).
+                    # Resolve execution version and metadata together, but never
+                    # share a mutable runner between concurrent rows.
                     runner_args = dict(args)
                     if not runner_args.get("source"):
                         runner_args["source"] = "dataset_evaluation"
@@ -12624,6 +12624,10 @@ def run_evaluation_task(evaluation_data):
                     try:
                         version = EvalTemplateVersion.objects.resolve_for_metric(metric)
                         if version:
+                            # Pin queued runners to the same immutable version we
+                            # stamp below. Re-resolving the default in each row's
+                            # constructor can execute a newly activated version.
+                            runner_args["version_number"] = version.version_number
                             runner_source_configs.setdefault(
                                 "version_id", str(version.id)
                             )
