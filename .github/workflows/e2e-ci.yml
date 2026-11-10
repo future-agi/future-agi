@@ -226,6 +226,21 @@ jobs:
           -t "futureagi/future-agi:$IMAGE_TAG"
           -f e2e/stack/backend/Dockerfile .
 
+      # Both topologies exercise the mandatory executor's policy propagation.
+      # Never select :latest for a PR: it cannot contain the unmerged source.
+      - name: Build code-executor image from PR code
+        uses: docker/build-push-action@v5
+        with:
+          context: futureagi/code-executor
+          file: futureagi/code-executor/Dockerfile
+          load: true
+          tags: futureagi/code-executor:${{ env.IMAGE_TAG }}
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:code-executor
+          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:code-executor,mode=max', env.CACHE_REPO) || '' }}
+
+      - name: Select the source-built executor in both stacks
+        run: echo "CODE_EXECUTOR_VERSION=$IMAGE_TAG" >> "$GITHUB_ENV"
+
       - name: Build fi-collector image from PR code
         if: env.BUILD_BACKEND == 'true'
         uses: docker/build-push-action@v5

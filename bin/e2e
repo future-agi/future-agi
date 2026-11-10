@@ -31,7 +31,7 @@ if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   COMPOSE=(docker compose --env-file "$ENV_FILE"
     -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml"
     -p futureagi-e2e-standalone)
-  SERVICES=(app postgres clickhouse mock-llm)
+  SERVICES=(app postgres clickhouse mock-llm code-executor link-canary link-worker-canary)
 fi
 
 BUILD_TARGETS="backend|frontend|collector|executor|all|standalone|standalone-app"
@@ -93,6 +93,7 @@ build_target() {
     standalone)
       local tag; tag=$(standalone_tag)
       (cd "$ROOT" && build_local_images standalone all "$tag")
+      docker build -t "futureagi/code-executor:$tag" "$ROOT/futureagi/code-executor"
       echo "built futureagi/standalone:$tag. run with: E2E_STACK=standalone bin/e2e up" ;;
     standalone-app)
       local tag; tag=$(standalone_tag)

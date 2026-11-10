@@ -1,5 +1,5 @@
 import { request } from '@playwright/test';
-import { test, expect } from '../../lib/fixtures';
+import { test, expect } from '../../lib/local-only-browser';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 
