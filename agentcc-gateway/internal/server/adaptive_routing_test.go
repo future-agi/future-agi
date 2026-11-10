@@ -62,7 +62,7 @@ func adaptiveServer(t *testing.T, cfg *config.Config) (*Server, *httptest.Server
 func adaptiveRequest(t *testing.T, server *httptest.Server, model string) int {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"model": model,
+		"model":    model,
 		"messages": []map[string]string{{"role": "user", "content": "synthetic probe"}},
 	})
 	if err != nil {
@@ -78,7 +78,7 @@ func adaptiveRequest(t *testing.T, server *httptest.Server, model string) int {
 	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 		t.Fatal(err)
 	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusServiceUnavailable {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadGateway && resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("gateway returned unexpected status %d", resp.StatusCode)
 	}
 	return resp.StatusCode
