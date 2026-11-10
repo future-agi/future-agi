@@ -3,7 +3,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import axios from 'src/utils/axios';
-import { readContextText, loadContextReview, useContextInspection, useContextInspectionFile } from './context-production';
+import { readContextText, loadContextReview, useContextInspection, useContextInspectionFile, useContextDraftFile, useContextDraftInventory } from './context-production';
 
 const state = vi.hoisted(() => ({ workspace: 'workspace-a' }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ authenticated: true, user: { id: 'author' } }) }));
@@ -66,4 +66,30 @@ it('refuses mixed release review pages before reading any comparison bytes', asy
     .mockResolvedValueOnce(envelope({ review_fingerprint: 'two', changes: diff, head_changes: diff }));
   await expect(loadContextReview('context', 3, {})).rejects.toThrow('release changed');
   expect(axios.get).not.toHaveBeenCalled();
+});
+it('fences compiled bytes when the saved draft revision changes', async () => {
+  let resolveOld;
+  axios.get.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+    .mockResolvedValue(envelope({ ...chunk, revision: 4, text: 'new saved bytes', eof: true }));
+  const hook = renderHook(({ revision }) => useContextDraftFile('context', revision, 'AGENTS.md', { revision, digest, files: [{ path: 'AGENTS.md', sha256: 'hash' }] }), { wrapper, initialProps: { revision: 3 } });
+  await waitFor(() => expect(axios.get).toHaveBeenCalledOnce());
+  hook.rerender({ revision: 4 });
+  await waitFor(() => expect(hook.result.current.data?.revision).toBe(4));
+  await act(async () => resolveOld(envelope({ ...chunk, revision: 3, text: 'old saved bytes', eof: true })));
+  expect(hook.result.current.data.text).toBe('new saved bytes');
+});
+it('reads all compiled inventory pages including unchanged files without hydrating their bytes', async () => {
+  const value = { candidate: { kind: 'draft', revision: 3, digest }, review_fingerprint: 'stable', head_review: { draft_revision: 3, candidate_digest: digest } };
+  axios.post.mockImplementation(async (_, body) => envelope({ ...value, changes: { total_pages: 2, files: [{ path: body.page === 1 ? 'skills/policy/SKILL.md' : '.futureagi/context.json', status: 'unchanged', to_sha256: 'hash' }] }, head_changes: { total_pages: 1, files: [] } }));
+  const hook = renderHook(() => useContextDraftInventory('context', 3), { wrapper });
+  await waitFor(() => expect(hook.result.current.isSuccess).toBe(true));
+  expect(hook.result.current.data.files.map((file) => file.path)).toEqual(['skills/policy/SKILL.md', '.futureagi/context.json']);
+  expect(axios.post).toHaveBeenCalledTimes(2);
+  expect(axios.get).not.toHaveBeenCalled();
+});
+it('refuses a different compiled draft revision', async () => {
+  axios.post.mockResolvedValue(envelope({ candidate: { kind: 'draft', revision: 4, digest }, review_fingerprint: 'stable', head_review: { draft_revision: 4, candidate_digest: digest }, changes: { files: [], total_pages: 1 }, head_changes: { files: [], total_pages: 1 } }));
+  const hook = renderHook(() => useContextDraftInventory('context', 3), { wrapper });
+  await waitFor(() => expect(hook.result.current.isError).toBe(true));
+  expect(hook.result.current.data).toBeUndefined();
 });

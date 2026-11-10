@@ -1,6 +1,7 @@
 /* eslint-env node */
 import fs from 'node:fs';
 import ts from 'typescript';
+import PropTypes from 'prop-types';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useRoutes } from 'react-router-dom';
@@ -21,6 +22,14 @@ vi.mock('src/contexts/OrganizationContext', () => ({ useOrganization: () => ({ i
 vi.mock('src/contexts/WorkspaceContext', () => ({ useWorkspace: () => ({ isReady: true, currentWorkspaceId: identity.workspace }) }));
 // Only the HTTP boundary is replaced; route/provider/controllers/hooks stay real.
 vi.mock('src/utils/axios', () => ({ default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() } }));
+// jsdom cannot mount Monaco's canvas. Only the editor primitive is replaced;
+// the production controller, draft session and revision fences remain real.
+vi.mock('@monaco-editor/react', () => ({ useMonaco: () => null }));
+vi.mock('src/components/form-code-editor', () => {
+  function FormCodeEditor({ value, readOnly, label, onChange }) { return <textarea aria-label={label} value={value} readOnly={readOnly} onChange={(event) => onChange(event.target.value)} />; }
+  FormCodeEditor.propTypes = { value: PropTypes.string, readOnly: PropTypes.bool, label: PropTypes.string, onChange: PropTypes.func };
+  return { FormCodeEditor };
+});
 const id = '00000000-0000-4000-8000-000000000003';
 const versionId = '00000000-0000-4000-8000-000000000004';
 const digest = `sha256:${'a'.repeat(64)}`;
@@ -130,6 +139,96 @@ it('loads the production draft review and sends the exact head acknowledgment', 
   fireEvent.click(screen.getByRole('button', { name: 'Acknowledge reviewed head' }));
   await waitFor(() => expect(axios.post.mock.calls.find(([url]) => url.endsWith('/acknowledge-head/'))?.[1]).toEqual({ revision: 3, expected_digest: digest, expected_head_version: 4, review_fingerprint: digest }));
   expect(axios.post.mock.calls.some(([url]) => url.endsWith('/publish/'))).toBe(false);
+});
+
+it('loads later-page dependencies and reads linked/generated saved bytes through the production editor', async () => {
+  const read = axios.get.getMockImplementation();
+  const draft = { id: 'draft', revision: 3, base_version: 4, files: [{ path: 'AGENTS.md', content: '# Owned instructions' }], context_spec: { schema: 1, description: 'Standing policy', links: [{ skill_id: 'linked', selector: { version: 1 } }] }, resolved_lock: { schema: 1, links: [{ skill_id: 'linked', mount: 'policy', version: 1, version_id: 'child-version', digest, requested: { version: 1 } }] }, digest, recovery_digest: digest, checks: { items: [], summary: { errors: 0, warnings: 0 } }, note: '', expected_head_version: 4, head_acknowledged: false, review_fingerprint: null };
+  axios.get.mockImplementation(async (url, config) => {
+    if (url.endsWith('/draft/')) return envelope(draft);
+    if (url === '/model-hub/skills/') return envelope({ results: config.params.page === 1 ? Array.from({ length: 100 }, (_, n) => ({ id: `unpublished-${n}`, name: `Unpublished ${n}`, latest_version: null })) : [{ id: 'outside-first-page', name: 'Later published skill', latest_version: 1 }], count: 101, page: config.params.page, page_size: 100, total_pages: 2 });
+    if (url.endsWith('/draft/files/')) return envelope({ path: config.params.path, revision: 3, digest, sha256: 'hash', total_chars: 20, offset: 0, next_offset: null, eof: true, text: 'Accepted linked bytes' });
+    return read(url, config);
+  });
+  axios.post.mockImplementation(async (url, body) => {
+    if (url.endsWith('/release/review/')) {
+      expect(body.revision).toBe(3);
+      const files = ['AGENTS.md', 'skills/policy/SKILL.md', '.futureagi/context.json'].map((path) => ({ path, status: 'unchanged', from_sha256: 'hash', to_sha256: 'hash' }));
+      return envelope({ candidate: { kind: 'draft', revision: 3, digest }, changes: { files, total_pages: 1 }, head_changes: { files, total_pages: 1 }, review_fingerprint: digest, head_review: { draft_revision: 3, candidate_digest: digest } });
+    }
+    throw new Error(`Unexpected write ${url}`);
+  });
+  mount(`/dashboard/skills/contexts/${id}/edit`);
+  await screen.findByRole('textbox', { name: 'AGENTS.md' });
+  fireEvent.mouseDown(await screen.findByRole('combobox', { name: /Published leaf skill/ }));
+  fireEvent.click(await screen.findByRole('option', { name: 'Later published skill' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add to proposed links' }));
+  expect(screen.getByText('Later published skill')).toBeVisible();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'SKILL.md' }));
+  expect(await screen.findByRole('textbox', { name: 'skills/policy/SKILL.md' })).toHaveValue('Accepted linked bytes');
+  expect(screen.getByRole('textbox', { name: 'skills/policy/SKILL.md' })).toHaveAttribute('readonly');
+  fireEvent.click(screen.getByRole('treeitem', { name: 'context.json' }));
+  expect(await screen.findByRole('textbox', { name: '.futureagi/context.json' })).toHaveAttribute('readonly');
+  expect(axios.get.mock.calls.filter(([url]) => url.endsWith('/draft/files/')).every(([, config]) => config.params.revision === 3)).toBe(true);
+  expect(axios.put).not.toHaveBeenCalled();
+});
+
+function installRequest(kind, { current = true, canMove = true, authorId = 'another-author' } = {}) {
+  const read = axios.get.getMockImplementation();
+  const requestId = '00000000-0000-4000-8000-000000000090';
+  const packet = { schema: 1, subject_kind: kind, subject_id: id, candidate_version_id: versionId, candidate_digest: digest, transition: { label: 'production', expected_version: 3, version: 4, expected_release_revision: 1, expected_security_revision: 0, expected_impact_fingerprint: digest }, target: null, evidence: [], external_pipeline: null };
+  const request = { id: requestId, revision: 1, status: 'pending', author_id: authorId, subject_id: id, subject_kind: kind, name: 'Assigned candidate', unread: true };
+  axios.get.mockImplementation(async (url, config) => {
+    if (url.endsWith('/review-inbox/')) return envelope({ ...page([request]), unread_count: 1 });
+    if (url.endsWith(`/release-requests/${requestId}/`)) return envelope({ ...request, packet, fingerprint: digest });
+    if (url === `/model-hub/skills/${id}/`) return envelope({ id, labels: [{ name: 'production', version: 3, can_move: canMove }], permissions: {} });
+    if (url === `/model-hub/skills/${id}/versions/4/`) return envelope({ id: versionId, number: 4, digest, checks: { items: [], summary: { errors: 0 } } });
+    if (url.endsWith('/compare/')) return envelope({ from: 3, to: 4, files: [{ path: 'SKILL.md', status: 'modified', from_text: 'Old policy', to_text: 'Reviewed candidate policy' }] });
+    if (url.endsWith('/inspection/files/')) {
+      const before = url.includes('/versions/3/');
+      return envelope({ path: 'AGENTS.md', version_id: before ? 'version-3' : versionId, digest, sha256: before ? 'before' : 'after', offset: 0, next_offset: null, eof: true, text: before ? 'Old policy' : 'Reviewed candidate policy' });
+    }
+    return read(url, config);
+  });
+  axios.post.mockImplementation(async (url, body) => {
+    if (url.endsWith('/release-requests/preview/')) return envelope({ packet, fingerprint: current ? digest : 'changed' });
+    if (url.endsWith('/release/review/')) return envelope({ candidate: { kind: 'version', version: 4, digest }, release_state: { ...releaseState, labels: [{ name: 'production', version: 3, can_move: canMove }] }, changes: { from: 3, files: [{ path: 'AGENTS.md', status: 'modified', from_sha256: 'before', to_sha256: 'after' }], total_pages: 1 }, head_changes: { from: 4, files: [], total_pages: 1 }, checks: { items: [] }, impact: { following: 2, pinned: 1, unobserved: 0, more_available: false }, review_fingerprint: digest, head_review: null });
+    if (url.endsWith('/decisions/')) { expect(body.expected_fingerprint).toBe(digest); request.status = 'approved'; request.revision = 2; return envelope(request); }
+    if (url.endsWith('/execute/')) { expect(body.revision).toBe(2); request.status = 'released'; request.revision = 3; return envelope({ request_id: requestId, decision_id: 'decision', revision: 3, executed_by: 'author', currentness_at_action: { fingerprint: digest }, post_move_state: { label: 'production', version: 4, release_revision: 2, event_id: 'event' } }); }
+    throw new Error(`Unexpected write ${url}`);
+  });
+}
+it.each(['agent_context', 'skill'])('opens, approves and executes a %s request through the production inbox', async (kind) => {
+  installRequest(kind);
+  mount('/dashboard/skills/reviews');
+  fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
+  const acknowledge = await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ });
+  expect(acknowledge).toBeEnabled();
+  if (kind === 'agent_context') expect(screen.getByText(/2 followers · 1 intentional pins/)).toBeVisible();
+  fireEvent.click(acknowledge);
+  fireEvent.click(screen.getByRole('button', { name: 'Approve exact packet' }));
+  await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/decisions/'))).toBe(true));
+  await waitFor(() => expect(screen.getByRole('checkbox', { name: /I reviewed this exact candidate/ })).not.toBeChecked());
+  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed this exact candidate/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Release approved packet' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Move production', exact: true }));
+  await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/execute/'))).toBe(true));
+});
+it.each(['agent_context', 'skill'])('keeps a stale %s packet fail-closed', async (kind) => {
+  installRequest(kind, { current: false });
+  mount('/dashboard/skills/reviews');
+  fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
+  expect(await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Approve exact packet' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Release approved packet' })).toBeDisabled();
+});
+it.each(['agent_context', 'skill'])('does not grant %s release authority from readable content', async (kind) => {
+  installRequest(kind, { canMove: false, authorId: 'author' });
+  mount('/dashboard/skills/reviews');
+  fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /I reviewed this exact candidate/ }));
+  expect(screen.getByRole('button', { name: 'Approve exact packet' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Release approved packet' })).toBeDisabled();
 });
 
 it('does not substitute latest when a malformed explicit release was requested', async () => {

@@ -32,7 +32,7 @@ import useUnsavedNavigation from "./useUnsavedNavigation";
 const contextReadOnly = (path) => /^(skills|\.futureagi)(\/|$)/i.test(path);
 const contextReserved = (path) => contextReadOnly(path) || /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$/i.test(path);
 
-function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', resourceApi, scopeKey = '', contextControls = {}, readOnlyFiles = [], readOnlyFileQuery, onSelectReadOnlyFile, onReview }) {
+function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', resourceApi, scopeKey = '', contextControls = {}, readOnlyFiles = [], readOnlyFileQuery, onSelectReadOnlyFile, onDraftRevisionChange, onReview }) {
   const isContext = kind === 'agent_context';
   const root = isContext ? 'AGENTS.md' : 'SKILL.md';
   const navigate = useNavigate();
@@ -79,6 +79,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   const detailPath = isContext ? paths.dashboard.skills.contextDetail(skill.id) : paths.dashboard.skills.detail(skill.id);
   const files = [...session.files, ...readOnlyFiles.filter((item) => !session.files.some((owned) => owned.path === item.path)).map((item) => ({ ...item, readOnly: true }))];
 
+  useEffect(() => { onDraftRevisionChange?.(session.revision); }, [session.revision, onDraftRevisionChange]);
   useEffect(() => { if (session.status === 'conflict') setConflictOpen(true); }, [session.status]);
   useEffect(() => {
     if (isLinked) onSelectReadOnlyFile?.(selectedPath, session.revision);
@@ -224,7 +225,7 @@ const propTypes = {
   initialDraft: PropTypes.shape({ files: PropTypes.array.isRequired, note: PropTypes.string.isRequired, revision: PropTypes.number.isRequired, baseVersion: PropTypes.number }).isRequired,
   refetchDraft: PropTypes.func.isRequired, kind: PropTypes.oneOf(['skill', 'agent_context']), resourceApi: PropTypes.object,
   scopeKey: PropTypes.string, contextControls: PropTypes.object, readOnlyFiles: PropTypes.array,
-  readOnlyFileQuery: PropTypes.object, onSelectReadOnlyFile: PropTypes.func, onReview: PropTypes.func,
+  readOnlyFileQuery: PropTypes.object, onSelectReadOnlyFile: PropTypes.func, onDraftRevisionChange: PropTypes.func, onReview: PropTypes.func,
 };
 EditorSession.propTypes = propTypes;
 

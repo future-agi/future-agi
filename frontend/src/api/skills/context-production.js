@@ -33,7 +33,7 @@ export async function readContextText({ contextId, number, revision, path, confi
     if (value.path !== path || value.offset !== offset || (identity && key !== identity) || (revision != null && value.revision !== revision) || (expectedDigest && value.digest !== expectedDigest) || (expectedSha256 && value.sha256 !== expectedSha256)) throw new Error('The reviewed file identity changed. Reload the exact release.');
     identity = key;
     text += value.text;
-    if (value.eof) return { path, text, versionId: value.version_id, digest: value.digest, sha256: value.sha256 };
+    if (value.eof) return { path, text, revision: value.revision, versionId: value.version_id, digest: value.digest, sha256: value.sha256 };
     if (!Number.isSafeInteger(value.next_offset) || value.next_offset <= offset) throw new Error('The complete file could not be read.');
     offset = value.next_offset;
   }
@@ -76,7 +76,7 @@ export function useContextInspectionFile(contextId, number, path, versionId, dig
 
 export const mapHeadReview = (value) => ({ subjectId: value.subject_id, kind: value.kind, draftRevision: value.draft_revision, candidateDigest: value.candidate_digest, baseVersion: value.base_version, expectedHeadVersion: value.expected_head_version, headDigest: value.head_digest, reviewFingerprint: value.review_fingerprint });
 
-export async function loadContextReview(contextId, revision, config, published = null) {
+async function loadContextComparison(contextId, revision, config, published = null) {
   let snapshot;
   const origin = [];
   const head = [];
@@ -89,6 +89,26 @@ export async function loadContextReview(contextId, revision, config, published =
     if (page >= Math.max(value.changes.total_pages, value.head_changes.total_pages)) break;
     if (page === 100) throw new Error('The complete comparison is unavailable.');
   }
+  if (!published && (snapshot.candidate.revision !== revision || !snapshot.head_review || snapshot.head_review.draft_revision !== revision || snapshot.head_review.candidate_digest !== snapshot.candidate.digest)) throw new Error('The saved draft no longer matches this review.');
+  return { snapshot, origin, head };
+}
+
+// The comparison contains the complete compiled tree (including unchanged
+// files). Read metadata only here; load selected bytes through the scoped draft
+// endpoint, never through a consume credential or a server-provided URL.
+export function useContextDraftInventory(contextId, revision) {
+  return useSkillV11Query({ parts: contextParts(contextId, 'compiled-inventory', revision), enabled: Boolean(contextId && revision) && contextReviewReady(), load: async (config) => {
+    const { snapshot, origin } = await loadContextComparison(contextId, revision, config);
+    return { revision, digest: snapshot.candidate.digest, files: origin.filter((file) => file.to_sha256 !== null).map((file) => ({ path: file.path, sha256: file.to_sha256, revision })) };
+  } });
+}
+export function useContextDraftFile(contextId, revision, path, inventory) {
+  const file = inventory?.revision === revision ? inventory.files.find((item) => item.path === path) : null;
+  return useSkillV11Query({ parts: contextParts(contextId, 'compiled-file', revision, inventory?.digest, path, file?.sha256), enabled: Boolean(file), load: (config) => readContextText({ contextId, revision, path, expectedDigest: inventory.digest, expectedSha256: file.sha256, config }) });
+}
+
+export async function loadContextReview(contextId, revision, config, published = null) {
+  const { snapshot, origin, head } = await loadContextComparison(contextId, revision, config, published);
   const textCache = new Map();
   const read = (file, number, isDraft) => {
     const hash = isDraft ? file.to_sha256 : file.from_sha256;
@@ -100,8 +120,7 @@ export async function loadContextReview(contextId, revision, config, published =
   const hydrate = (files, number) => Promise.all(files.filter((file) => file.status !== 'unchanged').map(async (file) => ({ path: file.path, status: file.status, fromText: await read(file, number, false), toText: await read(file, null, true) })));
   const changes = await hydrate(origin, snapshot.changes.from);
   const headChanges = await hydrate(head, snapshot.latest_version);
-  if (!published && (!snapshot.head_review || snapshot.head_review.draft_revision !== revision || snapshot.head_review.candidate_digest !== snapshot.candidate.digest)) throw new Error('The saved draft no longer matches this review.');
-  return { review: snapshot.head_review ? mapHeadReview(snapshot.head_review) : null, originChanges: changes, headChanges, checks: mapChecks(snapshot.checks), releaseState: mapContextReleaseState(snapshot.release_state), candidateDigest: snapshot.candidate.digest, impact: snapshot.impact, complete: true };
+  return { review: snapshot.head_review ? mapHeadReview(snapshot.head_review) : null, originChanges: changes, headChanges, checks: mapChecks(snapshot.checks), releaseState: mapContextReleaseState(snapshot.release_state), candidateDigest: snapshot.candidate.digest, impact: { ...snapshot.impact, moreAvailable: snapshot.impact.more_available }, complete: true };
 }
 export function usePreviewContextRelease(contextId) {
   return useSkillV11Mutation({ send: (input, config) => loadContextReview(contextId, input.revision, config) });
