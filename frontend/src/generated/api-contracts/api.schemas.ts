@@ -471,12 +471,22 @@ export interface AccountsStringResultResponseApi {
   result: string;
 }
 
+export type CreateSecretKeyApiType =
+  (typeof CreateSecretKeyApiType)[keyof typeof CreateSecretKeyApiType];
+
+export const CreateSecretKeyApiType = {
+  user: "user",
+  coding_agent: "coding_agent",
+} as const;
+
 export interface CreateSecretKeyApi {
   /**
    * @minLength 1
    * @maxLength 100
    */
   key_name: string;
+  type?: CreateSecretKeyApiType;
+  simulation_environment_id?: string;
 }
 
 export interface SecretKeyCreateResultApi {
@@ -17894,6 +17904,9 @@ export interface AgentFixEngineReportApi {
   summary?: string;
   failure?: AgentFixEngineFailureApi;
   winner_candidate_id?: string;
+  /** @maxItems 50 */
+  lost_models?: string[];
+  last_error?: string;
 }
 
 export interface AgentFixEngineStateApi {
@@ -18099,7 +18112,7 @@ export interface AgentFixLaunchApi {
    * @minimum 1
    * @maximum 1440
    */
-  max_minutes: number;
+  max_minutes?: number;
 }
 
 export interface AgentFixLaunchSourceRunApi {
@@ -20100,6 +20113,78 @@ export interface HarnessEnvironmentRunEvaluationsQueuedApi {
   call_execution_count: number;
 }
 
+export interface HarnessVerifyCreateApi {
+  /** The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts. */
+  agent_version_id: string;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+}
+
+export type HarnessVerifyCreateResponseApiState =
+  (typeof HarnessVerifyCreateResponseApiState)[keyof typeof HarnessVerifyCreateResponseApiState];
+
+export const HarnessVerifyCreateResponseApiState = {
+  received: "received",
+  queued: "queued",
+  admitted: "admitted",
+  provisioning: "provisioning",
+  running: "running",
+  finalizing: "finalizing",
+  cleaning_up: "cleaning_up",
+  retry_wait: "retry_wait",
+  completed: "completed",
+  failed: "failed",
+  canceled: "canceled",
+} as const;
+
+export interface HarnessVerifyCreateResponseApi {
+  verify_id: string;
+  state: HarnessVerifyCreateResponseApiState;
+}
+
+export type HarnessVerifyResultApiState =
+  (typeof HarnessVerifyResultApiState)[keyof typeof HarnessVerifyResultApiState];
+
+export const HarnessVerifyResultApiState = {
+  received: "received",
+  queued: "queued",
+  admitted: "admitted",
+  provisioning: "provisioning",
+  running: "running",
+  finalizing: "finalizing",
+  cleaning_up: "cleaning_up",
+  retry_wait: "retry_wait",
+  completed: "completed",
+  failed: "failed",
+  canceled: "canceled",
+} as const;
+
+export interface HarnessVerifyResultApi {
+  state: HarnessVerifyResultApiState;
+  /** @minimum 0 */
+  passed: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  total: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+  /**
+   * 95% range of the trial pass rate, [low, high]; null until it ends.
+   * @minItems 2
+   * @maxItems 2
+   */
+  held_back_pass_rate: number[];
+  /** Too few cases were held back to call a version verified. */
+  limited_validation: boolean;
+}
+
 export interface HarnessAgentConfigChangeApi {
   /**
    * @minLength 1
@@ -20127,6 +20212,8 @@ export interface HarnessAgentVersionCreateApi {
    */
   prompt?: string;
   agent_payload?: HarnessAgentPayloadChangeApi;
+  /** False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default. */
+  make_default?: boolean;
 }
 
 export interface HarnessAgentCredentialsResponseApi {
@@ -24808,6 +24895,8 @@ export interface CallExecutionRerunApi {
   call_execution_ids?: string[];
   /** Whether to rerun all call executions in the test execution */
   select_all?: boolean;
+  /** Resume an interrupted run: re-run only the calls that did not finish, as a new attempt of the same run. Takes no call ids and no select_all. */
+  unfinished_only?: boolean;
   /** Fresh job-scoped environment for a repository-backed harness rerun. Values are forwarded to the sandbox and are not persisted. */
   environment_values?: CallExecutionRerunApiEnvironmentValues;
 }
@@ -24977,6 +25066,9 @@ export const SimulateRunV3EvaluationResultApiStatus = {
   skipped: "skipped",
 } as const;
 
+/**
+ * Any valid JSON value.
+ */
 export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
 
 export interface SimulateRunV3EvaluationResultApi {
@@ -24985,6 +25077,7 @@ export interface SimulateRunV3EvaluationResultApi {
   /** @minLength 1 */
   name: string;
   type: string;
+  /** Any valid JSON value. */
   value: SimulateRunV3EvaluationResultApiValue;
   score: number;
   passed: boolean;
@@ -25639,6 +25732,19 @@ export interface RunAnalyticsV3ResponseApi {
   trends: TrendApi[];
 }
 
+export interface RunResumeEntryApi {
+  at: string;
+  by: string;
+  calls: number;
+}
+
+export interface RunResumeApi {
+  resumable: boolean;
+  finished: number;
+  unfinished: number;
+  history: RunResumeEntryApi[];
+}
+
 export interface RunSummaryApi {
   total: number;
   outcomes: OutcomeCountsApi;
@@ -25648,6 +25754,11 @@ export interface RunSummaryApi {
   latency: MetricStatsApi;
   tokens: TotalMetricStatsApi;
   cost_cents: TotalMetricStatsApi;
+}
+
+export interface RunFixRunApi {
+  id: string;
+  label: string;
 }
 
 export interface RunExecutionApi {
@@ -25671,7 +25782,9 @@ export interface RunExecutionApi {
   trials?: number;
   /** @minLength 1 */
   agent_type: string;
+  resume: RunResumeApi;
   summary: RunSummaryApi;
+  fix_run?: RunFixRunApi;
 }
 
 export interface SimulateRunV3ScoringCountsApi {
@@ -25734,6 +25847,19 @@ export const RunCallApiCsatStatus = {
   skipped: "skipped",
 } as const;
 
+export type RunCallApiFailureDomain =
+  (typeof RunCallApiFailureDomain)[keyof typeof RunCallApiFailureDomain];
+
+export const RunCallApiFailureDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  platform_sync: "platform_sync",
+} as const;
+
 export interface RunCallApi {
   id: string;
   /** @minLength 1 */
@@ -25775,15 +25901,16 @@ export interface RunCallApi {
   cost_cents: number;
   cost_breakdown_cents: CostBreakdownApi;
   csat: number;
-  /** @minLength 1 */
   ended_reason: string;
-  /** @minLength 1 */
   error_message: string;
   evaluations: SimulateRunV3EvaluationResultApi[];
   scoring_status: RunCallApiScoringStatus;
   csat_status: RunCallApiCsatStatus;
   /** @minLength 1 */
   csat_reason: string;
+  failure_domain: RunCallApiFailureDomain;
+  /** @minLength 1 */
+  failure_code: string;
 }
 
 export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
@@ -31034,6 +31161,7 @@ export const ObservationSpanApiObservationType = {
   guardrail: "guardrail",
   evaluator: "evaluator",
   conversation: "conversation",
+  internal: "internal",
 } as const;
 
 export type ObservationSpanApiInput = { [key: string]: unknown };
@@ -35609,6 +35737,9 @@ export interface AutoReloadSettingsRequestApi {
   autoreload_enabled: boolean;
   autoreload_walletamount: string;
   autoreload_walletthreshold: string;
+  autoreload_maxcharge?: string;
+  autoreload_consent?: boolean;
+  autoreload_charge_now?: boolean;
 }
 
 export type AutoReloadUpdateResponseApiStatus =
