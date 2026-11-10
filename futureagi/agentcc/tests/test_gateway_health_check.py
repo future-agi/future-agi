@@ -274,3 +274,46 @@ def test_failed_resync_dispatch_keeps_the_probe_result_and_releases_the_claim(
     assert response.status_code == 200
     assert payload["result"]["status"] == "healthy"
     assert store == {}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("operation", ["get", "add", "delete"])
+def test_sync_cache_failure_preserves_healthy_probe_and_timestamp(monkeypatch, operation):
+    """TH-3947 FX1-1: optional re-sync cache failures cannot invalidate a probe."""
+    completed = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
+    clock = {"now": completed}
+    monkeypatch.setattr(timezone, "now", lambda: clock["now"])
+    _use_gateway_transport(
+        monkeypatch, lambda request: httpx.Response(200, json={"status": "ok"})
+    )
+    _stub_providers(monkeypatch)
+    cache = MagicMock()
+    cache.get.return_value = None
+    cache.add.return_value = True
+
+    def unavailable(*args, **kwargs):
+        clock["now"] = completed + datetime.timedelta(seconds=20)
+        raise ConnectionError(f"cache.{operation} unavailable")
+
+    getattr(cache, operation).side_effect = unavailable
+    monkeypatch.setattr(gateway, "cache", cache)
+    dispatch = MagicMock()
+    if operation == "delete":
+        dispatch.side_effect = RuntimeError("temporal unavailable")
+    monkeypatch.setattr(gateway.push_all_org_configs_activity, "apply_async", dispatch)
+
+    response, payload = _post_health_check()
+
+    assert response.status_code == 200
+    assert payload["result"]["status"] == "healthy"
+    assert (
+        datetime.datetime.fromisoformat(payload["result"]["last_health_check"]) == completed
+    )
+    assert f"cache.{operation}" not in response.content.decode()
+    getattr(cache, operation).assert_called_once()
+    if operation == "delete":
+        dispatch.assert_called_once_with(dispatch_timeout_seconds=5)
+        cache.delete.assert_called_once_with("agentcc:gateway_config_synced")
+    else:
+        dispatch.assert_not_called()
+        cache.delete.assert_not_called()

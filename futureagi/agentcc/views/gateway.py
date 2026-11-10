@@ -407,19 +407,22 @@ class AgentccGatewayViewSet(ViewSet):
                 # response reports only this probe. cache.add claims the slot so
                 # concurrent checks dispatch it at most once per window.
                 cache_key = "agentcc:gateway_config_synced"
-                if not cache.get(cache_key) and cache.add(cache_key, True, 300):
-                    try:
-                        push_all_org_configs_activity.apply_async(
-                            dispatch_timeout_seconds=5
-                        )
+                # Claim and release are best-effort too: cache failures must not
+                # replace a successful probe with a health-check error.
+                try:
+                    if not cache.get(cache_key) and cache.add(cache_key, True, 300):
+                        try:
+                            push_all_org_configs_activity.apply_async(
+                                dispatch_timeout_seconds=5
+                            )
+                        except Exception:
+                            cache.delete(cache_key)
+                            raise
                         logger.info(
                             "gateway_auto_sync_dispatched", reason="first_health_check"
                         )
-                    except Exception:
-                        cache.delete(cache_key)
-                        logger.warning(
-                            "gateway_auto_sync_dispatch_failed", exc_info=True
-                        )
+                except Exception:
+                    logger.warning("gateway_auto_sync_dispatch_failed", exc_info=True)
 
                 data = {
                     "status": "healthy",
