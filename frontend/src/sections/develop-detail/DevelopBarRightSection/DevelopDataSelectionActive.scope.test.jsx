@@ -1,7 +1,5 @@
-import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "src/utils/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -106,10 +104,12 @@ const selectRows = (selectAll = true, toggledNodes = []) => {
 const renderActions = () => {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
   client.setQueryData(getDatasetQueryKey(mocks.dataset, 0, [], [], ""), page(["alpha-1", "alpha-2", "beta-1", "beta-2"]));
-  return render(<QueryClientProvider client={client}><MemoryRouter>
-    <DevelopBarLeftSection hideFilter hideColumnView hideRowHeight />
-    <DevelopDataSelectionActive />
-  </MemoryRouter></QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={client}>
+      <DevelopBarLeftSection hideFilter hideColumnView hideRowHeight />
+      <DevelopDataSelectionActive />
+    </QueryClientProvider>,
+  );
 };
 
 const openAction = (action) => {
