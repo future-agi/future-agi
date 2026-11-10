@@ -12488,9 +12488,7 @@ def _run_dataset_evaluation_row(metric_id, row_id, runner_args):
     close_old_connections()
     try:
         row_args = dict(runner_args)
-        row_args["source_configs"] = copy.deepcopy(
-            row_args.get("source_configs") or {}
-        )
+        row_args["source_configs"] = copy.deepcopy(row_args.get("source_configs") or {})
         # The task owns the metric lifecycle. A queued row must not reset a
         # stopped metric to RUNNING when its worker eventually starts.
         runner = EvaluationRunner(

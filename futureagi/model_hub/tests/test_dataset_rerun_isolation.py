@@ -8,15 +8,15 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from accounts.models import Organization, User
-from accounts.models.workspace import Workspace
 from django.db import OperationalError
 from django.db.models.query import QuerySet
+
+from accounts.models import Organization, User
+from accounts.models.workspace import Workspace
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
-
 from model_hub.views.develop_dataset import run_evaluation_task
 from model_hub.views.eval_runner import EvaluationRunner
 
