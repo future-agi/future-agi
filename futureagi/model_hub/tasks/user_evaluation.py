@@ -7,6 +7,7 @@ from accounts.models import workspace
 from accounts.models.workspace import Workspace
 from agentic_eval.core.utils.functions import detect_input_type
 from django.db import close_old_connections
+from django.utils import timezone
 
 logger = structlog.get_logger(__name__)
 try:
@@ -514,8 +515,10 @@ def execute_evaluation():
 
         # Update status for all evaluations
         all_eval_ids = [eval.id for eval in all_evaluations]
+        # updated_at marks when the run was queued; stale-work recovery
+        # leaves a Running eval alone until its queue and run limits pass.
         UserEvalMetric.objects.filter(id__in=all_eval_ids).update(
-            status=StatusType.RUNNING.value
+            status=StatusType.RUNNING.value, updated_at=timezone.now()
         )
 
         # Prepare data for processing - check status directly
