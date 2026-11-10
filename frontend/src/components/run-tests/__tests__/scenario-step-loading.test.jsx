@@ -201,3 +201,122 @@ describe("Choose Scenarios step — paging", () => {
     ).toBeInTheDocument();
   });
 });
+
+// 28 "Checkout" rows and 2 "Morgan" rows: unfiltered there are 3 pages, but
+// "morg" fits on one, so a page-2 request for it is out of range.
+const SEARCH_ROWS = [
+  ...Array.from({ length: 28 }, (_, i) => ({
+    id: `c${i}`,
+    name: `Checkout scenario ${i}`,
+    description: "desc",
+    dataset_rows: 5,
+  })),
+  {
+    id: "m0",
+    name: "Morgan refund call",
+    description: "desc",
+    dataset_rows: 5,
+  },
+  {
+    id: "m1",
+    name: "Morgan billing dispute",
+    description: "desc",
+    dataset_rows: 5,
+  },
+];
+
+// Filters and pages like the list endpoint, including DRF's 404 "Invalid
+// page." for a page past the end of the filtered set.
+const serveScenarios = ({ page, limit, search }) => {
+  const term = (search || "").toLowerCase();
+  const matches = SEARCH_ROWS.filter((row) =>
+    row.name.toLowerCase().includes(term),
+  );
+  const pageCount = Math.max(1, Math.ceil(matches.length / limit));
+  if (page > pageCount) {
+    return Promise.reject({ statusCode: 404, result: "Invalid page." });
+  }
+  return Promise.resolve({
+    data: {
+      count: matches.length,
+      results: matches.slice((page - 1) * limit, page * limit),
+    },
+  });
+};
+
+const scenarioRequests = () =>
+  mocks.get.mock.calls
+    .filter(([url]) => url === "/scenarios/")
+    .map(([, config]) => config.params);
+
+const typeSearch = (value) =>
+  fireEvent.change(screen.getByPlaceholderText(/Search scenarios/i), {
+    target: { value },
+  });
+
+describe("Choose Scenarios step — search", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.get.mockImplementation((url, config) =>
+      url === "/scenarios/"
+        ? serveScenarios(config.params)
+        : Promise.resolve({ data: {} }),
+    );
+  });
+
+  it("goes back to page 1 when a search is typed from page 2", async () => {
+    renderPage();
+    await goToScenarioStep();
+    expect(await screen.findByText("Checkout scenario 0")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    expect(await screen.findByText("Checkout scenario 10")).toBeInTheDocument();
+
+    typeSearch("morg");
+
+    // The search is debounced (500ms), so give it time to land.
+    expect(
+      await screen.findByText("Morgan refund call", {}, { timeout: 2000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Morgan billing dispute")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Failed to load scenarios"),
+    ).not.toBeInTheDocument();
+    // The out-of-range page is never requested, so there is no "Invalid
+    // page." response to surface.
+    expect(scenarioRequests()).not.toContainEqual(
+      expect.objectContaining({ page: 2, search: "morg" }),
+    );
+  });
+
+  it("goes back to page 1 when the search box is cleared", async () => {
+    renderPage();
+    await goToScenarioStep();
+    expect(await screen.findByText("Checkout scenario 0")).toBeInTheDocument();
+
+    typeSearch("Checkout");
+    await waitFor(
+      () =>
+        expect(scenarioRequests()).toContainEqual(
+          expect.objectContaining({ page: 1, search: "Checkout" }),
+        ),
+      { timeout: 2000 },
+    );
+    expect(await screen.findByText(/of 28$/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    expect(await screen.findByText("Checkout scenario 10")).toBeInTheDocument();
+
+    typeSearch("");
+
+    expect(
+      await screen.findByText("Checkout scenario 0", {}, { timeout: 2000 }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(scenarioRequests().at(-1)).toMatchObject({
+        page: 1,
+        search: "",
+      }),
+    );
+  });
+});
