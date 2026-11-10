@@ -363,8 +363,18 @@ jobs:
         id: boot
         run: bin/e2e up
 
+      # Isolated proof branch only; the PR retains the unchanged full suite.
       - name: Run E2E suite
-        run: bin/e2e test
+        run: python3 -I scripts/jev-ci-proof.py
+
+      - name: Upload Jev fallibility evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: jev-fallibility-proof
+          path: e2e/jev-proof
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Prove host update assertion fallibility
         id: host-update-fallibility
