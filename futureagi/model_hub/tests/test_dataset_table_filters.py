@@ -1,10 +1,18 @@
 import json
+from unittest.mock import patch
 
 import pytest
+from django.core.exceptions import ValidationError
 from rest_framework import status
 
 from model_hub.models.choices import DataTypeChoices, SourceChoices
-from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.develop_dataset import (
+    Cell,
+    Column,
+    Dataset,
+    Row,
+    validate_column_metadata,
+)
 from model_hub.serializers.contracts import (
     DatasetRowDataRequestSerializer,
     DatasetTableQuerySerializer,
@@ -473,3 +481,293 @@ def test_filter_dataset_cells_array_contains_list_value(array_col_seed):
         cells, "array", "in", [json.dumps(["see CIRCULAR appendix"])], "array"
     )
     assert set(exact.values_list("row_id", flat=True)) == {rows[2].id}
+
+
+AUDIO_DATA_URI = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4"
+OLD_AUDIO_URL = "https://storage.example.com/audio/old.mp3"
+NEW_AUDIO_URL = "https://storage.example.com/audio/new.mp3"
+
+
+@pytest.fixture
+def audio_col_seed(organization, workspace):
+    """An audio column: row 0 is empty, row 1 already holds a 3 second clip
+    stored the way the file upload path stores it, row 2 is empty."""
+    dataset = Dataset.objects.create(
+        name="Audio filter dataset",
+        organization=organization,
+        workspace=workspace,
+    )
+    audio_col = Column.objects.create(
+        name="recording",
+        data_type=DataTypeChoices.AUDIO.value,
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    rows = [
+        Row.objects.create(dataset=dataset, order=1),
+        Row.objects.create(dataset=dataset, order=2),
+        Row.objects.create(dataset=dataset, order=3),
+    ]
+    Cell.objects.create(dataset=dataset, row=rows[0], column=audio_col, value=None)
+    Cell.objects.create(
+        dataset=dataset,
+        row=rows[1],
+        column=audio_col,
+        value=OLD_AUDIO_URL,
+        column_metadata={"audio_duration_seconds": 3.0},
+    )
+    Cell.objects.create(dataset=dataset, row=rows[2], column=audio_col, value=None)
+    return dataset, rows, audio_col
+
+
+def _update_audio_cell(auth_client, dataset, row, column, new_value, upload_result):
+    with patch(
+        "model_hub.views.develop_dataset.upload_audio_to_s3_duration",
+        return_value=upload_result,
+    ) as upload:
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/update_cell_value/",
+            {
+                "row_id": str(row.id),
+                "column_id": str(column.id),
+                "new_value": new_value,
+            },
+            format="json",
+        )
+    return response, upload
+
+
+@pytest.mark.django_db
+def test_update_cell_value_audio_persists_duration_for_filter(
+    auth_client, audio_col_seed
+):
+    """Editing an audio cell keeps the computed clip length in
+    ``column_metadata`` so the duration filter matches the row (#1767)."""
+    dataset, rows, audio_col = audio_col_seed
+
+    response, upload = _update_audio_cell(
+        auth_client,
+        dataset,
+        rows[0],
+        audio_col,
+        AUDIO_DATA_URI,
+        (NEW_AUDIO_URL, 12.04),
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert upload.call_args.kwargs["duration_seconds"] is None
+    cell = Cell.objects.get(row=rows[0], column=audio_col)
+    assert cell.value == NEW_AUDIO_URL
+    assert cell.column_metadata == {"audio_duration_seconds": 12.04}
+
+    def duration_filter(filter_op, filter_value):
+        return _apply(
+            dataset,
+            [_filter(audio_col.id, "number", filter_op, filter_value)],
+            [audio_col],
+        )
+
+    assert duration_filter("greater_than", 1) == [rows[0], rows[1]]
+    assert duration_filter("greater_than", 100) == []
+    assert duration_filter("less_than", 5) == [rows[1]]
+    assert duration_filter("between", [10, 15]) == [rows[0]]
+    assert duration_filter("between", [0, 5]) == [rows[1]]
+
+
+@pytest.mark.django_db
+def test_update_cell_value_audio_replacement_recomputes_duration(
+    auth_client, audio_col_seed
+):
+    """A different clip, even one already in our bucket, must not inherit the
+    old clip's stored length."""
+    dataset, rows, audio_col = audio_col_seed
+
+    response, upload = _update_audio_cell(
+        auth_client,
+        dataset,
+        rows[1],
+        audio_col,
+        NEW_AUDIO_URL,
+        (NEW_AUDIO_URL, 12.04),
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert upload.call_args.kwargs["duration_seconds"] is None
+    cell = Cell.objects.get(row=rows[1], column=audio_col)
+    assert cell.value == NEW_AUDIO_URL
+    assert cell.column_metadata == {"audio_duration_seconds": 12.04}
+
+
+@pytest.mark.django_db
+def test_update_cell_value_audio_resave_keeps_duration_and_extra_keys(
+    auth_client, audio_col_seed
+):
+    """Re-saving the same clip reuses the stored length and merges into the
+    existing metadata instead of replacing it."""
+    dataset, rows, audio_col = audio_col_seed
+    cell = Cell.objects.get(row=rows[1], column=audio_col)
+    cell.column_metadata = {"audio_duration_seconds": 3.0, "source": "import"}
+    cell.save()
+
+    response, upload = _update_audio_cell(
+        auth_client,
+        dataset,
+        rows[1],
+        audio_col,
+        OLD_AUDIO_URL,
+        (OLD_AUDIO_URL, 3.0),
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert upload.call_args.kwargs["duration_seconds"] == 3.0
+    cell.refresh_from_db()
+    assert cell.column_metadata == {"audio_duration_seconds": 3.0, "source": "import"}
+
+
+@pytest.mark.django_db
+def test_update_cell_value_audio_clear_drops_duration(auth_client, audio_col_seed):
+    """Clearing an audio cell lands in the generic empty-value branch and must
+    not leave the old clip's length behind."""
+    dataset, rows, audio_col = audio_col_seed
+
+    response, upload = _update_audio_cell(
+        auth_client, dataset, rows[1], audio_col, "", (NEW_AUDIO_URL, 12.04)
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    upload.assert_not_called()
+    cell = Cell.objects.get(row=rows[1], column=audio_col)
+    assert cell.value is None
+    assert "audio_duration_seconds" not in (cell.column_metadata or {})
+
+
+@pytest.mark.django_db
+def test_update_cell_value_audio_falsy_duration_writes_no_key(
+    auth_client, audio_col_seed
+):
+    """A zero duration from the upload helper stores no length, matching the
+    file upload path, and drops the previous clip's length."""
+    dataset, rows, audio_col = audio_col_seed
+
+    response, _upload = _update_audio_cell(
+        auth_client,
+        dataset,
+        rows[1],
+        audio_col,
+        AUDIO_DATA_URI,
+        (NEW_AUDIO_URL, 0.0),
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    cell = Cell.objects.get(row=rows[1], column=audio_col)
+    assert cell.value == NEW_AUDIO_URL
+    assert "audio_duration_seconds" not in (cell.column_metadata or {})
+
+
+@pytest.mark.django_db
+def test_update_cell_value_audio_handles_null_metadata(auth_client, audio_col_seed):
+    """A cell whose ``column_metadata`` is NULL in the database still accepts
+    an audio upload."""
+    dataset, rows, audio_col = audio_col_seed
+    Cell.objects.filter(row=rows[0], column=audio_col).update(column_metadata=None)
+
+    response, _upload = _update_audio_cell(
+        auth_client,
+        dataset,
+        rows[0],
+        audio_col,
+        AUDIO_DATA_URI,
+        (NEW_AUDIO_URL, 12.04),
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    cell = Cell.objects.get(row=rows[0], column=audio_col)
+    assert cell.value == NEW_AUDIO_URL
+    assert cell.column_metadata == {"audio_duration_seconds": 12.04}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "new_value",
+    ["", " \t ", None, 1],
+    ids=["empty", "whitespace", "null", "converted-empty"],
+)
+def test_update_cell_value_audio_clear_keeps_extra_metadata(
+    auth_client, audio_col_seed, new_value
+):
+    dataset, rows, audio_col = audio_col_seed
+    cell = Cell.objects.get(row=rows[1], column=audio_col)
+    cell.column_metadata = {"audio_duration_seconds": 3.0, "source": "import"}
+    cell.save()
+
+    # A truthy non-string with no uploaded file reaches the inner clear branch
+    # after _convert_to_base64 returns None; the other inputs clear directly.
+    response, upload = _update_audio_cell(
+        auth_client, dataset, rows[1], audio_col, new_value, (NEW_AUDIO_URL, 12.04)
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    upload.assert_not_called()
+    cell.refresh_from_db()
+    assert cell.value is None
+    assert cell.column_metadata == {"source": "import"}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("duration", [0.0, None])
+def test_update_cell_value_audio_falsy_duration_keeps_extra_metadata(
+    auth_client, audio_col_seed, duration
+):
+    dataset, rows, audio_col = audio_col_seed
+    cell = Cell.objects.get(row=rows[1], column=audio_col)
+    cell.column_metadata = {"audio_duration_seconds": 3.0, "source": "import"}
+    cell.save()
+
+    response, upload = _update_audio_cell(
+        auth_client,
+        dataset,
+        rows[1],
+        audio_col,
+        AUDIO_DATA_URI,
+        (NEW_AUDIO_URL, duration),
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert upload.call_count == 1
+    assert upload.call_args.kwargs["duration_seconds"] is None
+    cell.refresh_from_db()
+    assert cell.value == NEW_AUDIO_URL
+    assert cell.column_metadata == {"source": "import"}
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_column_metadata_without_duration_keeps_extra_keys(as_json):
+    metadata = {"source": "import"}
+    value = json.dumps(metadata) if as_json else metadata
+
+    validate_column_metadata(value)
+
+    expected = {"source": "import"}
+    assert value == (json.dumps(expected) if as_json else expected)
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+@pytest.mark.parametrize("duration", [0.0, 3.0])
+def test_column_metadata_accepts_present_nonnegative_duration(as_json, duration):
+    metadata = {"audio_duration_seconds": duration, "source": "import"}
+    value = json.dumps(metadata) if as_json else metadata
+
+    validate_column_metadata(value)
+
+    expected = {"audio_duration_seconds": duration, "source": "import"}
+    assert value == (json.dumps(expected) if as_json else expected)
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+@pytest.mark.parametrize("duration", [-1.0, "invalid", None])
+def test_column_metadata_rejects_invalid_present_duration(as_json, duration):
+    metadata = {"audio_duration_seconds": duration, "source": "import"}
+    value = json.dumps(metadata) if as_json else metadata
+
+    with pytest.raises(ValidationError, match="Invalid column_metadata format"):
+        validate_column_metadata(value)
