@@ -118,16 +118,19 @@ def _has_invalid_tag_string(value):
 
     Keep the existing JSON-list contract, including nested keys and values.
     Valid escaped surrogate pairs have already been combined by the parser.
+    Traverse iteratively so deeply nested JSON does not exhaust Python's stack.
     """
-    if isinstance(value, str):
-        return any(char == "\x00" or "\ud800" <= char <= "\udfff" for char in value)
-    if isinstance(value, list):
-        return any(_has_invalid_tag_string(item) for item in value)
-    if isinstance(value, dict):
-        return any(
-            _has_invalid_tag_string(key) or _has_invalid_tag_string(item)
-            for key, item in value.items()
-        )
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            if any(char == "\x00" or "\ud800" <= char <= "\udfff" for char in item):
+                return True
+        elif isinstance(item, list):
+            pending.extend(item)
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
     return False
 
 

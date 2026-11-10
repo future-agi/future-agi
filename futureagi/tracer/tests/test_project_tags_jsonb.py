@@ -116,6 +116,64 @@ def test_valid_tag_round_trip(tag_endpoint, raw_body, expected):
     assert response.exc_info is None
 
 
+def nested_tag_body(raw_leaf, depth, container):
+    opening, closing = (b"[", b"]") if container == "array" else (b'{"label":', b"}")
+    return b'{"tags":[' + opening * depth + raw_leaf + closing * depth + b"]}"
+
+
+@pytest.mark.parametrize("depth", [600, 800])
+@pytest.mark.parametrize("container", ["array", "object"])
+def test_deep_valid_tag_round_trip(tag_endpoint, depth, container):
+    client, project, url = tag_endpoint
+    raw_body = nested_tag_body(b'["release",1,true,null]', depth, container)
+    # Compare serialized values so the test's equality check does not recurse.
+    expected_json = json.dumps(json.loads(raw_body)["tags"])
+    before = persisted_state(project)
+
+    response = client.patch(url, data=raw_body, content_type="application/json")
+
+    assert response.status_code == 200
+    assert json.dumps(response.json()["result"]["tags"]) == expected_json
+    tags, updated_at = persisted_state(project)
+    assert json.dumps(tags) == expected_json
+    assert updated_at > before[1]
+    assert response.exc_info is None
+
+
+@pytest.mark.parametrize("depth", [600, 800])
+@pytest.mark.parametrize("container", ["array", "object"])
+@pytest.mark.parametrize(
+    "raw_leaf",
+    [
+        pytest.param(b'"\\u0000"', id="nul-value"),
+        pytest.param(b'"\\ud800"', id="high-surrogate-value"),
+        pytest.param(b'"\\udc00"', id="low-surrogate-value"),
+        pytest.param(b'{"\\u0000":"value"}', id="nul-key"),
+        pytest.param(b'{"\\ud800":"value"}', id="high-surrogate-key"),
+        pytest.param(b'{"\\udc00":"value"}', id="low-surrogate-key"),
+    ],
+)
+def test_deep_invalid_tag_returns_400_without_mutation(
+    tag_endpoint, depth, container, raw_leaf
+):
+    client, project, url = tag_endpoint
+    raw_body = nested_tag_body(raw_leaf, depth, container)
+    assert isinstance(json.loads(raw_body)["tags"], list)
+    before = persisted_state(project)
+
+    response = client.patch(url, data=raw_body, content_type="application/json")
+
+    assert persisted_state(project) == before
+    assert response.status_code == 400
+    assert response["Content-Type"].startswith("application/json")
+    body = response.json()
+    assert body["status"] is False
+    assert body["type"] == "validation_error"
+    assert body["code"]
+    assert body["detail"] == body["message"] == body["result"]
+    assert response.exc_info is None
+
+
 @pytest.mark.parametrize("raw_body", [b"[]", b"{}", b'{"tags":"release"}'])
 def test_existing_shape_validation_remains_400(tag_endpoint, raw_body):
     client, project, url = tag_endpoint
