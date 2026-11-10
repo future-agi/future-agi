@@ -7,6 +7,7 @@ import { loadContextReview } from './context-production';
 import { endpoints } from './endpoints';
 import { mapChecks, mapCompare } from './mappers';
 import { readSkillFile } from './index';
+import { operationStatus } from './operation-errors';
 
 // Leaf packets pin both sides of the transition, not whichever versions happen
 // to be latest when a reviewer opens the inbox.
@@ -54,11 +55,33 @@ export function useReviewInbox({ page = 1, status = '' } = {}) {
 export function useMarkReviewSeen() {
   return useSkillV11Mutation({ send: async ({ requestId, revision }, config) => { await axios.post(seen(requestId), { revision }, config); return { acknowledged: true }; }, invalidate: () => [['review-inbox']] });
 }
-export function useReleaseRequest(requestId, contextId) {
-  return useSkillV11Query({ parts: ['release-request', requestId, contextId], enabled: Boolean(requestId) && reviewsReady(), load: async (config) => {
-    const raw = skillV11Result(await axios.get(detail(requestId), config));
+export const mapReleaseReceipt = (result) => ({ requestId: result.request_id, decisionId: result.decision_id, revision: result.revision, executedBy: result.executed_by, currentnessAtAction: result.currentness_at_action, postMoveState: { label: result.post_move_state.label, version: result.post_move_state.version, releaseRevision: result.post_move_state.release_revision, eventId: result.post_move_state.event_id } });
+
+export async function loadReleaseRequest(requestId, contextId, config) {
+    let raw;
+    try {
+      raw = skillV11Result(await axios.get(detail(requestId), config));
+    } catch (error) {
+      // Packet detail intentionally disappears when evidence is no longer shared
+      // or retained. The separately authorized metadata receipt remains readable.
+      // A context-scoped route must still validate its subject; never bypass it.
+      const status = operationStatus(error);
+      const unavailableEvidence = [404, 410].includes(status) || (status === 403 && error.code === 'evidence_share_required');
+      if (contextId || !unavailableEvidence) throw error;
+      const retained = skillV11Result(await axios.get(apiPath('/model-hub/skills/release-requests/{request_id}/receipt/', { request_id: requestId }), config));
+      if (retained.request_id !== requestId) throw new Error('The release receipt does not match this request.');
+      return { request: { id: requestId, status: 'released', revision: retained.revision }, receipt: mapReleaseReceipt(retained), canExecute: false };
+    }
     if (contextId && raw.subject_id !== contextId) throw new Error('This review belongs to another context.');
     const packet = raw.packet;
+    // A released packet is historical. Its old preconditions necessarily differ
+    // after the move, and its evidence can later expire. Read the durable receipt
+    // without trying to authorize that old transition against today's state.
+    if (raw.status === 'released') {
+      const receipt = skillV11Result(await axios.get(apiPath('/model-hub/skills/release-requests/{request_id}/receipt/', { request_id: requestId }), config));
+      if (receipt.request_id !== raw.id || receipt.revision !== raw.revision) throw new Error('The release receipt does not match this request.');
+      return { request: mapRequest({ ...raw, subject_kind: packet.subject_kind }), preview: { packet: mapReleasePacket(packet), fingerprint: raw.fingerprint, current: false }, receipt: mapReleaseReceipt(receipt), canExecute: false };
+    }
     const inspected = packet.subject_kind === 'agent_context'
       ? await loadContextReview(raw.subject_id, null, config, { operation: 'move', target_version: packet.transition.version, label: packet.transition.label })
       : packet.subject_kind === 'skill' ? await loadSkillReview(raw.subject_id, packet, config) : null;
@@ -73,7 +96,9 @@ export function useReleaseRequest(requestId, contextId) {
       review: inspected ? { complete: inspected.complete, changes: inspected.originChanges, checks: inspected.checks, impact: inspected.impact } : undefined,
       canExecute,
     };
-  } });
+}
+export function useReleaseRequest(requestId, contextId) {
+  return useSkillV11Query({ parts: ['release-request', requestId, contextId], enabled: Boolean(requestId) && reviewsReady(), load: (config) => loadReleaseRequest(requestId, contextId, config) });
 }
 const decisionInput = ({ revision, expectedFingerprint, decision, comment }) => ({ revision, expected_fingerprint: expectedFingerprint, decision, comment });
 export function useDecideReleaseRequest() {
@@ -82,6 +107,6 @@ export function useDecideReleaseRequest() {
 export function useExecuteReleaseRequest() {
   return useSkillV11Mutation({ send: async ({ requestId, revision, expectedFingerprint, idempotencyKey }, config) => {
     const result = skillV11Result(await axios.post(execute(requestId), { revision, expected_fingerprint: expectedFingerprint }, { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } }));
-    return { requestId: result.request_id, decisionId: result.decision_id, revision: result.revision, executedBy: result.executed_by, currentnessAtAction: result.currentness_at_action, postMoveState: { label: result.post_move_state.label, version: result.post_move_state.version, releaseRevision: result.post_move_state.release_revision, eventId: result.post_move_state.event_id } };
+    return mapReleaseReceipt(result);
   }, invalidate: () => [['release-request'], ['review-inbox'], ['agent_context']] });
 }

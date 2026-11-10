@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
-  Box,
   Button,
   Checkbox,
   FormControlLabel,
@@ -14,8 +13,8 @@ import {
 import { isDefiniteRejection } from "src/api/skills/operation-errors";
 import Section from "src/components/section";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import ReleaseReceipt from './ReleaseReceipt';
 import ReleaseReviewBody, {
-  IdentityValue,
   ReviewState,
   evidenceKey,
   evidenceProblems,
@@ -205,7 +204,7 @@ function PacketActions({
   return (
     <Stack spacing={3}>
       <ReleaseReviewBody {...review} packet={packet} />
-      {!current && (
+      {!current && !closed && (
         <Alert severity="warning">
           Review is stale or unavailable.{" "}
           {Array.from(new Set(reasons)).join(" ")} Request a new packet after
@@ -352,46 +351,7 @@ function PacketActions({
           </Stack>
         </Section>
       )}
-      {finalReceipt && (
-        <Section title="Durable release receipt">
-          <Stack spacing={1}>
-            <IdentityValue label="Request" value={finalReceipt.requestId} />
-            <IdentityValue label="Decision" value={finalReceipt.decisionId} />
-            <IdentityValue
-              label="Executed by"
-              value={finalReceipt.executedBy}
-            />
-            <Box component="details" open>
-              <Typography component="summary" variant="m3">
-                Currentness before the move
-              </Typography>
-              <Typography
-                component="pre"
-                variant="s3"
-                sx={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}
-              >
-                {JSON.stringify(finalReceipt.currentnessAtAction, null, 2)}
-              </Typography>
-            </Box>
-            <Box component="details" open>
-              <Typography component="summary" variant="m3">
-                Pointer state after the move
-              </Typography>
-              <Typography
-                component="pre"
-                variant="s3"
-                sx={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}
-              >
-                {JSON.stringify(finalReceipt.postMoveState, null, 2)}
-              </Typography>
-            </Box>
-            <Alert severity="info">
-              The pointer changed or was already at its target. Installation and
-              model delivery require their own observations.
-            </Alert>
-          </Stack>
-        </Section>
-      )}
+      {finalReceipt && <ReleaseReceipt receipt={finalReceipt} />}
       <ConfirmDialog
         open={confirm && !closed}
         onClose={() => {
@@ -442,6 +402,7 @@ export default function ReleaseRequestPanel({
   onRetry,
   ...props
 }) {
+  if (scopeKey && state === 'ready' && props.receipt) return <ReleaseReceipt receipt={props.receipt} />;
   if (
     !scopeKey ||
     ["loading", "error", "forbidden", "unavailable", "empty"].includes(state) ||
@@ -459,6 +420,7 @@ export default function ReleaseRequestPanel({
   );
 }
 ReleaseRequestPanel.propTypes = {
+  receipt: PropTypes.object,
   scopeKey: PropTypes.string,
   state: PropTypes.string,
   preview: PropTypes.object,
