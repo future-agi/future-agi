@@ -1293,17 +1293,25 @@ def test_historical_snapshot_delete_and_activation_ignore_draft_prefetch(
         window_end=timezone.now(),
     )
     delete_url = f"{ROOT}{saved['id']}/snapshots/{run.id}/"
-    assert auth_client.delete(delete_url).status_code == 503
     edited = auth_client.put(
         f"{ROOT}{saved['id']}/",
         {**body(observe_project), "expected_version": 1},
         format="json",
     )
     assert edited.status_code == 200, edited.data
-    assert auth_client.get(f"{ROOT}{saved['id']}/snapshots/").data["results"][0][
-        "id"
-    ] == str(run.id)
-    assert auth_client.delete(delete_url).status_code == 503
+    # The historical (version 1) snapshot stays listed after a new draft exists.
+    listed = auth_client.get(f"{ROOT}{saved['id']}/snapshots/").data["results"]
+    assert [row["id"] for row in listed] == [str(run.id)]
+    # B18 implemented deletion: the historical snapshot is accepted for cleanup,
+    # leaves the list, and repeating the delete is idempotent.
+    deleted = auth_client.delete(delete_url)
+    assert deleted.status_code == 202 and deleted.data == {"status": "cleanup_pending"}
+    assert auth_client.get(f"{ROOT}{saved['id']}/snapshots/").data["results"] == []
+    again = auth_client.delete(delete_url)
+    assert again.status_code == 202 and again.data["status"] in {
+        "cleanup_pending",
+        "deleted",
+    }
     assert (
         auth_client.delete(f"{ROOT}{saved['id']}/snapshots/{uuid4()}/").status_code
         == 404
