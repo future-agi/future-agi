@@ -28,11 +28,13 @@ vi.mock("react-pdf", async () => {
 vi.mock("src/utils/CommonStores/pdfPreviewStore", () => ({
   usePdfPreviewStoreShallow: (selector) =>
     selector({
-      openPdfPreviewDrawer: {
-        url: preview.url,
-        name: "ordinary.pdf",
-        type: "pdf",
-      },
+      openPdfPreviewDrawer: preview.open
+        ? {
+            url: preview.url,
+            name: "ordinary.pdf",
+            type: preview.type,
+          }
+        : null,
       closePreview: () => {},
     }),
 }));
@@ -53,6 +55,8 @@ import PdfPreviewDrawer from "../PdfPreviewDrawer";
 
 beforeEach(() => {
   preview.url = "blob:https://example.invalid/owned-document";
+  preview.open = true;
+  preview.type = "pdf";
   viewer.props = null;
   page.props = null;
   vi.stubGlobal(
@@ -109,6 +113,18 @@ describe("PDF preview document boundary", () => {
     act(() => viewer.props.onLoadError(new Error("invalid PDF")));
     expect(screen.getByText("Unable to preview this document")).toBeVisible();
     expect(page.props).toBeNull();
+  });
+
+  it("reports a newly opened preview with no document metadata", () => {
+    preview.open = false;
+    preview.url = undefined;
+    preview.type = undefined;
+    const { rerender } = render(<PdfPreviewDrawer />);
+    expect(screen.queryByText("Unable to preview this document")).toBeNull();
+    preview.open = true;
+    rerender(<PdfPreviewDrawer />);
+    expect(screen.getByText("Unable to preview this document")).toBeVisible();
+    expect(viewer.props).toBeNull();
   });
 
   it("fails closed when the document URL is missing", () => {

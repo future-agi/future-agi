@@ -26,7 +26,8 @@ const PdfPreviewDrawer = () => {
     }),
   );
 
-  const covered = useDrawerCovered(Boolean(openPdfPreviewDrawer));
+  const isOpen = Boolean(openPdfPreviewDrawer);
+  const covered = useDrawerCovered(isOpen);
   const fileUrl = openPdfPreviewDrawer?.url;
   const name = openPdfPreviewDrawer?.name;
   const type = openPdfPreviewDrawer?.type;
@@ -55,7 +56,7 @@ const PdfPreviewDrawer = () => {
   useEffect(() => {
     if (!fileUrl) {
       setLoading(false);
-      if (openPdfPreviewDrawer) setError(errorMessages.notAccessible);
+      if (isOpen) setError(errorMessages.notAccessible);
       return;
     }
 
@@ -73,7 +74,7 @@ const PdfPreviewDrawer = () => {
     } else {
       setLoading(false);
     }
-  }, [fileUrl, type]);
+  }, [fileUrl, type, isOpen]);
 
   useEffect(() => {
     return () => {
