@@ -4,12 +4,17 @@ import userEvent from "@testing-library/user-event";
 
 // The report the server answered, and what the buttons asked for.
 let report;
+let loading = false;
+let recheckPending = false;
 const recheck = vi.fn();
 const retryAgent = vi.fn();
 
 vi.mock("src/api/simulate-environments/readiness", () => ({
-  useReadiness: () => ({ data: report, isLoading: false, isError: false }),
-  useRecheck: () => ({ mutate: recheck, isPending: false }),
+  useReadiness: () =>
+    loading
+      ? { data: undefined, isLoading: true, isError: false }
+      : { data: report, isLoading: false, isError: false },
+  useRecheck: () => ({ mutate: recheck, isPending: recheckPending }),
 }));
 vi.mock("src/api/simulate-environments/versions", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -46,11 +51,42 @@ const blockedReport = (recheckScope) => ({
 const picks = { agent: "agent-v2" };
 
 beforeEach(() => {
+  loading = false;
+  recheckPending = false;
   recheck.mockReset();
   retryAgent.mockReset();
 });
 
 describe("ReadyToRunSection", () => {
+  it("shows the check in progress as soon as a re-check is sent", () => {
+    report = blockedReport("pair");
+    recheckPending = true;
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
+    expect(screen.getByText(/Checking these versions together/)).toBeVisible();
+    // The lines are the last results until the check ends: no Fix on them.
+    expect(screen.queryByRole("button", { name: "Fix" })).toBeNull();
+  });
+
+  it("holds Run from the moment a re-check is sent", () => {
+    report = blockedReport("pair");
+    recheckPending = true;
+    const onView = vi.fn();
+    render(<ReadyToRunSection envId="env-1" picks={picks} onView={onView} />);
+    expect(onView).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canRun: false }),
+    );
+  });
+
+  it("holds Run until the report has loaded", () => {
+    loading = true;
+    const onView = vi.fn();
+    render(<ReadyToRunSection envId="env-1" picks={picks} onView={onView} />);
+    expect(onView).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canRun: false }),
+    );
+  });
+
   it("opens a fix with the server's instruction and re-checks the pair", async () => {
     report = blockedReport("pair");
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
