@@ -749,6 +749,23 @@ import type {
   LegacyKnowledgeBaseMutationResponseApi,
   LegacyKnowledgeBaseSdkCodeResponseApi,
   LegacyKnowledgeBaseTableResponseApi,
+  LibrarySkillAttachApi,
+  LibrarySkillAttachedApi,
+  LibrarySkillAttachmentApi,
+  LibrarySkillCopyApi,
+  LibrarySkillCreateApi,
+  LibrarySkillDetachApi,
+  LibrarySkillDetailApi,
+  LibrarySkillInCodeApi,
+  LibrarySkillInCodeFilesApi,
+  LibrarySkillListResponseApi,
+  LibrarySkillPromoteApi,
+  LibrarySkillTagApi,
+  LibrarySkillTestApi,
+  LibrarySkillTestCreateApi,
+  LibrarySkillVersionApi,
+  LibrarySkillVersionCreateApi,
+  LibrarySkillVersionFilesApi,
   LicenseActionRequestApi,
   LicenseGrantApi,
   LinearTeamsResponseApi,
@@ -1234,6 +1251,10 @@ import type {
   SimulateApiPersonasWorkspacePersonas200,
   SimulateApiPersonasWorkspacePersonasParams,
   SimulateApiRunTestsListParams,
+  SimulateApiSkillsAttachedParams,
+  SimulateApiSkillsInCodeInCodeFilesParams,
+  SimulateApiSkillsInCodeParams,
+  SimulateApiSkillsListParams,
   SimulateApiTestExecutionsListParams,
   SimulateEvalConfigResponseApi,
   SimulateExportReadParams,
@@ -64542,6 +64563,655 @@ export const simulateApiRunTestsList = async (
 ): Promise<simulateApiRunTestsListResponse> => {
   return apiMutator<simulateApiRunTestsListResponse>(
     getSimulateApiRunTestsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiSkillsListResponse200 = {
+  data: LibrarySkillListResponseApi;
+  status: 200;
+};
+
+export type simulateApiSkillsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiSkillsListResponseSuccess =
+  simulateApiSkillsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsListResponseError =
+  simulateApiSkillsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsListResponse =
+  | simulateApiSkillsListResponseSuccess
+  | simulateApiSkillsListResponseError;
+
+export const getSimulateApiSkillsListUrl = (
+  params?: SimulateApiSkillsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/skills/?${stringifiedParams}`
+    : `/simulate/api/skills/`;
+};
+
+export const simulateApiSkillsList = async (
+  params?: SimulateApiSkillsListParams,
+  options?: RequestInit,
+): Promise<simulateApiSkillsListResponse> => {
+  return apiMutator<simulateApiSkillsListResponse>(
+    getSimulateApiSkillsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiSkillsCreateResponse201 = {
+  data: LibrarySkillDetailApi;
+  status: 201;
+};
+
+export type simulateApiSkillsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiSkillsCreateResponseSuccess =
+  simulateApiSkillsCreateResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsCreateResponseError =
+  simulateApiSkillsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsCreateResponse =
+  | simulateApiSkillsCreateResponseSuccess
+  | simulateApiSkillsCreateResponseError;
+
+export const getSimulateApiSkillsCreateUrl = () => {
+  return `/simulate/api/skills/`;
+};
+
+export const simulateApiSkillsCreate = async (
+  librarySkillCreateApi: LibrarySkillCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiSkillsCreateResponse> => {
+  return apiMutator<simulateApiSkillsCreateResponse>(
+    getSimulateApiSkillsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(librarySkillCreateApi),
+    },
+  );
+};
+
+export type simulateApiSkillsAttachedResponse200 = {
+  data: LibrarySkillAttachedApi[];
+  status: 200;
+};
+
+export type simulateApiSkillsAttachedResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiSkillsAttachedResponseSuccess =
+  simulateApiSkillsAttachedResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsAttachedResponseError =
+  simulateApiSkillsAttachedResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsAttachedResponse =
+  | simulateApiSkillsAttachedResponseSuccess
+  | simulateApiSkillsAttachedResponseError;
+
+export const getSimulateApiSkillsAttachedUrl = (
+  params: SimulateApiSkillsAttachedParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/skills/attached/?${stringifiedParams}`
+    : `/simulate/api/skills/attached/`;
+};
+
+export const simulateApiSkillsAttached = async (
+  params: SimulateApiSkillsAttachedParams,
+  options?: RequestInit,
+): Promise<simulateApiSkillsAttachedResponse> => {
+  return apiMutator<simulateApiSkillsAttachedResponse>(
+    getSimulateApiSkillsAttachedUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiSkillsInCodeResponse200 = {
+  data: LibrarySkillInCodeApi;
+  status: 200;
+};
+
+export type simulateApiSkillsInCodeResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiSkillsInCodeResponseSuccess =
+  simulateApiSkillsInCodeResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsInCodeResponseError =
+  simulateApiSkillsInCodeResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsInCodeResponse =
+  | simulateApiSkillsInCodeResponseSuccess
+  | simulateApiSkillsInCodeResponseError;
+
+export const getSimulateApiSkillsInCodeUrl = (
+  params: SimulateApiSkillsInCodeParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/skills/in-code/?${stringifiedParams}`
+    : `/simulate/api/skills/in-code/`;
+};
+
+export const simulateApiSkillsInCode = async (
+  params: SimulateApiSkillsInCodeParams,
+  options?: RequestInit,
+): Promise<simulateApiSkillsInCodeResponse> => {
+  return apiMutator<simulateApiSkillsInCodeResponse>(
+    getSimulateApiSkillsInCodeUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiSkillsInCodeCopyToLibraryResponse201 = {
+  data: LibrarySkillDetailApi;
+  status: 201;
+};
+
+export type simulateApiSkillsInCodeCopyToLibraryResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiSkillsInCodeCopyToLibraryResponseSuccess =
+  simulateApiSkillsInCodeCopyToLibraryResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsInCodeCopyToLibraryResponseError =
+  simulateApiSkillsInCodeCopyToLibraryResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsInCodeCopyToLibraryResponse =
+  | simulateApiSkillsInCodeCopyToLibraryResponseSuccess
+  | simulateApiSkillsInCodeCopyToLibraryResponseError;
+
+export const getSimulateApiSkillsInCodeCopyToLibraryUrl = (
+  skillVersionId: string,
+) => {
+  return `/simulate/api/skills/in-code/${skillVersionId}/copy/`;
+};
+
+export const simulateApiSkillsInCodeCopyToLibrary = async (
+  skillVersionId: string,
+  librarySkillCopyApi: LibrarySkillCopyApi,
+  options?: RequestInit,
+): Promise<simulateApiSkillsInCodeCopyToLibraryResponse> => {
+  return apiMutator<simulateApiSkillsInCodeCopyToLibraryResponse>(
+    getSimulateApiSkillsInCodeCopyToLibraryUrl(skillVersionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(librarySkillCopyApi),
+    },
+  );
+};
+
+export type simulateApiSkillsInCodeInCodeFilesResponse200 = {
+  data: LibrarySkillInCodeFilesApi;
+  status: 200;
+};
+
+export type simulateApiSkillsInCodeInCodeFilesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiSkillsInCodeInCodeFilesResponseSuccess =
+  simulateApiSkillsInCodeInCodeFilesResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsInCodeInCodeFilesResponseError =
+  simulateApiSkillsInCodeInCodeFilesResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsInCodeInCodeFilesResponse =
+  | simulateApiSkillsInCodeInCodeFilesResponseSuccess
+  | simulateApiSkillsInCodeInCodeFilesResponseError;
+
+export const getSimulateApiSkillsInCodeInCodeFilesUrl = (
+  skillVersionId: string,
+  params: SimulateApiSkillsInCodeInCodeFilesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/skills/in-code/${skillVersionId}/files/?${stringifiedParams}`
+    : `/simulate/api/skills/in-code/${skillVersionId}/files/`;
+};
+
+export const simulateApiSkillsInCodeInCodeFiles = async (
+  skillVersionId: string,
+  params: SimulateApiSkillsInCodeInCodeFilesParams,
+  options?: RequestInit,
+): Promise<simulateApiSkillsInCodeInCodeFilesResponse> => {
+  return apiMutator<simulateApiSkillsInCodeInCodeFilesResponse>(
+    getSimulateApiSkillsInCodeInCodeFilesUrl(skillVersionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiSkillsReadResponse200 = {
+  data: LibrarySkillDetailApi;
+  status: 200;
+};
+
+export type simulateApiSkillsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiSkillsReadResponseSuccess =
+  simulateApiSkillsReadResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsReadResponseError =
+  simulateApiSkillsReadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsReadResponse =
+  | simulateApiSkillsReadResponseSuccess
+  | simulateApiSkillsReadResponseError;
+
+export const getSimulateApiSkillsReadUrl = (id: string) => {
+  return `/simulate/api/skills/${id}/`;
+};
+
+export const simulateApiSkillsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiSkillsReadResponse> => {
+  return apiMutator<simulateApiSkillsReadResponse>(
+    getSimulateApiSkillsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiSkillsAttachResponse200 = {
+  data: LibrarySkillAttachmentApi;
+  status: 200;
+};
+
+export type simulateApiSkillsAttachResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiSkillsAttachResponseSuccess =
+  simulateApiSkillsAttachResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsAttachResponseError =
+  simulateApiSkillsAttachResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsAttachResponse =
+  | simulateApiSkillsAttachResponseSuccess
+  | simulateApiSkillsAttachResponseError;
+
+export const getSimulateApiSkillsAttachUrl = (id: string) => {
+  return `/simulate/api/skills/${id}/attach/`;
+};
+
+export const simulateApiSkillsAttach = async (
+  id: string,
+  librarySkillAttachApi: LibrarySkillAttachApi,
+  options?: RequestInit,
+): Promise<simulateApiSkillsAttachResponse> => {
+  return apiMutator<simulateApiSkillsAttachResponse>(
+    getSimulateApiSkillsAttachUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(librarySkillAttachApi),
+    },
+  );
+};
+
+export type simulateApiSkillsDetachResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: number;
+};
+export type simulateApiSkillsDetachResponseError =
+  simulateApiSkillsDetachResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsDetachResponse =
+  simulateApiSkillsDetachResponseError;
+
+export const getSimulateApiSkillsDetachUrl = (id: string) => {
+  return `/simulate/api/skills/${id}/detach/`;
+};
+
+export const simulateApiSkillsDetach = async (
+  id: string,
+  librarySkillDetachApi: LibrarySkillDetachApi,
+  options?: RequestInit,
+): Promise<simulateApiSkillsDetachResponse> => {
+  return apiMutator<simulateApiSkillsDetachResponse>(
+    getSimulateApiSkillsDetachUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(librarySkillDetachApi),
+    },
+  );
+};
+
+export type simulateApiSkillsPromoteResponse200 = {
+  data: LibrarySkillTagApi;
+  status: 200;
+};
+
+export type simulateApiSkillsPromoteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiSkillsPromoteResponseSuccess =
+  simulateApiSkillsPromoteResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsPromoteResponseError =
+  simulateApiSkillsPromoteResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsPromoteResponse =
+  | simulateApiSkillsPromoteResponseSuccess
+  | simulateApiSkillsPromoteResponseError;
+
+export const getSimulateApiSkillsPromoteUrl = (id: string) => {
+  return `/simulate/api/skills/${id}/promote/`;
+};
+
+export const simulateApiSkillsPromote = async (
+  id: string,
+  librarySkillPromoteApi: LibrarySkillPromoteApi,
+  options?: RequestInit,
+): Promise<simulateApiSkillsPromoteResponse> => {
+  return apiMutator<simulateApiSkillsPromoteResponse>(
+    getSimulateApiSkillsPromoteUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(librarySkillPromoteApi),
+    },
+  );
+};
+
+export type simulateApiSkillsStartTestResponse201 = {
+  data: LibrarySkillTestApi;
+  status: 201;
+};
+
+export type simulateApiSkillsStartTestResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiSkillsStartTestResponseSuccess =
+  simulateApiSkillsStartTestResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsStartTestResponseError =
+  simulateApiSkillsStartTestResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsStartTestResponse =
+  | simulateApiSkillsStartTestResponseSuccess
+  | simulateApiSkillsStartTestResponseError;
+
+export const getSimulateApiSkillsStartTestUrl = (id: string) => {
+  return `/simulate/api/skills/${id}/test/`;
+};
+
+export const simulateApiSkillsStartTest = async (
+  id: string,
+  librarySkillTestCreateApi: LibrarySkillTestCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiSkillsStartTestResponse> => {
+  return apiMutator<simulateApiSkillsStartTestResponse>(
+    getSimulateApiSkillsStartTestUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(librarySkillTestCreateApi),
+    },
+  );
+};
+
+export type simulateApiSkillsTestsResponse200 = {
+  data: LibrarySkillTestApi[];
+  status: 200;
+};
+
+export type simulateApiSkillsTestsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiSkillsTestsResponseSuccess =
+  simulateApiSkillsTestsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsTestsResponseError =
+  simulateApiSkillsTestsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsTestsResponse =
+  | simulateApiSkillsTestsResponseSuccess
+  | simulateApiSkillsTestsResponseError;
+
+export const getSimulateApiSkillsTestsUrl = (id: string) => {
+  return `/simulate/api/skills/${id}/tests/`;
+};
+
+export const simulateApiSkillsTests = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiSkillsTestsResponse> => {
+  return apiMutator<simulateApiSkillsTestsResponse>(
+    getSimulateApiSkillsTestsUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiSkillsCreateVersionResponse201 = {
+  data: LibrarySkillVersionApi;
+  status: 201;
+};
+
+export type simulateApiSkillsCreateVersionResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiSkillsCreateVersionResponseSuccess =
+  simulateApiSkillsCreateVersionResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsCreateVersionResponseError =
+  simulateApiSkillsCreateVersionResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsCreateVersionResponse =
+  | simulateApiSkillsCreateVersionResponseSuccess
+  | simulateApiSkillsCreateVersionResponseError;
+
+export const getSimulateApiSkillsCreateVersionUrl = (id: string) => {
+  return `/simulate/api/skills/${id}/versions/`;
+};
+
+export const simulateApiSkillsCreateVersion = async (
+  id: string,
+  librarySkillVersionCreateApi: LibrarySkillVersionCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiSkillsCreateVersionResponse> => {
+  return apiMutator<simulateApiSkillsCreateVersionResponse>(
+    getSimulateApiSkillsCreateVersionUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(librarySkillVersionCreateApi),
+    },
+  );
+};
+
+export type simulateApiSkillsVersionsVersionFilesResponse200 = {
+  data: LibrarySkillVersionFilesApi;
+  status: 200;
+};
+
+export type simulateApiSkillsVersionsVersionFilesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiSkillsVersionsVersionFilesResponseSuccess =
+  simulateApiSkillsVersionsVersionFilesResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiSkillsVersionsVersionFilesResponseError =
+  simulateApiSkillsVersionsVersionFilesResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiSkillsVersionsVersionFilesResponse =
+  | simulateApiSkillsVersionsVersionFilesResponseSuccess
+  | simulateApiSkillsVersionsVersionFilesResponseError;
+
+export const getSimulateApiSkillsVersionsVersionFilesUrl = (
+  id: string,
+  versionNumber: string,
+) => {
+  return `/simulate/api/skills/${id}/versions/${versionNumber}/files/`;
+};
+
+export const simulateApiSkillsVersionsVersionFiles = async (
+  id: string,
+  versionNumber: string,
+  options?: RequestInit,
+): Promise<simulateApiSkillsVersionsVersionFilesResponse> => {
+  return apiMutator<simulateApiSkillsVersionsVersionFilesResponse>(
+    getSimulateApiSkillsVersionsVersionFilesUrl(id, versionNumber),
     {
       ...options,
       method: "GET",

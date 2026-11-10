@@ -21236,6 +21236,37 @@ export interface HarnessTargetMetricsApi {
   provider_end_reason?: string;
 }
 
+export type HarnessSkillLoadApiOrigin =
+  (typeof HarnessSkillLoadApiOrigin)[keyof typeof HarnessSkillLoadApiOrigin];
+
+export const HarnessSkillLoadApiOrigin = {
+  library: "library",
+  repo: "repo",
+} as const;
+
+export type HarnessSkillLoadApiLoaded =
+  (typeof HarnessSkillLoadApiLoaded)[keyof typeof HarnessSkillLoadApiLoaded];
+
+export const HarnessSkillLoadApiLoaded = {
+  yes: "yes",
+  no: "no",
+  unknown: "unknown",
+} as const;
+
+export interface HarnessSkillLoadApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  name: string;
+  origin?: HarnessSkillLoadApiOrigin;
+  /** @minimum 1 */
+  version_number?: number;
+  observed: boolean;
+  loaded: HarnessSkillLoadApiLoaded;
+  at?: number;
+}
+
 export interface HarnessCallApi {
   started_at: string;
   ended_at: string;
@@ -21256,6 +21287,7 @@ export interface HarnessCallApi {
   stop_reason?: string;
   script_completed?: boolean;
   target_metrics?: HarnessTargetMetricsApi;
+  skill_loads?: HarnessSkillLoadApi[];
 }
 
 export type HarnessFailureApiDomain =
@@ -22628,6 +22660,379 @@ export interface RunTestErrorResponseApi {
   error?: string;
   attr?: string;
   details?: RunTestErrorResponseApiDetails;
+}
+
+export type LibrarySkillListItemApiKind =
+  (typeof LibrarySkillListItemApiKind)[keyof typeof LibrarySkillListItemApiKind];
+
+export const LibrarySkillListItemApiKind = {
+  skill: "skill",
+  context: "context",
+} as const;
+
+export type LibrarySkillTagApiName =
+  (typeof LibrarySkillTagApiName)[keyof typeof LibrarySkillTagApiName];
+
+export const LibrarySkillTagApiName = {
+  staging: "staging",
+  production: "production",
+} as const;
+
+export interface LibrarySkillTagApi {
+  name: LibrarySkillTagApiName;
+  version: number;
+  readonly updated_at?: string;
+}
+
+export interface LibrarySkillListItemApi {
+  readonly id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  name: string;
+  kind?: LibrarySkillListItemApiKind;
+  description?: string;
+  latest_version: number;
+  tags: LibrarySkillTagApi[];
+  used_by: number;
+  last_test_version: number;
+  /** @minLength 1 */
+  last_test_state: string;
+  last_test_verdict: string;
+  readonly updated_at?: string;
+}
+
+export interface LibrarySkillListResponseApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  results: LibrarySkillListItemApi[];
+  total_pages: number;
+  current_page: number;
+}
+
+export type LibrarySkillCreateApiKind =
+  (typeof LibrarySkillCreateApiKind)[keyof typeof LibrarySkillCreateApiKind];
+
+export const LibrarySkillCreateApiKind = {
+  skill: "skill",
+  context: "context",
+} as const;
+
+export interface LibrarySkillFileApi {
+  /**
+   * @minLength 1
+   * @maxLength 512
+   */
+  path: string;
+  content: string;
+}
+
+export interface LibrarySkillCreateApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  name: string;
+  kind?: LibrarySkillCreateApiKind;
+  /** @maxLength 1024 */
+  description?: string;
+  /** @maxLength 255 */
+  note?: string;
+  files: LibrarySkillFileApi[];
+}
+
+export type LibrarySkillDetailApiKind =
+  (typeof LibrarySkillDetailApiKind)[keyof typeof LibrarySkillDetailApiKind];
+
+export const LibrarySkillDetailApiKind = {
+  skill: "skill",
+  context: "context",
+} as const;
+
+export type LibrarySkillVersionApiFilesManifest = { [key: string]: unknown };
+
+export interface LibrarySkillVersionApi {
+  readonly id?: string;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  version_number?: number;
+  description?: string;
+  /** @maxLength 255 */
+  note?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  files_hash: string;
+  files_manifest?: LibrarySkillVersionApiFilesManifest;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  size: number;
+  /** @minLength 1 */
+  created_by?: string;
+  readonly created_at?: string;
+}
+
+export type LibrarySkillPromotionApiTag =
+  (typeof LibrarySkillPromotionApiTag)[keyof typeof LibrarySkillPromotionApiTag];
+
+export const LibrarySkillPromotionApiTag = {
+  staging: "staging",
+  production: "production",
+} as const;
+
+export interface LibrarySkillPromotionApi {
+  version: number;
+  tag: LibrarySkillPromotionApiTag;
+  tested?: boolean;
+  reason?: string;
+  /** @minLength 1 */
+  created_by?: string;
+  readonly created_at?: string;
+}
+
+export type LibrarySkillUsageApiTag =
+  (typeof LibrarySkillUsageApiTag)[keyof typeof LibrarySkillUsageApiTag];
+
+export const LibrarySkillUsageApiTag = {
+  staging: "staging",
+  production: "production",
+} as const;
+
+export interface LibrarySkillUsageApi {
+  agent_definition_id: string;
+  /** @minLength 1 */
+  agent_name: string;
+  tag?: LibrarySkillUsageApiTag;
+  version?: number;
+  readonly updated_at?: string;
+}
+
+export interface LibrarySkillDetailApi {
+  readonly id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  name: string;
+  kind?: LibrarySkillDetailApiKind;
+  description?: string;
+  versions: LibrarySkillVersionApi[];
+  tags: LibrarySkillTagApi[];
+  promotions: LibrarySkillPromotionApi[];
+  attachments: LibrarySkillUsageApi[];
+  /** @minLength 1 */
+  created_by?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export type LibrarySkillAttachedApiKind =
+  (typeof LibrarySkillAttachedApiKind)[keyof typeof LibrarySkillAttachedApiKind];
+
+export const LibrarySkillAttachedApiKind = {
+  skill: "skill",
+  context: "context",
+} as const;
+
+export interface LibrarySkillAttachedApi {
+  skill_id: string;
+  /** @minLength 1 */
+  name: string;
+  kind: LibrarySkillAttachedApiKind;
+  /** @minLength 1 */
+  tag: string;
+  pinned_version: number;
+  resolved_version: number;
+  attached_at: string;
+}
+
+export type LibrarySkillInCodeApiStatus =
+  (typeof LibrarySkillInCodeApiStatus)[keyof typeof LibrarySkillInCodeApiStatus];
+
+export const LibrarySkillInCodeApiStatus = {
+  scanned: "scanned",
+  source_missing: "source_missing",
+  too_large: "too_large",
+  not_scanned: "not_scanned",
+  unsupported_source: "unsupported_source",
+  no_version: "no_version",
+} as const;
+
+export type LibrarySkillInCodeItemApiKind =
+  (typeof LibrarySkillInCodeItemApiKind)[keyof typeof LibrarySkillInCodeItemApiKind];
+
+export const LibrarySkillInCodeItemApiKind = {
+  skill: "skill",
+  context: "context",
+} as const;
+
+export interface LibrarySkillInCodeItemApi {
+  readonly id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  name: string;
+  kind?: LibrarySkillInCodeItemApiKind;
+  /** @maxLength 512 */
+  path?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  files_hash: string;
+  description?: string;
+  readable?: boolean;
+  /** @maxLength 64 */
+  problem?: string;
+}
+
+export interface LibrarySkillInCodeApi {
+  agent_version_number: number;
+  status: LibrarySkillInCodeApiStatus;
+  items: LibrarySkillInCodeItemApi[];
+}
+
+export interface LibrarySkillCopyApi {
+  agent_definition_id: string;
+}
+
+export interface LibrarySkillInCodeFilesApi {
+  files: LibrarySkillFileApi[];
+}
+
+export type LibrarySkillAttachApiTag =
+  (typeof LibrarySkillAttachApiTag)[keyof typeof LibrarySkillAttachApiTag];
+
+export const LibrarySkillAttachApiTag = {
+  staging: "staging",
+  production: "production",
+} as const;
+
+export interface LibrarySkillAttachApi {
+  agent_definition_id: string;
+  tag?: LibrarySkillAttachApiTag;
+  /** @minimum 1 */
+  version?: number;
+}
+
+export type LibrarySkillAttachmentApiTag =
+  (typeof LibrarySkillAttachmentApiTag)[keyof typeof LibrarySkillAttachmentApiTag];
+
+export const LibrarySkillAttachmentApiTag = {
+  staging: "staging",
+  production: "production",
+} as const;
+
+export interface LibrarySkillAttachmentApi {
+  readonly skill_id?: string;
+  agent_definition_id: string;
+  tag?: LibrarySkillAttachmentApiTag;
+  version?: number;
+  readonly updated_at?: string;
+}
+
+export interface LibrarySkillDetachApi {
+  agent_definition_id: string;
+}
+
+export type LibrarySkillPromoteApiTag =
+  (typeof LibrarySkillPromoteApiTag)[keyof typeof LibrarySkillPromoteApiTag];
+
+export const LibrarySkillPromoteApiTag = {
+  staging: "staging",
+  production: "production",
+} as const;
+
+export interface LibrarySkillPromoteApi {
+  /** @minimum 1 */
+  version: number;
+  tag: LibrarySkillPromoteApiTag;
+  /** @maxLength 1000 */
+  reason?: string;
+}
+
+export interface LibrarySkillTestCreateApi {
+  /** @minimum 1 */
+  version: number;
+  agent_definition_id: string;
+  environment_id: string;
+  /** @maxItems 200 */
+  scenario_keys: string[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+}
+
+export type LibrarySkillTestApiScenarioKeys = { [key: string]: unknown };
+
+export type LibrarySkillTestApiState =
+  (typeof LibrarySkillTestApiState)[keyof typeof LibrarySkillTestApiState];
+
+export const LibrarySkillTestApiState = {
+  running: "running",
+  finished: "finished",
+  failed: "failed",
+} as const;
+
+export type LibrarySkillTestApiVerdict =
+  (typeof LibrarySkillTestApiVerdict)[keyof typeof LibrarySkillTestApiVerdict];
+
+export const LibrarySkillTestApiVerdict = {
+  helps: "helps",
+  helps_with_regression: "helps_with_regression",
+  no_improvement: "no_improvement",
+  not_used: "not_used",
+  inconclusive: "inconclusive",
+} as const;
+
+export type LibrarySkillTestApiSummary = { [key: string]: unknown };
+
+export interface LibrarySkillTestApi {
+  readonly id?: string;
+  version: number;
+  baseline_version?: number;
+  agent_definition_id: string;
+  /** @minLength 1 */
+  agent_name: string;
+  environment_id: string;
+  run_a_execution_id?: string;
+  run_b_execution_id?: string;
+  scenario_keys?: LibrarySkillTestApiScenarioKeys;
+  /**
+   * @minimum 0
+   * @maximum 32767
+   */
+  trials?: number;
+  state?: LibrarySkillTestApiState;
+  verdict?: LibrarySkillTestApiVerdict;
+  summary: LibrarySkillTestApiSummary;
+  /** @minLength 1 */
+  created_by?: string;
+  readonly created_at?: string;
+  finished_at?: string;
+}
+
+export interface LibrarySkillVersionCreateApi {
+  /** @maxLength 255 */
+  note?: string;
+  files: LibrarySkillFileApi[];
+}
+
+export interface LibrarySkillVersionFilesApi {
+  version: number;
+  files: LibrarySkillFileApi[];
 }
 
 /**
@@ -25761,6 +26166,28 @@ export interface RunFixRunApi {
   label: string;
 }
 
+export type RunSkillLoadApiOrigin =
+  (typeof RunSkillLoadApiOrigin)[keyof typeof RunSkillLoadApiOrigin];
+
+export const RunSkillLoadApiOrigin = {
+  library: "library",
+  repo: "repo",
+} as const;
+
+export interface RunSkillLoadApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  kind: string;
+  origin: RunSkillLoadApiOrigin;
+  version_number: number;
+  /** @minLength 1 */
+  from_tag: string;
+  observed: boolean;
+  loaded_in: number;
+  total: number;
+}
+
 export interface RunExecutionApi {
   id: string;
   run_test_id: string;
@@ -25785,6 +26212,7 @@ export interface RunExecutionApi {
   resume: RunResumeApi;
   summary: RunSummaryApi;
   fix_run?: RunFixRunApi;
+  skills?: RunSkillLoadApi[];
 }
 
 export interface SimulateRunV3ScoringCountsApi {
@@ -39255,6 +39683,34 @@ export const SimulateApiRunTestsListSimulationType = {
   agent_definition: "agent_definition",
   prompt: "prompt",
 } as const;
+
+export type SimulateApiSkillsListParams = {
+  /**
+   * @maxLength 64
+   */
+  search?: string;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type SimulateApiSkillsAttachedParams = {
+  agent_definition_id: string;
+};
+
+export type SimulateApiSkillsInCodeParams = {
+  agent_definition_id: string;
+};
+
+export type SimulateApiSkillsInCodeInCodeFilesParams = {
+  agent_definition_id: string;
+};
 
 export type SimulateApiTestExecutionsListParams = {
   search?: string;

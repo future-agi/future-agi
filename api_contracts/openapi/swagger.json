@@ -55713,6 +55713,567 @@
             },
             "parameters": []
         },
+        "/simulate/api/skills/": {
+            "get": {
+                "operationId": "simulate_api_skills_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 64
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 1,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 25,
+                        "maximum": 100,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "simulate_api_skills_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/skills/attached/": {
+            "get": {
+                "operationId": "simulate_api_skills_attached",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "agent_definition_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/LibrarySkillAttached"
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/skills/in-code/": {
+            "get": {
+                "operationId": "simulate_api_skills_in_code",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "agent_definition_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillInCode"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/skills/in-code/{skill_version_id}/copy/": {
+            "post": {
+                "operationId": "simulate_api_skills_in-code_copy_to_library",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillCopy"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/skills/in-code/{skill_version_id}/files/": {
+            "get": {
+                "operationId": "simulate_api_skills_in-code_in_code_files",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "agent_definition_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillInCodeFiles"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/skills/{id}/": {
+            "get": {
+                "operationId": "simulate_api_skills_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/skills/{id}/attach/": {
+            "post": {
+                "operationId": "simulate_api_skills_attach",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillAttach"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillAttachment"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/skills/{id}/detach/": {
+            "post": {
+                "operationId": "simulate_api_skills_detach",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillDetach"
+                        }
+                    }
+                ],
+                "responses": {
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/skills/{id}/promote/": {
+            "post": {
+                "operationId": "simulate_api_skills_promote",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillPromote"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillTag"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/skills/{id}/test/": {
+            "post": {
+                "operationId": "simulate_api_skills_start_test",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillTestCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillTest"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/skills/{id}/tests/": {
+            "get": {
+                "operationId": "simulate_api_skills_tests",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/LibrarySkillTest"
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/skills/{id}/versions/": {
+            "post": {
+                "operationId": "simulate_api_skills_create_version",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillVersionCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillVersion"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/skills/{id}/versions/{version_number}/files/": {
+            "get": {
+                "operationId": "simulate_api_skills_versions_version_files",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/LibrarySkillVersionFiles"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_number",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/test-executions/": {
             "get": {
                 "operationId": "simulate_api_test-executions_list",
@@ -144536,6 +145097,56 @@
             },
             "x-nullable": true
         },
+        "HarnessSkillLoad": {
+            "required": [
+                "name",
+                "observed",
+                "loaded"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "origin": {
+                    "title": "Origin",
+                    "type": "string",
+                    "enum": [
+                        "library",
+                        "repo"
+                    ],
+                    "default": "library"
+                },
+                "version_number": {
+                    "title": "Version number",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
+                },
+                "observed": {
+                    "title": "Observed",
+                    "type": "boolean"
+                },
+                "loaded": {
+                    "title": "Loaded",
+                    "type": "string",
+                    "enum": [
+                        "yes",
+                        "no",
+                        "unknown"
+                    ]
+                },
+                "at": {
+                    "title": "At",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessCall": {
             "required": [
                 "started_at",
@@ -144594,6 +145205,13 @@
                 },
                 "target_metrics": {
                     "$ref": "#/definitions/HarnessTargetMetrics"
+                },
+                "skill_loads": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessSkillLoad"
+                    },
+                    "x-nullable": true
                 }
             },
             "x-nullable": true
@@ -147220,6 +147838,888 @@
                             "type": "string",
                             "minLength": 1
                         }
+                    }
+                }
+            }
+        },
+        "LibrarySkillTag": {
+            "required": [
+                "name",
+                "version"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "enum": [
+                        "staging",
+                        "production"
+                    ]
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "LibrarySkillListItem": {
+            "required": [
+                "name",
+                "latest_version",
+                "tags",
+                "used_by",
+                "last_test_version",
+                "last_test_state",
+                "last_test_verdict"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "skill",
+                        "context"
+                    ]
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "latest_version": {
+                    "title": "Latest version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillTag"
+                    }
+                },
+                "used_by": {
+                    "title": "Used by",
+                    "type": "integer"
+                },
+                "last_test_version": {
+                    "title": "Last test version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "last_test_state": {
+                    "title": "Last test state",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "last_test_verdict": {
+                    "title": "Last test verdict",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "LibrarySkillListResponse": {
+            "required": [
+                "count",
+                "next",
+                "previous",
+                "results",
+                "total_pages",
+                "current_page"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "previous": {
+                    "title": "Previous",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillListItem"
+                    }
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "current_page": {
+                    "title": "Current page",
+                    "type": "integer"
+                }
+            }
+        },
+        "LibrarySkillFile": {
+            "required": [
+                "path",
+                "content"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "maxLength": 512,
+                    "minLength": 1
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string"
+                }
+            }
+        },
+        "LibrarySkillCreate": {
+            "required": [
+                "name",
+                "files"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "skill",
+                        "context"
+                    ],
+                    "default": "skill"
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 1024
+                },
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 255
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillFile"
+                    }
+                }
+            }
+        },
+        "LibrarySkillVersion": {
+            "required": [
+                "files_hash",
+                "size"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "version_number": {
+                    "title": "Version number",
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 0,
+                    "x-nullable": true
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "files_hash": {
+                    "title": "Files hash",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "files_manifest": {
+                    "title": "Files manifest",
+                    "type": "object"
+                },
+                "size": {
+                    "title": "Size",
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 0
+                },
+                "created_by": {
+                    "title": "Created by",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "LibrarySkillPromotion": {
+            "required": [
+                "version",
+                "tag"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "tag": {
+                    "title": "Tag",
+                    "type": "string",
+                    "enum": [
+                        "staging",
+                        "production"
+                    ]
+                },
+                "tested": {
+                    "title": "Tested",
+                    "type": "boolean"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "created_by": {
+                    "title": "Created by",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "LibrarySkillUsage": {
+            "required": [
+                "agent_definition_id",
+                "agent_name"
+            ],
+            "type": "object",
+            "properties": {
+                "agent_definition_id": {
+                    "title": "Agent definition id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "agent_name": {
+                    "title": "Agent name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tag": {
+                    "title": "Tag",
+                    "type": "string",
+                    "enum": [
+                        "staging",
+                        "production"
+                    ]
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "LibrarySkillDetail": {
+            "required": [
+                "name",
+                "versions",
+                "tags",
+                "promotions",
+                "attachments"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "skill",
+                        "context"
+                    ]
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillVersion"
+                    }
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillTag"
+                    }
+                },
+                "promotions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillPromotion"
+                    }
+                },
+                "attachments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillUsage"
+                    }
+                },
+                "created_by": {
+                    "title": "Created by",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "LibrarySkillAttached": {
+            "required": [
+                "skill_id",
+                "name",
+                "kind",
+                "tag",
+                "pinned_version",
+                "resolved_version",
+                "attached_at"
+            ],
+            "type": "object",
+            "properties": {
+                "skill_id": {
+                    "title": "Skill id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "skill",
+                        "context"
+                    ]
+                },
+                "tag": {
+                    "title": "Tag",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "pinned_version": {
+                    "title": "Pinned version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "resolved_version": {
+                    "title": "Resolved version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "attached_at": {
+                    "title": "Attached at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "LibrarySkillInCodeItem": {
+            "required": [
+                "name",
+                "files_hash"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "skill",
+                        "context"
+                    ]
+                },
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "files_hash": {
+                    "title": "Files hash",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "readable": {
+                    "title": "Readable",
+                    "type": "boolean"
+                },
+                "problem": {
+                    "title": "Problem",
+                    "type": "string",
+                    "maxLength": 64
+                }
+            }
+        },
+        "LibrarySkillInCode": {
+            "required": [
+                "agent_version_number",
+                "status",
+                "items"
+            ],
+            "type": "object",
+            "properties": {
+                "agent_version_number": {
+                    "title": "Agent version number",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "scanned",
+                        "source_missing",
+                        "too_large",
+                        "not_scanned",
+                        "unsupported_source",
+                        "no_version"
+                    ]
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillInCodeItem"
+                    }
+                }
+            }
+        },
+        "LibrarySkillCopy": {
+            "required": [
+                "agent_definition_id"
+            ],
+            "type": "object",
+            "properties": {
+                "agent_definition_id": {
+                    "title": "Agent definition id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "LibrarySkillInCodeFiles": {
+            "required": [
+                "files"
+            ],
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillFile"
+                    }
+                }
+            }
+        },
+        "LibrarySkillAttach": {
+            "required": [
+                "agent_definition_id"
+            ],
+            "type": "object",
+            "properties": {
+                "agent_definition_id": {
+                    "title": "Agent definition id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "tag": {
+                    "title": "Tag",
+                    "type": "string",
+                    "enum": [
+                        "staging",
+                        "production"
+                    ],
+                    "x-nullable": true
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "LibrarySkillAttachment": {
+            "required": [
+                "agent_definition_id"
+            ],
+            "type": "object",
+            "properties": {
+                "skill_id": {
+                    "title": "Skill id",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "agent_definition_id": {
+                    "title": "Agent definition id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "tag": {
+                    "title": "Tag",
+                    "type": "string",
+                    "enum": [
+                        "staging",
+                        "production"
+                    ]
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "LibrarySkillDetach": {
+            "required": [
+                "agent_definition_id"
+            ],
+            "type": "object",
+            "properties": {
+                "agent_definition_id": {
+                    "title": "Agent definition id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "LibrarySkillPromote": {
+            "required": [
+                "version",
+                "tag"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "tag": {
+                    "title": "Tag",
+                    "type": "string",
+                    "enum": [
+                        "staging",
+                        "production"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 1000
+                }
+            }
+        },
+        "LibrarySkillTestCreate": {
+            "required": [
+                "version",
+                "agent_definition_id",
+                "environment_id",
+                "scenario_keys"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "agent_definition_id": {
+                    "title": "Agent definition id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 200
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "default": 1,
+                    "maximum": 20,
+                    "minimum": 1
+                }
+            }
+        },
+        "LibrarySkillTest": {
+            "required": [
+                "version",
+                "agent_definition_id",
+                "agent_name",
+                "environment_id",
+                "summary"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "baseline_version": {
+                    "title": "Baseline version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "agent_definition_id": {
+                    "title": "Agent definition id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "agent_name": {
+                    "title": "Agent name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "run_a_execution_id": {
+                    "title": "Run a execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "run_b_execution_id": {
+                    "title": "Run b execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "scenario_keys": {
+                    "title": "Scenario keys",
+                    "type": "object"
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "maximum": 32767,
+                    "minimum": 0
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "running",
+                        "finished",
+                        "failed"
+                    ]
+                },
+                "verdict": {
+                    "title": "Verdict",
+                    "type": "string",
+                    "enum": [
+                        "helps",
+                        "helps_with_regression",
+                        "no_improvement",
+                        "not_used",
+                        "inconclusive"
+                    ]
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "created_by": {
+                    "title": "Created by",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "LibrarySkillVersionCreate": {
+            "required": [
+                "files"
+            ],
+            "type": "object",
+            "properties": {
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 255
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillFile"
+                    }
+                }
+            }
+        },
+        "LibrarySkillVersionFiles": {
+            "required": [
+                "version",
+                "files"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LibrarySkillFile"
                     }
                 }
             }
@@ -155862,6 +157362,63 @@
             },
             "x-nullable": true
         },
+        "RunSkillLoad": {
+            "required": [
+                "name",
+                "kind",
+                "origin",
+                "version_number",
+                "from_tag",
+                "observed",
+                "loaded_in",
+                "total"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "origin": {
+                    "title": "Origin",
+                    "type": "string",
+                    "enum": [
+                        "library",
+                        "repo"
+                    ]
+                },
+                "version_number": {
+                    "title": "Version number",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "from_tag": {
+                    "title": "From tag",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "observed": {
+                    "title": "Observed",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "loaded_in": {
+                    "title": "Loaded in",
+                    "type": "integer"
+                },
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                }
+            }
+        },
         "RunExecution": {
             "required": [
                 "id",
@@ -155962,6 +157519,13 @@
                 },
                 "fix_run": {
                     "$ref": "#/definitions/RunFixRun"
+                },
+                "skills": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RunSkillLoad"
+                    },
+                    "default": []
                 }
             }
         },
