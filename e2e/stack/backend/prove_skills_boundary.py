@@ -25,6 +25,7 @@ def main(mode: str) -> None:
     os.environ["SKILLS_VERIFIED_MODELS"] = ""
     os.environ["SKILLS_TESTING_ENABLED"] = "false"
     os.environ["SKILLS_GITHUB_ENABLED"] = "false"
+    os.environ["SKILLS_CONTEXT_CONSUMPTION_ENABLED"] = "false"
     os.environ["OPENAI_API_BASE"] = "https://unapproved.invalid/v1"
     os.environ["E2E_SKILLS_API_BASE"] = "https://unapproved.invalid/v1"
 
@@ -48,6 +49,7 @@ def main(mode: str) -> None:
     )
     assert settings.SKILLS_TESTING_ENABLED == (mode == "overlay-on")
     assert settings.SKILLS_GITHUB_ENABLED == (mode == "overlay-on")
+    assert settings.SKILLS_CONTEXT_CONSUMPTION_ENABLED == (mode == "overlay-on")
     assert list(settings.SKILLS_VERIFIED_MODELS) == (
         ["gpt-4o-mini"] if mode == "overlay-on" else []
     )

@@ -20,6 +20,10 @@ if os.environ.get("E2E_SKILLS_FIXTURES") == "1":
     SKILLS_GITHUB_ENABLED = True
     SKILLS_VERIFIED_MODELS = ["gpt-4o-mini"]
 
+    # J6: exercise purpose-bound reporting on the isolated managed stack.
+    # This is not qualification of a production SDK, runtime or application.
+    SKILLS_CONTEXT_CONSUMPTION_ENABLED = True
+
 # The managed mock stack has no EE license. This test-image-only registry
 # replacement keeps the product capability decision and image untouched.
 FEATURE_REGISTRY["error_feed"] = replace(
