@@ -76,7 +76,7 @@ func TestSavedAPIFormatSelectsNativeAdapter(t *testing.T) {
 			}
 			defer provider.Close()
 			response, err := provider.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
-				Model: "synthetic-model",
+				Model:    "synthetic-model",
 				Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"synthetic request"`)}},
 			})
 			if err != nil {
