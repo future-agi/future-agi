@@ -33,6 +33,16 @@ export function variationsNote(picked, limits, agentKind) {
   return `${note} With fewer than ${limits.verified_cases_min} failing cases it can only end with Limited validation${draft}.`;
 }
 
+// Whether Start is disabled only by the environment's unsaved scenario changes, which
+// the variations would be written on top of: the user can save or discard them.
+export function blockedByDraft(options, picked) {
+  return (
+    !options.blocked &&
+    needsVariations(picked, options.limits) &&
+    options.variations_blocked?.code === "fix_suite_draft_open"
+  );
+}
+
 // Why Start is disabled by the platform: the fix itself, or the variations it
 // would write first.
 export function blockedReason(options, picked) {
