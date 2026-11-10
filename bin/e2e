@@ -77,6 +77,7 @@ build_target() {
                docker build -t futureagi/future-agi:e2e-local --build-arg BASE_TAG=e2e-base -f "$ROOT/e2e/stack/backend/Dockerfile" "$ROOT"
                echo "built. run with: FUTURE_AGI_VERSION=e2e-local bin/e2e up" ;;
     frontend)  docker build -t futureagi/frontend:e2e-local "$ROOT/frontend"
+               docker build --build-arg BASE_TAG=e2e-local -t futureagi/frontend:e2e-local -f "$ROOT/e2e/stack/frontend/Dockerfile" "$ROOT"
                echo "built. run with: FRONTEND_VERSION=e2e-local bin/e2e up" ;;
     collector) docker build -t futureagi/fi-collector:e2e-local "$ROOT/fi-collector"
                echo "built. run with: E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
@@ -95,6 +96,7 @@ build_target() {
       docker build -t "futureagi/future-agi:$tag" --build-arg IMAGE_VARIANT=slim -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
       docker build --build-arg BASE_TAG="$tag" -t "futureagi/future-agi:$tag" -f "$ROOT/e2e/stack/backend/Dockerfile" "$ROOT"
       docker build -t "futureagi/frontend:$tag" "$ROOT/frontend"
+      docker build --build-arg BASE_TAG="$tag" -t "futureagi/frontend:$tag" -f "$ROOT/e2e/stack/frontend/Dockerfile" "$ROOT"
       docker build -t "futureagi/fi-collector:$tag" "$ROOT/fi-collector"
       docker build -t "futureagi/agentcc-gateway:$tag" "$ROOT/agentcc-gateway"
       docker build -t "futureagi/code-executor:$tag" "$ROOT/futureagi/code-executor"

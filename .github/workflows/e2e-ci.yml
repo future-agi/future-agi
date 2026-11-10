@@ -263,6 +263,14 @@ jobs:
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:frontend
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:frontend,mode=max', env.CACHE_REPO) || '' }}
 
+      - name: Add local editor assets to the E2E frontend
+        if: env.BUILD_FRONTEND == 'true'
+        run: >
+          docker build
+          --build-arg BASE_TAG="$IMAGE_TAG"
+          -t "futureagi/frontend:$IMAGE_TAG"
+          -f e2e/stack/frontend/Dockerfile .
+
       - name: Build agentcc-gateway image from PR code
         # The eval flow routes the mock LLM through the gateway, so gateway
         # changes have to run as built code, not as released :latest.
