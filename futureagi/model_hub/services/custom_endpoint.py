@@ -113,7 +113,9 @@ def post_custom_endpoint(
             decode_content=False,
         )
         if response.headers.get("Content-Encoding", "identity").lower() != "identity":
-            raise CustomEndpointError("Compressed custom model responses are not supported.")
+            raise CustomEndpointError(
+                "Compressed custom model responses are not supported."
+            )
         if 300 <= response.status < 400:
             raise CustomEndpointError(
                 "Custom model endpoint redirects are not supported."

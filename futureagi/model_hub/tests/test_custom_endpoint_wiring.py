@@ -46,7 +46,9 @@ def test_execution_uses_safe_transport_without_logging_url(caplog):
 def test_execution_returns_safe_refusal_without_credentials(caplog):
     with patch(
         "agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.custom_model_handler.post_custom_endpoint",
-        side_effect=CustomEndpointError("Custom model endpoint request refused or unavailable."),
+        side_effect=CustomEndpointError(
+            "Custom model endpoint request refused or unavailable."
+        ),
     ):
         with pytest.raises(CustomEndpointError, match="refused or unavailable"):
             handler()._make_custom_api_request({}, time.time())
@@ -59,16 +61,28 @@ def test_validation_uses_safe_transport_and_preserves_configuration():
     response = requests.Response()
     response.status_code = 200
     response._content = b"synthetic-result"
-    with patch("model_hub.utils.utils.post_custom_endpoint", return_value=response) as post:
-        assert validate_model_working("synthetic-model", {"config_json": config}, "custom") == "synthetic-result"
+    with patch(
+        "model_hub.utils.utils.post_custom_endpoint", return_value=response
+    ) as post:
+        assert (
+            validate_model_working("synthetic-model", {"config_json": config}, "custom")
+            == "synthetic-result"
+        )
     assert post.call_args.kwargs["url"] == ENDPOINT
     assert post.call_args.kwargs["headers"] == HEADERS
     assert config == {"api_base": ENDPOINT, "headers": HEADERS, "custom_provider": True}
 
 
 def test_custom_readback_fully_redacts_short_and_nested_credentials():
-    config = {"api_base": ENDPOINT, "headers": HEADERS, "other": ["xy", {"key": "z"}], "custom_provider": True}
-    instance = SimpleNamespace(provider="custom", key_config={"stored": True}, actual_json=config)
+    config = {
+        "api_base": ENDPOINT,
+        "headers": HEADERS,
+        "other": ["xy", {"key": "z"}],
+        "custom_provider": True,
+    }
+    instance = SimpleNamespace(
+        provider="custom", key_config={"stored": True}, actual_json=config
+    )
     assert CustomAIModelSerializer().get_config_json(instance) == {
         "api_base": "********",
         "headers": {"X-Short": "********", "X-Key": "********"},

@@ -16,8 +16,6 @@ from typing import Any, Dict, Optional, Tuple
 
 import structlog
 
-from model_hub.services.custom_endpoint import CustomEndpointError, post_custom_endpoint
-
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
     BaseModelHandler,
     HandlerResponse,
@@ -26,6 +24,7 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.payload_builder import (
     PayloadBuilder,
 )
+from model_hub.services.custom_endpoint import CustomEndpointError, post_custom_endpoint
 
 logger = structlog.get_logger(__name__)
 
