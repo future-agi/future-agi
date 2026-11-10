@@ -44,7 +44,7 @@ export function safeLog(line, service) {
   // ConsoleRenderer. In either case retain only known events and typed fields.
   const start = line.indexOf('{');
   let value;
-  try { value = JSON.parse(line.slice(start)); } catch { /* Try the local renderer below. */ }
+  try { if (start >= 0) value = JSON.parse(line.slice(start)); } catch { /* Try the local renderer below. */ }
   if (!value) {
     const plain = line.replace(/\x1b\[[0-9;]*m/g, '');
     const event = plain.match(/\[(?:warning|info|error)\s*\]\s+([a-z_]+)(?:\s|$)/)?.[1];

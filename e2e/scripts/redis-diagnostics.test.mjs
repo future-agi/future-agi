@@ -31,6 +31,11 @@ test('E2E local ConsoleRenderer retains typed cache attribution without raw fiel
     error_class: 'ConnectionInterrupted', cause_class: 'TimeoutError', source_function: 'decode_token', source_line: 1036 });
 });
 
+test('console records ending in a digit are not mistaken for JSON scalars', () => {
+  assert.deepEqual(safeLog(`${timestamp} [warning  ] api_cache_unavailable source_line=123`, 'backend'),
+    { timestamp, service: 'backend', event: 'api_cache_unavailable', source_line: 123 });
+});
+
 test('Redis evidence is an allowlist of numeric counters and lifecycle events', () => {
   assert.deepEqual(redisInfo('used_memory:123\r\nrejected_connections:2\r\nmaster_host:secret\r\nerrorstat_OOM:count=4\r\naof_delayed_fsync:5'),
     { used_memory: 123, rejected_connections: 2, errorstat_OOM: 4, aof_delayed_fsync: 5 });
