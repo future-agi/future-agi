@@ -122,7 +122,7 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 			orgCache := providers.NewOrgProviderCache(map[string]config.ProviderConfig{
 				"fast": {BaseURL: org.URL, APIFormat: "openai", Models: orgModels},
 			}, false)
-			t.Cleanup(func() { orgCache.Close() })
+			t.Cleanup(orgCache.EvictAll)
 			srv.handlers.tenantStore = store
 			srv.handlers.orgProviderCache = orgCache
 			srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
