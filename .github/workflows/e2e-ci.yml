@@ -363,8 +363,17 @@ jobs:
         id: boot
         run: bin/e2e up
 
-      - name: Run E2E suite
-        run: bin/e2e test
+      - name: Run E2E suite with bounded Redis diagnostics
+        run: node e2e/scripts/redis-diagnostics.mjs --output-dir "$RUNNER_TEMP/redis-diagnostics" -- bin/e2e test
+
+      - name: Upload Redis diagnostics
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-diagnostics-${{ matrix.stack }}
+          path: ${{ runner.temp }}/redis-diagnostics
+          retention-days: 3
+          if-no-files-found: warn
 
       - name: Prove host update assertion fallibility
         id: host-update-fallibility
