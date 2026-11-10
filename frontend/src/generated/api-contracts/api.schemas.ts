@@ -20002,7 +20002,19 @@ export type EvidenceImportCaseApiStatus =
 export const EvidenceImportCaseApiStatus = {
   pending: "pending",
   unavailable: "unavailable",
+  drafted: "drafted",
+  blocked: "blocked",
+  added: "added",
 } as const;
+
+/**
+ * Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.
+ */
+export interface EvidenceNewCheckApi {
+  /** @minLength 1 */
+  name: string;
+  what: string;
+}
 
 export type EvidenceTranscriptApiStatus =
   (typeof EvidenceTranscriptApiStatus)[keyof typeof EvidenceTranscriptApiStatus];
@@ -20137,6 +20149,12 @@ export interface EvidenceImportCaseApi {
   source_id: string;
   status: EvidenceImportCaseApiStatus;
   reason: string;
+  /** False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. */
+  source_available: boolean;
+  /** The drafted scenario's key, once drafted. */
+  scenario_key: string;
+  /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
+  new_checks: EvidenceNewCheckApi[];
   /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. */
   changed_since_import: boolean;
   trace_ids: string[];
@@ -20221,6 +20239,49 @@ export interface EvidenceImportApi {
   created_at: string;
   cases: EvidenceImportCaseApi[];
   redaction: EvidenceRedactionApi;
+}
+
+export interface EvidenceDraftRefApi {
+  id: string;
+  /** @minimum 0 */
+  revision: number;
+}
+
+/**
+ * The unsaved changes the review saw (GET drafts); none means the suite is saved with the cases.
+ */
+export interface EvidenceExpectedDraftsApi {
+  environment: EvidenceDraftRefApi;
+  suite: EvidenceDraftRefApi;
+}
+
+export interface EvidenceImportAddApi {
+  /**
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids: string[];
+  expected_drafts: EvidenceExpectedDraftsApi;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key: string;
+}
+
+export interface EvidenceImportAddResponseApi {
+  /** True: the suite was saved with the cases. False: they joined the unsaved changes beside other edits. */
+  saved: boolean;
+  evidence_import: EvidenceImportApi;
+}
+
+export interface EvidenceImportDraftApi {
+  /**
+   * The import's waiting cases the environment's builder drafts.
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids: string[];
 }
 
 export type HarnessNudgeApiTarget =

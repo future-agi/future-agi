@@ -45,6 +45,15 @@ class EvidenceImport(BaseModel):
         related_name="+",
     )
     source_kind = models.CharField(max_length=16, choices=SourceKind.choices)
+    # The throwaway job whose builder chat is drafting cases now; it and its chat
+    # are deleted once the turn settles.
+    drafting_job = models.ForeignKey(
+        "simulate.HostedHarnessJob",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="evidence_drafting",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -70,6 +79,9 @@ class EvidenceImportCase(BaseModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending review"
         UNAVAILABLE = "unavailable", "Unavailable"
+        DRAFTED = "drafted", "Drafted"
+        BLOCKED = "blocked", "Blocked"
+        ADDED = "added", "Added to the suite"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     evidence_import = models.ForeignKey(
@@ -85,6 +97,14 @@ class EvidenceImportCase(BaseModel):
     # SHA-256 of what the source held when the import was made; blank when it
     # held nothing the project still keeps.
     digest = models.CharField(max_length=64, blank=True, default="")
+    # The scenario the builder drafted for the case: its key, its folder (suite
+    # files only, never the environment's) and the environment it was proved on.
+    scenario_key = models.CharField(max_length=255, blank=True, default="")
+    proposal_object_key = models.CharField(max_length=512, blank=True, default="")
+    environment_hash = models.CharField(max_length=128, blank=True, default="")
+    # Checks the builder added to the environment's catalogue for this scenario,
+    # as catalogue entries (ALK's SubGoal): new names only, never an edit.
+    new_sub_goals = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "simulate_evidence_import_case"

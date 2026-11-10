@@ -24,7 +24,7 @@ from tracer.selectors.observe_evidence import (
     Turn,
     observe_evidence,
 )
-from tracer.utils.pii_scrubber import find_pii, find_pii_basic
+from tracer.utils.pii_scrubber import PiiFinding, find_pii, find_pii_basic, redact
 
 # Sources one import may hold.
 MAX_SOURCES = 20
@@ -35,6 +35,8 @@ MAX_SOURCES = 20
 MAX_IMPORT_CHARS = 60_000
 # Findings one bundle lists; the rest are counted.
 MAX_FINDINGS = 1000
+# The longest line of the evidence document a builder reads.
+DOCUMENT_LINE_CHARS = 1000
 
 STATE_MISSING = (
     "Observe does not record the records the agent's tools read before the "
@@ -273,6 +275,9 @@ def _cut_labels(labels: tuple[Label, ...], room: int) -> tuple[tuple[Label, ...]
 
 def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
     if evidence is None:
+        # A drafted, blocked or added case keeps what became of it; only one
+        # still waiting reads as unavailable. Its evidence is gone either way.
+        pending = case.status == EvidenceImportCase.Status.PENDING
         reason = (
             case.reason
             if case.status == EvidenceImportCase.Status.UNAVAILABLE
@@ -281,8 +286,11 @@ def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
         return {
             "id": case.id,
             "source_id": case.source_id,
-            "status": EvidenceImportCase.Status.UNAVAILABLE,
-            "reason": reason,
+            "status": EvidenceImportCase.Status.UNAVAILABLE if pending else case.status,
+            "reason": reason if pending or not case.reason else case.reason,
+            "source_available": False,
+            "scenario_key": case.scenario_key,
+            "new_checks": _new_checks(case),
             "changed_since_import": None,
             "trace_ids": [],
             "started_at": None,
@@ -300,6 +308,9 @@ def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
         "source_id": case.source_id,
         "status": case.status,
         "reason": case.reason,
+        "source_available": True,
+        "scenario_key": case.scenario_key,
+        "new_checks": _new_checks(case),
         # Unknown when either side could not be read in full.
         "changed_since_import": (
             digest != case.digest if digest and case.digest else None
@@ -312,6 +323,13 @@ def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
         "starting_state": _part("missing", STATE_MISSING),
         "labels": _labels(evidence),
     }
+
+
+def _new_checks(case: EvidenceImportCase) -> list[dict]:
+    return [
+        {"name": str(one.get("name") or ""), "what": str(one.get("what") or "")}
+        for one in case.new_sub_goals or []
+    ]
 
 
 def _part(status: str, reason: str = "", **items) -> dict:
@@ -399,12 +417,10 @@ def _labels(evidence: SourceEvidence) -> dict:
     return _part("present", labels=labels)
 
 
-def _redaction(
+def _texts(
     cases: list[EvidenceImportCase], evidence: dict[str, SourceEvidence | None]
-) -> dict:
-    """What redaction would replace in every text the bundle carries, analysed
-    in one batch. Without Presidio, a fixed-shape match stands in and the
-    reason says what it could not check."""
+) -> list[tuple[EvidenceImportCase, str, int, str, str]]:
+    """Every text the bundle carries, as (case, part, index, field, text)."""
     values: list[tuple[EvidenceImportCase, str, int, str, str]] = []
     for case in cases:
         source = evidence.get(case.source_id)
@@ -426,11 +442,24 @@ def _redaction(
             values.append((case, "labels", i, "notes", label.notes))
             if isinstance(label.value, str):
                 values.append((case, "labels", i, "value", label.value))
-    texts = [text for *_, text in values]
+    return values
+
+
+def _analysed(texts: list[str]) -> tuple[list[list[PiiFinding]], str, str]:
+    """Each text's findings, analysed in one batch, with the method and its
+    reason. Without Presidio, a fixed-shape match stands in."""
     found = find_pii(texts)
-    method, reason = "presidio", ""
     if found is None:
-        found, method, reason = find_pii_basic(texts), "basic", BASIC_REDACTION
+        return find_pii_basic(texts), "basic", BASIC_REDACTION
+    return found, "presidio", ""
+
+
+def _redaction(
+    cases: list[EvidenceImportCase], evidence: dict[str, SourceEvidence | None]
+) -> dict:
+    """What redaction would replace in every text the bundle carries."""
+    values = _texts(cases, evidence)
+    found, method, reason = _analysed([text for *_, text in values])
     findings = [
         {
             "case_id": case.id,
@@ -448,3 +477,96 @@ def _redaction(
         "findings": findings[:MAX_FINDINGS],
         "total": len(findings),
     }
+
+
+def evidence_document(
+    evidence_import: EvidenceImport,
+    case_ids: list,
+    evidence: dict[str, SourceEvidence] | None = None,
+) -> str:
+    """The evidence a builder turn reads for ``case_ids``, every value redacted
+    (all findings, not only the listed ones), one value per line and no line
+    longer than DOCUMENT_LINE_CHARS, since a builder's Read cuts long lines.
+    A case with nothing to read is left out."""
+    wanted = {str(case_id) for case_id in case_ids}
+    cases = [
+        case
+        for case in evidence_import.cases.all()
+        if str(case.id) in wanted
+        and case.status != EvidenceImportCase.Status.UNAVAILABLE
+    ]
+    if evidence is None:
+        evidence = import_evidence(
+            evidence_import.project,
+            evidence_import.source_kind,
+            [case.source_id for case in cases],
+        )
+    values = _texts(cases, evidence)
+    found, method, reason = _analysed([text for *_, text in values])
+    redacted = {
+        (case.id, part, index, field): redact(text, hits)
+        for (case, part, index, field, text), hits in zip(values, found, strict=True)
+    }
+    lines = [
+        f"# Evidence import {evidence_import.id}: {evidence_import.source_kind}s "
+        f"from Observe project {evidence_import.project_id}.",
+        "# Personal data is replaced with tokens such as <EMAIL_ADDRESS>."
+        + (f" {reason}" if reason else ""),
+        "# Observe never records the starting state: anything you assume about "
+        "it is synthetic and must be labelled so.",
+        "# Labels are what annotators said: input evidence, not the expected answer.",
+    ]
+    for case in cases:
+        source = evidence.get(case.source_id)
+        if source is None:
+            continue
+        lines += [
+            "",
+            f"== case {case.id} ({evidence_import.source_kind} {case.source_id}, "
+            f"traces {', '.join(source.trace_ids)}, "
+            f"{source.started_at.isoformat()} to {source.ended_at.isoformat()})",
+            f"-- transcript: {_transcript(source)['status']}",
+        ]
+        for i, turn in enumerate(source.turns):
+            lines += _wrapped(
+                f"[turn {i + 1}] {turn.role}",
+                redacted[(case.id, "transcript", i, "text")],
+            )
+        lines.append(f"-- tool calls: {_tools(source)['tool_calls']['status']}")
+        for i, call in enumerate(source.tool_calls or ()):
+            lines.append(
+                f"[call {i + 1}] {call.name} at {call.at.isoformat()}"
+                + (" FAILED" if call.failed else "")
+            )
+            for field in ("input", "output", "error"):
+                text = redacted[(case.id, "tool_calls", i, field)]
+                if text:
+                    lines += _wrapped(f"[call {i + 1}] {field}", text)
+        lines.append(f"-- labels: {_labels(source)['status']}")
+        for i, label in enumerate(source.labels):
+            value = (
+                redacted[(case.id, "labels", i, "value")]
+                if isinstance(label.value, str)
+                else json.dumps(label.value)
+            )
+            lines += _wrapped(
+                f"[label {i + 1}] {label.name} on the {label.target}", value
+            )
+            notes = redacted[(case.id, "labels", i, "notes")]
+            if notes:
+                lines += _wrapped(f"[label {i + 1}] notes", notes)
+    return "\n".join(lines) + "\n"
+
+
+def _wrapped(head: str, text: str) -> list[str]:
+    """``head: text`` as lines of at most DOCUMENT_LINE_CHARS, newlines kept
+    as separate lines, each continuation marked."""
+    room = DOCUMENT_LINE_CHARS - len(head) - len(" (cont.): ")
+    pieces = [
+        line[start : start + room]
+        for line in (text.splitlines() or [""])
+        for start in range(0, max(len(line), 1), room)
+    ]
+    return [
+        f"{head}{' (cont.)' if n else ''}: {piece}" for n, piece in enumerate(pieces)
+    ]

@@ -3383,6 +3383,13 @@ class HostedHarnessGateway:
                 _CHAT_CAPABILITIES_PATH,
             )
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
+            from simulate.services import evidence_drafts
+
+            # An evidence drafting chat reads its redacted evidence from outside the
+            # workspace, so no checkpoint carries it.
+            evidence = evidence_drafts.sandbox_evidence(conversation)
+            if evidence is not None:
+                sandbox.fs.upload_file(evidence, evidence_drafts.EVIDENCE_PATH)
             overlay = _alk_source_overlay()
             if overlay is not None:
                 sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -3398,6 +3405,11 @@ class HostedHarnessGateway:
                     "mkdir -p /work/alk-src && tar -xzf /work/alk-src.tar.gz -C /work/alk-src && "
                     "rm /work/alk-src.tar.gz && "
                     if overlay is not None
+                    else ""
+                )
+                + (
+                    f"chmod 0444 {evidence_drafts.EVIDENCE_PATH} && "
+                    if evidence is not None
                     else ""
                 )
                 + f"chmod 0600 /work/job.json {_CHAT_CAPABILITIES_PATH} "
@@ -5762,7 +5774,9 @@ def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -
     environment = job.environment or job
     job_ids = [
         environment.id,
-        *environment.simulation_runs.values_list("id", flat=True),
+        *environment.simulation_runs.filter(evidence_drafting__isnull=True).values_list(
+            "id", flat=True
+        ),
     ]
     refs = set(
         HostedHarnessConversationLease.no_workspace_objects.filter(
@@ -5964,7 +5978,9 @@ def rewrite_conversation_scenarios(job: HostedHarnessJob, suite: list[dict]) -> 
         HostedHarnessConversation.no_workspace_objects.filter(
             job_id__in=[
                 environment.id,
-                *environment.simulation_runs.values_list("id", flat=True),
+                *environment.simulation_runs.filter(
+                    evidence_drafting__isnull=True
+                ).values_list("id", flat=True),
             ],
             latest_workspace_object_key__isnull=False,
         )

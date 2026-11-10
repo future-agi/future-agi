@@ -52096,6 +52096,104 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_evidence-imports_add_evidence_cases",
+                "description": "Add an import's drafted cases to the suite: saved with them when the\nreview saw no unsaved changes, else beside those changes in the draft.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImportAdd"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImportAddResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "import_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_evidence-imports_draft_evidence_cases",
+                "description": "Ask the environment's builder to draft a scenario for each of an import's\nwaiting cases. The turn runs in a chat of the import's own; nothing it does\nreaches the environment until a person adds the drafted cases.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImportDraft"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EvidenceImport"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "import_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/nudges/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_nudges",
@@ -141890,6 +141988,25 @@
                 }
             }
         },
+        "EvidenceNewCheck": {
+            "description": "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+            "required": [
+                "name",
+                "what"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "what": {
+                    "title": "What",
+                    "type": "string"
+                }
+            }
+        },
         "EvidenceTurn": {
             "required": [
                 "role",
@@ -142153,6 +142270,9 @@
                 "source_id",
                 "status",
                 "reason",
+                "source_available",
+                "scenario_key",
+                "new_checks",
                 "changed_since_import",
                 "trace_ids",
                 "started_at",
@@ -142181,12 +142301,32 @@
                     "type": "string",
                     "enum": [
                         "pending",
-                        "unavailable"
+                        "unavailable",
+                        "drafted",
+                        "blocked",
+                        "added"
                     ]
                 },
                 "reason": {
                     "title": "Reason",
                     "type": "string"
+                },
+                "source_available": {
+                    "title": "Source available",
+                    "description": "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands.",
+                    "type": "boolean"
+                },
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "description": "The drafted scenario's key, once drafted.",
+                    "type": "string"
+                },
+                "new_checks": {
+                    "description": "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceNewCheck"
+                    }
                 },
                 "changed_since_import": {
                     "title": "Changed since import",
@@ -142396,6 +142536,105 @@
                 },
                 "redaction": {
                     "$ref": "#/definitions/EvidenceRedaction"
+                }
+            }
+        },
+        "EvidenceDraftRef": {
+            "required": [
+                "id",
+                "revision"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "EvidenceExpectedDrafts": {
+            "description": "The unsaved changes the review saw (GET drafts); none means the suite is saved with the cases.",
+            "required": [
+                "environment",
+                "suite"
+            ],
+            "type": "object",
+            "properties": {
+                "environment": {
+                    "$ref": "#/definitions/EvidenceDraftRef"
+                },
+                "suite": {
+                    "$ref": "#/definitions/EvidenceDraftRef"
+                }
+            }
+        },
+        "EvidenceImportAdd": {
+            "required": [
+                "case_ids",
+                "expected_drafts",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "case_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1
+                },
+                "expected_drafts": {
+                    "$ref": "#/definitions/EvidenceExpectedDrafts"
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            }
+        },
+        "EvidenceImportAddResponse": {
+            "required": [
+                "saved",
+                "evidence_import"
+            ],
+            "type": "object",
+            "properties": {
+                "saved": {
+                    "title": "Saved",
+                    "description": "True: the suite was saved with the cases. False: they joined the unsaved changes beside other edits.",
+                    "type": "boolean"
+                },
+                "evidence_import": {
+                    "$ref": "#/definitions/EvidenceImport"
+                }
+            }
+        },
+        "EvidenceImportDraft": {
+            "required": [
+                "case_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "case_ids": {
+                    "description": "The import's waiting cases the environment's builder drafts.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1
                 }
             }
         },

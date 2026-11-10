@@ -303,6 +303,13 @@ def find_pii_basic(texts: Sequence[str]) -> list[list[PiiFinding]]:
     return found
 
 
+def redact(text: str, findings: Sequence[PiiFinding]) -> str:
+    """``text`` with each finding replaced by its token."""
+    for finding in sorted(findings, key=lambda f: f.start, reverse=True):
+        text = text[: finding.start] + finding.replacement + text[finding.end :]
+    return text
+
+
 def _luhn(number: str) -> bool:
     digits = [int(d) for d in number if d.isdigit()]
     checksum = sum(digits[-1::-2]) + sum(sum(divmod(2 * d, 10)) for d in digits[-2::-2])

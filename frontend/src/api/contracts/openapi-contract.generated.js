@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1130,
+  endpointCount: 1132,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28840,6 +28840,48 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_evidence-imports_add_evidence_cases",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EvidenceImportAdd",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/EvidenceImportAddResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_evidence-imports_draft_evidence_cases",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EvidenceImportDraft",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/EvidenceImport",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/harness-environments/{id}/nudges/": {
       get: {
         operationId: "simulate_api_harness-environments_nudges",
@@ -63528,6 +63570,45 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EvidenceImportAdd: {
+      required: ["case_ids", "expected_drafts", "idempotency_key"],
+      type: "object",
+      properties: {
+        case_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+        expected_drafts: {
+          $ref: "#/definitions/EvidenceExpectedDrafts",
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
+    EvidenceImportAddResponse: {
+      required: ["saved", "evidence_import"],
+      type: "object",
+      properties: {
+        saved: {
+          title: "Saved",
+          description:
+            "True: the suite was saved with the cases. False: they joined the unsaved changes beside other edits.",
+          type: "boolean",
+        },
+        evidence_import: {
+          $ref: "#/definitions/EvidenceImport",
+        },
+      },
+    },
     EvidenceImportCreate: {
       required: ["project_id", "source_kind", "ids"],
       type: "object",
@@ -63545,6 +63626,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         ids: {
           description:
             "Session ids, or the trace ids of calls, in the order picked.",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+      },
+    },
+    EvidenceImportDraft: {
+      required: ["case_ids"],
+      type: "object",
+      properties: {
+        case_ids: {
+          description:
+            "The import's waiting cases the environment's builder drafts.",
           type: "array",
           items: {
             type: "string",
@@ -99430,6 +99528,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "source_id",
         "status",
         "reason",
+        "source_available",
+        "scenario_key",
+        "new_checks",
         "changed_since_import",
         "trace_ids",
         "started_at",
@@ -99456,11 +99557,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["pending", "unavailable"],
+          enum: ["pending", "unavailable", "drafted", "blocked", "added"],
         },
         reason: {
           title: "Reason",
           type: "string",
+        },
+        source_available: {
+          title: "Source available",
+          description:
+            "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands.",
+          type: "boolean",
+        },
+        scenario_key: {
+          title: "Scenario key",
+          description: "The drafted scenario's key, once drafted.",
+          type: "string",
+        },
+        new_checks: {
+          description:
+            "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceNewCheck",
+          },
         },
         changed_since_import: {
           title: "Changed since import",
@@ -99534,6 +99654,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Every finding, including those past the listed ones.",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    EvidenceExpectedDrafts: {
+      description:
+        "The unsaved changes the review saw (GET drafts); none means the suite is saved with the cases.",
+      required: ["environment", "suite"],
+      type: "object",
+      properties: {
+        environment: {
+          $ref: "#/definitions/EvidenceDraftRef",
+        },
+        suite: {
+          $ref: "#/definitions/EvidenceDraftRef",
         },
       },
     },
@@ -120243,6 +120377,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EvidenceNewCheck: {
+      description:
+        "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+      required: ["name", "what"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        what: {
+          title: "What",
+          type: "string",
+        },
+      },
+    },
     EvidencePart: {
       description: "Whether the tool calls recorded their inputs.",
       required: ["status", "reason"],
@@ -120359,6 +120510,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Replacement",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    EvidenceDraftRef: {
+      required: ["id", "revision"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+          minimum: 0,
         },
       },
     },

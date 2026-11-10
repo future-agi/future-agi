@@ -30,11 +30,13 @@ from model_hub.models.ai_model import AIModel
 from simulate.models import EvidenceImport, EvidenceImportCase
 from simulate.selectors.evidence_import import (
     BASIC_REDACTION,
+    DOCUMENT_LINE_CHARS,
     MAX_IMPORT_CHARS,
     MAX_SOURCES,
     SOURCE_NOT_FOUND,
     SOURCE_UNAVAILABLE,
     evidence_digest,
+    evidence_document,
     import_evidence,
 )
 from simulate.services.hosted_harness import create_hosted_job
@@ -569,3 +571,100 @@ def test_an_environment_only_organization_imports_through_its_environment(
         response = _start(client, environment, project, {SESSION: _evidence()})
 
     assert response.status_code == status.HTTP_201_CREATED, response.data
+
+
+class TestEvidenceDocument:
+    """What a builder turn reads: redacted, one value per line, short lines."""
+
+    def _import(self, client, environment, project, found, ids=(SESSION, MISSING)):
+        made = _start(client, environment, project, found, ids=ids).json()
+        return EvidenceImport.no_workspace_objects.get(id=made["id"]), made
+
+    def test_every_value_is_redacted(self, client, environment, project):
+        found = {
+            SESSION: _evidence(
+                tool_calls=(_call("lookup", error="no customer bob@example.com"),)
+            )
+        }
+        evidence_import, made = self._import(client, environment, project, found)
+
+        with _observe(found):
+            text = evidence_document(evidence_import, [c["id"] for c in made["cases"]])
+
+        assert "jane.doe@example.com" not in text
+        assert "bob@example.com" not in text
+        body = [line for line in text.splitlines() if not line.startswith("#")]
+        assert sum(line.count("<EMAIL_ADDRESS>") for line in body) == 2
+        assert "[call 1] lookup at " in text
+        assert "starting state" in text.lower()
+
+    def test_findings_past_the_listed_ones_are_redacted_too(
+        self, client, environment, project, monkeypatch
+    ):
+        trace = str(uuid.uuid4())
+        turns = tuple(
+            Turn("user", f"mail me at person{i}@example.com", False, trace, T0)
+            for i in range(3)
+        )
+        found = {SESSION: _evidence(turns=turns)}
+        monkeypatch.setattr("simulate.selectors.evidence_import.MAX_FINDINGS", 1)
+        evidence_import, made = self._import(client, environment, project, found)
+
+        with _observe(found):
+            text = evidence_document(evidence_import, [made["cases"][0]["id"]])
+
+        assert "@example.com" not in text
+        assert made["redaction"]["total"] == 3
+        assert len(made["redaction"]["findings"]) == 1
+
+    def test_long_values_wrap_and_lose_nothing(self, client, environment, project):
+        output = "".join(f"row {i:04d} ok; " for i in range(400))
+        found = {SESSION: _evidence(tool_calls=(_call("export", output=output),))}
+        evidence_import, made = self._import(
+            client, environment, project, found, ids=(SESSION,)
+        )
+
+        with _observe(found):
+            text = evidence_document(evidence_import, [made["cases"][0]["id"]])
+
+        lines = text.splitlines()
+        assert max(len(line) for line in lines) <= DOCUMENT_LINE_CHARS
+        pieces = [
+            line.split(": ", 1)[1]
+            for line in lines
+            if line.startswith("[call 1] output")
+        ]
+        assert len(pieces) > 1
+        assert "".join(pieces) == output
+
+    def test_without_presidio_the_document_says_what_was_not_checked(
+        self, client, environment, project
+    ):
+        found = {SESSION: _evidence()}
+        evidence_import, made = self._import(client, environment, project, found)
+
+        with (
+            _observe(found),
+            patch("simulate.selectors.evidence_import.find_pii", return_value=None),
+        ):
+            text = evidence_document(evidence_import, [made["cases"][0]["id"]])
+
+        assert BASIC_REDACTION in text
+        assert "jane.doe@example.com" not in text
+
+    def test_only_the_asked_and_readable_cases_are_in_it(
+        self, client, environment, project
+    ):
+        other = str(uuid.uuid4())
+        found = {SESSION: _evidence(), other: _evidence(other)}
+        evidence_import, made = self._import(
+            client, environment, project, found, ids=(SESSION, other, MISSING)
+        )
+        asked, _, missing = made["cases"]
+
+        with _observe(found):
+            text = evidence_document(evidence_import, [asked["id"], missing["id"]])
+
+        assert f"== case {asked['id']}" in text
+        assert other not in text
+        assert f"== case {missing['id']}" not in text

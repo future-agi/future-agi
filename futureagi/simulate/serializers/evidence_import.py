@@ -74,11 +74,28 @@ class EvidenceLabelsSerializer(EvidencePartSerializer):
     labels = EvidenceLabelSerializer(many=True)
 
 
+class EvidenceNewCheckSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    what = serializers.CharField(allow_blank=True)
+
+
 class EvidenceImportCaseSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     source_id = serializers.CharField()
     status = serializers.ChoiceField(choices=EvidenceImportCase.Status.choices)
     reason = serializers.CharField(allow_blank=True)
+    source_available = serializers.BooleanField(
+        help_text="False once Observe no longer holds the source: its provenance "
+        "is unavailable, though what became of the case stands."
+    )
+    scenario_key = serializers.CharField(
+        allow_blank=True, help_text="The drafted scenario's key, once drafted."
+    )
+    new_checks = EvidenceNewCheckSerializer(
+        many=True,
+        help_text="Checks this case adds to the environment when it is added: each "
+        "one is new, never a change to an existing check.",
+    )
     changed_since_import = serializers.BooleanField(
         allow_null=True,
         help_text="Null when unknown: the source is gone, or part of it could not "
@@ -137,3 +154,41 @@ class EvidenceImportSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     cases = EvidenceImportCaseSerializer(many=True)
     redaction = EvidenceRedactionSerializer()
+
+
+class EvidenceDraftRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField(allow_null=True)
+    revision = serializers.IntegerField(min_value=0)
+
+
+class EvidenceExpectedDraftsSerializer(serializers.Serializer):
+    environment = EvidenceDraftRefSerializer()
+    suite = EvidenceDraftRefSerializer()
+
+
+class EvidenceImportAddSerializer(serializers.Serializer):
+    case_ids = serializers.ListField(
+        child=serializers.UUIDField(), min_length=1, max_length=MAX_SOURCES
+    )
+    expected_drafts = EvidenceExpectedDraftsSerializer(
+        help_text="The unsaved changes the review saw (GET drafts); none means the "
+        "suite is saved with the cases."
+    )
+    idempotency_key = serializers.CharField(max_length=128)
+
+
+class EvidenceImportAddResponseSerializer(serializers.Serializer):
+    saved = serializers.BooleanField(
+        help_text="True: the suite was saved with the cases. False: they joined the "
+        "unsaved changes beside other edits."
+    )
+    evidence_import = EvidenceImportSerializer()
+
+
+class EvidenceImportDraftSerializer(serializers.Serializer):
+    case_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        max_length=MAX_SOURCES,
+        help_text="The import's waiting cases the environment's builder drafts.",
+    )
