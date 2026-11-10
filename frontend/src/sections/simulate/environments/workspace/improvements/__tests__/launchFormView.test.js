@@ -52,7 +52,7 @@ describe("variations", () => {
       "5 failing, and up to 15 variations of them · 1 must keep passing",
     );
     expect(variationsNote(7, FLOOR)).toBe(
-      "A fix needs 12 failing cases. It first writes 3 variations of each (about 50 min), then fixes the ones the current version also fails.",
+      "A fix needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails.",
     );
     expect(variationsNote(12, FLOOR)).toBeNull();
     expect(

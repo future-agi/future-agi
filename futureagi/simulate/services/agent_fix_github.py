@@ -268,9 +268,9 @@ def _ref_head(repository: str, ref: str, branch: str, token: str) -> str | None:
         return _api("GET", f"/repos/{repository}/commits/{quote(name)}", token).json()[
             "sha"
         ]
-    return _api("GET", f"/repos/{repository}/git/ref/heads/{branch}", token).json()[
-        "object"
-    ]["sha"]
+    return _api(
+        "GET", f"/repos/{repository}/git/ref/heads/{quote(branch, safe='/')}", token
+    ).json()["object"]["sha"]
 
 
 def _pull_request(

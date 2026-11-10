@@ -7,9 +7,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, CancelledError
 
 from simulate.temporal.constants import (
-    AGENT_FIX_VARIATIONS_MINUTES,
     AGENT_FIX_VARIATIONS_TICK_SECONDS,
-    AGENT_FIX_VARIATIONS_WRITE_MINUTES,
     AGENT_FIX_WATCH_TICK_SECONDS,
     QUEUE_RUNNER,
 )
@@ -82,8 +80,8 @@ class AgentFixWorkflow:
 
     async def _variations(self, input: AgentFixInput) -> Observation | None:
         """The fix's first step, when its run had too few failing cases; None once the fix
-        goes on to its engine. The step's time is its own: the builder has the first cap to
-        write the variations, and the whole step the second."""
+        goes on to its engine. The step's time is its own, and each look says how much of
+        it the step may have used by then (step_minutes)."""
         began = None
         while not self.cancel_requested:
             try:
@@ -116,11 +114,7 @@ class AgentFixWorkflow:
                 await self._wait(_QUEUE_PAUSE)
                 continue
             began = began or workflow.now()
-            cap = (
-                AGENT_FIX_VARIATIONS_WRITE_MINUTES
-                if step == VariationsStep.WRITING
-                else AGENT_FIX_VARIATIONS_MINUTES
-            )
+            cap = result.minutes
             if workflow.now() - began >= timedelta(minutes=cap):
                 await self._close(
                     input,

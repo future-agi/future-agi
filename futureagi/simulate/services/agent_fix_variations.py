@@ -43,6 +43,7 @@ from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     VARIATIONS_LABEL,
     scenario_results,
+    variations_minutes,
     written_variations,
 )
 from simulate.services.agent_fix_engine import start_check_run
@@ -58,6 +59,7 @@ from simulate.services.hosted_harness_conversation import (
 )
 from simulate.services.hosted_harness_gateway import _scenario_token
 from simulate.services.hosted_harness_ingress import _public_base_url
+from simulate.temporal.constants import AGENT_FIX_VARIATIONS_WRITE_MINUTES
 from simulate.temporal.types.agent_fix import Observation, VariationsStep
 
 logger = structlog.get_logger(__name__)
@@ -124,6 +126,21 @@ def advance(fix_run_id: str) -> VariationsStep:
             },
         )
         return VariationsStep.ENDED
+
+
+def step_minutes(fix_run_id: str, step: VariationsStep) -> int:
+    """How long the first step may have taken by a look that found it at ``step``: the
+    builder's cap while it writes, then the whole step's time (variations_minutes); 0 at
+    any other step, which has no cap."""
+    if step == VariationsStep.WRITING:
+        return AGENT_FIX_VARIATIONS_WRITE_MINUTES
+    if step != VariationsStep.CHECKING:
+        return 0
+    return variations_minutes(
+        AgentFixRun.no_workspace_objects.select_related("environment").get(
+            id=fix_run_id
+        )
+    )
 
 
 def _advance(fix_run_id: str) -> VariationsStep:

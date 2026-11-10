@@ -25,7 +25,9 @@ from simulate.pydantic_schemas.agent_fix import FixRequest, FixStep, Surface
 from simulate.selectors.agent_fix import (
     VARIATIONS_LABEL,
     engine_brief,
+    fix_deadline,
     inventory,
+    variations_minutes,
 )
 from simulate.services import agent_fix_variations as variations
 from simulate.services.agent_fix_agents import agent_kind
@@ -515,6 +517,47 @@ class TestThePrivateSuite:
             "fix_variations_failed",
             None,
         )
+
+
+class TestTheStepsTime:
+    """The first step's cap follows the time its run is allowed, not a fixed one."""
+
+    def _runtime(self, job, seconds):
+        payload = {**job.payload, "runtime": {**job.payload["runtime"]}}
+        payload["runtime"]["max_duration_seconds"] = seconds
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(payload=payload)
+
+    @pytest.mark.parametrize(
+        ("environment_seconds", "minutes"),
+        # The builder's 60, the run's own limit, and the 15-minute grace. The failing case
+        # and its three variations take at least 4 x 6 minutes.
+        [(600, 60 + 24 + 15), (3 * 3600, 60 + 180 + 15)],
+    )
+    def test_before_its_run_it_is_the_limit_that_run_will_get(
+        self, environment, fix_run, environment_seconds, minutes
+    ):
+        self._runtime(environment, environment_seconds)
+        fix_run.refresh_from_db()
+
+        assert variations_minutes(fix_run) == minutes
+        assert variations.step_minutes(str(fix_run.id), VariationsStep.WRITING) == 60
+        assert (
+            variations.step_minutes(str(fix_run.id), VariationsStep.CHECKING) == minutes
+        )
+        assert variations.step_minutes(str(fix_run.id), VariationsStep.WAITING) == 0
+
+    def test_once_its_run_exists_it_is_that_run_s_limit_and_the_fix_s_deadline_follows(
+        self, environment, fix_run, storage
+    ):
+        _land(fix_run, storage, _builder_save(environment))
+        run = _base_run(fix_run)
+        # A voice suite's run may be allowed far more than the old fixed 90 minutes.
+        self._runtime(run, 4 * 3600)
+        fix_run.refresh_from_db()
+
+        assert variations_minutes(fix_run) == 60 + 240 + 15
+        start = fix_run.started_at or fix_run.created_at
+        assert fix_deadline(fix_run) == start + timedelta(minutes=30 + 60 + 240 + 15)
 
 
 class TestSettle:

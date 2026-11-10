@@ -2231,6 +2231,27 @@ class TestMakeDefault:
         environment.refresh_from_db()
         assert environment.agent_version_id == first.agent_version_id
 
+    def test_a_fix_is_refused_not_failed_when_the_environment_lost_its_default(
+        self, environment, source_run, user
+    ):
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind="archive")
+        winner = self._winner(source_run)
+        # The default is SET_NULL: deleting the version leaves the environment none.
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            agent_version=None
+        )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            make_candidate_default(winner, user=user)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_base_moved",
+            409,
+        )
+        assert "no default version any more" in refused.value.message
+
     @pytest.mark.parametrize(
         ("state", "outcome", "refusal"),
         [

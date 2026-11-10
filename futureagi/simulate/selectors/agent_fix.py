@@ -75,14 +75,20 @@ from simulate.services.agent_fix_agents import AgentKind, agent_kind
 from simulate.services.harness_environment import environment_name
 from simulate.services.harness_github import short_ref
 from simulate.services.harness_usage import check_harness_action
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    run_max_duration_seconds,
+)
 from simulate.services.run_compare import REGRESSED, verdict
 from simulate.services.run_results_v3_scoring import (
     LiveEvals,
     judge_stored_eval,
     live_eval_specs,
 )
-from simulate.temporal.constants import AGENT_FIX_VARIATIONS_MINUTES
+from simulate.temporal.constants import (
+    AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
+    AGENT_FIX_VARIATIONS_WRITE_MINUTES,
+)
 
 TRANSCRIPT_CHARS = 8000
 # A lost model is skipped for this long after it was lost: a short outage may be over.
@@ -166,8 +172,36 @@ def fix_deadline(fix_run: AgentFixRun) -> datetime:
     request = FixRequest.model_validate(fix_run.request)
     minutes = request.max_minutes
     if request.variations_pending:
-        minutes += AGENT_FIX_VARIATIONS_MINUTES
+        minutes += variations_minutes(fix_run)
     return (fix_run.started_at or fix_run.created_at) + timedelta(minutes=minutes)
+
+
+def variations_minutes(fix_run: AgentFixRun) -> int:
+    """The time of a fix's first step: the builder's cap to write the variations, then the
+    current version's run on the failing cases and their variations within that run's own
+    time limit, and a grace for the run to start and report. Until the run exists, its
+    limit is the one a run of every target and its variations would get."""
+    run = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            fix_run=fix_run, fix_label=VARIATIONS_LABEL
+        )
+        .order_by("-created_at")
+        .only("payload")
+        .first()
+    )
+    if run is not None:
+        seconds = int(run.payload["runtime"]["max_duration_seconds"])
+    else:
+        targets = len(FixRequest.model_validate(fix_run.request).target_scenario_keys)
+        seconds = run_max_duration_seconds(
+            int(fix_run.environment.payload["runtime"]["max_duration_seconds"]),
+            targets * (1 + VARIATIONS_PER_CASE),
+        )
+    return (
+        AGENT_FIX_VARIATIONS_WRITE_MINUTES
+        + -(-seconds // 60)
+        + AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES
+    )
 
 
 def queue_deadline(fix_run: AgentFixRun) -> datetime:
