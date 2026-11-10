@@ -697,6 +697,10 @@ class ActorDecisionSerializer(serializers.Serializer):
     """
 
     actor = serializers.CharField()
+    name = serializers.CharField(
+        required=False,
+        help_text="The actor's name, so a pre-run writer who changed nothing in the trial is named, not shown by id.",
+    )
     play = serializers.ChoiceField(
         choices=(
             "mocked",

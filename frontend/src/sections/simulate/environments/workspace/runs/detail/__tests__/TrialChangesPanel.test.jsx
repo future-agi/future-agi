@@ -302,6 +302,29 @@ describe("TrialChangesPanel", () => {
     expect(screen.queryByText(/Before the run · /)).toBeNull();
   });
 
+  it("names a pre-run writer who changed nothing in the trial by the name its message carries", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [],
+          decisions: [
+            {
+              actor: "lead",
+              name: "Sam Lee",
+              play: "history",
+              action: "chat.post_message",
+              arguments: { text: "Margins are tight on deal 9." },
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("Sam Lee: Margins are tight on deal 9."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^lead:/)).toBeNull();
+  });
+
   it("says each actor's model calls, tokens and cost, then the trial's in all", () => {
     const call = (actor, model, cost) => ({
       actor,

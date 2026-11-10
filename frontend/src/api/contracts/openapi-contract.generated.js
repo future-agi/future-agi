@@ -119302,6 +119302,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        name: {
+          title: "Name",
+          description:
+            "The actor's name, so a pre-run writer who changed nothing in the trial is named, not shown by id.",
+          type: "string",
+          minLength: 1,
+        },
         play: {
           title: "Play",
           type: "string",

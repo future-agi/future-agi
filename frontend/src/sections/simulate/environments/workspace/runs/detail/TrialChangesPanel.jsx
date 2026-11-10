@@ -107,7 +107,7 @@ export default function TrialChangesPanel({ trialState }) {
           <Typography sx={quiet}>{C.preRunAbout}</Typography>
           {preRun.map((one, index) => (
             <Typography key={`pre-${index}`} sx={quiet}>
-              {`${name(one.actor)}: ${one.arguments?.text || one.action}`}
+              {`${one.name || name(one.actor)}: ${one.arguments?.text || one.action}`}
             </Typography>
           ))}
         </Box>
