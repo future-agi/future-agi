@@ -13,7 +13,7 @@ import structlog
 import yaml
 from chevron.tokenizer import ChevronError
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
-from django.db import close_old_connections
+from django.db import close_old_connections, transaction
 from django.db.models import Q
 from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
@@ -1164,6 +1164,37 @@ class LitellmAPIView(CreateAPIView):
         return self._gm.success_response("success")
 
 
+def _persist_run_prompt_api_call_status(api_call_log_row, status):
+    """Retry terminal status writes, then bypass model save hooks as a fallback."""
+    api_call_log_row.status = status
+    for attempt in range(2):
+        try:
+            api_call_log_row.save(update_fields=["status"])
+            return
+        except Exception:
+            logger.warning(
+                "RunPrompts_api_call_status_save_failed",
+                api_call_id=str(api_call_log_row.pk),
+                status=status,
+                attempt=attempt + 1,
+                exc_info=True,
+            )
+
+    try:
+        updated = type(api_call_log_row).objects.filter(pk=api_call_log_row.pk).update(
+            status=status
+        )
+        if updated != 1:
+            raise RuntimeError("API call row was not updated")
+    except Exception as error:
+        logger.exception(
+            "RunPrompts_api_call_terminal_status_failed",
+            api_call_id=str(api_call_log_row.pk),
+            status=status,
+        )
+        raise RuntimeError("Unable to persist run-prompt API call status") from error
+
+
 class RunPrompts:
     def __init__(self, run_prompt_id):
         self.run_prompt_id = run_prompt_id
@@ -1336,6 +1367,9 @@ class RunPrompts:
             raise
 
     def process_row(self, row, column, edit_mode=False):
+        api_call_log_row = None
+        api_call_started = False
+        api_call_succeeded = False
         row_id = str(row.id)
         logger.info(
             "RunPrompts_process_row_started",
@@ -1351,7 +1385,6 @@ class RunPrompts:
             status = CellStatus.PASS.value
             is_llm_error = False
             error_phase = None
-            # api_call_log_row = None
             try:
                 logger.info(
                     "RunPrompts_process_row_validating_api_call",
@@ -1404,41 +1437,7 @@ class RunPrompts:
                             error_message=error_message,
                         )
                         raise ValueError(error_message)
-                    elif (
-                        api_call_log_row.status == APICallStatusChoices.PROCESSING.value
-                    ):
-                        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                        api_call_log_row.save()
-                        logger.info(
-                            "RunPrompts_process_row_api_call_status_set_success",
-                            run_prompt_id=str(self.run_prompt_id),
-                            row_id=row_id,
-                        )
-
-                # Dual-write: emit usage event for new billing system
-                try:
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
-
-                    if emit is not None and UsageEvent is not None:
-                        emit(
-                            UsageEvent(
-                                org_id=str(self.run_prompt_model.organization.id),
-                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                                properties={
-                                    "source": "dataset_run_prompt",
-                                    "source_id": str(self.run_prompt_id),
-                                },
-                            )
-                        )
-                except Exception:
-                    pass  # Metering failure must not break the action
+                    api_call_started = True
 
                 logger.info(
                     "RunPrompts_process_row_populating_placeholders",
@@ -1526,26 +1525,6 @@ class RunPrompts:
                 response = error_message
                 value_info = {"reason": error_message}
                 status = CellStatus.ERROR.value
-
-            # if status == CellStatus.ERROR.value:
-            #     try:
-            #         if api_call_log_row:
-            #             api_call_log_row.status = APICallStatusChoices.ERROR.value
-            #             api_call_log_row.save()
-            #         refund_config = {"evaluation_id": str(self.user_eval_metric_id)}
-            #         refund_cost_for_api_call(api_call_log_row, config=refund_config)
-            #     except Exception as e:
-            #         print(f"Error refunding cost for api call: {str(e)}")
-            # else:
-            #     try:
-            #         if api_call_log_row:
-            #             api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-            #             api_call_log_row.save()
-            #             print(
-            #                 f"Updated api call status to processed: {api_call_log_row.id}"
-            #             )
-            #     except Exception as e:
-            #         print(f"Error updating api call status to processed: {str(e)}")
 
             if self.is_editing:
                 logger.info(
@@ -1689,6 +1668,12 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     status=status,
                 )
+            if api_call_started and status == CellStatus.PASS.value:
+                _persist_run_prompt_api_call_status(
+                    api_call_log_row, APICallStatusChoices.SUCCESS.value
+                )
+                api_call_succeeded = True
+
             logger.info(
                 "RunPrompts_process_row_completed",
                 run_prompt_id=str(self.run_prompt_id),
@@ -1704,12 +1689,49 @@ class RunPrompts:
             )
             raise
         finally:
-            logger.info(
-                "RunPrompts_process_row_cleanup",
-                run_prompt_id=str(self.run_prompt_id),
-                row_id=row_id,
-            )
-            close_old_connections()
+            try:
+                if api_call_started and not api_call_succeeded:
+                    _persist_run_prompt_api_call_status(
+                        api_call_log_row, APICallStatusChoices.ERROR.value
+                    )
+            finally:
+                logger.info(
+                    "RunPrompts_process_row_cleanup",
+                    run_prompt_id=str(self.run_prompt_id),
+                    row_id=row_id,
+                )
+                close_old_connections()
+
+        if api_call_succeeded:
+            def emit_usage():
+                try:
+                    try:
+                        from ee.usage.schemas.events import UsageEvent
+                        from ee.usage.services.emitter import emit
+                    except ImportError:
+                        return
+
+                    emit(
+                        UsageEvent(
+                            event_id=str(api_call_log_row.log_id),
+                            org_id=str(self.run_prompt_model.organization.id),
+                            event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                            properties={
+                                "source": "dataset_run_prompt",
+                                "source_id": str(self.run_prompt_id),
+                            },
+                        )
+                    )
+                except Exception:
+                    # A metering outage must not roll back or rerun a saved result.
+                    logger.exception(
+                        "RunPrompts_process_row_usage_event_failed",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                    )
+
+            # Also honor any enclosing transaction: rolled-back cells are not usage.
+            transaction.on_commit(emit_usage)
 
     def empty_column(self, column):
         cells = Cell.objects.filter(
