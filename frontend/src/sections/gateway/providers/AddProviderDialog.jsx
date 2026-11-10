@@ -1191,11 +1191,14 @@ const AddProviderDialog = ({
 
           {(() => {
             const currentPreset = PROVIDER_PRESETS[name];
-            const visibleFormats = currentPreset?.supportedFormats?.length
-              ? API_FORMATS.filter((f) =>
-                  currentPreset.supportedFormats.includes(f),
-                )
-              : API_FORMATS;
+            // Keep saved adapters intact on edit; only Custom offers a choice.
+            const visibleFormats = currentPreset && name !== "custom"
+              ? [apiFormat]
+              : currentPreset?.supportedFormats?.length
+                ? API_FORMATS.filter((f) =>
+                    currentPreset.supportedFormats.includes(f),
+                  )
+                : API_FORMATS;
             const isFiltered = visibleFormats.length < API_FORMATS.length;
             const isSingleOption = visibleFormats.length === 1;
             return (
@@ -1207,9 +1210,11 @@ const AddProviderDialog = ({
                 onChange={(e) => setApiFormat(e.target.value)}
                 disabled={isSingleOption}
                 helperText={
-                  isFiltered
-                    ? "Restricted to compatible formats for this provider"
-                    : undefined
+                  isSingleOption
+                    ? "Use Custom / Self-hosted to choose a different API format"
+                    : isFiltered
+                      ? "Restricted to compatible formats for this provider"
+                      : undefined
                 }
               >
                 {visibleFormats.map((f) => (

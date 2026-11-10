@@ -466,8 +466,21 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 return sorted(m["id"] for m in data["data"])
             return sorted(m["name"] for m in data.get("models", []) if m.get("name"))
 
+        if name == "azure" or api_format == "azure":
+            if not base_url:
+                raise ValueError("Azure model discovery requires a resource base URL")
+            # Match the Azure gateway adapter's default data-plane API version.
+            resp = http.get(
+                f"{base_url.rstrip('/')}/openai/models",
+                headers={"api-key": api_key},
+                params={"api-version": "2024-10-21"},
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            return sorted(model["id"] for model in resp.json().get("data", []))
+
         # Default: OpenAI-compatible (OpenAI, Groq, Together, Fireworks, Mistral,
-        # Azure OpenAI-compat, custom/self-hosted). The version segment is the
+        # custom/self-hosted). The version segment is the
         # provider's own, so discovery probes the URL the proxy will really use.
         url = _join_api_endpoint(
             base_url or "https://api.openai.com/v1", api_path_prefix, "/models"
