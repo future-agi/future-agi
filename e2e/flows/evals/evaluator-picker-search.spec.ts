@@ -132,8 +132,9 @@ test('EVAL-E2E-013: a Jev choice stays under the pointer while ordinary model se
           return win.pickerSamples;
         });
         const footprint = (await picker.boundingBox())!;
-        expect(footprint.y).toBeGreaterThanOrEqual(16);
-        expect(footprint.y + footprint.height).toBeLessThanOrEqual(height - 16);
+        // MUI rounds its top position to CSS pixels; tolerate a subpixel edge.
+        expect(footprint.y).toBeGreaterThanOrEqual(15.5);
+        expect(footprint.y + footprint.height).toBeLessThanOrEqual(height - 15.5);
         const beforeLoading = samples.filter(sample => !sample.loading).at(-1);
         expect(beforeLoading, 'must observe the filtered row before the ordinary search starts').toBeDefined();
         const duringLoading = (await latest.boundingBox())!;
