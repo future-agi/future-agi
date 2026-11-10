@@ -22255,6 +22255,7 @@ export const HarnessSubGoalApiVerdict = {
   fail: "fail",
   not_applicable: "not_applicable",
   inconclusive: "inconclusive",
+  unmeasured: "unmeasured",
 } as const;
 
 export interface HarnessSubGoalApi {
@@ -22267,6 +22268,8 @@ export interface HarnessSubGoalApi {
   reason?: string;
   judged: boolean;
   verdict?: HarnessSubGoalApiVerdict;
+  /** @maxItems 16 */
+  evidence?: string[];
 }
 
 export type HarnessTargetMetricsApiProvider =

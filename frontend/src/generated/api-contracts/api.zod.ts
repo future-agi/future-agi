@@ -45880,6 +45880,10 @@ export const simulateApiHarnessAttemptsResultsBodyWorldIndexMax = 7;
 
 export const simulateApiHarnessAttemptsResultsBodySubGoalsItemNameMax = 255;
 
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemEvidenceItemMax = 64;
+
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemEvidenceMax = 16;
+
 export const simulateApiHarnessAttemptsResultsBodyCallDurationMsMin = 0;
 
 export const simulateApiHarnessAttemptsResultsBodyCallTurnsMin = 0;
@@ -45960,7 +45964,18 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       reason: zod.string().optional(),
       judged: zod.boolean(),
       verdict: zod
-        .enum(["pass", "fail", "not_applicable", "inconclusive"])
+        .enum(["pass", "fail", "not_applicable", "inconclusive", "unmeasured"])
+        .optional(),
+      evidence: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessAttemptsResultsBodySubGoalsItemEvidenceItemMax,
+            ),
+        )
+        .max(simulateApiHarnessAttemptsResultsBodySubGoalsItemEvidenceMax)
         .optional(),
     }),
   ),
