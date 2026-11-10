@@ -214,22 +214,32 @@ describe.each(["light", "dark"])("sampling v3 polish in %s", (mode) => {
     expect(form.getValues("samplingPolicy")).toEqual(before);
   });
 
-  it("uses existing small buttons for the field and value pickers without changing their disabled guards", async () => {
+  it("uses small inline dropdowns for the field and value pickers without changing their disabled guards", async () => {
     render(<Harness policy={groupPolicy()} />, {
       theme: productionTheme(mode),
     });
-    for (const name of ["Choose group field", "Choose values"]) {
-      expect(screen.getByRole("button", { name })).toHaveClass(
-        "MuiButton-sizeSmall",
+    for (const name of ["Group field", "Group values"]) {
+      expect(screen.getByRole("combobox", { name })).toHaveClass(
+        "MuiInputBase-inputSizeSmall",
       );
-      expect(screen.getByRole("button", { name })).toBeEnabled();
+      expect(screen.getByRole("combobox", { name })).toBeEnabled();
     }
+    expect(screen.getByRole("combobox", { name: "Group field" })).toHaveValue(
+      "locale",
+    );
+    expect(screen.getByRole("button", { name: "fr" })).toBeVisible();
+    expect(
+      screen.queryByRole("dialog", { name: /Choose/ }),
+    ).not.toBeInTheDocument();
     await act(async () => form.setValue("project", ""));
     expect(
-      screen.getByRole("button", { name: "Choose group field" }),
+      screen.getByRole("combobox", { name: "Group field" }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Choose values" }),
+      screen.getByRole("combobox", { name: "Group field location" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("combobox", { name: "Group values" }),
     ).toBeDisabled();
   });
 

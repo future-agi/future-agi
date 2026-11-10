@@ -210,36 +210,21 @@ export default function SamplingPolicyEditor({ control, getValues }) {
             ))}
           </TextField>
           {policy.sampling_unit === "attribute" && (
-            <Box
-              component="details"
-              sx={{
-                "& > summary": {
-                  cursor: "pointer",
-                  fontSize: 12,
-                  color: "text.secondary",
-                },
+            // Shown in place, not behind a disclosure: the attribute is
+            // required whenever the project has no contact attribute set.
+            <SamplingFieldPicker
+              project={project}
+              label="Custom ID attribute"
+              value={policy.unit_attribute}
+              emptyLabel="Project’s contact attribute (if set)"
+              helperText="Leave empty to use the project’s contact attribute (if one is set in project settings); otherwise choose an attribute."
+              onChange={(attribute) => {
+                const next = { ...policy };
+                if (attribute.key) next.unit_attribute = attribute;
+                else delete next.unit_attribute;
+                update(next);
               }}
-            >
-              <summary>
-                {policy.unit_attribute?.key
-                  ? `Custom ID: ${policy.unit_attribute.key}`
-                  : "Use the project’s contact attribute (if one is set in project settings) · change attribute"}
-              </summary>
-              <Box sx={{ mt: 1 }}>
-                <SamplingFieldPicker
-                  project={project}
-                  label="Custom ID attribute"
-                  value={policy.unit_attribute}
-                  helperText="Leave empty only if this project has a contact attribute set in its settings; otherwise choose the attribute that identifies a contact."
-                  onChange={(attribute) => {
-                    const next = { ...policy };
-                    if (attribute.key) next.unit_attribute = attribute;
-                    else delete next.unit_attribute;
-                    update(next);
-                  }}
-                />
-              </Box>
-            </Box>
+            />
           )}
           {!unitInvalid && (
             <SamplingPickIllustration
@@ -293,6 +278,8 @@ export default function SamplingPolicyEditor({ control, getValues }) {
                 }}
               />
               <SamplingValuePicker
+                // Values typed for one field never carry over to another.
+                key={`${groupField.source || "span"}:${groupField.key}`}
                 project={project}
                 distinctGroups
                 predicate={{ ...groupField, op: "in", values: groupValues }}

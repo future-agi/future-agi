@@ -34,14 +34,22 @@ vi.mock("src/utils/axios", () => ({
 // Discovery adapters have their own production-picker interaction suite. This
 // harness makes selected typed values explicit without a catalog/network.
 vi.mock("./sampling_field_picker", () => {
-  const SamplingFieldPicker = ({ onChange, label = "Group field" }) => (
-    <button onClick={() => onChange({ source: "metadata", key: "language" })}>
-      {`Choose ${label.toLowerCase()}`}
-    </button>
+  const SamplingFieldPicker = ({
+    onChange,
+    label = "Group field",
+    helperText,
+  }) => (
+    <>
+      <button onClick={() => onChange({ source: "metadata", key: "language" })}>
+        {`Choose ${label.toLowerCase()}`}
+      </button>
+      {helperText && <p>{helperText}</p>}
+    </>
   );
   SamplingFieldPicker.propTypes = {
     onChange: PropTypes.func,
     label: PropTypes.string,
+    helperText: PropTypes.string,
   };
   const SamplingValuePicker = ({ onChange }) => (
     <button onClick={() => onChange(["French", "English"])}>
