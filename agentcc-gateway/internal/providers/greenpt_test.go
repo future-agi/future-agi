@@ -36,6 +36,11 @@ func TestGreenPTExampleConfiguration(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(example), &providers); err != nil {
 		t.Fatalf("uncommented GreenPT example is invalid YAML: %v", err)
 	}
+	loaded := config.DefaultConfig()
+	loaded.Providers = providers
+	if err := loaded.Validate(); err != nil {
+		t.Fatalf("GreenPT example fails config validation: %v", err)
+	}
 	cfg := providers["greenpt"]
 	if cfg.Type != "greenpt" || cfg.AutoDiscover == nil || !*cfg.AutoDiscover || len(cfg.Models) != 0 {
 		t.Fatal("GreenPT example must enable discovery without an active model allow-list")

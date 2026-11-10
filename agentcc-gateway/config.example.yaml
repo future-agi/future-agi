@@ -204,7 +204,9 @@ providers:
 
   # greenpt:
   #   api_key: "${GREENPT_API_KEY}"
-  #   type: "greenpt"                # auto-sets base_url + api_format
+  #   type: "greenpt"
+  #   base_url: "https://api.greenpt.ai"
+  #   api_format: "openai"
   #   auto_discover: true             # authenticated GET /v1/models
   #   # Or set auto_discover: false and use an explicit allow-list:
   #   # models:
