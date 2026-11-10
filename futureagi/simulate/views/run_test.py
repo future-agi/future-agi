@@ -2908,6 +2908,30 @@ class TestExecutionDetailView(APIView):
                     status=status.HTTP_200_OK,
                 )
 
+            # The stored execution status can lag behind its calls. Aggregate all
+            # live calls, independently of search, filters, and pagination.
+            call_statuses = set(
+                test_execution.calls.order_by()
+                .values_list("status", flat=True)
+                .distinct()
+            )
+            execution_status = next(
+                (
+                    call_status
+                    for call_status in (
+                        CallExecution.CallStatus.PENDING,
+                        CallExecution.CallStatus.REGISTERED,
+                        CallExecution.CallStatus.ONGOING,
+                        CallExecution.CallStatus.ANALYZING,
+                        CallExecution.CallStatus.COMPLETED,
+                        CallExecution.CallStatus.FAILED,
+                        CallExecution.CallStatus.CANCELLED,
+                    )
+                    if call_status in call_statuses
+                ),
+                test_execution.status,
+            )
+
             # Order by updated date (newest/most recently rerun first) - only for non-grouped results
             call_executions = call_executions.order_by("-updated_at")
 
@@ -2937,7 +2961,7 @@ class TestExecutionDetailView(APIView):
                         "current_page": query_data.get("page", 1),
                         "column_order": column_order,
                         "error_messages": error_messages,
-                        "status": test_execution.status,
+                        "status": execution_status,
                     },
                     status=status.HTTP_200_OK,
                 )
@@ -3070,7 +3094,7 @@ class TestExecutionDetailView(APIView):
                 or str(col.get("id")) in harness_eval_outputs
             ]
             response_data["error_messages"] = error_messages
-            response_data["status"] = test_execution.status
+            response_data["status"] = execution_status
             response_data["provider"] = (
                 test_execution.agent_definition.provider
                 if test_execution.agent_definition
