@@ -48,8 +48,16 @@ function stateText(state, reason) {
 
 const spinner = <CircularProgress size={12} color="inherit" />;
 
-function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
-  const [open, setOpen] = useState(false);
+function FixLine({
+  line,
+  onRecheck,
+  onRetryAgent,
+  busy,
+  inFlight,
+  open,
+  onToggle,
+  checking,
+}) {
   const { fix } = line;
   // Checking the pair again is this line's whole fix: it opens on the full
   // reason and what it means, not an instruction that only says "check again".
@@ -93,7 +101,7 @@ function FixLine({ line, onRecheck, onRetryAgent, busy, inFlight, checking }) {
           <Button
             size="small"
             variant="outlined"
-            onClick={() => setOpen((shown) => !shown)}
+            onClick={onToggle}
             sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
           >
             {open && COPY.hideFix}
@@ -153,6 +161,8 @@ FixLine.propTypes = {
   checking: PropTypes.bool,
   // This line's own re-check is the one running.
   inFlight: PropTypes.bool,
+  open: PropTypes.bool,
+  onToggle: PropTypes.func.isRequired,
 };
 
 /**
@@ -172,6 +182,8 @@ export default function ReadyToRunSection({
   const retryAgent = useRetryAgentVersion(envId);
   // Which line's button started the check, so that button shows it running.
   const [pressed, setPressed] = useState(null);
+  // One fix open at a time keeps the section short; the popup body scrolls.
+  const [openArea, setOpenArea] = useState(null);
   const view = useMemo(
     () => (readiness.data ? readinessView(readiness.data) : null),
     [readiness.data],
@@ -270,72 +282,73 @@ export default function ReadyToRunSection({
           </Typography>
         </Stack>
       )}
-      {/* The lines scroll inside the section once opened fixes make it tall. */}
-      <Box sx={{ maxHeight: 320, overflowY: "auto" }}>
-        {view.open.map((line) => (
-          <FixLine
-            key={line.area}
-            line={line}
-            onRecheck={() => runRecheck(line.area)}
-            onRetryAgent={() => runRetryAgent(line.area)}
-            inFlight={checking && pressed === line.area}
-            checking={checking}
-            busy={busy}
+      {view.open.map((line) => (
+        <FixLine
+          key={line.area}
+          line={line}
+          onRecheck={() => runRecheck(line.area)}
+          onRetryAgent={() => runRetryAgent(line.area)}
+          inFlight={checking && pressed === line.area}
+          open={openArea === line.area}
+          onToggle={() =>
+            setOpenArea((area) => (area === line.area ? null : line.area))
+          }
+          checking={checking}
+          busy={busy}
+        />
+      ))}
+      {view.limits.map((line) => (
+        <Stack
+          key={line.area}
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          sx={dimSx}
+        >
+          <StatusBadge
+            status={line.status}
+            label={COPY.areas[line.area] || line.area}
+            variant="dot"
           />
-        ))}
-        {view.limits.map((line) => (
-          <Stack
-            key={line.area}
-            direction="row"
-            spacing={1}
-            alignItems="center"
-            sx={dimSx}
+          <Typography
+            noWrap
+            sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
           >
-            <StatusBadge
-              status={line.status}
-              label={COPY.areas[line.area] || line.area}
-              variant="dot"
-            />
-            <Typography
-              noWrap
-              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
-            >
-              {line.reason}
-            </Typography>
-          </Stack>
-        ))}
-        {view.grading.notGradable > 0 && (
-          <Stack direction="row" spacing={1} alignItems="center" sx={dimSx}>
-            <StatusBadge
-              status="partial"
-              label={COPY.areas.grading}
-              variant="dot"
-            />
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {COPY.notGradable(view.grading.notGradable)}
-            </Typography>
-          </Stack>
-        )}
-        {readyLabels.length > 0 && (
-          <Stack direction="row" spacing={0.75} alignItems="center" sx={dimSx}>
-            <StatusBadge
-              status="supported"
-              label=""
-              variant="dot"
-              sx={{ gap: 0 }}
-            />
-            <Typography
-              noWrap
-              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
-            >
-              {COPY.moreReady(
-                readyLabels,
-                view.open.length === 0 && view.limits.length === 0,
-              )}
-            </Typography>
-          </Stack>
-        )}
-      </Box>
+            {line.reason}
+          </Typography>
+        </Stack>
+      ))}
+      {view.grading.notGradable > 0 && (
+        <Stack direction="row" spacing={1} alignItems="center" sx={dimSx}>
+          <StatusBadge
+            status="partial"
+            label={COPY.areas.grading}
+            variant="dot"
+          />
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            {COPY.notGradable(view.grading.notGradable)}
+          </Typography>
+        </Stack>
+      )}
+      {readyLabels.length > 0 && (
+        <Stack direction="row" spacing={0.75} alignItems="center" sx={dimSx}>
+          <StatusBadge
+            status="supported"
+            label=""
+            variant="dot"
+            sx={{ gap: 0 }}
+          />
+          <Typography
+            noWrap
+            sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+          >
+            {COPY.moreReady(
+              readyLabels,
+              view.open.length === 0 && view.limits.length === 0,
+            )}
+          </Typography>
+        </Stack>
+      )}
     </Box>
   );
 }
