@@ -44,3 +44,14 @@ test('managed stack attests the isolated link network before mock registration',
   const receipt = inspectManagedMock();
   await testInfo.attach('managed-mock-receipt', { contentType: 'application/json', body: JSON.stringify(receipt) });
 });
+
+
+test('local editor bootstrap is served as JavaScript with pinned assets', async ({ request }) => {
+  const response = await request.get('/e2e-monaco/bootstrap.js');
+  expect(response.status()).toBe(200);
+  expect(response.headers()['content-type']).toMatch(/^(application|text)\/javascript/);
+  expect(await response.text()).toContain("window.require(['vs/editor/editor.main']");
+  const loader = await request.get('/e2e-monaco/vs/loader.js');
+  expect(loader.status()).toBe(200);
+  expect(loader.headers()['content-type']).toMatch(/^(application|text)\/javascript/);
+});

@@ -11,7 +11,7 @@ export function withLocalEditor(html) {
   }
   const [tag, entry] = entries[0];
   return {
-    html: html.replace(tag, tag.replace(`src="${entry}"`, 'src="/e2e-monaco/bootstrap.mjs"')),
+    html: html.replace(tag, tag.replace(`src="${entry}"`, 'src="/e2e-monaco/bootstrap.js"')),
     bootstrap: `await new Promise((resolve, reject) => {
   const script = document.createElement('script');
   script.src = '/e2e-monaco/vs/loader.js';

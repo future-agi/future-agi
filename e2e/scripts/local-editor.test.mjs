@@ -7,7 +7,7 @@ import { withLocalEditor } from '../stack/frontend/rewrite-index.mjs';
 test('local editor fixture preserves the app entry and loads the exact editor before it', () => {
   const input = '<html><script src="/config.js"></script><script type="module" crossorigin src="/assets/index-ab12.js"></script><body><div id="root"></div></body></html>';
   const result = withLocalEditor(input);
-  assert.equal(result.html, input.replace('/assets/index-ab12.js', '/e2e-monaco/bootstrap.mjs'));
+  assert.equal(result.html, input.replace('/assets/index-ab12.js', '/e2e-monaco/bootstrap.js'));
   assert.match(result.bootstrap, /script.src = '\/e2e-monaco\/vs\/loader.js'/);
   assert.match(result.bootstrap, /window.require.config\(\{ paths: \{ vs: '\/e2e-monaco\/vs' \} \}\)/);
   assert.ok(result.bootstrap.indexOf("window.require(['vs/editor/editor.main']") < result.bootstrap.indexOf('await import('));
@@ -19,7 +19,7 @@ for (const [name, html] of [
   ['missing', '<html></html>'],
   ['multiple', '<script type="module" src="/assets/a.js"></script><script type="module" src="/assets/b.js"></script>'],
   ['remote', '<script type="module" src="https://external.invalid/a.js"></script>'],
-  ['already wrapped', '<script type="module" src="/e2e-monaco/bootstrap.mjs"></script>'],
+  ['already wrapped', '<script type="module" src="/e2e-monaco/bootstrap.js"></script>'],
 ]) {
   test(`local editor fixture refuses ${name} entry modules`, () => {
     assert.throws(() => withLocalEditor(html), /Expected one local Vite entry module/);

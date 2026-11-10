@@ -10,8 +10,8 @@ COPY --from=product /usr/share/nginx/html/index.html ./index.html
 RUN npm pack monaco-editor@0.43.0 --ignore-scripts \
     && node -e "const fs=require('fs'),c=require('crypto'); const actual=c.createHash('sha512').update(fs.readFileSync('monaco-editor-0.43.0.tgz')).digest('base64'); if(actual!=='cnoqwQi/9fml2Szamv1XbSJieGJ1Dc8tENVMD26Kcfl7xGQWp7OBKMjlwKVGYFJ3/AXJjSOGvcqK7Ry/j9BM1Q==')throw Error('Monaco integrity mismatch')" \
     && tar -xzf monaco-editor-0.43.0.tgz \
-    && node rewrite-index.mjs index.html bootstrap.mjs
+    && node rewrite-index.mjs index.html bootstrap.js
 FROM product
 COPY --from=assets /fixture/package/min/vs /usr/share/nginx/html/e2e-monaco/vs
 COPY --from=assets /fixture/index.html /usr/share/nginx/html/index.html
-COPY --from=assets /fixture/bootstrap.mjs /usr/share/nginx/html/e2e-monaco/bootstrap.mjs
+COPY --from=assets /fixture/bootstrap.js /usr/share/nginx/html/e2e-monaco/bootstrap.js
