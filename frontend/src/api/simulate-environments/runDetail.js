@@ -660,6 +660,12 @@ function asActorLine(turn, actorsByName) {
   };
 }
 
+// A chat row whose every message is the scenario's own task: no person sent it, so it is never the customer's.
+const isTaskRow = (row) =>
+  Array.isArray(row?.content) &&
+  row.content.length > 0 &&
+  row.content.every((item) => item?.role === "task");
+
 export function mapCallDetail(raw) {
   if (!raw) return null;
 
@@ -668,7 +674,7 @@ export function mapCallDetail(raw) {
   const turns = callTranscript(raw).map((t) =>
     asActorLine(
       {
-        role: normalizeRole(t.speaker_role ?? t.role),
+        role: normalizeRole(t.speaker_role ?? (isTaskRow(t) ? "task" : t.role)),
         speakerName: t.speaker_name || "",
         actorId: t.actor_id || "",
         actorRole: t.actor_role || "",

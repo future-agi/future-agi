@@ -1377,6 +1377,9 @@ def _epoch_seconds(value: Any) -> float | None:
 WORLD_ACTIONS_KEY = "harness_world_actions"
 # Where a call keeps what changed in the world during its trial, per participant, and what each actor decided.
 TRIAL_STATE_KEY = "harness_trial_state"
+# What started a call that no person began: the scenario's own task.
+STARTED_BY_KEY = "harness_started_by"
+STARTED_BY_TASK = "task"
 
 
 def _call_actor_record(raw: object) -> CallCallActors | None:
@@ -1534,6 +1537,12 @@ def _ingest_hosted_transcript(
             )
             if segments:
                 _store_alk_chat_messages(call, segments)
+            if metadata is not None:
+                # Started by the scenario's own task, with no person: the call has no customer to show.
+                if any(one["speaker_role"] == STARTED_BY_TASK for one in segments):
+                    metadata[STARTED_BY_KEY] = STARTED_BY_TASK
+                else:
+                    metadata.pop(STARTED_BY_KEY, None)
             return _placed_world_actions(metadata, base_time)
         rows: list[CallTranscript] = []
         if isinstance(messages, list):

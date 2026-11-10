@@ -21,10 +21,12 @@ import {
 } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 import { seriesColor } from "src/theme/data-colors";
 
+// `task`: a scenario's own start message, when no person or actor sent it.
 const ROLE_LABEL = {
   agent: "Assistant",
   customer: "Customer",
   tool: "Tool call",
+  task: "Task",
 };
 const TOOL_SERIES = 1;
 const isHandOffRow = (turn) =>
@@ -92,6 +94,7 @@ export default function ChatTranscriptPane({ turns, customerName }) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
   const others = otherParties(turns);
+  const hasCustomer = turns.some((s) => s.role === "customer");
   // The pane stays mounted across calls, and the next call may have no others.
   const activeFilter =
     roleFilter === "others" && !others.length ? "all" : roleFilter;
@@ -115,7 +118,7 @@ export default function ChatTranscriptPane({ turns, customerName }) {
           <CallParticipants
             others={others}
             customerName={customerName}
-            withCustomer={turns.some((s) => s.role === "customer")}
+            withCustomer={hasCustomer}
           />
         </Box>
       )}
@@ -150,7 +153,9 @@ export default function ChatTranscriptPane({ turns, customerName }) {
         >
           <Tab value="all" label="All" />
           <Tab value="agent" label="Assistant" />
-          <Tab value="customer" label="Customer" />
+          {(hasCustomer || !turns.some((s) => s.role === "task")) && (
+            <Tab value="customer" label="Customer" />
+          )}
           {others.length > 0 && (
             <Tab value="others" label={DEFAULT_ROLE_LABELS.others} />
           )}

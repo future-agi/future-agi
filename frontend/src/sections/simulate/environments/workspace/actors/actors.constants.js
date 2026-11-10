@@ -139,7 +139,7 @@ export const ACTORS_COPY = {
       moreDetails: "More details",
       lessDetails: "Hide more details",
       moreDetailsHelp:
-        "Given to them whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them, and \"Brought in by\" is for reading only.",
+        "Given to them as background whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them, and \"Brought in by\" is for reading only.",
       editTitle: (name) => `Edit ${name}`,
       id: "Id",
       // The rule's words are the schema's own, when it sends them.
