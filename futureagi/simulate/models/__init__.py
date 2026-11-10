@@ -58,6 +58,7 @@ from .test_execution import (
     CallExecution,
     CallExecutionSnapshot,
     CallTranscript,
+    CallTranscriptActor,
     TestExecution,
 )
 from .trial_item_result import TrialItemResult
@@ -94,6 +95,7 @@ __all__ = [
     "TestExecution",
     "CallExecution",
     "CallTranscript",
+    "CallTranscriptActor",
     "CallExecutionSnapshot",
     "CallLogEntry",
     "ScenarioGraph",

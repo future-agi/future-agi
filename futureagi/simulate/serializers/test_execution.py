@@ -72,6 +72,12 @@ class CallTranscriptSerializer(serializers.ModelSerializer):
 
     start_time_seconds = serializers.SerializerMethodField()
     end_time_seconds = serializers.SerializerMethodField()
+    speaker_name = serializers.CharField(
+        max_length=255, required=False, allow_blank=True
+    )
+    actor_id = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, allow_null=True
+    )
 
     class Meta:
         model = CallTranscript
@@ -762,7 +768,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if hasattr(obj, "transcripts"):
             filtered_transcripts = obj.transcripts.exclude(
                 speaker_role=CallTranscript.SpeakerRole.UNKNOWN
-            )
+            ).select_related("actor_turn")
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
             from simulate.utils.speaker_roles import SpeakerRoleResolver
@@ -1576,7 +1582,7 @@ class CallExecutionSerializer(serializers.ModelSerializer):
         if hasattr(obj, "transcripts"):
             filtered_transcripts = obj.transcripts.exclude(
                 speaker_role=CallTranscript.SpeakerRole.UNKNOWN
-            )
+            ).select_related("actor_turn")
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
             from simulate.utils.speaker_roles import SpeakerRoleResolver

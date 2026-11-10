@@ -107,7 +107,9 @@ def _call_transcript_turns(call: Any) -> list[dict[str, Any]]:
             rows = list(
                 call.transcripts.filter(
                     speaker_role__in=get_displayable_transcript_roles()
-                ).order_by("start_time_ms")
+                )
+                .select_related("actor_turn")
+                .order_by("start_time_ms")
             )
         return list(CallTranscriptSerializer(rows, many=True).data)
     except (ObjectDoesNotExist, AttributeError, DatabaseError) as exc:

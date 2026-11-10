@@ -62,10 +62,14 @@ class CallTranscriptView(APIView):
             )
 
             # Get all transcripts for this call
-            transcripts = CallTranscript.objects.filter(
-                call_execution=call_execution,
-                speaker_role__in=get_displayable_transcript_roles(),
-            ).order_by("start_time_ms")
+            transcripts = (
+                CallTranscript.objects.filter(
+                    call_execution=call_execution,
+                    speaker_role__in=get_displayable_transcript_roles(),
+                )
+                .select_related("actor_turn")
+                .order_by("start_time_ms")
+            )
 
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
@@ -125,7 +129,7 @@ class TestExecutionTranscriptsView(APIView):
                 test_execution_id=test_execution_id,
                 test_execution__run_test__organization=user_organization,
                 test_execution__run_test__deleted=False,
-            ).prefetch_related("transcripts", "scenario")
+            ).prefetch_related("transcripts__actor_turn", "scenario")
 
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 

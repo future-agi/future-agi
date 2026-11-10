@@ -236,7 +236,9 @@ def _build_transcript_data(call_execution):
         if is_text:
             transcripts = call_execution.chat_messages.all().order_by("created_at")
         else:
-            transcripts = call_execution.transcripts.all().order_by("start_time_ms")
+            transcripts = call_execution.transcripts.select_related(
+                "actor_turn"
+            ).order_by("start_time_ms")
 
         if transcripts.exists():
             transcript_text = []

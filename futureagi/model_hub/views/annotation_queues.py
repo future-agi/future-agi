@@ -286,7 +286,9 @@ def _queue_item_export_prefetches():
             queryset=CallTranscript.objects.filter(
                 speaker_role__in=get_displayable_transcript_roles(),
                 deleted=False,
-            ).order_by("start_time_ms"),
+            )
+            .select_related("actor_turn")
+            .order_by("start_time_ms"),
             to_attr="_displayable_transcripts",
         ),
     )

@@ -674,13 +674,6 @@ class CallTranscript(BaseModel):
         default=SpeakerRole.UNKNOWN,
         help_text="Role of the speaker (user or assistant)",
     )
-    # Who spoke, when the speaker is an actor: anyone in the conversation other than the person and the agent.
-    speaker_name = models.CharField(
-        max_length=255, blank=True, default="", db_default=""
-    )
-    # Which actor spoke, by their id in the environment; null on other turns and older rows.
-    actor_id = models.CharField(max_length=255, null=True, blank=True)
-
     content = models.TextField(help_text="Transcript content")
 
     start_time_ms = models.BigIntegerField(
@@ -701,8 +694,91 @@ class CallTranscript(BaseModel):
         verbose_name_plural = "Call Transcripts"
         ordering = ["start_time_ms"]
 
+    def __init__(self, *args, **kwargs):
+        self._actor_turn_pending = None
+        super().__init__(*args, **kwargs)
+
     def __str__(self):
         return f"{self.speaker_role} - {self.content[:50]}..."
+
+    def _actor_turn(self):
+        if self._actor_turn_pending is not None:
+            return self._actor_turn_pending
+        if self.speaker_role != self.SpeakerRole.ACTOR or self._state.adding:
+            return None
+        try:
+            return self.actor_turn
+        except CallTranscriptActor.DoesNotExist:
+            return None
+
+    def _set_actor_turn(self, field: str, value) -> None:
+        if self._actor_turn_pending is None:
+            self._actor_turn_pending = CallTranscriptActor(transcript=self)
+        setattr(self._actor_turn_pending, field, value)
+
+    # Who spoke, when the speaker is an actor: anyone in the conversation other than the person and the agent.
+    @property
+    def speaker_name(self) -> str:
+        turn = self._actor_turn()
+        return turn.speaker_name if turn is not None else ""
+
+    @speaker_name.setter
+    def speaker_name(self, value) -> None:
+        self._set_actor_turn("speaker_name", value or "")
+
+    # Which actor spoke, by their id in the environment; None on other turns and older rows.
+    @property
+    def actor_id(self) -> str | None:
+        turn = self._actor_turn()
+        return turn.actor_id if turn is not None else None
+
+    @actor_id.setter
+    def actor_id(self, value) -> None:
+        self._set_actor_turn("actor_id", value or None)
+
+    @classmethod
+    def create_actor_turns(cls, rows) -> None:
+        """Store who spoke for the actor turns among `rows`, once the rows themselves are saved."""
+        turns = [
+            row._actor_turn_pending
+            for row in rows
+            if row.speaker_role == cls.SpeakerRole.ACTOR
+            and row._actor_turn_pending is not None
+            and (
+                row._actor_turn_pending.speaker_name or row._actor_turn_pending.actor_id
+            )
+        ]
+        if turns:
+            CallTranscriptActor.objects.bulk_create(turns)
+
+    @classmethod
+    def delete_with_actor_turns(cls, transcripts) -> None:
+        """Delete `transcripts` and who spoke their actor turns."""
+        CallTranscriptActor.objects.filter(
+            transcript_id__in=transcripts.values("pk")
+        ).delete()
+        transcripts.delete()
+
+
+class CallTranscriptActor(models.Model):
+    """Who spoke an actor's turn in a call transcript.
+
+    Kept beside the transcript table rather than as columns on it, so adding actors changes no existing table. No
+    database constraint: deleting transcripts stays a plain delete, and a turn left behind by one is never read.
+    """
+
+    transcript = models.OneToOneField(
+        CallTranscript,
+        primary_key=True,
+        on_delete=models.DO_NOTHING,
+        db_constraint=False,
+        related_name="actor_turn",
+    )
+    speaker_name = models.CharField(max_length=255, blank=True, default="")
+    actor_id = models.CharField(max_length=255, null=True, blank=True)
+
+    class Meta:
+        db_table = "simulate_call_transcript_actor"
 
 
 class CallExecutionSnapshot(BaseModel):
