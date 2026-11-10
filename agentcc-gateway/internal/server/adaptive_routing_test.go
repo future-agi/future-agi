@@ -112,17 +112,24 @@ func TestAdaptiveGatewayLearnsFromHTTP(t *testing.T) {
 	for _, model := range []string{"fast/adaptive-sample", "slow/adaptive-sample"} {
 		adaptiveRequest(t, gateway, model)
 	}
-	for i := 0; i < 20; i++ {
-		adaptiveRequest(t, gateway, "adaptive-sample")
-	}
-	fastBefore, slowBefore := fastCalls.Load(), slowCalls.Load()
-	for i := 0; i < 200; i++ {
-		adaptiveRequest(t, gateway, "adaptive-sample")
-	}
-	fastCount, slowCount := fastCalls.Load()-fastBefore, slowCalls.Load()-slowBefore
-	t.Logf("HTTP adaptive sample: healthy=%d failing=%d strategy=%s", fastCount, slowCount, srv.registry.Router().Strategy())
-	if fastCount+slowCount != 200 || fastCount < 160 {
-		t.Fatalf("adaptive routing did not favor the healthy upstream: healthy=%d failing=%d", fastCount, slowCount)
+	for cycle := 0; cycle < 2; cycle++ {
+		if cycle > 0 {
+			if err := srv.handlers.ReloadRouting(cfg, srv.registry); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for i := 0; i < 20; i++ {
+			adaptiveRequest(t, gateway, "adaptive-sample")
+		}
+		fastBefore, slowBefore := fastCalls.Load(), slowCalls.Load()
+		for i := 0; i < 200; i++ {
+			adaptiveRequest(t, gateway, "adaptive-sample")
+		}
+		fastCount, slowCount := fastCalls.Load()-fastBefore, slowCalls.Load()-slowBefore
+		t.Logf("HTTP adaptive sample: reload=%d healthy=%d failing=%d strategy=%s", cycle, fastCount, slowCount, srv.registry.Router().Strategy())
+		if fastCount+slowCount != 200 || fastCount < 160 {
+			t.Fatalf("adaptive routing did not favor the healthy upstream: healthy=%d failing=%d", fastCount, slowCount)
+		}
 	}
 	if srv.registry.Router().Strategy() != "adaptive" {
 		t.Fatal("gateway silently substituted a different strategy")

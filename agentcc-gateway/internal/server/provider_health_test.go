@@ -26,7 +26,7 @@ import (
 
 type adaptiveOutputPolicy struct{}
 
-func (adaptiveOutputPolicy) Name() string { return "synthetic-output-policy" }
+func (adaptiveOutputPolicy) Name() string  { return "synthetic-output-policy" }
 func (adaptiveOutputPolicy) Priority() int { return 50 }
 func (adaptiveOutputPolicy) ProcessRequest(context.Context, *models.RequestContext) pipeline.PluginResult {
 	return pipeline.ResultContinue()
@@ -35,24 +35,38 @@ func (adaptiveOutputPolicy) ProcessResponse(context.Context, *models.RequestCont
 	return pipeline.ResultError(models.ErrGuardrailBlocked("synthetic-output-policy", "synthetic refusal"))
 }
 
-func adaptiveHTTP(t *testing.T, gateway *httptest.Server, model, authorization string, stream bool) (int, string) {
+func adaptiveHTTP(t *testing.T, gateway *httptest.Server, model, authorization string, stream bool, headers ...http.Header) (int, string) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"model": model, "stream": stream,
 		"messages": []map[string]string{{"role": "user", "content": "synthetic probe"}},
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	req, err := http.NewRequest(http.MethodPost, gateway.URL+"/v1/chat/completions", bytes.NewReader(body))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(headers) > 0 {
+		req.Header = headers[0].Clone()
+	}
 	req.Header.Set("Content-Type", "application/json")
-	if authorization != "" { req.Header.Set("Authorization", "Bearer "+authorization) }
+	if authorization != "" {
+		req.Header.Set("Authorization", "Bearer "+authorization)
+	}
 	client := gateway.Client()
-	client.Timeout = 5*time.Second
+	client.Timeout = 5 * time.Second
 	resp, err := client.Do(req)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
+	t.Logf("synthetic request: status=%d cache=%s", resp.StatusCode, resp.Header.Get("x-agentcc-cache-status"))
 	data, err := io.ReadAll(resp.Body)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return resp.StatusCode, string(data)
 }
 
@@ -76,16 +90,36 @@ func TestAdaptiveHealthExcludesPipelineOutcomes(t *testing.T) {
 				plugin = adaptiveOutputPolicy{}
 			}
 			srv, gateway := adaptiveServer(t, cfg, plugin)
+			key := ""
+			if scenario == "cache-hit" {
+				key = "synthetic-cache-probe"
+				store := tenant.NewStore()
+				store.Set("synthetic-cache-org", &tenant.OrgConfig{Cache: &tenant.CacheConfig{Enabled: true}})
+				srv.handlers.tenantStore = store
+				srv.handlers.keyStore = auth.NewKeyStore(config.AuthConfig{Keys: []config.AuthKeyConfig{
+					{Name: "synthetic-cache", Key: key, KeyType: "internal", Metadata: map[string]string{"org_id": "synthetic-cache-org"}},
+				}})
+			}
 			for i := 0; i < 2; i++ {
-				status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "", false)
+				status, body := adaptiveHTTP(t, gateway, "adaptive-sample", key, false)
 				want := http.StatusOK
-				if scenario == "local-rate-limit" && i == 1 { want = http.StatusTooManyRequests }
-				if scenario == "output-policy" { want = models.ErrGuardrailBlocked("", "").Status }
-				if status != want { t.Fatalf("status=%d want=%d", status, want) }
-				if want == http.StatusOK && !strings.Contains(body, "synthetic response") { t.Fatal("missing upstream/cached content") }
+				if scenario == "local-rate-limit" && i == 1 {
+					want = http.StatusTooManyRequests
+				}
+				if scenario == "output-policy" {
+					want = models.ErrGuardrailBlocked("", "").Status
+				}
+				if status != want {
+					t.Fatalf("status=%d want=%d", status, want)
+				}
+				if want == http.StatusOK && !strings.Contains(body, "synthetic response") {
+					t.Fatal("missing upstream/cached content")
+				}
 			}
 			wantCalls := int64(1)
-			if scenario == "output-policy" { wantCalls = 2 }
+			if scenario == "output-policy" {
+				wantCalls = 2
+			}
 			health := srv.handlers.healthMonitor.GetHealth("fast")
 			if calls.Load() != wantCalls || health.RequestCount != wantCalls || health.ErrorCount != 0 || health.SuccessRate != 1 {
 				t.Fatalf("pipeline corrupted upstream health: calls=%d samples=%d errors=%d success=%v", calls.Load(), health.RequestCount, health.ErrorCount, health.SuccessRate)
@@ -104,8 +138,14 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 			cfg.Providers = map[string]config.ProviderConfig{
 				"fast": {BaseURL: global.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
 			}
-			cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "synthetic-org", Key: "synthetic-org-probe", KeyType: "byok", Metadata: map[string]string{"org_id": "synthetic-org"}}}
+			cfg.Auth.Keys = []config.AuthKeyConfig{
+				{Name: "synthetic-org", Key: "synthetic-org-probe", KeyType: "byok", Metadata: map[string]string{"org_id": "synthetic-org"}},
+				{Name: "synthetic-global", Key: "synthetic-global-probe", KeyType: "internal"},
+			}
 			cfg.Routing = config.RoutingConfig{DefaultStrategy: "adaptive"}
+			if path != "org-first" {
+				cfg.Routing.ProviderLock = config.ProviderLockConfig{Enabled: true}
+			}
 			if path == "failover-override" {
 				cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{"adaptive-sample": {{Provider: "fast"}}}
 				cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 1}
@@ -113,7 +153,9 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 			}
 			srv, gateway := adaptiveServer(t, cfg)
 			orgModels := []string{"different-model"}
-			if path == "org-first" { orgModels = []string{"adaptive-sample"} }
+			if path == "org-first" {
+				orgModels = []string{"adaptive-sample"}
+			}
 			store := tenant.NewStore()
 			store.Set("synthetic-org", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
 				"fast": {Enabled: true, APIKey: "synthetic-provider-key", Models: orgModels},
@@ -126,18 +168,33 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 			srv.handlers.tenantStore = store
 			srv.handlers.orgProviderCache = orgCache
 			srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
-			if status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "", false); status != http.StatusOK { t.Fatal("global priming failed") }
+			if status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-global-probe", false); status != http.StatusOK {
+				t.Fatal("global priming failed")
+			}
 			before := srv.handlers.healthMonitor.GetHealth("fast")
+			headers := http.Header{}
+			if path != "org-first" {
+				headers.Set("x-agentcc-provider-lock", "fast")
+			}
 			for i := 0; i < 3; i++ {
-				status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-probe", false)
-				if status != http.StatusBadGateway { t.Fatalf("org status=%d want=502", status) }
+				status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-probe", false, headers)
+				if status != http.StatusBadGateway {
+					t.Fatalf("org status=%d want=502", status)
+				}
 			}
 			after := srv.handlers.healthMonitor.GetHealth("fast")
-			if orgCalls.Load() != 3 || globalCalls.Load() != 1 { t.Fatalf("wrong instances called: global=%d org=%d", globalCalls.Load(), orgCalls.Load()) }
+			if got := len(srv.handlers.healthMonitor.GetAllHealth()); got != 1 {
+				t.Fatalf("global monitor retained org samples: providers=%d want=1", got)
+			}
+			if orgCalls.Load() != 3 || globalCalls.Load() != 1 {
+				t.Fatalf("wrong instances called: global=%d org=%d", globalCalls.Load(), orgCalls.Load())
+			}
 			if after.RequestCount != before.RequestCount || after.ErrorCount != 0 || after.LatencyEWMAMs != before.LatencyEWMAMs || !after.Healthy || after.CircuitState == "open" {
 				t.Fatalf("org instance polluted global health: samples=%d errors=%d latency=%d before_latency=%d circuit=%s", after.RequestCount, after.ErrorCount, after.LatencyEWMAMs, before.LatencyEWMAMs, after.CircuitState)
 			}
-			if status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "", false); status != http.StatusOK { t.Fatal("org failure blocked unrelated global traffic") }
+			if status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-global-probe", false); status != http.StatusOK {
+				t.Fatal("org failure blocked unrelated global traffic")
+			}
 		})
 	}
 }
@@ -155,12 +212,18 @@ func TestAdaptiveHealthRecordsEachFailoverAttempt(t *testing.T) {
 	cfg.Routing.Adaptive.UpdateInterval = time.Hour
 	cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2}
 	srv, gateway := adaptiveServer(t, cfg)
-	if adaptiveRequest(t, gateway, "adaptive-sample") != http.StatusOK { t.Fatal("failover failed") }
+	if adaptiveRequest(t, gateway, "adaptive-sample") != http.StatusOK {
+		t.Fatal("failover failed")
+	}
 	for _, id := range []string{"fast", "slow"} {
 		health := srv.handlers.healthMonitor.GetHealth(id)
 		wantErrors := int64(0)
-		if id == "slow" { wantErrors = 1 }
-		if health.RequestCount != 1 || health.ErrorCount != wantErrors { t.Fatalf("wrong attempt attribution for %s: samples=%d errors=%d", id, health.RequestCount, health.ErrorCount) }
+		if id == "slow" {
+			wantErrors = 1
+		}
+		if health.RequestCount != 1 || health.ErrorCount != wantErrors {
+			t.Fatalf("wrong attempt attribution for %s: samples=%d errors=%d", id, health.RequestCount, health.ErrorCount)
+		}
 	}
 }
 
@@ -168,13 +231,18 @@ func TestAdaptiveStreamHealthUsesUpstreamCompletion(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("upstream-failure=%t", fail), func(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/v1/chat/completions" { w.WriteHeader(http.StatusNotFound); return }
+				if r.URL.Path != "/v1/chat/completions" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, "data: {\"id\":\"synthetic\",\"model\":\"adaptive-sample\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"synthetic response\"}}]}\n\n")
 				w.(http.Flusher).Flush()
 				if fail {
 					fmt.Fprint(w, "data: {\"error\":{\"message\":\"synthetic failure\",\"type\":\"server_error\",\"code\":\"synthetic\"}}\n\n")
-				} else { fmt.Fprint(w, "data: [DONE]\n\n") }
+				} else {
+					fmt.Fprint(w, "data: [DONE]\n\n")
+				}
 			}))
 			t.Cleanup(upstream.Close)
 			cfg := config.DefaultConfig()
@@ -182,11 +250,17 @@ func TestAdaptiveStreamHealthUsesUpstreamCompletion(t *testing.T) {
 			cfg.Routing = config.RoutingConfig{DefaultStrategy: "adaptive"}
 			srv, gateway := adaptiveServer(t, cfg, adaptiveOutputPolicy{})
 			status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "", true)
-			if status != http.StatusOK || !strings.Contains(body, "synthetic response") { t.Fatalf("stream not received: status=%d", status) }
+			if status != http.StatusOK || !strings.Contains(body, "synthetic response") {
+				t.Fatalf("stream not received: status=%d", status)
+			}
 			health := srv.handlers.healthMonitor.GetHealth("fast")
 			wantErrors := int64(0)
-			if fail { wantErrors = 1 }
-			if health.RequestCount != 1 || health.ErrorCount != wantErrors { t.Fatalf("stream outcome attribution: samples=%d errors=%d want_errors=%d", health.RequestCount, health.ErrorCount, wantErrors) }
+			if fail {
+				wantErrors = 1
+			}
+			if health.RequestCount != 1 || health.ErrorCount != wantErrors {
+				t.Fatalf("stream outcome attribution: samples=%d errors=%d want_errors=%d", health.RequestCount, health.ErrorCount, wantErrors)
+			}
 		})
 	}
 }
