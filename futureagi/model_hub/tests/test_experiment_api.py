@@ -39,6 +39,7 @@ from model_hub.models.experiments import (
     ExperimentComparison,
     ExperimentDatasetTable,
     ExperimentsTable,
+    PendingRowTask,
 )
 from model_hub.models.run_prompt import RunPrompter
 from tfc.middleware.workspace_context import set_workspace_context
@@ -1954,3 +1955,176 @@ class TestExperimentOrganizationIsolation:
             f"/model-hub/experiments/?experiment_id={other_org_experiment.id}"
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+class TestExperimentDatasetStatusCascade:
+    """Freeze sibling workers between column completion and their final writes."""
+
+    @pytest.fixture
+    def eval_cells(self, dataset, row, experiment_dataset):
+        experiment_dataset.status = StatusType.RUNNING.value
+        experiment_dataset.save(update_fields=["status"])
+        experiment = experiment_dataset.experiment
+        experiment.status = StatusType.RUNNING.value
+        experiment.save(update_fields=["status"])
+        cells = []
+        for index in range(2):
+            column = Column.objects.create(
+                name=f"Evaluation {index}",
+                dataset=dataset,
+                data_type=DataTypeChoices.TEXT.value,
+                source=SourceChoices.EXPERIMENT_EVALUATION.value,
+                source_id=f"{experiment_dataset.id}-sourceid-{uuid.uuid4()}",
+                status=StatusType.COMPLETED.value,
+            )
+            experiment_dataset.columns.add(column)
+            cells.append(
+                Cell.objects.create(
+                    dataset=dataset,
+                    row=row,
+                    column=column,
+                    value="done",
+                    status=CellStatus.PASS.value,
+                )
+            )
+        return cells
+
+    @pytest.mark.parametrize(
+        "terminal_status",
+        [CellStatus.PASS.value, CellStatus.ERROR.value],
+        ids=["pass", "error"],
+    )
+    def test_completed_column_waits_for_running_cell(
+        self, experiment_dataset, eval_cells, terminal_status
+    ):
+        from model_hub.views.experiment_runner import (
+            check_and_update_experiment_dataset_status,
+        )
+
+        # Worker A has finished; B's column is already COMPLETED, but its
+        # final cell write has not happened yet. No thread timing is required.
+        late_cell = eval_cells[1]
+        late_cell.status = CellStatus.RUNNING.value
+        late_cell.save(update_fields=["status"])
+
+        assert check_and_update_experiment_dataset_status(experiment_dataset.id) is False
+        experiment_dataset.refresh_from_db()
+        assert experiment_dataset.status == StatusType.RUNNING.value
+
+        late_cell.status = terminal_status
+        late_cell.save(update_fields=["status"])
+        assert check_and_update_experiment_dataset_status(experiment_dataset.id) is True
+        # A late duplicate completion check is harmless.
+        assert check_and_update_experiment_dataset_status(experiment_dataset.id) is True
+        experiment_dataset.refresh_from_db()
+        assert experiment_dataset.status == StatusType.COMPLETED.value
+        experiment_dataset.experiment.refresh_from_db()
+        assert experiment_dataset.experiment.status == StatusType.RUNNING.value
+
+    @pytest.mark.parametrize(
+        "task_status",
+        [PendingRowTask.TaskStatus.REGISTERED, PendingRowTask.TaskStatus.PROCESSING],
+        ids=["registered", "processing"],
+    )
+    def test_pending_row_task_blocks_completion(
+        self, experiment_dataset, eval_cells, task_status
+    ):
+        from model_hub.views.experiment_runner import (
+            check_and_update_experiment_dataset_status,
+        )
+
+        late_cell = eval_cells[1]
+        column = late_cell.column
+        column.status = StatusType.RUNNING.value
+        column.save(update_fields=["status"])
+        task = PendingRowTask.objects.create(
+            row=late_cell.row,
+            column=column,
+            dataset=late_cell.dataset,
+            experiment=experiment_dataset.experiment,
+            messages=[],
+            model="test-model",
+            model_config={},
+            status=task_status,
+        )
+
+        # Terminal cells alone do not prove that a registered writer is done.
+        assert check_and_update_experiment_dataset_status(experiment_dataset.id) is False
+        experiment_dataset.refresh_from_db()
+        column.refresh_from_db()
+        assert experiment_dataset.status == StatusType.RUNNING.value
+        assert column.status == StatusType.RUNNING.value
+
+        task.status = PendingRowTask.TaskStatus.COMPLETED
+        task.save(update_fields=["status"])
+        assert check_and_update_experiment_dataset_status(experiment_dataset.id) is True
+        experiment_dataset.refresh_from_db()
+        column.refresh_from_db()
+        assert experiment_dataset.status == StatusType.COMPLETED.value
+        assert column.status == StatusType.COMPLETED.value
+
+    @pytest.mark.parametrize(
+        "task_status",
+        [PendingRowTask.TaskStatus.COMPLETED, PendingRowTask.TaskStatus.FAILED],
+        ids=["completed", "failed"],
+    )
+    def test_terminal_tasks_allow_completion(
+        self, experiment_dataset, eval_cells, task_status
+    ):
+        from model_hub.views.experiment_runner import (
+            check_and_update_experiment_dataset_status,
+        )
+
+        cell = eval_cells[0]
+        PendingRowTask.objects.create(
+            row=cell.row,
+            column=cell.column,
+            dataset=cell.dataset,
+            experiment=experiment_dataset.experiment,
+            messages=[],
+            model="test-model",
+            model_config={},
+            status=task_status,
+        )
+        assert check_and_update_experiment_dataset_status(experiment_dataset.id) is True
+        experiment_dataset.refresh_from_db()
+        assert experiment_dataset.status == StatusType.COMPLETED.value
+
+    def test_deleted_and_unrelated_work_does_not_block_completion(
+        self, experiment_dataset, eval_cells, output_column
+    ):
+        from model_hub.views.experiment_runner import (
+            check_and_update_experiment_dataset_status,
+        )
+
+        cell = eval_cells[0]
+        deleted_row = Row.objects.create(dataset=cell.dataset, order=1, deleted=True)
+        Cell.objects.create(
+            dataset=cell.dataset,
+            row=deleted_row,
+            column=cell.column,
+            status=CellStatus.RUNNING.value,
+            deleted=True,
+        )
+        Cell.objects.create(
+            dataset=cell.dataset,
+            row=cell.row,
+            column=output_column,
+            status=CellStatus.RUNNING.value,
+        )
+        for column, deleted in [(cell.column, True), (output_column, False)]:
+            PendingRowTask.objects.create(
+                row=cell.row,
+                column=column,
+                dataset=cell.dataset,
+                experiment=experiment_dataset.experiment,
+                messages=[],
+                model="test-model",
+                model_config={},
+                status=PendingRowTask.TaskStatus.PROCESSING,
+                deleted=deleted,
+            )
+        assert check_and_update_experiment_dataset_status(experiment_dataset.id) is True
+        experiment_dataset.refresh_from_db()
+        assert experiment_dataset.status == StatusType.COMPLETED.value

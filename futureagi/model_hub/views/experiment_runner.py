@@ -367,6 +367,26 @@ def check_and_update_experiment_dataset_status(experiment_dataset_id: uuid.UUID)
                 check_and_update_experiment_status(experiment.id)
             return True
 
+        # A sibling can publish its column status before its final cell write.
+        # Check persisted work even for COMPLETED columns, and do this before
+        # repairing RUNNING column statuses so active writers are not hidden.
+        if Cell.objects.filter(
+            column_id__in=all_column_ids,
+            deleted=False,
+            status=CellStatus.RUNNING.value,
+        ).exists():
+            return False
+
+        if PendingRowTask.objects.filter(
+            column_id__in=all_column_ids,
+            deleted=False,
+            status__in=[
+                PendingRowTask.TaskStatus.REGISTERED,
+                PendingRowTask.TaskStatus.PROCESSING,
+            ],
+        ).exists():
+            return False
+
         # CRITICAL FIX: Before checking column statuses, update any columns that have
         # status=RUNNING but no running cells. This handles reason columns and other
         # columns whose status wasn't properly updated after their cells completed.
