@@ -483,10 +483,6 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 	return h.failover.Load()
 }
 
-func (h *Handlers) resolveFallbackProvider(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string) (providers.Provider, string, string, bool) {
-	return h.resolveFallbackProviderExcluding(orgID, orgCfg, rc, fallbackModel, nil)
-}
-
 func (h *Handlers) resolveFallbackProviderExcluding(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string, excluded map[string]bool) (providers.Provider, string, string, bool) {
 	if orgProvider, orgProviderID := h.resolveOrgProvider(orgID, orgCfg, fallbackModel); orgProvider != nil && !excluded[orgProviderID] {
 		return orgProvider, orgProviderID, fallbackModel, true

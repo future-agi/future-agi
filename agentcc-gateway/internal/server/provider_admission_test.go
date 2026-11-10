@@ -23,7 +23,9 @@ import (
 func newProbeServer(t *testing.T, cfg *config.Config, tenants *tenant.Store) (*Server, *httptest.Server) {
 	t.Helper()
 	registry, err := providers.NewRegistry(cfg)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { registry.Close() })
 	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), tenants, nil)
 	srv.ready.Store(true)
@@ -50,15 +52,23 @@ func probeRequest(t *testing.T, gateway *httptest.Server, model, key string, str
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, gateway.URL+"/v1/chat/completions",
 		strings.NewReader(fmt.Sprintf(`{"model":%q,"stream":%t,"messages":[{"role":"user","content":"probe"}]}`, model, stream)))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	req.Header.Set("Content-Type", "application/json")
-	if key != "" { req.Header.Set("Authorization", "Bearer "+key) }
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Do(req)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return resp.StatusCode, string(body)
 }
 
@@ -66,7 +76,9 @@ func waitProbeState(t *testing.T, cb *routing.CircuitBreaker, state routing.Circ
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for cb.State() != state {
-		if time.Now().After(deadline) { t.Fatalf("breaker state=%v, want %v", cb.State(), state) }
+		if time.Now().After(deadline) {
+			t.Fatalf("breaker state=%v, want %v", cb.State(), state)
+		}
 		time.Sleep(time.Millisecond)
 	}
 }
@@ -80,13 +92,20 @@ func TestProbeDirectAdmission(t *testing.T) {
 				var once sync.Once
 				unblock := func() { once.Do(func() { close(release) }) }
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						return
+					}
 					if calls.Add(1) == 1 {
 						w.WriteHeader(http.StatusServiceUnavailable)
 						fmt.Fprint(w, `{"error":{"message":"outage"}}`)
 						return
 					}
 					entered <- struct{}{}
-					select { case <-release: case <-r.Context().Done(): return }
+					select {
+					case <-release:
+					case <-r.Context().Done():
+						return
+					}
 					writeProbeResponse(w, stream, "recovered")
 				}))
 				t.Cleanup(upstream.Close)
@@ -105,19 +124,39 @@ func TestProbeDirectAdmission(t *testing.T) {
 					cfg.Routing.Targets["primary"] = append(cfg.Routing.Targets["primary"], config.RoutingTargetConfig{Provider: "probe"})
 				}
 				srv, gateway := newProbeServer(t, cfg, tenants)
+				if mode == "org-failover" {
+					orgCfg := &tenant.OrgConfig{Routing: &tenant.RoutingConfig{FallbackEnabled: true}}
+					for i := 0; i < 2; i++ {
+						if srv.handlers.effectiveFailover(orgCfg).CircuitBreakers() != srv.handlers.circuitBreakers.Load() {
+							t.Fatal("org failover override lost the persistent breaker registry")
+						}
+					}
+				}
 				t.Cleanup(unblock)
-				if status, _ := probeRequest(t, gateway, "primary", key, stream); status != http.StatusBadGateway { t.Fatalf("outage status=%d", status) }
-				if reg := srv.handlers.circuitBreakers.Load(); reg == nil { t.Fatal("no persistent breaker registry") }
+				if status, _ := probeRequest(t, gateway, "primary", key, stream); status != http.StatusBadGateway {
+					t.Fatalf("outage status=%d", status)
+				}
+				if reg := srv.handlers.circuitBreakers.Load(); reg == nil {
+					t.Fatal("no persistent breaker registry")
+				}
 				cb := srv.handlers.circuitBreakers.Load().Get("probe")
-				if cb.State() != routing.StateOpen { t.Fatalf("direct request did not open breaker: %v", cb.State()) }
+				if cb.State() != routing.StateOpen {
+					t.Fatalf("direct request did not open breaker: %v", cb.State())
+				}
 				time.Sleep(30 * time.Millisecond)
 				finished := make(chan struct{})
 				go func() { defer close(finished); probeRequest(t, gateway, "primary", key, stream) }()
-				select { case <-entered: case <-time.After(time.Second): t.Fatal("recovery probe never reached upstream") }
+				select {
+				case <-entered:
+				case <-time.After(time.Second):
+					t.Fatal("recovery probe never reached upstream")
+				}
 				if status, body := probeRequest(t, gateway, "primary", key, stream); status != 503 || !strings.Contains(body, `"code":"circuit_open"`) {
 					t.Errorf("saturated request status=%d, circuit_open=%t", status, strings.Contains(body, `"code":"circuit_open"`))
 				}
-				if calls.Load() != 2 { t.Errorf("upstream calls=%d, want outage plus one probe", calls.Load()) }
+				if calls.Load() != 2 {
+					t.Errorf("upstream calls=%d, want outage plus one probe", calls.Load())
+				}
 				unblock()
 				<-finished
 			})
@@ -133,12 +172,26 @@ func TestProbeStreamTerminalOutcome(t *testing.T) {
 			var once sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if calls.Add(1) == 1 { w.WriteHeader(503); fmt.Fprint(w, `{"error":{"message":"outage"}}`); return }
+				if r.Method != http.MethodPost {
+					return
+				}
+				if calls.Add(1) == 1 {
+					w.WriteHeader(503)
+					fmt.Fprint(w, `{"error":{"message":"outage"}}`)
+					return
+				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, "data: {\"model\":\"primary\",\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n")
 				w.(http.Flusher).Flush()
-				select { case <-release: case <-r.Context().Done(): return }
-				if ending == "error" { fmt.Fprint(w, "data: {\"error\":{\"message\":\"terminal outage\"}}\n\n"); return }
+				select {
+				case <-release:
+				case <-r.Context().Done():
+					return
+				}
+				if ending == "error" {
+					fmt.Fprint(w, "data: {\"error\":{\"message\":\"terminal outage\"}}\n\n")
+					return
+				}
 				fmt.Fprint(w, "data: [DONE]\n\n")
 			}))
 			t.Cleanup(upstream.Close)
@@ -154,16 +207,25 @@ func TestProbeStreamTerminalOutcome(t *testing.T) {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, gateway.URL+"/v1/chat/completions", strings.NewReader(`{"model":"primary","stream":true,"messages":[{"role":"user","content":"probe"}]}`))
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			defer resp.Body.Close()
 			scanner := bufio.NewScanner(resp.Body)
-			if !scanner.Scan() || !strings.Contains(scanner.Text(), "first") { t.Fatal("first chunk not delivered") }
+			if !scanner.Scan() || !strings.Contains(scanner.Text(), "first") {
+				t.Fatal("first chunk not delivered")
+			}
 			cb := srv.handlers.circuitBreakers.Load().Get("probe")
 			if status, body := probeRequest(t, gateway, "primary", "", true); status != 503 || !strings.Contains(body, "circuit_open") {
 				t.Errorf("stream released probe at first chunk: status=%d", status)
 			}
-			if ending == "cancel" { cancel() } else { unblock() }
-			for scanner.Scan() {}
+			if ending == "cancel" {
+				cancel()
+			} else {
+				unblock()
+			}
+			for scanner.Scan() {
+			}
 			if ending == "error" {
 				waitProbeState(t, cb, routing.StateOpen)
 			} else {
@@ -171,14 +233,21 @@ func TestProbeStreamTerminalOutcome(t *testing.T) {
 				deadline := time.Now().Add(time.Second)
 				for {
 					generation, allowed := cb.Allow()
-					if allowed { cb.RecordFailure(generation, nil); break }
-					if time.Now().After(deadline) { t.Fatal("terminal stream leaked its probe") }
+					if allowed {
+						cb.RecordFailure(generation, nil)
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("terminal stream leaked its probe")
+					}
 					time.Sleep(time.Millisecond)
 				}
 				unblock()
 				probeRequest(t, gateway, "primary", "", true)
 				want := routing.StateClosed
-				if ending == "cancel" { want = routing.StateHalfOpen }
+				if ending == "cancel" {
+					want = routing.StateHalfOpen
+				}
 				waitProbeState(t, cb, want)
 			}
 		})
@@ -191,7 +260,11 @@ func TestProbeTenantFallbackIsolation(t *testing.T) {
 			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
 			t.Cleanup(primary.Close)
 			shared := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Authorization") == "Bearer synthetic-org-a" { w.WriteHeader(429); fmt.Fprint(w, `{"error":{"message":"outage"}}`); return }
+				if r.Header.Get("Authorization") == "Bearer synthetic-org-a" {
+					w.WriteHeader(429)
+					fmt.Fprint(w, `{"error":{"message":"outage"}}`)
+					return
+				}
 				writeProbeResponse(w, stream, "isolated")
 			}))
 			t.Cleanup(shared.Close)
@@ -203,13 +276,19 @@ func TestProbeTenantFallbackIsolation(t *testing.T) {
 			cfg.Auth.Enabled = true
 			tenants := tenant.NewStore()
 			for _, id := range []string{"a", "b"} {
-				cfg.Auth.Keys = append(cfg.Auth.Keys, config.AuthKeyConfig{Name: id, Key: "synthetic-internal-"+id, KeyType: "internal", Metadata: map[string]string{"org_id": id}})
-				tenants.Set(id, &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{"shared": {Enabled: true, APIKey: "synthetic-org-"+id, Models: []string{"fallback"}}}})
+				cfg.Auth.Keys = append(cfg.Auth.Keys, config.AuthKeyConfig{Name: id, Key: "synthetic-internal-" + id, KeyType: "internal", Metadata: map[string]string{"org_id": id}})
+				tenants.Set(id, &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{"shared": {Enabled: true, APIKey: "synthetic-org-" + id, Models: []string{"fallback"}}}})
 			}
 			srv, gateway := newProbeServer(t, cfg, tenants)
-			if status, _ := probeRequest(t, gateway, "primary", "synthetic-internal-a", stream); status != 502 { t.Fatalf("tenant A status=%d", status) }
-			if cb := srv.handlers.circuitBreakers.Load().Get("shared"); cb.State() != routing.StateClosed { t.Errorf("tenant fallback changed operator breaker: %v", cb.State()) }
-			if _, err := srv.registry.Router().Select("fallback"); err != nil { t.Errorf("tenant fallback changed operator health: %v", err) }
+			if status, _ := probeRequest(t, gateway, "primary", "synthetic-internal-a", stream); status != 502 {
+				t.Fatalf("tenant A status=%d", status)
+			}
+			if cb := srv.handlers.circuitBreakers.Load().Get("shared"); cb.State() != routing.StateClosed {
+				t.Errorf("tenant fallback changed operator breaker: %v", cb.State())
+			}
+			if _, err := srv.registry.Router().Select("fallback"); err != nil {
+				t.Errorf("tenant fallback changed operator health: %v", err)
+			}
 			if status, body := probeRequest(t, gateway, "primary", "synthetic-internal-b", stream); status != 200 || !strings.Contains(body, "isolated") {
 				t.Fatalf("tenant B blocked by tenant A: status=%d, isolated=%t", status, strings.Contains(body, "isolated"))
 			}
@@ -223,16 +302,22 @@ func TestProbeFallbackReselectsSaturatedTarget(t *testing.T) {
 			var saturatedCalls atomic.Int32
 			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
 			t.Cleanup(primary.Close)
-			blocked := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { saturatedCalls.Add(1); writeProbeResponse(w, stream, "wrong") }))
+			blocked := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					return
+				}
+				saturatedCalls.Add(1)
+				writeProbeResponse(w, stream, "wrong")
+			}))
 			t.Cleanup(blocked.Close)
 			healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeProbeResponse(w, stream, "alternative") }))
 			t.Cleanup(healthy.Close)
 			cfg := probeConfig(primary.URL)
 			cfg.Providers["blocked"] = config.ProviderConfig{BaseURL: blocked.URL, APIFormat: "openai", Models: []string{"fallback"}}
 			cfg.Providers["healthy"] = config.ProviderConfig{BaseURL: healthy.URL, APIFormat: "openai", Models: []string{"fallback"}}
-			cfg.Routing.DefaultStrategy = "priority"
+			cfg.Routing.DefaultStrategy = "least-latency"
 			cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{
-				"primary": {{Provider: "probe"}, {Provider: "probe"}},
+				"primary":  {{Provider: "probe"}, {Provider: "probe"}},
 				"fallback": {{Provider: "blocked", Priority: 1}, {Provider: "healthy", Priority: 2}},
 			}
 			cfg.Routing.ModelFallbacks = map[string][]string{"primary": {"fallback"}}
@@ -242,13 +327,19 @@ func TestProbeFallbackReselectsSaturatedTarget(t *testing.T) {
 			cb.RecordFailure(generation, routing.CircuitOpenError())
 			time.Sleep(30 * time.Millisecond)
 			generation, allowed := cb.Allow()
-			if !allowed { t.Fatal("could not hold half-open probe") }
+			if !allowed {
+				t.Fatal("could not hold half-open probe")
+			}
 			defer cb.RecordFailure(generation, nil)
 			for i := 0; i < 2; i++ { // second call exercises already-open primary -> 503 -> model fallback
 				status, body := probeRequest(t, gateway, "primary", "", stream)
-				if status != 200 || !strings.Contains(body, "alternative") { t.Errorf("fallback target was skipped: status=%d alternative=%t", status, strings.Contains(body, "alternative")) }
+				if status != 200 || !strings.Contains(body, "alternative") {
+					t.Errorf("fallback target was skipped: status=%d alternative=%t", status, strings.Contains(body, "alternative"))
+				}
 			}
-			if saturatedCalls.Load() != 0 { t.Errorf("saturated upstream called %d times", saturatedCalls.Load()) }
+			if saturatedCalls.Load() != 0 {
+				t.Errorf("saturated upstream called %d times", saturatedCalls.Load())
+			}
 		})
 	}
 }
