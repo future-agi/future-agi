@@ -131934,10 +131934,7 @@
                     "x-nullable": true
                 }
             },
-            "additionalProperties": {
-                "description": "Provider-specific credential fields accepted at top level.",
-                "type": "object"
-            }
+            "additionalProperties": true
         },
         "SDKMessageResult": {
             "required": [
@@ -132014,9 +132011,7 @@
                     "minimum": 1
                 }
             },
-            "additionalProperties": {
-                "type": "object"
-            }
+            "additionalProperties": true
         },
         "SDKStandaloneEvalRequest": {
             "required": [

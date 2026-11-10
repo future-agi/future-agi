@@ -1,4 +1,3 @@
-from drf_yasg import openapi
 from rest_framework import serializers
 
 from sdk.serializers.analytics import (
@@ -30,12 +29,9 @@ class ConfigureEvaluationsRequestSerializer(serializers.Serializer):
 
     class Meta:
         ref_name = "SDKConfigureEvaluationsRequest"
-        swagger_schema_fields = {
-            "additional_properties": openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                description="Provider-specific credential fields accepted at top level.",
-            )
-        }
+        # The view forwards undeclared JSON values from request.data as provider
+        # credentials (including scalar strings); they are not object-only.
+        swagger_schema_fields = {"additional_properties": True}
 
 
 class SDKMessageResultSerializer(serializers.Serializer):
@@ -53,9 +49,9 @@ class SDKStandaloneEvalInputSerializer(serializers.Serializer):
 
     class Meta:
         ref_name = "SDKStandaloneEvalInput"
-        swagger_schema_fields = {
-            "additional_properties": openapi.Schema(type=openapi.TYPE_OBJECT)
-        }
+        # DRF ignores undeclared nested input fields regardless of JSON type.
+        # Keep their existing acceptance without claiming object-only values.
+        swagger_schema_fields = {"additional_properties": True}
 
 
 class SDKStandaloneEvalRequestSerializer(serializers.Serializer):

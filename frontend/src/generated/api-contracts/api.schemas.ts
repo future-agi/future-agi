@@ -15838,7 +15838,7 @@ export interface SDKConfigureEvaluationsRequestApi {
   /** @minLength 1 */
   platform: string;
   custom_eval_name?: string;
-  [key: string]: { [key: string]: unknown };
+  [key: string]: unknown;
 }
 
 export interface SDKMessageResultApi {
@@ -15866,7 +15866,7 @@ export interface SDKStandaloneEvalInputApi {
   input?: string;
   /** @minimum 1 */
   max_tokens?: number;
-  [key: string]: { [key: string]: unknown };
+  [key: string]: unknown;
 }
 
 export interface SDKStandaloneEvalRequestApi {
