@@ -8,7 +8,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("accounts", "0024_sosloginproxy"),
         ("model_hub", "0122_backfill_queueitem_source_preview"),

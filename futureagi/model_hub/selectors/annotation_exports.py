@@ -13,7 +13,10 @@ def resolve_export_job_state(job: AnnotationExportJob) -> tuple[str, str | None]
     ):
         return job.status, job.error
     if job.queue_id is None:
-        return AnnotationExportJobStatus.FAILED.value, "The annotation queue was deleted before export completed."
+        return (
+            AnnotationExportJobStatus.FAILED.value,
+            "The annotation queue was deleted before export completed.",
+        )
     if not job.workflow_id:
         return job.status, job.error
 
@@ -28,4 +31,7 @@ def resolve_export_job_state(job: AnnotationExportJob) -> tuple[str, str | None]
     }.get(workflow["status_name"])
     if reason is None:
         return job.status, job.error
-    return AnnotationExportJobStatus.FAILED.value, f"The background export {reason}. Please retry."
+    return (
+        AnnotationExportJobStatus.FAILED.value,
+        f"The background export {reason}. Please retry.",
+    )

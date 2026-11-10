@@ -18,7 +18,9 @@ def preserve_export_storage_keys(apps, schema_editor):
         for job in rows:
             extension = "csv" if job.export_format == "csv" else "json"
             job.storage_key = f"annotation-exports/{job.queue_id}/{job.pk}.{extension}"
-        jobs.objects.using(schema_editor.connection.alias).bulk_update(rows, ["storage_key"])
+        jobs.objects.using(schema_editor.connection.alias).bulk_update(
+            rows, ["storage_key"]
+        )
         after = rows[-1].pk
 
 
@@ -38,16 +40,34 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name="annotationexportjob",
             name="organization",
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="annotation_export_jobs", to="accounts.organization"),
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="annotation_export_jobs",
+                to="accounts.organization",
+            ),
         ),
         migrations.AlterField(
             model_name="annotationexportjob",
             name="queue",
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="export_jobs", to="model_hub.annotationqueue"),
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="export_jobs",
+                to="model_hub.annotationqueue",
+            ),
         ),
         migrations.AlterField(
             model_name="annotationexportjob",
             name="workspace",
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="annotation_export_jobs", to="accounts.workspace"),
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="annotation_export_jobs",
+                to="accounts.workspace",
+            ),
         ),
     ]

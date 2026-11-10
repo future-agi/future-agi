@@ -368,7 +368,9 @@ def test_items_without_annotations_still_get_a_csv_line(organization, workspace,
     assert all(row[11:18] == ["", "", "", "", "", "", ""] for row in rows)
     assert {row[18] for row in rows} == {str(row.id) for row in seed["rows"]}
     assert [json.loads(row[19])["fields"]["col_0"] for row in rows] == [
-        "r0c0", "r1c0", "r2c0"
+        "r0c0",
+        "r1c0",
+        "r2c0",
     ]
 
 
@@ -613,16 +615,28 @@ def test_cleanup_soft_deletes_terminal_jobs_past_retention(
     old = EXPORT_RETENTION_DAYS + 1
 
     stale_ok = _finished_job(
-        queue, organization, workspace, user,
-        status_value=AnnotationExportJobStatus.SUCCEEDED.value, age_days=old,
+        queue,
+        organization,
+        workspace,
+        user,
+        status_value=AnnotationExportJobStatus.SUCCEEDED.value,
+        age_days=old,
     )
     stale_failed = _finished_job(
-        queue, organization, workspace, user,
-        status_value=AnnotationExportJobStatus.FAILED.value, age_days=old,
+        queue,
+        organization,
+        workspace,
+        user,
+        status_value=AnnotationExportJobStatus.FAILED.value,
+        age_days=old,
     )
     recent = _finished_job(
-        queue, organization, workspace, user,
-        status_value=AnnotationExportJobStatus.SUCCEEDED.value, age_days=1,
+        queue,
+        organization,
+        workspace,
+        user,
+        status_value=AnnotationExportJobStatus.SUCCEEDED.value,
+        age_days=1,
     )
     # A pending job carries no finished_at, so it can't be past any cutoff.
     pending = _make_job(queue, organization, workspace, user, "json")
@@ -653,8 +667,12 @@ def test_cleanup_continues_past_a_storage_failure(organization, workspace, user)
     old = EXPORT_RETENTION_DAYS + 5
     for _ in range(3):
         _finished_job(
-            queue, organization, workspace, user,
-            status_value=AnnotationExportJobStatus.SUCCEEDED.value, age_days=old,
+            queue,
+            organization,
+            workspace,
+            user,
+            status_value=AnnotationExportJobStatus.SUCCEEDED.value,
+            age_days=old,
         )
 
     calls = {"n": 0}
@@ -684,15 +702,16 @@ def test_cleanup_deletes_the_stored_object_for_the_reclaimed_job(
         organization=organization, workspace=workspace, user=user, n_rows=1
     )
     job = _finished_job(
-        seed["queue"], organization, workspace, user,
+        seed["queue"],
+        organization,
+        workspace,
+        user,
         status_value=AnnotationExportJobStatus.SUCCEEDED.value,
         age_days=EXPORT_RETENTION_DAYS + 1,
     )
 
     client = mock.MagicMock()
-    with mock.patch(
-        "tfc.utils.storage_client.get_storage_client", return_value=client
-    ):
+    with mock.patch("tfc.utils.storage_client.get_storage_client", return_value=client):
         cleanup_expired_export_jobs._original_func()
 
     bucket, key = client.remove_object.call_args.args
@@ -700,7 +719,9 @@ def test_cleanup_deletes_the_stored_object_for_the_reclaimed_job(
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize("workflow_status", ["FAILED", "TIMED_OUT", "CANCELED", "TERMINATED"])
+@pytest.mark.parametrize(
+    "workflow_status", ["FAILED", "TIMED_OUT", "CANCELED", "TERMINATED"]
+)
 def test_poll_reports_worker_exit_without_mutating_on_get(
     auth_client, organization, workspace, user, workflow_status
 ):
@@ -747,13 +768,19 @@ def test_poll_does_not_fail_on_temporal_outage_or_retry(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_cleanup_removes_upload_even_when_saving_file_url_failed(organization, workspace, user):
+def test_cleanup_removes_upload_even_when_saving_file_url_failed(
+    organization, workspace, user
+):
     seed = _build_dataset_queue(
         organization=organization, workspace=workspace, user=user, n_rows=1
     )
     job = _finished_job(
-        seed["queue"], organization, workspace, user,
-        status_value="failed", age_days=EXPORT_RETENTION_DAYS + 1,
+        seed["queue"],
+        organization,
+        workspace,
+        user,
+        status_value="failed",
+        age_days=EXPORT_RETENTION_DAYS + 1,
     )
     job.file_url = None
     job.save()
