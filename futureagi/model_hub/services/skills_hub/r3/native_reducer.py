@@ -336,9 +336,7 @@ def reduce_native_results(
     state = (
         "needs_changes"
         if candidate_failures
-        else "inconclusive"
-        if counts["incomplete"]
-        else "works_on_examples"
+        else "inconclusive" if counts["incomplete"] else "works_on_examples"
     )
     if reproduction == "not_reproduced" and not candidate_failures:
         state = "inconclusive"

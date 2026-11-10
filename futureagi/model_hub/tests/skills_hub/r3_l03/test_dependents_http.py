@@ -25,9 +25,9 @@ def test_http_dependents_reports_complete_followers_and_pins(
             [
                 {
                     "skill_id": str(hub_skill.pk),
-                    "selector": {"version": 1}
-                    if index == 2
-                    else {"label": "production"},
+                    "selector": (
+                        {"version": 1} if index == 2 else {"label": "production"}
+                    ),
                 }
             ],
         )
