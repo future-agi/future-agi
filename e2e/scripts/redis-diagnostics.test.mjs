@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { boundedRecords, collectSnapshot, dockerEvent, redisInfo, runWithDiagnostics, safeLog } from './redis-diagnostics.mjs';
+import { boundedRecords, collectSnapshot, dockerEvent, redisInfo, runWithDiagnostics, safeLog, stackServices } from './redis-diagnostics.mjs';
 
 const timestamp = '2026-11-10T08:30:34.719Z';
 
@@ -61,10 +61,36 @@ test('bounded evidence retains first failure and counts discarded tail', () => {
 });
 
 test('missing services and runner pressure stay diagnostic, not suite failures', async () => {
-  const result = await collectSnapshot(async () => { throw new Error('secret transport'); }, async () => { throw new Error('secret'); });
+  const result = await collectSnapshot(async () => { throw new Error('secret transport'); }, async () => { throw new Error('secret'); },
+    stackServices('distributed'));
   assert.equal(result.redis.stats_unavailable, true);
   assert.deepEqual(result.containers.map(row => row.unavailable), [true, true]);
   assert.ok(!JSON.stringify(result).includes('secret'));
+});
+
+test('each stack targets the services bin/e2e actually starts', async () => {
+  assert.deepEqual(stackServices('distributed').containers, ['backend', 'redis']);
+  assert.deepEqual(stackServices('').containers, ['backend', 'redis']);
+  assert.deepEqual(stackServices('distributed').redisInfo('stats'), ['redis', 'redis-cli', 'INFO', 'stats']);
+  // Standalone runs Redis inside `app`, authenticated from the container's own env.
+  assert.deepEqual(stackServices('standalone').containers, ['app']);
+  const args = stackServices('standalone').redisInfo('stats');
+  assert.deepEqual([args[0], args.at(-1)], ['app', 'stats']);
+  assert.match(args[3], /REDISCLI_AUTH="\$REDIS_PASSWORD"/);
+  const calls = [];
+  await collectSnapshot(async (file, argv) => { calls.push(argv.join(' ')); throw new Error('unavailable'); },
+    async () => { throw new Error('unavailable'); }, stackServices('standalone'));
+  assert.ok(calls.some(call => call.startsWith('compose exec -T app sh -c')));
+  assert.ok(calls.includes('compose ps -q app'));
+  assert.ok(!calls.some(call => / (backend|redis)$/.test(call) || call.includes('exec -T redis')));
+});
+
+test('standalone app logs yield both Redis and backend events', () => {
+  assert.deepEqual(safeLog(`${timestamp} Background saving terminated with success`, 'app'),
+    { timestamp, service: 'app', event: 'save_complete' });
+  assert.deepEqual(safeLog(`${timestamp} [warning  ] api_cache_unavailable source_line=123`, 'app'),
+    { timestamp, service: 'app', event: 'api_cache_unavailable', source_line: 123 });
+  assert.equal(safeLog(`${timestamp} secret-command secret-value`, 'app'), null);
 });
 
 for (const [status, signal, expected] of [[7, null, 7], [null, 'SIGKILL', 137]])
@@ -84,7 +110,7 @@ for (const [status, signal, expected] of [[7, null, 7], [null, 'SIGKILL', 137]])
   };
   try {
     const code = await runWithDiagnostics(['fake-suite'], dir, {
-      spawn, command: async () => 'a'.repeat(64),
+      spawn, command: async () => 'a'.repeat(64), services: stackServices('distributed'),
       snapshot: async () => { sequence.push('snapshot'); return { timestamp, rejected_connections: 2 }; },
     });
     assert.equal(code, expected);

@@ -34,11 +34,14 @@ export function redisInfo(text) {
 export function safeLog(line, service) {
   const timestamp = line.match(/\b\d{4}-\d{2}-\d{2}T[\d:.]+Z\b/)?.[0];
   if (!timestamp) return null;
-  if (service === 'redis') {
+  // Standalone's `app` container runs Redis next to the backend, so its lines
+  // are checked for Redis events first and then for backend events.
+  if (service === 'redis' || service === 'app') {
     const events = [/Ready to accept connections/, /Background saving started/,
       /Background saving terminated with success/, /DB saved on disk/, /overcommit_memory/];
     const index = events.findIndex(pattern => pattern.test(line));
-    return index < 0 ? null : { timestamp, service, event: ['ready', 'save_started', 'save_complete', 'db_saved', 'overcommit_warning'][index] };
+    if (index >= 0) return { timestamp, service, event: ['ready', 'save_started', 'save_complete', 'db_saved', 'overcommit_warning'][index] };
+    if (service === 'redis') return null;
   }
   // Prod uses JSONRenderer; the E2E overlay uses ENV_TYPE=local and therefore
   // ConsoleRenderer. In either case retain only known events and typed fields.
@@ -97,13 +100,24 @@ async function command(file, args) {
   return stdout;
 }
 
-export async function collectSnapshot(run = command, read = readFile) {
+// Mirrors bin/e2e: distributed runs `backend` and `redis` as separate services;
+// standalone (E2E_STACK=standalone) runs both inside one `app` service, where
+// Redis needs the stack password. REDISCLI_AUTH is read from the container's
+// own environment, so the password never appears in argv or in these records.
+export function stackServices(stack = process.env.E2E_STACK) {
+  return stack === 'standalone'
+    ? { containers: ['app'], redisInfo: section => ['app', 'sh', '-c',
+      'REDISCLI_AUTH="$REDIS_PASSWORD" exec redis-cli -h 127.0.0.1 INFO "$0"', section] }
+    : { containers: ['backend', 'redis'], redisInfo: section => ['redis', 'redis-cli', 'INFO', section] };
+}
+
+export async function collectSnapshot(run = command, read = readFile, services = stackServices()) {
   const snapshot = { timestamp: new Date().toISOString(), redis: {}, containers: [], pressure: {}, cgroup: {} };
   await Promise.all(['server', 'clients', 'stats', 'memory', 'persistence', 'errorstats'].map(async section => {
-    try { Object.assign(snapshot.redis, redisInfo(await run('bin/e2e', ['compose', 'exec', '-T', 'redis', 'redis-cli', 'INFO', section]))); }
+    try { Object.assign(snapshot.redis, redisInfo(await run('bin/e2e', ['compose', 'exec', '-T', ...services.redisInfo(section)]))); }
     catch { snapshot.redis[`${section}_unavailable`] = true; }
   }));
-  await Promise.all(['backend', 'redis'].map(async service => {
+  await Promise.all(services.containers.map(async service => {
     try {
       const id = (await run('bin/e2e', ['compose', 'ps', '-q', service])).trim();
       if (!/^[a-f0-9]{12,64}$/.test(id)) return;
@@ -139,7 +153,8 @@ export async function collectSnapshot(run = command, read = readFile) {
 export async function runWithDiagnostics(argv, outputDir, deps = {}) {
   const run = deps.command ?? command;
   const start = deps.spawn ?? spawn;
-  const sample = deps.snapshot ?? (() => collectSnapshot(run));
+  const services = deps.services ?? stackServices();
+  const sample = deps.snapshot ?? (() => collectSnapshot(run, readFile, services));
   try { await mkdir(outputDir, { recursive: true }); }
   catch { console.error('Optional Redis diagnostic directory unavailable'); }
   const evidence = boundedRecords();
@@ -161,7 +176,7 @@ export async function runWithDiagnostics(argv, outputDir, deps = {}) {
       });
     }
   }
-  for (const service of ['backend', 'redis']) {
+  for (const service of services.containers) {
     try {
       const id = (await run('bin/e2e', ['compose', 'ps', '-q', service])).trim();
       if (!/^[a-f0-9]{12,64}$/.test(id)) continue;
