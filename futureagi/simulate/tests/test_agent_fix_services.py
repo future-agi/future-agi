@@ -61,6 +61,7 @@ from simulate.services.agent_fix_runs import (
     retry_fix_run,
     split_held_back,
 )
+from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
 from simulate.services.harness_versioning.versions import record_authoring
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -2354,39 +2355,53 @@ class TestMeasuredConversations:
         CallExecution.objects.filter(id=call.id).update(
             simulation_call_type=CallExecution.SimulationCallType.TEXT
         )
-        start = timezone.now()
-        # (user turn at, agent's first message at) per exchange, in ms; the last one's
-        # user message has no time, so it says nothing.
-        for n, (asked, answered) in enumerate(
-            [(0, 1000), (5000, 8000), (12000, 14000), (None, 30000)]
-        ):
-            ask, answer = _chat(
-                call,
-                ("user", [{"role": "user", "content": "q", "start_time_ms": asked}]),
-                (
-                    "assistant",
-                    [
-                        {
-                            "role": "assistant",
-                            "kind": "tool_calls",
-                            "content": "x",
-                            "start_time_ms": answered,
-                        },
-                        {
-                            "role": "assistant",
-                            "content": "a",
-                            "start_time_ms": answered + 500,
-                        },
-                    ],
-                ),
-            )
-            ChatMessageModel.no_workspace_objects.filter(
-                id__in=[ask.id, answer.id]
-            ).update(created_at=start + timedelta(seconds=n))
+        call.refresh_from_db()
+        # A transcript as the hosted harness reports one, stored by its ingestion:
+        # every row gets its own created_at.
+        _store_alk_chat_messages(
+            call,
+            [
+                # The agent's greeting answers no user turn.
+                {"speaker_role": "assistant", "content": "Hi!", "start_time_ms": 0},
+                {
+                    "speaker_role": "user",
+                    "content": "Book a visit",
+                    "start_time_ms": 1200,
+                },
+                # The agent's first message after a turn may be a tool call.
+                {
+                    "speaker_role": "tool_calls",
+                    "content": "find_slot",
+                    "start_time_ms": 3050,
+                },
+                {
+                    "speaker_role": "assistant",
+                    "content": "Tuesday 10?",
+                    "start_time_ms": 3400,
+                },
+                {"speaker_role": "user", "content": "Yes", "start_time_ms": 6000},
+                {
+                    "speaker_role": "assistant",
+                    "content": "Booked.",
+                    "start_time_ms": 8200,
+                },
+                {"speaker_role": "user", "content": "Thanks", "start_time_ms": 10000},
+                {"speaker_role": "assistant", "content": "Bye", "start_time_ms": 10900},
+                # A last turn the agent never answered.
+                {
+                    "speaker_role": "user",
+                    "content": "One more thing",
+                    "start_time_ms": 15000,
+                },
+            ],
+        )
+        stored = ChatMessageModel.no_workspace_objects.filter(call_execution=call)
+        assert stored.values("created_at").distinct().count() == stored.count() == 8
 
         [record] = check_run_status(run).records
 
-        assert record.reply_latency_ms == 2000
+        # Replies of 1850, 2200 and 900 ms.
+        assert record.reply_latency_ms == 1850
 
     def test_a_voice_call_s_reply_latency_is_its_agent_s_average(self, source_run):
         run, [call] = _finished_trials(source_run)

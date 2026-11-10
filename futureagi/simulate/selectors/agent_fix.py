@@ -474,11 +474,24 @@ def models_called(usage: Mapping[str, CallUsage]) -> list[str]:
     return sorted({model for one in usage.values() for model in one.models})
 
 
+def _first_time_ms(content: Any) -> int | None:
+    """When a chat row's first timed item was said: hosted chat stores each segment's
+    start time on its item."""
+    return next(
+        (
+            item["start_time_ms"]
+            for item in content or []
+            if isinstance(item, Mapping) and isinstance(item.get("start_time_ms"), int)
+        ),
+        None,
+    )
+
+
 def _reply_latencies(calls: Iterable[CallExecution]) -> dict[Any, float | None]:
     """Each call's reply latency in ms. A voice call has its agent's average latency. A
-    chat has the median, over its exchanges, of the agent's first message time less the
-    user message's: hosted chat stores both on each row's items, and an exchange's two
-    rows share their created_at."""
+    chat has the median, over its user turns, of the time from the user's message to
+    the agent's first message after it. An agent's greeting before any user turn, and a
+    last user turn the agent never answered, have no reply."""
     latencies: dict[Any, float | None] = {}
     chats = []
     for call in calls:
@@ -490,33 +503,39 @@ def _reply_latencies(calls: Iterable[CallExecution]) -> dict[Any, float | None]:
                 if call.avg_agent_latency_ms is not None
                 else None
             )
-    exchanges: dict[Any, dict[Any, dict[str, int]]] = defaultdict(dict)
-    rows = ChatMessageModel.no_workspace_objects.filter(
+    turns: dict[Any, list[tuple[int | None, Any, str, str]]] = defaultdict(list)
+    for (
+        call_id,
+        created_at,
+        row_id,
+        role,
+        content,
+    ) in ChatMessageModel.no_workspace_objects.filter(
         call_execution_id__in=chats,
         role__in=[
             ChatMessageModel.RoleChoices.USER,
             ChatMessageModel.RoleChoices.ASSISTANT,
         ],
-    ).values_list("call_execution_id", "created_at", "role", "content")
-    for call_id, created_at, role, content in rows:
-        at = next(
-            (
-                item["start_time_ms"]
-                for item in content or []
-                if isinstance(item, Mapping)
-                and isinstance(item.get("start_time_ms"), int)
-            ),
-            None,
-        )
-        if at is not None:
-            exchanges[call_id].setdefault(created_at, {})[role] = at
+    ).values_list("call_execution_id", "created_at", "id", "role", "content"):
+        turns[call_id].append((_first_time_ms(content), created_at, str(row_id), role))
     for call_id in chats:
-        gaps = [
-            times["assistant"] - times["user"]
-            for times in exchanges[call_id].values()
-            if times.keys() >= {"user", "assistant"}
-            and times["assistant"] >= times["user"]
-        ]
+        rows = turns[call_id]
+        # The conversation's order: its own times when every row has one, else the
+        # order the rows were stored in (each row's created_at is its own).
+        if all(at is not None for at, *_ in rows):
+            rows.sort(key=lambda row: (row[0], row[1], row[2]))
+        else:
+            rows.sort(key=lambda row: (row[1], row[2]))
+        gaps = []
+        asked: int | None = None
+        waiting = False
+        for at, _created_at, _row_id, role in rows:
+            if role == ChatMessageModel.RoleChoices.USER:
+                asked, waiting = at, True
+                continue
+            if waiting and asked is not None and at is not None and at >= asked:
+                gaps.append(at - asked)
+            waiting = False
         latencies[call_id] = float(median(gaps)) if gaps else None
     return latencies
 
