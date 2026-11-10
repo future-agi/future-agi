@@ -124,6 +124,7 @@ services:
     networks: [link-public, link-private]
     extra_hosts:
       - "allowed.example:11.23.0.10"
+      - "worker-allowed.example:11.23.0.11"
       - "denied.example:11.23.0.10"
       - "private.example:172.30.91.10"
     restart: "no"
@@ -142,6 +143,21 @@ services:
         ipv4_address: 11.23.0.10
       link-private:
         ipv4_address: 172.30.91.10
+    restart: "no"
+
+  # A separate journal keeps asynchronous harness traffic out of the browser
+  # flow's full-journal assertion when Playwright runs the files in parallel.
+  link-worker-canary:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/link-canary/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28083:80"
+    networks:
+      default: {}
+      link-public:
+        ipv4_address: 11.23.0.11
     restart: "no"
 
 networks:

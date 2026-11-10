@@ -21,6 +21,9 @@ test('every code-evaluation worker can reach the isolated executor without local
   const executorNetworks = Object.keys(config.services['code-executor'].networks);
   assert.deepEqual(executorNetworks.sort(), ['link-private', 'link-public']);
   for (const name of executorNetworks) assert.equal(config.networks[name].internal, true, name);
+  assert.notEqual(config.services['link-canary'].networks['link-public'].ipv4_address,
+    config.services['link-worker-canary'].networks['link-public'].ipv4_address,
+    'parallel browser and Temporal tests must have independent listener journals');
   const workers = Object.entries(config.services).filter(([, service]) =>
     service.environment?.SERVICE_TYPE === 'temporal-worker');
   assert.ok(workers.some(([name]) => name === 'worker'));

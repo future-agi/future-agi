@@ -19,7 +19,7 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
 # Dedicated-executor service selection reused from the existing executor harness.
 # No serving; keep the general and exact-aggregation workers and real sandbox.
 # Completed one-shot dependencies gate the app; failed jobs are never retried.
-SERVICES=(frontend backend worker worker-exact-aggregation code-executor link-canary
+SERVICES=(frontend backend worker worker-exact-aggregation code-executor link-canary link-worker-canary
   postgres clickhouse redis minio
   temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)

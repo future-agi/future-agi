@@ -18,7 +18,7 @@ test('Temporal code evaluations reach the isolated executor with fallback disabl
     expect(templates.map(row => row.name)).toEqual(['contains_valid_link', 'no_invalid_links']);
     const seeded = await sendTrace(req, { collectorUrl: E2E.collectorUrl,
       apiKey: actor.apiKey, secretKey: actor.secretKey, projectName: `e2e-worker-links-${suffix}`,
-      childAttributes: { 'e2e.link.text': `http://allowed.example${path}` } });
+      childAttributes: { 'e2e.link.text': `http://worker-allowed.example${path}` } });
     await expect.poll(async () => Number((await probe.ch<{ n: string }>(
       'SELECT count() AS n FROM spans FINAL WHERE trace_id = {t:String}', { t: seeded.traceId }))[0].n),
     POLL.SPAN_VISIBLE).toBe(2);
@@ -50,11 +50,11 @@ test('Temporal code evaluations reach the isolated executor with fallback disabl
       { status: 'completed', output_bool: true, eval_explanation: 'All 1 link(s) are valid' },
       { status: 'completed', output_bool: true, eval_explanation: 'Link found and valid (status 200)' },
     ]);
-    const journal = await req.get(`${E2E.linkCanaryUrl}/requests?prefix=${encodeURIComponent(path)}`);
+    const journal = await req.get(`${E2E.linkWorkerCanaryUrl}/requests?prefix=${encodeURIComponent(path)}`);
     expect(journal.status()).toBe(200);
     expect(await journal.json()).toEqual([
-      { method: 'HEAD', host: 'allowed.example', path },
-      { method: 'HEAD', host: 'allowed.example', path },
+      { method: 'HEAD', host: 'worker-allowed.example', path },
+      { method: 'HEAD', host: 'worker-allowed.example', path },
     ]);
   } finally {
     await req.dispose();
