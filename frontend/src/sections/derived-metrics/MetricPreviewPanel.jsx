@@ -10,10 +10,15 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from "@mui/material";
+import Iconify from "src/components/iconify";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import MetricOutcomeBadge from "./MetricOutcomeBadge";
 import { DEFAULT_LABELS, isBooleanMetric } from "./builderSpec";
 import { formatMetricValue } from "./formatMetricValue";
+import { inputLabel, recipeSentence, unitInputs } from "./metricPresentation";
 
 const scalar = (value) =>
   value == null
@@ -23,16 +28,48 @@ const scalar = (value) =>
       : value === ""
         ? "Empty text"
         : String(value);
-export default function MetricPreviewPanel({ preview, form }) {
+
+const ellipsis = {
+  display: "block",
+  minWidth: 0,
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+
+export default function MetricPreviewPanel({ preview, form, sourceLabels }) {
   const { state, data, retry } = preview;
   const boolean = isBooleanMetric(form);
   const labels = { ...DEFAULT_LABELS, ...form.value_labels };
+  // A custom formula names its inputs by alias, so the alias is the label.
+  const labelFor = (alias) =>
+    !form.kind || form.kind === "custom"
+      ? alias
+      : inputLabel(alias, { inputs: form.inputs, sourceLabels });
   // The ungrouped row is a total; never substitute the first grouped result.
   const point = data?.results?.find((row) => row.group_key === "");
+  // The response's own metadata wins; the form only fills what it left out,
+  // so the hero reads the same as the list and the metric page.
+  const metadata = {
+    ...data,
+    unit: data?.unit || form.unit || "",
+    value_format: data?.value_format || form.value_format,
+    value_type: "number",
+  };
   const value =
     state === "ready" && data?.point_status === "ok" && point?.status === "ok"
-      ? formatMetricValue(point.value, { ...data, value_type: "number" })
+      ? formatMetricValue(point.value, metadata)
       : null;
+  // A unit's value shares the hero's unit and digit grouping. The percent
+  // proof (rate_eligible) belongs to the total, so it is never rescaled.
+  const sampleValue = (sample) =>
+    typeof sample.value_number === "number"
+      ? formatMetricValue(sample.value_number, {
+          ...metadata,
+          value_format: "number",
+          rate_eligible: false,
+        }) ?? scalar(sample.value_number)
+      : scalar(sample.value_text);
   const countSummary =
     boolean &&
     !data?.weighted &&
@@ -41,31 +78,59 @@ export default function MetricPreviewPanel({ preview, form }) {
     Number.isFinite(point.denominator);
   const loading = ["loading", "busy_retrying"].includes(state);
   const failed = !["idle", "loading", "busy_retrying", "ready"].includes(state);
+  const sentence = form.inputs?.length ? recipeSentence(form, labelFor) : null;
+  const samples = data?.sample_units?.slice(0, 20) || [];
   return (
     <Stack
       component="aside"
       aria-label="Metric preview"
       spacing={2.5}
-      sx={{ p: 3, height: "100%", bgcolor: "background.neutral" }}
+      sx={{ px: 3, py: 2.5, minHeight: "100%" }}
     >
-      <Box>
-        <Typography component="h2" variant="subtitle2">
+      <Stack direction="row" alignItems="baseline" spacing={1}>
+        <Typography component="h2" variant="subtitle1" fontWeight={600}>
           Live preview
         </Typography>
         <Typography variant="caption" color="text.secondary">
           Last 7 days · settled units
         </Typography>
-      </Box>
-      <Box aria-live="polite" aria-busy={loading}>
-        {state === "idle" && (
-          <Typography variant="body2" color="text.secondary">
-            Choose a project, source and valid calculation to preview.
+      </Stack>
+      <Box
+        aria-live="polite"
+        aria-busy={loading}
+        sx={{
+          p: 2,
+          border: 1,
+          borderColor: "divider",
+          borderRadius: 1,
+          minHeight: 132,
+        }}
+      >
+        {sentence && (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mb: 1, overflowWrap: "anywhere" }}
+          >
+            {sentence}
           </Typography>
         )}
+        {state === "idle" && (
+          <Stack
+            spacing={1}
+            alignItems="flex-start"
+            sx={{ color: "text.secondary" }}
+          >
+            <Iconify icon="solar:graph-up-linear" width={20} />
+            <Typography variant="body2" color="text.secondary">
+              Choose a project, source and valid calculation to preview.
+            </Typography>
+          </Stack>
+        )}
         {loading && (
-          <Stack direction="row" alignItems="center" gap={1}>
-            <CircularProgress size={16} color="inherit" />
-            <Typography variant="body2">
+          <Stack direction="row" alignItems="center" gap={1} sx={{ py: 1 }}>
+            <CircularProgress size={14} color="inherit" />
+            <Typography variant="body2" color="text.secondary">
               {state === "busy_retrying"
                 ? "Preview busy. Retrying once…"
                 : "Updating preview…"}
@@ -89,23 +154,23 @@ export default function MetricPreviewPanel({ preview, form }) {
           </Alert>
         )}
         {state === "ready" && (
-          <Stack gap={1}>
+          <Stack spacing={0.5}>
             <Typography
-              variant="h3"
               component="p"
-              sx={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}
+              variant={value != null ? "display" : "title_md"}
+              color={value != null ? "text.primary" : "text.secondary"}
+              sx={{ fontVariantNumeric: "tabular-nums" }}
             >
               {value ??
                 (data?.point_status === "no_data" ? "No data" : "No value")}
             </Typography>
             {countSummary && (
-              <Typography variant="body2">
+              <Typography
+                variant="body2"
+                color="text.primary"
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+              >
                 {point.numerator} of {point.denominator} {data.unit_noun} match
-              </Typography>
-            )}
-            {data?.summary && (
-              <Typography variant="body2" color="text.secondary">
-                {data.summary}
               </Typography>
             )}
             {value == null && (
@@ -115,57 +180,105 @@ export default function MetricPreviewPanel({ preview, form }) {
                   : `A current value is not available${data?.point_status ? ` (${data.point_status.replaceAll("_", " ")})` : ""}.`}
               </Typography>
             )}
+            {data?.summary && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ pt: 0.5 }}
+              >
+                {data.summary}
+              </Typography>
+            )}
           </Stack>
         )}
       </Box>
-      {state === "ready" && data?.sample_units?.length > 0 && (
-        <Box sx={{ overflowX: "auto" }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+      {state === "ready" && samples.length > 0 && (
+        <Box>
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
             Sample {data.unit_noun}
           </Typography>
-          <Table size="small" aria-label="Preview sample inputs">
+          <Table
+            size="small"
+            aria-label="Preview sample inputs"
+            sx={{ tableLayout: "fixed" }}
+          >
             <TableHead>
               <TableRow>
-                <TableCell>Unit</TableCell>
+                <TableCell sx={{ width: "34%" }}>Unit</TableCell>
                 <TableCell>Inputs</TableCell>
-                <TableCell>{boolean ? "Counts" : "Value"}</TableCell>
+                <TableCell
+                  align={boolean ? "left" : "right"}
+                  sx={{ width: 128 }}
+                >
+                  {boolean ? "Result" : "Value"}
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {data.sample_units.slice(0, 20).map((sample) => (
-                <TableRow key={sample.unit_id}>
-                  <TableCell sx={{ maxWidth: 150, overflowWrap: "anywhere" }}>
-                    {sample.unit_id}
+              {samples.map((sample) => (
+                <TableRow
+                  key={sample.unit_id}
+                  sx={{ height: ROW_HEIGHT.default }}
+                >
+                  <TableCell>
+                    <Tooltip title={sample.unit_id} placement="top-start">
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        tabIndex={0}
+                        sx={{
+                          ...ellipsis,
+                          fontFamily: "monospace",
+                          color: "text.secondary",
+                        }}
+                      >
+                        {sample.unit_id}
+                      </Typography>
+                    </Tooltip>
                   </TableCell>
-                  <TableCell sx={{ maxWidth: 220, overflowWrap: "anywhere" }}>
-                    {Object.entries({
-                      ...sample.inputs,
-                      ...sample.inputs_bool,
-                      ...sample.inputs_text,
-                    }).map(([alias, inputValue]) => (
-                      <Typography key={alias} variant="caption" component="div">
-                        {form.inputs?.find((input) => input.alias === alias)
-                          ?.attribute_key || alias}
-                        : {scalar(inputValue)}
+                  <TableCell>
+                    {unitInputs(sample).map(([alias, inputValue]) => (
+                      <Typography
+                        key={alias}
+                        variant="body2"
+                        component="div"
+                        title={`${labelFor(alias)}: ${scalar(inputValue)}`}
+                        sx={{
+                          ...ellipsis,
+                          fontVariantNumeric: "tabular-nums",
+                          color:
+                            inputValue == null
+                              ? "text.secondary"
+                              : "text.primary",
+                        }}
+                      >
+                        {labelFor(alias)}: {scalar(inputValue)}
                       </Typography>
                     ))}
                   </TableCell>
-                  <TableCell>
-                    {sample.status !== "value" ? (
-                      <>
-                        <Typography variant="body2">No value</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {sample.no_value_reason?.replaceAll("_", " ")}
-                        </Typography>
-                      </>
+                  <TableCell align={boolean ? "left" : "right"}>
+                    {sample.status !== "value" ||
+                    (boolean && typeof sample.value_bool !== "boolean") ? (
+                      <MetricOutcomeBadge
+                        reason={sample.no_value_reason || undefined}
+                      />
                     ) : boolean ? (
-                      typeof sample.value_bool === "boolean" ? (
-                        labels[sample.value_bool ? "match" : "other"]
-                      ) : (
-                        "No value"
-                      )
+                      <MetricOutcomeBadge
+                        outcome={sample.value_bool}
+                        label={labels[sample.value_bool ? "match" : "other"]}
+                      />
                     ) : (
-                      scalar(sample.value_number ?? sample.value_text)
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        title={sampleValue(sample)}
+                        sx={{
+                          ...ellipsis,
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        {sampleValue(sample)}
+                      </Typography>
                     )}
                   </TableCell>
                 </TableRow>
@@ -174,14 +287,22 @@ export default function MetricPreviewPanel({ preview, form }) {
           </Table>
         </Box>
       )}
-      <Typography variant="caption" color="text.secondary">
-        This preview is not saved history. Saving queues recalculation; the
-        active version stays visible until its replacement is ready.
-      </Typography>
+      <Stack direction="row" gap={0.75} alignItems="flex-start">
+        <Iconify
+          icon="solar:info-circle-linear"
+          width={14}
+          sx={{ color: "text.disabled", mt: "1px", flexShrink: 0 }}
+        />
+        <Typography variant="caption" color="text.secondary">
+          This preview is not saved history. Saving queues recalculation; the
+          active version stays visible until its replacement is ready.
+        </Typography>
+      </Stack>
     </Stack>
   );
 }
 MetricPreviewPanel.propTypes = {
   preview: PropTypes.object.isRequired,
   form: PropTypes.object.isRequired,
+  sourceLabels: PropTypes.objectOf(PropTypes.string),
 };

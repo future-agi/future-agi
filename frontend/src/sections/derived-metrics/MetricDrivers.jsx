@@ -11,8 +11,11 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from "@mui/material";
+import EmptyState from "src/components/empty-state";
+import Iconify from "src/components/iconify";
 import { useMetricDrivers, useMetricFields, useMetricKpi } from "./api";
 import { formatMetricValue } from "./formatMetricValue";
 import { formatMetricWindow } from "./metricTime";
@@ -23,7 +26,9 @@ import {
   sameMetricRead,
 } from "./metricPageValues";
 import MetricValueCell from "./MetricValueCell";
+import MetricOutcomeBadge from "./MetricOutcomeBadge";
 import MetricStatusLine, { MetricReadNotice } from "./MetricStatusLine";
+import { inputLabel, unitInputs } from "./metricPresentation";
 
 const TracesDrawer = lazy(
   () => import("src/sections/projects/TracesDrawer/TracesDrawer"),
@@ -31,6 +36,18 @@ const TracesDrawer = lazy(
 const TaskRunTraceDrawer = lazy(
   () => import("src/sections/tasks/components/TaskRunTraceDrawer"),
 );
+const unitHeader = {
+  conversation: "Conversation",
+  trace: "Trace",
+  span: "Span",
+};
+const ellipsis = {
+  display: "block",
+  minWidth: 0,
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
 const contextFor = {
   conversation: "sessions",
   span: "spans",
@@ -131,11 +148,19 @@ export default function MetricDrivers({ metric, scope, window }) {
     );
   if (!definition)
     return (
-      <Typography color="text.secondary">
-        Not calculated yet. Drivers need an active definition.
-      </Typography>
+      <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
+        <EmptyState
+          variant="no-results"
+          icon="solar:sort-vertical-linear"
+          title="Not calculated yet. Drivers need an active definition."
+          description="Once the first calculation completes, the units pulling the value down are ranked here."
+        />
+      </Box>
     );
   const canOpen = ["conversation", "trace"].includes(definition.level);
+  const inputs = definition.field_spec?.inputs?.length
+    ? definition.field_spec.inputs
+    : definition.inputs || [];
   return (
     <Stack spacing={2}>
       <Box>
@@ -148,18 +173,10 @@ export default function MetricDrivers({ metric, scope, window }) {
           unit.
         </Typography>
       </Box>
-      <Typography variant="body2" color="text.secondary">
-        Open units and units without a value are excluded, not counted as
-        failures. Source telemetry may have expired since calculation.
-      </Typography>
       <MetricReadNotice query={query} label="Drivers" />
       <MetricReadNotice query={fields} label="Field metadata" />
       {query.data && fields.data && (
         <>
-          <Typography variant="caption" color="text.secondary">
-            {formatMetricWindow(query.data.effective_window)} ·{" "}
-            {query.data.effective_window.rounding}
-          </Typography>
           {!field ? (
             <Alert severity="warning">
               {candidateField
@@ -168,60 +185,107 @@ export default function MetricDrivers({ metric, scope, window }) {
             </Alert>
           ) : valid.length ? (
             <TableContainer>
-              <Table size="small" aria-label="Metric drivers">
+              <Table
+                size="small"
+                aria-label="Metric drivers"
+                sx={{ tableLayout: "fixed" }}
+              >
                 <TableHead>
                   <TableRow>
-                    {["Unit", "Value", "Inputs", "Influence"].map((label) => (
-                      <TableCell key={label}>{label}</TableCell>
-                    ))}
+                    <TableCell sx={{ width: "32%" }}>
+                      {unitHeader[definition.level] || "Unit"}
+                    </TableCell>
+                    <TableCell sx={{ width: "20%" }}>Value</TableCell>
+                    <TableCell>Inputs</TableCell>
+                    <TableCell align="right" sx={{ width: "20%" }}>
+                      Influence
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {valid.map((row) => (
-                    <TableRow key={row.unit_id}>
-                      <TableCell
-                        sx={{ maxWidth: 300, overflowWrap: "anywhere" }}
-                      >
-                        {canOpen ? (
-                          <Button
-                            color="inherit"
-                            size="small"
-                            sx={{ textAlign: "left", overflowWrap: "anywhere" }}
-                            onClick={() =>
-                              setSelected({
-                                unitId: row.unit_id,
-                                level: definition.level,
-                                projectId: metric.project_id,
-                              })
-                            }
-                          >
-                            {row.unit_id}
-                          </Button>
+                    <TableRow key={row.unit_id} hover>
+                      <TableCell>
+                        <Tooltip title={row.unit_id} placement="top-start">
+                          {canOpen ? (
+                            <Button
+                              color="inherit"
+                              size="small"
+                              endIcon={
+                                <Iconify
+                                  icon="solar:arrow-right-up-linear"
+                                  width={14}
+                                />
+                              }
+                              sx={{
+                                maxWidth: "100%",
+                                minWidth: 0,
+                                px: 0.5,
+                                ml: -0.5,
+                                justifyContent: "flex-start",
+                                fontFamily: "monospace",
+                                typography: "s1",
+                                "& .MuiButton-endIcon": {
+                                  flexShrink: 0,
+                                  color: "text.disabled",
+                                },
+                              }}
+                              onClick={() =>
+                                setSelected({
+                                  unitId: row.unit_id,
+                                  level: definition.level,
+                                  projectId: metric.project_id,
+                                })
+                              }
+                            >
+                              <Box component="span" sx={ellipsis}>
+                                {row.unit_id}
+                              </Box>
+                            </Button>
+                          ) : (
+                            <Typography
+                              component="span"
+                              variant="body2"
+                              tabIndex={0}
+                              sx={{ ...ellipsis, fontFamily: "monospace" }}
+                            >
+                              {row.unit_id}
+                            </Typography>
+                          )}
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell>
+                        {field.value_type === "boolean" ? (
+                          // Every row here has a settled value (filtered above),
+                          // shown as the same outcome pill as the preview.
+                          <MetricOutcomeBadge
+                            outcome={unitValueState(row, field).value}
+                            label={formatMetricValue(
+                              unitValueState(row, field).value,
+                              field,
+                            )}
+                          />
                         ) : (
-                          row.unit_id
+                          <MetricValueCell value={row} field={field} />
                         )}
                       </TableCell>
                       <TableCell>
-                        <MetricValueCell value={row} field={field} />
-                      </TableCell>
-                      <TableCell>
-                        {Object.entries({
-                          ...row.inputs,
-                          ...row.inputs_bool,
-                          ...row.inputs_text,
-                        }).map(([alias, value]) => (
+                        {unitInputs(row).map(([alias, value]) => (
                           <Typography
-                            variant="caption"
+                            variant="body2"
                             component="div"
                             key={alias}
                             sx={{ overflowWrap: "anywhere" }}
                           >
-                            {alias}:{" "}
+                            {inputLabel(alias, { inputs })}:{" "}
                             {value == null ? "No value" : String(value)}
                           </Typography>
                         ))}
                       </TableCell>
-                      <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
+                      <TableCell
+                        align="right"
+                        sx={{ fontVariantNumeric: "tabular-nums" }}
+                      >
                         {comparable
                           ? formatMetricDifference(
                               row.influence,
@@ -235,42 +299,82 @@ export default function MetricDrivers({ metric, scope, window }) {
               </Table>
             </TableContainer>
           ) : (
-            <Typography color="text.secondary">
-              No drivers with a settled value in this window.
-            </Typography>
+            <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
+              <EmptyState
+                variant="no-results"
+                icon="solar:sort-vertical-linear"
+                title="No drivers with a settled value in this window."
+                description="Try a longer window."
+              />
+            </Box>
           )}
-          {excluded > 0 && field && (
-            <Typography variant="body2" color="text.secondary">
-              {excluded} open or no-value units excluded. Sampled-out units have
-              no value: not evaluated.
-            </Typography>
-          )}
-          {!comparable && valid.length > 0 && (
+          <Stack spacing={0.5}>
             <Typography variant="caption" color="text.secondary">
-              Influence units could not be verified against the same committed
-              KPI. No effects are shown.
+              Open units and units without a value are excluded, not counted as
+              failures. Source telemetry may have expired since calculation.
             </Typography>
-          )}
-          <MetricStatusLine
-            provenance={query.data.provenance}
-            definition={definition}
-          />
+            {excluded > 0 && field && (
+              <Typography variant="caption" color="text.secondary">
+                {excluded} open or no-value units excluded. Sampled-out units
+                have no value: not evaluated.
+              </Typography>
+            )}
+            {!comparable && valid.length > 0 && (
+              <Typography variant="caption" color="text.secondary">
+                Influence units could not be verified against the same committed
+                KPI. No effects are shown.
+              </Typography>
+            )}
+          </Stack>
+          <Stack
+            direction="row"
+            alignItems="flex-start"
+            justifyContent="space-between"
+            spacing={3}
+            sx={{ pt: 1.5, borderTop: 1, borderColor: "divider" }}
+          >
+            <Typography variant="caption" color="text.secondary">
+              {formatMetricWindow(query.data.effective_window)} ·{" "}
+              {query.data.effective_window.rounding}
+            </Typography>
+            <Box sx={{ flexShrink: 0, maxWidth: "50%" }}>
+              <MetricStatusLine
+                provenance={query.data.provenance}
+                definition={definition}
+              />
+            </Box>
+          </Stack>
         </>
       )}
-      <Stack direction="row" alignItems="center" spacing={2}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="flex-end"
+        spacing={1}
+      >
+        <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+          Page {page + 1}
+        </Typography>
         <Button
           color="inherit"
+          variant="outlined"
+          size="small"
+          aria-label="Previous drivers"
+          startIcon={<Iconify icon="solar:alt-arrow-left-linear" width={16} />}
           disabled={page === 0 || query.readState === "loading"}
           onClick={() => {
             setSelected(null);
             setPage(page - 1);
           }}
         >
-          Previous drivers
+          Previous
         </Button>
-        <Typography variant="caption">Page {page + 1}</Typography>
         <Button
           color="inherit"
+          variant="outlined"
+          size="small"
+          aria-label="Next drivers"
+          endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={16} />}
           disabled={!query.data?.next_cursor}
           onClick={() => {
             setSelected(null);
@@ -278,7 +382,7 @@ export default function MetricDrivers({ metric, scope, window }) {
             setPage(page + 1);
           }}
         >
-          Next drivers
+          Next
         </Button>
       </Stack>
       {sourceDrawer}

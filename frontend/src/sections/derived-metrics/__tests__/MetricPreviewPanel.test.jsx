@@ -153,6 +153,56 @@ describe("honest previews", () => {
     expect(screen.queryByText("0%")).toBeNull();
     expect(screen.queryByText(/of 3 conversations match/)).toBeNull();
   });
+  it("names sample inputs by their source and never shows the compiled condition alias", () => {
+    render(
+      <MetricPreviewPanel
+        form={{
+          kind: "share",
+          level: "conversation",
+          inputs: [
+            {
+              alias: "value_1",
+              source: "span",
+              field: "attribute_number",
+              attribute_key: "resolved",
+              value_type: "number",
+              reducer: "latest",
+            },
+          ],
+          field_spec: {
+            conditions: [{ alias: "value_1", operator: "eq", value: 1 }],
+          },
+        }}
+        preview={{
+          state: "ready",
+          data: {
+            ...data,
+            sample_units: [
+              {
+                unit_id: "f04ffcfa-e377-5a81-80ec-19aac081098f",
+                status: "value",
+                value_bool: true,
+                inputs: { value_1: 1, field_condition: 1 },
+                inputs_bool: {},
+                inputs_text: {},
+              },
+            ],
+          },
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("Share of conversations where resolved (latest) is 1"),
+    ).toBeTruthy();
+    expect(screen.getByText("resolved: 1")).toBeTruthy();
+    expect(screen.queryByText(/value_1/)).toBeNull();
+    expect(screen.queryByText(/field_condition/)).toBeNull();
+    // The full unit ID stays readable for copy and assistive tech.
+    expect(
+      screen.getByText("f04ffcfa-e377-5a81-80ec-19aac081098f"),
+    ).toBeTruthy();
+    expect(screen.getByText("Counts")).toBeTruthy();
+  });
   it("shows at most twenty sample rows", () => {
     render(
       <MetricPreviewPanel
@@ -170,5 +220,42 @@ describe("honest previews", () => {
       />,
     );
     expect(screen.getAllByRole("row")).toHaveLength(21);
+  });
+  it("formats the hero and unit values with the same unit and grouping", () => {
+    render(
+      <MetricPreviewPanel
+        form={{ kind: "average", unit: "ms", value_format: "number" }}
+        preview={{
+          state: "ready",
+          data: {
+            ...data,
+            value_format: "number",
+            unit: "",
+            rate_eligible: false,
+            results: [{ group_key: "", status: "ok", value: 2445.32 }],
+            sample_units: [
+              {
+                unit_id: "slow",
+                status: "value",
+                value_number: 1297,
+                inputs: { duration: 1297 },
+              },
+              {
+                unit_id: "missing",
+                status: "no_value",
+                no_value_reason: "missing_inputs",
+                value_number: null,
+                inputs: { duration: null },
+              },
+            ],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("2,445.32 ms")).toBeTruthy();
+    expect(screen.getByText("1,297 ms")).toBeTruthy();
+    // A missing unit value is a labelled state with its reason, never zero.
+    expect(screen.getByText("No value")).toBeTruthy();
+    expect(screen.queryByText("0 ms")).toBeNull();
   });
 });

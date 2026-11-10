@@ -20,6 +20,7 @@ export default function MetricValueCell({
   stale = false,
   valueMode = "materialized",
   locale,
+  dense = false,
 }) {
   const options = { loading, error, stale, valueMode };
   const state =
@@ -50,11 +51,21 @@ export default function MetricValueCell({
       )
     : [];
   const label = hasValue ? formatted : state.label;
+  // Dense rows (lists) keep every returned line, one line each; the full text
+  // stays in the DOM and in a native title for anything that is cut off.
+  const lineSx = dense
+    ? {
+        display: "block",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }
+    : {};
 
   return (
     <Stack
       component="span"
-      spacing={0.5}
+      spacing={dense ? 0.25 : 0.5}
       data-value-state={state.state}
       aria-busy={loading || undefined}
       sx={{ minWidth: 0, color: "text.primary", overflowWrap: "anywhere" }}
@@ -119,7 +130,8 @@ export default function MetricValueCell({
           component="span"
           variant="caption"
           color="text.secondary"
-          sx={{ fontVariantNumeric: "tabular-nums" }}
+          title={dense ? formatMetricInterval(value, locale) : undefined}
+          sx={{ fontVariantNumeric: "tabular-nums", ...lineSx }}
         >
           {formatMetricInterval(value, locale)}
         </Typography>
@@ -132,7 +144,8 @@ export default function MetricValueCell({
             variant="caption"
             color="text.secondary"
             key={line}
-            sx={{ fontVariantNumeric: "tabular-nums" }}
+            title={dense ? line : undefined}
+            sx={{ fontVariantNumeric: "tabular-nums", ...lineSx }}
           >
             {line}
           </Typography>
@@ -156,4 +169,5 @@ MetricValueCell.propTypes = {
   stale: PropTypes.bool,
   valueMode: PropTypes.oneOf(["materialized", "on_demand"]),
   locale: PropTypes.string,
+  dense: PropTypes.bool,
 };

@@ -1,7 +1,18 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Box, Button, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  MenuItem,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import PageHeader from "src/components/page-header";
+import Iconify from "src/components/iconify";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { readObserveProjectPage } from "src/api/project/observe-project-list";
@@ -10,9 +21,18 @@ import { paths } from "src/routes/paths";
 import { useDebounce } from "src/hooks/use-debounce";
 import { ROLES } from "src/utils/rolePermissionMapping";
 import { useMetricsList } from "./api";
-import { formatMetricWindow, metricWindow } from "./metricTime";
+import { metricWindow } from "./metricTime";
 import MetricList from "./MetricList";
 import MetricProjectSelect from "./MetricProjectSelect";
+
+const DESCRIPTION = "Track outcomes across conversations, spans and users.";
+const WINDOWS = [
+  [1, "Last 24 hours"],
+  [7, "Last 7 days"],
+  [30, "Last 30 days"],
+];
+// Toolbar controls share the search field's 30px height so the row aligns.
+const CONTROL_SX = { "& .MuiOutlinedInput-root": { height: 30 } };
 
 // A workspace change remounts all local filters/cursors before any new read.
 export default function MetricsListPage() {
@@ -29,9 +49,7 @@ export default function MetricsListPage() {
   if (!organizationReady || !workspaceReady) {
     return (
       <Box sx={{ p: 2 }}>
-        <Typography component="h1" variant="h6" fontWeight={600}>
-          Metrics
-        </Typography>
+        <PageHeader title="Metrics" description={DESCRIPTION} />
         <Typography role="status" variant="body2" color="text.secondary">
           Loading workspace…
         </Typography>
@@ -69,7 +87,9 @@ function WorkspaceMetricsList({ scope, canCreate }) {
     pageSize: 25,
     cursors: [null],
   });
+  const [days, setDays] = useState(7);
   const [window, setWindow] = useState(() => metricWindow(7));
+  const windowLabel = WINDOWS.find(([value]) => value === days)?.[1];
   const selectedScope = { ...scope, projectId: projectId || undefined };
   const definitions = useMetricsList({
     scope: selectedScope,
@@ -102,49 +122,53 @@ function WorkspaceMetricsList({ scope, canCreate }) {
   });
   const resetPage = () =>
     setPagination((previous) => ({ ...previous, page: 0, cursors: [null] }));
+  const createAction = (
+    <Tooltip
+      title={
+        canCreate
+          ? ""
+          : "A workspace member role is required to create metrics."
+      }
+    >
+      <span>
+        <Button
+          variant="contained"
+          color="inherit"
+          size="small"
+          disabled={!canCreate}
+          startIcon={<Iconify icon="solar:add-linear" width={16} />}
+          onClick={() => router.push(paths.dashboard.metrics.new)}
+        >
+          Create metric
+        </Button>
+      </span>
+    </Tooltip>
+  );
   return (
     <Stack
-      spacing={2}
       sx={{ p: 2, height: "100%", minHeight: 0, bgcolor: "background.paper" }}
     >
-      <Stack direction="row" alignItems="center" justifyContent="space-between">
-        <Box>
-          <Typography component="h1" variant="h6" fontWeight={600}>
-            Metrics
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Track outcomes across conversations, spans and users.
-          </Typography>
-        </Box>
-        <Tooltip
-          title={
-            canCreate
-              ? ""
-              : "A workspace member role is required to create metrics."
+      <PageHeader title="Metrics" description={DESCRIPTION} sx={{ mb: 0 }} />
+      {projects.isError && (
+        <Alert
+          severity="warning"
+          sx={{ mt: 1.5 }}
+          action={
+            <Button color="inherit" onClick={() => projects.refetch()}>
+              Retry projects
+            </Button>
           }
         >
-          <span>
-            <Button
-              variant="contained"
-              color="inherit"
-              disabled={!canCreate}
-              onClick={() => router.push(paths.dashboard.metrics.new)}
-              sx={{
-                bgcolor: "text.primary",
-                color: "background.paper",
-                "&:hover": { bgcolor: "text.secondary" },
-              }}
-            >
-              Create metric
-            </Button>
-          </span>
-        </Tooltip>
-      </Stack>
+          Project choices could not be loaded. The metrics list is still
+          available.
+        </Alert>
+      )}
       <MetricList
         key={projectId || "all-projects"}
         definitions={definitions}
         scope={selectedScope}
         window={window}
+        windowLabel={windowLabel}
         onSelect={(metric) =>
           router.push(paths.dashboard.metrics.detail(metric.id))
         }
@@ -162,59 +186,69 @@ function WorkspaceMetricsList({ scope, canCreate }) {
         onPageSizeChange={(pageSize) =>
           setPagination({ page: 0, pageSize, cursors: [null] })
         }
+        createAction={createAction}
         toolbar={
           <>
-            <Box sx={{ width: 240 }}>
-              <MetricProjectSelect
-                value={projectId}
-                projects={projects}
-                search={settledProjectSearch}
-                page={projectPage}
-                label="Project filter"
-                placeholder="All projects"
-                onSearch={(text) => {
-                  setProjectSearch(text);
-                  setProjectPage(0);
-                }}
-                onPage={setProjectPage}
-                onChange={(id) => {
-                  setProjectId(id);
-                  resetPage();
-                }}
-              />
-            </Box>
-            <Tooltip title={formatMetricWindow(window)}>
-              <Typography variant="body2" color="text.secondary" tabIndex={0}>
-                Last 7 days
-              </Typography>
-            </Tooltip>
-            <Button
+            <MetricProjectSelect
+              value={projectId}
+              projects={projects}
+              search={settledProjectSearch}
+              page={projectPage}
+              label="Project filter"
+              placeholder="All projects"
+              hideLabel
+              sx={{ width: 220, ...CONTROL_SX }}
+              onSearch={(text) => {
+                setProjectSearch(text);
+                setProjectPage(0);
+              }}
+              onPage={setProjectPage}
+              onChange={(id) => {
+                setProjectId(id);
+                resetPage();
+              }}
+            />
+            <TextField
+              select
               size="small"
-              color="inherit"
-              disabled={definitions.readState === "loading"}
-              onClick={() => {
-                setWindow(metricWindow(7));
-                void definitions.refetch();
+              value={days}
+              inputProps={{ "aria-label": "Value window" }}
+              sx={{ width: 150, ...CONTROL_SX }}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setDays(next);
+                setWindow(metricWindow(next));
               }}
             >
-              Refresh values
-            </Button>
+              {WINDOWS.map(([value, label]) => (
+                <MenuItem key={value} value={value}>
+                  {label}
+                </MenuItem>
+              ))}
+            </TextField>
           </>
         }
+        actions={
+          <Tooltip title="Read values again for a fresh window ending now">
+            <span>
+              <Button
+                variant="outlined"
+                color="inherit"
+                size="small"
+                aria-label="Refresh values"
+                disabled={definitions.readState === "loading"}
+                startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
+                onClick={() => {
+                  setWindow(metricWindow(days));
+                  void definitions.refetch();
+                }}
+              >
+                Refresh
+              </Button>
+            </span>
+          </Tooltip>
+        }
       />
-      {projects.isError && (
-        <Alert
-          severity="warning"
-          action={
-            <Button color="inherit" onClick={() => projects.refetch()}>
-              Retry projects
-            </Button>
-          }
-        >
-          Project choices could not be loaded. The metrics list is still
-          available.
-        </Alert>
-      )}
     </Stack>
   );
 }

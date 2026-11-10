@@ -70,7 +70,13 @@ export default function FieldPicker({
           {option.label}
         </li>
       )}
-      renderInput={(params) => <TextField {...params} label={label} />}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label}
+          placeholder="Search span attributes and saved evaluations"
+        />
+      )}
     />
   );
 }

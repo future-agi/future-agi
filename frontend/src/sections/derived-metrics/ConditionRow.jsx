@@ -44,14 +44,14 @@ export default function ConditionRow({
   const label = `Value for ${input.attribute_key || input.alias}`;
   return (
     <Stack gap={1}>
-      <Stack direction="row" gap={1}>
+      <Stack direction="row" gap={1.5} alignItems="flex-start">
         <TextField
           select
           size="small"
           label="Comparison"
           value={condition.operator}
           disabled={disabled}
-          sx={{ minWidth: 140 }}
+          sx={{ width: 160, flexShrink: 0 }}
           onChange={(event) =>
             onChange({ ...condition, operator: event.target.value })
           }
@@ -65,7 +65,10 @@ export default function ConditionRow({
           )}
         </TextField>
         {condition.right_alias ? (
-          <Typography variant="body2">
+          <Typography
+            variant="body2"
+            sx={{ alignSelf: "flex-end", lineHeight: "32px" }}
+          >
             Compared with {condition.right_alias} (saved source)
           </Typography>
         ) : type === "boolean" ? (
