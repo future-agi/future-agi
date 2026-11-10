@@ -40,7 +40,7 @@ export const READY_TO_RUN_COPY = {
   recheckPair: "Re-check this pair",
   retryAgent: "Retry the agent's start",
   moreReady: (labels, all) =>
-    `${all ? "All" : labels.length} ${all ? "ready" : "more ready"}: ${labels
+    `${all ? "All ready" : "Also ready"}: ${labels
       .map((label) => label.toLowerCase())
       .join(", ")}`,
   notGradable: (n) =>
