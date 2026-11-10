@@ -157796,7 +157796,7 @@
                         "$ref": "#/definitions/FacetValue"
                     }
                 },
-                "call_actor": {
+                "actor": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/CallActorFacetValue"

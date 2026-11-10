@@ -26357,7 +26357,7 @@ export interface CallActorFacetValueApi {
 export interface RunFacetsApi {
   goal: FacetValueApi[];
   sub_goal: FacetValueApi[];
-  call_actor?: CallActorFacetValueApi[];
+  actor?: CallActorFacetValueApi[];
   status: FacetValueApi[];
 }
 
