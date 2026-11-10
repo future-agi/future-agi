@@ -204,8 +204,16 @@ def _guardrail_config(check):
 
 def validate_guardrail_representations(guardrails):
     """Validate retained input, including collections not selected for projection."""
-    allowed = _contract_input_names(GatewayGuardrailConfig) | {"rules", "enabled"}
-    if not isinstance(guardrails, dict) or set(guardrails) - allowed:
+    allowed = _contract_input_names(GatewayGuardrailConfig) | {
+        "rules",
+        "enabled",
+        "_meta",
+    }
+    if (
+        not isinstance(guardrails, dict)
+        or set(guardrails) - allowed
+        or ("_meta" in guardrails and not isinstance(guardrails["_meta"], str))
+    ):
         raise OrgConfigRejected(
             "The gateway cannot accept this config. Unsupported guardrail fields."
         )
@@ -213,6 +221,10 @@ def validate_guardrail_representations(guardrails):
         if field not in guardrails:
             continue
         collection = guardrails[field]
+        if collection is None:
+            # A null collection has no retained checks; a null check config is
+            # different and is always rejected by _guardrail_config below.
+            continue
         if field == "checks" and isinstance(collection, dict):
             items = collection.items()
         elif isinstance(collection, list):
@@ -225,6 +237,14 @@ def validate_guardrail_representations(guardrails):
                 "The gateway cannot accept this config. Invalid guardrail collection."
             )
         for name, check in items:
+            if (
+                field == "checks"
+                and isinstance(collection, dict)
+                and not isinstance(check, dict)
+            ):
+                # This nonempty map is always selected, and the projection keeps
+                # malformed values visible for the gateway contract to reject.
+                continue
             if not isinstance(check, dict) or not isinstance(name, str) or not name:
                 raise OrgConfigRejected(
                     "The gateway cannot accept this config. Guardrail checks must be named objects."
