@@ -631,8 +631,13 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByLabelText("What they want (optional)"),
     ).not.toBeVisible();
-    fireEvent.click(screen.getByText("More details (not used by runs yet)"));
+    fireEvent.click(screen.getByText("More details"));
     expect(screen.getByLabelText("What they want (optional)")).toBeVisible();
+    // A live or speaking actor is given these; the form never says they are unused.
+    expect(
+      screen.getByText(/Given to them whenever they speak or decide in the moment/),
+    ).toBeVisible();
+    expect(screen.queryByText(/not used by runs/)).toBeNull();
   });
 
   it("needs a role for an actor who speaks when the record schema says so", () => {
