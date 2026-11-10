@@ -24,7 +24,9 @@ def _destination(url):
             or any(ord(char) <= 32 or ord(char) == 127 for char in url)
         ):
             raise ValueError
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        port = parsed.port
+        if port is None:
+            port = 443 if parsed.scheme == "https" else 80
         if not 1 <= port <= 65535:
             raise ValueError
         address = _resolve_pinned_ip(parsed.hostname)

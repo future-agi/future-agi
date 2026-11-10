@@ -74,6 +74,7 @@ class WebhookDestinationTests(unittest.TestCase):
             "https://user:password@receiver.invalid/x",
             "https://receiver.invalid/x#secret",
             "https://receiver.invalid:bad/x",
+            "https://receiver.invalid:0/x",
             "https://receiver.invalid:65536/x",
             "https://receiver.invalid\\@127.0.0.1/x",
             "https://receiver.invalid/\nsecret",
