@@ -291,6 +291,14 @@ def reduce_native_results(
                 }
             )
     reproduction = "not_requested"
+    if reproduction_checks is not None and (
+        not isinstance(reproduction_checks, dict)
+        or any(
+            not isinstance(case_id, str) or not isinstance(check_id, str)
+            for case_id, check_id in reproduction_checks.items()
+        )
+    ):
+        _invalid("Use a mapping of historical cases to frozen check identities.")
     if reproduction_checks:
         if "reference" not in variants or not set(reproduction_checks) <= set(cases):
             _invalid(
@@ -299,8 +307,15 @@ def reduce_native_results(
         reproduced = []
         for case_id, check_id in reproduction_checks.items():
             expected = check_index[case_id].get(check_id)
-            if expected is None or "reference" not in expected["variants"]:
-                _invalid("Reproduction must name an applicable frozen check.")
+            # Reproducing a reference-only tool/delivery/selection failure says
+            # nothing about its repair. The very same assertion must run on the
+            # candidate; a passing answer check cannot stand in for it.
+            if expected is None or not {"candidate", "reference"} <= set(
+                expected["variants"]
+            ):
+                _invalid(
+                    "Reproduction must name the same frozen check on candidate and reference."
+                )
             reference = [
                 observed.get(_key(cell))
                 for cell in planned
@@ -321,7 +336,9 @@ def reduce_native_results(
     state = (
         "needs_changes"
         if candidate_failures
-        else "inconclusive" if counts["incomplete"] else "works_on_examples"
+        else "inconclusive"
+        if counts["incomplete"]
+        else "works_on_examples"
     )
     if reproduction == "not_reproduced" and not candidate_failures:
         state = "inconclusive"

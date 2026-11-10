@@ -34,8 +34,9 @@ def catalog_identity(links: list[dict]) -> str:
     seen = set()
     for link in links:
         try:
-            skill_id, version_id = str(UUID(str(link["skill_id"]))), str(
-                UUID(str(link["version_id"]))
+            skill_id, version_id = (
+                str(UUID(str(link["skill_id"]))),
+                str(UUID(str(link["version_id"]))),
             )
             digest, mount = link["digest"], link["mount"]
         except (KeyError, ValueError, TypeError, AttributeError) as exc:
@@ -126,6 +127,15 @@ def evaluate_child_selection(
     *, selection: dict, observation: SelectionObservation
 ) -> list[dict]:
     """A missing receipt is not proof of nonselection. Forced runs prove no routing."""
+    if (
+        type(observation.complete) is not bool
+        or type(observation.instrumented) is not bool
+    ):
+        raise SkillsHubError(
+            "invalid_receipt",
+            "Selection completeness and instrumentation must be booleans.",
+            status=400,
+        )
     observations = {row.skill_id: row for row in observation.children}
     if len(observations) != len(observation.children):
         raise SkillsHubError(
