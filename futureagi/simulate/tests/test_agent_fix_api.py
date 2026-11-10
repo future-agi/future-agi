@@ -25,8 +25,12 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models import TestExecution as Execution
-from simulate.pydantic_schemas.agent_fix import Surface
-from simulate.selectors.agent_fix import LOST_MODELS_SKIPPED_FOR
+from simulate.pydantic_schemas.agent_fix import MAX_MINUTES_MAX, EngineBrief, Surface
+from simulate.selectors.agent_fix import (
+    LOST_MODELS_SKIPPED_FOR,
+    default_max_minutes,
+    engine_brief,
+)
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_agents import VersionedSourceAgent
 from simulate.services.agent_fix_runs import close_fix_run, retry_fix_run
@@ -52,6 +56,7 @@ from simulate.tests.test_agent_fix_services import (
     _executions,
     _fix_run,
     _receipt,
+    _receipts,
     _run,
     _runtime,
     _tree,
@@ -179,6 +184,32 @@ class TestEngineAuthentication:
 
         assert response.status_code == 200, response.content
         assert response.json()["fix_run_id"] == str(fix_run.id)
+
+    def test_the_brief_round_trips_with_the_records_the_engine_reads(
+        self, api_client, source_run
+    ):
+        _receipts(
+            source_run, {KEYS[0]: {"refunded": False}, KEYS[1]: {"refunded": True}}
+        )
+        fix_run = _armed(_fix_run(source_run))
+
+        body = _engine(api_client, "get", fix_run, "brief/").json()
+
+        assert EngineBrief.model_validate(body) == engine_brief(fix_run)
+        # Every field the engine's toRecord() reads from a check record.
+        assert [set(one) for one in body["source_failures"]] == [
+            {
+                "scenario_key",
+                "trial",
+                "status",
+                "error",
+                "sub_goals",
+                "reasons",
+                "transcript",
+                "failure",
+                "duration_s",
+            }
+        ]
 
     @pytest.mark.parametrize(
         ("sent", "code"),
@@ -866,6 +897,29 @@ class TestUserApi:
             "scenarios_max": 200,
         }
         assert options["blocked"] is None
+
+    @pytest.mark.parametrize(
+        ("cases", "minutes"),
+        [(12, 180), (30, 180), (60, 300), (400, MAX_MINUTES_MAX)],
+    )
+    def test_the_default_time_limit_grows_with_the_suite(self, cases, minutes):
+        assert default_max_minutes(cases) == minutes
+
+    def test_a_launch_without_a_time_limit_gets_the_suggested_one(
+        self, auth_client, source_run
+    ):
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+        body = _launch_body(source_run)
+        del body["max_minutes"]
+
+        response = auth_client.post(f"{BASE}/", body, format="json")
+
+        assert response.status_code == 201, response.content
+        assert response.json()["request"]["max_minutes"] == 180
+        assert options["defaults"]["max_minutes"] == 180
 
     def test_launch_options_say_what_would_refuse_the_launch(
         self, auth_client, environment, source_run
