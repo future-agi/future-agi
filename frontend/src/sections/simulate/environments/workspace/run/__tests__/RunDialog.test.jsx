@@ -253,7 +253,9 @@ describe("RunDialog", () => {
     const region = screen.getByTestId("run-plan");
     expect(region).toHaveAttribute("aria-live", "polite");
     expect(
-      within(region).getByText("Checking these versions…"),
+      within(region).getByRole("progressbar", {
+        name: "Checking these versions…",
+      }),
     ).toBeInTheDocument();
     expect(runButton()).toBeDisabled();
   });

@@ -4,11 +4,11 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   DialogActions,
   DialogContent,
   DialogTitle,
   MenuItem,
+  Skeleton,
   Stack,
   TextField,
   Typography,
@@ -310,7 +310,7 @@ export default function RunDialog({
     if (!selected.suite) return null;
     if (!needsMembers)
       return `${COPY.allCurrentScenarios(named(suite))}${repeats}`;
-    if (members.isLoading) return COPY.membersLoading;
+    if (members.isLoading) return null;
     if (!memberKeys) return null;
     return `${COPY.allScenarios(memberKeys.length, named(suite))}${repeats}`;
   };
@@ -354,85 +354,99 @@ export default function RunDialog({
             onView={setReadiness}
           />
         )}
-        {rerun === "fellBack" && (
-          <Alert severity="info" sx={NOTE_SX} data-testid="rerun-fallback">
-            {agentFellBack ? COPY.rerunAgentFallback : COPY.rerunFallback}
-          </Alert>
-        )}
-        {(line || (heldBack && !allHeld)) && (
-          <Stack spacing={0.5}>
-            {line && (
-              <Typography
-                sx={{ typography: "s2", fontWeight: "fontWeightMedium" }}
-              >
-                {line}
-              </Typography>
-            )}
-            {heldBack && !allHeld && (
-              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {RUN_PLAN_COPY.heldBack(held, blockingLabel)}
-              </Typography>
-            )}
-          </Stack>
-        )}
-        {allHeld && (
-          <Alert severity="error" sx={NOTE_SX} data-testid="run-all-held">
-            {RUN_PLAN_COPY.allHeld(blockingLabel)}
-          </Alert>
-        )}
-        {drafts?.any && (
-          <Alert severity="info" sx={NOTE_SX} data-testid="run-drafts-note">
-            {DRAFTS_COPY.notInRun}
-          </Alert>
-        )}
-        {blocked && (
-          <Typography
-            sx={{ typography: "s2", color: "error.main" }}
-            data-testid="run-blocked"
-          >
-            {blocked}
-          </Typography>
-        )}
-        {members.isError && !members.data && (
-          <Typography sx={{ typography: "s2", color: "error.main" }}>
-            {COPY.membersError}
-          </Typography>
-        )}
-        {missing.length > 0 && !blocked && (
-          <Alert severity="warning" sx={NOTE_SX}>
-            {COPY.notInSuite(missing, named(suite))}
-          </Alert>
-        )}
-        {/* Kept rendered while empty so the live region is announced. */}
-        <Stack
-          spacing={2}
-          aria-live="polite"
-          data-testid="run-plan"
-          sx={{ "&:empty": { mt: 0 } }}
-        >
-          {plan.isLoading && (
-            <Stack direction="row" spacing={1} alignItems="center">
-              <CircularProgress size={14} />
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                {COPY.checking}
-              </Typography>
+        {/* The run line and its notes read as one group, tighter than the
+            sections above. */}
+        <Stack spacing={1} sx={{ "&:empty": { display: "none" } }}>
+          {rerun === "fellBack" && (
+            <Alert severity="info" sx={NOTE_SX} data-testid="rerun-fallback">
+              {agentFellBack ? COPY.rerunAgentFallback : COPY.rerunFallback}
+            </Alert>
+          )}
+          {needsMembers && members.isLoading && !blocked && (
+            <Box
+              role="progressbar"
+              aria-busy="true"
+              aria-label={COPY.membersLoading}
+            >
+              <Skeleton variant="rounded" width="45%" height={14} />
+            </Box>
+          )}
+          {(line || (heldBack && !allHeld)) && (
+            <Stack spacing={0.5}>
+              {line && (
+                <Typography
+                  sx={{ typography: "s2", fontWeight: "fontWeightMedium" }}
+                >
+                  {line}
+                </Typography>
+              )}
+              {heldBack && !allHeld && (
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {RUN_PLAN_COPY.heldBack(held, blockingLabel)}
+                </Typography>
+              )}
             </Stack>
           )}
-          {planFailed && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {COPY.planError}
+          {allHeld && (
+            <Alert severity="error" sx={NOTE_SX} data-testid="run-all-held">
+              {RUN_PLAN_COPY.allHeld(blockingLabel)}
+            </Alert>
+          )}
+          {drafts?.any && (
+            <Alert severity="info" sx={NOTE_SX} data-testid="run-drafts-note">
+              {DRAFTS_COPY.notInRun}
+            </Alert>
+          )}
+          {blocked && (
+            <Typography
+              sx={{ typography: "s2", color: "error.main" }}
+              data-testid="run-blocked"
+            >
+              {blocked}
             </Typography>
           )}
-          {warnings.map((warning) => (
-            <Alert
-              key={`${warning.code}:${warning.piece || ""}`}
-              sx={NOTE_SX}
-              severity="warning"
-              data-testid="run-warning"
-            >
-              {warning.message}
+          {members.isError && !members.data && (
+            <Typography sx={{ typography: "s2", color: "error.main" }}>
+              {COPY.membersError}
+            </Typography>
+          )}
+          {missing.length > 0 && !blocked && (
+            <Alert severity="warning" sx={NOTE_SX}>
+              {COPY.notInSuite(missing, named(suite))}
             </Alert>
-          ))}
+          )}
+          {/* Kept rendered while empty so the live region is announced. */}
+          <Stack
+            spacing={1}
+            aria-live="polite"
+            data-testid="run-plan"
+            sx={{ "&:empty": { mt: 0 } }}
+          >
+            {plan.isLoading && (
+              <Box
+                role="progressbar"
+                aria-busy="true"
+                aria-label={COPY.checking}
+              >
+                <Skeleton variant="rounded" height={32} />
+              </Box>
+            )}
+            {planFailed && (
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                {COPY.planError}
+              </Typography>
+            )}
+            {warnings.map((warning) => (
+              <Alert
+                key={`${warning.code}:${warning.piece || ""}`}
+                sx={NOTE_SX}
+                severity="warning"
+                data-testid="run-warning"
+              >
+                {warning.message}
+              </Alert>
+            ))}
+          </Stack>
         </Stack>
       </>
     );
