@@ -19,7 +19,7 @@ func TestOpenRouterDecisionRoutingPolicy(t *testing.T) {
 	for _, preferences := range []string{
 		"",
 		`,"provider":null`,
-		`,"provider":{"allow_fallbacks":true,"require_parameters":false,"only":["TypeSafe"],"zdr":true}`,
+		`,"provider":{"allow_fallbacks":false,"require_parameters":false,"only":["TypeSafe"],"zdr":true}`,
 	} {
 		t.Run(preferences, func(t *testing.T) {
 			body := `{"model":"~typesafe/jev-latest","state":{"count":9007199254740993},"questions":{"q":{"type":"noul","instructions":"private-instructions"}},"future":{"keep":true}` + preferences + `}`
@@ -43,7 +43,7 @@ func TestOpenRouterDecisionRoutingPolicy(t *testing.T) {
 			if err := json.Unmarshal(after["provider"], &policy); err != nil {
 				t.Fatal(err)
 			}
-			if string(policy["allow_fallbacks"]) != "false" || string(policy["require_parameters"]) != "true" {
+			if string(policy["allow_fallbacks"]) != "true" || string(policy["require_parameters"]) != "true" {
 				t.Fatal("OpenRouter routing policy was not enforced")
 			}
 			if strings.Contains(preferences, `"only"`) && (string(policy["only"]) != `["TypeSafe"]` || string(policy["zdr"]) != "true") {
@@ -98,7 +98,7 @@ func TestOpenRouterDecisionResponsePreservesCanonicalModelAndRefusal(t *testing.
 		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
 			t.Error(err)
 		}
-		if sent.Model != "typesafe/jev-1.13" || !reflect.DeepEqual(sent.Provider, map[string]bool{"allow_fallbacks": false, "require_parameters": true}) {
+		if sent.Model != "typesafe/jev-1.13" || !reflect.DeepEqual(sent.Provider, map[string]bool{"allow_fallbacks": true, "require_parameters": true}) {
 			t.Error("wrong model or routing policy")
 		}
 		io.WriteString(w, answer)

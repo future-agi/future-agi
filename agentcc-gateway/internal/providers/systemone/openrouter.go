@@ -7,9 +7,13 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
-// openRouterDecisionBody keeps the selected model and provider restrictions,
-// but disables upstream failover and requires supported parameters. Decision
-// calls must not silently take a different route or drop evaluation criteria.
+// openRouterDecisionBody keeps the selected model and provider restrictions and
+// requires supported parameters, so evaluation criteria are never dropped. A
+// decision call must not switch models: "models" and "route" overrides are
+// refused, and the backend checks the returned model identity. Hosts serving
+// that same model may fail over, though: with allow_fallbacks=false OpenRouter
+// tries only its first-ranked host, so a host the caller cannot use (such as a
+// BYOK-only endpoint) turned every call for that model into a 404.
 func openRouterDecisionBody(body []byte) ([]byte, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
@@ -28,7 +32,7 @@ func openRouterDecisionBody(body []byte) ([]byte, error) {
 			return nil, models.ErrBadRequest("invalid_provider_preferences", "provider must be an object or null")
 		}
 	}
-	preferences["allow_fallbacks"] = json.RawMessage("false")
+	preferences["allow_fallbacks"] = json.RawMessage("true")
 	preferences["require_parameters"] = json.RawMessage("true")
 	encodedPreferences, err := json.Marshal(preferences)
 	if err != nil {

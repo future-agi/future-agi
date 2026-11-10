@@ -32,7 +32,7 @@ func TestDecisionOpenRouterInternalBYOKPreservesModelNamespace(t *testing.T) {
 		io.WriteString(w, answer)
 	})
 	for _, routerModel := range []string{"typesafe/jev-1.14", "~typesafe/jev-latest", "openai/gpt-6-luna-decisions"} {
-		body := fmt.Sprintf(`{"model":"openrouter/%s","state":"private-state","questions":{"q":{"type":"noul","instructions":"private-instructions"}},"provider":{"allow_fallbacks":true,"require_parameters":false,"only":["TypeSafe"]}}`, routerModel)
+		body := fmt.Sprintf(`{"model":"openrouter/%s","state":"private-state","questions":{"q":{"type":"noul","instructions":"private-instructions"}},"provider":{"allow_fallbacks":false,"require_parameters":false,"only":["TypeSafe"]}}`, routerModel)
 		rr := g.post(t, keyInternal, body, models.ProviderKeyHeader, callerOwnKey)
 		if rr.Code != http.StatusOK || rr.Body.String() != answer {
 			t.Fatalf("%s: status %d", routerModel, rr.Code)
@@ -54,7 +54,7 @@ func TestDecisionOpenRouterInternalBYOKPreservesModelNamespace(t *testing.T) {
 		if err := json.Unmarshal([]byte(sentBody), &sent); err != nil {
 			t.Fatal(err)
 		}
-		if sent.Provider.AllowFallbacks || !sent.Provider.RequireParameters || len(sent.Provider.Only) != 1 || sent.Provider.Only[0] != "TypeSafe" {
+		if !sent.Provider.AllowFallbacks || !sent.Provider.RequireParameters || len(sent.Provider.Only) != 1 || sent.Provider.Only[0] != "TypeSafe" {
 			t.Fatal("routing policy or provider restriction changed")
 		}
 		if got := g.upstream.lastHeaders().Get(models.ProviderKeyHeader); got != "" {

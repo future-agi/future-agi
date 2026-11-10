@@ -1209,7 +1209,7 @@ func TestDecisionPrefixStripping(t *testing.T) {
 		if got := g.upstream.sentModel(t); got != tt.sent {
 			t.Errorf("%s: vendor was sent %q, want %q", tt.model, got, tt.sent)
 		}
-		// Other vendors preserve bytes; OpenRouter adds its no-fallback policy.
+		// Other vendors preserve bytes; OpenRouter adds its routing policy.
 		_, sentBody := g.upstream.last()
 		want := strings.Replace(decisionSysBody, `"typesafe/jev-latest"`, `"`+tt.sent+`"`, 1)
 		if tt.provider == "openrouter" {
@@ -1217,7 +1217,7 @@ func TestDecisionPrefixStripping(t *testing.T) {
 			if err := json.Unmarshal([]byte(want), &expected); err != nil {
 				t.Fatal(err)
 			}
-			expected["provider"] = json.RawMessage(`{"allow_fallbacks":false,"require_parameters":true}`)
+			expected["provider"] = json.RawMessage(`{"allow_fallbacks":true,"require_parameters":true}`)
 			encoded, err := json.Marshal(expected)
 			if err != nil {
 				t.Fatal(err)

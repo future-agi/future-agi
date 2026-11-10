@@ -3,8 +3,9 @@
 // out. TypeSafe defined it; Perplexity's Decider and self-hosted endpoints
 // speak it too. Each vendor is a Dialect row.
 //
-// The caller's body is forwarded byte for byte except OpenRouter's explicit
-// no-fallback routing policy. The vendor's 200 body is returned unchanged.
+// The caller's body is forwarded byte for byte except OpenRouter's routing
+// policy (one model, same-model host failover, required parameters). The
+// vendor's 200 body is returned unchanged.
 package systemone
 
 import (

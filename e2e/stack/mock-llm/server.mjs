@@ -126,8 +126,10 @@ export function handleRequest(req, res) {
       if (auth !== "Bearer e2e-mock" && auth !== `Bearer e2e-decision-${connection}-key`) {
         return json(res, 401, { error: { message: "synthetic decision credential required" } });
       }
-      if (connection === "openrouter" && (body.provider?.allow_fallbacks !== false || body.provider?.require_parameters !== true || body.models || body.route)) {
-        return json(res, 400, { error: { message: "explicit no-fallback decision routing required" } });
+      // The gateway's OpenRouter policy: one model (no "models"/"route"), same-model
+      // host failover allowed, and every parameter supported.
+      if (connection === "openrouter" && (body.provider?.allow_fallbacks !== true || body.provider?.require_parameters !== true || body.models || body.route)) {
+        return json(res, 400, { error: { message: "gateway decision routing policy required" } });
       }
       const response = decisions(body, nativeOpenAI);
       if (!response) return json(res, 400, { error: { message: "invalid synthetic decision request" } });

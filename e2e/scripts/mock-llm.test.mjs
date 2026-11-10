@@ -31,7 +31,7 @@ test('decision fixtures preserve native envelopes, identifiers, probabilities an
   ]) {
     const body = { model, state: 'e2e-decision:pass unique-fixture',
       questions: { check: { type: 'noul', instructions: 'synthetic only' } },
-      ...(key === 'openrouter' ? { provider: { allow_fallbacks: false, require_parameters: true } } : {}) };
+      ...(key === 'openrouter' ? { provider: { allow_fallbacks: true, require_parameters: true } } : {}) };
     const headers = { authorization: `Bearer e2e-decision-${key}-key` };
     assert.deepEqual(call('POST', url, body, undefined, headers).body, {
       model, answers: { check: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 37, output_tokens: 0 },
@@ -56,8 +56,10 @@ test('decision fixtures refuse wrong keys, fallback policy, invalid input and ov
   assert.equal(call('POST', '/api/alpha/decisions', body).status, 401);
   assert.equal(call('POST', '/api/alpha/decisions', body, undefined, { authorization: 'Bearer e2e-decision-openai-key' }).status, 401);
   assert.equal(call('POST', '/api/alpha/decisions', body, undefined, auth).status, 400);
-  const routed = { ...body, provider: { allow_fallbacks: false, require_parameters: true } };
+  const routed = { ...body, provider: { allow_fallbacks: true, require_parameters: true } };
   assert.equal(call('POST', '/api/alpha/decisions', routed, undefined, auth).status, 200);
+  // The old single-host policy is refused, so the gateway must send the current one.
+  assert.equal(call('POST', '/api/alpha/decisions', { ...body, provider: { allow_fallbacks: false, require_parameters: true } }, undefined, auth).status, 400);
   for (const override of [{ questions: {} }, { questions: [] }, { model: 'not-a-model' }, { models: ['other'] }, { questions: { q: { type: 'unknown' } } }]) {
     assert.equal(call('POST', '/api/alpha/decisions', { ...routed, ...override }, undefined, auth).status, 400);
   }
