@@ -9,11 +9,11 @@ const wireRequest = { url: `${cfg.collectorUrl}/v1/traces`, data: '{"synthetic":
 type Reply = { status?: number; hint?: string; body?: string; elapsed?: number; error?: string;
   textError?: boolean; disposeError?: boolean; disposeElapsed?: number };
 function harness(replies: Reply[]) {
-  const state = { mono: 0, wall: Date.parse('Tue, 10 Nov 2026 12:00:00 GMT') };
+  const state = { mono: 0 };
   const calls: { url: string; options: Parameters<APIRequestContext['post']>[1]; time: number }[] = [];
   const disposed: number[] = [], sleeps: number[] = [], diagnostics: OtlpRetryDiagnostic[] = [];
   const clock: OtlpDeliveryRuntime = {
-    monotonicNow: () => state.mono, wallNow: () => state.wall,
+    monotonicNow: () => state.mono,
     sleep: async ms => { sleeps.push(ms); state.mono += ms; },
     diagnostic: entry => diagnostics.push(entry),
   };
@@ -39,15 +39,17 @@ function harness(replies: Reply[]) {
 
 for (const [header, expected] of [
   ['1', 1000], ['5', 5000], ['0', 0], ['  1  ', 1000],
-  ['Tue, 10 Nov 2026 12:00:05 GMT', 5000], ['Tue, 10 Nov 2026 11:59:59 GMT', 0],
-  ['Tuesday, 10-Nov-26 12:00:05 GMT', 5000], ['Tue Nov 10 12:00:05 2026', 5000],
+  // HTTP-dates are deliberately not hints: the collector never sends them, and
+  // parsing them invited timezone (asctime) and impossible-date (31 Feb) bugs.
+  ['Tue, 10 Nov 2026 12:00:05 GMT', undefined], ['Tuesday, 10-Nov-26 12:00:05 GMT', undefined],
+  ['Tue Nov 10 12:00:05 2026', undefined], ['Tue, 31 Feb 2026 12:00:05 GMT', undefined],
   [undefined, undefined], ['', undefined], ['-1', undefined], ['1.5', undefined],
   ['+1', undefined], ['1e3', undefined], ['tomorrow', undefined], ['2026', 2026000],
   ['Tue, 99 Nov 2026 12:00:05 GMT', undefined], ['9007199254740991', undefined],
   ['9'.repeat(400), undefined],
 ] as const) {
   test(`H-OTLP-DELIVERY Retry-After parser ${String(header).slice(0, 50)}`, () => {
-    expect(retryAfterMs(header, Date.parse('Tue, 10 Nov 2026 12:00:00 GMT'))).toBe(expected);
+    expect(retryAfterMs(header)).toBe(expected);
   });
 }
 
@@ -116,11 +118,10 @@ for (const hint of ['30', '31', '9007199254740']) {
   });
 }
 
-test('H-OTLP-DELIVERY early timer wake never sends early and wall changes cannot reset budget', async () => {
-  const h = harness([{ status: 503, hint: 'Tue, 10 Nov 2026 12:00:05 GMT' }, {}]);
+test('H-OTLP-DELIVERY early timer wake never sends early', async () => {
+  const h = harness([{ status: 503, hint: '5' }, {}]);
   h.clock.sleep = async ms => {
     h.sleeps.push(ms); h.state.mono += h.sleeps.length === 1 ? 1000 : ms;
-    h.state.wall -= 3600000;
   };
   await h.deliver();
   expect(h.sleeps).toEqual([5000, 4000]);
