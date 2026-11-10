@@ -8,7 +8,7 @@ context propagation, mirroring ``tfc/temporal/evaluations/activities.py``.
 """
 
 import structlog
-from django.db import close_old_connections
+from django.db import close_old_connections, connection
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
@@ -148,12 +148,25 @@ def _claim_batch_sync(task_id: str, n: int) -> dict:
 
         task = EvalTask.objects.get(id=task_id)
         _require_instant_eval_license(task)
-        # Earlier task/license reads cannot have claimed anything. Only this
-        # transaction needs protection against replay after a lost commit reply.
-        with database_control_errors(
-            task_id=str(task_id),
-            control_activity="claim_eval_batch_activity",
-            claim=True,
+        # claim_pending_batch uses transaction.atomic() on the default writer.
+        # A failure opening that connection cannot have claimed any entries.
+        # Once SQL is submitted, conservatively treat a lost reply as uncertain,
+        # including a disconnect while committing after the UPDATE succeeds.
+        submitted = False
+
+        def track_submission(execute, sql, params, many, context):
+            nonlocal submitted
+            submitted = True
+            return execute(sql, params, many, context)
+
+        with (
+            database_control_errors(
+                task_id=str(task_id),
+                control_activity="claim_eval_batch_activity",
+                claim=True,
+                claim_submitted=lambda: submitted,
+            ),
+            connection.execute_wrapper(track_submission),
         ):
             entries = claim_pending_batch(task, n)
         return {"entry_ids": [str(e.id) for e in entries]}
@@ -460,13 +473,25 @@ def _set_task_status_sync(
     """
     close_old_connections()
     try:
+        from django.db.models import Case, When
+        from django.db.models.functions import Coalesce
         from django.utils import timezone
 
         from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
         fields: dict = {"status": status}
         if status == EvalTaskStatus.RUNNING:
-            fields["start_time"] = timezone.now()
+            # Continuous start_time is its acceptance/activation floor, not
+            # worker startup time. Creation falls back to created_at; conversion
+            # persists a new start_time in the mode-change transaction. Preserve
+            # it (and any partial cursor) through outages, resumes and reruns.
+            fields["start_time"] = Case(
+                When(
+                    run_type=RunType.CONTINUOUS,
+                    then=Coalesce("start_time", "created_at"),
+                ),
+                default=timezone.now(),
+            )
         elif status in (EvalTaskStatus.COMPLETED, EvalTaskStatus.FAILED):
             fields["end_time"] = timezone.now()
 

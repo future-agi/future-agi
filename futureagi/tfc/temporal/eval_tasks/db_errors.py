@@ -68,13 +68,19 @@ def is_transient_database_error(exc: BaseException) -> bool:
 
 @contextmanager
 def database_control_errors(
-    *, task_id: str, control_activity: str, claim: bool = False
+    *,
+    task_id: str,
+    control_activity: str,
+    claim: bool = False,
+    claim_submitted: Callable[[], bool] | None = None,
 ) -> Iterator[None]:
     """Only a submitted claim can have an uncertain commit outcome.
 
     Never repeat that attempt and silently claim a second batch. Park and leave
     unacknowledged IDs to the existing stale-claim reaper. A confirmed read-only
     rejection rolls back, so it can keep the normal bounded activity retries.
+    Connection establishment failures also retain that budget: no claim could
+    commit before submission. Without a submission witness, stay conservative.
     """
     try:
         yield
@@ -82,7 +88,12 @@ def database_control_errors(
         if not is_transient_database_error(exc):
             raise
         driver = _driver_error(exc)
-        unknown_claim = claim and driver is not None and driver.sqlstate != "25006"
+        unknown_claim = (
+            claim
+            and (claim_submitted is None or claim_submitted())
+            and driver is not None
+            and driver.sqlstate not in {"08001", "25006"}
+        )
         error_type = (
             "EvalTaskClaimOutcomeUnknown"
             if unknown_claim
