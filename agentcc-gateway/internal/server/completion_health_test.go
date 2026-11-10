@@ -26,6 +26,11 @@ import (
 func completionHealthUpstream(t *testing.T, mode string, fail bool, calls *atomic.Int64) *httptest.Server {
 	t.Helper()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"object":"list","data":[{"id":"adaptive-sample","object":"model"}]}`)
+			return
+		}
 		path := "/v1/completions"
 		if mode == "translated" {
 			path = "/openai/deployments/adaptive-sample/chat/completions"
@@ -105,6 +110,10 @@ func completionHealthHTTP(t *testing.T, gateway *httptest.Server, mode, key stri
 func TestAdaptiveLegacyCompletionAttemptHealth(t *testing.T) {
 	for _, mode := range []string{"native", "translated", "stream"} {
 		for _, scenario := range []string{"success", "upstream-error", "local-rate-limit", "output-policy", "cache-hit"} {
+			// The cache plugin deliberately neither reads nor writes streams.
+			if mode == "stream" && scenario == "cache-hit" {
+				continue
+			}
 			t.Run(mode+"/"+scenario, func(t *testing.T) {
 				var calls atomic.Int64
 				upstream := completionHealthUpstream(t, mode, scenario == "upstream-error", &calls)
@@ -184,7 +193,7 @@ func TestAdaptiveLegacyCompletionExcludesOrgInstances(t *testing.T) {
 			srv, gateway := adaptiveServer(t, cfg)
 			store := tenant.NewStore()
 			store.Set("synthetic-org", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
-				"fast": {Enabled: true, Models: []string{"adaptive-sample"}},
+				"fast": {Enabled: true, APIKey: "synthetic-provider-key", Models: []string{"adaptive-sample"}},
 			}})
 			orgCache := providers.NewOrgProviderCache(map[string]config.ProviderConfig{"fast": completionHealthConfig(org.URL, mode)}, false)
 			t.Cleanup(orgCache.EvictAll)
@@ -192,8 +201,9 @@ func TestAdaptiveLegacyCompletionExcludesOrgInstances(t *testing.T) {
 			srv.handlers.orgProviderCache = orgCache
 			srv.handlers.keyStore = auth.NewKeyStore(config.AuthConfig{Keys: []config.AuthKeyConfig{
 				{Name: "synthetic-org", Key: "synthetic-org-probe", KeyType: "byok", Metadata: map[string]string{"org_id": "synthetic-org"}},
+				{Name: "synthetic-global", Key: "synthetic-global-probe", KeyType: "internal"},
 			}})
-			if status, _ := completionHealthHTTP(t, gateway, mode, ""); status != http.StatusOK {
+			if status, _ := completionHealthHTTP(t, gateway, mode, "synthetic-global-probe"); status != http.StatusOK {
 				t.Fatal("global priming failed")
 			}
 			before := srv.handlers.healthMonitor.GetHealth("fast")
