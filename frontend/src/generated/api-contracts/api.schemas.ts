@@ -8588,15 +8588,90 @@ export interface LiteLLMModelVoicesResponseApi {
   result: LiteLLMModelVoicesResultApi;
 }
 
-export type ModelHubPaginatedResponseApiResultsItem = {
-  [key: string]: unknown;
-};
+export interface DecisionConnectionApi {
+  /** @minLength 1 */
+  model_name: string;
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  label: string;
+  is_available: boolean;
+}
 
-export interface ModelHubPaginatedResponseApi {
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiBestFor = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiUseCase = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiCutoff = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiRateLimits = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiLatency = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiPricing = JsonValueApi;
+
+export interface ModelListEntryApi {
+  /** @minLength 1 */
+  model_name: string;
+  /** @minLength 1 */
+  label?: string;
+  /** @minLength 1 */
+  author?: string;
+  /** @minLength 1 */
+  version?: string;
+  question_types?: string[];
+  /** @minimum 1 */
+  min_choices?: number;
+  /** @minimum 1 */
+  max_choices?: number;
+  /** @minimum 1 */
+  max_state_bytes?: number;
+  notice?: string;
+  /** @minLength 1 */
+  unavailable_reason?: string | null;
+  connections?: DecisionConnectionApi[];
+  /** @minLength 1 */
+  type: string;
+  providers?: string;
+  is_available?: boolean;
+  logo_url?: string | null;
+  /** Any valid JSON value. */
+  best_for?: ModelListEntryApiBestFor;
+  /** Any valid JSON value. */
+  use_case?: ModelListEntryApiUseCase;
+  /** Any valid JSON value. */
+  cutoff?: ModelListEntryApiCutoff;
+  /** Any valid JSON value. */
+  rate_limits?: ModelListEntryApiRateLimits;
+  /** Any valid JSON value. */
+  latency?: ModelListEntryApiLatency;
+  /** Any valid JSON value. */
+  pricing?: ModelListEntryApiPricing;
+}
+
+export interface ModelListResponseApi {
   count: number;
-  next?: string;
-  previous?: string;
-  results: ModelHubPaginatedResponseApiResultsItem[];
+  next?: string | null;
+  previous?: string | null;
+  results: ModelListEntryApi[];
 }
 
 export type CellErrorLocalizerResultApiErrorAnalysis = {
@@ -8826,6 +8901,17 @@ export interface CustomMetricTestResponseApi {
   /** @minLength 1 */
   status: string;
   prompts?: CustomMetricTestResponseApiPrompts;
+}
+
+export type ModelHubPaginatedResponseApiResultsItem = {
+  [key: string]: unknown;
+};
+
+export interface ModelHubPaginatedResponseApi {
+  count: number;
+  next?: string;
+  previous?: string;
+  results: ModelHubPaginatedResponseApiResultsItem[];
 }
 
 export interface CustomAIModelApi {
@@ -37767,6 +37853,13 @@ export type ModelHubApiKeysListParams = {
    * Number of results to return per page.
    */
   limit?: number;
+};
+
+export type ModelHubApiModelsListListParams = {
+  name?: string;
+  search?: string;
+  model_type?: string;
+  exclude_providers?: string[];
 };
 
 export type ModelHubDatasetOptimizationListParams = {
