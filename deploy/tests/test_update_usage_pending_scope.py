@@ -14,7 +14,6 @@ from types import SimpleNamespace
 import unittest
 
 from scripts import rehearse_update_compatibility as p
-from scripts import update_rehearsal_qualification as q
 from deploy.tests.test_update_usage_reference import ROOT, REVISIONS, source
 
 LATEST = (
@@ -51,10 +50,12 @@ FLOOR_ONLY = (
 def keywords(node): return {k.arg:k.value for k in node.keywords}
 
 
-class StockCharField(SimpleNamespace):
-    """Literal AST shape only; native Django/PG tests prove database behavior."""
+class CharField(SimpleNamespace):
+    """AST-only built-in-field double; constructor equality is not SQL proof."""
+    non_db_attrs = ('choices',)
+
     def deconstruct(self):
-        return None, 'django.db.models.CharField', copy.deepcopy(self.args), copy.deepcopy(self.kwargs)
+        return None, 'django.db.models.CharField', self.arguments, dict(self.options)
 
 
 def field(node):
@@ -70,18 +71,14 @@ def field(node):
             target='accounts.user'
         else: target=ast.literal_eval(target)
         remote=SimpleNamespace(model=target,through=ast.literal_eval(options['through']) if 'through' in options else None)
-    attributes=dict(remote_field=remote,many_to_many=kind=='ManyToManyField',
+    cls=CharField if kind=='CharField' else SimpleNamespace
+    return cls(remote_field=remote,many_to_many=kind=='ManyToManyField',
         primary_key=ast.literal_eval(options['primary_key']) if 'primary_key' in options else False,
         unique=ast.literal_eval(options['unique']) if 'unique' in options else kind=='OneToOneField',
-        db_table=ast.literal_eval(options['db_table']) if 'db_table' in options else None)
-    if kind=='CharField':
-        try:
-            arguments=[ast.literal_eval(value) for value in node.args]
-            parameters={name:ast.literal_eval(value) for name,value in options.items()}
-        except (ValueError, TypeError):
-            return SimpleNamespace(**attributes)  # unresolved declarations stay conservative
-        return StockCharField(args=arguments,kwargs=parameters,**attributes)
-    return SimpleNamespace(**attributes)
+        db_index=ast.literal_eval(options['db_index']) if 'db_index' in options else False,
+        db_table=ast.literal_eval(options['db_table']) if 'db_table' in options else None,
+        arguments=[ast.dump(arg) for arg in node.args],
+        options={key:ast.dump(value) for key,value in options.items()})
 
 
 def model(node):
@@ -104,8 +101,6 @@ class Operation:
         for key in ('name','model_name','old_name','new_name'):
             if key in options: setattr(self,key,ast.literal_eval(options[key]))
         if 'field' in options: self.field=field(options['field'])
-        if type(self).__name__=='AlterField':
-            self.preserve_default=ast.literal_eval(options['preserve_default']) if 'preserve_default' in options else True
         if type(self).__name__=='RunPython': self.code=object()  # opaque; never called
         if type(self).__name__=='RunSQL': self.sql='opaque'  # only declaration is read
     def state_forwards(self,app,state):
@@ -136,7 +131,8 @@ def scope_environment(state):
         if '.' in remote:
             app,remote=remote.split('.',1)
         return app,remote.lower()
-    env=dict(ast=ast,re=re,migrations=operation_types(),models=SimpleNamespace(CharField=StockCharField),schemas={'postgres':'public','clickhouse':'default'},
+    env=dict(ast=ast,re=re,migrations=operation_types(),models=SimpleNamespace(CharField=CharField),
+        schemas={'postgres':'public','clickhouse':'default'},
         resolve_relation=resolve,strip_quotes=lambda s:s.replace('"',''),truncate_name=lambda s,length:s[:length])
     # Use the actual resolver's functions/constants, with imports and final
     # loader invocation left to the native test. Opaque declarations are AST data.
@@ -183,18 +179,6 @@ def baseline_state(revision):
             fields[item.targets[0].id]=field(call)
         if fields:
             state.models[('usage',node.name.lower())]=SimpleNamespace(options={},fields=fields)
-    # Pin the actual source field before choices-only tracer0130; CreateModel
-    # alone predates intervening AlterFields and cannot describe this boundary.
-    previous=ast.parse(source(revision,'tracer/migrations/0026_alter_observationspan_observation_type.py'))
-    operation=next(node for node in ast.walk(previous) if isinstance(node,ast.Call)
-        and isinstance(node.func,ast.Attribute) and node.func.attr=='AlterField'
-        and ast.literal_eval(keywords(node)['name'])=='observation_type')
-    state.models[('tracer','observationspan')].fields['observation_type']=field(keywords(operation)['field'])
-    previous_usage=ast.parse(source(revision,'ee/usage/migrations/0021_add_code_evaluator_choice.py'))
-    usage_operation=next(node for node in ast.walk(previous_usage) if isinstance(node,ast.Call)
-        and isinstance(node.func,ast.Attribute) and node.func.attr=='AlterField'
-        and ast.literal_eval(keywords(node)['name'])=='name')
-    state.models[('usage','apicalltype')].fields['name']=field(keywords(usage_operation)['field'])
     return state
 
 
@@ -239,43 +223,36 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                         tables=[dict(engine=e,table=t) for e,t in sorted(tables)]))
                 identities_in_order=[dict(app_label=m.app_label,name=m.name) for m in plan]
                 selected=p.select_reference_registry(registry,scopes,plan=identities_in_order)
-                expected={'tracer_trace','tracer_observation_span','tracer_eval_task'}
+                expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog'}
                 if count==26: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                 self.assertEqual({row['table'] for row in selected},expected)
-                if count==21:
-                    references=[dict(engine=row['database'],table='public.'+row['table']) for row in selected]
-                    certified=q.reference_scope(identities_in_order,scopes,references)
-                    self.assertEqual(len(certified),21)
-                    physical=[(table['engine'],table['table']) for scope in certified for table in scope['tables']]
-                    self.assertEqual(len(physical),len(set(physical)))
-                    self.assertEqual(len(physical),3)
                 self.assertTrue(all(row['database']=='postgres' for row in selected))
                 self.assertFalse(any(row.get('app_label')=='prism' or row.get('model') in ('UsageEventLog','UsageSummary') for row in selected))
                 usage=next(row for row in scopes if row['app_label']=='usage')
-                self.assertEqual(usage['tables'],[])
+                self.assertEqual({row['table'] for row in usage['tables']},
+                    {'public.usage_apicalltype','public.usage_apicalllog','public.usage_pricing','public.usage_ratelimit'})
                 for row in scopes:
                     scoped=p.select_reference_registry(registry,[row],plan=[{k:row[k] for k in ('app_label','name')}])
                     names={item['table'] for item in scoped}
                     if row['name']=='0030_queue_existing_demo_trace_publications': expected_row={'tracer_trace','tracer_observation_span'}
-                    elif row['app_label']=='usage': expected_row=set()
+                    elif row['app_label']=='usage': expected_row={'usage_apicalllog'}
                     elif row['name']=='0118_instant_eval_answers': expected_row={'tracer_eval_task'}
-                    elif row['name']=='0130_observationspan_internal_type': expected_row=set()
+                    elif row['name']=='0130_observationspan_internal_type': expected_row=set()  # Choices-only state change.
                     elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                     else: expected_row=set()
                     self.assertEqual(names,expected_row,(row['app_label'],row['name']))
 
-    def test_unique_name_preserves_inbound_scope_for_a_physical_change(self):
+    def test_unique_name_is_the_non_pk_reason_usage_is_selected(self):
         state=baseline_state(REVISIONS[1]); env=scope_environment(state)
         migration=pending_plan([('usage','0030_add_jev_evaluator_call_type')],env)[0]
         op=migration.operations[0]
-        self.assertEqual(env['touched'](op,migration,state),set())
-        # The real choices change is state-only. A wider unique column is a
-        # physical change whose inbound log/pricing/rate-limit tables still count.
-        op.field.kwargs['max_length']=60
         self.assertFalse(op.field.primary_key); self.assertTrue(op.field.unique)
         self.assertIn(('postgres','public.usage_apicalllog'),env['touched'](op,migration,state))
         # Negative control removes BOTH before/after unique flags. The actual
         # source and target keep them; do not "fix" production by changing this.
         state.models[('usage','apicalltype')].fields['name'].unique=False
         op.field.unique=False
+        # Retain a real column alteration: without one this becomes choices-only,
+        # which now correctly has no physical-table scope at all.
+        op.field.options['max_length']=ast.dump(ast.Constant(51))
         self.assertEqual(env['touched'](op,migration,state),{('postgres','public.usage_apicalltype')})

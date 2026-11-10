@@ -1592,45 +1592,41 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:70`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
 
 **Tags:** —
 
 **User steps:**
 
-1. create a voice project and seed a call whose four recording URLs 404
-2. open Voice Observe and identify the exact seeded call by Call ID
-3. open the call detail drawer and observe a real recording HTTP 404
-4. see "Recording unavailable", with no loader, retry or exposed recording URL
+1. create a scoped voice project through the public API and ingest a call whose recording URLs 404
+2. open Voice Observe and the exact seeded call detail drawer
+3. see "Recording unavailable", with no loader, retry or exposed recording URL
 
 **Backend state verified:**
 
-- the public-created project retains its exact ID/name, actor organization/workspace and simulator source in PG
-- the exact conversation root and recording attributes are queryable in spans FINAL with the scoped curated trace present
-- the browser voice-list response and visible Call ID/Status cells identify exactly the seeded completed call
-- browser and independent voice_call_detail reads return the exact seeded call and all four recording URLs unchanged with recording_available true
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call and retain its four recording URLs
 
 ### OBS-E2E-013 — a voice call with no recording says so
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:70`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
 
 **Tags:** —
 
 **User steps:**
 
-1. create a voice project and seed a call with no recording attributes
-2. open Voice Observe and identify the exact seeded call by Call ID
-3. open the call detail drawer
-4. see "No recording found", with no loader or recording-unavailable error
+1. create a scoped voice project through the public API and ingest a call with no recording attributes
+2. open the exact seeded call detail drawer
+3. see "No recording found" without a loader or recording error
 
 **Backend state verified:**
 
-- the public-created project retains its exact ID/name, actor organization/workspace and simulator source in PG
-- the exact conversation root and recording attributes are queryable in spans FINAL with the scoped curated trace present
-- the browser voice-list response and visible Call ID/Status cells identify exactly the seeded completed call
-- browser and independent voice_call_detail reads return the exact seeded call with recording_available false and all four recording URLs null
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call, with recording_available false and no recording URLs
 
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
