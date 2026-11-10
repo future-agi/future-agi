@@ -28,8 +28,6 @@ def test_catalog_blank_choices_match_runtime(field_name, query):
         (GetTraceAnnotationSerializer, "exclude_annotators", "[]", True),
         (TraceListQuerySerializer, "trace_ids", "", True),
         (TraceListQuerySerializer, "trace_ids", "", False),
-        (UsersQuerySerializer, "requested_columns", "", True),
-        (UsersQuerySerializer, "requested_columns", "", False),
         (UsersQuerySerializer, "attribute_keys", "", True),
         (UsersQuerySerializer, "attribute_keys", "", False),
     ],

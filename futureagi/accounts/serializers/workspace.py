@@ -228,7 +228,7 @@ class WorkspaceListRequestSerializer(PaginationSerializer):
 class UserListSortField(serializers.Field):
     """Normalize supported user-list sort payload shapes to Django order_by fields."""
 
-    swagger_empty_input_default = "[]"
+    swagger_empty_input_default = ""
 
     default_error_messages = {
         "invalid": "Sort must be a field name, JSON object, or JSON list."

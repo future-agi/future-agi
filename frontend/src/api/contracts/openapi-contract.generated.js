@@ -2832,7 +2832,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: "[]",
+              default: "",
             },
           },
           workspace_id: {
@@ -43203,7 +43203,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              default: "",
             },
           },
           attribute_keys: {
@@ -90644,7 +90643,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
           type: "string",
-          default: "",
         },
         attribute_keys: {
           title: "Attribute keys",

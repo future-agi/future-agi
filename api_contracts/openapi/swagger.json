@@ -5380,7 +5380,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": "[]"
+                        "default": ""
                     },
                     {
                         "name": "workspace_id",
@@ -76176,8 +76176,7 @@
                         "in": "query",
                         "description": "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
                         "required": false,
-                        "type": "string",
-                        "default": ""
+                        "type": "string"
                     },
                     {
                         "name": "attribute_keys",
@@ -177013,8 +177012,7 @@
                 "requested_columns": {
                     "title": "Requested columns",
                     "description": "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
-                    "type": "string",
-                    "default": ""
+                    "type": "string"
                 },
                 "attribute_keys": {
                     "title": "Attribute keys",

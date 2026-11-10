@@ -1784,7 +1784,7 @@ export const accountsUserListListQueryLimitDefault = 10;
 export const accountsUserListListQueryLimitMax = 100;
 
 export const accountsUserListListQuerySearchDefault = ``;
-export const accountsUserListListQuerySortDefault = `[]`;
+export const accountsUserListListQuerySortDefault = ``;
 export const accountsUserListListQueryFilterStatusDefault = [];
 export const accountsUserListListQueryFilterRoleDefault = [];
 
@@ -77278,7 +77278,6 @@ export const tracerUsersListQueryExportDefault = false;
 export const tracerUsersListQueryCursorMax = 4096;
 
 export const tracerUsersListQueryCursorModeDefault = false;
-export const tracerUsersListQueryRequestedColumnsDefault = ``;
 export const tracerUsersListQueryAttributeKeysDefault = ``;
 
 export const TracerUsersListQueryParams = zod.object({
@@ -77310,7 +77309,7 @@ export const TracerUsersListQueryParams = zod.object({
   cursor_mode: zod.boolean().default(tracerUsersListQueryCursorModeDefault),
   requested_columns: zod
     .string()
-    .default(tracerUsersListQueryRequestedColumnsDefault)
+    .optional()
     .describe(
       "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
     ),
@@ -77432,7 +77431,6 @@ export const tracerUsersCreateBodyExportDefault = false;
 export const tracerUsersCreateBodyCursorMax = 4096;
 
 export const tracerUsersCreateBodyCursorModeDefault = false;
-export const tracerUsersCreateBodyRequestedColumnsDefault = ``;
 export const tracerUsersCreateBodyAttributeKeysDefault = ``;
 
 export const TracerUsersCreateBody = zod.object({
@@ -77469,7 +77467,7 @@ export const TracerUsersCreateBody = zod.object({
   cursor_mode: zod.boolean().default(tracerUsersCreateBodyCursorModeDefault),
   requested_columns: zod
     .string()
-    .default(tracerUsersCreateBodyRequestedColumnsDefault)
+    .optional()
     .describe(
       "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
     ),
