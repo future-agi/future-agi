@@ -166,8 +166,12 @@ test.describe('SAML tenant isolation', () => {
          ORDER BY t.created_at DESC LIMIT 1`,
         [actor.email],
       );
-      expect(rows).toEqual([{
-        auth_origin: 'saml', scoped_organization_id: actor.organizationId, state: 'consumed',
+      // Temporary assertion-side proofs: real setup/query/capture remain unchanged.
+      expect.soft(rows, 'fallibility: wrong organization must fail').toEqual([{
+        auth_origin: 'saml', scoped_organization_id: `${actor.organizationId}-assertion-only`, state: 'consumed',
+      }]);
+      expect.soft(rows, 'fallibility: wrong attempt state must fail').toEqual([{
+        auth_origin: 'saml', scoped_organization_id: actor.organizationId, state: 'pending',
       }]);
       // The dashboard asks for user-info after the barrier has stripped the URL.
       await expect.poll(async () => (await recorder.drain())
@@ -185,6 +189,7 @@ test.describe('SAML tenant isolation', () => {
         expect(redacted).not.toContain(secret);
       }
       expect(redacted).not.toContain(token);
+      expect.soft(redacted, 'fallibility: forbidden redaction marker must fail').not.toContain('[REDACTED]');
     });
   });
 
