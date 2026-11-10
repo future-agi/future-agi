@@ -2,7 +2,7 @@
 # or vX.Y.Z-rc.N. Prereleases stay in the beta channel: complete OSS images
 # and versioned Helm chart only, no shared image aliases, EE/docs dispatch,
 # deployment bump or Artifact Hub metadata update. Never promote a beta tag.
-# All publication still requires the ordinary production approval.
+# Publication requires Production approval unless the migration-free tag policy opts in.
 #
 # Every image builds through build-image-multiarch.yml: linux/amd64 and
 # linux/arm64 on native runners (the CUDA serving variant and the simulation
@@ -86,6 +86,9 @@ jobs:
       channel: ${{ steps.v.outputs.channel }}
       # JSON list of the components this run builds: all of them on a tag push.
       components: ${{ steps.v.outputs.components }}
+      environment: ${{ steps.policy.outputs.environment }}
+      migrations: ${{ steps.policy.outputs.migrations }}
+      tag-sha: ${{ steps.policy.outputs.tag_sha }}
     steps:
       - id: v
         shell: bash
@@ -209,12 +212,33 @@ jobs:
           echo "components=$components" >> "$GITHUB_OUTPUT"
           echo "components: $components"
 
-  # The one review of a release run: every other job waits on it. The image
-  # builds run in production-auto, which has no reviewers.
+      # Run policy code from reviewed main, never from the proposed tag. Full
+      # history supplies origin/main ancestry and the previous stable baseline.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify tag ancestry and select the approval environment
+        id: policy
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          RELEASE_AUTO_APPROVE: ${{ vars.RELEASE_AUTO_APPROVE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release_autopilot.py environment --version "$VERSION"
+
+  # Every other job still waits here. Unknown/new migrations and dispatches
+  # retain Production review; only opted-in migration-free tag pushes skip it.
   approve:
     needs: guard
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ needs.guard.outputs.environment }}
     timeout-minutes: 15
     env:
       REQUESTED_VERSION: ${{ inputs.version }}
@@ -344,6 +368,27 @@ jobs:
           components=$(printf '%s\n' $selected | jq -R . | jq -sc .)
           echo "components=$components" >> "$GITHUB_OUTPUT"
           echo "components: $components"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Recheck ancestry and approval policy after the wait
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          EXPECTED_SHA: ${{ needs.guard.outputs.tag-sha }}
+          APPROVED_ENVIRONMENT: ${{ needs.guard.outputs.environment }}
+          RELEASE_AUTO_APPROVE: ${{ vars.RELEASE_AUTO_APPROVE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release_autopilot.py environment --version "$VERSION" \
+            --expected-sha "$EXPECTED_SHA" --approved-environment "$APPROVED_ENVIRONMENT"
 
   build:
     needs: [guard, approve]
@@ -1225,7 +1270,9 @@ jobs:
             fi
             gh pr create --repo future-agi/deployment --base main --head "$branch" \
               --title "chore(release): bump platform to ${VERSION}" \
-              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. Review release notes (check for the migrations callout) before deploying per the deployment guide."
+              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. Review release notes (check for the migrations callout) before deploying per the deployment guide.
+
+          Migrations: ${{ needs.guard.outputs.migrations }} new files"
           else
             echo "bump PR already open"
           fi

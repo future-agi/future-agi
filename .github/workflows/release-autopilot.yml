@@ -1,0 +1,75 @@
+name: Release autopilot
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_run:
+    workflows: ["Backend CI"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-autopilot
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Dispatches must use the default branch too. A workflow_run is only a
+    # wake-up signal: no PR checkout, artifacts or event-supplied checks are used.
+    if: >-
+      github.repository == 'future-agi/future-agi' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      vars.RELEASE_AUTOPILOT == 'on'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read
+      statuses: read
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_AUTOPILOT: ${{ vars.RELEASE_AUTOPILOT }}
+      RELEASE_AUTOPILOT_REQUIRED_CHECKS: ${{ vars.RELEASE_AUTOPILOT_REQUIRED_CHECKS }}
+      RELEASE_AUTOPILOT_MIN_AGE_MINUTES: ${{ vars.RELEASE_AUTOPILOT_MIN_AGE_MINUTES }}
+      RELEASE_AUTOPILOT_WEEKENDS: ${{ vars.RELEASE_AUTOPILOT_WEEKENDS }}
+      AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Evaluate current release PR
+        id: policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release_autopilot.py check
+      - uses: actions/create-github-app-token@v2
+        if: steps.policy.outputs.eligible == 'true'
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: future-agi
+          repositories: future-agi
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Recheck, approve with Actions, and merge with the release App
+        if: steps.policy.outputs.eligible == 'true'
+        env:
+          RELEASE_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          EXPECTED_PR: ${{ steps.policy.outputs.number }}
+          EXPECTED_HEAD_SHA: ${{ steps.policy.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release_autopilot.py merge
