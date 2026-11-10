@@ -1959,6 +1959,7 @@ export const endpoints = {
       test: (id) =>
         apiPath("/tracer/alerts/error_feed/{alert_id}/test/", { alert_id: id }),
     },
+    escalationSettings: apiPath("/tracer/feed/escalation-settings/"),
     list: apiPath("/tracer/feed/issues/"),
     stats: apiPath("/tracer/feed/issues/stats/"),
     detail: (clusterId) =>

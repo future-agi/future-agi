@@ -17,7 +17,8 @@ export interface UserInfo {
 }
 interface KeysEnvelope { status: string; data: { api_key: string; secret_key: string } }
 
-export async function provisionActor(req: APIRequestContext, label: string): Promise<TestActor> {
+export async function provisionActor(req: APIRequestContext, label: string,
+  createAccount?: (account: { email: string; fullName: string; password: string }) => Promise<void>): Promise<TestActor> {
   // The domain gives the auto-created organization a stable name.
   // Freshness must not depend on the caller's label: parallel workers can
   // provision in the same millisecond.
@@ -26,8 +27,9 @@ export async function provisionActor(req: APIRequestContext, label: string): Pro
   const password = `E2e-${label}-${runId}`;
   const anon = new ApiClient(req, E2E.apiUrl);
 
+  if (createAccount) await createAccount({ email, fullName: `E2E ${label}`, password });
   // Only the test image exposes this route. Signup flows use the public route.
-  await anon.post('/accounts/e2e/clean-signup/', { email, full_name: `E2E ${label}`, password });
+  else await anon.post('/accounts/e2e/clean-signup/', { email, full_name: `E2E ${label}`, password });
   const tokens = await anon.post<Tokens>('/accounts/token/', { email, password, remember_me: true });
 
   let api = anon.withAuth(tokens);

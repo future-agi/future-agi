@@ -249,7 +249,30 @@ class TraceErrorGroup(BaseModel):
     status = models.CharField(
         max_length=20,
         choices=FeedIssueStatus.choices,
-        default=FeedIssueStatus.ESCALATING,
+        default=FeedIssueStatus.FOR_REVIEW,
+    )
+    status_origin = models.CharField(
+        max_length=20,
+        default="system",
+        db_default="legacy_unknown",
+        choices=[
+            ("system", "System"),
+            ("manual", "Manual"),
+            ("legacy_unknown", "Unknown legacy ownership"),
+        ],
+    )
+    status_changed_at = models.DateTimeField(null=True, blank=True)
+    status_changed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="changed_feed_issue_statuses",
+    )
+    status_revision = models.PositiveBigIntegerField(default=0, db_default=0)
+    escalation_state = models.JSONField(default=dict, db_default={}, blank=True)
+    escalation_next_evaluation_at = models.DateTimeField(
+        null=True, blank=True, db_index=True
     )
     eval_config = models.ForeignKey(
         CustomEvalConfig,
@@ -364,6 +387,10 @@ class TraceErrorGroup(BaseModel):
         db_table = "tracer_trace_error_group"
         ordering = ["cluster_id"]
         indexes = [
+            models.Index(
+                fields=["project", "status_origin", "status"],
+                name="feed_issue_evaluation_idx",
+            ),
             models.Index(fields=["project", "cluster_id"]),
             models.Index(fields=["error_type"]),
             models.Index(fields=["combined_impact"]),
@@ -548,6 +575,10 @@ class ErrorClusterTraces(BaseModel):
     """Stores the traces that are clustered together, with provenance."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    occurred_at = models.DateTimeField(null=True, blank=True)
+    occurrence_time_source = models.CharField(
+        max_length=32, blank=True, default="", db_default=""
+    )
     trace = models.ForeignKey(
         Trace,
         on_delete=models.CASCADE,
@@ -625,6 +656,9 @@ class ErrorClusterTraces(BaseModel):
             ["cluster", "trace_session"],
         ]
         indexes = [
+            models.Index(
+                fields=["cluster", "occurred_at"], name="feed_membership_occurrence_idx"
+            ),
             models.Index(fields=["cluster", "trace"]),
             models.Index(fields=["cluster"]),
             models.Index(fields=["trace"]),

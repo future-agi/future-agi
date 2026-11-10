@@ -187,6 +187,9 @@ def test_f6_pages_distinct_traces_before_offset_and_keeps_missing_ch(omega_issue
         patch.object(feed.timezone, "now", return_value=now),
         patch.object(feed, "_avg_eval_score", return_value=None),
         patch.object(feed, "_users_affected_in_window", return_value=0),
+        patch.object(
+            feed.timezone, "now", return_value=report.recorded_at + timedelta(hours=1)
+        ),
     ):
         metrics = feed._fetch_trend_metrics(cluster.cluster_id, project_id, days=14)
     assert metrics[0].value == "100%"  # 101 findings, one distinct failing trace
@@ -349,7 +352,12 @@ def test_repeated_severity_edit_does_not_churn_f6_versions(omega_issue, user):
         first_revision = state.revision
         first_registry_revision = scope.registry_revision
 
-        feed.update_cluster(cluster.cluster_id, [str(cluster.project_id)], payload)
+        severity_only = FeedUpdatePayload(
+            severity="high", assignee=user.email, assignee_provided=True
+        )
+        feed.update_cluster(
+            cluster.cluster_id, [str(cluster.project_id)], severity_only
+        )
 
     cluster.refresh_from_db()
     state.refresh_from_db()

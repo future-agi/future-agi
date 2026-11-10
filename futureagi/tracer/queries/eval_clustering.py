@@ -731,7 +731,11 @@ def create_cluster(
     # Lazy import avoids a query-module import cycle; severity_to_priority
     # returns "medium" when severity is None (the fallback default).
     from tracer.queries.feed import severity_to_priority
+    from tracer.services.feed_escalation import request_evaluation
+    from tracer.services.feed_escalation_publication import eval_occurrence_time
 
+    # Outside the transaction: resolving the time may need an external lookup.
+    at, provenance = eval_occurrence_time(project_id, result)
     try:
         # Savepoint so a unique-constraint violation here doesn't poison the
         # surrounding transaction/connection.
@@ -753,7 +757,7 @@ def create_cluster(
                 title=meta.title,
                 combined_description=result.explanation,
                 combined_impact=_score_to_impact(result.score),
-                status=FeedIssueStatus.ESCALATING,
+                status=FeedIssueStatus.FOR_REVIEW,
                 priority=severity_to_priority(meta.severity),
                 error_type=result.eval_name,
                 eval_config_id=result.eval_config_id,
@@ -771,6 +775,8 @@ def create_cluster(
                 trace_id=result.trace_id,
                 trace_session_id=result.session_id,
                 eval_logger_id=result.eval_logger_id,
+                occurred_at=at,
+                occurrence_time_source=provenance,
             )
             from tracer.services.feed_alerts.events import record_issue_event
 
@@ -779,6 +785,7 @@ def create_cluster(
                 before=None,
                 source_key=f"eval-create:{result.eval_logger_id}",
             )
+            request_evaluation(cluster.pk)
     except IntegrityError:
         # Another concurrent run created this cluster between our .exists()
         # check and the insert (unique_project_cluster_if_not_deleted). Treat
@@ -848,6 +855,10 @@ def assign_to_cluster(
     # behind it while re-inflating counters and re-shifting the centroid on each
     # pass. Counter + membership are written in one transaction so a mid-row
     # activity kill can't leave the +1 without its row and reopen that loop.
+    from tracer.services.feed_escalation import request_evaluation
+    from tracer.services.feed_escalation_publication import eval_occurrence_time
+
+    at, provenance = eval_occurrence_time(project_id, result)
     with transaction.atomic():
         # The eval row first, then the issue: the order the delete takes them.
         if not lock_live_eval(result.eval_logger_id):
@@ -877,6 +888,8 @@ def assign_to_cluster(
                 cluster=cluster,
                 trace_session_id=None if session_already_member else result.session_id,
                 eval_logger_id=result.eval_logger_id,
+                occurred_at=at,
+                occurrence_time_source=provenance,
             )
         else:
             # Unique key is (cluster, trace, span) with span NULL here, and
@@ -888,6 +901,8 @@ def assign_to_cluster(
                 cluster=cluster,
                 trace_id=result.trace_id,
                 eval_logger_id=result.eval_logger_id,
+                occurred_at=at,
+                occurrence_time_source=provenance,
             )
 
         _refresh_counts(cluster, session=result.target_type == "session")
@@ -908,6 +923,8 @@ def assign_to_cluster(
             before=alert_before,
             source_key=f"eval-assign:{result.eval_logger_id}:{cluster.pk}",
         )
+
+        request_evaluation(cluster.pk)
 
     # Incrementally update centroid in ClickHouse
     family = _eval_family(result.eval_name, result.target_type)

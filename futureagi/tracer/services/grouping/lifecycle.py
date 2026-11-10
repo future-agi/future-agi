@@ -152,7 +152,7 @@ def deproject_superseded_report(
                 "updated_at",
             ]
         )
-        _recount(state)
+        _recount(state, structural=True)
     if states:
         scope.registry_revision = F("registry_revision") + 1
         scope.save(update_fields=["registry_revision", "updated_at"])

@@ -1,6 +1,10 @@
-import React, { useState } from "react";
-import { Box, Button, Typography } from "@mui/material";
+import React, { useEffect, useState } from "react";
+import { Box, Button, IconButton, Tooltip, Typography } from "@mui/material";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import EscalationSettingsDialog from "./components/EscalationSettingsDialog";
 import { useNavigate } from "react-router-dom";
+import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import PageHeader from "src/components/page-header";
 import { useErrorFeedList } from "src/api/errorFeed/error-feed";
@@ -11,6 +15,12 @@ import { useErrorFeedApiParams } from "./store";
 export default function ErrorFeedView() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { currentWorkspaceId } = useWorkspace();
+  const { currentOrganizationId } = useOrganization();
+  useEffect(() => {
+    setSettingsOpen(false);
+  }, [currentWorkspaceId, currentOrganizationId]);
 
   const apiParams = useErrorFeedApiParams();
   const { data } = useErrorFeedList(apiParams);
@@ -68,6 +78,26 @@ export default function ErrorFeedView() {
           description="Track, triage and resolve agent errors: hallucinations, eval failures and pipeline issues."
           actions={
             <>
+              <Tooltip title="Escalation settings" arrow>
+                <span>
+                  <IconButton
+                    aria-label="Escalation settings"
+                    size="small"
+                    disabled={!currentWorkspaceId || !currentOrganizationId}
+                    onClick={() => setSettingsOpen(true)}
+                    sx={{
+                      border: "1px solid",
+                      borderColor: "divider",
+                      borderRadius: "6px",
+                      width: 32,
+                      height: 32,
+                      color: "text.secondary",
+                    }}
+                  >
+                    <Iconify icon="solar:settings-linear" width={16} />
+                  </IconButton>
+                </span>
+              </Tooltip>
               <Button
                 variant="outlined"
                 size="small"
@@ -106,6 +136,16 @@ export default function ErrorFeedView() {
           }
         />
       </Box>
+
+      {settingsOpen && (
+        <EscalationSettingsDialog
+          key={`${currentOrganizationId}:${currentWorkspaceId}`}
+          open
+          organizationId={currentOrganizationId}
+          workspaceId={currentWorkspaceId}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
 
       {/* ── Content ── */}
       <Box

@@ -23,6 +23,7 @@ import {
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
 import ErrorStatusChip from "./components/ErrorStatusChip";
+import EscalationReason from "./components/EscalationReason";
 import ErrorSeverityBadge from "./components/ErrorSeverityBadge";
 import ErrorMetadataPanel, {
   LinearTeamPicker,
@@ -237,7 +238,9 @@ export default function ErrorFeedDetailView() {
               <Button
                 size="small"
                 variant="text"
-                startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
+                startIcon={
+                  <Iconify icon="solar:arrow-left-linear" width={14} />
+                }
                 onClick={() => navigate("/dashboard/error-feed")}
                 sx={{
                   color: "text.secondary",
@@ -320,6 +323,7 @@ export default function ErrorFeedDetailView() {
                   size="small"
                 />
               </Stack>
+              <EscalationReason issue={currentError} />
             </Stack>
 
             {/* Action buttons */}
@@ -363,7 +367,10 @@ export default function ErrorFeedDetailView() {
                     size="small"
                     variant="outlined"
                     startIcon={
-                      <Iconify icon="solar:download-minimalistic-linear" width={14} />
+                      <Iconify
+                        icon="solar:download-minimalistic-linear"
+                        width={14}
+                      />
                     }
                     disabled={
                       exportTraces.isPending || !currentError.trace_count
@@ -415,12 +422,12 @@ export default function ErrorFeedDetailView() {
                     onClick={() =>
                       updateIssue.mutate({
                         clusterId: currentError.cluster_id,
-                        status: "escalating",
+                        status: "for_review",
                       })
                     }
                     sx={{ borderColor: "divider", color: "text.secondary" }}
                   >
-                    Ignore issue
+                    Move to review
                   </Button>
                 </>
               )}
@@ -438,7 +445,8 @@ export default function ErrorFeedDetailView() {
             bgcolor: "background.paper",
           }}
         >
-          <Tabs sx={{ boxShadow: "none" }}
+          <Tabs
+            sx={{ boxShadow: "none" }}
             value={safeTabIndex}
             onChange={(_, v) => setActiveTab(TABS[v].key)}
           >

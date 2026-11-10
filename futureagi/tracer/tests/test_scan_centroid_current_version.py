@@ -79,6 +79,7 @@ def _run(select_rows):
         patch("tracer.queries.scan_clustering.TraceScanIssue"),
         patch("tracer.queries.scan_clustering.ErrorClusterTraces"),
         patch("tracer.services.feed_alerts.events.record_issue_event"),
+        patch("tracer.services.feed_escalation_publication.bind_scan_occurrence"),
     ):
         group.objects.get.return_value = MagicMock(error_count=0, total_events=0)
         assign_to_cluster(_CLUSTER, _PROJECT, _issue(), [1.0, 0.0, 0.0])

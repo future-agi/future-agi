@@ -23,7 +23,7 @@ const STATUS_CONFIG = {
 };
 
 export default function ErrorStatusChip({ status, size = "small", onClick }) {
-  const key = STATUS_CONFIG[status] ? status : "escalating";
+  const key = STATUS_CONFIG[status] ? status : "for_review";
   const cfg = STATUS_CONFIG[key];
 
   return (
@@ -34,7 +34,9 @@ export default function ErrorStatusChip({ status, size = "small", onClick }) {
       icon={<Iconify icon={cfg.icon} width={12} />}
       onClick={onClick}
       sx={
-        onClick ? { cursor: "pointer", "&:hover": { opacity: 0.85 } } : undefined
+        onClick
+          ? { cursor: "pointer", "&:hover": { opacity: 0.85 } }
+          : undefined
       }
     />
   );
