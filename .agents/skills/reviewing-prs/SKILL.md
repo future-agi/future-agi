@@ -200,9 +200,10 @@ Reproduce the mechanism, grep the claim across the repo, or read the framework's
 on a public review is worse than a missed P3.
 
 For every functional finding, ask: would the proposed fix prevent the stated failure with the stated
-input or interleaving? Verify both allowed and denied cases against policy; a newly restrictive
-predicate is not itself the specification. A wording fix, test request, typing cleanup or adjacent
-bug does not establish detection of a different mechanism.
+input or interleaving? For findings involving permission or authorization predicates, verify both
+allowed and denied cases against the established policy; a newly restrictive predicate is not itself
+the specification. A wording fix, test request, typing cleanup or adjacent bug does not establish
+detection of a different mechanism.
 
 Separate source-demonstrable defects from operational hypotheses. When needed, ask for sanitized
 deployed fixtures or representative size/memory evidence; do not present an unverified hypothesis as
