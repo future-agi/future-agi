@@ -49,5 +49,7 @@ class MigrationExportView(PrivateWorkflowView):
         result = migration_receipts.export_migrated_version(
             principal=request.skill_principal, resource_id=resource_id, number=number
         )
-        result["archive_base64"] = base64.b64encode(result.pop("archive")).decode("ascii")
+        result["archive_base64"] = base64.b64encode(result.pop("archive")).decode(
+            "ascii"
+        )
         return self.output(request, s.MigrationExport, result)

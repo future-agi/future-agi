@@ -13,7 +13,9 @@ urlpatterns = [
         "contexts/<uuid:context_id>/test-runs/preview/",
         testing.ContextTestPreviewView.as_view(),
     ),
-    path("contexts/<uuid:context_id>/test-runs/", testing.ContextTestRunsView.as_view()),
+    path(
+        "contexts/<uuid:context_id>/test-runs/", testing.ContextTestRunsView.as_view()
+    ),
     path(
         "contexts/<uuid:context_id>/test-runs/<uuid:run_id>/",
         testing.ContextTestRunView.as_view(),

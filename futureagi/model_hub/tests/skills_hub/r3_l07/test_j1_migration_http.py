@@ -72,8 +72,7 @@ def test_j1_public_review_replay_and_exact_export(
     )
     assert review.data["result"]["has_draft"] is False
     assert (
-        other_scope.post(url + "review/", review_body, format="json").status_code
-        == 404
+        other_scope.post(url + "review/", review_body, format="json").status_code == 404
     )
     body, key = fixtures.decision(plan), str(uuid4())
     accepted = admin.post(
@@ -81,9 +80,7 @@ def test_j1_public_review_replay_and_exact_export(
     )
     assert accepted.status_code == 200, accepted.data
     assert (
-        admin.post(
-            url + "accept/", body, format="json", HTTP_IDEMPOTENCY_KEY=key
-        ).data
+        admin.post(url + "accept/", body, format="json", HTTP_IDEMPOTENCY_KEY=key).data
         == accepted.data
     )
     resource = accepted.data["result"]["resource_id"]
