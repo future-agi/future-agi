@@ -37,8 +37,10 @@ const MoveItem = ({ id, open, onClose, name, folderId }) => {
         variant: "success",
       });
       onClose();
+      // The prompt leaves its source folder and appears in the destination
+      // (and in "All prompts"), so refresh every cached folder list.
       queryClient.invalidateQueries({
-        queryKey: ["folder-items", folder],
+        queryKey: ["folder-items"],
       });
     },
   });
@@ -103,7 +105,7 @@ const MoveItem = ({ id, open, onClose, name, folderId }) => {
         size="small"
         label="Select folder"
         value={selectedFolder}
-        options={folders?.filter((f) => f?.value !== folder)}
+        options={folders?.filter((f) => f?.value !== (folderId || folder))}
         onChange={(e) => setSelectedFolder(e.target.value)}
       />
     </ModalWrapper>
