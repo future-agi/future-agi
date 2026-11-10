@@ -20,6 +20,7 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
     usage_aggregate_sql,
     usage_coverage_sql,
 )
+from tracer.services.users_walk_witness import canonical_picked_text_values
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     literal_survivor_map_subquery,
@@ -91,7 +92,7 @@ class MatchingActivityWitness:
 
     family: Literal["raw", "native"]
     key: str
-    kind: Literal["text", "number", "boolean", "native"]
+    kind: Literal["text", "canonical_text", "number", "boolean", "native"]
     sql: str
     params: dict[str, Any] = field(default_factory=dict)
     leaf_index: int | None = None
@@ -718,6 +719,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 kind=kind,
                 sql=witness,
                 params=params,
+                index_pruned=kind != "canonical_text",
                 identity=canonical_filter_leaf(item),
             )
             rank = witness_selectivity_rank(item, found)
@@ -801,6 +803,18 @@ class UserListQueryBuilder(BaseQueryBuilder):
             config = dict(item.get("filter_config") or item.get("filterConfig") or {})
             # This is an existing Users raw-attribute leaf, not a trace native alias.
             config["col_type"] = "SPAN_ATTRIBUTE"
+            if canonical_picked_text_values(item):
+                # Raw equality is not exhaustive for canonical JSON/boolean
+                # strings. Discover by presence in bounded time slices, then
+                # certify values and their newest matching time in Python.
+                yield (
+                    item,
+                    "canonical_text",
+                    "mapContains(attrs_string, %(canonical_text_key)s)",
+                    {"canonical_text_key": str(item.get("column_id") or item.get("columnId"))},
+                    False,
+                )
+                continue
             try:
                 plans = compile_trace_filter_plans([{**item, "filter_config": config}])
             except (TypeError, ValueError):
@@ -824,19 +838,9 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 witness = plan.raw_witness_predicate or ""
             raw_values = config.get("filter_value", config.get("filterValue"))
             values = raw_values if isinstance(raw_values, list) else [raw_values]
-            value_types = config.get(
-                "attribute_value_types", config.get("attributeValueTypes")
-            )
-            picked_strings = (
-                isinstance(value_types, list)
-                and len(value_types) == len(values)
-                and all(value_type == "string" for value_type in value_types)
-            )
             # Users canonicalizes boolean/JSON-looking text and uses Python's
-            # Unicode lower(). Picker provenance makes the storage domain
-            # explicit, so boolean/JSON-looking *strings* may use the raw
-            # string witness; typed input without provenance still keeps the
-            # canonical comparison. Unsupported shapes keep the complete path.
+            # Unicode lower(). Do not narrow those domains with raw equality.
+            # Unsupported shapes keep the complete existing path.
             plain_text = (
                 (config.get("filter_type") or config.get("filterType"))
                 in {"text", "string"}
@@ -846,13 +850,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
                     isinstance(value, str)
                     and value
                     and value.isascii()
-                    and (
-                        picked_strings
-                        or (
-                            value.strip().lower() not in {"true", "false"}
-                            and not value.strip().startswith(("{", "["))
-                        )
-                    )
+                    and value.strip().lower() not in {"true", "false"}
+                    and not value.strip().startswith(("{", "["))
                     for value in values
                 )
             )

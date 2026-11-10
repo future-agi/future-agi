@@ -637,7 +637,7 @@ def test_attribute_filter_preserves_storage_type_provenance(
     ("filter_value", "value_types", "expected"),
     [
         ("call-a", None, ("call-a",)),
-        (['{"enabled":true}'], ["string"], ('{"enabled":true}',)),
+        (['{"enabled":true}'], ["string"], None),
     ],
     ids=["typed-text", "json-looking-picked-string"],
 )
@@ -720,7 +720,7 @@ def test_positive_text_attribute_filter_walks_matching_activity_not_the_seed(
         analytics_cls.return_value.execute_ch_query.side_effect = empty_server
         result = manager.list_cursor_payload(page_size=25)
 
-    assert manager.attribute_exact_text_filters == {"call_id": expected}
+    assert manager.attribute_exact_text_filters == ({"call_id": expected} if expected else {})
     assert captured_limits == []
     assert result.payload["table"] == []
     assert result.payload["query_provenance"] == "matching_activity_walk"
@@ -779,7 +779,7 @@ def test_mixed_storage_attribute_filter_never_uses_string_candidate_pruning():
 
 
 @pytest.mark.parametrize("selected", ["true", '{"enabled":true}', "[1,2]"])
-def test_string_picker_provenance_accelerates_canonical_looking_text(selected):
+def test_string_picker_provenance_never_narrows_canonical_text_as_raw(selected):
     manager = _manager(
         filters=[
             {
@@ -795,7 +795,7 @@ def test_string_picker_provenance_accelerates_canonical_looking_text(selected):
         ]
     )
 
-    assert manager.attribute_exact_text_filters == {"picked": (selected.lower(),)}
+    assert manager.attribute_exact_text_filters == {}
 
 
 @pytest.mark.parametrize(
