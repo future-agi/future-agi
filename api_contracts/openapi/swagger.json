@@ -138800,6 +138800,7 @@
                         "tool_calls",
                         "tool_call_result",
                         "actor",
+                        "task",
                         "unknown"
                     ]
                 },
@@ -149295,6 +149296,7 @@
                         "tool_calls",
                         "tool_call_result",
                         "actor",
+                        "task",
                         "unknown"
                     ]
                 },

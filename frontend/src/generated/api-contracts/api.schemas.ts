@@ -18749,6 +18749,7 @@ export const ALKSimulateTranscriptSegmentApiSpeakerRole = {
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
   actor: "actor",
+  task: "task",
   unknown: "unknown",
 } as const;
 
@@ -23380,6 +23381,7 @@ export const CallTranscriptApiSpeakerRole = {
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
   actor: "actor",
+  task: "task",
   unknown: "unknown",
 } as const;
 

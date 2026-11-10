@@ -31,6 +31,8 @@ from simulate.services.harness_scenarios import (
     pinned_scenarios,
 )
 from simulate.services.hosted_harness_ingestion import (
+    STARTED_BY_KEY,
+    STARTED_BY_TASK,
     SUB_GOAL_PASSED,
     WORLD_ACTIONS_KEY,
     sub_goal_result,
@@ -681,6 +683,9 @@ def build_call_rows(
             or row_dimensions.get("persona")
             or scenario_metadata.get("persona")
         )
+        if (call.call_metadata or {}).get(STARTED_BY_KEY) == STARTED_BY_TASK:
+            # A run the scenario's own task started has no person, whatever persona the row was provisioned with.
+            persona_details = None
         persona = persona_details.get("name") if persona_details else None
         goal = (
             getattr(call, "result_goal", None)

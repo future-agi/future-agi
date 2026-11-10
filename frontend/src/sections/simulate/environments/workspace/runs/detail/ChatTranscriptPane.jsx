@@ -20,7 +20,8 @@ import {
   otherParties,
 } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
-const ROLE_LABEL = { agent: "Assistant", customer: "Customer" };
+// `task`: a scenario's own start message, when no person or actor sent it.
+const ROLE_LABEL = { agent: "Assistant", customer: "Customer", task: "Task" };
 
 // Voice turns carry a real `at` (seconds into the recording); chat turns don't,
 // so a made-up mm:ss there would misrepresent the transcript. Fall back to the
@@ -82,6 +83,7 @@ export default function ChatTranscriptPane({ turns, customerName }) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
   const others = otherParties(turns);
+  const hasCustomer = turns.some((s) => s.role === "customer");
   // The pane stays mounted across calls, and the next call may have no others.
   const activeFilter =
     roleFilter === "others" && !others.length ? "all" : roleFilter;
@@ -105,7 +107,7 @@ export default function ChatTranscriptPane({ turns, customerName }) {
           <CallParticipants
             others={others}
             customerName={customerName}
-            withCustomer={turns.some((s) => s.role === "customer")}
+            withCustomer={hasCustomer}
           />
         </Box>
       )}
@@ -140,7 +142,9 @@ export default function ChatTranscriptPane({ turns, customerName }) {
         >
           <Tab value="all" label="All" />
           <Tab value="agent" label="Assistant" />
-          <Tab value="customer" label="Customer" />
+          {(hasCustomer || !turns.some((s) => s.role === "task")) && (
+            <Tab value="customer" label="Customer" />
+          )}
           {others.length > 0 && (
             <Tab value="others" label={DEFAULT_ROLE_LABELS.others} />
           )}
