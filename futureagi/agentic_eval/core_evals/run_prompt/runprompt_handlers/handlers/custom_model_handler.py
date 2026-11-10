@@ -14,8 +14,9 @@ Features:
 import time
 from typing import Any, Dict, Optional, Tuple
 
-import requests
 import structlog
+
+from model_hub.services.custom_endpoint import CustomEndpointError, post_custom_endpoint
 
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
     BaseModelHandler,
@@ -96,7 +97,6 @@ class CustomModelHandler(BaseModelHandler):
 
             logger.info(
                 f"[CustomModel] Loaded config for {self.context.model}",
-                endpoint_url=endpoint_url,
                 has_headers=bool(headers),
             )
 
@@ -237,20 +237,20 @@ class CustomModelHandler(BaseModelHandler):
 
         try:
             logger.info(
-                f"[CustomModel] Making request to {endpoint_url}",
+                "[CustomModel] Making endpoint request",
                 model=self.context.model,
                 message_count=len(payload.get("messages", [])),
             )
 
             # Make POST request to custom endpoint
-            response = requests.post(
-                endpoint_url,
-                headers=headers,
-                json=payload,
-                timeout=300,  # 5 minute timeout for custom models
+            response = post_custom_endpoint(
+                url=endpoint_url, headers=headers, payload=payload,
             )
 
-            response.raise_for_status()
+            if response.status_code >= 400:
+                raise CustomEndpointError(
+                    f"Custom model endpoint returned HTTP {response.status_code}."
+                )
             response_content = response.text
 
             end_time = time.time()
@@ -307,25 +307,12 @@ class CustomModelHandler(BaseModelHandler):
                 metadata=metadata,
             )
 
-        except requests.exceptions.Timeout as e:
-            logger.error(
-                f"[CustomModel] Request timeout for {self.context.model}: {e}",
-                endpoint=endpoint_url,
-            )
-            raise TimeoutError(f"Custom model request timed out after 300 seconds: {e}")
-
-        except requests.exceptions.RequestException as e:
-            logger.exception(
-                f"[CustomModel] Request failed for {self.context.model}: {e}",
-                endpoint=endpoint_url,
-            )
-            raise RuntimeError(f"Custom model API request failed: {e}")
-
-        except Exception as e:
-            logger.exception(
-                f"[CustomModel] Unexpected error for {self.context.model}: {e}",
-            )
+        except CustomEndpointError:
+            logger.warning("[CustomModel] Endpoint request refused or failed")
             raise
+        except Exception:
+            logger.warning("[CustomModel] Endpoint execution failed")
+            raise RuntimeError("Custom model endpoint execution failed.") from None
 
     def execute_sync(self, streaming: bool = False) -> HandlerResponse:
         """
@@ -358,11 +345,8 @@ class CustomModelHandler(BaseModelHandler):
                 )
             return self._make_custom_api_request(payload, start_time)
 
-        except Exception as e:
-            logger.exception(
-                f"[CustomModel] Execution failed: {e}",
-                model=self.context.model,
-            )
+        except Exception:
+            logger.warning("[CustomModel] Execution failed", model=self.context.model)
             raise
 
     async def execute_async(self, streaming: bool = False) -> HandlerResponse:
