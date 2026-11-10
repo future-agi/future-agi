@@ -158,8 +158,14 @@ class CustomModelHandler(BaseModelHandler):
         )
 
         # Count tokens
-        estimated_prompt_tokens = (count_tiktoken_tokens(prompt_text, image_urls) if count_tiktoken_tokens else 0)
-        estimated_completion_tokens = (count_tiktoken_tokens(completion_text) if count_tiktoken_tokens else 0)
+        estimated_prompt_tokens = (
+            count_tiktoken_tokens(prompt_text, image_urls)
+            if count_tiktoken_tokens
+            else 0
+        )
+        estimated_completion_tokens = (
+            count_tiktoken_tokens(completion_text) if count_tiktoken_tokens else 0
+        )
 
         # Prepare usage payload for cost calculation
         token_usage = {
@@ -243,7 +249,9 @@ class CustomModelHandler(BaseModelHandler):
 
             # Make POST request to custom endpoint
             response = post_custom_endpoint(
-                url=endpoint_url, headers=headers, payload=payload,
+                url=endpoint_url,
+                headers=headers,
+                payload=payload,
             )
 
             if response.status_code >= 400:

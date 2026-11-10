@@ -422,7 +422,9 @@ def validate_model_working(model_name, api_key, provider):
                     if not url:
                         raise Exception("Please provide the API Base.")
                     response = post_custom_endpoint(
-                        url=url, headers=config.get("headers", {}), payload=payload,
+                        url=url,
+                        headers=config.get("headers", {}),
+                        payload=payload,
                     )
                     # The model's own calls POST to this URL as given too, so
                     # a bare base such as .../v1 is wrong, not just this check.
