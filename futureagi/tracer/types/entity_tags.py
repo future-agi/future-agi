@@ -53,3 +53,14 @@ class TagTargetRow(TagSourceRow):
 
 
 TagAssignmentKey = tuple[str, Literal["trace", "span"], str, str, datetime, str, str]
+
+
+class TagUpdateRequest(TagTargetReference):
+    tags: list[TagItem]
+    expected_tag_revision: int
+
+
+class TagUpdateResult(EffectiveTags):
+    id: str
+    manual_tags: list[TagItem]
+    tag_revision: int

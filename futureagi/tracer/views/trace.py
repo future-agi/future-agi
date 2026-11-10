@@ -34,7 +34,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import serializers, status
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
@@ -64,6 +64,11 @@ from tracer.selectors.trace_filter_reads import (
     bounded_numbered_page_depth_exceeded,
     long_filtered_read_requires_cursor,
     numbered_page_depth_exceeded,
+)
+from tracer.serializers.entity_tags import (
+    TAG_UPDATE_RESPONSES,
+    TraceTagsUpdateSerializer,
+    tag_validation_error_response,
 )
 from tracer.serializers.filters import (
     ObserveGraphDataQuerySerializer,
@@ -200,6 +205,7 @@ from tracer.utils.helper import (
 )
 from tracer.utils.otel import CallAttributes, ConversationAttributes
 from tracer.utils.property_registry import validate_property_graph_namespace
+from tracer.views.entity_tags import tag_update_response
 from tracer.views.observation_span import get_observation_spans
 
 logger = structlog.get_logger(__name__)
@@ -468,10 +474,6 @@ class TraceNavigationReadUnavailable(RuntimeError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
-
-
-class TraceTagsUpdateSerializer(serializers.Serializer):
-    tags = serializers.ListField(child=serializers.CharField(), allow_empty=True)
 
 
 def _sanitize_nonfinite_floats(value):
@@ -2613,22 +2615,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
         return eval_configs, base_query
 
-    @validated_request(request_serializer=TraceTagsUpdateSerializer)
+    @validated_request(
+        request_serializer=TraceTagsUpdateSerializer,
+        responses=TAG_UPDATE_RESPONSES,
+        validation_error_response=tag_validation_error_response,
+    )
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
-        """Update tags for a trace."""
-        try:
-            trace_id = kwargs.get("pk")
-            trace = self.get_queryset().get(id=trace_id)
-            tags = request.validated_data["tags"]
-            trace.tags = tags
-            trace.save(update_fields=["tags", "updated_at"])
-            return self._gm.success_response({"id": str(trace.id), "tags": trace.tags})
-        except Trace.DoesNotExist:
-            return self._gm.bad_request("Trace not found")
-        except Exception as e:
-            logger.exception(f"Error updating trace tags: {e}")
-            return self._gm.bad_request("Error updating tags")
+        """Assign manual tags to a verified ClickHouse root, without PG telemetry."""
+        return tag_update_response(request, trace_id=kwargs["pk"])
 
     @validated_request(responses={200: TracePropertiesResponseSerializer})
     @action(detail=False, methods=["get"], pagination_class=None)

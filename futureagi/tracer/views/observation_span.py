@@ -75,6 +75,11 @@ from tracer.selectors.trace_filter_reads import (
     bounded_numbered_page_depth_exceeded,
     numbered_page_depth_exceeded,
 )
+from tracer.serializers.entity_tags import (
+    TAG_UPDATE_RESPONSES,
+    SpanTagsUpdateSerializer,
+    tag_validation_error_response,
+)
 from tracer.serializers.filters import (
     ObserveGraphDataQuerySerializer,
     ObserveGraphDataRequestSerializer,
@@ -203,6 +208,7 @@ from tracer.utils.otel import (
 )
 from tracer.utils.property_registry import validate_property_graph_namespace
 from tracer.utils.sql_queries import SQL_query_handler
+from tracer.views.entity_tags import tag_update_response
 
 logger = structlog.get_logger(__name__)
 
@@ -1779,31 +1785,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error submitting feedback: {get_error_message('FAILED_TO_CREATE_FEEDBACK')}"
             )
 
+    @validated_request(
+        request_serializer=SpanTagsUpdateSerializer,
+        responses=TAG_UPDATE_RESPONSES,
+        validation_error_response=tag_validation_error_response,
+    )
     @action(detail=False, methods=["post"], url_path="update-tags")
     def update_tags(self, request, *args, **kwargs):
-        """Update tags for an observation span."""
-        try:
-            span_id = request.data.get("span_id")
-            if not span_id:
-                return self._gm.bad_request("span_id is required")
-            span = ObservationSpan.objects.get(
-                _project_workspace_scope_q(request),
-                id=span_id,
-                project__organization=_get_request_organization(request),
-            )
-            tags = request.data.get("tags")
-            if tags is None:
-                return self._gm.bad_request("tags field is required")
-            if not isinstance(tags, list):
-                return self._gm.bad_request("tags must be a list")
-            span.tags = tags
-            span.save(update_fields=["tags"])
-            return self._gm.success_response({"id": str(span.id), "tags": span.tags})
-        except ObservationSpan.DoesNotExist:
-            return self._gm.bad_request("Observation span not found")
-        except Exception as e:
-            logger.exception(f"Error updating span tags: {e}")
-            return self._gm.bad_request("Error updating tags")
+        """Assign tags to an exact CH span; verified roots alias trace assignments."""
+        return tag_update_response(request)
 
     @action(detail=False, methods=["post"])
     def submit_feedback_action_type(self, request, *args, **kwargs):
