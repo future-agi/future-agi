@@ -286,8 +286,17 @@ def test_export_job_uses_declared_response_serializer(
     assert response.data["status"] is True
     result = response.data["result"]
     assert set(result) == {
-        "job_id", "queue_id", "status", "export_format", "item_count",
-        "file_url", "file_name", "error", "created_at", "started_at", "finished_at",
+        "job_id",
+        "queue_id",
+        "status",
+        "export_format",
+        "item_count",
+        "file_url",
+        "file_name",
+        "error",
+        "created_at",
+        "started_at",
+        "finished_at",
     }
     assert result["job_id"] == str(job.id)
     assert result["queue_id"] == str(seed["queue"].id)
