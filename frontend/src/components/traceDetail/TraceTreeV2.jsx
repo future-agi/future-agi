@@ -101,6 +101,7 @@ const TreeToolbar = ({
 }) => (
   <Stack
     spacing={0.25}
+    className="trace-tree-toolbar"
     sx={{
       px: 1,
       py: 0.5,
@@ -387,6 +388,7 @@ const TreeNodeRow = ({
         <Box sx={{ flex: 1, minWidth: 0, ml: 0.5 }}>
           <Typography
             noWrap
+            className="trace-tree-span-name"
             sx={{
               fontSize: 13,
               fontWeight: isSelected ? 600 : 500,

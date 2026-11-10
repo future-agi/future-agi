@@ -32,7 +32,7 @@ import "@xyflow/react/dist/style.css";
 import Dagre from "@dagrejs/dagre";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { error as errorPalette, success } from "src/theme/palette";
+import { error as errorPalette, grey, success } from "src/theme/palette";
 import FullscreenGraphDialog from "./FullscreenGraphDialog";
 import {
   AGGREGATION_POLLING_PAUSED_MESSAGE,
@@ -54,7 +54,17 @@ const DIFF_STATUS = {
 const DIFF_REGRESSED_COLOR = "#F5A623";
 
 // `_isFailurePoint` is the headline and takes priority over diff status.
-const getDiffOverlay = (diffStatus, isFailurePoint) => {
+// `_state` ({ label, tone, ghost }) is a recorded end state worded by the
+// caller (simulate's Participants view): "No answer came back", "Not run"…
+const getDiffOverlay = (diffStatus, isFailurePoint, state) => {
+  if (state) {
+    const isError = state.tone === "error";
+    return {
+      ringColor: isError ? errorPalette.main : grey[500],
+      badge: isError ? "✕" : "−",
+      label: state.label,
+    };
+  }
   if (isFailurePoint) {
     return { ringColor: errorPalette.main, badge: "✕", label: "Failed" };
   }
@@ -163,14 +173,17 @@ const AgentNode = ({ data }) => {
   // `_isFailurePoint` is the actual failure marker — it takes visual priority
   // over diff status (a failed node is the headline, not a diff cue).
   const diffStatus = data._diffStatus;
-  const isFailurePoint = !!data._isFailurePoint;
-  const isGhost = diffStatus === DIFF_STATUS.PASS_ONLY_GHOST;
+  const endState = data._state || null;
+  const isFailurePoint =
+    !!data._isFailurePoint || endState?.tone === "error";
+  const isGhost =
+    diffStatus === DIFF_STATUS.PASS_ONLY_GHOST || !!endState?.ghost;
 
   const {
     ringColor: diffRingColor,
     badge: diffBadge,
     label: diffBadgeLabel,
-  } = getDiffOverlay(diffStatus, isFailurePoint);
+  } = getDiffOverlay(diffStatus, !!data._isFailurePoint, endState);
 
   // Tooltip: name, duration/tokens side-by-side, cost, eval bars, annotations
   const evals = data.evals || [];
@@ -757,12 +770,16 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
       };
     }
 
+    // Optional recorded step order (simulate's Participants view): "2, 6"
+    // replaces the ×N count; a control pass is dashed, a ghost edge faint.
+    const stepLabel = edge._stepLabel;
+    const dashed = edge._control || edge._ghost;
     return {
       id: `e-${idx}`,
       source: edge.source,
       target: edge.target,
       type: "default",
-      animated: edge.is_self_loop,
+      animated: edge.is_self_loop && !stepLabel,
       markerEnd: {
         type: MarkerType.ArrowClosed,
         color: edgeColor,
@@ -771,10 +788,27 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
       },
       style: {
         stroke: strokeColor,
-        strokeWidth: Math.round(thickness * 10) / 10,
+        strokeWidth: stepLabel ? 1.2 : Math.round(thickness * 10) / 10,
+        ...(dashed && { strokeDasharray: "5 4" }),
       },
+      ...(stepLabel && {
+        label: stepLabel,
+        labelStyle: {
+          fontSize: 12,
+          fill: theme ? theme.palette.text.primary : "#18181b",
+          fontWeight: 600,
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+        },
+        labelBgStyle: {
+          fill: theme ? theme.palette.background.neutral : "#f4f4f5",
+          fillOpacity: 1,
+        },
+        labelBgPadding: [5, 3],
+        labelBgBorderRadius: 4,
+      }),
       // Show transition count on edges with > 1 transition
-      ...(count > 1 && {
+      ...(!stepLabel &&
+        count > 1 && {
         label: `×${count}`,
         labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
         labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
