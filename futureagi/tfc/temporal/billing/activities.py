@@ -41,16 +41,21 @@ async def _billing_heartbeats() -> AsyncIterator[Callable[[str], None]]:
                 activity.heartbeat(org_id)
 
         def progress_from_thread(org_id: str) -> None:
+            # The invoice service calls this before each organization, outside
+            # its transaction. Cooperatively stop there, never in the middle of
+            # an organization's billing work. CancelledError is a BaseException:
+            # the service's except Exception progress handler must not swallow it.
+            if stopped.is_set():
+                raise asyncio.CancelledError("Billing activity has stopped")
             # Async activity heartbeats create asyncio tasks. The executor has
             # no loop, so carry the activity context back to its owning loop.
-            if not stopped.is_set():
-                loop.call_soon_threadsafe(report_progress, org_id, context=context)
+            loop.call_soon_threadsafe(report_progress, org_id, context=context)
 
         try:
             yield progress_from_thread
         finally:
-            # Cancelling the await cannot stop in-flight synchronous billing.
-            # Ignore its late progress, including already-queued callbacks.
+            # Cancelling the await cannot interrupt synchronous billing. Signal
+            # its next organization boundary and suppress queued heartbeats.
             stopped.set()
 
 

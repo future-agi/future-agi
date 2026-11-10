@@ -224,8 +224,12 @@ async def test_heartbeat_lifecycle(monkeypatch, closing, outcome):
                 assert (await task).invoices_created == 1
             count_at_exit = len(heartbeats)
         await asyncio.wait_for(finished.wait(), 2)
-        # Even a callback retained by the service must be inert after exit.
-        await asyncio.to_thread(callbacks[0], ORG_ID)
+        # A retained pre-organization callback cancels further work after exit
+        # without dispatching any heartbeat onto the activity loop.
+        with pytest.raises(
+            asyncio.CancelledError, match="Billing activity has stopped"
+        ):
+            await asyncio.to_thread(callbacks[0], ORG_ID)
         await asyncio.sleep(0.03)
         assert len(heartbeats) == count_at_exit
         assert not (asyncio.all_tasks() - before - {task})
