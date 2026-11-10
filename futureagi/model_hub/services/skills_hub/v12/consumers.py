@@ -939,11 +939,49 @@ def _observation(
             if observations
             else None
         )
+    # J6: a successful reporter is not evidence for every declared instance or
+    # retained thread. Keep historical loaded facts, but never turn partial
+    # cohort coverage (or a later failure) into a recovered target.
+    delivered_instances = {row.instance_id for row in delivered}
+    active_instances = {row.instance_id for row in active}
+    delivered_sessions = {row.session_id for row in delivered if row.session_id}
+    closed_sessions = {
+        row.session_id for row in rows if row.stage == "closed" and row.session_id
+    } - {row.session_id for row in active if row.session_id}
+    unobserved_sessions = (
+        binding.hub_skill_sessions.filter(
+            expires_at__gt=now,
+        )
+        .exclude(pk__in=delivered_sessions | closed_sessions)
+        .exists()
+    )
+    failed_sequences = {
+        row.instance_id: row.sequence for row in active if row.stage == "failed"
+    }
+    if (
+        active_instances - delivered_instances
+        or unobserved_sessions
+        or any(
+            failed_sequences.get(row.instance_id, -1) > row.sequence
+            for row in delivered
+        )
+    ):
+        states.add("unknown")
+    if any(
+        (now - row.observed_at).total_seconds()
+        > binding.expected_report_interval_seconds
+        for row in delivered
+    ):
+        states.add("stale_observation")
     identities = {str(row.version_id) for row in delivered}
     if len(identities) > 1:
         states.add("mixed_sessions")
     if desired and identities:
-        if identities == {desired["version_id"]} and complete:
+        if (
+            identities == {desired["version_id"]}
+            and complete
+            and not states.intersection({"unknown", "quarantined", "stale_observation"})
+        ):
             states.add("matches_target")
             if "version" in binding.selector:
                 states.add("pinned_as_intended")
@@ -962,6 +1000,10 @@ def _observation(
     age = (now - newest).total_seconds() if newest else None
     if age is not None and age > binding.expected_report_interval_seconds:
         states.add("stale_observation")
+    if states.intersection(
+        {"unknown", "quarantined", "stale_observation", "local_modifications"}
+    ):
+        states.difference_update({"matches_target", "pinned_as_intended"})
     action = (
         "review_quarantine"
         if "quarantined" in states
@@ -974,7 +1016,9 @@ def _observation(
                 else (
                     "observe_runtime"
                     if "unknown" in states
-                    else "check_reporter" if "stale_observation" in states else "none"
+                    else "check_reporter"
+                    if "stale_observation" in states
+                    else "none"
                 )
             )
         )
