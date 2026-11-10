@@ -34,6 +34,12 @@ func Decode(body []byte) (Request, error) {
 	if err := d.Decode(new(any)); err != io.EOF {
 		return req, invalid("invalid_request", "body", "one JSON object required")
 	}
+	// Reject repeats before building maps: encoding/json merges repeated struct
+	// values and ignores null assignments to numbers, while maps keep only the
+	// last occurrence. Either behavior could hide an alias or explicit null.
+	if name, dup := duplicateKey(body); dup {
+		return req, invalid("invalid_parameter", name, "field repeated")
+	}
 	// encoding/json also matches field names case-insensitively, so an alias such
 	// as "DURATION_SECONDS" sets the field without DisallowUnknownFields noticing.
 	// Require the canonical spelling at every struct level, so the explicit-zero

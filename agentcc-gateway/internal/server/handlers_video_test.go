@@ -489,12 +489,21 @@ func TestVideoCaseAliasAndInvalidUTF8RefusedBeforeAccept(t *testing.T) {
 		{"mixed fps null", head + `,"Fps":null}`, "unknown_field"},
 		{"canonical duration null", head + `,"duration_seconds":null}`, "invalid_parameter"},
 		{"canonical n null", head + `,"n":null}`, "invalid_parameter"},
+		{"repeated source object", head + `,"inputs":[{"role":"first_frame","media_type":"image/png","source":{"URL":"https://example.com/a.png"},"source":{}}]}`, "invalid_parameter"},
+		{"repeated source null", head + `,"inputs":[{"role":"first_frame","media_type":"image/png","source":{"URL":"https://example.com/a.png"},"source":null}]}`, "invalid_parameter"},
+		{"repeated inputs array", head + `,"inputs":[{"Role":"first_frame","media_type":"image/png","source":{"url":"https://example.com/a.png"}}],"inputs":[{}]}`, "invalid_parameter"},
+		{"repeated duration null", head + `,"duration_seconds":5,"duration_seconds":null}`, "invalid_parameter"},
+		{"repeated fps null", head + `,"fps":24,"fps":null}`, "invalid_parameter"},
+		{"repeated n null", head + `,"n":1,"n":null}`, "invalid_parameter"},
 		{"invalid utf8 valid model", strings.Replace(videoTestBody, "private prompt", "private \xff prompt", 1), "invalid_request"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := f.request("POST", "/v1/videos", f.keyA, video.NewID(), tc.body)
 			if w.Code != 400 || !strings.Contains(w.Body.String(), tc.code) {
 				t.Fatal(w.Code, w.Body.String())
+			}
+			if strings.HasPrefix(tc.name, "repeated ") && !strings.Contains(w.Body.String(), "field repeated") {
+				t.Fatal("repeated key reached normalization or ingress", w.Body.String())
 			}
 		})
 	}

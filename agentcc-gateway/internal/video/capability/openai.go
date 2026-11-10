@@ -72,9 +72,6 @@ func DecodeOpenAIJSON(body []byte) (OpenAICreate, error) {
 			return c, invalid("unknown_field", k, "unknown field")
 		}
 		if k == "input_reference" {
-			if nested, dup := duplicateKey(v); dup {
-				return c, invalid("invalid_parameter", "input_reference."+nested, "field repeated")
-			}
 			// encoding/json matches struct field names case-insensitively. Check
 			// exact keys first so aliases cannot override a validated image URL.
 			var fields map[string]json.RawMessage
@@ -119,28 +116,45 @@ func DecodeOpenAIJSON(body []byte) (OpenAICreate, error) {
 	return c, nil
 }
 
-// duplicateKey reports a repeated top-level key, which json.Unmarshal would
-// otherwise resolve silently to the last value.
+// duplicateKey reports the path of a repeated key in any object, including
+// objects in arrays. Callers first validate the JSON syntax. Walking tokens
+// preserves every occurrence instead of collapsing repeated containers to maps.
 func duplicateKey(body []byte) (string, bool) {
 	d := json.NewDecoder(bytes.NewReader(body))
-	if t, err := d.Token(); err != nil || t != json.Delim('{') {
+	d.UseNumber()
+	return duplicateValue(d)
+}
+
+func duplicateValue(d *json.Decoder) (string, bool) {
+	t, err := d.Token()
+	if err != nil {
 		return "", false
 	}
-	seen := map[string]bool{}
-	for d.More() {
-		t, err := d.Token()
-		k, ok := t.(string)
-		if err != nil || !ok {
-			return "", false
+	switch t {
+	case json.Delim('{'):
+		seen := map[string]bool{}
+		for d.More() {
+			t, err := d.Token()
+			k, ok := t.(string)
+			if err != nil || !ok {
+				return "", false
+			}
+			if seen[k] {
+				return k, true
+			}
+			seen[k] = true
+			if nested, dup := duplicateValue(d); dup {
+				return k + "." + nested, true
+			}
 		}
-		if seen[k] {
-			return k, true
+		_, _ = d.Token() // closing brace; syntax was already validated
+	case json.Delim('['):
+		for i := 0; d.More(); i++ {
+			if nested, dup := duplicateValue(d); dup {
+				return strconv.Itoa(i) + "." + nested, true
+			}
 		}
-		seen[k] = true
-		var skip json.RawMessage
-		if d.Decode(&skip) != nil {
-			return "", false
-		}
+		_, _ = d.Token() // closing bracket
 	}
 	return "", false
 }
