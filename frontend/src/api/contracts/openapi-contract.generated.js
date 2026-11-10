@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1126,
+  endpointCount: 1128,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28942,6 +28942,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/verify/": {
+      post: {
+        operationId: "simulate_api_harness-environments_verify",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessVerifyCreate",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessVerifyCreateResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/verify/{verify_id}/": {
+      get: {
+        operationId: "simulate_api_harness-environments_verify_detail",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessVerifyResult",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/versions/": {
       get: {
         operationId: "simulate_api_harness-environments_versions",
@@ -50736,7 +50772,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "target_scenario_keys",
         "surfaces",
         "budget_credits",
-        "max_minutes",
       ],
       type: "object",
       properties: {
@@ -58458,6 +58493,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 100,
           minLength: 1,
         },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["user", "coding_agent"],
+          default: "user",
+        },
+        simulation_environment_id: {
+          title: "Simulation environment id",
+          type: "string",
+          format: "uuid",
+        },
       },
     },
     CurrentOrganizationResponse: {
@@ -66151,6 +66197,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_payload: {
           $ref: "#/definitions/HarnessAgentPayloadChange",
         },
+        make_default: {
+          title: "Make default",
+          description:
+            "False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default.",
+          type: "boolean",
+        },
       },
     },
     HarnessArtifactUploadResponse: {
@@ -68251,6 +68303,125 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Upgrade cta",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessVerifyCreate: {
+      required: ["agent_version_id"],
+      type: "object",
+      properties: {
+        agent_version_id: {
+          title: "Agent version id",
+          description:
+            "The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts.",
+          type: "string",
+          format: "uuid",
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          default: 3,
+          maximum: 20,
+          minimum: 1,
+        },
+      },
+    },
+    HarnessVerifyCreateResponse: {
+      required: ["verify_id", "state"],
+      type: "object",
+      properties: {
+        verify_id: {
+          title: "Verify id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "received",
+            "queued",
+            "admitted",
+            "provisioning",
+            "running",
+            "finalizing",
+            "cleaning_up",
+            "retry_wait",
+            "completed",
+            "failed",
+            "canceled",
+          ],
+        },
+      },
+    },
+    HarnessVerifyResult: {
+      required: [
+        "state",
+        "passed",
+        "failed",
+        "total",
+        "trials",
+        "held_back_pass_rate",
+        "limited_validation",
+      ],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "received",
+            "queued",
+            "admitted",
+            "provisioning",
+            "running",
+            "finalizing",
+            "cleaning_up",
+            "retry_wait",
+            "completed",
+            "failed",
+            "canceled",
+          ],
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+          minimum: 0,
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+          minimum: 0,
+        },
+        total: {
+          title: "Total",
+          type: "integer",
+          minimum: 0,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          maximum: 20,
+          minimum: 1,
+        },
+        held_back_pass_rate: {
+          description:
+            "95% range of the trial pass rate, [low, high]; null until it ends.",
+          type: "array",
+          items: {
+            type: "number",
+            maximum: 1,
+            minimum: 0,
+          },
+          maxItems: 2,
+          minItems: 2,
+          "x-nullable": true,
+        },
+        limited_validation: {
+          title: "Limited validation",
+          description:
+            "Too few cases were held back to call a version verified.",
+          type: "boolean",
         },
       },
     },
@@ -110521,6 +110692,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "scoring_status",
         "csat_status",
         "csat_reason",
+        "failure_domain",
+        "failure_code",
       ],
       type: "object",
       properties: {
@@ -110722,6 +110895,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         csat_reason: {
           title: "Csat reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        failure_domain: {
+          title: "Failure domain",
+          type: "string",
+          enum: [
+            "agent",
+            "simulator",
+            "environment",
+            "connectivity",
+            "infrastructure",
+            "grading",
+            "platform_sync",
+          ],
+          "x-nullable": true,
+        },
+        failure_code: {
+          title: "Failure code",
           type: "string",
           minLength: 1,
           "x-nullable": true,

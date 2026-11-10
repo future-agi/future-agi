@@ -573,8 +573,14 @@ export const AccountsKeyEnableKeyResponse = zod.object({
 
 export const accountsKeyGenerateSecretKeyBodyKeyNameMax = 100;
 
+export const accountsKeyGenerateSecretKeyBodyTypeDefault = `user`;
+
 export const AccountsKeyGenerateSecretKeyBody = zod.object({
   key_name: zod.string().min(1).max(accountsKeyGenerateSecretKeyBodyKeyNameMax),
+  type: zod
+    .enum(["user", "coding_agent"])
+    .default(accountsKeyGenerateSecretKeyBodyTypeDefault),
+  simulation_environment_id: zod.string().uuid().optional(),
 });
 
 export const AccountsKeyGenerateSecretKeyResponse = zod.object({
@@ -36457,7 +36463,8 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
   max_minutes: zod
     .number()
     .min(1)
-    .max(simulateApiAgentFixRunsCreateBodyMaxMinutesMax),
+    .max(simulateApiAgentFixRunsCreateBodyMaxMinutesMax)
+    .optional(),
 });
 
 /**
@@ -38430,7 +38437,8 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
 
 /**
  * Same shape whichever door built it. A section the pipeline has not reached
-yet is null, so the client renders "building" rather than an empty pane.
+yet is null, so the client renders "building" rather than an empty pane. A
+coding agent's read leaves out the held-back cases.
  * @summary One environment: overview, contract, world, scenarios, evaluations, settings.
  */
 export const SimulateApiHarnessEnvironmentsReadParams = zod.object({
@@ -40813,6 +40821,102 @@ export const SimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsBody =
   });
 
 /**
+ * Verify an agent version on the held-back cases, in a run no user read shows.
+Its live or completed verify is final: asking again returns it. After one that
+failed or was canceled, asking again starts a new one.
+ */
+export const SimulateApiHarnessEnvironmentsVerifyParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsVerifyBodyTrialsDefault = 3;
+export const simulateApiHarnessEnvironmentsVerifyBodyTrialsMax = 20;
+
+export const SimulateApiHarnessEnvironmentsVerifyBody = zod.object({
+  agent_version_id: zod
+    .string()
+    .uuid()
+    .describe(
+      "The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts.",
+    ),
+  trials: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsVerifyBodyTrialsMax)
+    .default(simulateApiHarnessEnvironmentsVerifyBodyTrialsDefault),
+});
+
+/**
+ * How the verified version did on the held-back cases, as counts only.
+ */
+export const SimulateApiHarnessEnvironmentsVerifyDetailParams = zod.object({
+  id: zod.string(),
+  verify_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponsePassedMin = 0;
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseFailedMin = 0;
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseTotalMin = 0;
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseTrialsMax = 20;
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateItemMin = 0;
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateItemMax = 1;
+
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateMin = 2;
+export const simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateMax = 2;
+
+export const SimulateApiHarnessEnvironmentsVerifyDetailResponse = zod.object({
+  state: zod.enum([
+    "received",
+    "queued",
+    "admitted",
+    "provisioning",
+    "running",
+    "finalizing",
+    "cleaning_up",
+    "retry_wait",
+    "completed",
+    "failed",
+    "canceled",
+  ]),
+  passed: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsVerifyDetailResponsePassedMin),
+  failed: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsVerifyDetailResponseFailedMin),
+  total: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsVerifyDetailResponseTotalMin),
+  trials: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsVerifyDetailResponseTrialsMax),
+  held_back_pass_rate: zod
+    .array(
+      zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateItemMin,
+        )
+        .max(
+          simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateItemMax,
+        ),
+    )
+    .min(simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateMin)
+    .max(simulateApiHarnessEnvironmentsVerifyDetailResponseHeldBackPassRateMax)
+    .describe(
+      "95% range of the trial pass rate, [low, high]; null until it ends.",
+    ),
+  limited_validation: zod
+    .boolean()
+    .describe("Too few cases were held back to call a version verified."),
+});
+
+/**
  * Every agent, environment and suite version of this environment, read-only.
  */
 export const SimulateApiHarnessEnvironmentsVersionsParams = zod.object({
@@ -41055,7 +41159,8 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
 
 /**
  * A new agent version from an upload, a prompt edit or a settings edit; it is
-checked next, then made this environment's default.
+checked next, then made this environment's default unless make_default is
+false. A coding agent key pushes only an upload, never made the default.
  */
 export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionParams =
   zod.object({
@@ -41103,6 +41208,12 @@ export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionBody =
         }),
       })
       .optional(),
+    make_default: zod
+      .boolean()
+      .optional()
+      .describe(
+        "False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default.",
+      ),
   });
 
 /**
@@ -41371,7 +41482,8 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionBody =
   zod.object({});
 
 /**
- * The scenarios in one suite version, by number.
+ * The scenarios in one suite version, by number; a coding agent's read leaves
+out the held-back cases.
  */
 export const SimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersParams =
   zod.object({
@@ -42689,10 +42801,11 @@ export const SimulateApiHarnessJobsSourceUploadBody = zod.object({
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ * One harness job. A coding agent key reads its own run narrowly, outside
+this schema: only `status` (its failure as domain, stage, code and a fixed
+message), `receipts`, `consumption`, `platform`, and `job` with its ids and
+five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
+`job.source`, which name every case of the suite.
  */
 export const SimulateApiHarnessJobsReadParams = zod.object({
   id: zod.string(),
@@ -53919,6 +54032,16 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         "skipped",
       ]),
       csat_reason: zod.string().min(1),
+      failure_domain: zod.enum([
+        "agent",
+        "simulator",
+        "environment",
+        "connectivity",
+        "infrastructure",
+        "grading",
+        "platform_sync",
+      ]),
+      failure_code: zod.string().min(1),
     }),
   ),
   groups: zod.array(
