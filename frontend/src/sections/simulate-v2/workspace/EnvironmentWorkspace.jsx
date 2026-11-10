@@ -1222,9 +1222,10 @@ export default function EnvironmentWorkspace() {
   /* Run the agent's connection check from the run plan without leaving it:
      the same check as Agent → Capabilities, saved on the agent, so the
      plan's capability rows update where they are. */
-  const canCheckCaps = !!connectedAgent && checksConnection(connectedAgent);
-  const runCapsCheck = (agentNow = connectedAgent) => {
-    if (capsChecking || !canCheckCaps) return;
+  /* key: the agent being checked — the run plan can pick another
+     compatible agent, and the check belongs to that pair. */
+  const runCapsCheck = (agentNow = connectedAgent, key = agentKey) => {
+    if (capsChecking || !agentNow || !checksConnection(agentNow)) return;
     const found = foundValuesOf(agentNow);
     const spec = connectionSpecOf(agentNow, found);
     setCapsChecking(true);
@@ -1237,7 +1238,7 @@ export default function EnvironmentWorkspace() {
         const knob = new URLSearchParams(window.location.search).get("check");
         if (knob === "unavailable" || knob === "timeout") {
           const timedOut = knob === "timeout";
-          setAgentValues(agentKey, {
+          setAgentValues(key, {
             checkUnavailable: {
               at: new Date().toISOString(),
               timedOut,
@@ -1259,7 +1260,7 @@ export default function EnvironmentWorkspace() {
         const failed = out.results.filter((r) => r.state === "failed").length;
         /* Saved with the pairing it covered, so a newer environment version
            or edited scenarios make it stale. */
-        setAgentValues(agentKey, {
+        setAgentValues(key, {
           ...checkSavedPatch(agentNow.values, out),
           checkUnavailable: null,
           checkedOn: {
@@ -1285,14 +1286,6 @@ export default function EnvironmentWorkspace() {
     const others = buildableAgentsOf(connectedAgents).filter(
       (a) => a.key !== agentKey && typeId && a.typeId === typeId,
     );
-    const readinessOf = (a) => {
-      const c = compatibilityOf({ env, envState, agent: a });
-      const blocked = c?.scope?.blocked?.length || 0;
-      const requested = c?.scope?.requested || 0;
-      return blocked
-        ? `${requested - blocked} of ${requested} scenarios can run with this agent here.`
-        : "Ready to run here.";
-    };
     return [
       {
         key: agentKey,
@@ -1305,7 +1298,6 @@ export default function EnvironmentWorkspace() {
         name: a.name,
         version: a.production || a.latest || "v1",
         current: false,
-        readiness: readinessOf(a),
       })),
     ];
   })();
@@ -3337,33 +3329,55 @@ export default function EnvironmentWorkspace() {
                 })
               : null
           }
-          compat={
+          /* Ready to run for the agent picked in the plan: this
+             environment's own, or another compatible one (the pair). */
+          compatOf={
             runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot
-              ? compatibilityOf({
-                  env: worldEnv,
-                  envState,
-                  agent: {
-                    ...envState.agent,
-                    values: {
-                      ...(envState.agent?.values || {}),
-                      ...(connectedAgent?.values || {}),
+              ? (key) => {
+                  const other =
+                    key && key !== agentKey
+                      ? connectedAgents.find((a) => a.key === key)
+                      : null;
+                  return compatibilityOf({
+                    env: worldEnv,
+                    envState,
+                    agent: other || {
+                      ...envState.agent,
+                      values: {
+                        ...(envState.agent?.values || {}),
+                        ...(connectedAgent?.values || {}),
+                      },
                     },
-                  },
-                  scenarioIds: runPlanReq.scenarioIds,
-                })
+                    scenarioIds: runPlanReq.scenarioIds,
+                  });
+                }
               : null
           }
+          canCheckCompat={(key) => {
+            const a =
+              key && key !== agentKey
+                ? connectedAgents.find((x) => x.key === key)
+                : connectedAgent;
+            return !!a && checksConnection(a);
+          }}
           /* Fix on a capability opens its repair on the agent; otherwise its
              Capabilities tab for this world. */
-          onCheckCompat={canCheckCaps ? () => runCapsCheck() : undefined}
+          onCheckCompat={(key) =>
+            key && key !== agentKey
+              ? runCapsCheck(
+                  connectedAgents.find((x) => x.key === key),
+                  key,
+                )
+              : runCapsCheck()
+          }
           checkingCompat={capsChecking}
-          onRepairCompat={(row) => {
+          onRepairCompat={(row, key = agentKey) => {
             /* A bigger repair is done on the agent; its back button returns
                to this run plan, with the same scenarios and attempts. */
             navigate(
               row?.fixId
-                ? `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=connections&fix=${encodeURIComponent(row.fixId)}`
-                : `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=${row?.repair === "agent" ? "definition" : "connections"}`,
+                ? `${paths.dashboard.agents}/connected/${agentIdOf(key)}?tab=connections&fix=${encodeURIComponent(row.fixId)}`
+                : `${paths.dashboard.agents}/connected/${agentIdOf(key)}?tab=${row?.repair === "agent" ? "definition" : "connections"}`,
               {
                 state: {
                   from: "environment",

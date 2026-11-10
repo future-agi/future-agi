@@ -154,7 +154,10 @@ export default function RunPlanDialog({
   alsoScopes = [],
   breakdown = null,
   seedFrom = null,
-  compat = null,
+  /* The readiness report for the picked agent on this environment —
+     compatibility belongs to the pair, so it follows the Agent pick. */
+  compatOf = null,
+  canCheckCompat = null,
   onCheckCompat,
   checkingCompat = false,
   onRepairCompat,
@@ -205,6 +208,8 @@ export default function RunPlanDialog({
     );
   const otherAgent =
     agentChoices.find((a) => a.key === agentKey && !a.current) || null;
+  const pickedKey = agentKey || agentChoices.find((a) => a.current)?.key || null;
+  const compat = compatOf ? compatOf(pickedKey) : null;
   const suite = suites.find((x) => x.id === suiteId) || null;
   const shownCount = suite ? suite.ids.length : scenarioCount;
   /* A multi-agent app runs with its coordinator and workers together. */
@@ -469,43 +474,22 @@ export default function RunPlanDialog({
               {scopeLead}
             </Typography>
           )}
-          {/* ── Ready to run (plan T06): this agent version on this
-              environment, before anything starts — six areas, each blocker
-              with its scenarios and fix ── */}
-          {compat && (
-            <ReadyToRun
-              report={compat}
-              scenarios={envState?.scenarios || []}
-              evalCount={(evals || []).length}
-              onFix={onRepairCompat}
-              onCheck={onCheckCompat}
-              checking={checkingCompat}
-              excluded={breakdown?.excluded || 0}
-            >
-              {allHeld && !pairFailed && (
-                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                  {`No run: every selected case is held back (${leftOut}). Fix it, or select cases it doesn't hold back.`}
-                </Typography>
-              )}
-            </ReadyToRun>
-          )}
-
-          {/* ── run setup: agent · environment · suite, read together ── */}
-          {(agentChoices.length > 1 || suites.length > 0 || envLabel) && (
-            <Box
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: "8px",
-                px: 1.5,
-                py: 1,
-              }}
-            >
-              {[
-                {
-                  k: "Agent",
-                  v:
-                    agentChoices.length > 1 ? (
+          {/* ── the agent first: everything below is for this agent on
+              this environment (compatibility belongs to the pair) ── */}
+          {agentChoices.length > 1 && (
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Typography
+                sx={{
+                  typography: "s2",
+                  color: "text.secondary",
+                  width: 88,
+                  flexShrink: 0,
+                }}
+              >
+                Agent
+              </Typography>
+              <Box sx={{ typography: "s2", minWidth: 0 }}>
+                    {agentChoices.length > 1 ? (
                       <TextField
                         select
                         size="small"
@@ -538,14 +522,48 @@ export default function RunPlanDialog({
                       </TextField>
                     ) : (
                       agentChoices[0]?.name || envState?.agent?.name || "—"
-                    ),
-                  note: (() => {
-                    const a =
-                      otherAgent || agentChoices.find((x) => x.current) || null;
-                    if (!a?.readiness) return null;
-                    return a.readiness;
-                  })(),
-                },
+                    )}
+              </Box>
+            </Stack>
+          )}
+
+          {/* ── Ready to run (plan T06): this agent version on this
+              environment, before anything starts — six areas, each blocker
+              with its scenarios and fix ── */}
+          {compat && (
+            <ReadyToRun
+              report={compat}
+              scenarios={envState?.scenarios || []}
+              evalCount={(evals || []).length}
+              onFix={(row) => onRepairCompat?.(row, pickedKey)}
+              onCheck={
+                onCheckCompat && canCheckCompat?.(pickedKey)
+                  ? () => onCheckCompat(pickedKey)
+                  : undefined
+              }
+              checking={checkingCompat}
+              excluded={breakdown?.excluded || 0}
+            >
+              {allHeld && !pairFailed && (
+                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                  {`No run: every selected case is held back (${leftOut}). Fix it, or select cases it doesn't hold back.`}
+                </Typography>
+              )}
+            </ReadyToRun>
+          )}
+
+          {/* ── run setup: agent · environment · suite, read together ── */}
+          {(agentChoices.length > 1 || suites.length > 0 || envLabel) && (
+            <Box
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "8px",
+                px: 1.5,
+                py: 1,
+              }}
+            >
+              {[
                 ...(participants.length
                   ? [
                       {
@@ -1568,7 +1586,8 @@ RunPlanDialog.propTypes = {
   /* "run 3" when the run reuses an earlier run's seed. */
   seedFrom: PropTypes.string,
   /* The compatibility report for this scope — blocked cases ask for a reviewed subset. */
-  compat: PropTypes.object,
+  compatOf: PropTypes.func,
+  canCheckCompat: PropTypes.func,
   onCheckCompat: PropTypes.func,
   checkingCompat: PropTypes.bool,
   onRepairCompat: PropTypes.func,
