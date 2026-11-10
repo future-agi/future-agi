@@ -15,6 +15,13 @@ vi.mock("src/api/simulate-environments/readiness", () => ({
       ? { data: undefined, isLoading: true, isError: false }
       : { data: report, isLoading: false, isError: false },
   useRecheck: () => ({ mutate: recheck, isPending: recheckPending }),
+  useReadinessCases: (envId, { bucket, enabled }) => ({
+    data:
+      enabled && bucket === "blocked"
+        ? [{ key: "k1", name: "Refund over limit" }]
+        : undefined,
+    isLoading: false,
+  }),
 }));
 vi.mock("src/api/simulate-environments/versions", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -58,6 +65,13 @@ beforeEach(() => {
 });
 
 describe("ReadyToRunSection", () => {
+  it("names the scenarios behind a count on hover", async () => {
+    report = blockedReport("pair");
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    await userEvent.hover(screen.getByText("4 blocked"));
+    expect(await screen.findByText("Refund over limit")).toBeVisible();
+  });
+
   it("keeps one fix open at a time", async () => {
     report = blockedReport("pair");
     report.areas.push({ id: "reset", status: "blocked", rows: ["reset"] });

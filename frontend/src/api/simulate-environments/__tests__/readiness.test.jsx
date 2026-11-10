@@ -8,7 +8,7 @@ vi.mock("src/utils/axios", () => ({
 }));
 
 const { default: axios } = await import("src/utils/axios");
-const { useReadiness } = await import("../readiness");
+const { useReadiness, getReadinessCases } = await import("../readiness");
 
 let client;
 const wrapper = ({ children }) => (
@@ -74,5 +74,31 @@ describe("useReadiness", () => {
     );
     await act(() => vi.advanceTimersByTimeAsync(30000));
     expect(axios.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("lists a bucket's scenarios by name, page by page, for the picked versions", async () => {
+    axios.get
+      .mockResolvedValueOnce({
+        data: { items: [{ key: "a", name: "Refund over limit" }], next: "50" },
+      })
+      .mockResolvedValueOnce({
+        data: { items: [{ key: "b", name: "Angry caller" }], next: null },
+      });
+
+    const items = await getReadinessCases("env-1", { agent: "a2" }, "stale", [
+      "a",
+      "b",
+    ]);
+
+    expect(items.map((item) => item.name)).toEqual([
+      "Refund over limit",
+      "Angry caller",
+    ]);
+    expect(axios.get.mock.calls[0][1].params).toEqual({
+      agent_version_id: "a2",
+      bucket: "stale",
+      keys: ["a", "b"],
+    });
+    expect(axios.get.mock.calls[1][1].params.cursor).toBe("50");
   });
 });

@@ -2,17 +2,26 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 export const READY_TO_RUN_COPY = {
   title: "Ready to run",
+  // The header's parts; a part with a bucket names its scenarios on hover.
   summary: ({ eligible, requested, blocked, stale }, blockers) =>
     [
-      `${eligible} of ${requested} eligible`,
-      `${blocked} blocked`,
-      stale ? `${stale} not proved here` : null,
-      blockers
-        ? `${plural(blockers, "blocker", "blockers")} to fix`
-        : "no blocker",
-    ]
-      .filter(Boolean)
-      .join(" · "),
+      {
+        bucket: "eligible",
+        count: eligible,
+        text: `${eligible} of ${requested} eligible`,
+      },
+      { bucket: "blocked", count: blocked, text: `${blocked} blocked` },
+      stale
+        ? { bucket: "stale", count: stale, text: `${stale} not proved here` }
+        : null,
+      {
+        text: blockers
+          ? `${plural(blockers, "blocker", "blockers")} to fix`
+          : "no blocker",
+      },
+    ].filter(Boolean),
+  namesLoading: "Loading the scenarios…",
+  namesMore: (n) => `and ${n} more`,
   recheck: "Re-check",
   checking: "Checking…",
   areas: {
