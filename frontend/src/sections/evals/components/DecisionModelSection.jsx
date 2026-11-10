@@ -78,7 +78,12 @@ export default function DecisionModelSection({
         </Box>
       )}
       {shown.map((group) => {
-        const connection = chooseDecisionConnection(group, model);
+        const connection = chooseDecisionConnection(
+          group,
+          model,
+          undefined,
+          search,
+        );
         const selected = connection.model_name === model;
         const compatibility = decisionCompatibilityError(
           group,

@@ -46,11 +46,12 @@ def get_decision_catalog(
                 ]
             ).lower()
         ]
+    # Models the caller can run now come first. Otherwise keep the catalog's
+    # curated order (established decision families before newer or niche
+    # ones); sorted() is stable, so only readiness moves a group.
     return sorted(
         groups,
-        key=lambda group: (
-            not any(connection["is_available"] for connection in group["connections"]),
-            group["author"].lower(),
-            group["label"].lower(),
+        key=lambda group: not any(
+            connection["is_available"] for connection in group["connections"]
         ),
     )

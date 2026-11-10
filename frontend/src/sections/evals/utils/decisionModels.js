@@ -64,13 +64,33 @@ export function filterDecisionGroups(groups, search = "") {
   );
 }
 
-export function chooseDecisionConnection(group, model, preferredId) {
+// A search that names a connection ("openrouter") rather than the model
+// itself should offer that connection when the row is chosen.
+function connectionNamedBySearch(group, search) {
+  const query = search?.trim().toLowerCase();
+  if (!query) return undefined;
+  const namesModel = [
+    group.model_name,
+    group.label,
+    group.author,
+    group.version,
+  ].some((value) => value?.toLowerCase().includes(query));
+  if (namesModel) return undefined;
+  return group.connections.find((connection) =>
+    [connection.provider, connection.label].some((value) =>
+      value?.toLowerCase().includes(query),
+    ),
+  );
+}
+
+export function chooseDecisionConnection(group, model, preferredId, search) {
   // An explicitly selected/saved route wins even if its key was removed.
   return (
     group.connections.find(
       (connection) => connection.model_name === preferredId,
     ) ||
     group.connections.find((connection) => connection.model_name === model) ||
+    connectionNamedBySearch(group, search) ||
     group.connections.find((connection) => connection.is_available) ||
     group.connections[0]
   );

@@ -80,6 +80,36 @@ describe("Decision model identity and connection selection", () => {
     ).toEqual(router);
     expect(chooseDecisionConnection(group, "")).toEqual(native);
   });
+  it("offers the connection a search names, without overriding a saved route", () => {
+    const [native, router] = group.connections;
+    // "openrouter" names a connection, so the row offers OpenRouter even
+    // though only the native key is configured.
+    expect(
+      chooseDecisionConnection(group, "", undefined, "openrouter"),
+    ).toEqual(router);
+    expect(chooseDecisionConnection(group, "", undefined, " Router ")).toEqual(
+      router,
+    );
+    // A search for the model or its author keeps the default choice.
+    expect(chooseDecisionConnection(group, "", undefined, "OpenAI")).toEqual(
+      native,
+    );
+    expect(chooseDecisionConnection(group, "", undefined, "luna")).toEqual(
+      native,
+    );
+    // The current or saved route still wins over the search.
+    expect(
+      chooseDecisionConnection(
+        group,
+        native.model_name,
+        undefined,
+        "openrouter",
+      ),
+    ).toEqual(native);
+    expect(
+      chooseDecisionConnection(group, "", native.model_name, "openrouter"),
+    ).toEqual(native);
+  });
   it.each(["OpenRouter", "Luna", "OpenAI", "decision/openai"])(
     "searches model, author and route: %s",
     (search) => {

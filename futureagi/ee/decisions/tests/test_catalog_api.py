@@ -43,6 +43,38 @@ def test_catalog_search_includes_author_model_and_connection():
     assert {group["label"] for group in clef} == {"Clef", "Clef Flash", "Clef Omni"}
 
 
+def _catalog_with_keys(*providers):
+    with patch("model_hub.selectors.decision_models.LiteLLMModelManager") as cls:
+        cls.return_value._find_api_key_entry.side_effect = lambda org, ws, provider: (
+            SimpleNamespace(actual_key="synthetic-private-key")
+            if provider in providers
+            else None
+        )
+        return get_decision_catalog(organization_id="org", workspace_id="workspace-a")
+
+
+def test_catalog_without_keys_keeps_curated_order():
+    # A new workspace sees the established families first, not vendor A-Z.
+    labels = [group["label"] for group in _catalog_with_keys()]
+    assert labels == [group["label"] for group in model_groups()]
+    assert labels[:4] == ["Jev 1.14", "Jev 1.13", "Jev latest", "GPT-6 Luna Decisions"]
+
+
+def _runnable(group):
+    return any(connection["is_available"] for connection in group["connections"])
+
+
+def test_catalog_puts_runnable_groups_first_in_curated_order():
+    result = _catalog_with_keys("perplexity")
+    ready = [group["label"] for group in result if _runnable(group)]
+    rest = [group["label"] for group in result if not _runnable(group)]
+    curated = [group["label"] for group in model_groups()]
+    assert [group["label"] for group in result] == ready + rest
+    assert ready == [label for label in curated if label in ready]
+    assert rest == [label for label in curated if label in rest]
+    assert ready[:2] == ["Decider 1.2", "Decider Flash 1.2"]
+
+
 def test_catalog_missing_checked_organization_does_not_resolve_keys():
     with patch("model_hub.selectors.decision_models.LiteLLMModelManager") as cls:
         assert get_decision_catalog(organization_id=None, workspace_id=None) == []

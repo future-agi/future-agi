@@ -193,6 +193,32 @@ describe("Decision-model picker", () => {
     expect(screen.queryByText("Turing Large")).not.toBeInTheDocument();
   });
 
+  it("offers the OpenRouter connection when the search names it", async () => {
+    mount();
+    await openPicker();
+    await userEvent.type(
+      screen.getByPlaceholderText("Search models..."),
+      "openrouter",
+    );
+    // Only the native key is saved, yet the search asked for OpenRouter.
+    expect(
+      screen.getByRole("combobox", {
+        name: "Connection for GPT-6 Luna Decisions",
+      }),
+    ).toHaveValue(routerLuna);
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: /GPT-6 Luna Decisions/ }),
+    );
+    await screen.findByText("Configure API keys");
+    expect(
+      (await screen.findByText("OpenRouter", { exact: true })).closest("form"),
+    ).toBeTruthy();
+    // Nothing is selected until the OpenRouter key exists.
+    expect(screen.getByLabelText("Selected model")).toHaveTextContent(
+      "ordinary-model",
+    );
+  });
+
   it("makes the connection selector reachable from a model row with the keyboard", async () => {
     mount();
     await openPicker();
