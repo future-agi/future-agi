@@ -85,7 +85,13 @@ test('ANNOT-E2E-006: large queues download all annotations and source content', 
   ]) {
     await test.step(`${scenario.queue === large ? 'large' : 'small'} ${scenario.format} ${scenario.header ? 'header' : 'analytics'}`, async () => {
       await page.goto(`/dashboard/annotations/queues/${scenario.queue}`);
-      if (!scenario.header) await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+      // Wait for membership hydration before choosing an index-based tab; the
+      // manager-only Settings tab is inserted when queue detail resolves.
+      await expect(page.getByRole('tab', { name: 'Settings', exact: true })).toBeVisible({ timeout: UI_READY });
+      if (!scenario.header) {
+        await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+        await expect(page.getByRole('tab', { name: 'Analytics', exact: true })).toHaveAttribute('aria-selected', 'true', { timeout: UI_READY });
+      }
       const responsePromise = page.waitForResponse(r => new URL(r.url()).pathname === `${QUEUES}${scenario.queue}/export/`, { timeout: UI_READY });
       const downloadPromise = page.waitForEvent('download', { timeout: UI_READY + POLL.ASYNC_JOB.timeout });
       if (scenario.header) {
