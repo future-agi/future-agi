@@ -14,6 +14,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 const bedrockService = "bedrock"
@@ -130,7 +131,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("bedrock: request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock: request failed: %v", err))
@@ -139,7 +140,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock: reading response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "bedrock: reading response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -219,7 +220,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
-			if ctx.Err() != nil {
+			if common.TimedOut(ctx, err) {
 				errs <- models.ErrGatewayTimeout("bedrock: request timed out")
 				return
 			}
@@ -251,7 +252,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			msg, err := readEventStreamMessage(resp.Body)
 			if err != nil {
 				if ctx.Err() == nil {
-					errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock: stream read error: %v", err))
+					errs <- common.ReadError(err, 0, "bedrock: stream read")
 				}
 				return
 			}

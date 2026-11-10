@@ -23,10 +23,12 @@ from simulate.models import (
     SimulateEvalConfig,
     TestExecution,
 )
+from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_scenarios import (
     authored_scenarios_for_calls,
     call_row_metadata,
+    pinned_scenarios,
 )
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
@@ -314,7 +316,20 @@ def _harness_scenarios(
         call_execution_id__in=call_ids
     ):
         scenarios.setdefault(str(scenario.call_execution_id), scenario)
-    return scenarios
+    # A pinned run shows its suite version's content, as its grouping does.
+    keys = {}
+    for call in calls:
+        metadata = call_row_metadata(call)
+        if isinstance(metadata, dict):
+            keys[call.id] = metadata.get("harness_scenario_key")
+    pinned = pinned_scenarios(
+        calls, {call.id: scenarios.get(str(call.id)) for call in calls}, keys
+    )
+    return {
+        str(call_id): scenario
+        for call_id, scenario in pinned.items()
+        if scenario is not None
+    }
 
 
 ROW_DIMENSION_COLUMNS = (
@@ -562,6 +577,22 @@ def build_evaluation_catalog(
     return columns, live_eval_ids
 
 
+# A receipt failure's typed fields, which a reader can have without its message.
+_FAILURE_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+def _failure_fields(receipt: Mapping[str, Any]) -> dict[str, str | None]:
+    failure = receipt.get("failure")
+    failure = failure if isinstance(failure, Mapping) else {}
+    domain, code = failure.get("domain"), failure.get("code")
+    return {
+        "failure_domain": domain if domain in HARNESS_FAILURE_DOMAINS else None,
+        "failure_code": (
+            code if isinstance(code, str) and _FAILURE_CODE.fullmatch(code) else None
+        ),
+    }
+
+
 def build_call_rows(
     execution: TestExecution,
     calls: list[CallExecution] | None = None,
@@ -760,6 +791,7 @@ def build_call_rows(
                 "csat": _csat_score(metrics),
                 "ended_reason": call.ended_reason,
                 "error_message": call.error_message,
+                **_failure_fields(receipt),
                 "evaluations": evaluations,
                 "scoring_status": scoring.status,
                 "csat_status": scoring.csat_status,

@@ -422,9 +422,12 @@ def test_exact_trace_reader_preserves_raw_date_in_real_identity_classifier(
     assert captured and result["query_complete"] is True
     query, params, _ = analytics.calls[0]
     assert params["graph_candidate_trace_ids"] == ("trace-1",)
-    assert (
-        "attrs_string" not in query
-    )  # membership is classified, not reapplied to contributions
+    assert "AS graph_cost_flags" in query
+    # Raw membership is classified, not reapplied to contributions. Render
+    # bound accesses too, without treating unused classifier params as SQL.
+    assert f"attrs_string['{key}']" not in query
+    assert f"attrs_string['{key}']" not in finalize_query(query, params)
+    assert "attrs_number" not in query and "attributes_extra" not in query
 
 
 @pytest.mark.parametrize("key", RAW_NAMES)

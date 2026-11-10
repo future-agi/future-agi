@@ -238,6 +238,9 @@ func labelsKey(labels map[string]string) string {
 	return b.String()
 }
 
+// labelValueEscaper escapes label values per the Prometheus text format.
+var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+
 // formatLabels formats labels for Prometheus output (key="value").
 func formatLabels(labels map[string]string) string {
 	if len(labels) == 0 {
@@ -253,7 +256,7 @@ func formatLabels(labels map[string]string) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		fmt.Fprintf(&b, "%s=\"%s\"", k, labels[k])
+		fmt.Fprintf(&b, "%s=\"%s\"", k, labelValueEscaper.Replace(labels[k]))
 	}
 	return b.String()
 }

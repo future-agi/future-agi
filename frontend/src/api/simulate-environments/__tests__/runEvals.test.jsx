@@ -66,6 +66,10 @@ describe("useRunNewEvals", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["simulation-run-analytics-v3", "ex1"],
     });
+    // Compare is refreshed once grading finishes, not while it runs.
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: ["harness-run-compare"],
+    });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["simulation-call-detail-v3"],
     });

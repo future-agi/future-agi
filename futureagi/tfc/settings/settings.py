@@ -732,6 +732,12 @@ GCP_MARKETPLACE_DOUBLE_METRICS = {
     "enterprise_voice_simulation",
 }
 
+# Optional read-only public status mount. No updater/control access in the app.
+# Only /run/futureagi-host-update/status.json is accepted by the reader; an empty
+# value leaves existing installations healthy with reporting unconfigured.
+FI_HOST_UPDATE_STATUS_FILE = os.environ.get("FI_HOST_UPDATE_STATUS_FILE", "")
+FI_HOST_UPDATE_STATUS_SLOT = os.environ.get("FI_HOST_UPDATE_STATUS_SLOT", "")
+
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
 EE_LICENSE_PUBLIC_KEY = os.environ.get("EE_LICENSE_PUBLIC_KEY", "").replace("\\n", "\n")
@@ -821,6 +827,13 @@ EVAL_TASK_SWEEP_RECOVER_FAILED = os.getenv(
 CODE_EXECUTOR_LOCAL_FALLBACK = os.getenv(
     "CODE_EXECUTOR_LOCAL_FALLBACK", "false"
 ).lower() in ("true", "1", "yes")
+
+# How Jev evaluators reach TypeSafe, always on the org's own key. "gateway"
+# (default) sends them to the AgentCC gateway's /v1/systemone on
+# AGENTCC_INTERNAL_API_KEY, carrying the org's key for that call. "direct"
+# calls TypeSafe from the backend, for local dev without a gateway. Any other
+# value means "gateway".
+JEV_TRANSPORT = os.getenv("JEV_TRANSPORT", "gateway").strip().lower()
 
 # Hosted simulation runner (plan §9): when enabled, eligible runs are dispatched
 # to the simulation-runner worker which executes the released SDK, instead of the
@@ -993,6 +1006,7 @@ ALK_HARNESS_SANDBOX_URL = os.getenv("ALK_HARNESS_SANDBOX_URL", "")
 ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
+GITHUB_APP_WEBHOOK_SECRET = os.getenv("GITHUB_APP_WEBHOOK_SECRET", "")
 ALK_HOSTED_SOURCE_MAX_BYTES = int(
     os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
 )
@@ -1003,13 +1017,11 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
 ]
 # Hosted simulator credentials are platform configuration, not customer job input. Values are
 # resolved only while launching the sandbox and are never persisted on HostedHarnessJob. Model
-# calls go through AgentCC, so no model vendor's credential is listed here.
+# and speech calls go through AgentCC, so no model or speech vendor's credential is listed here.
 ALK_HOSTED_SIMULATOR_SECRET_ENV = {
     "SIMULATOR_LIVEKIT_URL": "LIVEKIT_URL",
     "SIMULATOR_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
     "SIMULATOR_LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
-    "SIMULATOR_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
-    "SIMULATOR_CARTESIA_API_KEY": "CARTESIA_API_KEY",
     "SIMULATOR_LLM_PROVIDER": "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_LLM_MODEL": "SIMULATOR_LLM_MODEL",
     "SIMULATOR_STT_PROVIDER": "SIMULATOR_STT_PROVIDER",
@@ -1056,7 +1068,9 @@ ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
 # message before a post-run chat sandbox is reclaimed, and only trades cost against latency.
 ALK_HOSTED_CHAT_TTL_SECONDS = int(os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800"))
 # Off sends a fresh build through the staged authoring pipeline instead of the builder session.
-ALK_HOSTED_BUILDER_SESSION = os.getenv("ALK_HOSTED_BUILDER_SESSION", "true").strip().lower() not in (
+ALK_HOSTED_BUILDER_SESSION = os.getenv(
+    "ALK_HOSTED_BUILDER_SESSION", "true"
+).strip().lower() not in (
     "0",
     "false",
     "no",
@@ -1084,6 +1098,55 @@ ALK_E2B_TEMPLATE_CPU_UNITS = int(os.getenv("ALK_E2B_TEMPLATE_CPU_UNITS", "4"))
 ALK_E2B_TEMPLATE_MEMORY_MB = int(os.getenv("ALK_E2B_TEMPLATE_MEMORY_MB", "8192"))
 ALK_E2B_TEMPLATE_DISK_GB = int(os.getenv("ALK_E2B_TEMPLATE_DISK_GB", "10"))
 ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
+# "Fix my agent": the improvement engine runs in its own E2B template, built on the hosted ALK
+# template (the svc-control user and /opt/alk-venv the E2B bootstrap expects).
+AGENT_FIX_E2B_TEMPLATE_REFERENCE = os.getenv("AGENT_FIX_E2B_TEMPLATE_REFERENCE", "")
+AGENT_FIX_ENGINE_COMMAND = os.getenv(
+    "AGENT_FIX_ENGINE_COMMAND", "node /opt/agent-improvement/platform-entry.mjs"
+)
+# Fixes running at once, on the platform and in one organization; the rest wait as queued. Size
+# these for sandboxes and models: a fix holds about 4 sandboxes at its peak (the engine and one
+# for each check run side by side). Two claims can race past a cap by a few fixes.
+AGENT_FIX_MAX_RUNNING = int(os.getenv("AGENT_FIX_MAX_RUNNING", "10"))
+AGENT_FIX_MAX_RUNNING_PER_ORG = int(os.getenv("AGENT_FIX_MAX_RUNNING_PER_ORG", "3"))
+# How long a fix may wait for room before it fails, free to retry; a fix whose time limit
+# plus AGENT_FIX_TOKEN_GRACE_SECONDS is longer waits that long instead.
+AGENT_FIX_MAX_QUEUED_SECONDS = int(os.getenv("AGENT_FIX_MAX_QUEUED_SECONDS", "3600"))
+# Sandboxes one fix may use in all; an engine that dies is started again after a pause.
+AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "3"))
+# Conversations a fix's check run holds at once. Every run of a fix asks for the same, so
+# its arms stay comparable.
+AGENT_FIX_CHECK_RUN_PARALLELISM = int(os.getenv("AGENT_FIX_CHECK_RUN_PARALLELISM", "2"))
+# The engine reports at least every minute; silent this long, it is treated as dead.
+AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
+    os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")
+)
+# A check run reserves this much of a fix's budget for each scenario execution.
+AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
+    "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
+)
+# Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
+# cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.
+AGENT_FIX_MIN_FAILING_CASES = int(os.getenv("AGENT_FIX_MIN_FAILING_CASES", "12"))
+# Models the engine may call through its fix's API; Future AGI pays for them. The list holds
+# the engine's planner, coder and reviewer, and the backups its profile moves to when one
+# loses a call.
+AGENT_FIX_ENGINE_MODELS = os.getenv(
+    "AGENT_FIX_ENGINE_MODELS",
+    "anthropic/claude-opus-5.5,deepseek/deepseek-v4.1-flash,openai/gpt-6.1-sol,"
+    "openai/gpt-6-luna,anthropic/claude-sonnet-5.5",
+).split(",")
+# How long past the fix's deadline its token still works, for the final report.
+AGENT_FIX_TOKEN_GRACE_SECONDS = int(os.getenv("AGENT_FIX_TOKEN_GRACE_SECONDS", "600"))
+# How long one of the engine's model calls may take at the gateway.
+AGENT_FIX_MODEL_TIMEOUT_SECONDS = int(
+    os.getenv("AGENT_FIX_MODEL_TIMEOUT_SECONDS", "900")
+)
+# Limits on what an engine may upload: a candidate's unpacked tree.
+AGENT_FIX_MAX_TREE_BYTES = int(
+    os.getenv("AGENT_FIX_MAX_TREE_BYTES", str(128 * 1024 * 1024))
+)
+AGENT_FIX_MAX_TREE_FILES = int(os.getenv("AGENT_FIX_MAX_TREE_FILES", "20000"))
 ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS = int(
     os.getenv("ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS", "180")
 )
@@ -1102,6 +1165,23 @@ HARNESS_PARALLELISM_ENABLED = os.getenv("HARNESS_PARALLELISM_ENABLED", "").lower
     "yes",
 )
 HARNESS_MAX_WORLD_SLOTS = int(os.getenv("HARNESS_MAX_WORLD_SLOTS", "8"))
+# Environment versioning: decides whether an environment without versions starts getting
+# them, and gates their UI. An environment that has versions always records new ones, and
+# readers decide by data (pins present or not), never by this flag.
+HARNESS_VERSIONING_ENABLED = os.getenv("HARNESS_VERSIONING_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+# A pinned run that misses the bundle cache certifies its own bundle; off, it runs the
+# environment's default pair as before.
+HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
+    "HARNESS_BUNDLE_CERTIFY_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Raising agent-change nudges; only takes effect while versioning is enabled.
+HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
+    "HARNESS_VERSIONING_NUDGES_ENABLED", ""
+).lower() in ("1", "true", "yes")
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.
@@ -1408,7 +1488,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # ~160 MB at the default) while its consumer is behind or stopped; XADD trims
 # unread events beyond it. A positive integer, as fi-collector requires.
 from tfc.ee_loader import usage_event_consumer_available  # noqa: E402
-from tfc.utils.env import env_int  # noqa: E402
+from tfc.utils.env import env_datetime, env_int  # noqa: E402
 
 _usage_events = os.getenv("USAGE_EVENTS_ENABLED", "").strip().lower()
 USAGE_EVENTS_ENABLED = (
@@ -1417,6 +1497,13 @@ USAGE_EVENTS_ENABLED = (
     else usage_event_consumer_available()
 )
 USAGE_EVENTS_MAX_LEN = env_int("USAGE_EVENTS_MAX_LEN", 1_000_000, minimum=1)
+
+# Orgs created at or after this instant see only Environments in Simulate. Set it
+# to the start of the deploy that introduces the restriction, in UTC, the same
+# value in every region. Unset restricts no org (self-hosted installs).
+RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF = env_datetime(
+    "RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"
+)
 
 # Django Channels layer. CHANNEL_LAYER_BACKEND: auto (default) | memory | redis |
 # rabbitmq. With one web process the layer lives in memory and needs no broker;
@@ -1569,3 +1656,64 @@ CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger
 # Default is "postgres" so cutover is opt-in. Flip to "clickhouse" only after
 # the backfill + validator pass and a soak period.
 EVAL_SPAN_READ_SOURCE = os.getenv("EVAL_SPAN_READ_SOURCE", "postgres").lower()
+
+# Concurrent Jev calls per worker process (ee/jev/client.py). Instant eval
+# drains up to 32 rows at once, so a worker that serves it wants at least that.
+JEV_MAX_CONCURRENT = max(1, int(os.getenv("JEV_MAX_CONCURRENT") or 8))
+# Seconds one Jev answer may take, its retries and waits included, and the
+# retries after a failed call that may succeed (a timeout, a rate limit). Both
+# can only be lowered: at most 90 seconds and 2 retries. Like the other Jev and
+# Instant eval numbers here, an empty value (``NAME=`` in .env) is the default.
+JEV_TOTAL_DEADLINE = max(1, min(int(os.getenv("JEV_TOTAL_DEADLINE") or 90), 90))
+JEV_MAX_RETRIES = max(0, min(int(os.getenv("JEV_MAX_RETRIES") or 2), 2))
+# TypeSafe's API for JEV_TRANSPORT=direct; empty means https://api.typesafe.ai.
+# The gateway transport never reads it.
+TYPESAFE_BASE_URL = os.getenv("TYPESAFE_BASE_URL", "").strip()
+
+# Instant eval at scale (tracer/views/instant_eval_scale.py). The server refuses
+# a run above MAX_ROWS, holds one above CONFIRM_ROWS for the person to confirm
+# (with what it costs, where it is billed), and lets an organization run at
+# most MAX_ACTIVE_PER_ORG at a time. Each is at least 1: a 0 or a negative
+# would refuse (or hold) every run.
+INSTANT_EVAL_MAX_ROWS = max(1, int(os.getenv("INSTANT_EVAL_MAX_ROWS") or 100000))
+INSTANT_EVAL_CONFIRM_ROWS = max(1, int(os.getenv("INSTANT_EVAL_CONFIRM_ROWS") or 5000))
+INSTANT_EVAL_MAX_ACTIVE_PER_ORG = max(
+    1, int(os.getenv("INSTANT_EVAL_MAX_ACTIVE_PER_ORG") or 2)
+)
+# Rows a run is assumed to read a minute, for the time estimate before it
+# starts (a run's page shows the measured rate once answers land).
+INSTANT_EVAL_ASSUMED_ROWS_PER_MIN = max(
+    1.0, float(os.getenv("INSTANT_EVAL_ASSUMED_ROWS_PER_MIN") or 300)
+)
+# Seconds a Users estimate (asked again on every filter edit) may spend
+# counting users the list decides one by one before it reports a lower bound,
+# and seconds a start may spend finishing that count. 0.5-30 and 1-600.
+INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S = max(
+    0.5, min(float(os.getenv("INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S") or 3), 30.0)
+)
+INSTANT_EVAL_USERS_RUN_BUDGET_S = max(
+    1.0, min(float(os.getenv("INSTANT_EVAL_USERS_RUN_BUDGET_S") or 60), 600.0)
+)
+
+# The Insights agent's evidence broker (ee/agenthub/insights/broker.py): the
+# secret its run-scoped capabilities are signed with (empty keeps runs on the
+# agent's insights-agent/v1 contract), the previous one while a new one rolls
+# out, where the worker stores the unit snapshots the web pods serve
+# (ee/agenthub/insights/evidence_store.py: "local", a directory of each host,
+# empty: <tmp>/insights-evidence, and how large it may grow; or "object", a
+# private bucket every pod reads, never the upload bucket), and whether media
+# outside the platform's own storage may be fetched for the agent to view
+# (off by default).
+INSIGHTS_EVIDENCE_SECRET = os.getenv("INSIGHTS_EVIDENCE_SECRET", "")
+INSIGHTS_EVIDENCE_SECRET_PREVIOUS = os.getenv("INSIGHTS_EVIDENCE_SECRET_PREVIOUS", "")
+INSIGHTS_EVIDENCE_STORE = (
+    os.getenv("INSIGHTS_EVIDENCE_STORE", "").strip().lower() or "local"
+)
+INSIGHTS_EVIDENCE_BUCKET = os.getenv("INSIGHTS_EVIDENCE_BUCKET", "").strip()
+INSIGHTS_EVIDENCE_CACHE_DIR = os.getenv("INSIGHTS_EVIDENCE_CACHE_DIR", "").strip()
+INSIGHTS_EVIDENCE_CACHE_MAX_BYTES = max(
+    1, int(os.getenv("INSIGHTS_EVIDENCE_CACHE_MAX_BYTES") or 2 * 1024**3)
+)
+INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA = os.getenv(
+    "INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA", ""
+).strip().lower() in ("1", "true", "yes", "on")

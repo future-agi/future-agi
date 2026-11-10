@@ -233,7 +233,6 @@ const LAZY_CHILDREN = [
   () => import("../GraphSection/AgentGraph"),
   () => import("../GraphSection/AgentPath"),
   () => import("src/sections/agents/CallLogs/CallLogsGrid"),
-  () => import("../LLMFiltersDrawer"),
   () => import("src/components/traceDetailDrawer/addToDataset/add-dataset"),
   () => import("src/components/traceDetail/AddTagsPopover"),
   () =>

@@ -16,10 +16,10 @@ import {
   Typography,
 } from "@mui/material";
 import { useRunAnalytics } from "src/api/simulate-environments/runAnalytics";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import EmptyState from "../../../components/EmptyState";
 import {
   Bars,
-  COLORS,
   Donut,
   format,
   NoMeasurement,
@@ -132,12 +132,12 @@ const VERDICTS = {
   not_evaluated: "Not evaluated",
 };
 const OUTCOMES = [
-  { key: "queued", label: "Queued", color: COLORS[5] },
-  { key: "in_progress", label: "In progress", color: COLORS[4] },
-  { key: "passed", label: "Passed", color: COLORS[0] },
-  { key: "failed", label: "Failed", color: COLORS[2] },
-  { key: "error", label: "Error", color: COLORS[3] },
-  { key: "inconclusive", label: "Inconclusive", color: COLORS[5] },
+  { key: "queued", label: "Queued", role: "neutral" },
+  { key: "in_progress", label: "In progress", role: "info" },
+  { key: "passed", label: "Passed", role: "success" },
+  { key: "failed", label: "Failed", role: "danger" },
+  { key: "error", label: "Error", role: "warning" },
+  { key: "inconclusive", label: "Inconclusive", role: "neutral" },
 ];
 const DISTRIBUTIONS = {
   latency_ms: ["Agent response time", "ms"],
@@ -147,8 +147,8 @@ const DISTRIBUTIONS = {
   turns: ["Turns per call", "number"],
 };
 const tableSx = {
-  "& th": { fontSize: 10, textTransform: "uppercase", color: "text.secondary" },
-  "& td": { fontSize: 12 },
+  "& th": { typography: "s3", fontWeight: 500, color: "text.secondary" },
+  "& td": { typography: "s1", height: ROW_HEIGHT.default },
   "& tr:last-child td": { borderBottom: 0 },
 };
 
@@ -232,7 +232,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       "The provider's own judgement as reported; it never replaces your evals",
     sentiment:
       "As reported by the provider; the platform does not compute sentiment",
-    reliability: `${reliability.scenarios ?? 0} scenarios × ${reliability.trials ?? 0} trial${reliability.trials === 1 ? "" : "s"}${interval ? ` · pass rate 95% range ${format(interval.low, "percent")}–${format(interval.high, "percent")}` : ""}`,
+    reliability: `${reliability.scenarios ?? 0} scenarios × ${reliability.trials ?? 0} trial${reliability.trials === 1 ? "" : "s"}${interval ? ` · pass^1 95% range ${format(interval.low, "percent")}–${format(interval.high, "percent")}` : ""}`,
     evaluations: `${evalSummary.graders} evals · ${evalSummary.passed} of ${evalSummary.measured} evaluated calls passed every eval (${format(evalSummary.pass_rate, "percent")})${evalSummary.errored_checks ? ` · ${evalSummary.errored_checks} checks could not run` : ""}`,
     csat: "Scorer CSAT on a 0–10 scale; a provider success flag is never mixed in",
     response_time:
@@ -275,10 +275,6 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const costPerPass = metricsByKey.cost_per_pass;
   const comparison = dashboard.comparison;
   const health = dashboard.run_health;
-  const passMargin =
-    interval && passRate?.value != null
-      ? Math.max(passRate.value - interval.low, interval.high - passRate.value)
-      : null;
   const metricTile = (key, label, coverage, unit) => {
     const metric = metricsByKey[key];
     if (!metric) return null;
@@ -295,7 +291,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     `${metric.measured ?? 0} / ${metric.total ?? 0} measured`;
   // Voice-only metrics are absent from chat runs, so their tiles drop out.
   const callTiles = [
-    metricTile("total", "Total Calls", () => "this run"),
+    metricTile("total", "Total calls", () => "this run"),
     health && {
       key: "connected",
       label: "Connected",
@@ -306,14 +302,14 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     },
     metricTile(
       "connected_rate",
-      "Calls Connected (%)",
+      "Calls connected (%)",
       (metric) => `${metric.measured ?? 0} / ${metric.total ?? 0} calls`,
     ),
-    metricTile("agent_latency", "Agent Latency", measuredOf),
+    metricTile("agent_latency", "Agent latency", measuredOf),
     metricTile("wpm", "Agent WPM", () => "words/min"),
-    metricTile("stop", "Agent Stop Latency", measuredOf),
+    metricTile("stop", "Agent stop latency", measuredOf),
     // API sends the agent's share as a percent; show it as agent/customer.
-    metricTile("talk", "Talk Ratio", () => "agent/customer", "ratio"),
+    metricTile("talk", "Talk ratio", () => "agent/customer", "ratio"),
     metricTile(
       "duration",
       "Avg duration",
@@ -331,7 +327,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       label: "Calls passed",
       value: format(passRate?.value, "percent"),
       reported: passRate?.value != null,
-      detail: passMargin == null ? null : `±${number(passMargin)} pts`,
+      // No range here: pass^1's range brackets the scenario average, which this
+      // pooled rate need not sit inside.
+      detail: null,
       coverage: `${passRate?.measured ?? 0} / ${passRate?.total ?? 0} evaluated`,
       note: passRate?.note,
     },
@@ -428,7 +426,8 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           onOpen={id === "goal_outcome" ? onOpenCalls : undefined}
         />
       );
-    if (id === "reliability") return <Reliability data={reliability} />;
+    if (id === "reliability")
+      return <Reliability data={reliability} onOpenCalls={onOpenCalls} />;
     if (id === "csat" || id === "response_time")
       return (
         <DashboardHistogram
@@ -463,10 +462,13 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                         value={row.pass_rate}
                         sx={{
                           height: 6,
-                          borderRadius: 1,
+                          borderRadius: "4px",
                           bgcolor: "action.hover",
                           "& .MuiLinearProgress-bar": {
-                            bgcolor: row.pass_rate < 50 ? COLORS[2] : COLORS[1],
+                            bgcolor: (t) =>
+                              t.palette.status[
+                                row.pass_rate < 50 ? "danger" : "success"
+                              ].solid,
                           },
                         }}
                       />
@@ -517,7 +519,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
               ))}
             </TableBody>
           </Table>
-          <Typography sx={{ p: 2, fontSize: 11, color: "text.secondary" }}>
+          <Typography sx={{ p: 2, typography: "s3", color: "text.secondary" }}>
             ASR word-error rate: not recorded · User interruptions:{" "}
             {number(dashboard.interruptions.average)} / measured call ·{" "}
             {number(dashboard.interruptions.total, 0)} total
@@ -533,9 +535,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             unit="cents"
             series={[
               { key: "llm_cents", label: "LLM" },
-              { key: "tts_cents", label: "TTS", color: COLORS[4] },
-              { key: "stt_cents", label: "STT", color: COLORS[3] },
-              { key: "storage_cents", label: "Storage", color: COLORS[5] },
+              { key: "tts_cents", label: "TTS" },
+              { key: "stt_cents", label: "STT" },
+              { key: "storage_cents", label: "Storage" },
             ]}
           />
           <Stack
@@ -547,7 +549,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             {dashboard.pipeline_cost?.map((component) => (
               <Typography
                 key={component.key}
-                sx={{ fontSize: 10, color: "text.secondary" }}
+                sx={{ typography: "s3", color: "text.secondary" }}
               >
                 {component.label} {format(component.total_cents, "cents")} (
                 {format(component.share, "percent")})
@@ -555,7 +557,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             ))}
           </Stack>
           <Typography
-            sx={{ px: 2, pb: 1.5, fontSize: 10, color: "text.secondary" }}
+            sx={{ px: 2, pb: 1.5, typography: "s3", color: "text.secondary" }}
           >
             Transport cost is not recorded. Storage is shown separately.
           </Typography>
@@ -600,18 +602,12 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             const label = row.key === "latency_ms" ? latencyLabel : mapped;
             return (
               <Box key={row.key}>
-                <Typography
-                  sx={{
-                    fontSize: 10,
-                    color: "text.secondary",
-                    textTransform: "uppercase",
-                  }}
-                >
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
                   {label}
                 </Typography>
                 <Typography
                   sx={{
-                    fontSize: 21,
+                    typography: "l3",
                     my: 0.5,
                     fontWeight: row.p90 == null ? 400 : 600,
                     color: row.p90 == null ? "text.disabled" : "text.primary",
@@ -620,29 +616,23 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                   {format(row.p90, unit)}{" "}
                   <Typography
                     component="span"
-                    sx={{ fontSize: 10, color: "text.secondary" }}
+                    sx={{ typography: "s3", color: "text.secondary" }}
                   >
                     p90
                   </Typography>
                 </Typography>
                 {["p50", "p99", "max"].map((p) => (
                   <Stack key={p} direction="row" justifyContent="space-between">
-                    <Typography
-                      sx={{
-                        fontSize: 10,
-                        color: "text.secondary",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {p}
+                    <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                      {p === "max" ? "Max" : p}
                     </Typography>
-                    <Typography sx={{ fontSize: 11 }}>
+                    <Typography sx={{ typography: "s3" }}>
                       {format(row[p], unit)}
                     </Typography>
                   </Stack>
                 ))}
                 <Typography
-                  sx={{ mt: 0.5, fontSize: 10, color: "text.secondary" }}
+                  sx={{ mt: 0.5, typography: "s3", color: "text.secondary" }}
                 >
                   {row.measured} measured
                 </Typography>
@@ -673,7 +663,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           multicolor
           angled
           series={[
-            { key: "invocations", label: "Invocations", color: COLORS[4] },
+            { key: "invocations", label: "Invocations", colorIndex: 1 },
           ]}
         />
       );
@@ -690,7 +680,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           labelKey="failure_label"
           multicolor
           series={[
-            { key: "failure_rate", label: "Failure rate", color: COLORS[2] },
+            { key: "failure_rate", label: "Failure rate", role: "danger" },
           ]}
         />
       );
@@ -710,7 +700,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             {
               key: "value",
               label: id === "slowest" ? "Duration" : "Cost",
-              color: id === "slowest" ? COLORS[0] : "#c02f80",
+              colorIndex: id === "slowest" ? 0 : 4,
             },
           ]}
           onOpen={open}
@@ -757,7 +747,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             border: "1px solid",
             borderColor: "divider",
             bgcolor: "background.paper",
-            borderRadius: 1.5,
+            borderRadius: "8px",
             overflow: "hidden",
           }}
         >
@@ -774,8 +764,8 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
               >
                 <Typography
                   sx={{
-                    fontSize: 10,
-                    fontWeight: 600,
+                    typography: "s3",
+                    fontWeight: 500,
                     color: "text.secondary",
                   }}
                 >
@@ -784,22 +774,22 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                 <Stack direction="row" alignItems="baseline" spacing={0.75}>
                   <Typography
                     sx={{
-                      fontSize: 22,
+                      typography: "l3",
                       mt: 0.5,
-                      fontWeight: card.reported ? 650 : 400,
+                      fontWeight: card.reported ? 600 : 400,
                       color: card.reported ? "text.primary" : "text.disabled",
                     }}
                   >
                     {card.value}
                   </Typography>
                   {card.detail && (
-                    <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+                    <Typography sx={{ typography: "s3", color: "text.secondary" }}>
                       {card.detail}
                     </Typography>
                   )}
                 </Stack>
                 <Typography
-                  sx={{ fontSize: 10, color: "text.secondary", mt: 0.3 }}
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
                 >
                   {card.reported || card.key === "drop_off"
                     ? card.coverage
@@ -816,25 +806,25 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             border: "1px solid",
             borderColor: "divider",
             bgcolor: "background.paper",
-            borderRadius: 1.5,
+            borderRadius: "8px",
             px: 2,
             py: 1.5,
           }}
         >
-          <Typography component="h2" sx={{ fontSize: 13, fontWeight: 600 }}>
+          <Typography component="h2" sx={{ typography: "m3", fontWeight: 500 }}>
             What to look at first
           </Typography>
           {findings.length ? (
             <Box component="ul" sx={{ m: 0, mt: 1, pl: 2.5 }}>
               {findings.map((finding) => (
-                <Typography component="li" key={finding} sx={{ fontSize: 12 }}>
+                <Typography component="li" key={finding} sx={{ typography: "s1" }}>
                   {finding}
                 </Typography>
               ))}
             </Box>
           ) : (
             <Typography
-              sx={{ mt: 0.75, fontSize: 12, color: "text.secondary" }}
+              sx={{ mt: 0.75, typography: "s1", color: "text.secondary" }}
             >
               No priority findings in this run.
             </Typography>
@@ -850,8 +840,8 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
               <Typography
                 component="h2"
                 sx={{
-                  fontSize: 13,
-                  fontWeight: 600,
+                  typography: "m3",
+                  fontWeight: 500,
                   mb: 1,
                   pt: 1,
                   borderTop: "1px solid",
@@ -894,7 +884,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
 }
 AnalyticsDashboard.propTypes = RunAnalytics.propTypes;
 
-function Reliability({ data }) {
+function Reliability({ data, onOpenCalls }) {
   if (!data?.scenarios) return <NoMeasurement />;
   const tiles = [
     ["Passed every trial", data.consistent_pass, data.scenarios],
@@ -906,10 +896,10 @@ function Reliability({ data }) {
       <Stack direction="row" gap={3} sx={{ px: 2, pb: 1.5 }} flexWrap="wrap">
         {tiles.map(([label, value, of]) => (
           <Box key={label}>
-            <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
               {label}
             </Typography>
-            <Typography sx={{ fontSize: 20, fontWeight: 600 }}>
+            <Typography sx={{ typography: "l3", fontWeight: 600 }}>
               {of ? `${value} / ${of}` : "-"}
             </Typography>
           </Box>
@@ -917,7 +907,7 @@ function Reliability({ data }) {
       </Stack>
       {data.trials < 2 && (
         <Typography
-          sx={{ px: 2, pb: 1, fontSize: 11, color: "text.secondary" }}
+          sx={{ px: 2, pb: 1, typography: "s3", color: "text.secondary" }}
         >
           Run 2 or more trials to see which scenarios give different results on
           repeat.
@@ -929,34 +919,44 @@ function Reliability({ data }) {
             <TableRow>
               <TableCell>Scenario</TableCell>
               <TableCell>Result</TableCell>
-              <TableCell align="right">Passed / evaluated</TableCell>
-              <TableCell align="right">Evaluated / total trials</TableCell>
-              <TableCell align="right">Error</TableCell>
+              <TableCell align="right">Trials</TableCell>
+              <TableCell align="right">Inconclusive</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {data.rows.map((row) => (
-              <TableRow key={row.scenario_key || row.scenario}>
+              <TableRow
+                key={row.scenario_key || row.scenario}
+                hover={!!onOpenCalls}
+                onClick={
+                  onOpenCalls && row.call_ids?.length
+                    ? () => onOpenCalls({ callExecutionId: row.call_ids })
+                    : undefined
+                }
+                sx={onOpenCalls ? { cursor: "pointer" } : undefined}
+              >
                 <TableCell>{row.scenario}</TableCell>
                 <TableCell
                   sx={{
-                    color:
+                    color: (t) =>
                       row.verdict === "flaky"
-                        ? COLORS[3]
+                        ? t.palette.status.warning.fg
                         : row.verdict === "failed"
-                          ? COLORS[2]
+                          ? t.palette.status.danger.fg
                           : undefined,
                   }}
                 >
                   {VERDICTS[row.verdict]}
                 </TableCell>
+                {/* Inconclusive trials sit outside the denominator. */}
                 <TableCell align="right">
-                  {row.passed} / {row.evaluated}
+                  {row.evaluated
+                    ? `${row.passed}/${row.evaluated} trials passed`
+                    : "No conclusive trial"}
                 </TableCell>
                 <TableCell align="right">
-                  {row.evaluated} / {row.runs}
+                  {row.error + row.inconclusive}
                 </TableCell>
-                <TableCell align="right">{row.error}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -965,4 +965,4 @@ function Reliability({ data }) {
     </>
   );
 }
-Reliability.propTypes = { data: PropTypes.object };
+Reliability.propTypes = { data: PropTypes.object, onOpenCalls: PropTypes.func };
