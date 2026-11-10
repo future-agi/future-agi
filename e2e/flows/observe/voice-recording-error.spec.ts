@@ -1,4 +1,4 @@
-import { request, type Page } from '@playwright/test';
+import { request, type APIRequestContext, type Page } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace } from '../../lib/otlp';
 import { POLL, type StateProbe } from '../../lib/state-probe';
@@ -23,6 +23,31 @@ const DEAD_RECORDING_URL = `${E2E.appUrl}/e2e-no-such-recording.wav`;
 const UI_READY = 60_000;
 
 const LOADER_COPY = /painting sound waves/i;
+
+const PROJECT = '/tracer/project/';
+
+type Actor = { tokens: { access: string }; organizationId: string; workspaceId: string };
+
+/** Observe shows the voice-call grid only for projects whose source is
+ *  'simulator' (LLMTracingView: projectDetail.source === PROJECT_SOURCE.SIMULATOR).
+ *  A project the collector auto-creates from a span gets 'prototype'
+ *  (fi-collector/pkg/auth/pgresolver.go) and opens on the plain Trace grid, so
+ *  create the voice project first, exactly as OBS-E2E-008 does, and let the
+ *  collector resolve the spans into it by name. */
+async function createVoiceProject(req: APIRequestContext, actor: Actor, name: string) {
+  const response = await req.post(E2E.apiUrl + PROJECT, {
+    headers: {
+      Authorization: `Bearer ${actor.tokens.access}`,
+      'X-Organization-Id': actor.organizationId,
+      'X-Workspace-Id': actor.workspaceId,
+    },
+    data: { name, model_type: 'GenerativeLLM', trace_type: 'observe', source: 'simulator' },
+  });
+  expect(response.status()).toBe(200);
+  const body = await response.json() as { result: { project_id: string; name: string } };
+  expect(body.result.name).toBe(name);
+  return body.result.project_id;
+}
 
 async function resolveProjectId(
   probe: StateProbe,
@@ -63,6 +88,7 @@ test('OBS-E2E-012: an unreachable recording shows an error, not an endless loade
   test.setTimeout(300_000);
   const req = await request.newContext();
   const projectName = `e2e-voice-err-${testInfo.workerIndex}-${Date.now().toString(36)}`;
+  const createdProjectId = await createVoiceProject(req, actor, projectName);
 
   const seeded = await sendTrace(req, {
     collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey,
@@ -77,6 +103,7 @@ test('OBS-E2E-012: an unreachable recording shows an error, not an endless loade
       [`${RECORDING_PREFIX}.mono.assistant`]: DEAD_RECORDING_URL,
       [`${RECORDING_PREFIX}.mono.customer`]: DEAD_RECORDING_URL,
     },
+    resourceAttributes: { project_type: 'observe' },
   });
   await testInfo.attach('seeded-voice-call', {
     body: JSON.stringify(seeded), contentType: 'application/json',
@@ -93,6 +120,7 @@ test('OBS-E2E-012: an unreachable recording shows an error, not an endless loade
   });
 
   const projectId = await resolveProjectId(probe, projectName, actor.organizationId);
+  expect(projectId).toBe(createdProjectId);
 
   await test.step('the drawer reports the failure instead of spinning', async () => {
     await openVoiceCall(page, projectId);
@@ -126,11 +154,13 @@ test('OBS-E2E-013: a voice call with no recording says so', {
   test.setTimeout(300_000);
   const req = await request.newContext();
   const projectName = `e2e-voice-none-${testInfo.workerIndex}-${Date.now().toString(36)}`;
+  const createdProjectId = await createVoiceProject(req, actor, projectName);
 
   const seeded = await sendTrace(req, {
     collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey,
     secretKey: actor.secretKey, projectName, rootName: 'e2e.voice-call-silent',
     rootAttributes: { 'fi.span.kind': VOICE_SPAN_KIND, 'call.status': 'ended' },
+    resourceAttributes: { project_type: 'observe' },
   });
 
   await expect.poll(async () => {
@@ -142,6 +172,7 @@ test('OBS-E2E-013: a voice call with no recording says so', {
   }, POLL.SPAN_VISIBLE).toBe(1);
 
   const projectId = await resolveProjectId(probe, projectName, actor.organizationId);
+  expect(projectId).toBe(createdProjectId);
   await openVoiceCall(page, projectId);
 
   await expect(page.getByText(/no recording found/i)).toBeVisible({ timeout: UI_READY });
