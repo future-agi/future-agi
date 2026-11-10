@@ -741,7 +741,8 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(mock_post.call_args.kwargs["url"], api_base)
         message = response.data["message"]
-        self.assertIn(api_base, message)
+        self.assertNotIn(api_base, message)
+        self.assertIn("Custom model endpoint answered 404 Not Found.", message)
         self.assertIn("full chat-completions URL", message)
         self.assertIn("/v1/chat/completions", message)
         self.assertFalse(

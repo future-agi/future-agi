@@ -73,6 +73,30 @@ def test_validation_uses_safe_transport_and_preserves_configuration():
     assert config == {"api_base": ENDPOINT, "headers": HEADERS, "custom_provider": True}
 
 
+def test_validation_error_never_repeats_url_or_server_reason():
+    url = "https://model.example/path-secret?key=query-secret"
+    response = requests.Response()
+    response.status_code = 404
+    response.reason = "synthetic-header-secret"
+    response._content = b"synthetic-response-secret"
+    with patch(
+        "model_hub.utils.utils.post_custom_endpoint", return_value=response
+    ):
+        error = validate_model_working(
+            "synthetic-model", {"config_json": {"api_base": url}}, "custom"
+        )
+    assert isinstance(error, Exception)
+    assert "Custom model endpoint answered 404 Not Found." in str(error)
+    assert "server must serve model 'synthetic-model'" in str(error)
+    for secret in (
+        "path-secret",
+        "query-secret",
+        "synthetic-header-secret",
+        "synthetic-response-secret",
+    ):
+        assert secret not in str(error)
+
+
 def test_custom_readback_fully_redacts_short_and_nested_credentials():
     config = {
         "api_base": ENDPOINT,

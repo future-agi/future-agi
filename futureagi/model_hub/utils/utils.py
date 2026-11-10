@@ -5,7 +5,6 @@ import time
 from collections import Counter
 from http import HTTPStatus
 from typing import Literal
-from urllib.parse import urlsplit, urlunsplit
 
 import litellm
 import requests
@@ -431,10 +430,10 @@ def validate_model_working(model_name, api_key, provider):
                     # Never repeat response.text: it could be an internal page.
                     if response.status_code in (404, 405):
                         reason = HTTPStatus(response.status_code).phrase
-                        parsed_url = urlsplit(url)
-                        diagnostic_url = urlunsplit((parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", ""))
+                        # Credentials can be embedded in the URL path as well
+                        # as its query, so never repeat the configured URL.
                         raise Exception(
-                            f"{diagnostic_url} answered {response.status_code} "
+                            f"Custom model endpoint answered {response.status_code} "
                             f"{reason}. API Base URL must be the full "
                             "chat-completions URL, such as "
                             "https://your-host/v1/chat/completions, and the "
