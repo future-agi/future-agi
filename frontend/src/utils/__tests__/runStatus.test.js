@@ -28,6 +28,12 @@ describe("runStatusOf role", () => {
     ["passed", "success"],
     ["Healthy", "success"],
     ["resolved", "success"],
+    // Run readiness statuses: Untested and Stale never read as green.
+    ["supported", "success"],
+    ["blocked", "danger"],
+    ["stale", "warning"],
+    ["untested", "neutral"],
+    ["unavailable", "neutral"],
     ["connected", "success"],
     ["auto_resolved", "success"],
     ["OK", "success"],
