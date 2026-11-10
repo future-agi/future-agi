@@ -175,6 +175,21 @@ describe("DraftBar", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(text);
   });
 
+  it("says how to get past a save that needs Validate, which this page has no button for", () => {
+    state.save = {
+      error: {
+        statusCode: 409,
+        error: "validation_required",
+        message:
+          "Validate the reviewed changes first, then save the validated versions",
+      },
+    };
+    render(<DraftBar env={ENV} />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(DRAFTS_COPY.errors.validation_required);
+    expect(alert).not.toHaveTextContent("Validate the reviewed changes first");
+  });
+
   it("explains a stale refusal with the piece it names", () => {
     state.save = {
       error: { statusCode: 409, error: "draft_stale", piece: "environment" },
