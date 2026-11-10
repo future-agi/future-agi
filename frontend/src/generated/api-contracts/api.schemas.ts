@@ -36507,16 +36507,13 @@ export interface QueueExportJobResultApi {
   status: string;
   /** @minLength 1 */
   export_format: string;
-  item_count: number;
-  /** @minLength 1 */
-  file_url: string;
-  /** @minLength 1 */
-  file_name: string;
-  /** @minLength 1 */
-  error: string;
+  item_count: number | null;
+  file_url: string | null;
+  file_name: string | null;
+  error: string | null;
   created_at: string;
-  started_at: string;
-  finished_at: string;
+  started_at: string | null;
+  finished_at: string | null;
 }
 
 export interface QueueExportJobResponseApi {

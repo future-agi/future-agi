@@ -47,18 +47,19 @@ test('ANNOT-E2E-006: large queues download all annotations and source content', 
   const labelId = (await actor.api.post<{ result: { id: string } }>('/model-hub/annotations-labels/', {
     name: `${prefix}-rating`, type: 'star', settings: { no_of_stars: 5 },
   })).result.id;
-  const large = (await actor.api.post<{ result: { id: string } }>(QUEUES, {
+  // ModelViewSet.create returns AnnotationQueueSerializer directly (no envelope).
+  const large = (await actor.api.post<{ id: string }>(QUEUES, {
     name: `${prefix}-large`, label_ids: [labelId],
-  })).result.id;
-  const small = (await actor.api.post<{ result: { id: string } }>(QUEUES, {
+  })).id;
+  const small = (await actor.api.post<{ id: string }>(QUEUES, {
     name: `${prefix}-small`, label_ids: [labelId],
-  })).result.id;
+  })).id;
   for (let start = 0; start < rows.length; start += 200) {
-    await actor.api.post(`${QUEUES}${large}/items/add/`, {
+    await actor.api.post(`${QUEUES}${large}/items/add-items/`, {
       items: rows.slice(start, start + 200).map(r => ({ source_type: 'dataset_row', source_id: r.id })),
     });
   }
-  await actor.api.post(`${QUEUES}${small}/items/add/`, {
+  await actor.api.post(`${QUEUES}${small}/items/add-items/`, {
     items: [{ source_type: 'dataset_row', source_id: rows[0].id }],
   });
   const readItems = (queue: string) => probe.pg<Item>(

@@ -1015,6 +1015,9 @@ class AnnotationExportJob(BaseModel):
     )
     # Kept after parent deletion so retention can still remove the artifact.
     storage_key = models.CharField(max_length=255, default="")
+    # One workflow activity owns a job; retries have increasing attempt numbers.
+    activity_execution = models.CharField(max_length=255, default="")
+    activity_attempt = models.PositiveIntegerField(default=0)
     created_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,

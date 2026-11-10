@@ -12,7 +12,7 @@ import tempfile
 from datetime import timedelta
 
 import structlog
-from django.db import transaction
+from django.db import connections, transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework.utils.encoders import JSONEncoder
@@ -22,6 +22,7 @@ from model_hub.models.choices import (
     AnnotationExportFormat,
     AnnotationExportJobStatus,
 )
+from tfc.routers import force_primary
 from tfc.temporal import temporal_activity
 
 logger = structlog.get_logger(__name__)
@@ -78,6 +79,16 @@ def render_export(job):
 
     The caller owns *fileobj* and must close it.
     """
+    # Keyset pages alone are not stable when users edit order/status mid-export.
+    # Start a fresh snapshot before the first read; release it before the worker
+    # re-reads the job under a lock for upload/finalization.
+    with force_primary(), transaction.atomic(using="default"):
+        with connections["default"].cursor() as cursor:
+            cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        return _render_export_snapshot(job)
+
+
+def _render_export_snapshot(job):
     from model_hub.views.annotation_queues import (
         QUEUE_EXPORT_CSV_HEADER,
         build_queue_export_rows,
@@ -200,6 +211,16 @@ def _temporal_will_retry():
     return attempt < max_attempts
 
 
+def _temporal_execution():
+    """Retries are ordered within this job's single workflow activity execution."""
+    from temporalio import activity
+
+    if not activity.in_activity():
+        return None
+    info = activity.info()
+    return f"{info.workflow_run_id}/{info.activity_id}", info.attempt
+
+
 @temporal_activity(time_limit=3600, queue="tasks_l")
 def export_annotation_queue_async(job_id):
     """Build a large queue export on a worker and store it for download.
@@ -208,10 +229,21 @@ def export_annotation_queue_async(job_id):
     is over the sync cap, so the HTTP request can return 202 immediately while
     the resolution of every item runs here.
     """
+    execution = _temporal_execution()
     with transaction.atomic():
         job = AnnotationExportJob.no_workspace_objects.select_for_update().get(pk=job_id)
         if job.status == AnnotationExportJobStatus.SUCCEEDED.value:
             return _export_job_result(job)
+        if execution is None:
+            # Direct calls have no Temporal retry identity.
+            execution = (job.activity_execution, job.activity_attempt + 1)
+        execution_id, attempt = execution
+        if job.activity_execution and job.activity_execution != execution_id:
+            raise RuntimeError("This export belongs to a different workflow execution.")
+        if attempt <= job.activity_attempt:
+            raise RuntimeError("This export attempt was superseded.")
+        job.activity_execution = execution_id
+        job.activity_attempt = attempt
         job.status = AnnotationExportJobStatus.RUNNING.value
         job.started_at = timezone.now()
         job.error = None
@@ -219,7 +251,7 @@ def export_annotation_queue_async(job_id):
         if not job.storage_key and job.queue_id:
             extension = "csv" if _is_csv(job) else "json"
             job.storage_key = f"annotation-exports/{job.queue_id}/{job.id}.{extension}"
-        job.save(update_fields=["status", "started_at", "error", "finished_at", "storage_key", "updated_at"])
+        job.save(update_fields=["status", "started_at", "error", "finished_at", "storage_key", "activity_execution", "activity_attempt", "updated_at"])
     attempt_started = job.started_at
 
     fileobj = None
@@ -233,8 +265,13 @@ def export_annotation_queue_async(job_id):
             job = AnnotationExportJob.no_workspace_objects.select_for_update().get(pk=job_id)
             if job.status == AnnotationExportJobStatus.SUCCEEDED.value:
                 return _export_job_result(job)
-            if job.started_at != attempt_started or job.status != AnnotationExportJobStatus.RUNNING.value:
-                return _export_job_result(job)
+            if (
+                job.activity_execution != execution_id
+                or job.activity_attempt != attempt
+                or job.started_at != attempt_started
+                or job.status != AnnotationExportJobStatus.RUNNING.value
+            ):
+                raise RuntimeError("This export attempt was superseded.")
             if job.queue_id is None:
                 raise ValueError("The annotation queue was deleted before export completed.")
             file_url, file_name = _store_export_file(job, fileobj, size)
@@ -250,7 +287,8 @@ def export_annotation_queue_async(job_id):
             raise
         AnnotationExportJob.no_workspace_objects.filter(
             pk=job_id, status=AnnotationExportJobStatus.RUNNING.value,
-            started_at=attempt_started,
+            started_at=attempt_started, activity_execution=execution_id,
+            activity_attempt=attempt,
         ).update(status=AnnotationExportJobStatus.FAILED.value, error=str(exc),
                  finished_at=timezone.now(), updated_at=timezone.now())
         raise

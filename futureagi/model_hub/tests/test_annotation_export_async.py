@@ -72,7 +72,7 @@ def _make_job(queue, organization, workspace, user, export_format="json"):
     )
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_async_json_payload_matches_sync_download(
     auth_client, organization, workspace, user
@@ -103,7 +103,7 @@ def test_async_json_payload_matches_sync_download(
     assert async_rows == json.loads(json.dumps(sync_rows, cls=JSONEncoder))
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_async_csv_payload_matches_sync_download(
     auth_client, organization, workspace, user
@@ -125,7 +125,7 @@ def test_async_csv_payload_matches_sync_download(
     assert size == len(text.encode("utf-8"))
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=2)
 def test_async_export_covers_every_item_above_the_cap(organization, workspace, user):
     """The cap bounds the request, not the export: all rows must come out."""
@@ -146,7 +146,7 @@ def test_async_export_covers_every_item_above_the_cap(organization, workspace, u
     assert len({row[0] for row in rows}) == 7
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_activity_stores_file_and_completes_job(organization, workspace, user):
     seed = _build_dataset_queue(
@@ -185,7 +185,7 @@ def test_activity_stores_file_and_completes_job(organization, workspace, user):
     assert captured["size"] == len(captured["bytes"])
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_activity_failure_records_real_error_and_reraises(
     organization, workspace, user
@@ -210,7 +210,7 @@ def test_activity_failure_records_real_error_and_reraises(
     assert job.finished_at is not None
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_export_job_endpoint_reports_progress_then_link(
     auth_client, organization, workspace, user
 ):
@@ -236,7 +236,7 @@ def test_export_job_endpoint_reports_progress_then_link(
     assert ready["item_count"] == 2
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_export_job_endpoint_404s_for_another_queue(
     auth_client, organization, workspace, user
 ):
@@ -253,7 +253,7 @@ def test_export_job_endpoint_404s_for_another_queue(
     assert resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_async_export_honours_the_status_filter(organization, workspace, user):
     """The filter the user asked for has to survive the trip to the worker."""
@@ -277,7 +277,7 @@ def test_async_export_honours_the_status_filter(organization, workspace, user):
     assert all(row["status"] == QueueItemStatus.COMPLETED.value for row in rows)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=2)
 def test_status_all_is_recorded_as_no_filter(
     auth_client, organization, workspace, user
@@ -302,7 +302,7 @@ def test_status_all_is_recorded_as_no_filter(
     assert item_count == 5
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_export_job_endpoint_404s_on_a_malformed_job_id(
     auth_client, organization, workspace, user
 ):
@@ -316,7 +316,7 @@ def test_export_job_endpoint_404s_on_a_malformed_job_id(
     assert resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_export_rolls_over_to_disk_without_changing_the_bytes(
     organization, workspace, user
@@ -349,7 +349,7 @@ def test_export_rolls_over_to_disk_without_changing_the_bytes(
     assert size_disk == size_mem
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_items_without_annotations_still_get_a_csv_line(organization, workspace, user):
     """Every item is accounted for, annotated or not."""
@@ -374,7 +374,7 @@ def test_items_without_annotations_still_get_a_csv_line(organization, workspace,
     ]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 @pytest.mark.parametrize("export_format", ["json", "csv"])
 def test_async_matches_sync_across_chunk_boundaries(
@@ -407,7 +407,7 @@ def test_async_matches_sync_across_chunk_boundaries(
         )
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_failure_leaves_job_running_while_temporal_will_retry(
     organization, workspace, user
@@ -467,7 +467,7 @@ def _transcript_queries(captured):
     ]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_async_call_execution_matches_sync_download(
     auth_client, organization, workspace, user
@@ -491,7 +491,7 @@ def test_async_call_execution_matches_sync_download(
     assert all(row["source"]["type"] == "call_execution" for row in json.loads(text))
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_async_call_execution_prefetches_transcripts_no_n_plus_one(
     organization, workspace, user
@@ -518,7 +518,7 @@ def test_async_call_execution_prefetches_transcripts_no_n_plus_one(
     ]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 def test_async_prototype_run_matches_sync_download(
     auth_client, organization, workspace, user
@@ -541,7 +541,7 @@ def test_async_prototype_run_matches_sync_download(
     assert all(row["source"]["type"] == "prototype_run" for row in json.loads(text))
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
 @pytest.mark.parametrize(
     "source_type",
@@ -602,7 +602,7 @@ def _finished_job(queue, organization, workspace, user, *, status_value, age_day
     return job
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_cleanup_soft_deletes_terminal_jobs_past_retention(
     organization, workspace, user
 ):
@@ -645,7 +645,7 @@ def test_cleanup_soft_deletes_terminal_jobs_past_retention(
     assert AnnotationExportJob.all_objects.get(pk=stale_failed.id).deleted is True
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_cleanup_continues_past_a_storage_failure(organization, workspace, user):
     """One object-store failure must not abort the whole sweep."""
     seed = _build_dataset_queue(
@@ -677,7 +677,7 @@ def test_cleanup_continues_past_a_storage_failure(organization, workspace, user)
     assert AnnotationExportJob.objects.count() == 1
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_cleanup_deletes_the_stored_object_for_the_reclaimed_job(
     organization, workspace, user
 ):
@@ -701,7 +701,7 @@ def test_cleanup_deletes_the_stored_object_for_the_reclaimed_job(
     assert key == f"annotation-exports/{job.queue_id}/{job.id}.json"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("workflow_status", ["FAILED", "TIMED_OUT", "CANCELED", "TERMINATED"])
 def test_poll_reports_worker_exit_without_mutating_on_get(
     auth_client, organization, workspace, user, workflow_status
@@ -729,7 +729,7 @@ def test_poll_reports_worker_exit_without_mutating_on_get(
     assert job.finished_at is not None
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("workflow", [None, {"status_name": "RUNNING"}])
 def test_poll_does_not_fail_on_temporal_outage_or_retry(
     auth_client, organization, workspace, user, workflow
@@ -748,7 +748,7 @@ def test_poll_does_not_fail_on_temporal_outage_or_retry(
     assert _unwrap(response.data)["status"] == "pending"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_cleanup_removes_upload_even_when_saving_file_url_failed(organization, workspace, user):
     seed = _build_dataset_queue(
         organization=organization, workspace=workspace, user=user, n_rows=1
