@@ -32,7 +32,6 @@ import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHook
 import { useDebounce } from "src/hooks/use-debounce";
 import useSelection from "./useSelection";
 import PagedScenarioViews from "./PagedScenarioViews";
-import { useScenarioReadiness } from "./scenarioReadiness";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // carries this on its tooltip while locked.
@@ -94,7 +93,6 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false, runBlockedReason }) {
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
-  const readiness = useScenarioReadiness(env);
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -492,7 +490,6 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                 pageData={pageData}
                 selection={sel}
                 env={env}
-                readiness={readiness}
                 view={view}
                 hiddenGroupIds={hiddenGroupIds}
                 onHideGroup={toggleGroupHidden}
