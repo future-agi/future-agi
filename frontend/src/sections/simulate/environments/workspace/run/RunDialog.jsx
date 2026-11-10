@@ -39,6 +39,18 @@ const offered = (piece, version) =>
   version.isDefault ||
   (piece === "agent" ? version.pickable : version.status === "active");
 
+// Notes sit compact in the plan, like its Ready to run lines: a 16px icon
+// level with one line of small text.
+const NOTE_SX = {
+  py: 0.5,
+  px: 1.5,
+  alignItems: "center",
+  typography: "s3",
+  "& .MuiAlert-icon": { py: 0, mr: 1, fontSize: 16 },
+  "& .MuiAlert-icon svg": { width: 16, height: 16 },
+  "& .MuiAlert-message": { py: 0.5 },
+};
+
 const named = (version) => version?.label || COPY.unlabelled;
 const optionLabel = (version) =>
   version.isDefault ? `${named(version)} (${COPY.default})` : named(version);
@@ -345,7 +357,7 @@ export default function RunDialog({
           />
         )}
         {rerun === "fellBack" && (
-          <Alert severity="info" data-testid="rerun-fallback">
+          <Alert severity="info" sx={NOTE_SX} data-testid="rerun-fallback">
             {agentFellBack ? COPY.rerunAgentFallback : COPY.rerunFallback}
           </Alert>
         )}
@@ -366,12 +378,12 @@ export default function RunDialog({
           </Stack>
         )}
         {allHeld && (
-          <Alert severity="error" data-testid="run-all-held">
+          <Alert severity="error" sx={NOTE_SX} data-testid="run-all-held">
             {RUN_PLAN_COPY.allHeld(blockingLabel)}
           </Alert>
         )}
         {drafts?.any && (
-          <Alert severity="info" data-testid="run-drafts-note">
+          <Alert severity="info" sx={NOTE_SX} data-testid="run-drafts-note">
             {DRAFTS_COPY.notInRun}
           </Alert>
         )}
@@ -389,7 +401,7 @@ export default function RunDialog({
           </Typography>
         )}
         {missing.length > 0 && !blocked && (
-          <Alert severity="warning">
+          <Alert severity="warning" sx={NOTE_SX}>
             {COPY.notInSuite(missing, named(suite))}
           </Alert>
         )}
@@ -416,6 +428,7 @@ export default function RunDialog({
           {warnings.map((warning) => (
             <Alert
               key={`${warning.code}:${warning.piece || ""}`}
+              sx={NOTE_SX}
               severity="warning"
               data-testid="run-warning"
             >
@@ -456,7 +469,7 @@ export default function RunDialog({
         <Stack spacing={2} sx={{ pt: 1 }}>
           {body()}
           {dialogError && (
-            <Alert severity="error" data-testid="run-error">
+            <Alert severity="error" sx={NOTE_SX} data-testid="run-error">
               {errorText}
             </Alert>
           )}
