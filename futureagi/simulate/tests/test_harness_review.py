@@ -471,3 +471,60 @@ def test_a_rule_change_reads_as_the_rule_and_bookkeeping_is_left_out_of_a_summar
         "rule": f'Add rule "{rule}"',
         "actor": "Change role of actor morgan_lee",
     }
+
+
+def test_the_suite_index_follows_the_accepted_scenario_changes_and_keeps_the_rejected_ones_as_they_were():
+    def entry(name, **doc):
+        return {"name": name, "folder": f"scenarios/{name}", "steps": [], **doc}
+
+    default = _tree(
+        **{
+            "scenarios/kept/scenario.json": {"name": "kept", "sub_goals": ["a"]},
+            "scenarios/edited/scenario.json": {"name": "edited", "sub_goals": ["a"]},
+            "scenarios/gone/scenario.json": {"name": "gone"},
+            "scenarios/declined/scenario.json": {
+                "name": "declined",
+                "sub_goals": ["a"],
+            },
+            "scenarios.json": [
+                entry("kept", sub_goals=["a"]),
+                entry("edited", sub_goals=["a"]),
+                entry("gone"),
+                entry("declined", sub_goals=["a"]),
+                entry("orphan"),
+            ],
+        }
+    )
+    draft = _tree(
+        **{
+            "scenarios/kept/scenario.json": {"name": "kept", "sub_goals": ["a"]},
+            "scenarios/edited/scenario.json": {
+                "name": "edited",
+                "sub_goals": ["a", "b"],
+            },
+            "scenarios/declined/scenario.json": {
+                "name": "declined",
+                "sub_goals": ["a", "c"],
+            },
+            "scenarios/new/scenario.json": {"name": "new"},
+            "scenarios.json": [
+                entry("kept", sub_goals=["a"]),
+                entry("edited", sub_goals=["a", "b"]),
+                entry("declined", sub_goals=["a", "c"]),
+                entry("new"),
+            ],
+        }
+    )
+    changes = compute_changes(default, draft)
+    composed = compose_accepted(
+        default,
+        draft,
+        changes,
+        _decide(changes, {"scenario:edited", "scenario:gone", "scenario:new"}),
+    )
+
+    index = {one["name"]: one for one in json.loads(composed["scenarios.json"])}
+    assert list(index) == ["kept", "edited", "declined", "new"]
+    assert index["edited"]["sub_goals"] == ["a", "b"]
+    assert index["declined"]["sub_goals"] == ["a"]
+    assert "scenarios/gone/scenario.json" not in composed
