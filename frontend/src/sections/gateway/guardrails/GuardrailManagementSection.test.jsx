@@ -222,7 +222,7 @@ describe("GuardrailManagementSection", () => {
     expect(screen.getByText("201")).toBeInTheDocument();
   });
 
-  it("marks a blocked (403) row in the Logs tab as an error", async () => {
+  it("marks a blocked (403) row in the Logs tab as a warning", async () => {
     mockParams = { tab: "logs" };
     vi.spyOn(axiosInstance, "get").mockResolvedValue({
       data: {
@@ -247,34 +247,39 @@ describe("GuardrailManagementSection", () => {
       </QueryClientProvider>,
     );
 
-    // The status code is a StatusBadge now; a block reads in the danger tint.
+    // A blocked request is a client warning, distinct from a server error.
     const badge = (await screen.findByText("403")).parentElement;
     const theme = createTheme({ palette: palette("light") });
     expect(badge).toHaveStyle({
-      backgroundColor: statusColors(theme, "danger").bg,
+      backgroundColor: statusColors(theme, "warning").bg,
     });
   });
 
   describe.each(["light", "dark"])(
     "Logs tab status colour by HTTP status class (%s theme)",
     (mode) => {
+      // The Logs column represents the HTTP class, not the guardrail action.
+      // Even the legacy 246 warning code belongs to the successful 2xx class.
       it.each([
-        [400, "danger"],
-        [403, "danger"],
-        [429, "danger"],
-        [446, "danger"],
-        [499, "danger"],
-        [500, "danger"],
-        [502, "danger"],
-        [599, "danger"],
-        [246, "warning"],
         [200, "success"],
         [201, "success"],
         [204, "success"],
+        [246, "success"],
         [299, "success"],
+        [300, "info"],
+        [302, "info"],
+        [399, "info"],
+        [400, "warning"],
+        [403, "warning"],
+        [404, "warning"],
+        [429, "warning"],
+        [446, "warning"],
+        [499, "warning"],
+        [500, "danger"],
+        [502, "danger"],
+        [503, "danger"],
+        [599, "danger"],
         [199, "neutral"],
-        [300, "neutral"],
-        [399, "neutral"],
         [600, "neutral"],
         [0, "neutral"],
         [null, "neutral"],
