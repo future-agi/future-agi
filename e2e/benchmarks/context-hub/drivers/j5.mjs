@@ -46,7 +46,7 @@ export async function runInventory({ python, manifestPath, evidencePath, signal 
   }
   const inventory = JSON.parse(stdout);
   const artifact = JSON.stringify({ exitCode, inventory }, null, 2);
-  await writeFile(evidencePath, artifact);
+  await writeFile(evidencePath, artifact, { flag: 'wx', mode: 0o600 });
   return { exitCode, inventory, artifact_sha256: hash(artifact) };
 }
 
@@ -112,7 +112,7 @@ export async function createDriver({ jobId, runId, registration }) {
       }
       assertInventory(observed.inventory, current);
       const filesystemArtifact = JSON.stringify(current, null, 2);
-      await writeFile(config.evidence_path + '.filesystem.json', filesystemArtifact);
+      await writeFile(config.evidence_path + '.filesystem.json', filesystemArtifact, { flag: 'wx', mode: 0o600 });
       ledger.stage({ step: stage.id, phase: stage.phase, source: 'filesystem',
         artifactHash: hash(filesystemArtifact), actionSequences: [] });
     },
