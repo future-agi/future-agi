@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from django.utils import timezone
 
+from model_hub.models.skills_hub_v12 import HubSkillContextSession
 from model_hub.services.skills_hub.v12.consumers import (
     adoption_summary,
     append_receipt,
@@ -76,6 +77,24 @@ def test_unobserved_retained_thread_cannot_be_hidden_by_another_reporter(
         ),
     )
     assert "matches_target" in summary(principal, context)["states"]
+
+
+def test_expired_unobserved_mapping_is_not_proof_of_thread_closure(
+    principal, context, context_version, binding, credential
+):
+    version = context_version(context)
+    point(context, version)
+    opened = open_context_session(
+        principal=credential(version),
+        binding_id=binding["id"],
+        request=session_request(),
+        idempotency_key=uuid4(),
+    )
+    report(principal, binding, receipt_for(version, stage="instructions_delivered"))
+    HubSkillContextSession.objects.filter(pk=opened["session_id"]).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    assert_unrecovered(summary(principal, context))
 
 
 def test_failure_after_delivery_is_not_recovered_until_new_delivery(

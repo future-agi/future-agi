@@ -948,13 +948,10 @@ def _observation(
     closed_sessions = {
         row.session_id for row in rows if row.stage == "closed" and row.session_id
     } - {row.session_id for row in active if row.session_id}
-    unobserved_sessions = (
-        binding.hub_skill_sessions.filter(
-            expires_at__gt=now,
-        )
-        .exclude(pk__in=delivered_sessions | closed_sessions)
-        .exists()
-    )
+    # Expiry is loss of resumability, not evidence that the application closed.
+    unobserved_sessions = binding.hub_skill_sessions.exclude(
+        pk__in=delivered_sessions | closed_sessions
+    ).exists()
     failed_sequences = {
         row.instance_id: row.sequence for row in active if row.stage == "failed"
     }
