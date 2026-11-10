@@ -15,6 +15,7 @@ const FewShotExamples = ({
   onChange,
   disabled = false,
   isJevModel = false,
+  modelLabel = "Jev",
 }) => {
   const { data: datasets = [], isLoading } = useQuery({
     queryKey: ["datasets-for-fewshot"],
@@ -32,7 +33,7 @@ const FewShotExamples = ({
         </Typography>
         <Typography variant="caption" color="text.secondary">
           {isJevModel
-            ? "Jev does not support few-shot examples. Your selected datasets are preserved."
+            ? `${modelLabel} does not support few-shot examples. Your selected datasets are preserved.`
             : "Select datasets to guide the LLM judge with example evaluations"}
         </Typography>
       </Box>
@@ -143,6 +144,7 @@ FewShotExamples.propTypes = {
   onChange: PropTypes.func.isRequired,
   disabled: PropTypes.bool,
   isJevModel: PropTypes.bool,
+  modelLabel: PropTypes.string,
 };
 
 export default FewShotExamples;
