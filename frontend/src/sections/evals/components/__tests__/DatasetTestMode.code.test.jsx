@@ -81,6 +81,9 @@ describe("Code dataset playground model override", () => {
       />,
     );
     await screen.findByTitle("Example input");
+    // The variable is auto-mapped in an effect after the row renders. The
+    // real Run button waits for isReady (onReadyChange), so the test does too.
+    await waitFor(() => expect(ref.current.isReady).toBe(true));
     await act(async () => {
       ref.current.runTest();
     });
