@@ -5,6 +5,7 @@ import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import Markdown from "react-markdown";
 import { ToolCallCard } from "src/components/tool-call/ToolCallCard";
+import { normalizeMessageRole } from "src/utils/message-role";
 
 // Role badge colors — keyed into palette.accent so each mode gets its own hue;
 // bg/border derive from the resolved accent via alpha for transparency
@@ -19,7 +20,8 @@ const ROLE_STYLES = {
 };
 
 const getRoleStyle = (role) => {
-  const base = ROLE_STYLES[(role || "").toLowerCase()] || ROLE_STYLES.user;
+  const base =
+    ROLE_STYLES[normalizeMessageRole(role).toLowerCase()] || ROLE_STYLES.user;
   return {
     ...base,
     color: `accent.${base.accent}`,
@@ -88,7 +90,7 @@ function parseMessages(input) {
 function normalizeMessage(msg) {
   if (!msg || typeof msg !== "object")
     return { role: "unknown", content: [String(msg)] };
-  const role = msg.role || "unknown";
+  const role = normalizeMessageRole(msg.role);
   // OpenAI format: {role, content: "text" or [{type, text}]}
   if (msg.content != null) {
     if (typeof msg.content === "string")
@@ -121,7 +123,7 @@ function normalizeMessage(msg) {
 
 // ── Single Message Card ──
 const MessageCard = ({ message }) => {
-  const role = message.role || "user";
+  const role = normalizeMessageRole(message.role, "user");
   const style = getRoleStyle(role);
   const content = message.content;
   const toolCalls = message.tool_calls || message.toolCalls;
