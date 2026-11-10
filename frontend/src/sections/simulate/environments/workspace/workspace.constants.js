@@ -508,6 +508,8 @@ export const DRAFTS_COPY = {
     draft_not_found: "These changes were already saved or discarded.",
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
+    validation_required:
+      "Some of these changes were accepted or rejected in review, so they must pass Validate before they are saved. Validate isn't on this page yet: run it through the API, or discard the changes.",
   },
   // The Scenarios tab and the run dialog.
   unsaved: "Unsaved",
