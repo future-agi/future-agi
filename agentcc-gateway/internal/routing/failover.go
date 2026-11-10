@@ -115,11 +115,21 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 			originalProvider = result.Target.ProviderID
 		}
 
-		// Check circuit breaker before calling.
+		// Keep the admission generation across retries and record exactly one result.
+		var cb *CircuitBreaker
+		var generation uint64
 		if f.cbReg.IsEnabled() {
-			cb := f.cbReg.Get(result.Target.ProviderID)
-			if !cb.Allow() {
+			cb = f.cbReg.Get(result.Target.ProviderID)
+			var allowed bool
+			generation, allowed = cb.Allow()
+			if !allowed {
 				excluded[result.Target.ProviderID] = true
+				if lastErr == nil {
+					lastErr = &models.APIError{
+						Status: 503, Code: "circuit_open",
+						Message: "All provider circuits are open or at their probe limit",
+					}
+				}
 				continue
 			}
 		}
@@ -146,12 +156,11 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 		}
 
 		// Record result in circuit breaker.
-		if f.cbReg.IsEnabled() {
-			cb := f.cbReg.Get(result.Target.ProviderID)
+		if cb != nil {
 			if callErr == nil {
-				cb.RecordSuccess()
+				cb.RecordSuccess(generation)
 			} else {
-				cb.RecordFailure(callErr)
+				cb.RecordFailure(generation, callErr)
 			}
 		}
 

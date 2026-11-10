@@ -40,6 +40,7 @@ type CircuitBreaker struct {
 	mu             sync.Mutex
 	providerID     string
 	state          CircuitState
+	generation     uint64 // identifies the state in which a request was admitted
 	failures       int
 	successes      int
 	halfOpenProbes int // half-open probes granted whose result is not recorded yet
@@ -81,30 +82,32 @@ func NewCircuitBreaker(providerID string, cfg config.CircuitBreakerConfig, onSta
 	}
 }
 
-// Allow returns true if the circuit allows a request through.
-func (cb *CircuitBreaker) Allow() bool {
+// Allow admits a request and returns its generation. Pass that generation to exactly one
+// RecordSuccess or RecordFailure call so late results cannot affect a newer recovery cycle.
+func (cb *CircuitBreaker) Allow() (generation uint64, allowed bool) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
 	switch cb.state {
 	case StateClosed:
-		return true
+		return cb.generation, true
 	case StateOpen:
 		// Check if cooldown has elapsed.
 		if time.Since(cb.lastFailure) >= cb.cfg.Cooldown {
 			cb.state = StateHalfOpen
+			cb.generation++
 			cb.successes = 0
 			cb.halfOpenProbes = 0
 			slog.Debug("circuit breaker half-open",
 				"provider", cb.providerID,
 			)
-			return cb.grantHalfOpenProbeLocked()
+			return cb.generation, cb.grantHalfOpenProbeLocked()
 		}
-		return false
+		return cb.generation, false
 	case StateHalfOpen:
-		return cb.grantHalfOpenProbeLocked()
+		return cb.generation, cb.grantHalfOpenProbeLocked()
 	default:
-		return true
+		return cb.generation, false
 	}
 }
 
@@ -127,9 +130,13 @@ func (cb *CircuitBreaker) releaseHalfOpenProbeLocked() {
 }
 
 // RecordSuccess records a successful call.
-func (cb *CircuitBreaker) RecordSuccess() {
+func (cb *CircuitBreaker) RecordSuccess(generation uint64) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
+
+	if generation != cb.generation {
+		return
+	}
 
 	switch cb.state {
 	case StateClosed:
@@ -139,6 +146,7 @@ func (cb *CircuitBreaker) RecordSuccess() {
 		cb.releaseHalfOpenProbeLocked()
 		if cb.successes >= cb.cfg.SuccessThreshold {
 			cb.state = StateClosed
+			cb.generation++
 			cb.failures = 0
 			cb.successes = 0
 			cb.halfOpenProbes = 0
@@ -153,9 +161,13 @@ func (cb *CircuitBreaker) RecordSuccess() {
 }
 
 // RecordFailure records a failed call.
-func (cb *CircuitBreaker) RecordFailure(err error) {
+func (cb *CircuitBreaker) RecordFailure(generation uint64, err error) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
+
+	if generation != cb.generation {
+		return
+	}
 
 	if !cb.isFailure(err) {
 		// The error says nothing about provider health (a 400 the provider passed through, say),
@@ -174,6 +186,7 @@ func (cb *CircuitBreaker) RecordFailure(err error) {
 		cb.failures++
 		if cb.failures >= cb.cfg.FailureThreshold {
 			cb.state = StateOpen
+			cb.generation++
 			slog.Warn("circuit breaker opened",
 				"provider", cb.providerID,
 				"failures", cb.failures,
@@ -186,6 +199,7 @@ func (cb *CircuitBreaker) RecordFailure(err error) {
 	case StateHalfOpen:
 		// Any failure in half-open → re-open.
 		cb.state = StateOpen
+		cb.generation++
 		cb.successes = 0
 		cb.halfOpenProbes = 0
 		slog.Warn("circuit breaker re-opened",
