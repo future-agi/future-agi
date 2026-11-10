@@ -281,7 +281,7 @@
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:183`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:145`
 
 **Tags:** @saml
 
@@ -302,7 +302,7 @@
 
 **Goal:** The browser that initiated SSO can complete after another browser posts first
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:232`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:191`
 
 **Tags:** @saml
 
@@ -322,7 +322,7 @@
 
 **Goal:** A real cross-site IdP POST does not leak the browser binding cookie
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:293`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:255`
 
 **Tags:** @saml
 
@@ -341,7 +341,7 @@
 
 **Goal:** A SAML user returns to the approved deep page and cannot be redirected off-site
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:316`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:276`
 
 **Tags:** @saml
 
@@ -360,7 +360,7 @@
 
 **Goal:** A SAML session lands in the organization that signed the assertion
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:348`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:308`
 
 **Tags:** @saml
 
@@ -379,7 +379,7 @@
 
 **Goal:** A SAML callback replaces a live session without using its stale organization scope
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:379`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:339`
 
 **Tags:** @saml
 
