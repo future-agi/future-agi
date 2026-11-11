@@ -62,6 +62,29 @@ class ApiError(PolicyError):
 # Only a run or jobs listing GitHub reports as gone goes to a person. Any other
 # failure (5xx, rate limit, timeout) fails the run, and the next one retries.
 GONE = frozenset({404, 410})
+# Waits between the tries of a write that must not fail on one bad answer.
+RETRY_DELAYS = (2, 5)
+
+
+def transient(exc):
+    """No answer, a server error or a rate limit: the same call may succeed."""
+    return isinstance(exc, ApiError) and (
+        exc.status is None or exc.status == 429 or exc.status >= 500
+    )
+
+
+def retrying(call):
+    """Run one GitHub call up to three times while it fails transiently.
+
+    Only for calls whose repetition is harmless: never the approval or merge.
+    """
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return call()
+        except ApiError as exc:
+            if delay is None or not transient(exc):
+                raise
+        time.sleep(delay)
 
 
 def load_policy(path=POLICY_PATH):
@@ -696,6 +719,32 @@ def review_checks_on(api, head, policy):
         if check.get("name") == policy["review_check"]
         and (check.get("app") or {}).get("slug") == "github-actions"
     ]
+
+
+def create_review_check(api, policy, payload):
+    """POST the in-progress review check, retried like retrying(). A lost
+    response can leave the check behind, so look for this record's check
+    before posting it again: a second one would stay in progress on the head."""
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return api.request("POST", "check-runs", payload)
+        except ApiError as exc:
+            if delay is None or not transient(exc):
+                raise
+        time.sleep(delay)
+        try:
+            found = [
+                check
+                for check in review_checks_on(api, payload["head_sha"], policy)
+                if check.get("external_id") == payload["external_id"]
+            ]
+        except ApiError as exc:
+            if not transient(exc):
+                raise
+            found = []
+        if found:
+            return found[0]
+    raise PolicyError("the review check could not be created")
 
 
 def own_run(context):
@@ -1348,19 +1397,50 @@ def prepare(api, policy, settings, event, event_name):
         separators=(",", ":"),
     )
     # Before any record exists, so every genuine record has its "Review
-    # reserved" step even if a later write in this step fails.
+    # reserved" step even if a later write in this step fails. If this step
+    # then fails before emitting review=true, the prepare job also runs the
+    # "Review retryable" step for the same reservation: the model was never
+    # called, so the diff is retried after the branch changes, not barred.
     emit("reserved", RESERVATION.format(**{key: context[key] for key in ("head", "base", "patch")}))
-    # Reserve BEFORE the billable action. A cancellation consumes a round and
-    # cannot cause an unlimited retry loop. All runs serialize via concurrency.
-    comment(
-        api,
-        number,
-        f"{ROUND_MARKER}{record} -->\nAI review attempt {context['round']} reserved for head `{context['head']}`, base `{context['base']}`; different diffs reviewed: {len(charged_diffs(own) | {context['patch']})}/{policy['max_review_rounds']}. Every attempt counts toward a cap of nine. A diff whose review found blocking issues or did not finish is not reviewed again; a review that went stale or whose AI job failed is retried after the branch changes, and re-reviewing an unchanged diff after merging dev costs no round. A person takes over after three different diffs.",
+    try:
+        context["check_id"] = reserve(api, policy, context, record, own)
+    except (PolicyError, KeyError, TypeError):
+        try:
+            comment(
+                api,
+                number,
+                f"AI review attempt {context['round']} for head `{context['head']}` could not start, "
+                "because a GitHub request failed while recording it. Nothing was reviewed. "
+                "Update the branch from dev or push a commit to retry.",
+            )
+        except PolicyError:
+            summary("The note that the review could not start was not posted.")
+        raise
+    emit("context", context)
+    emit("prompt", prompt)
+    summary(
+        f"Reserved review round {context['round']}; required checks: {', '.join(requirements)}."
     )
+    # Last: the AI job runs only when this is true, and the prepare job's
+    # "Review retryable" step only when it is not.
+    emit("review", "true")
+
+
+def reserve(api, policy, context, record, own):
+    """Record the attempt three ways BEFORE the billable action, and return the
+    review check's ID. A cancellation consumes a round and cannot cause an
+    unlimited retry loop; all runs for one PR serialize through concurrency.
+    Each write is retried: a lost response can only duplicate a comment or
+    status, which review_attempts folds into one attempt by run ID."""
+    retrying(lambda: comment(
+        api,
+        context["pr"],
+        f"{ROUND_MARKER}{record} -->\nAI review attempt {context['round']} reserved for head `{context['head']}`, base `{context['base']}`; different diffs reviewed: {len(charged_diffs(own) | {context['patch']})}/{policy['max_review_rounds']}. Every attempt counts toward a cap of nine. A diff whose review found blocking issues or did not finish is not reviewed again; a review that went stale, whose AI job failed or that could not start is retried after the branch changes, and re-reviewing an unchanged diff after merging dev costs no round. A person takes over after three different diffs.",
+    ))
     run_url = RUN_URL.format(repository=api.repository, run_id=context["run_id"])
     # The append-only index of this attempt; later runs rebuild the record from
     # this run's "Review reserved" step. Its state is never read.
-    api.request(
+    retrying(lambda: api.request(
         "POST",
         f"statuses/{context['head']}",
         {
@@ -1369,38 +1449,34 @@ def prepare(api, policy, settings, event, event_name):
             "target_url": run_url,
             "description": f"AI review attempt {context['round']} reserved. A record, not a verdict.",
         },
-    )
-    check = api.request(
-        "POST",
-        "check-runs",
-        {
-            "name": policy["review_check"],
-            "head_sha": context["head"],
-            "external_id": record,
-            "status": "in_progress",
-            "details_url": run_url,
-            "output": {
-                "title": "Diff-only automated review",
-                "summary": "The verdict is pending; no automatic approval is allowed.",
-            },
+    ))
+    check = create_review_check(api, policy, {
+        "name": policy["review_check"],
+        "head_sha": context["head"],
+        "external_id": record,
+        "status": "in_progress",
+        "details_url": run_url,
+        "output": {
+            "title": "Diff-only automated review",
+            "summary": "The verdict is pending; no automatic approval is allowed.",
         },
-    )
-    context["check_id"] = check["id"]
-    emit("context", context)
-    emit("prompt", prompt)
-    emit("review", "true")
-    summary(
-        f"Reserved review round {context['round']}; required checks: {', '.join(requirements)}."
-    )
+    })
+    return check["id"]
 
 
 def publish_verdict(api, policy, context, raw, action_result):
     require_initial_attempt()
     if str(context["run_id"]) != os.environ.get("GITHUB_RUN_ID"):
         raise PolicyError("review reservation belongs to another workflow run")
-    check = api.request("GET", f"check-runs/{context['check_id']}")
     record = {key: context[key] for key in RECORD_KEYS}
-    if (
+    try:
+        check = retrying(lambda: api.request("GET", f"check-runs/{context['check_id']}"))
+    except ApiError:
+        # Unreadable after retries. The attempt-1 and run-ID checks above
+        # already stop a rerun from replacing a verdict; what cannot be
+        # confirmed is that nobody edited the check, so a pass is not used.
+        check = None
+    if check is not None and (
         check.get("status") != "in_progress"
         or check.get("conclusion") is not None
         or check.get("name") != policy["review_check"]
@@ -1434,6 +1510,12 @@ def publish_verdict(api, policy, context, raw, action_result):
                     "PR head or dev base changed during review (or could not be "
                     "confirmed); this verdict is stale."
                 ]
+    if check is None and outcome == "passed":
+        outcome = "retryable"
+        reasons = [
+            "The pending review check could not be read, so this pass is not "
+            "used; the review is retried after the branch changes."
+        ]
     conclusion = {"passed": "success", "blocked": "failure", "retryable": "cancelled"}[outcome]
     title = {
         "passed": "No blocking findings",
@@ -1442,17 +1524,24 @@ def publish_verdict(api, policy, context, raw, action_result):
     }[outcome]
     text = "\n".join(safe_text(reason) for reason in reasons)
     try:
-        api.request(
+        retrying(lambda: api.request(
             "PATCH",
             f"check-runs/{context['check_id']}",
             {"status": "completed", "conclusion": conclusion,
              "output": {"title": title, "summary": text}},
-        )
+        ))
     except PolicyError:
-        # GitHub can apply an update and still lose the response.
-        check = api.request("GET", f"check-runs/{context['check_id']}")
-        if check.get("status") != "completed" or check.get("conclusion") != conclusion:
-            raise
+        # GitHub can apply an update and still lose the response. Either way
+        # the outcome is still emitted: the run's marker step is the evidence,
+        # and the check's conclusion is never read. A check left in progress
+        # only shows as pending on this head.
+        try:
+            check = api.request("GET", f"check-runs/{context['check_id']}")
+            updated = check.get("status") == "completed" and check.get("conclusion") == conclusion
+        except PolicyError:
+            updated = False
+        if not updated:
+            summary("The review check could not be completed; the outcome is still recorded.")
     # The workflow's marker step for this outcome is the evidence later runs read.
     emit("outcome", outcome)
     advice = {

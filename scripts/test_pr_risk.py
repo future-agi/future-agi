@@ -237,11 +237,15 @@ class FakeGitHub:
     def add_job(self, run_id, name, steps):
         self.run_jobs.setdefault((int(run_id), 1), []).append({"name": name, "steps": steps})
 
-    def reserve(self, run_id, reserved):
-        """The prepare job's steps after its policy step emitted `reserved`."""
+    def reserve(self, run_id, reserved, started=True):
+        """The prepare job's steps after its policy step emitted `reserved`.
+        `started`: the step emitted review=true; otherwise it failed after the
+        reservation and the job's "Review retryable" step runs too."""
         self.add_job(run_id, "prepare", [
-            {"name": "Classify, check protection and reserve at most one review round", "conclusion": "success"},
+            {"name": "Classify, check protection and reserve at most one review round",
+             "conclusion": "success" if started else "failure"},
             {"name": "Review reserved: " + reserved, "conclusion": "success"},
+            {"name": "Review retryable: " + reserved, "conclusion": "skipped" if started else "success"},
         ])
 
     def mark(self, run_id, outcome, context):
@@ -1002,6 +1006,9 @@ class ControllerTests(unittest.TestCase):
         summary = patch.object(risk, "summary")
         self.summary = summary.start()
         self.addCleanup(summary.stop)
+        sleep = patch.object(risk.time, "sleep")
+        self.sleep = sleep.start()
+        self.addCleanup(sleep.stop)
         self.patches = [
             patch.object(risk, "now_utc", return_value=NOW),
             patch.object(
@@ -1047,10 +1054,29 @@ class ControllerTests(unittest.TestCase):
             risk.prepare(self.api, POLICY, config or settings(), event, event_name)
         finally:
             # The workflow's "Review reserved" step runs whenever the policy
-            # step emitted a reservation, even if the step failed afterwards.
+            # step emitted a reservation, even if the step failed afterwards;
+            # its "Review retryable" step when review=true was never emitted.
             if self.outputs.get("reserved"):
-                self.api.reserve(self.run_id, self.outputs["reserved"])
+                self.api.reserve(self.run_id, self.outputs["reserved"], self.outputs.get("review") == "true")
         return self.outputs.get("context")
+
+    def failing(self, matches, times, status=502, lose_response=False):
+        """Fail the next `times` requests for which matches(method, route, data)
+        is true, with HTTP `status` (None: no answer). lose_response: GitHub
+        applied the request but the answer was lost."""
+        original = self.api.request
+        left = [times]
+
+        def request(method, route, data=None, **kwargs):
+            if left[0] and matches(method, route, data):
+                left[0] -= 1
+                if lose_response:
+                    original(method, route, data, **kwargs)
+                raise risk.ApiError(f"GitHub API denied or failed a request (HTTP {status})", status)
+            return original(method, route, data, **kwargs)
+
+        self.api.request = request
+        return left
 
     def publish(self, context, raw=None, job_result="success"):
         """The publish step, then the marker step the workflow runs for its outcome."""
@@ -1602,6 +1628,113 @@ class ControllerTests(unittest.TestCase):
 
         self.api.request = lossy
         self.assertEqual(self.publish(context), "passed")
+
+    # --- A failed GitHub write after the reservation (round three) ---
+
+    RESERVATION_WRITES = {
+        "ledger comment": lambda m, r, d: m == "POST" and r == "issues/42/comments" and d["body"].startswith(risk.ROUND_MARKER),
+        "reservation status": lambda m, r, d: m == "POST" and r.startswith("statuses/"),
+        "review check": lambda m, r, d: m == "POST" and r == "check-runs",
+    }
+
+    def test_one_failed_reservation_write_is_retried(self):
+        for name, matches in self.RESERVATION_WRITES.items():
+            for status in (502, 429, None):
+                with self.subTest(write=name, status=status):
+                    self.api = FakeGitHub()
+                    self.failing(matches, 1, status)
+                    context = self.prepare()
+                    self.assertEqual(self.outputs["review"], "true")
+                    self.assertEqual(len([c for c in self.api.checks if c["name"] == POLICY["review_check"]]), 1)
+                    self.assertEqual(self.publish(context), "passed")
+                    risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                    self.assertTrue(self.api.writes("pulls/42/merge"))
+                    self.assertFalse(self.escalations())
+
+    def test_a_check_created_with_a_lost_response_is_not_posted_twice(self):
+        self.failing(self.RESERVATION_WRITES["review check"], 1, lose_response=True)
+        context = self.prepare()
+        [check] = [c for c in self.api.checks if c["name"] == POLICY["review_check"]]
+        self.assertEqual(context["check_id"], check["id"])
+        self.assertEqual(len(self.reservations()), 1)
+        self.assertEqual(self.publish(context), "passed")
+
+    def test_a_refused_reservation_write_is_not_retried(self):
+        left = self.failing(self.RESERVATION_WRITES["review check"], 5, status=403)
+        with self.assertRaises(risk.ApiError):
+            self.prepare()
+        # One try only: five failures were armed and four are left.
+        self.assertEqual(left[0], 4)
+        self.assertFalse(self.reservations())
+
+    def test_a_review_that_could_not_start_is_retried_after_the_branch_changes(self):
+        for name, matches in self.RESERVATION_WRITES.items():
+            with self.subTest(write=name):
+                self.api = FakeGitHub()
+                os.environ.update(POLICY_SHA=BASE, GITHUB_SHA=BASE)
+                self.failing(matches, 3)
+                with self.assertRaises(risk.ApiError):
+                    self.prepare()
+                self.assertEqual(self.outputs["review"], "false")
+                self.assertEqual(self.outputs["context"], "")
+                if name != "ledger comment":
+                    self.assertTrue(any("could not start" in c["body"] for c in self.api.comments))
+                # The model was never called: the diff is not barred.
+                self.prepare()
+                self.assertFalse(self.escalations())
+                if name == "ledger comment":
+                    # Nothing recorded the attempt, so nothing was charged.
+                    self.assertEqual(self.outputs["review"], "true")
+                    continue
+                self.assertEqual(self.outputs["review"], "false")
+                self.catch_up("1" * 40, OTHER)
+                context = self.prepare()
+                self.assertEqual(self.outputs["review"], "true")
+                self.assertEqual(self.publish(context), "passed")
+                risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                self.assertTrue(self.api.writes("pulls/42/merge"))
+                self.assertFalse(self.escalations())
+
+    def test_publish_survives_a_failed_check_read(self):
+        reading = lambda m, r, d: m == "GET" and r.startswith("check-runs/")
+        # Once: retried, the pass stands.
+        context = self.prepare()
+        self.failing(reading, 1)
+        self.assertEqual(self.publish(context), "passed")
+        # Persistently: the verdict is still recorded; a pass cannot be confirmed.
+        for raw, expected in ((None, "retryable"), (verdict(blocking_findings=True), "blocked")):
+            with self.subTest(expected=expected):
+                self.api = FakeGitHub()
+                context = self.prepare()
+                self.failing(reading, 10)
+                self.assertEqual(self.publish(context, raw), expected)
+                self.assertEqual(self.api.checks[-1]["status"], "completed")
+                self.prepare()
+                self.assertEqual(self.outputs["review"], "false")
+                if expected == "blocked":
+                    self.assertTrue(any("found blocking issues" in body for body in self.escalations()))
+                else:
+                    self.assertFalse(self.escalations())
+                    self.catch_up("1" * 40, OTHER)
+                    self.prepare()
+                    self.assertEqual(self.outputs["review"], "true")
+                os.environ.update(POLICY_SHA=BASE, GITHUB_SHA=BASE)
+
+    def test_publish_records_the_outcome_when_the_check_cannot_be_completed(self):
+        context = self.prepare()
+        patched = []
+
+        def after_first_read(method, route, data):
+            # The update and the re-read after it fail; the first read works.
+            if route.startswith("check-runs/") and method == "PATCH":
+                patched.append(route)
+            return route.startswith("check-runs/") and bool(patched)
+
+        self.failing(after_first_read, 10)
+        self.assertEqual(self.publish(context), "passed")
+        self.assertEqual(self.api.checks[-1]["status"], "in_progress")
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertTrue(self.api.writes("pulls/42/merge"))
 
     def test_check_conclusions_are_not_evidence(self):
         # A blocked run's check flipped to success does not free the diff.
@@ -2491,6 +2624,15 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(reserved["name"], "Review reserved: ${{ steps.policy.outputs.reserved }}")
         self.assertEqual(reserved["if"], "always() && steps.policy.outputs.reserved != ''")
         self.assertEqual(reserved["run"], "true")
+        not_started = prepare[prepare.index(policy) + 2]
+        self.assertEqual("Review retryable: " + risk.RESERVATION, risk.OUTCOME_STEPS["retryable"])
+        self.assertEqual(not_started["name"], "Review retryable: ${{ steps.policy.outputs.reserved }}")
+        self.assertEqual(
+            not_started["if"],
+            "always() && steps.policy.outputs.reserved != '' && steps.policy.outputs.review != 'true'",
+        )
+        self.assertEqual(not_started["run"], "true")
+        self.assertEqual(len(prepare), prepare.index(policy) + 3)
         merge = steps[-1]
         self.assertIn("python3 -I scripts/pr_risk.py merge", merge["run"])
         self.assertEqual(

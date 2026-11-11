@@ -118,6 +118,15 @@ jobs:
       - name: "Review reserved: ${{ steps.policy.outputs.reserved }}"
         if: always() && steps.policy.outputs.reserved != ''
         run: 'true'
+      # A reservation whose review never started: the policy step failed (a
+      # GitHub write after the ledger comment) before it emitted review=true.
+      # The AI job runs only when review is 'true' and the gate job only after
+      # prepare succeeded, so no verdict exists that this could re-roll and no
+      # second outcome can be written. The diff is retried after the branch
+      # changes instead of being barred. Must match OUTCOME_STEPS["retryable"].
+      - name: "Review retryable: ${{ steps.policy.outputs.reserved }}"
+        if: always() && steps.policy.outputs.reserved != '' && steps.policy.outputs.review != 'true'
+        run: 'true'
 
   ai-review:
     name: Diff-only AI review
