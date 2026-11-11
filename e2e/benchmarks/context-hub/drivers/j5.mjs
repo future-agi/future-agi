@@ -260,7 +260,10 @@ class CampaignJourney {
     this.profile = this.config.native ? 'codex' : 'claude-code';
     this.campaigns = []; this.credentials = []; this.rounds = []; this.setupRounds = []; this.serial = 0; this.releases = 0;
     this.pinsInstalled = false;
-    this.env = { ...process.env };
+    // Operator configuration: hub origin and workspace scope. The planning
+    // credential itself is issued per rollout by the start command.
+    this.env = { ...process.env, FI_CONTEXT_ORIGIN: this.hubUrl, FI_CONTEXT_ORGANIZATION_ID: this.headers['X-Organization-Id'],
+      FI_CONTEXT_WORKSPACE_ID: this.headers['X-Workspace-Id'] };
     this.repos = fixtureRepositories();
     this.git = new J5GitFixture(this.repos);
     this.rollout = new ContextRollout({ hub: (method, path, data) => this.api(method, path, data), executor: this.executor,
