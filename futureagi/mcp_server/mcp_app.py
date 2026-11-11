@@ -145,10 +145,22 @@ def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
     """Authenticate via OAuth Bearer token and set per-request context."""
     from accounts.models.user import User
     from accounts.models.workspace import Workspace
+    from mcp_server.oauth_revocation import access_token_revocation_reason
     from mcp_server.oauth_utils import decrypt_oauth_token
 
     payload = decrypt_oauth_token(token)
     if not payload or payload.get("type") != "mcp_oauth":
+        return None
+
+    # A token that decrypts may still have been revoked since it was issued.
+    revoked = access_token_revocation_reason(token, payload)
+    if revoked:
+        logger.warning(
+            "mcp_oauth_token_revoked",
+            reason=revoked,
+            client_id=payload.get("client_id"),
+            user_id=payload.get("user_id"),
+        )
         return None
 
     try:
@@ -156,6 +168,9 @@ def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
             User.objects.all().select_related("organization").get(id=payload["user_id"])
         )
     except User.DoesNotExist:
+        return None
+    if not user.is_active:
+        logger.warning("mcp_oauth_user_inactive", user_id=str(user.id))
         return None
 
     organization = user.organization
