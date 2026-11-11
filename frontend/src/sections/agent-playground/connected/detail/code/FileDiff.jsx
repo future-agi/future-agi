@@ -3,6 +3,8 @@ import React from "react";
 import { Box, Skeleton, Typography } from "@mui/material";
 import { DiffEditor } from "@monaco-editor/react";
 import { useCodeFile } from "src/api/agents/agentDetail";
+import ErrorState from "src/components/error-state";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { EDITOR_OPTIONS, editorTheme } from "./editorOptions";
 
 // A side that is missing (the file was added or removed) diffs against empty.
@@ -15,6 +17,21 @@ const text = (file) => (file && file.kind === "text" ? file.content : "");
 export default function FileDiff({ agentId, versionId, againstId, path }) {
   const current = useCodeFile(agentId, versionId, path);
   const previous = useCodeFile(agentId, againstId, path);
+  if (current.isError || previous.isError) {
+    const failed = current.isError ? current : previous;
+    return (
+      <ErrorState
+        title="Couldn't load this file"
+        detail={errorMessage(failed.error)}
+        onRetry={() => {
+          if (current.isError) current.refetch();
+          if (previous.isError) previous.refetch();
+        }}
+        sx={{ p: 2 }}
+        data-testid="file-diff-error"
+      />
+    );
+  }
   if (current.isLoading || previous.isLoading) {
     return (
       <Box sx={{ p: 2 }} data-testid="file-diff-loading">

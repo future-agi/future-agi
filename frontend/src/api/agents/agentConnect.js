@@ -40,7 +40,13 @@ export function useStartScan() {
   });
 }
 
-// Polls while the scan runs; stops on its result or failure.
+// Polls while the scan runs; stops on its result, its failure, or a request
+// that errored, so a 404 or 500 is not asked again every few seconds.
+export const scanPollInterval = (query) =>
+  query?.state?.status !== "error" && scanOpen(query?.state?.data)
+    ? SCAN_POLL_MS
+    : false;
+
 export function useAgentScan(scanId) {
   return useQuery({
     queryKey: ["agents", "scan", scanId],
@@ -50,8 +56,7 @@ export function useAgentScan(scanId) {
       ),
     select: mapScan,
     enabled: !!scanId,
-    refetchInterval: (query) =>
-      scanOpen(query?.state?.data) ? SCAN_POLL_MS : false,
+    refetchInterval: scanPollInterval,
   });
 }
 
