@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Button, IconButton, Stack, Tab, TextField, Typography } from "@mui/material";
 
@@ -37,6 +37,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   const isContext = kind === 'agent_context';
   const root = isContext ? 'AGENTS.md' : 'SKILL.md';
   const navigate = useNavigate();
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const [panel, setPanel] = useState(params.get('tab') === 'tests' ? 'tests' : 'checks');
   const assistKind = !isContext && ['draft', 'description'].includes(params.get('assist')) ? params.get('assist') : null;
@@ -165,7 +166,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   else if (session.revision === 0) saveLabel = 'Not saved yet';
 
   if (migrationRecovery) return <J1MigrationDraftRecovery skill={skill} session={session}
-    onPreserved={() => guard.allow(() => navigate(paths.dashboard.skills.root))} />;
+    onPreserved={() => guard.allow(() => navigate(paths.dashboard.skills.root, location.state?.reopenMigration ? { state: { reopenMigration: location.state.reopenMigration } } : undefined))} />;
 
   return <Stack spacing={2} sx={{ flex: { xs: '1 0 auto', md: '1 1 0%' }, minHeight: 0 }}>
     <PageHeader title={<Box component="span" sx={{ fontFamily: 'monospace' }}>{skill.name}</Box>}

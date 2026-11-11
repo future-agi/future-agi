@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link as RouterLink, useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link as RouterLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { Autocomplete, Avatar, Box, Button, Chip, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { useSkillsList } from "src/api/skills";
@@ -24,7 +24,16 @@ export default function SkillsLibraryView() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [newTemplate, setNewTemplate] = useState(null);
-  const [importOpen, setImportOpen] = useState(false);
+  const location = useLocation();
+  // Returning from draft preservation reopens the same retained migration review.
+  const [reopenPlanIds] = useState(() => {
+    const ids = location.state?.reopenMigration?.planIds;
+    return Array.isArray(ids) && ids.length && ids.every((id) => typeof id === "string") ? ids : null;
+  });
+  const [importOpen, setImportOpen] = useState(Boolean(reopenPlanIds));
+  useEffect(() => {
+    if (location.state?.reopenMigration) navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [location, navigate]);
   const search = params.get("search") || "";
   const tag = params.get("tag") || "";
   const label = params.get("label") || "";
@@ -122,7 +131,7 @@ export default function SkillsLibraryView() {
             disabled={query.isFetching} onPageChange={(nextPage) => changeParams({ page: nextPage + 1 }, false)} onPageSizeChange={(size) => changeParams({ page_size: size })} />
         </Box>}
       {newTemplate !== null && <NewSkillDialog open onClose={() => setNewTemplate(null)} initialTemplate={newTemplate} />}
-      {importOpen && <ImportSkillsDialog open onClose={() => setImportOpen(false)} />}
+      {importOpen && <ImportSkillsDialog open onClose={() => setImportOpen(false)} {...(reopenPlanIds ? { initialTab: "migration", reopenPlanIds } : {})} />}
     </Stack>
   );
 }

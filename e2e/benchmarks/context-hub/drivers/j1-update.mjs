@@ -69,8 +69,8 @@ export async function performUpdate(stage, tools, state) {
   };
   // Retained-migration preview in the import dialog. The exchange format is the
   // preselected default; the owner opens the dialog unless already on the library.
-  const preview = async (page, { navigate }) => {
-    if (navigate) await go(page, '/dashboard/skills', 'second-migration-library');
+  const preview = async page => {
+    await go(page, '/dashboard/skills', 'second-migration-library');
     await operator.click(page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }), 'open-import');
     await click(page, 'tab', 'Retained migration');
     await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'owner', step: stage.id, phase: stage.phase, target: 'select-source-revision-two' }, () => page.getByLabel('Retained source files', { exact: true }).setInputFiles(input.update.exchange));
@@ -90,7 +90,7 @@ export async function performUpdate(stage, tools, state) {
     await publish(page, id, 2);
     await edit(page, input.update.personal);
     ledger.fault('hub-divergence', 'published-hub-change-and-personal-draft');
-    state.plan = await preview(page, { navigate: true });
+    state.plan = await preview(page);
     const changed = state.plan.inventory.items.filter(item => item.migration.hub_diverged);
     assert.deepEqual(changed.map(item => item.destination_id), [id]);
     state.personal = await read(`${id}/draft/`, signal);
@@ -121,8 +121,11 @@ export async function performUpdate(stage, tools, state) {
       await click(page, 'button', 'Preserve and suspend draft');
       await expect(page).toHaveURL(/\/dashboard\/skills$/);
     }, decision);
-    // Suspension returns to the library, so the second preview needs no navigation.
-    const fresh = await preview(page, { navigate: false });
+    // Suspension returns to the same retained review: the immutable plan and
+    // fingerprint are reloaded with live destination/draft state, no re-upload.
+    await expect(page.getByRole('heading', { name: 'Review all items', exact: true })).toBeVisible();
+    const fresh = await read(`intake/${state.plan.id}/`, signal);
+    assert.equal(fresh.fingerprint, state.plan.fingerprint);
     const names = fresh.inventory.items.map(item => item.name);
     // The diverged item is an exception: the owner inspects Base/Source/Hub and
     // chooses replacement explicitly; the unchanged-Hub item has the safe default.

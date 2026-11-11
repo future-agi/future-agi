@@ -38,9 +38,9 @@ function ImportReleaseReview({ bundle, label, snapshot, onReview }) {
 }
 ImportReleaseReview.propTypes = { bundle: PropTypes.object.isRequired, label: PropTypes.string.isRequired, snapshot: PropTypes.object, onReview: PropTypes.func.isRequired };
 
-function ImportSkillsDialogContent({ open, onClose }) {
+function ImportSkillsDialogContent({ open, onClose, initialTab, reopenPlanIds }) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState("upload");
+  const [tab, setTab] = useState(initialTab || "upload");
   const previewMutation = useImportPreview();
   const importMutation = useImportSkills();
   const folderInput = useRef(null);
@@ -100,7 +100,7 @@ function ImportSkillsDialogContent({ open, onClose }) {
       isLoading={busy} isValid={Boolean(result) || (preview ? canImport : files.length > 0)}
       onSubmit={submit} actionBtnSx={tab !== "upload" ? { display: "none" } : {}} actionBtnTitle={result ? "Done" : preview ? "Import" : "Preview import"}>
       <CustomTabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Import method"><Tab value="upload" label="Upload" disabled={busy} /><Tab value="github" label="GitHub" disabled={busy} /><Tab value="migration" label="Retained migration" disabled={busy} /></CustomTabs>
-      {tab === 'migration' ? <RetainedMigrationPanel onBusyChange={setMigrationBusy} onClose={onClose} /> : tab === 'github' ? <Box sx={{ minWidth: 0, overflowY: 'auto' }}><GitHubImportPanel onStaged={(receipt) => {
+      {tab === 'migration' ? <RetainedMigrationPanel onBusyChange={setMigrationBusy} onClose={onClose} initialPlanIds={reopenPlanIds} /> : tab === 'github' ? <Box sx={{ minWidth: 0, overflowY: 'auto' }}><GitHubImportPanel onStaged={(receipt) => {
         const id = receipt.consumed?.skillId ?? receipt.skill?.id;
         if (id) { onClose(); navigate(`${paths.dashboard.skills.edit(id)}?tab=tests`); }
       }} /></Box> : <Stack spacing={2} sx={{ minWidth: 0, overflowY: "auto" }}>
@@ -159,7 +159,7 @@ function ImportSkillsDialogContent({ open, onClose }) {
   );
 }
 
-ImportSkillsDialog.propTypes = { open: PropTypes.bool.isRequired, onClose: PropTypes.func.isRequired };
+ImportSkillsDialog.propTypes = { open: PropTypes.bool.isRequired, onClose: PropTypes.func.isRequired, initialTab: PropTypes.oneOf(["upload", "github", "migration"]), reopenPlanIds: PropTypes.arrayOf(PropTypes.string) };
 
 export default function ImportSkillsDialog(props) {
   const { identity } = useSkillV11Scope();

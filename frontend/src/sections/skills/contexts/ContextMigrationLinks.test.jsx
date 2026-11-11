@@ -20,8 +20,9 @@ it("seeds an empty draft with migration proposals pinned to exact versions, appl
   render(<ContextLinksPanel scopeKey="scope" session={draft} proposedLinks={proposed} availableSkills={[{ id: "one", name: "refunds", kind: "skill", latestVersion: 1 }]} onPreview={preview} onApply={apply} />);
   expect(screen.getByText(/2 skills from your migration are proposed/)).toBeVisible();
   expect(apply).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Preview dependency changes" }));
+  // The read-only preview runs once on arrival; nothing is applied yet.
   await screen.findByText(/Compiled candidate/);
+  expect(preview).toHaveBeenCalledOnce();
   expect(preview).toHaveBeenCalledWith({ revision: 1, links: [{ skillId: "one", selector: { version: 1 } }, { skillId: "two", selector: { version: 3 } }], refreshSkillIds: [] });
   expect(screen.getByRole("button", { name: "Apply selected updates to draft" })).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox", { name: "Accept these exact resolved versions and selector policies." }));

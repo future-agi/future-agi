@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Alert, Box, Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { AuthoringError, useAuthoringOperation } from "../editor/HotfixHeadReview";
@@ -17,6 +17,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
   const accepted = session.contextSpec?.links || [];
   const [links, setLinks] = useState(() => seedLinks(accepted, proposedLinks));
   const proposed = !accepted.length && links.length > 0 && Array.isArray(proposedLinks);
+  const autoPreviewed = useRef(false);
   const [refresh, setRefresh] = useState([]);
   const [selected, setSelected] = useState("");
   const [policy, setPolicy] = useState("label");
@@ -49,6 +50,13 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
     }, { revision: preview.revision, links, refreshSkillIds: refresh, expectedFingerprint: preview.fingerprint });
     if (result) { setLinks(result.contextSpec.links); setRefresh([]); invalidate(); }
   };
+  // Previewing is read-only, so seeded migration proposals are resolved once on
+  // arrival. Applying them still requires the explicit acceptance below.
+  useEffect(() => {
+    if (!proposed || readOnly || !onPreview || autoPreviewed.current) return;
+    autoPreviewed.current = true;
+    prepare();
+  });
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <Typography variant="m3" component="h2">Linked skills · {lock.length} accepted locks</Typography>
     <Typography variant="s1">Following offers updates. Published contexts stay unchanged. Linked paths are read-only; edit their source skill separately.</Typography>

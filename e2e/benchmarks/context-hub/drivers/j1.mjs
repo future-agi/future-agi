@@ -170,13 +170,13 @@ export async function createDriver({ jobId, runId, registration }) {
             ledger.fault('unsupported-member', 'binary-member');
           }
           // Both retained sources are previewed in ONE import session and reviewed
-          // together. The exchange format is the visible preselected default.
+          // together. The exchange format is the visible preselected default and
+          // choosing a private folder selects the folder format itself.
           const page = await newPage();
           await go(page, '/dashboard/skills', 'migration-library');
           await operator.click(page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }), 'open-import');
           await click(page, 'tab', 'Retained migration');
           for (const kind of ['exchange', 'folder']) {
-            if (kind === 'folder') await choose(page, 'Retained source format', 'Private folder or ZIP');
             await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'owner', step: stage.id, phase: stage.phase, target: 'select-source-input' }, () => page.getByLabel(kind === 'exchange' ? 'Retained source files' : 'Retained private folder', { exact: true }).setInputFiles(kind === 'exchange' ? input.exchange : input.folder));
             // The identities come from the terminal inventory report: a manual
             // information transfer into the browser form (H), plus the field edit (A).
@@ -270,7 +270,8 @@ export async function createDriver({ jobId, runId, registration }) {
           contextId = createdReceipt.context_id ?? createdReceipt.context?.id;
           requireValue(contextId, 'Context creation must retain an identity');
           await expect(page.getByText(/14 skills from your migration are proposed/)).toBeVisible();
-          await click(page, 'button', 'Preview dependency changes');
+          // The read-only dependency preview resolves on arrival; acceptance stays explicit.
+          await expect(page.getByText(/^Compiled candidate /)).toBeVisible();
           await operator.click(page.getByRole('checkbox', { name: 'Accept these exact resolved versions and selector policies.', exact: true }), 'accept-pinned-links');
           await click(page, 'button', 'Apply selected updates to draft');
           await expect(page.getByRole('heading', { name: 'Linked skills · 14 accepted locks', exact: true })).toBeVisible();

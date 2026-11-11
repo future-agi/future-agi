@@ -41,21 +41,31 @@ export function migrationDecisionInput(value) {
   return body;
 }
 
+async function withReviews(plan, config) {
+  const items = await Promise.all(plan.items.map(async (item) => {
+    if (item.blocked) return item;
+    const review = skillV11Result(await axios.post(reviewPath(plan.id), {
+      item_key: item.key, expected_fingerprint: plan.fingerprint,
+    }, config));
+    return { ...item, ...mapMigrationReview(review) };
+  }));
+  return { ...plan, items };
+}
+
 export function useMigrationPreview() {
   return useSkillV11Mutation({ send: async ({ form, exportData }, config) => {
     const wire = skillV11Result(await axios.post(exportData
       ? apiPath('/model-hub/skills/intake/langfuse/preview/') : apiPath('/model-hub/skills/intake/preview/'),
     exportData || form, config));
-    const plan = mapMigrationPlan(wire);
-    const items = await Promise.all(plan.items.map(async (item) => {
-      if (item.blocked) return item;
-      const review = skillV11Result(await axios.post(reviewPath(plan.id), {
-        item_key: item.key, expected_fingerprint: plan.fingerprint,
-      }, config));
-      return { ...item, ...mapMigrationReview(review) };
-    }));
-    return { ...plan, items };
+    return withReviews(mapMigrationPlan(wire), config);
   } });
+}
+
+// Reload retained plans by identity (for example after preserving a draft).
+// The retained bytes and fingerprint are unchanged; comparisons are re-read live.
+export function useMigrationPlanReload() {
+  return useSkillV11Mutation({ send: async ({ planIds }, config) => Promise.all(planIds.map(async (plan_id) =>
+    withReviews(mapMigrationPlan(skillV11Result(await axios.get(apiPath('/model-hub/skills/intake/{plan_id}/', { plan_id }), config))), config))) });
 }
 
 export function useMigrationDecision() {
