@@ -2161,7 +2161,10 @@ class HostedHarnessProvider:
             try:
                 flags = _scenario_readiness(job, request.query_params)
             except HostedHarnessError as exc:
-                return Response(exc.as_dict(), status=exc.status_code)
+                # A build that failed or is still running has no versions to pair: its rows carry no flags.
+                if exc.code != "versioning_disabled":
+                    return Response(exc.as_dict(), status=exc.status_code)
+                flags = {}
         rows = grouped(
             [
                 {
