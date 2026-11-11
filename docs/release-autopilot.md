@@ -176,8 +176,10 @@ the guard and now always selects `Production` review, including a retry of the
 newest release after a transient guard failure. Re-running only the approve job
 of an automatic run stops at the recheck in step 5. Because no re-run can return
 to `production-auto`, a GitHub API failure during the guard or the recheck would
-cost a Production review; the retries in step 2 make that less likely, and a
-read that fails three times still leads to **Re-run all jobs** and review.
+cost a Production review; the retries in step 2 make that less likely. A read
+that fails three times in the guard selects `Production` directly. In the
+recheck of an automatic run it stops the approve job, and only **Re-run all
+jobs**, which then selects `Production`, moves the release on.
 Re-running failed build jobs after approve succeeded reuses the earlier guard
 and approval and does not ask for review again, as the `release-images.yml`
 header says; that route can still rebuild an older release and move `latest`
