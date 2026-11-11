@@ -244,9 +244,12 @@ diff. Review findings and the decision are recorded, without logging raw diffs.
 
 Each attempt is reserved **before** the AI call, twice: a bot-authored PR
 comment and an in-progress `PR Autopilot review` check run on the head, both
-carrying the same record (PR, head, base, run ID, round, diff digest). The
-budget counts **different diffs**, not commits: the digest covers the exact
-patches the model reviews (hunk line numbers ignored).
+carrying the same record (PR, head, base, run ID, round, diff digest). In the
+same run, the prepare job then runs a step named `Review reserved: head <head>
+base <base> patch <patch>` (template `RESERVED_STEP` in `scripts/pr_risk.py`),
+rendered from the policy step's output; it runs even if that step failed after
+reserving. The budget counts **different diffs**, not commits: the digest
+covers the exact patches the model reviews (hunk line numbers ignored).
 
 The controller builds a PR's attempt history from the ledger comments **and**
 the review check runs (name `PR Autopilot review`, app `github-actions`) on
@@ -262,12 +265,17 @@ to a person (an escalation comment, no review, no merge):
 - a review check on one of the PR's heads whose record cannot be parsed;
 - a record that cites a run that is not the trusted `dev` dispatch run for its
   revision, or whose run or jobs cannot be read (for example, a deleted run);
-- two records for one run that disagree, or a run whose marker names a
-  different head, base or diff than its record.
+- two records for one run that disagree, a run whose `Review reserved` or
+  outcome step names a different head, base or diff than its record, or a run
+  with no `Review reserved` step for that record. The last case stops an
+  edited record from citing some other run that has no outcome, which would
+  move a never-finished bar onto a made-up diff. A genuine run cancelled in
+  the moment between its reservation and that step also lands here.
 
 For each attempt the controller reads the outcome marker of its run. An attempt
-whose run has no marker never finished (for example, the run was cancelled)
-and counts like a blocked one.
+whose run shows its `Review reserved` step but no outcome marker never finished
+(for example, the run was cancelled during the review) and counts like a
+blocked one.
 
 - A diff is **barred** if any attempt of it, on any head or base, was blocked
   or never finished. It is not reviewed again; a person must resolve the
@@ -417,10 +425,10 @@ Suggested rollout:
    all succeed. Confirm missing-scope/error cases deny automation, classic-only
    strictness is rejected, and a partial AI-job rerun makes no new model call.
    Also confirm these GitHub behaviors, which development could not observe:
-   - `actions/runs/{id}/attempts/1/jobs` lists the three marker steps with
-     their rendered names, the run object of a dispatch run has `head_branch`
-     `dev` and `head_sha` equal to the dispatched commit, and these hold after
-     "Re-run failed jobs";
+   - `actions/runs/{id}/attempts/1/jobs` lists the `Review reserved` step and
+     the outcome marker step with their rendered names; the run object of a
+     dispatch run has `head_branch` `dev` and `head_sha` equal to the
+     dispatched commit; and both hold after "Re-run failed jobs";
    - the branch activity endpoint and the GraphQL commits and
      `HEAD_REF_FORCE_PUSHED_EVENT` timeline query succeed with the job token;
    - whether deleting a workflow run also deletes the check runs it created.

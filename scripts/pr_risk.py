@@ -422,11 +422,17 @@ OUTCOME_STEPS = {
     "blocked": "Review blocked: head {head} base {base} patch {patch}",
     "retryable": "Review retryable: head {head} base {base} patch {patch}",
 }
+# The prepare job also names a step after the reservation it made, from a plain
+# output (prepare emits RESERVATION as "reserved"). Without it, an edited record
+# could cite any run with no outcome and move a never-finished bar to a made-up
+# diff.
+RESERVATION = "head {head} base {base} patch {patch}"
+RESERVED_STEP = "Review reserved: " + RESERVATION
 
 
 def run_outcome(api, record):
     """The outcome the cited run itself recorded for this attempt, or None if it
-    never published one (cancelled or failed before the verdict).
+    reserved this review but never published an outcome (cancelled or failed).
 
     Attempt 1 is read explicitly: the default listing shows only the latest
     attempt, and the publish step can run only in attempt 1.
@@ -440,18 +446,23 @@ def run_outcome(api, record):
             "The jobs of a review run cannot be read; the run may have been "
             "deleted. A person must review this PR."
         ) from None
+    attempt = {"head": record["head"], "base": record["base"], "patch": record["patch"]}
     names = {
-        template.format(head=record["head"], base=record["base"], patch=record["patch"]): outcome
+        template.format(**attempt): outcome
         for outcome, template in OUTCOME_STEPS.items()
     }
-    prefixes = tuple(template.split("{", 1)[0] for template in OUTCOME_STEPS.values())
-    found = set()
+    reserved_name = RESERVED_STEP.format(**attempt)
+    templates = (*OUTCOME_STEPS.values(), RESERVED_STEP)
+    prefixes = tuple(template.split("{", 1)[0] for template in templates)
+    found, reserved = set(), False
     for job in jobs:
         for step in job.get("steps") or []:
             name = step.get("name")
             if step.get("conclusion") != "success" or not isinstance(name, str):
                 continue
-            if name in names:
+            if name == reserved_name:
+                reserved = True
+            elif name in names:
                 found.add(names[name])
             elif name.startswith(prefixes):
                 raise NeedsPerson(
@@ -459,6 +470,11 @@ def run_outcome(api, record):
                     "reservation record says, so the record was edited. A person "
                     "must review this PR."
                 )
+    if not reserved:
+        raise NeedsPerson(
+            "A review record cites a run that did not reserve that review, so the "
+            "record was edited. A person must review this PR."
+        )
     if len(found) > 1:
         raise NeedsPerson("A review run recorded more than one outcome. A person must review this PR.")
     return found.pop() if found else None
@@ -531,9 +547,9 @@ def review_ledger(api, number, comments, runs=None):
 HEADS_QUERY = """query($owner:String!, $repo:String!, $number:Int!) {
   repository(owner:$owner, name:$repo) {
     pullRequest(number:$number) {
-      commits(first:100) { totalCount nodes { commit { oid } } }
+      commits(first:100) { pageInfo { hasNextPage } nodes { commit { oid } } }
       timelineItems(first:100, itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT]) {
-        totalCount
+        pageInfo { hasNextPage }
         nodes { ... on HeadRefForcePushedEvent { beforeCommit { oid } afterCommit { oid } } }
       }
     }
@@ -554,7 +570,7 @@ def pr_heads(api, pr, pushes):
         data = api.request("POST", "", {"query": HEADS_QUERY, "variables": variables}, graphql=True)
         pull = data["data"]["repository"]["pullRequest"]
         commits, forced = pull["commits"], pull["timelineItems"]
-        if commits["totalCount"] != len(commits["nodes"]) or forced["totalCount"] != len(forced["nodes"]):
+        if commits["pageInfo"]["hasNextPage"] is not False or forced["pageInfo"]["hasNextPage"] is not False:
             raise NeedsPerson(
                 "This PR's commit or force-push history is too long to check. "
                 "A person must review this PR."
@@ -1123,6 +1139,9 @@ def prepare(api, policy, settings, event, event_name):
         {key: context[key] for key in RECORD_KEYS},
         separators=(",", ":"),
     )
+    # Before any record exists, so every genuine record has its "Review
+    # reserved" step even if a later write in this step fails.
+    emit("reserved", RESERVATION.format(**{key: context[key] for key in ("head", "base", "patch")}))
     # Reserve BEFORE the billable action. A cancellation consumes a round and
     # cannot cause an unlimited retry loop. All runs serialize via concurrency.
     comment(

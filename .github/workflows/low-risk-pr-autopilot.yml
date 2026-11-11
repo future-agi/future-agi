@@ -109,6 +109,13 @@ jobs:
         run: |
           set -euo pipefail
           python3 -I scripts/pr_risk.py prepare
+      # Evidence for later runs that this run reserved a review: a record citing
+      # a run without this step was edited. The name is rendered from the policy
+      # step's plain output and must match RESERVED_STEP in scripts/pr_risk.py.
+      # always(): a reservation made before a later failure is still recorded.
+      - name: "Review reserved: ${{ steps.policy.outputs.reserved }}"
+        if: always() && steps.policy.outputs.reserved != ''
+        run: 'true'
 
   ai-review:
     name: Diff-only AI review

@@ -153,7 +153,7 @@ class FakeGitHub:
         # Head history: the PR's commits, its force pushes, and the branch
         # activity feed (before, after, actor), oldest first.
         self.commits = [HEAD]
-        self.commits_total = None
+        self.commits_truncated = False
         self.force_pushes = []
         self.push_log = [(risk.ZERO_SHA, HEAD, "trusted-author")]
         self.activity = None
@@ -185,6 +185,16 @@ class FakeGitHub:
         else:
             self.commits.append(sha)
 
+    def add_job(self, run_id, name, steps):
+        self.run_jobs.setdefault((int(run_id), 1), []).append({"name": name, "steps": steps})
+
+    def reserve(self, run_id, reserved):
+        """The prepare job's steps after its policy step emitted `reserved`."""
+        self.add_job(run_id, "prepare", [
+            {"name": "Classify, check protection and reserve at most one review round", "conclusion": "success"},
+            {"name": "Review reserved: " + reserved, "conclusion": "success"},
+        ])
+
     def mark(self, run_id, outcome, context):
         """The gate job's steps after its publish step emitted `outcome`."""
         steps = [{"name": "Publish the review verdict", "conclusion": "success"}]
@@ -193,9 +203,12 @@ class FakeGitHub:
                 "name": template.format(head=context["head"], base=context["base"], patch=context["patch"]),
                 "conclusion": "success" if name == outcome else "skipped",
             })
-        self.run_jobs[(int(run_id), 1)] = [
-            {"name": "Publish review gate and recheck merge", "steps": steps}
-        ]
+        self.add_job(run_id, "Publish review gate and recheck merge", steps)
+
+    def drop_outcome(self, run_id):
+        """The run reserved but its gate job never ran (or is not listed yet)."""
+        key = (int(run_id), 1)
+        self.run_jobs[key] = [job for job in self.run_jobs.get(key, []) if job["name"] == "prepare"]
 
     def known_run(self, run_id):
         if int(run_id) not in self.runs:
@@ -245,11 +258,11 @@ class FakeGitHub:
     def heads_payload(self):
         return {"data": {"repository": {"pullRequest": {
             "commits": {
-                "totalCount": self.commits_total if self.commits_total is not None else len(self.commits),
+                "pageInfo": {"hasNextPage": self.commits_truncated},
                 "nodes": [{"commit": {"oid": sha}} for sha in self.commits],
             },
             "timelineItems": {
-                "totalCount": len(self.force_pushes),
+                "pageInfo": {"hasNextPage": False},
                 "nodes": [
                     {"beforeCommit": {"oid": before}, "afterCommit": {"oid": after}}
                     for before, after in self.force_pushes
@@ -318,14 +331,15 @@ class FakeGitHub:
             return None
         if method == "POST" and route == "issues/42/comments":
             result = {
-                "id": len(self.comments) + 1,
+                "id": max([c["id"] for c in self.comments], default=0) + 1,
                 "body": data["body"],
                 "user": {"login": "github-actions[bot]", "type": "Bot"},
             }
             self.comments.append(result)
             return result
         if method == "PATCH" and route.startswith("issues/comments/"):
-            self.comments[int(route.split("/")[-1]) - 1].update(data)
+            # Comments can be deleted, so look them up by ID, not position.
+            next(c for c in self.comments if c["id"] == int(route.split("/")[-1])).update(data)
             return None
         if method == "POST" and route == "check-runs":
             result = {
@@ -932,7 +946,13 @@ class ControllerTests(unittest.TestCase):
             }
             event = {"pull_request": {"number": 42}}
         self.outputs.clear()
-        risk.prepare(self.api, POLICY, config or settings(), event, event_name)
+        try:
+            risk.prepare(self.api, POLICY, config or settings(), event, event_name)
+        finally:
+            # The workflow's "Review reserved" step runs whenever the policy
+            # step emitted a reservation, even if the step failed afterwards.
+            if self.outputs.get("reserved"):
+                self.api.reserve(self.run_id, self.outputs["reserved"])
         return self.outputs.get("context")
 
     def publish(self, context, raw=None, job_result="success"):
@@ -1303,6 +1323,55 @@ class ControllerTests(unittest.TestCase):
             with self.assertRaisesRegex(risk.NeedsPerson, "different revision"):
                 self.review_passes(context)
 
+    def test_record_moved_to_a_run_without_that_reservation_goes_to_a_person(self):
+        # Blocked in run A; run B is a later dispatch run that reserved nothing.
+        # An edited record citing B with a made-up digest would move the
+        # never-finished bar off the real diff.
+        context = self.prepare()
+        self.assertEqual(self.publish(context, verdict(blocking_findings=True)), "blocked")
+        self.prepare()
+        run_b = self.run_id
+        self.drop_ledger()
+        review = next(c for c in self.api.checks if c["name"] == POLICY["review_check"])
+        review["external_id"] = json.dumps({**json.loads(review["external_id"]),
+                                            "run_id": run_b, "patch": "e" * 32})
+        self.catch_up("1" * 40, OTHER)
+        self.prepare()
+        self.assertEqual(self.outputs["review"], "false")
+        self.assertEqual(len(self.reservations()), 1)
+        self.assertTrue(any("did not reserve" in body for body in self.escalations()))
+
+    def foreign_attempt(self, run_id, outcome, head, base, patch, number=7):
+        """A review of PR `number` whose check sits on one of this PR's heads."""
+        self.api.runs[run_id] = self.api.dispatch_run(base, number)
+        record = {"pr": number, "head": head, "base": base, "run_id": run_id, "round": 1, "patch": patch}
+        self.api.reserve(run_id, risk.RESERVATION.format(head=head, base=base, patch=patch))
+        self.api.mark(run_id, outcome, record)
+        self.api.checks.append({"id": 800 + run_id, "name": POLICY["review_check"], "head_sha": head,
+                                "status": "completed", "conclusion": "success",
+                                "app": {"slug": "github-actions"}, "external_id": json.dumps(record)})
+
+    def test_records_naming_another_pr_only_bar(self):
+        own_patch = risk.patch_digest(risk.review_patches(self.api.files, POLICY))
+        # Three passing reviews of other diffs on this head, for PR 7: they do
+        # not use this PR's three-diff budget.
+        for index, patch_id in enumerate(("1" * 32, "2" * 32, "3" * 32)):
+            self.foreign_attempt(501 + index, "passed", HEAD, OTHER, patch_id)
+        self.prepare()
+        self.assertEqual(self.outputs["review"], "true")
+        # A pass of this exact revision for PR 7 is not reused for PR 42.
+        self.api = FakeGitHub()
+        self.foreign_attempt(501, "passed", HEAD, BASE, own_patch)
+        self.prepare()
+        self.assertEqual((self.outputs["review"], self.outputs["context"]), ("false", ""))
+        self.assertFalse(self.reservations())
+        # A blocked review of this diff for PR 7 bars it here too.
+        self.api = FakeGitHub()
+        self.foreign_attempt(501, "blocked", HEAD, OTHER, own_patch)
+        self.prepare()
+        self.assertFalse(self.reservations())
+        self.assertTrue(any("found blocking issues" in body for body in self.escalations()))
+
     def test_human_forged_ledger_and_untrusted_runs_are_not_trusted(self):
         self.api.comments.append(
             {
@@ -1344,11 +1413,17 @@ class ControllerTests(unittest.TestCase):
             self.assertFalse(any(r[1] == f"actions/runs/{context['run_id']}/jobs"
                                  for r in self.api.requests))
             # A marker step that did not succeed is no outcome: never finished.
-            for step in self.api.run_jobs[(context["run_id"], 1)][0]["steps"]:
-                step["conclusion"] = "failure"
+            for job in self.api.run_jobs[(context["run_id"], 1)]:
+                if job["name"] != "prepare":
+                    for step in job["steps"]:
+                        step["conclusion"] = "failure"
             self.assertFalse(self.review_passes(later))
+            self.api.drop_outcome(context["run_id"])
+            self.assertFalse(self.review_passes(later))
+            # Not even the reservation step: the record does not fit its run.
             self.api.run_jobs.pop((context["run_id"], 1))
-            self.assertFalse(self.review_passes(later))
+            with self.assertRaisesRegex(risk.NeedsPerson, "did not reserve"):
+                self.review_passes(later)
 
     def test_reuse_needs_the_same_diff(self):
         context = self.passing_review()
@@ -1367,13 +1442,13 @@ class ControllerTests(unittest.TestCase):
 
     def test_same_run_merge_does_not_wait_for_the_jobs_api(self):
         context = self.passing_review()
-        self.api.run_jobs.pop((context["run_id"], 1))
+        self.api.drop_outcome(context["run_id"])
         risk.merge(self.api, POLICY, settings(), context)
         self.assertTrue(self.api.writes("pulls/42/merge"))
         # Without the publish step's "passed" the same run has no evidence.
         self.api = FakeGitHub()
         context = self.passing_review()
-        self.api.run_jobs.pop((context["run_id"], 1))
+        self.api.drop_outcome(context["run_id"])
         os.environ["REVIEW_OUTCOME"] = ""
         with self.assertRaises(risk.PolicyError):
             risk.merge(self.api, POLICY, settings(), context)
@@ -1610,7 +1685,9 @@ class ControllerTests(unittest.TestCase):
 
     def test_truncated_or_unavailable_head_history_goes_to_a_person(self):
         for change in (
-            lambda api: setattr(api, "commits_total", 101),
+            lambda api: setattr(api, "commits_truncated", True),
+            lambda api: setattr(api, "heads_payload", lambda: {"data": {"repository": {"pullRequest": {
+                "commits": {"nodes": []}, "timelineItems": {"pageInfo": {"hasNextPage": False}, "nodes": []}}}}}),
             lambda api: setattr(api, "heads_payload", lambda: {"data": {"repository": {"pullRequest": None}}}),
             lambda api: setattr(api, "force_pushes", [(None, HEAD)]),
         ):
@@ -1870,7 +1947,11 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.api.writes("pulls/42/merge"))
 
     def test_check_external_id_is_compact_and_contains_no_untrusted_text(self):
-        self.prepare()
+        context = self.prepare()
+        self.assertEqual(
+            "Review reserved: " + self.outputs["reserved"],
+            risk.RESERVED_STEP.format(head=context["head"], base=context["base"], patch=context["patch"]),
+        )
         external_id = self.reservations()[0][2]["external_id"]
         self.assertLess(len(external_id), 255)
         self.assertEqual(
@@ -1966,6 +2047,13 @@ class ControllerTests(unittest.TestCase):
                 self.assertGreater(names.index(name), steps.index(publish))
                 self.assertEqual(step["if"], f"steps.publish.outputs.outcome == '{outcome}'")
                 self.assertEqual(step["run"], "true")
+        prepare = yaml.safe_load(WORKFLOW_TEXT)["jobs"]["prepare"]["steps"]
+        policy = next(step for step in prepare if step.get("id") == "policy")
+        reserved = prepare[prepare.index(policy) + 1]
+        self.assertEqual(risk.RESERVED_STEP, "Review reserved: " + risk.RESERVATION)
+        self.assertEqual(reserved["name"], "Review reserved: ${{ steps.policy.outputs.reserved }}")
+        self.assertEqual(reserved["if"], "always() && steps.policy.outputs.reserved != ''")
+        self.assertEqual(reserved["run"], "true")
         merge = steps[-1]
         self.assertIn("python3 -I scripts/pr_risk.py merge", merge["run"])
         self.assertEqual(
