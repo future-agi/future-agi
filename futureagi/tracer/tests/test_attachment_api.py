@@ -482,7 +482,9 @@ def test_expired_capability_is_renewed_and_the_upload_finishes(api, monkeypatch)
     assert row.expires_at > datetime.fromisoformat(first["expires_at"])
     travel(monkeypatch, 301)
     assert_error(put_content(api, first), 401, "expired")
-    renewed = ok(post(api, f"{base(api)}/uploads", body, headers), 201, "UploadResponse")
+    renewed = ok(
+        post(api, f"{base(api)}/uploads", body, headers), 201, "UploadResponse"
+    )
     same = ("upload_id", "attachment_id", "occurrence_id", "reserved_bytes")
     assert {k: renewed[k] for k in same} == {k: first[k] for k in same}
     assert renewed["write_capability"] != first["write_capability"]
@@ -510,7 +512,9 @@ def test_expired_capability_upload_can_still_be_aborted(api, monkeypatch):
     first = ok(reply, 201, "UploadResponse")
     travel(monkeypatch, 301)
     assert_error(complete(api, first, path="abort"), 401, "expired")
-    renewed = ok(post(api, f"{base(api)}/uploads", body, headers), 201, "UploadResponse")
+    renewed = ok(
+        post(api, f"{base(api)}/uploads", body, headers), 201, "UploadResponse"
+    )
     aborted = ok(complete(api, renewed, path="abort"), 200, "StatusResponse")
     assert aborted["state"] == "deleted"
     assert AttachmentUpload.objects.get(pk=first["upload_id"]).state == "deleted"
@@ -542,7 +546,9 @@ def test_renewed_capability_never_outlives_the_upload_horizon(api):
     first = ok(reply, 201, "UploadResponse")
     horizon = timezone.now() + timedelta(seconds=30)
     AttachmentUpload.objects.filter(pk=first["upload_id"]).update(expires_at=horizon)
-    renewed = ok(post(api, f"{base(api)}/uploads", body, headers), 201, "UploadResponse")
+    renewed = ok(
+        post(api, f"{base(api)}/uploads", body, headers), 201, "UploadResponse"
+    )
     assert datetime.fromisoformat(renewed["expires_at"]) == horizon
 
 

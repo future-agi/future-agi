@@ -490,12 +490,11 @@ def test_upload_lifetime_is_separate_from_its_capability(setup):
     capability_expiry = args["expires_at"]
     assert upload.expires_at == reservation.expires_at
     assert capability_expiry < upload.expires_at <= upload.occurrence.expires_at
-    assert abs(
-        (capability_expiry - timezone.now()).total_seconds() - broker.CAPABILITY_SECONDS
-    ) < 5
-    assert abs(
-        (upload.expires_at - timezone.now()).total_seconds() - uploads.UPLOAD_SECONDS
-    ) < 5
+    now = timezone.now()
+    capability_left = (capability_expiry - now).total_seconds()
+    upload_left = (upload.expires_at - now).total_seconds()
+    assert abs(capability_left - broker.CAPABILITY_SECONDS) < 5
+    assert abs(upload_left - uploads.UPLOAD_SECONDS) < 5
     # Renewal mints a capability but never moves the job or its reservation.
     scope, writer = setup
     _, _, renewed = uploads.initialize(
