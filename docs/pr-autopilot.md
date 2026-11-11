@@ -63,7 +63,7 @@ those files take the human path.
 
 No repository settings are changed by the workflow installation, with one
 exception: if the owner has not created the environment `pr-autopilot`, GitHub
-creates it, with no rules, the first time the gate job runs.
+creates it, with no rules, the first time the `approve-and-merge` job runs.
 
 | Variable, secret, label or setting | Default | Administrative action |
 | --- | --- | --- |
@@ -75,8 +75,8 @@ creates it, with no rules, the first time the gate job runs.
 | PR label `autopilot-hold` | Absent | Add to stop automation for one PR; remove only when the PR may be reconsidered |
 | Labels `autopilot-low`, `autopilot-medium`, `autopilot-high` | Created by the first enabled sweep or run | No setup needed. The sweep creates missing labels once before it dispatches classification runs, and a run that finds a label just created by another run continues. The controller replaces only its own current tier label |
 | Labels `autopilot-approved`, `autopilot-merged` | Absent | Created/applied by the controller for audit; retain them after merge and revert |
-| Built-in `GITHUB_TOKEN` and Actions permissions | Provided by GitHub; explicit least-privilege job permissions | Allow the workflow's stated read/write scopes, including `statuses: write` in the prepare job (it posts the reservation status) and `statuses: read` in the gate job. No Administration permission or protection-bypass role is needed or granted. The workflow token never approves, so turn **off** “Allow GitHub Actions to create and approve pull requests” (see [Approver App and owner settings](#approver-app-and-owner-settings)). An organisation-level “off” overrides the repository setting |
-| Approver App, environment `pr-autopilot`, variable `AUTOPILOT_APPROVER_CLIENT_ID`, secret `AUTOPILOT_APPROVER_PRIVATE_KEY` | Not created | The owner creates them as described in [Approver App and owner settings](#approver-app-and-owner-settings). Without them the gate job's token step fails after the outcome is recorded, so nothing is approved or merged |
+| Built-in `GITHUB_TOKEN` and Actions permissions | Provided by GitHub; explicit least-privilege job permissions | Allow the workflow's stated read/write scopes, including `statuses: write` in the prepare job (it posts the reservation status) and `statuses: read` in the `approve-and-merge` job. No Administration permission or protection-bypass role is needed or granted. The workflow token never approves, so turn **off** “Allow GitHub Actions to create and approve pull requests” (see [Approver App and owner settings](#approver-app-and-owner-settings)). An organisation-level “off” overrides the repository setting |
+| Approver App, environment `pr-autopilot`, variable `AUTOPILOT_APPROVER_CLIENT_ID`, secret `AUTOPILOT_APPROVER_PRIVATE_KEY` | Not created | The owner creates them as described in [Approver App and owner settings](#approver-app-and-owner-settings). Without them the token step in the `approve-and-merge` job fails. The review outcome is already recorded by then. Nothing is approved or merged, and the bot posts one note per head on the PR |
 | Actions event policy for `pull_request_target` | None today: in GitHub's 9 Nov 2026 brownout, all 57 `pull_request_target` runs in this repository ended in `startup_failure` | From 2 Dec 2026 GitHub blocks `pull_request_target` in public repositories unless an Actions event policy, at repository or organisation level, allows it. The policy must allow it for `.github/workflows/low-risk-pr-autopilot.yml`. If the policy for `admission.yml` and `labeler.yml` names workflow files, it must name this file too. It must be in place before this workflow reaches `main` and before 2 Dec 2026; the 16 Nov 16:00–18:00 UTC brownout applies as well. Without it, every PR event into `dev` creates a run that fails at startup, even with `PR_AUTOPILOT` off, and only the sweep classifies and dispatches PRs (see below) |
 | `dev` protection / active org and repository branch rules | Read, never changed by this code | Enable an active branch ruleset with at least one required status check and strict up-to-date enforcement; preserve existing classic requirements. Classic-only strictness cannot be verified with `GITHUB_TOKEN`, so it is not sufficient. An active `pull_request` rule must also dismiss stale approvals on push; the controller refuses without it. dev's organisation rule has it on today (read-only check, 11 Nov). Also require approval of the most recent push; the controller does not check this one |
 | Required status checks | Policy minimum: `Backend Tests Pass`, union all active classic/ruleset requirements | Keep required checks meaningful and green on the PR head; missing, skipped, neutral, pending, stale or failing checks cannot satisfy the bot |
@@ -110,7 +110,16 @@ skips drafts, forks and PRs whose head repository no longer exists, and
 dispatches a run on `dev` for these PRs, in this order:
 
 1. Every trusted author's `autopilot-low` PR without `autopilot-hold`. These
-   are not capped, so the backfill never delays a merge.
+   are not capped, so the backfill never delays a merge. A PR that waits on a
+   person or the owner at its current head is dispatched only on one sweep
+   in four, about once an hour. It waits when the bot's standing escalation,
+   merge-blocked note or approver note names its current head, or when a
+   maintainer dismissed the autopilot's approval of that head. A push ends
+   the wait at once, because the note then names an older head. So does an
+   escalation marked "No longer applies" or an approver note the bot marked
+   the same way after a later approval. Parked PRs are staggered by PR
+   number. The sweep reads each trusted LOW PR's comments and reviews for
+   this. If a read fails, the PR is dispatched as usual.
 2. PRs to classify, at most 25 per sweep:
    - a PR with no tier label yet (the one-time backfill, so PRs opened before
      enablement get classified);
@@ -129,12 +138,16 @@ stop the rest, except a 403 or 429 (GitHub's secondary rate limits): then the
 sweep stops dispatching until the next sweep. The sweep fails and names the PRs
 it could not dispatch or whose tier comment it could not read.
 
-A trusted author's LOW PR that already went to a person (an escalation) or
-whose App approval a maintainer dismissed is still dispatched on every sweep.
-Those runs stop early and stay green. This is an accepted limit: an escalation
-can stop applying without a new head (for example a run that read as deleted
-reads again), and skipping such PRs would strand them. A dispatch on `dev` with
-input `pr_number` can also re-evaluate a PR; it cannot reset the review budget.
+Parked PRs are still dispatched hourly, not skipped. An escalation can stop
+applying without a new head (for example a run that read as deleted reads
+again), a person can supply what a branch rule needs, and the owner can fix
+the approver App. Skipping such PRs would strand them. The notes only slow
+the sweep: a writer who edits or deletes one changes when the PR is
+dispatched, never what a run checks. A PR that waits with no note (pending
+CI, a branch behind `dev`, a review to retry after the branch changes) is
+still dispatched on every sweep, because nothing tells the sweep when that
+wait ends. A dispatch on `dev` with input `pr_number` re-evaluates a PR at
+once; it cannot reset the review budget.
 
 The existing E2E suite remains **advisory**, given the observed failure rate.
 It is not added to the minimum required checks. If an administrator explicitly
@@ -157,36 +170,59 @@ review-gated, with or without this autopilot.
 
 How the workflow uses the App:
 
-- Only the `review-gate-and-merge` job names the environment `pr-autopilot`.
-  That job runs only in `workflow_dispatch` runs on `dev`. The environment
-  holds the App's client ID as the variable `AUTOPILOT_APPROVER_CLIENT_ID` and
-  its private key as the secret `AUTOPILOT_APPROVER_PRIVATE_KEY`. Its
-  deployment branch rule allows only `dev`, so a copy of the workflow on
-  another branch, and a `pull_request_target` run (which runs on `main`), cannot
-  read the key.
-- After the outcome marker steps, a step mints a token for this repository
-  only, with only "Pull requests: write"
-  (`actions/create-github-app-token`, pinned by commit). A missing or broken
-  key therefore never stops a verdict from being recorded. Only the merge step
-  gets the token (`APPROVER_TOKEN`) and the App's login, `<slug>[bot]`
-  (`APPROVER_LOGIN`). The token is used for one request: the approval.
-  Comments, labels, the merge and dispatches use the workflow token.
-- The controller stops before any request if the token or login is missing,
-  or if the login is `github-actions[bot]`. It also stops if GitHub records
-  the approval under another login.
+- Only the `approve-and-merge` job names the environment `pr-autopilot`.
+  That job runs only in `workflow_dispatch` runs on `dev`, and only after the
+  `review-gate-and-merge` job finished and recorded the outcome: after a pass
+  published in the same run, or for a reused pass. The environment holds the
+  App's client ID as the variable `AUTOPILOT_APPROVER_CLIENT_ID` and its
+  private key as the secret `AUTOPILOT_APPROVER_PRIVATE_KEY`. Its deployment
+  branch rule allows only `dev`, so a copy of the workflow on another branch,
+  and a `pull_request_target` run (which runs on `main`), cannot read the key.
+- The job with the outcome markers names no environment. An environment that
+  refuses a job (for example a branch rule that does not allow `dev`) or
+  holds it (required reviewers, a wait timer) therefore cannot stop a verdict
+  from being recorded. A refused `approve-and-merge` job does not start,
+  approves nothing and fails the run. It cannot post a note, so only the
+  failed run shows it.
+- A step in that job mints a token for this repository only, with only "Pull
+  requests: write" (`actions/create-github-app-token`, pinned by commit). The
+  step has `continue-on-error`, so a missing variable, secret or installation
+  does not skip the merge step. Only the merge step gets the token
+  (`APPROVER_TOKEN`) and the App's login, `<slug>[bot]` (`APPROVER_LOGIN`).
+  The token is used for one request: the approval. Comments, labels, the
+  merge and dispatches use the workflow token.
+- If the token or login is missing, or the login is `github-actions[bot]`,
+  the controller adds no label or audit comment and approves nothing. It
+  posts one note per head with the workflow token, and the run fails. The
+  note says that the approver App could not approve this head and why, what
+  the owner must check, and that a person may approve or merge the PR. A
+  refusal of the approval (HTTP 403 or 422) or an approval that GitHub
+  records under another login posts the same note. A server error does not.
+  Once the App approves the head, the bot marks the note "No longer
+  applies". While the note names the PR's head, the sweep dispatches the PR
+  about once an hour.
 - The controller's own-approval lookup and the dismissed-approval hold read
   only reviews by that login with type `Bot`. The prepare job does not hold
   the App's identity, so it waits when any bot's autopilot approval of the
   head was dismissed. That can only make a run wait; the merge step rechecks
   with the exact login.
-- GitHub records each run of the gate job as a deployment to `pr-autopilot`.
-  Check whether Slack or other integrations subscribe to deployment events.
+- GitHub records each run of the `approve-and-merge` job as a deployment to
+  `pr-autopilot`: one per passed or reused review, not one per sweep. Check
+  whether Slack or other integrations subscribe to deployment events.
 
 Owner settings for `future-agi/future-agi`. A read-only check on 11 Nov 2026
 found none of them in place: the Actions setting is on, `dev`'s only rule does
 not require last-push approval, and neither environment exists.
 
-1. **Create the approver App.** Use it for nothing else and install it on
+The order matters. While a writer can still get a PR approved without another
+person, that writer can land a job that names `pr-autopilot` on `dev` (or
+`release-autopilot` on `main`), dispatch it and read the approver key. A
+leaked key outlives the later settings: with Contents: write it can push to
+unprotected branches and give approvals that count, and it is never the last
+pusher. So steps 2 to 5 come before the key is added in step 6.
+
+1. **Create the approver App.** Use it only for the two autopilots in this
+   repository (this one and `release-autopilot.yml`), and install it on
    `future-agi/future-agi` only. It needs "Pull requests: Read and write" to
    post reviews. GitHub counts required approvals only from reviewers with
    write access, and one report plus one independent reproduction say an
@@ -196,39 +232,50 @@ not require last-push approval, and neither environment exists.
    counting follows the installation's access, not the token's scopes; no
    `permission-contents` is requested. With Contents: write the key could mint
    tokens that push to unprotected branches and merge PRs. So the key lives
-   only in the `pr-autopilot` environment, and the App is on no ruleset bypass
-   list.
-2. **Create the environments, then add the key.** GitHub creates a missing
-   environment with no rules the first time a job names it, so create each one
-   with its branch rule before the key is added. Neither may have required
-   reviewers or a wait timer: they would hold the job that records the outcome.
-   - `pr-autopilot`: deployment branch rule `dev`. It holds
-     `AUTOPILOT_APPROVER_CLIENT_ID` (variable) and
-     `AUTOPILOT_APPROVER_PRIVATE_KEY` (secret). The approving job of
-     `low-risk-pr-autopilot.yml` names it.
-   - `release-autopilot`: deployment branch rule `main`, with the same variable
-     and secret. The release job of `release-autopilot.yml` names it.
-3. **Turn off "Allow GitHub Actions to create and approve pull requests"** for
+   only in the two environments below, and the App is on no ruleset bypass
+   list. Do not store the key in any repository, environment or organisation
+   secret yet.
+2. **Turn off "Allow GitHub Actions to create and approve pull requests"** for
    `future-agi/future-agi`. Neither autopilot needs it. An organisation-level
    "off" also covers this repository. `frontend-auto-approve-hotfix.yml`
    approves with the workflow token and stops working once the setting is off.
    `future-agi/ee` and `future-agi/agent-learning-kit` also produce deployed
    images, have the same setting on and are under the same organisation
    ruleset. They have the same exposure and need the same change.
-4. **Require approval of the most recent push** on `main` and `dev`, in a
+3. **Require approval of the most recent push** on `main` and `dev`, in a
    repository ruleset rather than by editing organisation ruleset 2289447,
    which covers other repositories. Otherwise a writer can push onto someone
    else's PR and approve it. The autopilot never pushes, so the approver is
    never the last pusher.
+4. **Create the environments, with no key yet.** GitHub creates a missing
+   environment with no rules the first time a job names it, so create each one
+   with its branch rule first. Neither may have required reviewers or a wait
+   timer: they would hold the approving job and, through the PR's concurrency
+   group, every later run for that PR.
+   - `pr-autopilot`: deployment branch rule `dev`. The `approve-and-merge`
+     job of `low-risk-pr-autopilot.yml` names it.
+   - `release-autopilot`: deployment branch rule `main`. The release job of
+     `release-autopilot.yml` names it.
 5. **Move the release-bot App key** (`RELEASE_BOT_APP_ID`,
    `RELEASE_BOT_PRIVATE_KEY`, organisation secrets today) into environment
    secrets whose deployment branch policy allows only protected branches and
    release tags. Any writer's branch workflow can read an organisation secret,
-   and that App can approve PRs too. Every job that reads the key must then
-   name such an environment. A job names only one environment, so the key can
-   need a copy in more than one. `docs/bot-pr-autopilot.md` in
-   `future-agi/deployment` lists the jobs.
-6. **Check live, before `PR_AUTOPILOT` is set to `on`,** that the App's
+   and that App can approve PRs too, so until this step a writer can still
+   get a PR approved without another person. Every job that reads the key
+   must then name such an environment. A job names only one environment, so
+   the key can need a copy in more than one. `docs/bot-pr-autopilot.md` in
+   `future-agi/deployment` lists the jobs. Then delete the organisation
+   secrets, generate a new private key for the release-bot App and delete
+   the old one, because any branch workflow could read the old key.
+6. **Confirm, then add the approver key.** On a throwaway PR into `dev`, let
+   a workflow on the PR's branch try to approve that PR with its
+   `GITHUB_TOKEN`. GitHub must refuse it, and the PR must show no approval.
+   Only then add `AUTOPILOT_APPROVER_CLIENT_ID` (variable) and
+   `AUTOPILOT_APPROVER_PRIVATE_KEY` (secret) to both environments. If the
+   approver key was stored anywhere a branch workflow could read before
+   steps 2 to 5 were done, generate a new private key for the App, delete
+   the old one and store only the new one.
+7. **Check live, before `PR_AUTOPILOT` is set to `on`,** that the App's
    approval counts. On a throwaway PR into `dev`, approve with a token minted
    exactly as the workflow does (pull-requests: write only). Then
    `gh pr view <n> --json reviewDecision,mergeStateStatus` must show `APPROVED`,
@@ -236,8 +283,11 @@ not require last-push approval, and neither environment exists.
    merge button: organisation admins bypass the ruleset. Then dismiss the
    approval with the same token. If `reviewDecision` stays `REVIEW_REQUIRED`,
    grant the installation "Contents: Read and write" if it lacks it, and read
-   the same PR again. Until this check passes, every approved PR stops at
-   `blocked` and the autopilot tells the PR so (see step 7 below).
+   the same PR again. If the approval still does not count, the mint step in
+   `low-risk-pr-autopilot.yml` must also request `permission-contents: write`
+   (a code change, reviewed like any other). Until this check passes, every
+   approved PR stops at `blocked` and the autopilot tells the PR so (see item
+   7 of [Trust boundary and merge decision](#trust-boundary-and-merge-decision)).
 
 ## Trust boundary and merge decision
 
@@ -317,9 +367,10 @@ not require last-push approval, and neither environment exists.
    named `Review passed: head <head> base <base> patch <patch>`, `Review
    blocked: ...` and `Review retryable: ...`, rendered from the trusted prepare
    output (templates in `OUTCOME_STEPS` in `scripts/pr_risk.py`; a test checks
-   that the workflow matches them). The merge step runs only after `passed` in
-   the same run, or for a reused pass with no reservation in this run. A failed
-   result comment does not change the outcome or fail the step.
+   that the workflow matches them). The `approve-and-merge` job, which holds
+   the merge step, starts only after this job finished, and only after
+   `passed` in the same run or for a reused pass with no reservation in this
+   run. A failed result comment does not change the outcome or fail the step.
 6. Before approval and again before merge, the controller re-reads the PR,
    files, rules, current-head CI, push history, hold/draft/author state, time,
    and review result. Outstanding human change requests block it, and so does
@@ -340,7 +391,9 @@ not require last-push approval, and neither environment exists.
    label/comment without a submitted approval can remain if this final refresh
    catches a hold or another changed gate, or if GitHub refuses the approval.
    A refusal (HTTP 403 or 422) fails the run with a message that names the
-   App's installation and permission, and later runs post nothing more.
+   App's installation and permission. It posts no second audit comment, and
+   one note per head tells the PR (see [Approver App and owner
+   settings](#approver-app-and-owner-settings)).
 7. It waits for GitHub's mergeability/protection state to be `clean` or
    `unstable` (`unstable` means a check that is not required is failing or still
    running; the required checks were already verified above), then calls
@@ -352,10 +405,12 @@ not require last-push approval, and neither environment exists.
    existed, a rule needs something the autopilot cannot give (a code-owner
    review, another approval, resolved conversations, or an approval GitHub
    does not count). The bot then posts one comment per head saying a person
-   must review or merge the PR, and the run exits green. The sweep keeps
-   dispatching the PR, so it merges once a person supplies what the rule
-   needs. The controller does not delete the head branch. This repository has
-   `delete_branch_on_merge` on, so GitHub deletes it after the merge.
+   must review or merge the PR, and the run exits green. While that comment
+   names the PR's head, the sweep dispatches the PR about once an hour, so it
+   merges within about an hour once a person supplies what the rule needs. A
+   dispatch on `dev` with `pr_number` checks at once. The controller does not
+   delete the head branch. This repository has `delete_branch_on_merge` on,
+   so GitHub deletes it after the merge.
 
 The review check is **mandatory for the autopilot**, independently of the
 managed Claude review UI/check, which never fails. It is not installed as a
@@ -517,8 +572,8 @@ writes a fresh `branch_creation` row for the new name, earlier pushes drop
 out of both checks without notice. Until the rename rehearsal in the rollout
 list confirms the feed keeps them, this is a documented limit.
 
-**Workflow reruns do not invoke review or approve/merge.** All three controller/
-review jobs require `github.run_attempt == '1'`; a runtime guard also precedes
+**Workflow reruns do not invoke review or approve/merge.** All four controller,
+review and approval jobs require `github.run_attempt == '1'`; a runtime guard also precedes
 any AI action. This includes “Re-run failed jobs”, a specific AI-job rerun, and
 full workflow reruns. They cannot reuse the successful prepare job's saved
 reservation to buy extra invocations. Use a **new** dispatch on `dev` or the next
@@ -641,7 +696,8 @@ stop, also cancel active autopilot runs; their variable snapshot may still be
 `on`. Add `autopilot-hold` to affected open PRs. A missing review key or empty
 trust list also prevents new automatic approvals/merges, but explicit off plus
 cancellation is the clearest emergency procedure. Removing the approver App's
-key from the `pr-autopilot` environment also stops every approval. Do not
+key from the `pr-autopilot` environment also stops every approval; each PR
+that passes review then gets one note per head saying so. Do not
 remove normal required checks to make a stopped PR mergeable. An App approval
 already recorded remains visible; a maintainer can dismiss it if it must not
 count toward a later manual merge. Dismissing the App's approval also stops
@@ -697,10 +753,12 @@ Suggested rollout:
      the `Review reserved` and the `Review retryable` steps from its outputs
      (make the status POST fail, for example by a temporary 403 in a
      disposable repository);
-   - the gate job runs in the `pr-autopilot` environment without waiting, the
-     token step mints a token whose approval satisfies `dev`'s rules (the live
-     check in owner setting 6), and a copy of the workflow dispatched on
-     another branch cannot read the environment's key.
+   - the `approve-and-merge` job runs in the `pr-autopilot` environment
+     without waiting, also for a reused pass (when `ai-review` is skipped);
+     the token step mints a token whose approval satisfies `dev`'s rules (the
+     live check in owner setting 7); a copy of the workflow dispatched on
+     another branch cannot read the environment's key; and with the key
+     removed, the merge step still runs and the PR gets the approver note.
    No authenticated GitHub integration rehearsal, live merge or billable review
    was exercised during development; synthetic scope checks are not that proof.
 3. On `dev` and the default branch, enable classification with an **empty trust
@@ -718,7 +776,8 @@ Suggested rollout:
    pending/failed checks, three-diff escalation, a dev catch-up with an unchanged
    diff, a push by an account not on the list, a dismissed App approval, a
    blocked diff fixed by a new commit (the escalation must then say it no
-   longer applies), and post-merge dispatches.
+   longer applies), an escalated PR that the sweep then dispatches about
+   hourly, and post-merge dispatches.
    Confirm the medium/high human path and every relevant dev push consumer.
 5. Expand only after the audit trail, post-merge verification and revert/incident
    guardrails behave as expected. Policy widening is itself HIGH-risk.
@@ -740,12 +799,14 @@ the compare-only behind-dev rule, the sweep's
 dispatch filter and the workflow's runtime partial-rerun guard,
 approval/merge races (including holds during audit/duplicate-review reads), audit
 ordering and dispatch selection. It also covers approvals only by the approver
-App (a missing or unsafe identity stops before any request, and the workflow
-gives the key only to the merge step), the stale-approval rule, retried and
+App (a missing or unsafe identity, a refusal or another login approves
+nothing and posts one note per head; the workflow gives the key only to the
+merge step, in a job apart from the outcome markers), the stale-approval rule, retried and
 persistently failing reservation writes and check reads and updates, the
 not-started marker, unreviewable diffs, a PR blocked after an earlier approval,
-a refused approval, the sweep's order, caps, rotation, pause, throttling stop
-and re-tier of moved heads, concurrent label creation, and post-merge coverage
+a refused approval, the sweep's order, caps, rotation, pause, throttling stop,
+re-tier of moved heads and hourly dispatch of PRs that wait on a person,
+concurrent label creation, and post-merge coverage
 checked against every workflow file. No cloud/cluster or production
 configuration is needed. In CI the unprivileged `policy-tests` job tests proposed
 changes; privileged jobs never execute the proposed controller.
