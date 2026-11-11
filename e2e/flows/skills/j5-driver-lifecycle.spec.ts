@@ -106,7 +106,7 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
         await expect(page).toHaveURL(/\/dashboard\/skills\/contexts\/rollouts\/?$/);
         await expect(page.getByRole('table', { name: 'Repository rollouts' })).toBeVisible({ timeout: 60_000 });
         await mkdir(join(evidence, 'shots'), { recursive: true });
-        await page.screenshot({ path: join(evidence, 'shots', `j5-driver-${campaign.label}-list.png`) });
+        await page.screenshot({ path: join(evidence, 'shots', `j5-driver-${campaign.label}-list.png`), animations: 'disabled' });
         // A cancelled predecessor (base movement) can share the name; the
         // current revision from the public API selects the live rollout.
         const current = await actor.api.get<{ result: { revision: number; status: string } }>(`/model-hub/skills/contexts/campaigns/${campaign.id}/`);
@@ -116,7 +116,7 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
         const table = page.getByRole('table', { name: 'Fixed rollout targets' });
         await expect(table).toBeVisible({ timeout: 60_000 }); await expect(table.getByRole('row')).toHaveCount(41);
         await mkdir(join(evidence, 'shots'), { recursive: true });
-        await page.screenshot({ path: join(evidence, 'shots', `j5-driver-${campaign.label}.png`) });
+        await page.screenshot({ path: join(evidence, 'shots', `j5-driver-${campaign.label}.png`), animations: 'disabled' });
       } else {
         await driver.perform(stage, { ledger, signal });
         const events = ledger.events();
