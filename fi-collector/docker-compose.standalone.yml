@@ -1,26 +1,37 @@
-# Standalone test rig for fi-collector.
+# Development-only standalone test rig for fi-collector.
 #
-#   docker compose -f docker-compose.standalone.yml up --build
+#   docker compose -f docker-compose.standalone.yml up --build -d
 #
-# What you get:
+# What you get (host ports bind to loopback only):
 #   - clickhouse:8123 (HTTP) + :9000 (native), CH 25.3 LTS with the spans
 #     schema pre-applied via the entrypoint init script.
-#   - fi-collector:4317 (OTLP gRPC) + :9464 (admin)
+#   - postgres:5432 (compose network only), seeded with UUID identities and
+#     public local-test keys; NOT the full platform schema.
+#   - fi-collector:4317 (OTLP gRPC), :4318 (OTLP HTTP), :9464 (admin)
 #
-# To smoke-test from your host:
-#   pip install opentelemetry-exporter-otlp-proto-grpc
-#   python -c "from opentelemetry import trace; from opentelemetry.sdk.trace import TracerProvider; \
-#              from opentelemetry.sdk.trace.export import BatchSpanProcessor; \
-#              from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter; \
-#              trace.set_tracer_provider(TracerProvider()); \
-#              trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(OTLPSpanExporter('localhost:4317', insecure=True))); \
-#              tracer = trace.get_tracer('test'); \
-#              span = tracer.start_span('test'); \
-#              span.set_attribute('gen_ai.request.model', 'gpt-4o-mini'); \
-#              span.end()"
-#   curl -s 'http://localhost:8123/?query=SELECT%20count()%20FROM%20spans'
+# See README.md's standalone smoke test: send X-Api-Key=standalone-api-key,
+# X-Secret-Key=standalone-secret-key and a project_name resource attribute.
+# Authentication remains enabled. Never use this rig or its test keys in prod.
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: collector
+      POSTGRES_USER: collector
+      # Public local-test password; this service has no published host port.
+      POSTGRES_PASSWORD: standalone-db-password
+    volumes:
+      - ./test/standalone/seed.sql:/docker-entrypoint-initdb.d/001-standalone.sql:ro
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      # TCP waits for the final server, after init scripts finish. The temporary
+      # initdb server accepts only Unix-socket connections.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "collector", "-d", "collector"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
   clickhouse:
     image: clickhouse/clickhouse-server:25.3-alpine
     environment:
@@ -33,8 +44,8 @@ services:
         soft: 262144
         hard: 262144
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
     volumes:
       # The v2 spans table declares `SETTINGS storage_policy='tiered'`. That
       # policy is a SERVER config (NOT a schema .sql), so it must live in
@@ -60,16 +71,21 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       FI_CH_URL: http://clickhouse:8123
+      FI_PG_WRITE: postgres://collector:standalone-db-password@postgres:5432/collector?sslmode=disable
+      FI_PG_READ: postgres://collector:standalone-db-password@postgres:5432/collector?sslmode=disable
+      USAGE_EVENTS_ENABLED: "false"
       FI_GRPC_ADDR: ":4317"
       FI_HTTP_ADDR: ":4318"
       FI_ADMIN_ADDR: ":9464"
       FI_DEAD_LETTER_FILE: /var/lib/fi-collector/dead_letter.jsonl
     ports:
-      - "4317:4317"
-      - "4318:4318"
-      - "9464:9464"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:9464:9464"
     volumes:
       - fi-dead-letter:/var/lib/fi-collector
     healthcheck:
@@ -91,4 +107,5 @@ services:
 
 volumes:
   ch-data:
+  pg-data:
   fi-dead-letter:

@@ -85,6 +85,7 @@
     {"pattern": "futureagi/scripts/setup_pg_replication.sql", "reason": "PostgreSQL-only replica identity statements, not ClickHouse schema execution.", "sha256": "7c3b563bda94cdb1d92d794b22c14b41b11514cd05bd71d3d40cf45d28cbc015"},
     {"pattern": "futureagi/tfc/settings/test.py", "reason": "Test settings initialize disposable PostgreSQL databases, not product ClickHouse bootstrap.", "sha256": "7d345e110e8f176a510cd9aa671732e9eb8d64015725562cc41b184efaabdaed"},
     {"pattern": "futureagi/model_hub/utils/SQL_queries.py", "reason": "Inspected PostgreSQL PL/pgSQL function definitions using Django connections, not ClickHouse DDL.", "sha256": "4c13a5fce6b43c3be0c663400c8200b5fd3dd4ca312058e1b84ae6c3a3ec5ef1"},
-    {"pattern": "futureagi/tfc/utils/error_codes.py", "reason": "The literal create-user text is a user-facing error message, not a database schema statement.", "sha256": "43689832cf0943defc9eda7fd2728a24db5c82ebb0249f42f0d1264a65f52c57"}
+    {"pattern": "futureagi/tfc/utils/error_codes.py", "reason": "The literal create-user text is a user-facing error message, not a database schema statement.", "sha256": "43689832cf0943defc9eda7fd2728a24db5c82ebb0249f42f0d1264a65f52c57"},
+    {"pattern": "fi-collector/test/standalone/seed.sql", "reason": "Inspected PostgreSQL seed for the standalone collector Compose stack: creates the auth and project tables in a fresh standalone Postgres, not ClickHouse DDL.", "sha256": "8ca2a534c6cdf449ad44892bdb7985527e17b3f989834655be54f8abf8952d8b"}
   ]
 }

@@ -38,17 +38,97 @@ Postgres and ClickHouse: the default `docker-compose.yml` runs it inside the
 `docker compose up` brings everything live; SDKs point at the collector
 instead of Django's `/v1/traces` endpoint.
 
-### 2. Standalone (just collector + ClickHouse)
+### 2. Standalone development rig (collector + ClickHouse + seeded PostgreSQL)
 
 ```bash
 cd fi-collector/
-docker compose -f docker-compose.standalone.yml up
-# SDKs → http://localhost:4317 (gRPC) or http://localhost:4318 (HTTP)
-# ClickHouse 25.3 at localhost:18123 (HTTP) / 19000 (native)
+docker compose -f docker-compose.standalone.yml up --build -d
+# SDKs → localhost:4317 (gRPC) or http://localhost:4318/v1/traces (HTTP)
+# ClickHouse 25.3 at localhost:8123 (HTTP) / 9000 (native)
+curl --fail http://localhost:9464/healthz
 ```
 
-Use this for testing the collector in isolation, or for deploying it as a
-sidecar in a non-FutureAGI environment.
+Wait for the collector's health endpoint before sending spans. This rig is for
+**local development only**, not a production sidecar. Published ports bind to
+`127.0.0.1`; PostgreSQL has no published host port. The dedicated PostgreSQL
+volume is initialized from `test/standalone/seed.sql`, which supplies only the
+collector's auth/project/subscription tables, not the full platform schema.
+Do not apply that SQL to an existing platform database.
+
+Authentication is **not bypassed**: `FI_PG_WRITE` and `FI_PG_READ` point to the
+seeded database. Send the public local-test pair `X-Api-Key: standalone-api-key`
+and `X-Secret-Key: standalone-secret-key` (lowercase metadata keys for gRPC).
+The seed uses UUID organization/workspace/user IDs; projects are auto-created
+with UUID IDs by the normal resolver. Do not substitute human-readable IDs:
+ClickHouse's `org_id` and `project_id` columns require UUIDs.
+
+Each OTLP `ResourceSpans` must have a nonempty string **resource attribute**
+`project_name` (not merely a span attribute). Alternatively, `X-Project-Name`
+(`FI-Project-Name` alias, lowercase for gRPC) supplies the fallback for resources
+without one. Missing routing is rejected. An unknown name creates an Observe
+project in the authenticated workspace; clients must not invent `fi.project_id`
+or `fi.org_id` attributes.
+
+#### Standalone smoke test
+
+From the host, send a real authenticated span and explicitly flush the SDK:
+
+```bash
+pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-grpc
+python - <<'PY'
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+provider = TracerProvider(resource=Resource.create({
+    "service.name": "standalone-smoke",
+    "project_name": "standalone-smoke",
+}))
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
+    endpoint="localhost:4317",
+    insecure=True,
+    headers=(("x-api-key", "standalone-api-key"),
+             ("x-secret-key", "standalone-secret-key")),
+)))
+with provider.get_tracer("standalone-smoke").start_as_current_span("standalone-smoke"):
+    pass
+provider.force_flush()
+provider.shutdown()
+PY
+```
+
+After the collector's batch flush (up to 5 seconds by default), verify an actual
+**span** row, not just a successful export response or a row in `traces`:
+
+```bash
+curl --fail --get 'http://localhost:8123/' --data-urlencode \
+  "query=SELECT trace_id, org_id, project_id, name FROM spans WHERE name = 'standalone-smoke' ORDER BY start_time DESC LIMIT 1 FORMAT PrettyCompact"
+```
+
+Expect `org_id = 00000000-0000-4000-8000-000000000001` and a nonzero UUID
+`project_id`. If no span appears, inspect the collector logs with
+`docker compose -f docker-compose.standalone.yml logs fi-collector` and the
+dead-letter file `/var/lib/fi-collector/dead_letter.jsonl` in its persistent volume.
+A successful request alone is not proof of a ClickHouse span insert.
+
+The rig omits Redis, so quota enforcement, billing emission and immediate
+key/project cache invalidation are unavailable (auth still uses PostgreSQL and
+TTL-bound caches). It does not provide platform UI, custom model pricing or
+simulation routing. Use the full platform stack for those features; hosted
+collectors must keep their existing auth database, private credentials and TLS
+configuration. Never reuse these public test credentials remotely.
+
+PostgreSQL init scripts run only on an empty `pg-data` volume. Ordinary
+`docker compose -f docker-compose.standalone.yml down` preserves the data.
+To reset this disposable rig after seed/schema changes, the following command
+**deletes all of this compose stack's database and dead-letter volumes**; do not
+run it against data you want to retain:
+
+```bash
+docker compose -f docker-compose.standalone.yml down -v
+docker compose -f docker-compose.standalone.yml up --build -d
+```
 
 ## Why a custom OTel exporter
 
@@ -92,7 +172,7 @@ fi-collector/
 │   └── fi-collector-prod.yaml             — prod: + memory_limiter, retry, queue
 ├── builder-config.yaml                    — ocb manifest (which components to compile in)
 ├── Dockerfile                             — scratch runtime, ~25 MiB image
-├── docker-compose.standalone.yml          — collector + CH only, for isolated testing
+├── docker-compose.standalone.yml          — collector + CH + seeded PG, local testing
 ├── Makefile                               — build / run / test / docker / bench
 ├── go.mod / go.sum
 └── README.md                              — this file
