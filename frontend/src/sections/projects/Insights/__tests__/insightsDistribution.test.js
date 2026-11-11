@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dsPalette } from "src/theme/ds-tokens";
 import {
   CATEGORY_PALETTE,
   OTHER_COLOR,
@@ -63,10 +64,30 @@ describe("buildColorOrder", () => {
     expect(colorFor("x", order, "dark")).toBe(CATEGORY_PALETTE.dark[0]);
   });
 
+  it("uses each mode's own data steps for the same slots", () => {
+    const light = dsPalette("light").data;
+    const dark = dsPalette("dark").data;
+    expect(CATEGORY_PALETTE.light).toEqual([light[1], light[4], light[6]]);
+    expect(CATEGORY_PALETTE.dark).toEqual([dark[1], dark[4], dark[6]]);
+    const order = ["a", "b", "c"];
+    order.forEach((id, slot) => {
+      expect(colorFor(id, order, "light")).toBe(light[[1, 4, 6][slot]]);
+      expect(colorFor(id, order, "dark")).toBe(dark[[1, 4, 6][slot]]);
+    });
+    expect(colorFor("a", order, "dark")).not.toBe(
+      colorFor("a", order, "light"),
+    );
+    const [segment] = buildSegments([{ id: "a", name: "A", count: 3 }], {
+      order,
+      mode: "dark",
+    });
+    expect(segment.color).toBe(dark[1]);
+  });
+
   it("does not cycle hues beyond the three all-pairs-distinct system slots", () => {
     const order = Array.from({ length: 9 }, (_, i) => `c${i}`);
     expect(CATEGORY_PALETTE.light).toHaveLength(3);
-    expect(CATEGORY_PALETTE.dark).toEqual(CATEGORY_PALETTE.light);
+    expect(CATEGORY_PALETTE.dark).toHaveLength(3);
     expect(colorFor("c2", order)).toBe(CATEGORY_PALETTE.light[2]);
     expect(colorFor("c3", order)).toBeNull();
     expect(colorFor("c8", order)).toBeNull();

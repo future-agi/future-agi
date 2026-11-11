@@ -2,15 +2,18 @@ import { dsPalette } from "src/theme/ds-tokens";
 
 // Category identities keep their slot across sorting, filters and run paging.
 // Three all-pairs-distinct system slots avoid boolean and neutral slots.
-// The darker (light-mode) data steps pass contrast and separation checks on
-// both chart surfaces; use those documented steps deliberately in both modes.
-// Hue and identity bounds are independent: the original eight named series
-// remain selectable; slots four through eight use neutral marks. Only the
-// original identity overflow and unmatched items fold into labelled Other.
-const CATEGORY_STEPS = [1, 4, 6].map((slot) => dsPalette("light").data[slot]);
+// Each mode uses its own documented data steps for the same slots, so a
+// category keeps its hue when the theme changes and stays readable on that
+// mode's surface. Hue and identity bounds are independent: the original eight
+// named series remain selectable; slots four through eight use neutral marks.
+// Only the original identity overflow and unmatched items fold into labelled
+// Other.
+const CATEGORY_SLOTS = [1, 4, 6];
+const categorySteps = (mode) =>
+  CATEGORY_SLOTS.map((slot) => dsPalette(mode).data[slot]);
 export const CATEGORY_PALETTE = {
-  light: CATEGORY_STEPS,
-  dark: CATEGORY_STEPS,
+  light: categorySteps("light"),
+  dark: categorySteps("dark"),
 };
 export const OTHER_COLOR = {
   light: dsPalette("light").text.disabled,
