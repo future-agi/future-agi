@@ -93,10 +93,11 @@ export async function createDriver({ jobId, runId, registration }) {
       /** The plan is preselected from stored data. Each default is asserted visibly (never assumed) before the
        * reviewer decides; the single counted gesture is the button that names the paid ceiling. */
       const expectPlan = async ({ candidate, reference, titles }) => {
-        await expect(page.getByLabel('Candidate version', { exact: true })).toContainText(`v${candidate}`);
-        await expect(page.getByLabel('Recorded reference version', { exact: true })).toContainText(`v${reference}`);
-        for (const title of titles) await expect(group().getByRole('checkbox', { name: title, exact: true })).toBeChecked();
-        await expect(group().getByRole('checkbox', { name: 'Recorded failure to reproduce' }).last()).toBeChecked();
+        const ready = { timeout: 60_000 };
+        await expect(page.getByLabel('Candidate version', { exact: true })).toContainText(`v${candidate}`, ready);
+        await expect(page.getByLabel('Recorded reference version', { exact: true })).toContainText(`v${reference}`, ready);
+        for (const title of titles) await expect(group().getByRole('checkbox', { name: title, exact: true })).toBeChecked(ready);
+        await expect(group().getByRole('checkbox', { name: 'Recorded failure to reproduce' }).last()).toBeChecked(ready);
         await expect(page.getByRole('button', { name: RUN_BUTTON })).toBeEnabled({ timeout: 120_000 });
       };
       /** Accept the paid ceiling named on the button and start the run through the public Tests UI. Returns the evidence id. */
@@ -265,7 +266,7 @@ export async function createDriver({ jobId, runId, registration }) {
           // The application's current production is the baseline for the neighboring cases.
           await choose('Production version', `v${input.versions.head}`, 'matched-production');
           await expectPlan({ candidate: state.repaired.number, reference: input.versions.recorded, titles: Object.values(TITLE) });
-          await expect(page.getByLabel('Production version', { exact: true })).toContainText(`v${input.versions.head}`);
+          await expect(page.getByRole('combobox', { name: /^Production version/ })).toContainText(`v${input.versions.head}`);
           await shot('05a-matched-plan');
           const evidenceId = await startRun('matched');
           const run = await waitRun(evidenceId, signal);
