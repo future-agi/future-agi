@@ -1776,7 +1776,9 @@ class ControllerTests(unittest.TestCase):
                 self.assertFalse(self.escalations())
 
     def test_publish_survives_a_failed_check_read(self):
-        reading = lambda m, r, d: m == "GET" and r.startswith("check-runs/")
+        def reading(method, route, data):
+            return method == "GET" and route.startswith("check-runs/")
+
         # Once: retried, the pass stands.
         context = self.prepare()
         self.failing(reading, 1)
