@@ -129,6 +129,12 @@ test('AUTH-E2E-004: fresh signup seeds demo traces visible in Observe', {
       await page.getByLabel(/Organization Name/i).fill(`E2E Demo ${suffix}`);
       await page.getByRole('button', { name: 'Continue', exact: true }).click();
       await expect(page).toHaveURL(/\/dashboard\//, { timeout: UI_READY });
+      // Saving a goal completes onboarding, so AuthGuard performs its one-time
+      // post-onboarding landing (auth/guard/auth-guard.jsx: router.replace to
+      // the post-login path, then initial-render=done). Let it finish before
+      // navigating, or the landing redirect can replace the next page.
+      await page.waitForFunction(() => localStorage.getItem('initial-render') === 'done',
+        undefined, { timeout: UI_READY });
     }, { timeout: UI_READY });
 
     // Model table names and relationships: accounts/models/user.py,
