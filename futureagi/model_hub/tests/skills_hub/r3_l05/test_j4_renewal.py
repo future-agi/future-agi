@@ -92,7 +92,10 @@ def _renew(reviewer, request_id):
 
 
 def _items(changes):
-    return sorted(change["item"].split(".")[0] + "." + change["item"].split(".")[-1] for change in changes)
+    return sorted(
+        change["item"].split(".")[0] + "." + change["item"].split(".")[-1]
+        for change in changes
+    )
 
 
 @pytest.mark.parametrize("race", ["annotation", "configuration", "policy"])
@@ -161,7 +164,9 @@ def test_reviewer_renewal_after_race_requires_new_decision(
     fixtures.approve(reviewer, renewed, current)
     result = fixtures.execute(reviewer, renewed, current)
     assert result["post_move_state"]["version"] == candidate[1].number
-    assert result["currentness_at_action"]["packet_fingerprint"] == preview["fingerprint"]
+    assert (
+        result["currentness_at_action"]["packet_fingerprint"] == preview["fingerprint"]
+    )
 
 
 def test_expiry_keeps_metadata_row_and_renewal_removes_only_expired_evidence(
@@ -185,18 +190,24 @@ def test_expiry_keeps_metadata_row_and_renewal_removes_only_expired_evidence(
     mark_review_seen(principal=reviewer, request_id=request_id, revision=1)
     preview, receipt = _renew(reviewer, request_id)
     assert preview["removed_evidence"] == [
-        {"source": "skills_text", "source_id": str(older.pk), "reason": "evidence_expired"}
+        {
+            "source": "skills_text",
+            "source_id": str(older.pk),
+            "reason": "evidence_expired",
+        }
     ]
     assert [ref["source_id"] for ref in preview["packet"]["evidence"]] == [
         str(newer.pk)
     ]
-    assert list_review_inbox(principal=reviewer)["results"][0]["renewal_required"] is False
+    assert (
+        list_review_inbox(principal=reviewer)["results"][0]["renewal_required"] is False
+    )
     renewed = {"id": request["id"], "revision": receipt["revision"]}
     current = {"fingerprint": preview["fingerprint"]}
     fixtures.approve(reviewer, renewed, current)
-    assert fixtures.execute(reviewer, renewed, current)["post_move_state"]["version"] == (
-        candidate[1].number
-    )
+    assert fixtures.execute(reviewer, renewed, current)["post_move_state"][
+        "version"
+    ] == (candidate[1].number)
 
 
 def test_renewal_actor_currentness_and_cas(actors, hub_skill, candidate, hub_actor):
@@ -234,12 +245,12 @@ def test_renewal_actor_currentness_and_cas(actors, hub_skill, candidate, hub_act
     assert revision.value.code == "review_conflict"
     key = uuid4()
     again = release_renewal_preview(principal=reviewer, request_id=request_id)
-    body = dict(
-        principal=reviewer,
-        request_id=request_id,
-        revision=again["revision"],
-        expected_fingerprint=again["fingerprint"],
-    )
+    body = {
+        "principal": reviewer,
+        "request_id": request_id,
+        "revision": again["revision"],
+        "expected_fingerprint": again["fingerprint"],
+    }
     first = renew_release_request(**body, idempotency_key=key)
     assert renew_release_request(**body, idempotency_key=key) == first
     assert HubSkillReleasePacket.objects.filter(request_id=request_id).count() == 2
@@ -287,3 +298,50 @@ def test_renewal_http_contract(actors, hub_skill, candidate, organization, works
     assert renewed.status_code == 200, renewed.data
     assert renewed.data["result"]["revision"] == body["revision"] + 1
     assert renewed.data["result"]["status"] == "pending"
+
+
+def test_review_responses_are_never_cacheable(
+    actors, hub_skill, candidate, organization, workspace
+):
+    # A heuristically cached 410 detail would hide the renewed revision from
+    # the reviewer's browser; success and error responses are both no-store.
+    author, reviewer = actors
+    older = fixtures.text_run(author, hub_skill, candidate[1])
+    newer = fixtures.text_run(author, hub_skill, candidate[1])
+    request, _ = _approved(actors, hub_skill, candidate[1], [older, newer])
+    key = OrgApiKey.objects.create(
+        name="Synthetic reviewer",
+        type="user",
+        user_id=reviewer.user_id,
+        api_key=f"test-{uuid4()}",
+        secret_key=f"test-{uuid4()}",
+        organization=organization,
+        workspace=workspace,
+    )
+    client = APIClient()
+    client.credentials(HTTP_X_API_KEY=key.api_key, HTTP_X_SECRET_KEY=key.secret_key)
+    path = f"/model-hub/skills/release-requests/{request['id']}/"
+    current = client.get(path)
+    assert current.status_code == 200, current.data
+    assert current["Cache-Control"] == "private, no-store"
+    older.payload_expires_at = timezone.now() - timedelta(seconds=1)
+    older.save(update_fields=["payload_expires_at"])
+    expired = client.get(path)
+    assert expired.status_code == 410
+    assert expired["Cache-Control"] == "private, no-store"
+    renewal = client.get(path + "renewal/")
+    assert renewal["Cache-Control"] == "private, no-store"
+    body = renewal.data["result"]
+    renewed = client.post(
+        path + "renewal/",
+        {"revision": body["revision"], "expected_fingerprint": body["fingerprint"]},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY=str(uuid4()),
+    )
+    assert renewed.status_code == 200, renewed.data
+    after = client.get(path)
+    assert after.status_code == 200, after.data
+    assert after["Cache-Control"] == "private, no-store"
+    assert [ref["source_id"] for ref in after.data["result"]["packet"]["evidence"]] == [
+        str(newer.pk)
+    ]

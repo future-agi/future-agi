@@ -13,6 +13,13 @@ from model_hub.views.skills_hub import SkillsView
 class ReviewView(SkillsView):
     private_resource = True
 
+    def finalize_response(self, request, response, *args, **kwargs):
+        # J4: review state is private and changes under races. A browser must
+        # never reuse a heuristically cached 410/409 (or 200) after a renewal.
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response["Cache-Control"] = "private, no-store"
+        return response
+
 
 class PacketPreviewView(ReviewView):
     @contract(s.Packet, body=s.Preview)
@@ -31,9 +38,13 @@ class ReleaseInspectionView(ReviewView):
     def post(self, request):
         from model_hub.services.skills_hub.r3.release_inspection import inspect_release
 
-        return self.output(request, s.ReleaseInspection, inspect_release(
-            principal=request.skill_principal, **request.validated_data
-        ))
+        return self.output(
+            request,
+            s.ReleaseInspection,
+            inspect_release(
+                principal=request.skill_principal, **request.validated_data
+            ),
+        )
 
 
 class NativeEvidenceShareView(ReviewView):

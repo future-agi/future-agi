@@ -1043,9 +1043,7 @@ def _observation(
                 else (
                     "observe_runtime"
                     if "unknown" in states
-                    else "check_reporter"
-                    if "stale_observation" in states
-                    else "none"
+                    else "check_reporter" if "stale_observation" in states else "none"
                 )
             )
         )

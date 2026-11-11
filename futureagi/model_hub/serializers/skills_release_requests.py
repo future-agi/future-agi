@@ -61,7 +61,10 @@ class EvidenceSummary(ctx.ContextSerializer):
     availability = s.ChoiceField(choices=["available", "unavailable"])
 
     def get_fields(self):
-        return {**super().get_fields(), "source": s.ChoiceField(choices=["skills_text", "simulation_native"])}
+        return {
+            **super().get_fields(),
+            "source": s.ChoiceField(choices=["skills_text", "simulation_native"]),
+        }
 
 
 class ReleaseInspection(ctx.ContextSerializer):

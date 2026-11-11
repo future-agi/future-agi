@@ -6,7 +6,10 @@ from uuid import uuid4
 import pytest
 
 from model_hub.models.skills_hub import HubSkillLabel
-from model_hub.models.skills_hub_v12 import HubSkillContextBinding, HubSkillContextOperation
+from model_hub.models.skills_hub_v12 import (
+    HubSkillContextBinding,
+    HubSkillContextOperation,
+)
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.v12.credentials import canonical_digest
 from model_hub.tests.skills_hub import test_i2_integration as http
@@ -73,19 +76,34 @@ def test_legacy_repository_replay_and_kind_change_clear_native_identity(
 ):
     body = binding_body(None)
     body.pop("configuration")
-    body.update(kind="repository", update_mode="repository_lock", repository={
-        "provider": "github", "repository_id": "synthetic", "default_branch": "main", "project_scope": ""
-    })
+    body.update(
+        kind="repository",
+        update_mode="repository_lock",
+        repository={
+            "provider": "github",
+            "repository_id": "synthetic",
+            "default_branch": "main",
+            "project_scope": "",
+        },
+    )
     key = uuid4()
     created = create(admin, context, body, key)
     assert created.status_code == 201, created.data
     operation = HubSkillContextOperation.objects.get(idempotency_key=key)
-    assert operation.request_digest == canonical_digest({"context_id": str(context.pk), "binding": body})
+    assert operation.request_digest == canonical_digest(
+        {"context_id": str(context.pk), "binding": body}
+    )
     replay = create(admin, context, body, key)
     assert replay.status_code == 201, replay.data
     assert replay.data == created.data
-    native_target = create(admin, context, binding_body(native_configuration)).data["result"]
-    changed = admin.patch(BASE + f"bindings/{native_target['id']}/", {"revision": 1, "binding": body}, format="json")
+    native_target = create(admin, context, binding_body(native_configuration)).data[
+        "result"
+    ]
+    changed = admin.patch(
+        BASE + f"bindings/{native_target['id']}/",
+        {"revision": 1, "binding": body},
+        format="json",
+    )
     assert changed.status_code == 200, changed.data
     assert changed.data["result"]["configuration"] is None
     assert changed.data["result"]["configuration_digest"] == ""

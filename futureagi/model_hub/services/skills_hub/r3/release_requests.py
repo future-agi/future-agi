@@ -895,7 +895,11 @@ def _renewed_packet(
             if exc.code not in _UNAVAILABLE_EVIDENCE:
                 raise
             removed.append(
-                {"source": ref["source"], "source_id": ref["source_id"], "reason": exc.code}
+                {
+                    "source": ref["source"],
+                    "source_id": ref["source_id"],
+                    "reason": exc.code,
+                }
             )
             continue
         selections.append(

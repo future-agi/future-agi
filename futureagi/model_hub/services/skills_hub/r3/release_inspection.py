@@ -60,12 +60,23 @@ def _summary(principal, ref):
         # A persisted terminal job without a reducer result is not a passing run.
         if counts and decision:
             value["availability"] = "available"
-        for family, field in (("selection", "routing_verdict"), ("delivery", "delivery_verdict")):
+        for family, field in (
+            ("selection", "routing_verdict"),
+            ("delivery", "delivery_verdict"),
+        ):
             verdicts = set(record.hub_skill_attempts.values_list(field, flat=True))
             value[family] = (
-                "fail" if "fail" in verdicts else
-                "pass" if verdicts == {"pass"} else
-                "Not applicable" if verdicts == {"not_applicable"} else "Not observed"
+                "fail"
+                if "fail" in verdicts
+                else (
+                    "pass"
+                    if verdicts == {"pass"}
+                    else (
+                        "Not applicable"
+                        if verdicts == {"not_applicable"}
+                        else "Not observed"
+                    )
+                )
             )
     else:
         value["planned"] = len(record.planned_matrix)
@@ -75,7 +86,9 @@ def _summary(principal, ref):
 def inspect_release(*, principal, expected_fingerprint, **selection):
     first = preview_release_packet(principal=principal, **selection)
     if first["fingerprint"] != expected_fingerprint:
-        raise SkillsHubError("review_conflict", "The reviewed packet changed.", status=409)
+        raise SkillsHubError(
+            "review_conflict", "The reviewed packet changed.", status=409
+        )
     packet = first["packet"]
     versions = HubSkillVersion.objects.filter(skill_id=packet["subject_id"])
     after = versions.get(pk=packet["candidate_version_id"])
@@ -86,8 +99,10 @@ def inspect_release(*, principal, expected_fingerprint, **selection):
         if version is None:
             return []
         require_distribution_eligibility(version)
-        return [{"path": row.path, "content": row.blob.content}
-                for row in version.files.select_related("blob").order_by("path")]
+        return [
+            {"path": row.path, "content": row.blob.content}
+            for row in version.files.select_related("blob").order_by("path")
+        ]
 
     capabilities = capability_changes(before=files(before), after=files(after))
     summaries = [_summary(principal, ref) for ref in packet["evidence"]]
@@ -103,6 +118,12 @@ def inspect_release(*, principal, expected_fingerprint, **selection):
     # old fingerprint or make a best-effort partial inspection look complete.
     last = preview_release_packet(principal=principal, **selection)
     if last["fingerprint"] != expected_fingerprint:
-        raise SkillsHubError("review_conflict", "The review changed during inspection.", status=409)
-    return {"fingerprint": expected_fingerprint, "capabilities": capabilities,
-            "summaries": summaries, "target_configuration": target_configuration}
+        raise SkillsHubError(
+            "review_conflict", "The review changed during inspection.", status=409
+        )
+    return {
+        "fingerprint": expected_fingerprint,
+        "capabilities": capabilities,
+        "summaries": summaries,
+        "target_configuration": target_configuration,
+    }
