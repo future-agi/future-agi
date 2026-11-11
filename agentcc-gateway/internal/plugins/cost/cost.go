@@ -1,6 +1,7 @@
 package cost
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -236,12 +237,13 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		usage := rc.Response.Usage
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
 		providerType := p.providerType(rc)
-		opts.TablePrice = keepsTablePrice(db, model, rc.Provider, table, providerType)
-		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
+		ownKey, keep := resellerPrice(db, model, rc.Provider, table, providerType, opts.At)
+		opts.TablePrice = keep
+		cost, ok = db.CalculateCost(cmp.Or(ownKey, model), usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
 			fallback := priceKey(db, rc.Model, rc.Provider, table)
-			opts.TablePrice = keepsTablePrice(db, fallback, rc.Provider, table, providerType)
-			cost, ok = db.CalculateCost(fallback, usage.PromptTokens, usage.CompletionTokens, opts)
+			ownKey, opts.TablePrice = resellerPrice(db, fallback, rc.Provider, table, providerType, opts.At)
+			cost, ok = db.CalculateCost(cmp.Or(ownKey, fallback), usage.PromptTokens, usage.CompletionTokens, opts)
 		}
 	}
 
@@ -355,6 +357,70 @@ func keepsTablePrice(db *modeldb.ModelDB, model, provider, table, configuredType
 		}
 	}
 	return false
+}
+
+// googleFlashKeys are the keys Google's own Gemini 3.6/3.7/3.8 Flash entries
+// are listed under. A fixed list, not "has dated rows", so the rule below
+// outlives those rows.
+var googleFlashKeys = map[string]bool{
+	"gemini-3.6-flash":           true,
+	"gemini-3.7-flash":           true,
+	"gemini-3.8-flash":           true,
+	"gemini/gemini-3.6-flash":    true,
+	"gemini/gemini-3.7-flash":    true,
+	"gemini/gemini-3.8-flash":    true,
+	"vertex_ai/gemini-3.6-flash": true,
+	"vertex_ai/gemini-3.7-flash": true,
+	"vertex_ai/gemini-3.8-flash": true,
+}
+
+// ownPriceFrom is when a reseller's own price for those models wins whatever
+// it is. Before it, the own price wins only where it equals the price the
+// request is billed already, so no bill moves before Google's price does.
+var ownPriceFrom = time.Date(2027, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+// resellerPrice says how a chat request is priced when its provider resells
+// the model. ownKey is the provider's own entry to bill instead of model, or
+// ""; keepTablePrice bills model at the table's own rate, never a dated one.
+// Only Google's Gemini Flash keys take the provider's own entry: the first one
+// listed with an input and an output price, from ownPriceFrom on, or before it
+// when it equals the price in force for model. Anything else is priced as
+// keepsTablePrice says.
+func resellerPrice(db *modeldb.ModelDB, model, provider, table, configuredType string, at time.Time) (ownKey string, keepTablePrice bool) {
+	if !keepsTablePrice(db, model, provider, table, configuredType) {
+		return "", false
+	}
+	m, ok := db.Get(model)
+	if !ok {
+		return "", false
+	}
+	if !googleFlashKeys[m.ID] {
+		return "", true
+	}
+	base := m.ID[strings.LastIndexByte(m.ID, '/')+1:]
+	for _, name := range []string{provider, table, tableProviderNames[provider], configuredType} {
+		if name == "" {
+			continue
+		}
+		for _, key := range []string{name + "/" + base, name + "/google/" + base} {
+			own, ok := db.Get(key)
+			if !ok || own.ID != key {
+				continue
+			}
+			p := own.PricingAt(at)
+			if p.InputPerToken <= 0 || p.OutputPerToken <= 0 {
+				continue
+			}
+			if at.Before(ownPriceFrom) {
+				g := m.PricingAt(at)
+				if p.InputPerToken != g.InputPerToken || p.OutputPerToken != g.OutputPerToken {
+					return "", true
+				}
+			}
+			return key, false
+		}
+	}
+	return "", true
 }
 
 // imageCost prices an image call: by tokens when the upstream reported them,
