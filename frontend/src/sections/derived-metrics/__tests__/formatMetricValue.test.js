@@ -299,3 +299,35 @@ describe("server-declared diagnostic counts", () => {
     },
   );
 });
+
+// Round 3 UI: headline positions round for reading; tables keep six digits.
+describe("display precision", () => {
+  const display = (value, metadata) =>
+    formatMetricValue(value, metadata, "en-US", { display: true });
+  it.each([
+    [0.801887, rate, "80.2%"],
+    [0.8, rate, "80%"],
+    [3.99685, number, "3.997"],
+    [12.3456, number, "12.35"],
+    [2445.32, { ...number, unit: "ms" }, "2,445.32 ms"],
+    [1234567.891, number, "1,234,567.89"],
+    [0.000123456, number, "0.0001235"],
+  ])("rounds %s for a headline position", (value, metadata, text) => {
+    expect(display(value, metadata)).toBe(text);
+  });
+  it.each([
+    [0.0004, "0.04%"],
+    [-0.0004, "-0.04%"],
+    [0.99996, "99.996%"],
+  ])(
+    "never rounds %s onto a 0%% or 100%% boundary it does not reach",
+    (value, text) => {
+      expect(display(value, rate)).toBe(text);
+    },
+  );
+  it("leaves the default formatting and missing values unchanged", () => {
+    expect(formatMetricValue(0.801887, rate, "en-US")).toBe("80.1887%");
+    expect(display(null, rate)).toBeNull();
+    expect(display(0, rate)).toBe("0%");
+  });
+});

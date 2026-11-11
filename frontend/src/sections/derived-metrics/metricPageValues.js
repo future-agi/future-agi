@@ -1,3 +1,4 @@
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { windowNotCalculatedCopy } from "./copy";
 import { formatMetricValue } from "./formatMetricValue";
 import { pointValueState } from "./unitValueState";
@@ -76,6 +77,22 @@ const unavailableMessages = {
   metric_version_changed:
     "The active definition changed. Reload the metric to read the new version.",
 };
+
+/** A failed action (queue a recalculation, save or delete a snapshot) says
+ * what did not happen, not that something could not load. Wire codes keep
+ * their specific copy; a validation message the server marks safe is shown
+ * as is. */
+export function metricActionMessage(error, failure) {
+  if (Object.hasOwn(unavailableMessages, error?.code))
+    return unavailableMessages[error.code];
+  if (error?.statusCode === 403)
+    return "You do not have permission to change this metric.";
+  if (error?.statusCode === 404)
+    return "This metric is not available in this workspace.";
+  if (error?.statusCode === 429)
+    return `${failure} The service is busy. Try again shortly.`;
+  return getSafeActionErrorMessage(error, `${failure} Try again.`);
+}
 
 /** Error codes are part of the wire contract. Never turn a failed read into no data. */
 export function metricReadMessage(error, label) {

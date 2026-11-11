@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -7,10 +7,10 @@ import {
   Breadcrumbs,
   Button,
   Chip,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  IconButton,
   Link,
   ListItemIcon,
   Menu,
@@ -24,6 +24,8 @@ import {
   Typography,
 } from "@mui/material";
 import { visuallyHidden } from "@mui/utils";
+import ContentSkeleton from "src/components/content-skeleton";
+import { ClosableDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import PageHeader from "src/components/page-header";
 import StatusBadge from "src/components/status-badge";
@@ -33,10 +35,21 @@ import { useParams, useRouter } from "src/routes/hooks";
 import { paths } from "src/routes/paths";
 import { ROLES } from "src/utils/rolePermissionMapping";
 import { SegmentedTabs } from "src/components/tabs/tabs";
-import { metricKeys, useMetricDetail, useRefreshMetric } from "./api";
-import { localTime, localTimeZone, metricWindow } from "./metricTime";
+import {
+  metricKeys,
+  useMetricDetail,
+  useMetricEvaluators,
+  useRefreshMetric,
+} from "./api";
+import {
+  formatMetricClock,
+  localTime,
+  localTimeZone,
+  metricWindow,
+} from "./metricTime";
 import MetricStatusLine, { MetricReadNotice } from "./MetricStatusLine";
-import { metricReadMessage } from "./metricPageValues";
+import { metricActionMessage } from "./metricPageValues";
+import { firstCalculationBadge } from "./metricCalculationState";
 import MetricOverview from "./MetricOverview";
 import MetricDrivers from "./MetricDrivers";
 import MetricHistory from "./MetricHistory";
@@ -116,9 +129,37 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
     });
   };
   const detail = useMetricDetail({ scope, metricId });
+  // Tab panels use only a settled read of the metric, never a cached one.
   const metric = detail.data;
+  // The header, its actions and the request scope keep the last read of this
+  // same metric while it reads again (after Run now, a snapshot or a window
+  // focus). Otherwise every background read blanks the title, and the change
+  // of scope resets an action's result before anyone sees it. A failed read
+  // drops it: the page then shows the failure, not a stale name.
+  const [lastRead, setLastRead] = useState(null);
+  if (metric && metric !== lastRead) setLastRead(metric);
+  const identity =
+    metric ?? (detail.isFetching && !detail.isError ? lastRead : undefined);
+  // The metric is read again while its header stays. Its panels still wait
+  // for the settled read; a same-height placeholder stands in for them, so
+  // the tabs and the window picker do not move and the page does not flash
+  // empty.
+  const rereading = !metric && Boolean(identity);
+  const panelRef = useRef(null);
+  const [panelHeight, setPanelHeight] = useState(0);
+  useEffect(() => {
+    const node = panelRef.current;
+    if (!metric || !node || typeof ResizeObserver === "undefined")
+      return undefined;
+    const observer = new ResizeObserver(() => {
+      // A hidden panel measures 0; keep the last height it had on screen.
+      if (node.offsetHeight > 0) setPanelHeight(node.offsetHeight);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [metric]);
   const refresh = useRefreshMetric({
-    scope: { ...scope, projectId: metric?.project_id },
+    scope: { ...scope, projectId: identity?.project_id },
     metricId,
   });
   const [tab, setTab] = useState("Overview");
@@ -134,39 +175,36 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
     setDefinitionId(metric.definition?.id ?? null);
   }
   const userMetric =
-    metric?.definition?.level === "user" ||
-    (!metric?.definition && metric?.draft_definition?.level === "user");
-  const scopeWithProject = { ...scope, projectId: metric?.project_id };
+    identity?.definition?.level === "user" ||
+    (!identity?.definition && identity?.draft_definition?.level === "user");
+  const scopeWithProject = { ...scope, projectId: identity?.project_id };
   const readKey = `${definitionId}:${window.window_start}:${window.window_end}:${readRevision}`;
   const summary = definitionSummary(
-    metric?.definition || metric?.draft_definition,
+    identity?.definition || identity?.draft_definition,
   );
   // The same project read the Metrics list uses; no extra endpoint.
   const projectNames = useMetricProjectNames(
     scope,
-    metric?.project_id ? [metric.project_id] : [],
+    identity?.project_id ? [identity.project_id] : [],
   );
-  const statusBadge = !metric ? null : metric.definition ? (
+  const statusBadge = !identity ? null : identity.definition ? (
     <StatusBadge
       status="active"
-      label={`Active · v${metric.definition.version}`}
+      label={`Active · v${identity.definition.version}`}
       size="sm"
     />
   ) : (
+    // A saved metric waiting for its first calculation, not an unsaved draft.
     <StatusBadge
-      status="draft"
-      label={
-        metric.draft_definition?.version != null
-          ? `Draft v${metric.draft_definition.version}`
-          : "Draft"
-      }
+      {...firstCalculationBadge(identity.draft_definition)}
       variant="dot"
     />
   );
   const projectLabel =
-    metric?.project_id && metricProjectLabel(projectNames, metric.project_id);
+    identity?.project_id &&
+    metricProjectLabel(projectNames, identity.project_id);
   // Project first, then status, as the Tasks header shows them.
-  const badge = metric ? (
+  const badge = identity ? (
     <>
       {projectLabel && (
         <Chip
@@ -223,18 +261,18 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
           Metrics
         </Link>
         <Typography variant="body2" color="text.primary" noWrap>
-          {metric?.name || "Metric"}
+          {identity?.name || "Metric"}
         </Typography>
       </Breadcrumbs>
       <PageHeader
-        title={metric?.name || "Metric"}
+        title={identity?.name || "Metric"}
         badge={badge}
-        description={metric?.description || summary || undefined}
+        description={identity?.description || summary || undefined}
         sx={{ mt: 1, mb: 0 }}
         actions={
           <>
             <SaveSnapshot
-              metric={metric}
+              metric={identity}
               scope={scopeWithProject}
               window={window}
               canWrite={canWrite}
@@ -257,7 +295,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
                   color="inherit"
                   size="small"
                   startIcon={<Iconify icon="solar:pen-linear" width={16} />}
-                  disabled={!canWrite || !metric}
+                  disabled={!canWrite || !identity}
                   onClick={() =>
                     router.push(paths.dashboard.metrics.edit(metricId))
                   }
@@ -270,9 +308,11 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
               title={
                 userMetric
                   ? "User-level metrics are not available yet."
-                  : canWrite
-                    ? "Queue a recalculation. Existing values change only after it commits."
-                    : "A workspace member role is required to run metrics."
+                  : !canWrite
+                    ? "A workspace member role is required to run metrics."
+                    : identity && !identity.definition
+                      ? "Queue the first calculation again. Values appear when it finishes."
+                      : "Recalculate now. Current values stay until the new calculation finishes."
               }
             >
               <span>
@@ -282,7 +322,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
                   size="small"
                   startIcon={<Iconify icon="solar:play-linear" width={16} />}
                   disabled={
-                    !canWrite || !metric || userMetric || refresh.isPending
+                    !canWrite || !identity || userMetric || refresh.isPending
                   }
                   onClick={() => refresh.mutate({ confirm: true })}
                 >
@@ -298,7 +338,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
               aria-haspopup="menu"
               aria-expanded={Boolean(menu)}
               aria-controls={menu ? "metric-more-menu" : undefined}
-              disabled={!metric}
+              disabled={!identity}
               onClick={(event) => setMenu(event.currentTarget)}
               sx={{ minWidth: 0, px: 0.75 }}
             >
@@ -340,41 +380,62 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
       />
       <Stack spacing={1.5} sx={{ mt: 1.5 }}>
         {refresh.isError && (
-          <Alert severity="warning">
-            {metricReadMessage(refresh.error, "Refresh request")}
+          <Alert severity="warning" onClose={() => refresh.reset()}>
+            {metricActionMessage(
+              refresh.error,
+              "The recalculation was not queued.",
+            )}
           </Alert>
         )}
+        {/* Stays until dismissed: the reads it triggers keep the header's
+            scope, so they no longer reset this result. */}
         {refresh.isSuccess && (
           <Alert
             severity="info"
             action={
-              <Button
-                color="inherit"
-                size="small"
-                onClick={() => {
-                  setReadRevision((value) => value + 1);
-                  reload();
-                }}
-              >
-                Check for updates
-              </Button>
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => {
+                    setReadRevision((value) => value + 1);
+                    reload();
+                  }}
+                >
+                  Check for updates
+                </Button>
+                <IconButton
+                  color="inherit"
+                  size="small"
+                  aria-label="Close"
+                  onClick={() => refresh.reset()}
+                >
+                  <Iconify icon="solar:close-linear" width={16} />
+                </IconButton>
+              </Stack>
             }
           >
             {refresh.data?.status === "already_queued"
               ? "A recalculation is already queued."
-              : "Recalculation queued."}{" "}
-            Values change only after a successful commit.
+              : `Recalculation queued at ${formatMetricClock(refresh.submittedAt)}.`}{" "}
+            {identity?.definition
+              ? "Current values stay until it finishes."
+              : "Values appear here when the first calculation finishes."}
           </Alert>
         )}
-        <MetricReadNotice query={detail} label="Metric" />
-        {metric && userMetric && (
+        {/* While the header stays, the loading line sits in the panel's
+            place below the tabs instead (see the placeholder there). */}
+        {!rereading && <MetricReadNotice query={detail} label="Metric" />}
+        {/* Like the header's badge, these notices keep the last read of the
+            same metric while it reads again, so the tabs stay in place. */}
+        {identity && userMetric && (
           <Alert severity="info">
             User-level metrics are not available yet.
           </Alert>
         )}
-        {metric?.definition &&
-          metric.draft_definition &&
-          metric.draft_definition.id !== metric.definition.id && (
+        {identity?.definition &&
+          identity.draft_definition &&
+          identity.draft_definition.id !== identity.definition.id && (
             <Stack
               spacing={1}
               sx={{
@@ -385,17 +446,17 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
               }}
             >
               <Typography variant="body2" color="text.secondary">
-                Draft v{metric.draft_definition.version} is not active. Values
-                below still use v{metric.definition.version}.
+                Draft v{identity.draft_definition.version} is not active. Values
+                below still use v{identity.definition.version}.
               </Typography>
               <MetricStatusLine
-                definition={metric.draft_definition}
+                definition={identity.draft_definition}
                 showFreshness={false}
               />
             </Stack>
           )}
       </Stack>
-      {metric && (
+      {identity && (
         <Stack
           direction="row"
           alignItems="center"
@@ -418,7 +479,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
               />
             ))}
           </SegmentedTabs>
-          {["Overview", "Drivers"].includes(tab) && metric.definition && (
+          {["Overview", "Drivers"].includes(tab) && identity.definition && (
             <Stack
               direction="row"
               spacing={1}
@@ -478,9 +539,33 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
           )}
         </Stack>
       )}
+      {rereading && (
+        <Box
+          data-testid="metric-panel-rereading"
+          sx={{ mt: 2.5, minHeight: panelHeight || undefined }}
+        >
+          <Typography role="status" variant="body2" color="text.secondary">
+            Loading metric…
+          </Typography>
+          <ContentSkeleton
+            variant="panel"
+            rows={4}
+            aria-hidden="true"
+            sx={{
+              mt: 1.5,
+              border: 1,
+              borderColor: "divider",
+              borderRadius: 1,
+            }}
+          />
+        </Box>
+      )}
       {/* Focusable because the Definition panel has no control of its own;
-          the ring matches the list and value cells so the stop is visible. */}
+          the ring matches the list and value cells so the stop is visible.
+          Its panels stay mounted while the metric is read again, so a tab's
+          page and open drawer return with the settled read. */}
       <Box
+        ref={panelRef}
         role="tabpanel"
         id={`metric-panel-${tab}`}
         aria-labelledby={`metric-tab-${tab}`}
@@ -504,6 +589,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
             scope={scopeWithProject}
             window={window}
             windowLabel={windowLabel}
+            onViewHistory={() => setTab("History")}
           />
         )}
         {tab === "Drivers" && (
@@ -522,15 +608,9 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
             scope={scopeWithProject}
           />
         )}
+        {/* Read-only: Edit in the header is the one way into the editor. */}
         {tab === "Definition" && metric && (
-          <MetricDefinition
-            metric={metric}
-            onEditDraft={
-              canWrite
-                ? () => router.push(paths.dashboard.metrics.edit(metricId))
-                : undefined
-            }
-          />
+          <DefinitionTab metric={metric} scope={scopeWithProject} />
         )}
       </Box>
       {custom && (
@@ -553,6 +633,30 @@ WorkspaceMetricDetail.propTypes = {
   canWrite: PropTypes.bool.isRequired,
 };
 
+// Names an evaluation input by its saved evaluation's name when the project's
+// list returns one. The binding itself stays the saved ID.
+function DefinitionTab({ metric, scope }) {
+  const definition = metric.definition || metric.draft_definition;
+  const inputs = definition?.field_spec?.inputs?.length
+    ? definition.field_spec.inputs
+    : definition?.inputs || [];
+  const evaluators = useMetricEvaluators({
+    scope,
+    enabled: inputs.some((input) => input.source === "eval" && input.config_id),
+    params: { search: "", limit: 100 },
+  });
+  const names = Object.fromEntries(
+    (evaluators.data?.results || [])
+      .filter((item) => item.id && item.name)
+      .map((item) => [item.id, item.name]),
+  );
+  return <MetricDefinition metric={metric} evaluatorNames={names} />;
+}
+DefinitionTab.propTypes = {
+  metric: PropTypes.object.isRequired,
+  scope: PropTypes.object.isRequired,
+};
+
 function CustomWindow({ window, onClose, onApply }) {
   const [start, setStart] = useState(localTime(window.window_start));
   const [end, setEnd] = useState(localTime(window.window_end));
@@ -573,7 +677,7 @@ function CustomWindow({ window, onClose, onApply }) {
     });
   };
   return (
-    <Dialog
+    <ClosableDialog
       open
       onClose={onClose}
       fullWidth
@@ -612,7 +716,7 @@ function CustomWindow({ window, onClose, onApply }) {
           Apply window
         </Button>
       </DialogActions>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 CustomWindow.propTypes = {

@@ -209,6 +209,12 @@ it("saves the selected window once and shows queued snapshot history", async () 
   expect(
     within(dialog).getByText(/Later recalculations will not change it/),
   ).toBeVisible();
+  // Round 3 UI: the value the Overview read for this window, with its time.
+  expect(
+    within(dialog).getByText("Current value for this window"),
+  ).toBeVisible();
+  expect(within(dialog).getByText("≈ 62%")).toBeVisible();
+  expect(within(dialog).getByText(/^As read at \d\d:\d\d UTC\./)).toBeVisible();
   responses.history.results.unshift({
     kind: "snapshot",
     created_at: "2026-11-09T00:00:00Z",
@@ -256,9 +262,7 @@ it.each(["unique_count", "percentile"])(
     );
     await waitFor(() => expect(mock.post).toHaveBeenCalledTimes(1));
     expect(mock.post.mock.calls[0][0]).toBe("/metrics/metric-a/snapshots");
-    expect(mock.post.mock.calls[0][1]).toMatchObject(
-      calls("kpi")[0][1].params,
-    );
+    expect(mock.post.mock.calls[0][1]).toMatchObject(calls("kpi")[0][1].params);
   },
 );
 
@@ -725,7 +729,9 @@ it("scopes an empty drivers page to the drivers, and names an empty later page",
   fireEvent.click(screen.getByRole("button", { name: "Next drivers" }));
   expect(await screen.findByText("No more drivers")).toBeVisible();
   expect(
-    screen.getByText("No more drivers on this page. Use Previous to go back."),
+    screen.getByText(
+      "You have reached the end of the list. Use Previous to go back.",
+    ),
   ).toBeVisible();
   expect(
     screen.queryByText("No drivers in this window"),
@@ -1241,8 +1247,9 @@ it("shows Deleting… while pending, then keeps the confirmation and its error",
     within(dialog).queryByRole("button", { name: "Close" }),
   ).not.toBeInTheDocument();
   await act(async () => pending.reject({ statusCode: 503 }));
+  // Round 3 UI: an action failure says what did not happen.
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-    /snapshot deletion/,
+    "The snapshot was not deleted. Try again.",
   );
   expect(
     screen.getByRole("dialog", { name: "Delete snapshot?" }),
@@ -1308,6 +1315,275 @@ it("shows the bucket-aligned window a snapshot saves, and sends the selection", 
       window_start: "2026-11-02T14:09:54.321Z",
       window_end: "2026-11-09T14:09:54.321Z",
     });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// Round 3 UI: the reads Run now triggers keep the header's identity and
+// scope, so its result is no longer reset before anyone sees it.
+it("keeps the header and the Run now result through the detail read it triggers", async () => {
+  mount();
+  await screen.findByTestId("metric-hero");
+  const pending = deferred();
+  mock.get.mockImplementation((url) =>
+    url.endsWith("/detail")
+      ? pending.promise
+      : Promise.resolve({ data: responses[url.split("/").at(-1)] }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Run now" }));
+  await waitFor(() => expect(mock.post).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText("Loading metric…")).toBeVisible();
+  // The value waits for the fresh read; the title and scope do not.
+  expect(screen.queryByTestId("metric-hero")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { name: "Resolution rate" }),
+  ).toBeVisible();
+  expect(screen.getByText("Customer care")).toBeVisible();
+  await act(async () => pending.resolve({ data: responses.detail }));
+  expect(
+    await screen.findByText(/Recalculation queued at \d\d:\d\d UTC\./),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/Current values stay until it finishes/),
+  ).toBeVisible();
+  expect(await screen.findByTestId("metric-hero")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() =>
+    expect(screen.queryByText(/Recalculation queued/)).not.toBeInTheDocument(),
+  );
+});
+
+it("says a recalculation was not queued, not that something failed to load", async () => {
+  mount();
+  await screen.findByTestId("metric-hero");
+  mock.post.mockRejectedValueOnce({ statusCode: 503 });
+  fireEvent.click(screen.getByRole("button", { name: "Run now" }));
+  expect(
+    await screen.findByText("The recalculation was not queued. Try again."),
+  ).toBeVisible();
+  expect(screen.queryByText(/Could not load/)).not.toBeInTheDocument();
+});
+
+const pendingMetric = () => {
+  responses.detail.definition = null;
+  responses.detail.active_version = null;
+  responses.detail.draft_definition = {
+    ...metric.definition,
+    id: "version-3",
+    version: 3,
+    backfill_status: "pending",
+    backfill_days_done: null,
+    backfill_days_total: null,
+    created_at: "2026-11-11T05:24:07Z",
+  };
+  const attempt = (created_at, status) => ({
+    kind: "recalculation",
+    created_at,
+    status,
+    definition: null,
+    snapshot: null,
+  });
+  responses.history.results = [
+    attempt("2026-11-11T05:22:07Z", "prepared"),
+    attempt("2026-11-11T04:58:09Z", "aborted"),
+    attempt("2026-11-11T04:34:07Z", "aborted"),
+    {
+      kind: "version",
+      created_at: "2026-11-11T04:20:00Z",
+      status: "pending",
+      definition: responses.detail.draft_definition,
+      snapshot: null,
+    },
+  ];
+};
+
+it("states only reported facts while the first calculation is pending", async () => {
+  pendingMetric();
+  mount();
+  expect(await screen.findByText("Not calculated yet")).toBeVisible();
+  // One word per state: the header's "pending" is the panel's "Pending".
+  expect(screen.getByText(/The first calculation is pending\./)).toBeVisible();
+  expect(screen.getByText("v3 · First calculation pending")).toBeVisible();
+  expect(screen.getByText("11 Nov 2026, 05:24:07 UTC")).toBeVisible();
+  expect(screen.getByText("Pending")).toBeVisible();
+  expect(screen.queryByText("Queued")).not.toBeInTheDocument();
+  expect(await screen.findByText("Preparing")).toBeVisible();
+  expect(screen.getByText("started 11 Nov 2026, 05:22:07 UTC")).toBeVisible();
+  expect(
+    screen.getByText(/2 of the last 3 attempts stopped before finishing\./),
+  ).toBeVisible();
+  // Most attempts stopped: a next step, with no guessed cause.
+  expect(
+    screen.getByText(
+      /If attempts keep stopping, edit the definition or contact support\./,
+    ),
+  ).toBeVisible();
+  expect(screen.getByText(/^Checked /)).toBeVisible();
+  expect(
+    screen.getByText(/Checks again every 30 seconds while Overview is open\./),
+  ).toBeVisible();
+  expect(calls("kpi")).toHaveLength(0);
+  expect(calls("trend")).toHaveLength(0);
+  const reads = calls("history").length;
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Check now" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Check now" }));
+  await waitFor(() => expect(calls("history").length).toBeGreaterThan(reads));
+  // The panel keeps its facts while it checks again.
+  expect(screen.getByText("Preparing")).toBeVisible();
+});
+
+it("collapses repeated stopped attempts in History and labels attempt states", async () => {
+  pendingMetric();
+  mount();
+  await screen.findByText("Not calculated yet");
+  fireEvent.click(await screen.findByRole("button", { name: "View history" }));
+  const table = await screen.findByRole("table", { name: "Metric history" });
+  expect(within(table).getByText("Time (UTC)")).toBeVisible();
+  expect(within(table).getByText("2 recalculations")).toBeVisible();
+  expect(within(table).getAllByText("Stopped")).toHaveLength(1);
+  expect(within(table).getByText("Preparing")).toBeVisible();
+  expect(within(table).queryByText("aborted")).not.toBeInTheDocument();
+  expect(within(table).queryByText("Not reported")).not.toBeInTheDocument();
+  expect(within(table).getAllByText("Progress not reported").length).toBe(3);
+  fireEvent.click(
+    within(table).getByRole("button", { name: "Show 2 recalculations" }),
+  );
+  expect(within(table).getAllByText("Stopped")).toHaveLength(3);
+  expect(
+    within(table).getByRole("button", { name: "Hide 2 recalculations" }),
+  ).toHaveAttribute("aria-expanded", "true");
+});
+
+it("shows the saved version read-only on Definition while it waits", async () => {
+  pendingMetric();
+  mount();
+  await screen.findByText("Not calculated yet");
+  fireEvent.click(screen.getByRole("tab", { name: "Definition" }));
+  expect(screen.getByRole("heading", { name: "Definition v3" })).toBeVisible();
+  expect(screen.getByText(/No active definition yet/)).toBeVisible();
+  expect(screen.queryByText(/Active definition ·/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open draft" }),
+  ).not.toBeInTheDocument();
+});
+
+it("says a metric saved a moment ago was saved just now, with no attempts yet", async () => {
+  pendingMetric();
+  const savedAt = new Date().toISOString();
+  responses.detail.draft_definition.created_at = savedAt;
+  responses.history.results = [
+    {
+      kind: "version",
+      created_at: savedAt,
+      status: "pending",
+      definition: responses.detail.draft_definition,
+      snapshot: null,
+    },
+  ];
+  mount();
+  expect(await screen.findByText("Not calculated yet")).toBeVisible();
+  expect(await screen.findByText("None recorded yet")).toBeVisible();
+  expect(screen.getByText(/· just now/)).toBeVisible();
+  expect(
+    screen.getByText(/Nothing is shown as zero in the meantime\./),
+  ).toBeVisible();
+  expect(screen.queryByText(/contact support/)).not.toBeInTheDocument();
+});
+
+// The poll's contract: while the first calculation can still finish, the
+// panel reads the metric every 30 seconds; once a read returns an active
+// definition, the page's own detail read runs once and its values replace
+// the panel. Page read and status read share one URL, so counts are exact.
+it("replaces the pending panel with values when a poll finds the first calculation finished", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    pendingMetric();
+    mount();
+    expect(await screen.findByText("Not calculated yet")).toBeVisible();
+    // The page's detail read, then the panel's status read.
+    await waitFor(() => expect(calls("detail")).toHaveLength(2));
+    expect(calls("kpi")).toHaveLength(0);
+    responses.detail = structuredClone(metric);
+    await act(() => vi.advanceTimersByTimeAsync(30000));
+    expect(await screen.findByTestId("metric-hero")).toBeVisible();
+    expect(screen.queryByText("Not calculated yet")).not.toBeInTheDocument();
+    expect(screen.getByText("Active · v2")).toBeVisible();
+    // One poll, then one invalidated read of the page's own detail.
+    expect(calls("detail")).toHaveLength(4);
+    await act(() => vi.advanceTimersByTimeAsync(90000));
+    expect(calls("detail")).toHaveLength(4);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not poll a first calculation that failed", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    pendingMetric();
+    responses.detail.draft_definition.backfill_status = "failed";
+    mount();
+    expect(await screen.findByText("Not calculated yet")).toBeVisible();
+    expect(screen.getByText(/The first calculation failed/)).toBeVisible();
+    expect(screen.getByText("Failed")).toBeVisible();
+    await waitFor(() => expect(calls("detail")).toHaveLength(2));
+    await waitFor(() => expect(calls("history").length).toBeGreaterThan(0));
+    const history = calls("history").length;
+    await act(() => vi.advanceTimersByTimeAsync(90000));
+    expect(calls("detail")).toHaveLength(2);
+    expect(calls("history")).toHaveLength(history);
+    expect(screen.queryByText(/Checks again every/)).not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("quotes the Overview's rounded value in the snapshot dialog, unrounded on hover", async () => {
+  responses.kpi.current.value = 0.801887;
+  responses.trend.results = responses.trend.results.map((bucket) => ({
+    ...bucket,
+    value: 0.801887,
+  }));
+  mount();
+  expect(await screen.findByTestId("metric-hero")).toHaveTextContent("≈ 80.2%");
+  fireEvent.click(screen.getByRole("button", { name: "Save snapshot" }));
+  const dialog = screen.getByRole("dialog", { name: "Save snapshot" });
+  const value = within(dialog).getByText("≈ 80.2%");
+  expect(value).toBeVisible();
+  expect(value).toHaveAttribute("title", "80.1887%");
+  expect(within(dialog).queryByText(/80\.1887/)).not.toBeInTheDocument();
+});
+
+it("moves the header with the panel when a poll finds the calculation running, without another page read", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    pendingMetric();
+    mount();
+    expect(
+      await screen.findByText("v3 · First calculation pending"),
+    ).toBeVisible();
+    await waitFor(() => expect(calls("detail")).toHaveLength(2));
+    responses.detail = structuredClone(responses.detail);
+    Object.assign(responses.detail.draft_definition, {
+      backfill_status: "running",
+      backfill_days_done: 2,
+      backfill_days_total: 7,
+    });
+    await act(() => vi.advanceTimersByTimeAsync(30000));
+    expect(
+      await screen.findByText("v3 · First calculation running"),
+    ).toBeVisible();
+    expect(screen.getByText("Running")).toBeVisible();
+    expect(
+      screen.getByText(/The first calculation is running\./),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Recalculating history: 2 of 7 days"),
+    ).toBeVisible();
+    expect(calls("detail")).toHaveLength(3);
   } finally {
     vi.useRealTimers();
   }

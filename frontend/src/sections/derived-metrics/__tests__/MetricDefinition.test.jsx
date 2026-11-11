@@ -1,11 +1,5 @@
-import { afterEach, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "src/utils/test-utils";
+import { afterEach, expect, it } from "vitest";
+import { cleanup, render, screen, within } from "src/utils/test-utils";
 import MetricDefinition from "../MetricDefinition";
 import { metric, percentileMetrics } from "./metricPageFixtures";
 afterEach(cleanup);
@@ -142,20 +136,44 @@ it("preserves an exact custom formula even if field metadata contains a percenti
 it("never substitutes an unactivated draft when the active definition is absent", () => {
   render(<MetricDefinition metric={{ ...metric, definition: null }} />);
   // An expected state, not an error: no assertive alert is announced.
-  expect(screen.getByText("No active definition yet")).toBeVisible();
+  expect(screen.getByText(/No active definition yet/)).toBeVisible();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(screen.queryByText(/Active definition · v3/)).not.toBeInTheDocument();
 });
-it("offers the saved draft only when the viewer can edit it", () => {
-  const onEditDraft = vi.fn();
-  const draftOnly = { ...metric, definition: null };
-  const view = render(<MetricDefinition metric={draftOnly} />);
-  expect(
-    screen.queryByRole("button", { name: "Open draft" }),
-  ).not.toBeInTheDocument();
-  view.rerender(
-    <MetricDefinition metric={draftOnly} onEditDraft={onEditDraft} />,
+// Round 3 UI: the saved version is readable before its first calculation,
+// read-only and labelled as waiting. Edit in the page header is the way in.
+it("shows a saved version waiting for its first calculation read-only, never as active", () => {
+  render(
+    <MetricDefinition
+      metric={{
+        ...metric,
+        definition: null,
+        draft_definition: {
+          ...metric.definition,
+          id: "version-3",
+          version: 3,
+          backfill_status: "pending",
+          created_at: "2026-11-11T05:24:07Z",
+        },
+      }}
+    />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Open draft" }));
-  expect(onEditDraft).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("heading", { name: "Definition v3" })).toBeVisible();
+  expect(screen.getByText("First calculation pending")).toBeVisible();
+  expect(screen.getByText("11 Nov 2026, 05:24:07 UTC")).toBeVisible();
+  expect(screen.getByText("passed is true")).toBeVisible();
+  expect(screen.queryByText(/Active definition/)).not.toBeInTheDocument();
+  expect(screen.queryByText("Activated")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+it("names a saved evaluation input when its name is known, keeping the saved ID", () => {
+  render(
+    <MetricDefinition
+      metric={metric}
+      evaluatorNames={{ "eval-a": "Answer passed" }}
+    />,
+  );
+  expect(screen.getByText("Answer passed")).toBeVisible();
+  expect(screen.getByText("eval-a")).toBeVisible();
 });

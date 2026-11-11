@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -53,7 +54,10 @@ vi.mock("../api", () => ({
   }),
   useMetricCatalog: (args) => {
     state.catalogArgs = args;
-    return { data: state.catalog, readState: "ready" };
+    return {
+      data: state.catalogFor ? state.catalogFor(args.params) : state.catalog,
+      readState: "ready",
+    };
   },
   useMetricEvaluators: () => ({ data: state.evaluators, readState: "ready" }),
   useCreateMetric: () => ({ mutateAsync: state.create }),
@@ -97,6 +101,7 @@ const choose = (label, name) => {
 };
 beforeEach(() => {
   localStorage.clear();
+  state.catalogFor = null;
   state.metric = null;
   state.detailReadState = "ready";
   state.role = "Owner";
@@ -287,6 +292,48 @@ describe("metric builder page", () => {
     expect(screen.getByLabelText("Metric name").disabled).toBe(true);
   });
 
+  // Round 3 UI: custom attributes often sit past the first catalog page.
+  // One stable page per (search, cursor), as the real cache returns.
+  const pagedCatalog = (lastPage) => {
+    const pages = new Map();
+    return (params) => {
+      const key = `${params.search}:${params.cursor ?? ""}`;
+      if (!pages.has(key)) {
+        const page = Number(params.cursor || 0);
+        const last = page >= lastPage;
+        pages.set(key, {
+          status: "success",
+          result: {
+            metrics: last ? catalog.result.metrics : [],
+            next_cursor: last ? null : String(page + 1),
+          },
+        });
+      }
+      return pages.get(key);
+    };
+  };
+  it("reads further catalog pages on its own until the project's fields show", async () => {
+    state.catalogFor = pagedCatalog(3);
+    renderPage();
+    await waitFor(() => expect(state.catalogArgs.params.cursor).toBe("3"));
+    fireEvent.mouseDown(
+      screen.getByRole("combobox", { name: "Choose a source" }),
+    );
+    expect(screen.getByRole("option", { name: "Resolved" })).toBeTruthy();
+    expect(state.catalogArgs.params.page_size).toBeLessThanOrEqual(50);
+  });
+  it("stops reading catalog pages at its cap and while a search is typed", async () => {
+    state.catalogFor = pagedCatalog(Infinity);
+    renderPage();
+    await waitFor(() => expect(state.catalogArgs.params.cursor).toBe("4"));
+    await act(async () => {});
+    expect(state.catalogArgs.params.cursor).toBe("4");
+    const source = screen.getByRole("combobox", { name: "Choose a source" });
+    fireEvent.change(source, { target: { value: "res" } });
+    await act(async () => {});
+    expect(state.catalogArgs.params).toMatchObject({ search: "res" });
+    expect(state.catalogArgs.params.cursor).toBeUndefined();
+  });
   it("requests source catalog pages within the server's cursor maximum", () => {
     renderPage();
     // PROPERTY_CATALOG_MAX_PAGE_SIZE defaults to 50; larger pages are a 400.

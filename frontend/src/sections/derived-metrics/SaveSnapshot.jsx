@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Box,
@@ -13,9 +14,71 @@ import {
 } from "@mui/material";
 import { ClosableDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
-import { useCreateMetricSnapshot } from "./api";
-import { formatMetricTime, metricBucketWindow } from "./metricTime";
-import { metricReadMessage } from "./metricPageValues";
+import { settledMetricRead, useCreateMetricSnapshot } from "./api";
+import { metricCountCopy } from "./copy";
+import { formatMetricValue } from "./formatMetricValue";
+import {
+  formatMetricClock,
+  formatMetricTime,
+  metricBucketWindow,
+} from "./metricTime";
+import { metricActionMessage } from "./metricPageValues";
+import { pointValueState } from "./unitValueState";
+
+// The value the Overview already read for this window, labelled with when it
+// was read. The snapshot itself keeps the committed result at capture time.
+function CurrentValue({ read }) {
+  const current = read?.data?.current;
+  const state = pointValueState(current);
+  const metadata = current ? { ...current, value_type: "number" } : null;
+  // Rounded as the Overview headline it quotes; unrounded on hover.
+  const value =
+    state.state === "value"
+      ? `${current.weighted ? "≈ " : ""}${formatMetricValue(
+          current.value,
+          metadata,
+          undefined,
+          { display: true },
+        )}`
+      : null;
+  const unrounded = value ? formatMetricValue(current.value, metadata) : null;
+  const counts = value ? metricCountCopy(current, current.unit_noun) : [];
+  return (
+    <Box sx={{ mt: 1.25 }}>
+      <Typography variant="caption" color="text.secondary" component="div">
+        Current value for this window
+      </Typography>
+      {read ? (
+        <>
+          <Typography
+            variant="body2"
+            color={value ? "text.primary" : "text.secondary"}
+            sx={{ fontVariantNumeric: "tabular-nums" }}
+          >
+            <Box component="span" title={unrounded ?? undefined}>
+              {value ?? state.label}
+            </Box>
+            {counts[0] && (
+              <Box component="span" sx={{ color: "text.secondary" }}>
+                {" "}
+                · {counts[0]}
+              </Box>
+            )}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" component="div">
+            As read at {formatMetricClock(read.readAt)}. The snapshot keeps the
+            committed result when it is captured.
+          </Typography>
+        </>
+      ) : (
+        <Typography variant="body2" color="text.secondary">
+          Not available. Open Overview to read it.
+        </Typography>
+      )}
+    </Box>
+  );
+}
+CurrentValue.propTypes = { read: PropTypes.object };
 
 export default function SaveSnapshot({
   metric,
@@ -24,10 +87,14 @@ export default function SaveSnapshot({
   canWrite,
   onSaved,
 }) {
+  const client = useQueryClient();
   const [request, setRequest] = useState(null);
+  // What the dialog shows. It outlives the request so the closing dialog
+  // keeps its window instead of flashing "Unavailable".
+  const [shown, setShown] = useState(null);
   const save = useCreateMetricSnapshot({ scope, metricId: metric?.id });
   // The request keeps the raw selection; the server rounds it the same way.
-  const saved = metricBucketWindow(request);
+  const saved = metricBucketWindow(shown?.request);
   const reason = !canWrite
     ? "A workspace member role is required to save snapshots."
     : !metric?.definition
@@ -59,7 +126,18 @@ export default function SaveSnapshot({
             disabled={Boolean(reason) || save.isPending}
             onClick={() => {
               save.reset();
-              setRequest({ ...window, idempotency_key: crypto.randomUUID() });
+              const next = { ...window, idempotency_key: crypto.randomUUID() };
+              setRequest(next);
+              setShown({
+                request: next,
+                // The same read the Overview made for this window, if any.
+                read: settledMetricRead(client, "kpi", {
+                  scope,
+                  metricId: metric.id,
+                  version: metric.definition.version,
+                  params: window,
+                }),
+              });
             }}
           >
             Save snapshot
@@ -113,6 +191,7 @@ export default function SaveSnapshot({
                 Your selected range, with both ends rounded down to 15-minute
                 UTC buckets.
               </Typography>
+              {shown && <CurrentValue read={shown.read} />}
             </Box>
             <Typography variant="caption" color="text.secondary">
               Uses the active definition at capture time. Saved snapshots remain
@@ -121,7 +200,7 @@ export default function SaveSnapshot({
             </Typography>
             {save.isError && (
               <Alert severity="error">
-                {metricReadMessage(save.error, "Snapshot request")}
+                {metricActionMessage(save.error, "The snapshot was not saved.")}
               </Alert>
             )}
           </Stack>

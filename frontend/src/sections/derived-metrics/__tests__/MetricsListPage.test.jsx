@@ -308,7 +308,8 @@ it("unactivated drafts have no KPI request and no invented zero", async () => {
   expect(await screen.findByText("Not calculated yet")).toBeVisible();
   // Freshness is a quiet dash; its reason is the cell's accessible text.
   expect(screen.getByText("No active definition")).toBeInTheDocument();
-  expect(screen.getByText("Draft v3")).toBeVisible();
+  // Round 3 UI: saved and waiting for its first calculation, not "Draft v3".
+  expect(screen.getByText("v3 · Pending")).toBeVisible();
   expect(screen.queryByText("0")).not.toBeInTheDocument();
   expect(mock.get.mock.calls.every(([url]) => url === "/metrics")).toBe(true);
 });

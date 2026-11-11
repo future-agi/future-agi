@@ -7,6 +7,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  IconButton,
   Stack,
   Table,
   TableBody,
@@ -17,15 +18,17 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { visuallyHidden } from "@mui/utils";
 import { ClosableDialog } from "src/components/custom-dialog";
 import EmptyState from "src/components/empty-state";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { useMetricHistory, useDeleteMetricSnapshot } from "./api";
-import { metricReadMessage } from "./metricPageValues";
+import { metricActionMessage } from "./metricPageValues";
 import { snapshotStateCopy, windowNotCalculatedCopy } from "./copy";
-import { formatMetricTime } from "./metricTime";
+import { attemptState, groupHistoryRows } from "./metricCalculationState";
+import { formatMetricTime, formatMetricTimeRange } from "./metricTime";
 import { MetricReadNotice } from "./MetricStatusLine";
 
 const statusLabels = {
@@ -104,15 +107,28 @@ export default function MetricHistory({ metric, scope, canWrite = false }) {
             <Table size="small" aria-label="Metric history">
               <TableHead>
                 <TableRow>
-                  {["Event", "Created (UTC)", "Status", "Details"].map(
-                    (label) => (
-                      <TableCell key={label}>{label}</TableCell>
-                    ),
-                  )}
+                  {["Event", "Time (UTC)", "Status", "Details"].map((label) => (
+                    <TableCell key={label}>{label}</TableCell>
+                  ))}
                 </TableRow>
               </TableHead>
               <TableBody>
-                {query.data.results.map((entry, index) => {
+                {groupHistoryRows(query.data.results).map((row, index) => {
+                  if (row.kind === "attempts")
+                    return row.entries.length > 1 ? (
+                      <AttemptGroupRows
+                        key={`attempts:${row.entries[0].created_at}:${index}`}
+                        entries={row.entries}
+                        metric={metric}
+                      />
+                    ) : (
+                      <EntryRow
+                        key={`recalculation:${row.entries[0].created_at}:${index}`}
+                        entry={row.entries[0]}
+                        metric={metric}
+                      />
+                    );
+                  const { entry } = row;
                   if (entry.kind === "snapshot" && entry.snapshot)
                     return (
                       <SnapshotRow
@@ -123,89 +139,12 @@ export default function MetricHistory({ metric, scope, canWrite = false }) {
                         canWrite={canWrite}
                       />
                     );
-                  const definition = entry.definition;
-                  const progress =
-                    Number.isSafeInteger(definition?.backfill_days_done) &&
-                    Number.isSafeInteger(definition?.backfill_days_total) &&
-                    definition.backfill_days_total > 0;
-                  const active = definition?.id === metric.active_version;
                   return (
-                    <TableRow
+                    <EntryRow
                       key={`${entry.kind}:${entry.created_at}:${index}`}
-                      hover
-                      sx={{ height: ROW_HEIGHT.default }}
-                    >
-                      <TableCell>
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          alignItems="center"
-                          sx={{ minWidth: 0 }}
-                        >
-                          <Iconify
-                            icon={
-                              entry.kind === "version"
-                                ? "solar:document-text-linear"
-                                : entry.kind === "recalculation"
-                                  ? "solar:refresh-linear"
-                                  : "solar:camera-linear"
-                            }
-                            width={16}
-                            sx={{ color: "text.disabled", flexShrink: 0 }}
-                          />
-                          <Typography variant="body2" component="span">
-                            {entry.kind === "version"
-                              ? `Definition v${definition?.version ?? "—"}`
-                              : entry.kind === "recalculation"
-                                ? "Recalculation"
-                                : "Snapshot unavailable"}
-                          </Typography>
-                          {active && entry.kind === "version" && (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{
-                                px: 0.75,
-                                borderRadius: 0.5,
-                                bgcolor: "action.hover",
-                              }}
-                            >
-                              Active definition
-                            </Typography>
-                          )}
-                        </Stack>
-                      </TableCell>
-                      <TableCell
-                        sx={{
-                          whiteSpace: "nowrap",
-                          color: "text.secondary",
-                          fontVariantNumeric: "tabular-nums",
-                        }}
-                      >
-                        {formatMetricTime(entry.created_at)}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge
-                          status={entry.status || "unavailable"}
-                          label={
-                            statusLabels[entry.status] ||
-                            entry.status ||
-                            "Unavailable"
-                          }
-                          variant="dot"
-                        />
-                      </TableCell>
-                      <TableCell
-                        sx={{
-                          color: progress ? "text.primary" : "text.secondary",
-                          fontVariantNumeric: "tabular-nums",
-                        }}
-                      >
-                        {progress
-                          ? `${definition.backfill_days_done} of ${definition.backfill_days_total} days`
-                          : "Not reported"}
-                      </TableCell>
-                    </TableRow>
+                      entry={entry}
+                      metric={metric}
+                    />
                   );
                 })}
               </TableBody>
@@ -259,6 +198,181 @@ MetricHistory.propTypes = {
   metric: PropTypes.object,
   scope: PropTypes.object.isRequired,
   canWrite: PropTypes.bool,
+};
+
+const timeCell = {
+  whiteSpace: "nowrap",
+  color: "text.secondary",
+  fontVariantNumeric: "tabular-nums",
+};
+// The column header names UTC, so the cells do not repeat it.
+const columnTime = (value) => formatMetricTime(value, { utcSuffix: false });
+
+function entryBadge(entry) {
+  if (entry.kind === "recalculation") return attemptState(entry.status);
+  // A status without a label of its own keeps its words, humanized by the
+  // product status map, never the raw token.
+  return {
+    status: entry.status || "unavailable",
+    label: statusLabels[entry.status],
+  };
+}
+
+// Recalculation rows never report progress; versions do once calculating.
+// The dash is not a tab stop: its hidden words already reach assistive
+// tech, and a long History page would otherwise add a stop per row.
+function EntryDetails({ definition }) {
+  const progress =
+    Number.isSafeInteger(definition?.backfill_days_done) &&
+    Number.isSafeInteger(definition?.backfill_days_total) &&
+    definition.backfill_days_total > 0;
+  if (progress)
+    return (
+      <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
+        {`${definition.backfill_days_done} of ${definition.backfill_days_total} days`}
+      </TableCell>
+    );
+  return (
+    <TableCell sx={{ color: "text.secondary" }}>
+      <Tooltip
+        title="Progress not reported"
+        placement="top-start"
+        describeChild
+      >
+        <Box component="span">
+          <span aria-hidden="true">—</span>
+          <Box component="span" sx={visuallyHidden}>
+            Progress not reported
+          </Box>
+        </Box>
+      </Tooltip>
+    </TableCell>
+  );
+}
+EntryDetails.propTypes = { definition: PropTypes.object };
+
+function EntryRow({ entry, metric, nested = false }) {
+  const definition = entry.definition;
+  const active = definition?.id === metric.active_version;
+  return (
+    <TableRow hover sx={{ height: ROW_HEIGHT.default }}>
+      <TableCell sx={nested ? { pl: 6 } : undefined}>
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          sx={{ minWidth: 0 }}
+        >
+          <Iconify
+            icon={
+              entry.kind === "version"
+                ? "solar:document-text-linear"
+                : entry.kind === "recalculation"
+                  ? "solar:refresh-linear"
+                  : "solar:camera-linear"
+            }
+            width={16}
+            sx={{ color: "text.disabled", flexShrink: 0 }}
+          />
+          <Typography variant="body2" component="span">
+            {entry.kind === "version"
+              ? `Definition v${definition?.version ?? "—"}`
+              : entry.kind === "recalculation"
+                ? "Recalculation"
+                : "Snapshot unavailable"}
+          </Typography>
+          {active && entry.kind === "version" && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                px: 0.75,
+                borderRadius: 0.5,
+                bgcolor: "action.hover",
+              }}
+            >
+              Active definition
+            </Typography>
+          )}
+        </Stack>
+      </TableCell>
+      <TableCell sx={timeCell}>{columnTime(entry.created_at)}</TableCell>
+      <TableCell>
+        <StatusBadge {...entryBadge(entry)} variant="dot" />
+      </TableCell>
+      <EntryDetails definition={definition} />
+    </TableRow>
+  );
+}
+EntryRow.propTypes = {
+  entry: PropTypes.object.isRequired,
+  metric: PropTypes.object.isRequired,
+  nested: PropTypes.bool,
+};
+
+// Repeated attempts in one state read as one row: how many, over which
+// times, in that state. Expanding lists each attempt.
+function AttemptGroupRows({ entries, metric }) {
+  const [open, setOpen] = useState(false);
+  const badge = attemptState(entries[0].status);
+  const label = `${entries.length} recalculations`;
+  return (
+    <>
+      <TableRow hover sx={{ height: ROW_HEIGHT.default }}>
+        <TableCell>
+          <Stack
+            direction="row"
+            spacing={0.75}
+            alignItems="center"
+            sx={{ minWidth: 0, ml: -0.5 }}
+          >
+            <IconButton
+              size="small"
+              aria-expanded={open}
+              aria-label={`${open ? "Hide" : "Show"} ${label}`}
+              onClick={() => setOpen(!open)}
+              sx={{ p: 0.25, color: "text.secondary" }}
+            >
+              <Iconify
+                icon={
+                  open
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
+                width={16}
+              />
+            </IconButton>
+            <Typography variant="body2" component="span">
+              {label}
+            </Typography>
+          </Stack>
+        </TableCell>
+        <TableCell sx={timeCell}>
+          {formatMetricTimeRange(
+            entries.at(-1).created_at,
+            entries[0].created_at,
+          )}
+        </TableCell>
+        <TableCell>
+          <StatusBadge {...badge} variant="dot" />
+        </TableCell>
+        <EntryDetails />
+      </TableRow>
+      {open &&
+        entries.map((entry, index) => (
+          <EntryRow
+            key={`${entry.created_at}:${index}`}
+            entry={entry}
+            metric={metric}
+            nested
+          />
+        ))}
+    </>
+  );
+}
+AttemptGroupRows.propTypes = {
+  entries: PropTypes.array.isRequired,
+  metric: PropTypes.object.isRequired,
 };
 
 // One label per snapshot, checked in this order: a deletion wins over every
@@ -356,14 +470,8 @@ function SnapshotRow({ snapshot, scope, metricId, canWrite }) {
           </Box>
         </Stack>
       </TableCell>
-      <TableCell
-        sx={{
-          whiteSpace: "nowrap",
-          color: "text.secondary",
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {formatMetricTime(snapshot.captured_at || snapshot.created_at)}
+      <TableCell sx={timeCell}>
+        {columnTime(snapshot.captured_at || snapshot.created_at)}
       </TableCell>
       <TableCell>
         <StatusBadge
@@ -455,7 +563,10 @@ function SnapshotRow({ snapshot, scope, metricId, canWrite }) {
               </Box>
               {remove.isError && (
                 <Alert severity="error">
-                  {metricReadMessage(remove.error, "Snapshot deletion")}
+                  {metricActionMessage(
+                    remove.error,
+                    "The snapshot was not deleted.",
+                  )}
                 </Alert>
               )}
             </Stack>

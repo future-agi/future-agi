@@ -2,7 +2,6 @@ import PropTypes from "prop-types";
 import {
   Alert,
   Box,
-  Button,
   Stack,
   Table,
   TableBody,
@@ -13,9 +12,10 @@ import {
   Typography,
 } from "@mui/material";
 import EmptyState from "src/components/empty-state";
-import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { KIND_LABELS, LEVEL_LABELS, OPERATOR_LABELS } from "./builderSpec";
+import { firstCalculationBadge } from "./metricCalculationState";
 import {
   enumLabel,
   inputLabel,
@@ -45,12 +45,13 @@ const OBSERVATION_REDUCER_LABELS = {
 };
 
 // The source a person picked, then where it comes from. An evaluation input
-// carries only its saved ID, so the ID is the caption, not the name.
-function InputSource({ input, label }) {
+// carries only its saved ID: its name shows when the project's saved
+// evaluations return one, and the ID stays as the caption either way.
+function InputSource({ input, label, evaluatorName }) {
   const kind = inputSourceKind(input);
   const name =
     input.source === "eval"
-      ? null
+      ? evaluatorName || null
       : input.attribute_key ||
         (label !== input.alias ? label : input.field) ||
         null;
@@ -81,10 +82,15 @@ function InputSource({ input, label }) {
 InputSource.propTypes = {
   input: PropTypes.object.isRequired,
   label: PropTypes.string,
+  evaluatorName: PropTypes.string,
 };
 
-export default function MetricDefinition({ metric, onEditDraft }) {
-  const definition = metric.definition;
+/** The active definition behind committed values. A metric still waiting for
+ * its first calculation shows its saved version instead, read-only and
+ * labelled as not active: it is never presented as the active one. */
+export default function MetricDefinition({ metric, evaluatorNames = {} }) {
+  const waiting = !metric.definition;
+  const definition = metric.definition || metric.draft_definition;
   if (!definition)
     return (
       <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
@@ -92,20 +98,7 @@ export default function MetricDefinition({ metric, onEditDraft }) {
           variant="no-results"
           icon="solar:document-text-linear"
           title="No active definition yet"
-          description={`${metric.draft_definition?.version != null ? `Draft v${metric.draft_definition.version}` : "The saved draft"} has not finished its first calculation. The definition behind its values appears here once it is active.`}
-          action={
-            onEditDraft ? (
-              <Button
-                variant="outlined"
-                color="inherit"
-                size="small"
-                startIcon={<Iconify icon="solar:pen-linear" width={16} />}
-                onClick={onEditDraft}
-              >
-                Open draft
-              </Button>
-            ) : undefined
-          }
+          description="The saved definition is unavailable. It appears here once it can be read."
         />
       </Box>
     );
@@ -127,16 +120,37 @@ export default function MetricDefinition({ metric, onEditDraft }) {
     : recipeSentence({ ...definition, inputs }, labelOf);
   return (
     <Stack spacing={3}>
-      <Box>
-        <Typography component="h2" variant="subtitle1" fontWeight={600}>
-          Active definition · v{definition.version}
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          This is the definition used for committed values, not an unactivated
-          draft.
-        </Typography>
-      </Box>
-      {metric.draft_definition?.version !== definition.version &&
+      {waiting ? (
+        <Box>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Typography component="h2" variant="subtitle1" fontWeight={600}>
+              Definition v{definition.version}
+            </Typography>
+            <StatusBadge
+              {...firstCalculationBadge({
+                backfill_status: definition.backfill_status,
+              })}
+              variant="dot"
+            />
+          </Stack>
+          <Typography variant="body2" color="text.secondary">
+            No active definition yet. This saved version becomes the active
+            definition when its first calculation finishes.
+          </Typography>
+        </Box>
+      ) : (
+        <Box>
+          <Typography component="h2" variant="subtitle1" fontWeight={600}>
+            Active definition · v{definition.version}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            This is the definition used for committed values, not an unactivated
+            draft.
+          </Typography>
+        </Box>
+      )}
+      {!waiting &&
+        metric.draft_definition?.version !== definition.version &&
         metric.draft_definition && (
           <Alert severity="info">
             Draft v{metric.draft_definition.version} is not active. Its changes
@@ -225,12 +239,19 @@ export default function MetricDefinition({ metric, onEditDraft }) {
                 definition.cohort_key ||
                 "None",
             ],
-            [
-              "Activated",
-              definition.activated_at
-                ? formatMetricTime(definition.activated_at)
-                : "Not available",
-            ],
+            waiting
+              ? [
+                  "Saved",
+                  definition.created_at
+                    ? formatMetricTime(definition.created_at)
+                    : "Not available",
+                ]
+              : [
+                  "Activated",
+                  definition.activated_at
+                    ? formatMetricTime(definition.activated_at)
+                    : "Not available",
+                ],
           ].map(([label, value, raw]) => (
             <Stack direction="row" key={label} sx={{ py: 0.75 }}>
               <Typography component="dt" variant="body2">
@@ -334,7 +355,11 @@ export default function MetricDefinition({ metric, onEditDraft }) {
                       </TableCell>
                     )}
                     <TableCell>
-                      <InputSource input={input} label={labelOf(input.alias)} />
+                      <InputSource
+                        input={input}
+                        label={labelOf(input.alias)}
+                        evaluatorName={evaluatorNames[input.config_id]}
+                      />
                     </TableCell>
                     <TableCell title={stored(input.value_type)}>
                       {enumLabel(VALUE_TYPE_LABELS, input.value_type) ||
@@ -447,5 +472,6 @@ export default function MetricDefinition({ metric, onEditDraft }) {
 }
 MetricDefinition.propTypes = {
   metric: PropTypes.object.isRequired,
-  onEditDraft: PropTypes.func,
+  // Saved evaluation names by config ID; display only, never the binding.
+  evaluatorNames: PropTypes.objectOf(PropTypes.string),
 };

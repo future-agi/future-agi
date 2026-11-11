@@ -82,6 +82,9 @@ const post = (url, args, data = args.data) =>
 export const metricsApi = {
   list: (args) => get(paths.list, args, withProject(args.scope, args.params)),
   detail: (args) => get(paths.detail(args.metricId), args),
+  // The same detail read under its own cache key. A metric waiting for its
+  // first calculation polls this, so a poll never blanks the page's detail.
+  calculationStatus: (args) => get(paths.detail(args.metricId), args),
   create: (args) => post(paths.list, args, withProject(args.scope, args.data)),
   update: (args) =>
     responseData(
@@ -246,6 +249,9 @@ function useMetricRead(resource, args = {}) {
     // Previews are explicit builder work, never a focus/reconnect side effect.
     refetchOnWindowFocus: resource !== "preview",
     refetchOnReconnect: resource !== "preview",
+    // Opt-in polling (a number or a function of the query). It pauses while
+    // the browser tab is hidden.
+    refetchInterval: args.refetchInterval ?? false,
     // Never inherit a global previous-page placeholder across scope/windows.
     placeholderData: undefined,
     meta: { errorHandled: true },
@@ -267,8 +273,23 @@ function useMetricRead(resource, args = {}) {
   };
 }
 
+/** A read another part of the page already settled, from the cache, with
+ * when it was read. Null while it loads, refetches or has failed: a cached
+ * value is never shown as current without its read time. */
+export function settledMetricRead(client, resource, args) {
+  const state = client.getQueryState([
+    ...metricKeys.read(resource, args),
+    true,
+  ]);
+  return state?.status === "success" && state.fetchStatus === "idle"
+    ? { data: state.data, readAt: state.dataUpdatedAt }
+    : null;
+}
+
 export const useMetricsList = (args) => useMetricRead("list", args);
 export const useMetricDetail = (args) => useMetricRead("detail", args);
+export const useMetricCalculationStatus = (args) =>
+  useMetricRead("calculationStatus", args);
 export const useMetricCapabilities = (args) =>
   useMetricRead("capabilities", args);
 export const useMetricEvaluators = (args) => useMetricRead("evaluators", args);
@@ -286,6 +307,7 @@ export const useMetricPreview = (args) => useMetricRead("preview", args);
 
 const savedMetricReads = new Set([
   "detail",
+  "calculationStatus",
   "kpi",
   "trend",
   "drivers",
