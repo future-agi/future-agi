@@ -1,3 +1,4 @@
+import math
 from datetime import timedelta
 from functools import wraps
 
@@ -9,6 +10,7 @@ from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
@@ -108,30 +110,72 @@ from tracer.utils.helper import (
     get_default_project_version_config,
     get_sort_query,
 )
+from tracer.utils.parsers import NestingSafeJSONParser
 from tracer.utils.property_registry import validate_property_graph_namespace
 
 logger = structlog.get_logger(__name__)
 
 
-def _has_invalid_tag_string(value):
-    """JSON parsing permits NUL and lone surrogates; PostgreSQL jsonb does not.
+# Tags are labels. On Python 3.11 the C JSON codec shares the interpreter's
+# 1000-frame recursion budget, so no deeper value can round-trip there today.
+# Newer interpreters have a separate C guard near 10000 levels; stay well below.
+TAG_MAX_NESTING_DEPTH = 1000
+_INVALID_TAG_STRING = (
+    "tags must not contain null characters or unpaired Unicode surrogates"
+)
+_NON_FINITE_TAG_NUMBER = "tags must only contain finite numbers"
+_TAGS_TOO_DEEP = f"tags support at most {TAG_MAX_NESTING_DEPTH} nested levels"
+_TAGS_TOO_DEEP_TO_STORE = "tags are nested too deeply to store"
+
+
+def _is_jsonb_incompatible_string(value):
+    """PostgreSQL jsonb rejects NUL and unpaired surrogates; JSON parsing allows both.
+
+    Valid escaped surrogate pairs have already been combined by the parser, so
+    any surrogate left is unpaired and fails strict UTF-8 encoding. Each check
+    runs in C rather than looping over characters in Python.
+    """
+    if "\x00" in value:
+        return True
+    if value.isascii():
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return True
+    return False
+
+
+def _tag_validation_error(tags):
+    """Return why parsed ``tags`` cannot be stored as jsonb, or None.
 
     Keep the existing JSON-list contract, including nested keys and values.
-    Valid escaped surrogate pairs have already been combined by the parser.
-    Traverse iteratively so deeply nested JSON does not exhaust Python's stack.
+    Python's JSON parser accepts NUL, unpaired surrogates and overflowing
+    numbers (``1e400`` parses as infinity), all of which PostgreSQL rejects.
+    Traverse iteratively so deep nesting cannot exhaust Python's stack.
     """
-    pending = [value]
+    pending = [(tags, 1)]
     while pending:
-        item = pending.pop()
-        if isinstance(item, str):
-            if any(char == "\x00" or "\ud800" <= char <= "\udfff" for char in item):
-                return True
-        elif isinstance(item, list):
-            pending.extend(item)
-        elif isinstance(item, dict):
-            pending.extend(item.keys())
-            pending.extend(item.values())
-    return False
+        container, depth = pending.pop()
+        if depth > TAG_MAX_NESTING_DEPTH:
+            return _TAGS_TOO_DEEP
+        if isinstance(container, dict):
+            # JSON object keys are always strings.
+            if any(_is_jsonb_incompatible_string(key) for key in container):
+                return _INVALID_TAG_STRING
+            children = container.values()
+        else:
+            children = container
+        for child in children:
+            if isinstance(child, str):
+                if _is_jsonb_incompatible_string(child):
+                    return _INVALID_TAG_STRING
+            elif isinstance(child, float):
+                if not math.isfinite(child):
+                    return _NON_FINITE_TAG_NUMBER
+            elif isinstance(child, list | dict):
+                pending.append((child, depth + 1))
+    return None
 
 
 def sdk_key_snippets():
@@ -907,7 +951,12 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             503: ApiErrorResponseSerializer,
         }
     )
-    @action(detail=True, methods=["patch"], url_path="tags")
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path="tags",
+        parser_classes=[NestingSafeJSONParser, MultiPartParser],
+    )
     def update_tags(self, request, *args, **kwargs):
         """Update tags for a project."""
         project = self.get_object()
@@ -918,12 +967,17 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.bad_request("tags field is required")
         if not isinstance(tags, list):
             return self._gm.bad_request("tags must be a list")
-        if _has_invalid_tag_string(tags):
-            return self._gm.bad_request(
-                "tags must not contain null characters or unpaired Unicode surrogates"
-            )
+        error = _tag_validation_error(tags)
+        if error:
+            return self._gm.bad_request(error)
         project.tags = tags
-        project.save(update_fields=["tags", "updated_at"])
+        try:
+            project.save(update_fields=["tags", "updated_at"])
+        except RecursionError:
+            # On Python 3.11 the C JSON encoder shares the frame budget, and the
+            # database adapter serialises tags deeper in the stack than the
+            # parser read them. The error is raised before any query is sent.
+            return self._gm.bad_request(_TAGS_TOO_DEEP_TO_STORE)
         return self._gm.success_response({"id": str(project.id), "tags": project.tags})
 
     @validated_request(

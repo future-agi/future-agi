@@ -6,7 +6,7 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
     ExportTraceServiceRequest,
 )
 from rest_framework.exceptions import ParseError
-from rest_framework.parsers import BaseParser
+from rest_framework.parsers import BaseParser, JSONParser
 
 
 def deserialize_trace_payload(
@@ -50,3 +50,18 @@ class ProtobufParser(BaseParser):
             return MessageToDict(request_proto, preserving_proto_field_name=True)
         except Exception as e:
             raise ParseError(f"Failed to parse Protobuf data: {e}")  # noqa: B904
+
+
+class NestingSafeJSONParser(JSONParser):
+    """DRF's JSON parser, with too-deeply nested bodies reported as a 400.
+
+    The C JSON decoder raises RecursionError, not ValueError, once nesting
+    exceeds the interpreter's recursion guard, so DRF's JSONParser lets it
+    escape as an unhandled 500. Such a body is client input DRF cannot parse.
+    """
+
+    def parse(self, stream, media_type=None, parser_context=None):
+        try:
+            return super().parse(stream, media_type, parser_context)
+        except RecursionError as exc:
+            raise ParseError("JSON parse error - nesting is too deep") from exc
