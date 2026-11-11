@@ -512,9 +512,10 @@ def run_pr(run, repository):
     """The PR a dispatch run of dev's copy of this workflow evaluated, else None.
 
     Only workflow_dispatch runs on dev review. A pull_request_target run takes
-    the workflow file from the PR's base branch, which any writer can create,
-    and its run object does not name that branch. The run-name binds each run
-    to one PR.
+    the workflow file, GITHUB_REF and GITHUB_SHA from the default branch (main)
+    since 8 Dec 2025 (before that, from the PR's base branch, which any writer
+    can create), so it is not dev's copy, and its run object does not name dev.
+    The run-name binds each run to one PR.
     """
     title = run.get("display_title") if isinstance(run, dict) else None
     match = RUN_TITLE.fullmatch(title) if isinstance(title, str) else None
@@ -1310,8 +1311,9 @@ def audited_head(api, number):
 
 
 def sweep(api, policy, settings):
-    """Scheduled runs come from the default branch. Dispatch a run on dev for
-    each PR that can act, so all later policy and workflow code comes from dev.
+    """Scheduled runs come from the default branch (main), whose workflow copy
+    runs dev's controller. Dispatch a run on dev for each PR that can act, so
+    all later policy and workflow code comes from dev.
 
     First every trusted LOW PR without a hold, uncapped. Then, capped and
     rotated, PRs to classify: those with no tier label yet (the one-time

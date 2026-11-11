@@ -5,9 +5,13 @@ name: Low-risk PR autopilot
 run-name: "${{ github.event_name == 'pull_request_target' && format('PR autopilot #{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('PR autopilot #{0}', inputs.pr_number) || github.event_name == 'pull_request' && format('PR autopilot tests #{0}', github.event.pull_request.number) || 'PR autopilot sweep' }}"
 
 on:
-  # This event uses the base branch's workflow, not the PR's proposed workflow.
-  # It only classifies, labels and dispatches a run on dev: reviews, approvals
-  # and merges happen only in workflow_dispatch runs on dev.
+  # Since 8 Dec 2025 this event runs the default branch's (main's) copy of this
+  # workflow, whatever the PR's base, and never the PR's proposed copy. main's
+  # copy checks out dev's controller. It only classifies, labels and dispatches
+  # a run on dev: reviews, approvals and merges happen only in
+  # workflow_dispatch runs on dev. From 2 Dec 2026 GitHub blocks this event in
+  # public repositories unless an Actions event policy allows it for this file
+  # (docs/pr-autopilot.md); without it the sweep still classifies, more slowly.
   pull_request_target:
     branches: [dev]
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
