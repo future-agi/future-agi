@@ -129,7 +129,7 @@ test('SKILLS-E2E-050: inventory forty selected checkouts and retain the campaign
     await page.reload();
     await expect(page.getByText('No repository rollouts', { exact: true })).toBeVisible({ timeout: 60_000 });
     await page.screenshot({ path: testInfo.outputPath('J5-rollouts-dark.png'), animations: 'disabled' });
-    const reason = 'Checkpoint P and bounded real-GitHub authorization/conformance are absent; campaign execution remains disabled. The J5 driver implements only the inventory prefix, not the complete job.';
+    const reason = 'Checkpoint P and bounded real-GitHub authorization/conformance are absent; campaigns remain disabled in the default stack. This flow exercises inventory only; synthetic lifecycle evidence does not qualify a complete-job measurement.';
     const report = unavailableJob(getJob('J5'), reason);
     report.cohorts = Object.fromEntries(['cold', 'configured'].map((cohort) => [cohort, unavailableJob(getJob('J5'), reason)]));
     report.prerequisite_flow = { id: 'SKILLS-E2E-050', inventory_targets: 40, available: 39, unavailable: 1, complete_job: false };
